@@ -234,10 +234,11 @@ Both gaps are expected — overlays and notes are advanced admin features, not c
 
 ## 🎨 UI/UX Highlights
 
-1. **Design token system** (TailwindCSS 4):
+1. **Design token system** (TailwindCSS 4) — aligned with `@jentic/frontend-theme`:
     - Single-file theme architecture (`src/index.css`) using shadcn/TW4-native pattern
-    - `@theme inline` maps CSS custom properties to Tailwind utility classes
-    - Full HSL color palette in `:root` matching `@jentic/frontend-theme`
+    - Color tokens use **HSL triplets** in `:root` (e.g. `--primary: 183 29% 72%`) — no `hsl()` wrapper — matching `@jentic/frontend-theme` convention
+    - `@theme inline` wraps each token with `hsl()` so Tailwind utilities emit valid values and opacity modifiers work (`bg-primary/50`)
+    - Extended token families: `btn-primary-*`, `btn-secondary-*`, `table-header-bg`, `table-body-bg`, `card-border`, `card-border-hover`, `dropdown-*` (7 tokens), `nav-text`, `nav-hover-bg`
     - Semantic token names throughout: `bg-primary`, `text-foreground`, `border-border`, etc.
     - Zero hardcoded Tailwind default colors (no `red-500`, `gray-300`, etc.)
     - No separate `tailwind.config.js` or `styles.css` — everything in `index.css`
@@ -276,7 +277,21 @@ Both gaps are expected — overlays and notes are advanced admin features, not c
     - Autofocus on search inputs
     - Enter to submit forms
 
-8. **Mobile-responsive**:
+8. **Navigation chrome** — aligned with `jentic-webapp` top/bottom pattern:
+    - **`TopNavbar`** (`components/layout/TopNavbar.tsx`): fixed `h-12` bar; left = logo + vertical divider + `NavTabs`; right = pending-requests pill + `UserMenu`
+    - **`NavTabs`** (`components/layout/NavTabs.tsx`): horizontal desktop tabs with `ResizeObserver`-driven overflow into "More ▾" dropdown; active state = `bg-muted` underlay that morphs between tabs via `framer-motion` `layoutId="activeNavTab"` (spring: stiffness 500, damping 35) — matches `jentic-webapp`'s nav animation
+    - **`BottomNavbar`** (`components/layout/BottomNavbar.tsx`): `md:hidden` fixed bottom bar; icon + 10px label tiles; active tile uses the same `framer-motion` `layoutId="activeBottomNavTab"` spring; overflow items open a bottom sheet (Escape + backdrop tap both dismiss)
+    - **`UserMenu`** (`components/layout/UserMenu.tsx`): avatar button (initial), dropdown with username, API docs, version, Log out
+    - **`navbar.constants.ts`**: single `NAV_ITEMS` array — data-driven, ordered to match previous sidebar
+    - Sidebar and mobile drawer **fully removed** from `Layout.tsx`; padding adjusted (`pt-12 pb-20 md:pb-12`)
+
+9. **Page container — `PageShell`** (`components/layout/PageShell.tsx`):
+    - Single shared wrapper for every route mounted under `Layout`; owns content max-width and vertical rhythm
+    - Three width presets: `wide` (`max-w-screen-2xl`, default — dashboards, lists, tables), `reading` (`max-w-4xl` — detail pages), `form` (`max-w-2xl` — single-column forms)
+    - Replaces the previous mess of one-off `<div className="max-w-4xl|5xl|6xl space-y-5|6">` wrappers — every in-Layout page now goes through `PageShell`
+    - Auth-only screens (Login, Setup, Approval) keep their own centred card and intentionally bypass `PageShell`
+
+10. **Mobile-responsive**:
     - Grid layouts adapt (1/2/4 columns)
     - Overflow-x-auto on tables
 

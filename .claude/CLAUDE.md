@@ -105,13 +105,46 @@ The `ui/` directory contains a React 18 + Vite 7 admin frontend.
   - `:root` defines the full HSL color palette and semantic mappings
   - `@layer base` sets body, heading, and button cursor styles
 - **Icons**: Lucide React
-- **Fonts**: Sora (body), Nunito Sans (headings), Geist Mono (code) — loaded via Google Fonts in `index.html`
+- **Fonts**: Nunito Sans (body, `font-sans`), Sora (headings, `font-heading`), Geist Mono (code, `font-mono`) — loaded via Google Fonts in `index.html`
+
+### Navigation chrome
+Mini uses a webapp-style top + bottom nav (no sidebar):
+- `components/layout/TopNavbar.tsx` — fixed `h-12` top bar; logo + `NavTabs` (desktop) + pending pill + `UserMenu`
+- `components/layout/NavTabs.tsx` — horizontal tabs, overflow into "More ▾"; `ResizeObserver`-driven; active tab pill morphs between tabs via `framer-motion` `layoutId="activeNavTab"` (spring: stiffness 500, damping 35)
+- `components/layout/BottomNavbar.tsx` — `md:hidden` bottom bar, same spring on `layoutId="activeBottomNavTab"`; overflow opens a bottom sheet (Escape / backdrop dismiss)
+- `components/layout/UserMenu.tsx` — avatar + dropdown (username + version → API docs / jentic.com → Log out)
+- `components/layout/navbar.constants.ts` — single `NAV_ITEMS` source of truth
+- `components/ui/Menu.tsx` — shared `useDismissable` hook + `MenuPanel` / `MenuSeparator` / `menuItemClass` primitives that `NavTabs` and `UserMenu` (and the mobile sheet) consume so every dropdown shares the same outside-click / Escape behaviour and inset-pill item rounding
+
+`Layout.tsx` wraps all pages: `<TopNavbar /> + <main className="pt-12 pb-20 md:pb-12"> + <BottomNavbar />`
+
+### Page container — always use `PageShell`
+`components/layout/PageShell.tsx` is the canonical wrapper for every route mounted under `Layout`. It owns the content max-width and vertical rhythm so the whole app feels consistent. Three width variants:
+- `wide` (default, `max-w-screen-2xl`) — dashboards, lists, tables, anything that should fill the screen on a modern monitor
+- `reading` (`max-w-4xl`) — detail pages with prose / sequential sections
+- `form` (`max-w-2xl`) — single-column forms
+
+```tsx
+import { PageShell } from '@/components/layout/PageShell';
+
+export default function MyPage() {
+  return (
+    <PageShell>
+      <PageHeader title="…" />
+      …
+    </PageShell>
+  );
+}
+```
+
+Auth-only routes (`LoginPage`, `SetupPage`, `ApprovalPage`) are mounted outside `Layout` and render their own centred card — they do **not** use `PageShell`. Never reach for a one-off `<div className="max-w-Nxl space-y-N">` on a new page; pick a `PageShell` variant instead.
 
 ### UI Component Library
 Shadcn-style owned components in `ui/src/components/ui/`.
 
 - **Primitives**: `Button`, `Input`, `Label`, `Textarea`, `Select` — extend native HTML props, support error states and accessibility
 - **Layout**: `Dialog` (native `<dialog>`, zero deps), `EmptyState`, `PageHeader`, `ErrorAlert`, `LoadingState`, `BackButton`, `CopyButton`
+- **Overlays**: `Menu` — exports `useDismissable` (outside-click + Escape), `MenuPanel`, `MenuSeparator`, `menuItemClass`. Use these for any new dropdown / popover / sheet rather than re-rolling refs and effect listeners.
 - **Data**: `DataTable` (generic typed columns), `Pagination`
 - **Shared hooks**: `useCopyToClipboard` in `ui/src/hooks/`
 - **Shared utilities**: `timeAgo`, `formatTimestamp`, `statusVariant`, `statusColor` in `ui/src/lib/`
@@ -134,10 +167,10 @@ Shadcn-style owned components in `ui/src/components/ui/`.
 
 ### Adding colors or tokens
 All theming is in `ui/src/index.css`. To add a new semantic color:
-1. Add the raw HSL value to `:root` (e.g. `--info: hsl(210 80% 60%)`)
-2. Add the semantic mapping to `:root` if needed (e.g. `--info-foreground: hsl(0 0% 100%)`)
-3. Map it in `@theme inline` (e.g. `--color-info: var(--info)`)
-4. Use it in components as `bg-info`, `text-info`, etc.
+1. Add the raw HSL **triplet** to `:root` (e.g. `--info: 210 80% 60%` — no `hsl()` wrapper here)
+2. Add the semantic mapping to `:root` if needed (e.g. `--info-foreground: 0 0% 100%`)
+3. Map it in `@theme inline` with the `hsl()` wrapper (e.g. `--color-info: hsl(var(--info))`)
+4. Use it in components as `bg-info`, `text-info`, etc. — opacity modifiers now work: `bg-info/50`
 
 ## Testing
 
