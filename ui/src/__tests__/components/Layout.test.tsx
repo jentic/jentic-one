@@ -1,6 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { Routes, Route } from 'react-router-dom';
-import { screen, renderWithProviders } from '../test-utils';
+import { screen, renderWithProviders, userEvent } from '../test-utils';
 import { worker } from '../mocks/browser';
 import { Layout } from '@/components/layout/Layout';
 
@@ -17,42 +17,62 @@ function renderLayout(route = '/') {
 }
 
 describe('Layout', () => {
-	it('renders sidebar navigation links', async () => {
+	it('renders top + bottom nav with visible primary tabs and a More overflow', async () => {
 		renderLayout();
 
-		await screen.findByText('admin');
-		const nav = document.querySelector('nav')!;
-		expect(nav).toBeInTheDocument();
-		expect(nav.textContent).toContain('Dashboard');
-		expect(nav.textContent).toContain('Search');
-		expect(nav.textContent).toContain('API Catalog');
-		expect(nav.textContent).toContain('Workflows');
-		expect(nav.textContent).toContain('Toolkits');
-		expect(nav.textContent).toContain('Credentials');
-		expect(nav.textContent).toContain('Traces');
+		// Logo with "Mini" badge marks the top navbar.
+		await screen.findByText('Mini');
+
+		// `NavTabs` uses a `ResizeObserver` budget so the visible tab count
+		// depends on the parent's width. In a constrained CI viewport only
+		// the first one or two tabs survive — the rest live inside the
+		// closed More dropdown (not mounted until clicked). Assert the
+		// Dashboard tab is always visible, and a More overflow exists.
+		const text = document.body.textContent ?? '';
+		expect(text).toContain('Dashboard');
+		expect(screen.getAllByRole('button', { name: /more/i }).length).toBeGreaterThan(0);
 	});
 
-	it('renders username in header when authenticated', async () => {
+	it('exposes every NAV_ITEMS label after opening the More dropdown', async () => {
+		const user = userEvent.setup();
 		renderLayout();
+
+		// Click the desktop More button (the bottom-bar More opens a sheet
+		// with a different aria-label).
+		const moreButtons = await screen.findAllByRole('button', { name: /^more$/i });
+		await user.click(moreButtons[0]);
+
+		const text = document.body.textContent ?? '';
+		expect(text).toContain('Search');
+		expect(text).toContain('API Catalog');
+		expect(text).toContain('Workflows');
+		expect(text).toContain('Credentials');
+	});
+
+	it('renders the user-menu avatar button', async () => {
+		renderLayout();
+
+		expect(await screen.findByLabelText('User menu')).toBeInTheDocument();
+	});
+
+	it('shows username and Log out inside the user menu when opened', async () => {
+		const user = userEvent.setup();
+		renderLayout();
+
+		await user.click(await screen.findByLabelText('User menu'));
 
 		expect(await screen.findByText('admin')).toBeInTheDocument();
-	});
-
-	it('renders logout button', async () => {
-		renderLayout();
-
-		expect(await screen.findByText('Logout')).toBeInTheDocument();
+		expect(screen.getByText('Log out')).toBeInTheDocument();
 	});
 
 	it('renders child route content via Outlet', async () => {
 		renderLayout('/toolkits');
 
-		await screen.findByText('admin');
 		const main = document.querySelector('main')!;
 		expect(main.textContent).toContain('Toolkits');
 	});
 
-	it('shows pending requests badge when there are pending requests', async () => {
+	it('shows pending-requests pill when there are pending requests', async () => {
 		worker.use(
 			http.get('/toolkits', () => HttpResponse.json([{ id: 'tk-1', name: 'Toolkit A' }])),
 			http.get('/toolkits/tk-1/access-requests', () =>
@@ -65,7 +85,7 @@ describe('Layout', () => {
 		expect(await screen.findByText(/1 Pending Request/)).toBeInTheDocument();
 	});
 
-	it('shows current version in sidebar footer', async () => {
+	it('shows current version inside the user menu', async () => {
 		worker.use(
 			http.get('/version', () =>
 				HttpResponse.json({
@@ -76,29 +96,16 @@ describe('Layout', () => {
 			),
 		);
 
+		const user = userEvent.setup();
 		renderLayout();
 
-		expect(await screen.findByText('v0.5.3')).toBeInTheDocument();
-	});
-
-	it('shows version without update banner when telemetry is off', async () => {
-		worker.use(
-			http.get('/version', () =>
-				HttpResponse.json({
-					current: '0.5.3',
-					latest: null,
-					release_url: null,
-				}),
-			),
-		);
-
-		renderLayout();
+		await user.click(await screen.findByLabelText('User menu'));
 
 		expect(await screen.findByText('v0.5.3')).toBeInTheDocument();
 		expect(screen.queryByText(/Update available/)).not.toBeInTheDocument();
 	});
 
-	it('shows update available banner when new version exists', async () => {
+	it('shows update-available link in the user menu when a new version exists', async () => {
 		worker.use(
 			http.get('/version', () =>
 				HttpResponse.json({
@@ -109,7 +116,10 @@ describe('Layout', () => {
 			),
 		);
 
+		const user = userEvent.setup();
 		renderLayout();
+
+		await user.click(await screen.findByLabelText('User menu'));
 
 		expect(await screen.findByText(/Update available: 0.3.0/)).toBeInTheDocument();
 	});
@@ -117,7 +127,6 @@ describe('Layout', () => {
 	it('renders the Jentic logo', async () => {
 		renderLayout();
 
-		await screen.findByText('admin');
-		expect(screen.getAllByText('Mini').length).toBeGreaterThan(0);
+		expect((await screen.findAllByText('Mini')).length).toBeGreaterThan(0);
 	});
 });

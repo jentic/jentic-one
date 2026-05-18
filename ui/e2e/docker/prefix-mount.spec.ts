@@ -199,21 +199,29 @@ test.describe('Reverse-proxy prefix mount', () => {
 		await page.goto(`${PREFIX_BASE}/`);
 		await page.getByRole('heading', { name: /dashboard/i }).waitFor({ timeout: 15_000 });
 
+		// Log out lives inside the UserMenu dropdown, opened via the avatar
+		// button in TopNavbar.
+		await page.getByRole('button', { name: /user menu/i }).click();
+
 		// Layout.onSuccess calls navigate('/login') — React Router applies basename
 		// so the destination is /foo/login, not bare /login or double /foo/foo/login.
-		await page.getByRole('button', { name: /logout/i }).click();
+		await page.getByRole('menuitem', { name: /log out/i }).click();
 
 		await expect(page).toHaveURL(`${PREFIX_BASE}/login`);
 	});
 
-	test('sidebar API link href is /foo/docs', async ({ page }) => {
+	test('UserMenu API docs link href is /foo/docs', async ({ page }) => {
 		await loginViaApi(page);
 		await page.goto(`${PREFIX_BASE}/`);
 		await page.getByRole('heading', { name: /dashboard/i }).waitFor({ timeout: 15_000 });
 
+		// The API docs link sits inside the UserMenu dropdown now, not the
+		// old sidebar; open the menu first.
+		await page.getByRole('button', { name: /user menu/i }).click();
+
 		// apiUrl('/docs') → OpenAPI.BASE + '/docs' → '/foo/docs'.
 		// AppLink external= renders a plain <a> so React Router does not re-apply basename.
-		const docsLink = page.getByRole('link', { name: 'API (opens in a new tab)' });
+		const docsLink = page.getByRole('menuitem', { name: /api docs/i });
 		await expect(docsLink).toBeVisible({ timeout: 10_000 });
 
 		await expect(docsLink).toHaveAttribute('href', '/foo/docs');
