@@ -3,53 +3,85 @@
 /*
   THEME — Tailwind utility class mappings.
   @theme inline maps CSS vars to Tailwind classes without emitting extra variables.
-  e.g. --color-primary: var(--primary) → bg-primary, text-primary, etc.
+  All values are wrapped in hsl() so Tailwind opacity modifiers work (bg-primary/50 etc.).
 */
 @theme inline {
 	/* Surface colors */
-	--color-background: var(--background);
-	--color-background-secondary: var(--background-secondary);
-	--color-foreground: var(--foreground);
-	--color-foreground-lighter: var(--foreground-lighter);
+	--color-background: hsl(var(--background));
+	--color-background-secondary: hsl(var(--background-secondary));
+	--color-foreground: hsl(var(--foreground));
+	--color-foreground-lighter: hsl(var(--foreground-lighter));
 
 	/* Brand / Primary */
-	--color-primary: var(--primary);
-	--color-primary-hover: var(--primary-hover);
-	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: hsl(var(--primary));
+	--color-primary-hover: hsl(var(--primary-hover));
+	--color-primary-foreground: hsl(var(--primary-foreground));
 
 	/* Muted */
-	--color-muted: var(--muted);
-	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: hsl(var(--muted));
+	--color-muted-foreground: hsl(var(--muted-foreground));
 
 	/* Card */
-	--color-card: var(--card);
-	--color-card-foreground: var(--card-foreground);
+	--color-card: hsl(var(--card));
+	--color-card-foreground: hsl(var(--card-foreground));
 
 	/* Borders */
-	--color-border: var(--border);
-	--color-border-hover: var(--border-hover);
+	--color-border: hsl(var(--border));
+	--color-border-hover: hsl(var(--border-hover));
 
 	/* Focus ring */
-	--color-ring: var(--ring);
+	--color-ring: hsl(var(--ring));
 
 	/* Accent colors */
-	--color-accent-orange: var(--accent-orange);
-	--color-accent-yellow: var(--accent-yellow);
-	--color-accent-green: var(--accent-green);
-	--color-accent-teal: var(--accent-green); /* alias — no distinct teal in the palette */
-	--color-accent-pink: var(--accent-pink);
-	--color-accent-blue: var(--accent-blue);
+	--color-accent-orange: hsl(var(--accent-orange));
+	--color-accent-yellow: hsl(var(--accent-yellow));
+	--color-accent-green: hsl(var(--accent-green));
+	--color-accent-teal: hsl(var(--accent-green)); /* alias — no distinct teal in the palette */
+	--color-accent-pink: hsl(var(--accent-pink));
+	--color-accent-blue: hsl(var(--accent-blue));
 
 	/* State colors */
-	--color-success: var(--success);
-	--color-warning: var(--warning);
-	--color-danger: var(--danger);
-	--color-destructive: var(--destructive);
-	--color-destructive-foreground: var(--destructive-foreground);
+	--color-success: hsl(var(--success));
+	--color-warning: hsl(var(--warning));
+	--color-danger: hsl(var(--danger));
+	--color-destructive: hsl(var(--destructive));
+	--color-destructive-foreground: hsl(var(--destructive-foreground));
+
+	/* Button tokens */
+	--color-btn-primary-bg: hsl(var(--btn-primary-bg));
+	--color-btn-primary-bg-hover: hsl(var(--btn-primary-bg-hover));
+	--color-btn-primary-text: hsl(var(--btn-primary-text));
+	--color-btn-primary-border: hsl(var(--btn-primary-border));
+	--color-btn-primary-border-hover: hsl(var(--btn-primary-border-hover));
+	--color-btn-secondary-bg-hover: hsl(var(--btn-secondary-bg-hover));
+	--color-btn-secondary-text: hsl(var(--btn-secondary-text));
+	--color-btn-secondary-border: hsl(var(--btn-secondary-border));
+	--color-btn-secondary-border-hover: hsl(var(--btn-secondary-border-hover));
+
+	/* Table tokens */
+	--color-table-header-bg: hsl(var(--table-header-bg));
+	--color-table-body-bg: hsl(var(--table-body-bg));
+
+	/* Card border tokens */
+	--color-card-border: hsl(var(--card-border));
+	--color-card-border-hover: hsl(var(--card-border-hover));
+
+	/* Dropdown tokens */
+	--color-dropdown-bg: hsl(var(--dropdown-bg));
+	--color-dropdown-border: hsl(var(--dropdown-border));
+	--color-dropdown-hover: hsl(var(--dropdown-hover));
+	--color-dropdown-text: hsl(var(--dropdown-text));
+	--color-dropdown-text-muted: hsl(var(--dropdown-text-muted));
+	--color-dropdown-accent: hsl(var(--dropdown-accent));
+	--color-dropdown-accent-hover: hsl(var(--dropdown-accent-hover));
+
+	/* Navigation tokens */
+	--color-nav-text: hsl(var(--nav-text));
+	--color-nav-hover-bg: hsl(var(--nav-hover-bg));
 
 	/* Fonts */
-	--font-sans: 'Sora', sans-serif;
-	--font-heading: 'Nunito Sans', sans-serif;
+	--font-sans: 'Nunito Sans', sans-serif;
+	--font-heading: 'Sora', sans-serif;
 	--font-mono: 'Geist Mono', monospace;
 
 	/* Radius */
@@ -60,57 +92,119 @@
 }
 
 /*
-  TOKENS — Designer's Official Color Palette.
-  Full color values so var(--primary) works anywhere (CSS, JS, custom styles).
-  color-mix() handles opacity modifiers automatically.
-  Values match @jentic/frontend-theme.
+  TOKENS — HSL triplets (no hsl() wrapper here).
+  Format: `H S% L%` so Tailwind can apply opacity modifiers: bg-primary/50.
+  All values match @jentic/frontend-theme/styles.css conventions.
+
+  Primary scale (higher = darker — standard Tailwind convention):
+    --primary-50  → #F5F7F7 lightest
+    --primary-950 → #0E1A1D darkest
 */
 :root {
-	/* Primary scale (lower = lighter, higher = darker — standard Tailwind convention).
-     Intentionally sparse: only shades used by semantic tokens are defined.
-     Intermediate stops (200, 400, 600, 800) can be added here if needed. */
-	--primary-50: hsl(180 11% 96%); /* #F5F7F7 - Lightest */
-	--primary-100: hsl(189 15% 91%); /* #E4EAEB */
-	--primary-300: hsl(183 29% 72%); /* #A3CACC */
-	--primary-500: hsl(185 18% 50%); /* #689296 */
-	--primary-700: hsl(186 28% 26%); /* #305256 */
-	--primary-850: hsl(192 38% 16%); /* #193238 */
-	--primary-900: hsl(192 36% 13%); /* #162629 - Card background */
-	--primary-950: hsl(192 35% 8%); /* #0E1A1D - Darkest */
+	/* ======================================================================
+	   PRIMARY COLOR SCALE
+	   Higher number = darker (standard Tailwind convention).
+	   ====================================================================== */
+	--primary-50: 180 11% 96%; /* #F5F7F7 - Lightest */
+	--primary-100: 189 15% 91%; /* #E4EAEB */
+	--primary-300: 183 29% 72%; /* #A3CACC */
+	--primary-500: 185 18% 50%; /* #689296 */
+	--primary-700: 186 28% 26%; /* #305256 */
+	--primary-850: 192 38% 16%; /* #193238 */
+	--primary-900: 192 36% 13%; /* #162629 - Card background */
+	--primary-950: 192 35% 8%; /* #0E1A1D - Darkest */
 
-	/* Accent colors */
-	--accent-orange: hsl(31 97% 73%); /* #FDBD79 */
-	--accent-yellow: hsl(52 78% 75%); /* #F1E38B */
-	--accent-green: hsl(162 66% 62%); /* #5EDEB9 */
-	--accent-pink: hsl(358 64% 80%); /* #EDADAF */
-	--accent-blue: hsl(203 78% 67%); /* #68BAEC */
+	/* ======================================================================
+	   ACCENT COLORS
+	   ====================================================================== */
+	--accent-orange: 31 97% 73%; /* #FDBD79 */
+	--accent-yellow: 52 78% 75%; /* #F1E38B */
+	--accent-green: 162 66% 62%; /* #5EDEB9 */
+	--accent-pink: 358 64% 80%; /* #EDADAF */
+	--accent-blue: 203 78% 67%; /* #68BAEC */
 
-	/* Semantic mappings */
-	--background: var(--primary-950);
-	--background-secondary: var(--primary-850);
-	--card: var(--primary-900);
-	--card-foreground: hsl(0 0% 100%);
-	--border: var(--primary-700);
-	--border-hover: var(--primary-500);
-	--foreground: hsl(0 0% 100%);
-	--foreground-lighter: var(--primary-100);
-	--muted: var(--primary-850);
-	--muted-foreground: var(--primary-100);
-	--primary: var(--primary-300);
-	--primary-hover: var(--primary-100);
-	--primary-foreground: var(--primary-950);
-	--success: hsl(162 66% 62%);
-	--warning: hsl(52 78% 75%);
-	--danger: hsl(358 64% 80%);
-	--destructive: hsl(13 87% 46%); /* #DB3B0F */
-	--destructive-foreground: hsl(0 0% 100%);
+	/* ======================================================================
+	   SEMANTIC MAPPINGS
+	   ====================================================================== */
+
+	/* Surfaces */
+	--background: var(--primary-950); /* #0E1A1D */
+	--background-secondary: var(--primary-850); /* #193238 */
+	--card: var(--primary-900); /* #162629 */
+	--card-foreground: 0 0% 100%; /* #FFFFFF */
+	--border: var(--primary-700); /* #305256 */
+	--border-hover: var(--primary-500); /* #689296 */
+
+	/* Text */
+	--foreground: 0 0% 100%; /* #FFFFFF */
+	--foreground-lighter: var(--primary-100); /* #E4EAEB */
+	--muted: var(--primary-850); /* #193238 */
+	--muted-foreground: var(--primary-100); /* #E4EAEB */
+
+	/* Brand */
+	--primary: var(--primary-300); /* #A3CACC */
+	--primary-hover: var(--primary-100); /* #E4EAEB */
+	--primary-foreground: var(--primary-950); /* #0E1A1D */
+
+	/* State */
+	--success: 162 66% 62%; /* #5EDEB9 */
+	--warning: 52 78% 75%; /* #F1E38B */
+	--danger: 358 64% 80%; /* #EDADAF */
+	--destructive: 13 87% 46%; /* #DB3B0F */
+	--destructive-foreground: 0 0% 100%; /* #FFFFFF */
+
+	/* Misc */
 	--ring: var(--primary-300);
 	--radius: 0.75rem;
+
+	/* ======================================================================
+	   NAVIGATION TOKENS
+	   ====================================================================== */
+	--nav-text: 0 0% 100%; /* #FFFFFF */
+	--nav-hover-bg: var(--primary-850); /* #193238 */
+
+	/* ======================================================================
+	   BUTTON TOKENS
+	   ====================================================================== */
+	--btn-primary-bg: var(--primary-300); /* #A3CACC */
+	--btn-primary-bg-hover: var(--primary-100); /* #E4EAEB */
+	--btn-primary-text: var(--primary-950); /* #0E1A1D */
+	--btn-primary-border: var(--primary-300);
+	--btn-primary-border-hover: var(--primary-100);
+
+	--btn-secondary-bg: transparent;
+	--btn-secondary-bg-hover: var(--primary-850); /* #193238 */
+	--btn-secondary-text: 0 0% 100%; /* #FFFFFF */
+	--btn-secondary-border: var(--primary-700); /* #305256 */
+	--btn-secondary-border-hover: var(--primary-300); /* #A3CACC */
+
+	/* ======================================================================
+	   TABLE TOKENS
+	   ====================================================================== */
+	--table-header-bg: var(--primary-700); /* #305256 */
+	--table-body-bg: var(--primary-950); /* #0E1A1D */
+
+	/* ======================================================================
+	   CARD BORDER TOKENS
+	   ====================================================================== */
+	--card-border: var(--primary-700); /* #305256 */
+	--card-border-hover: var(--primary-500); /* #689296 */
+
+	/* ======================================================================
+	   DROPDOWN TOKENS
+	   ====================================================================== */
+	--dropdown-bg: 192 36% 13%; /* #162629 */
+	--dropdown-border: 185 18% 50%; /* #689296 */
+	--dropdown-hover: 185 18% 50%;
+	--dropdown-text: 30 3% 95%; /* #f4f3f2 */
+	--dropdown-text-muted: 0 0% 85%; /* #d9d9d9 */
+	--dropdown-accent: 183 29% 72%; /* #a3cacc */
+	--dropdown-accent-hover: 186 28% 79%; /* #b8d8da */
 }
 
 @layer base {
 	body {
-		@apply bg-background text-foreground;
+		@apply bg-background text-foreground font-sans;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
 	}
@@ -124,8 +218,87 @@
 		@apply font-heading font-bold;
 	}
 
+	h1,
+	h2 {
+		font-weight: 900;
+	}
+
 	button:not(:disabled),
 	[role='button']:not(:disabled) {
 		cursor: pointer;
 	}
+
+	/* Global scrollbar styling */
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: hsl(var(--border)) transparent;
+	}
+
+	*::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	*::-webkit-scrollbar-thumb {
+		background-color: hsl(var(--border));
+		border-radius: 9999px;
+	}
+}
+
+/* ============================================================================
+   UTILITY CLASSES (mirrored from @jentic/frontend-theme tailwind.config.js)
+   ============================================================================ */
+
+.text-link {
+	@apply text-primary hover:text-primary-hover transition-colors duration-150 cursor-pointer;
+}
+
+.text-hover-primary {
+	@apply hover:text-primary transition-colors duration-150;
+}
+
+.card-hover {
+	@apply hover:border-card-border-hover transition-colors duration-150;
+}
+
+.hide-scrollbar {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+	display: none;
+}
+
+.mask-fade-x {
+	-webkit-mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
+	mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
+}
+
+.mask-fade-x-sm {
+	-webkit-mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
+	mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
+}
+
+.custom-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: hsl(var(--border)) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+	background-color: hsl(var(--border));
+	border-radius: 9999px;
 }
