@@ -37,7 +37,8 @@ export default function LoginPage() {
 		<div className="bg-background text-foreground flex min-h-screen items-center justify-center">
 			<div className="bg-muted border-border w-full max-w-sm rounded-xl border p-8 shadow-2xl">
 				<div className="mb-8 flex justify-center">
-					<JenticLogo className="h-12" />
+					{/* Preserve the 77:24 wordmark aspect ratio when scaling up. */}
+					<JenticLogo width={128} height={40} />
 				</div>
 
 				<form
