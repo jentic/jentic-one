@@ -16,7 +16,7 @@ dependencies = [
   "pyyaml==6.0.3",
   "aiosqlite==0.22.1",
   "bcrypt==5.0.0",
-  "python-jose[cryptography]==3.5.0",
+  "PyJWT==2.10.1",
   "python-multipart>=0.0.27",
   "alembic>=1.18.4,<2",
   "jentic-openapi-common>=1.0.0a51",

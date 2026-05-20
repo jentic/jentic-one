@@ -10,7 +10,7 @@ claim still return the correct username via the DB query in /user/me.
 import sqlite3
 import time
 
-from jose import jwt as jose_jwt
+import jwt
 from src.auth import JWT_ALGORITHM, JWT_TTL_SECONDS
 from src.db import DB_PATH
 from starlette.testclient import TestClient
@@ -28,7 +28,7 @@ def _legacy_jwt(secret: str) -> str:
     """Craft a JWT that has no username claim (simulates pre-fix tokens)."""
     now = int(time.time())
     payload = {"sub": "human", "iat": now, "exp": now + JWT_TTL_SECONDS}
-    return jose_jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 
 # ── Cookie session ────────────────────────────────────────────────────────────

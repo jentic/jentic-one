@@ -50,10 +50,10 @@ from src.utils import route_path
 
 logger = logging.getLogger("jentic.auth")
 
-# ── JWT via python-jose ───────────────────────────────────────────────────────
+# ── JWT via PyJWT ─────────────────────────────────────────────────────────────
 try:
-    from jose import jwt as _jwt
-    from jose.exceptions import JWTError
+    import jwt as _jwt
+    from jwt.exceptions import InvalidTokenError as JWTError
 
     JWT_AVAILABLE = True
 except ImportError:
