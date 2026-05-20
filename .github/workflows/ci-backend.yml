@@ -8,7 +8,7 @@ on:
       - 'tests/**'
       - 'alembic/**'
       - 'pyproject.toml'
-      - 'pdm.lock'
+      - 'uv.lock'
       # Self-reference: ensures edits to this workflow are validated on the PR that makes them.
       - '.github/workflows/ci-backend.yml'
   workflow_call:
@@ -25,17 +25,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pdm-project/setup-pdm@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           python-version: '3.11'
-          version: '2.25.5'
-          cache: true
+          enable-cache: true
 
       - name: Install dependencies
-        run: pdm install --dev --frozen-lockfile
+        run: uv sync --frozen
 
       - name: Run lint
-        run: pdm run lint
+        run: uv run poe lint
 
   backend-tests:
     runs-on: ubuntu-latest
@@ -43,16 +42,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pdm-project/setup-pdm@v4
+      - uses: astral-sh/setup-uv@v8
         with:
           python-version: '3.11'
-          version: '2.25.5'
-          cache: true
+          enable-cache: true
 
       - name: Install dependencies
-        run: pdm install --dev --frozen-lockfile
+        run: uv sync --frozen
 
       - name: Run backend tests
         env:
           JENTIC_TELEMETRY: "off"
-        run: pdm run test
+        run: uv run poe test
