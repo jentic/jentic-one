@@ -32,11 +32,11 @@ dev = [
     "pytest-asyncio>=0.24,<2",
     "schemathesis>=4.15.0",
     "ruff<0.16.0,>=0.14.1",
+    "poethepoet>=0.37,<0.47",
 ]
 
-[build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+[tool.uv]
+package = false
 
 [tool.ruff]
 target-version = "py311"
@@ -55,6 +55,23 @@ explicit-preview-rules = true
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
+
+[tool.poe.tasks.lint]
+sequence = [
+  { shell = "ruff check ${GITHUB_ACTIONS:+--output-format=github}" },
+  { cmd = "ruff format --check --diff" },
+]
+
+[tool.poe.tasks."lint:fix"]
+sequence = [
+  { cmd = "ruff check --fix" },
+  { cmd = "ruff format" },
+]
+
+[tool.poe.tasks.test]
+cmd = "pytest -v ${target} --tb=short"
+args = [{name = "target", default = "tests", positional = true}]
+env = { PYTHONPATH = "." }
 
 [tool.pdm.scripts]
 lint.composite = ["ruff check", "ruff format --check --diff"]
