@@ -28,6 +28,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8
         with:
           python-version: '3.11'
+          version: "0.8.5"
           enable-cache: true
 
       - name: Install dependencies
@@ -45,6 +46,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8
         with:
           python-version: '3.11'
+          version: "0.8.5"
           enable-cache: true
 
       - name: Install dependencies
