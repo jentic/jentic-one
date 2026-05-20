@@ -99,7 +99,7 @@ Launch **three `Explore` subagents in parallel** — a single message with multi
 - Identify the test suites and CI workflows relevant to the areas touched (per `.claude/rules/testing.md` and `.github/workflows/`).
 - Find existing endpoints / UI flows / trace-log inspections that will demonstrate the phase works end-to-end.
 - Check whether `schemathesis` contract tests, `ui/openapi.json` regeneration, or Playwright E2E apply.
-- Return: concrete test targets (`pdm run test …`, `npm run test:run`, `npm run test:e2e`), curl / UI check commands with expected responses, and whether contract / E2E / migration gates apply.
+- Return: concrete test targets (`uv run poe test …`, `npm run test:run`, `npm run test:e2e`), curl / UI check commands with expected responses, and whether contract / E2E / migration gates apply.
 
 **Rules:**
 - Every brief must instruct the subagent to lead its summary with a `## Blockers` section (write `_none_` when there are none). Examples of blockers: the phase depends on an assumption that is false in the current code; prior work already landed and the phase is partly obsolete; a load-bearing file referenced by the phase body does not exist.
@@ -187,7 +187,7 @@ Numbered task groups. Granularity per the user's Question 2 answer.
 ```
 
 - Tasks are plain numbered items, **not checkboxes**. One concrete change each (file / function / test / route / migration / CLI command).
-- **The last group is always `Verify`**, listing the concrete checks that confirm the whole plan succeeded: command + expected result (e.g. `pdm run test tests/broker` exits 0; `curl localhost:8900/…` returns 200 with JSON containing `{ … }`).
+- **The last group is always `Verify`**, listing the concrete checks that confirm the whole plan succeeded: command + expected result (e.g. `uv run poe test tests/broker` exits 0; `curl localhost:8900/…` returns 200 with JSON containing `{ … }`).
 - **Include the roadmap-completion task** as a concrete numbered task in the final non-Verify group (typically a docs/lifecycle group). The task says to append ` ✅` — a single space followed by the U+2705 checkmark — to the `## Phase N — <Title>` heading in `specs/roadmap.md` and leave the rest of the block untouched, per the lifecycle rule in `specs/roadmap.md`. The leading space is load-bearing: the Verify assertion `grep -F`s for the exact ` ✅` suffix, so a heading rendered as `Title✅` (no space) silently fails the gate. Phase-completion marking is a phase-specific markdown edit that ships with the work, not generic meta-workflow — `/sdd-implement-spec` halts on plans that omit it. Pair it with an assertion in the Verify group that confirms the heading now ends with ` ✅` (e.g. `grep -F "## Phase <N> — <Title> ✅" specs/roadmap.md` exits 0).
 - **Do not include meta-workflow** in the plan (test-suite runs belong in `Verify`; squash/commit/PR creation are governed by `.claude/rules/git-workflow.md` and `.claude/rules/conventional-commits.md` — no need to repeat per phase).
 

@@ -18,6 +18,6 @@ E2E (`test:e2e*`) is opt-in — run only when a user journey or routing change w
 
 ### Commands
 
-See @DEVELOPMENT.md ("Running Tests") for the full list of backend (`pdm run test …`) and UI (`npm run test:run`, `npm run test:e2e`, …) commands. Extra UI targets like `npm run test:coverage` and `npm run test:e2e:ui` are documented in `ui/TESTING.md`.
+See @DEVELOPMENT.md ("Running Tests") for the full list of backend (`uv run poe test …`) and UI (`npm run test:run`, `npm run test:e2e`, …) commands. Extra UI targets like `npm run test:coverage` and `npm run test:e2e:ui` are documented in `ui/TESTING.md`.
 
 In agent contexts, prefer `npm run test:run` over `npm test` — `npm test` is Vitest watch mode and does not exit.

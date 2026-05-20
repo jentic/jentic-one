@@ -151,7 +151,7 @@ For each `## Group <N> — <Title>` in order, **excluding** the final Verify gro
    - Use the file/line references in `plan.md` as authoritative starting points. Minor drift (line numbers off by a few from intervening commits) is fine and silent; if a referenced file or symbol is clearly absent or has been replaced wholesale, stop and surface — do not improvise around the spec.
    - Do not add scope the spec did not call for. If the work obviously requires an adjacent change the spec missed, surface it and ask before adding.
 3. After the group's tasks are implemented, run any group-relevant local gates per `.claude/rules/testing.md` (scoped to the area touched if practical):
-   - Backend changes: `pdm run lint` and `pdm run test` (target a subset like `pdm run test -- tests/<area>` when the change is narrow)
+   - Backend changes: `uv run poe lint` and `uv run poe test` (target a subset like `uv run poe test tests/<area>` when the change is narrow)
    - UI changes: `cd ui && npm run lint && npx tsc --noEmit && npm run test:run` — chained so all three run inside `ui/`. Use `test:run`, not `test` (`test` is watch mode and won't exit).
 4. Stage the files this group touched by explicit path. Run `git diff --cached --name-only` and confirm only the expected paths appear; if anything else is staged, stop and surface.
 5. Commit per `.claude/rules/conventional-commits.md`:
@@ -175,7 +175,7 @@ The roadmap-completion task identified in Phase 2 lives inside one of the groups
 
 `TaskUpdate` the Verify group task → `in_progress`.
 
-`plan.md`'s Verify group and `validation.md`'s Definition-of-Done often overlap (e.g. both say `pdm run lint`). For overlapping commands, run each unique command **once** and mark both gates satisfied for that command — don't re-run a passing test just because it's listed in two places.
+`plan.md`'s Verify group and `validation.md`'s Definition-of-Done often overlap (e.g. both say `uv run poe lint`). For overlapping commands, run each unique command **once** and mark both gates satisfied for that command — don't re-run a passing test just because it's listed in two places.
 
 **Run `plan.md`'s Verify group commands** in order. These are local-gate verifications, not code changes — they produce no commit. Capture exit codes and key output lines for the Phase 10 report.
 

@@ -4,12 +4,10 @@ When the user asks for a worktree:
 
 1. Create it with `EnterWorktree`.
 2. Install deps (run in parallel):
-   - **Python**: `PDM_IGNORE_ACTIVE_VENV=1 pdm install` at the worktree root.
-     The `PDM_IGNORE_ACTIVE_VENV=1` prefix is mandatory — without it, PDM
-     reuses the parent checkout's active `.venv` and the worktree never gets
-     its own, breaking isolation.
+   - **Python**: `uv sync` at the worktree root. uv always uses the
+     project-local `.venv`, so no env-var prefix is needed.
    - **UI**: `npm install` in `ui/`.
-   The PDM venv, `node_modules/`, and `__pycache__/` are all gitignored, so a
+   The `.venv`, `node_modules/`, and `__pycache__/` are all gitignored, so a
    fresh worktree has none of them.
 3. Pick a free port pair (probe from 8901 / 5174 upward, skipping anything
    bound).
@@ -36,11 +34,8 @@ pick a different pair for each additional worktree. `JENTIC_INTERNAL_PORT`
 is read by `src/startup.py`, `src/routers/broker.py`, and
 `src/routers/workflows.py` — set it whenever the backend isn't on 8900.
 
-Two env vars beyond port selection are required for host runs in a worktree:
+One env var beyond port selection is required for host runs in a worktree:
 
-- `PDM_IGNORE_ACTIVE_VENV=1` — prefix every `pdm` invocation (`pdm install`,
-  `pdm run …`) so PDM uses the worktree's own `.venv` instead of inheriting
-  the parent shell's `VIRTUAL_ENV`.
 - `DB_PATH=$(pwd)/data/jentic-mini.db` — `src/config.py` defaults `DB_PATH`
   to `/app/data/jentic-mini.db` for Docker. Host runs must override it to a
   worktree-local path or the backend crashes on startup. Run `mkdir -p data`
@@ -55,10 +50,9 @@ Two env vars beyond port selection are required for host runs in a worktree:
 
 # 2. Backend (from worktree root)
 mkdir -p data
-PDM_IGNORE_ACTIVE_VENV=1 \
 JENTIC_INTERNAL_PORT=8901 \
 DB_PATH="$(pwd)/data/jentic-mini.db" \
-  pdm run uvicorn src.main:app --port 8901 --reload
+  uv run uvicorn src.main:app --port 8901 --reload
 
 # 3. UI dev server with HMR (optional, in another terminal from ui/)
 VITE_API_HOST=http://localhost:8901 npm run dev -- --port 5174
