@@ -20,13 +20,19 @@ uv sync --frozen
 
 Exits 0. The `--frozen` flag refuses to update `uv.lock`, so this doubles as a strict-reproducibility gate equivalent to PDM's `--frozen-lockfile`.
 
-### 3. uv_build override produces a wheel that contains `src/`
+### 3. uv runs in application mode (no build backend)
 
 ```
-uv build --wheel && unzip -l dist/jentic_mini-*.whl | grep -E 'src/(auth|db|main)\.py'
+grep -nE '^\[build-system\]' pyproject.toml
 ```
 
-`uv build --wheel` exits 0; the `grep` returns ≥3 lines listing `src/auth.py`, `src/db.py`, `src/main.py` inside the wheel. Proves `[tool.uv.build-backend] module-name = "src", module-root = ""` actually vendored the existing `src/` directory; if this fails, the migration is on the hatchling fallback path per `requirements.md` Decisions and the assertion text changes accordingly.
+Exits 1 (no `[build-system]` block remains). jentic-mini is Docker-distributed and never wheelable, so no PEP 517 backend is needed.
+
+```
+grep -nE '^package = false' pyproject.toml
+```
+
+Exits 0. The `[tool.uv] package = false` declaration is present, telling uv this is an application — `uv sync` resolves and installs `[project.dependencies]` + `[dependency-groups] dev` into `.venv` without invoking any backend. This sidesteps the `src/`-layout / project-name mismatch entirely (uv would otherwise look for `src/jentic_mini/` based on the project name).
 
 ### 4. Lint passes under poe
 
@@ -54,7 +60,7 @@ Exits 0 on the host architecture. The build must complete without the previous `
 
 ### 7. `ci-backend.yml` workflow green on the PR
 
-The GitHub Actions check `Backend / lint` and `Backend / backend-tests` must report success on the PR's head commit. Both jobs use `astral-sh/setup-uv@vN`, `uv sync --frozen`, and the new `uv run poe lint` / `uv run poe test` invocations; the `paths:` filter must trigger on the changed `pyproject.toml`/`uv.lock`/`Dockerfile`/`src/` paths.
+The GitHub Actions check `Backend / lint` and `Backend / backend-tests` must report success on the PR's head commit. Both jobs use `astral-sh/setup-uv@v8`, `uv sync --frozen`, and the new `uv run poe lint` / `uv run poe test` invocations; the `paths:` filter must trigger on the changed `pyproject.toml`/`uv.lock`/`Dockerfile`/`src/` paths.
 
 ### 8. `ci-docker.yml` workflow green on the PR
 
@@ -90,21 +96,21 @@ test ! -f pdm.lock && test -f uv.lock && test ! -f .pdm-python
 
 Exits 0.
 
-### 13. `[build-system]` is the uv-flavoured one
+### 13. No PDM backend reference remains
 
 ```
-grep -F 'requires = ["uv_build' pyproject.toml && grep -F 'build-backend = "uv_build"' pyproject.toml
+grep -nE 'pdm-backend|pdm\.backend' pyproject.toml
 ```
 
-Both greps exit 0. `grep -nE 'pdm-backend|pdm\.backend' pyproject.toml` exits 1 (no leftover PDM backend reference).
+Exits 1. The full `[build-system]` block (which previously named `pdm-backend`) is gone — see #3.
 
 ### 14. `.github/dependabot.yml` Python entry uses uv
 
 ```
-grep -nF 'package-ecosystem: "uv"' .github/dependabot.yml || grep -nF 'package-ecosystem: uv' .github/dependabot.yml
+grep -nE 'package-ecosystem:\s*"?uv"?' .github/dependabot.yml
 ```
 
-Exits 0 (matches either YAML quoting style). `grep -nF 'package-ecosystem: "pip"' .github/dependabot.yml` and `grep -nF 'package-ecosystem: pip' .github/dependabot.yml` both exit 1 (no `pip` ecosystem entry remains).
+Exits 0 (matches either YAML quoting style in a single regex). `grep -nE 'package-ecosystem:\s*"?pip"?' .github/dependabot.yml` exits 1 (no `pip` ecosystem entry remains).
 
 ### 15. `specs/tech-stack.md` Core Stack reflects the swap
 
