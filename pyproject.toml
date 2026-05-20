@@ -62,6 +62,12 @@ sequence = [
   { cmd = "ruff format --check --diff" },
 ]
 
+[tool.poe.tasks."lint:ci"]
+sequence = [
+  { cmd = "ruff check --output-format=github" },
+  { cmd = "ruff format --check --diff" },
+]
+
 [tool.poe.tasks."lint:fix"]
 sequence = [
   { cmd = "ruff check --fix" },

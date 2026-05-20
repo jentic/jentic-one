@@ -35,7 +35,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Run lint
-        run: uv run ruff check --output-format=github && uv run ruff format --check --diff
+        run: uv run poe lint:ci
 
   backend-tests:
     runs-on: ubuntu-latest
