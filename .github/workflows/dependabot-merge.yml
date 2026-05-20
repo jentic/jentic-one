@@ -2,70 +2,42 @@ name: Dependabot auto-merge
 
 on:
   pull_request_target:
-    branches: [ main ]
-
-env:
-  REQUIRED_CHECKS: "docker-e2e ui-tests docker-security backend-tests"
+    types: [opened, synchronize, reopened]
+    branches: [main]
 
 permissions:
-  pull-requests: write
   contents: write
-  checks: read
+  pull-requests: write
 
 jobs:
-  merge-me:
-    name: Merge me!
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+  dependabot-auto-merge:
+    name: Auto-merge non-major updates
     runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
     steps:
-      - name: Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@v3.1.0
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
         with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          app-id: ${{ secrets.ARAZZO_BUILDER_APP_ID }}
+          private-key: ${{ secrets.ARAZZO_BUILDER_PRIVATE_KEY }}
 
-      - name: Check if auto-merge applicable
-        id: check
-        run: |
-          if [[ "${{ steps.meta.outputs.update-type }}" == "version-update:semver-patch" ]] || \
-             [[ "${{ steps.meta.outputs.update-type }}" == "version-update:semver-minor" ]]; then
-            echo "should_merge=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_merge=false" >> $GITHUB_OUTPUT
-          fi
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: "${{ steps.app-token.outputs.token }}"
 
-      - name: Approve dependabot PR
-        if: steps.check.outputs.should_merge == 'true'
+      - name: Approve PR
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         run: gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
-      - name: Wait for checks to pass
-        if: steps.check.outputs.should_merge == 'true'
-        run: |
-          read -ra CHECKS <<< "$REQUIRED_CHECKS"
-          MAX_ATTEMPTS=40       # 40 × 30s = 20 minutes
-          POLL_INTERVAL_SEC=30
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            ALL_DONE=true
-            for CHECK in "${CHECKS[@]}"; do
-              STATE=$(gh pr checks "$PR_URL" --json name,state --jq ".[] | select(.name == \"$CHECK\") | .state")
-              if [ -z "$STATE" ]; then continue; fi        # check not triggered (path-filtered) — skip
-              if [ "$STATE" = "FAILURE" ]; then echo "$CHECK failed"; exit 1; fi
-              if [ "$STATE" != "SUCCESS" ]; then ALL_DONE=false; fi
-            done
-            if $ALL_DONE; then echo "All CI checks passed"; exit 0; fi
-            sleep $POLL_INTERVAL_SEC
-          done
-          echo "Timed out waiting for CI after $((MAX_ATTEMPTS * POLL_INTERVAL_SEC))s"; exit 1
+      - name: Enable auto-merge for non-major updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Squash and merge
-        if: steps.check.outputs.should_merge == 'true'
-        run: gh pr merge --squash "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
