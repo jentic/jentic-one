@@ -31,7 +31,7 @@ dev = [
     "pytest>=9.0.3,<10",
     "pytest-asyncio>=0.24,<2",
     "schemathesis>=4.15.0",
-    "ruff<0.16.0,>=0.14.1",
+    "ruff>=0.15.14,<0.16.0",
     "poethepoet>=0.37,<0.47",
 ]
 
