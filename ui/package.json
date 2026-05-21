@@ -19,7 +19,7 @@
 	},
 	"dependencies": {
 		"@jentic/arazzo-ui": "^1.0.0-alpha.31",
-		"@tanstack/react-query": "^5.100.10",
+		"@tanstack/react-query": "^5.100.11",
 		"clsx": "^2.1.1",
 		"lucide-react": "^1.16.0",
 		"react": "^18.3.1",
