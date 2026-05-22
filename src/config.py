@@ -140,7 +140,7 @@ BARRIKADE_INGRESS_ENABLED = (
     os.getenv("BARRIKADE_INGRESS_ENABLED", "false").strip().lower() == "true"
 )
 BARRIKADE_EGRESS_ENABLED = os.getenv("BARRIKADE_EGRESS_ENABLED", "false").strip().lower() == "true"
-BARRIKADE_TIMEOUT_MS = _int_env("BARRIKADE_TIMEOUT_MS", 1000)
+BARRIKADE_TIMEOUT_MS = _int_env("BARRIKADE_TIMEOUT_MS", 30000)
 BARRIKADE_FAIL_OPEN = os.getenv("BARRIKADE_FAIL_OPEN", "true").strip().lower() == "true"
 
 
