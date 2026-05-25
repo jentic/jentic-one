@@ -84,6 +84,17 @@
 	--font-heading: 'Sora', sans-serif;
 	--font-mono: 'Geist Mono', monospace;
 
+	/*
+	 * Page gutter token — the canonical horizontal inset for every gutter-aware
+	 * surface in the app (PageShell body, PageHeader band, sticky toolbars, …).
+	 * Pinned to 1rem to match `jentic-webapp`'s `px-4`. Because this lives on
+	 * the spacing scale, Tailwind 4 generates every utility we need:
+	 *   px-page-gutter, py-page-gutter, mx-page-gutter, -mx-page-gutter, …
+	 * Change it here and the whole app updates in lock-step. NEVER reach for
+	 * an inline `px-N` value on individual pages.
+	 */
+	--spacing-page-gutter: 1rem;
+
 	/* Radius */
 	--radius-sm: calc(var(--radius) - 8px);
 	--radius-md: calc(var(--radius) - 4px);
@@ -254,7 +265,7 @@
    ============================================================================ */
 
 .text-link {
-	@apply text-primary hover:text-primary-hover transition-colors duration-150 cursor-pointer;
+	@apply text-primary hover:text-primary-hover cursor-pointer transition-colors duration-150;
 }
 
 .text-hover-primary {
@@ -275,12 +286,24 @@
 }
 
 .mask-fade-x {
-	-webkit-mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
+	-webkit-mask-image: linear-gradient(
+		to right,
+		transparent 0%,
+		black 5%,
+		black 95%,
+		transparent 100%
+	);
 	mask-image: linear-gradient(to right, transparent 0%, black 5%, black 95%, transparent 100%);
 }
 
 .mask-fade-x-sm {
-	-webkit-mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
+	-webkit-mask-image: linear-gradient(
+		to right,
+		transparent 0%,
+		black 2%,
+		black 98%,
+		transparent 100%
+	);
 	mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
 }
 
@@ -301,4 +324,15 @@
 .custom-scrollbar::-webkit-scrollbar-thumb {
 	background-color: hsl(var(--border));
 	border-radius: 9999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
 }

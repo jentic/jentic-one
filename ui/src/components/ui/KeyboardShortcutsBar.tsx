@@ -1,0 +1,152 @@
+import type { ReactNode } from 'react';
+import { Kbd } from '@/components/ui/Kbd';
+import { cn } from '@/lib/utils';
+
+export interface KeyboardShortcut {
+	/**
+	 * Keys that make up the shortcut. Multiple entries are rendered as
+	 * separate pills with no separator between them, matching the
+	 * convention in `jentic-webapp` where `["↑","↓","←","→"]` reads as
+	 * "any of these arrow keys".
+	 *
+	 * For chord shortcuts (e.g. `Cmd+K`) pass `["⌘", "K"]`. We don't
+	 * try to render the visual `+` glyph between them — keeping it
+	 * minimal makes the bar easier to scan and avoids ambiguity with
+	 * the literal `+` key.
+	 */
+	keys: string[];
+	/** Plain-language description of what the shortcut does. */
+	label: string;
+	/**
+	 * Optional secondary trigger. Some shortcuts have synonyms (e.g. a
+	 * help dialog opened by `?` and `Shift+/`). Pass them as a
+	 * separate string array; rendered with a thin "or" between groups.
+	 */
+	altKeys?: string[];
+}
+
+export interface KeyboardShortcutsBarProps {
+	shortcuts: KeyboardShortcut[];
+	/**
+	 * Where to render the bar.
+	 *
+	 *  - `floating` (default): pinned to the bottom of the viewport on
+	 *    `md+` viewports, hidden on mobile (where the BottomNavbar
+	 *    already owns that strip). A subtle gradient fade above the
+	 *    bar prevents content from looking abruptly cut off.
+	 *
+	 *  - `inline`: renders in the document flow at the call site.
+	 *    Useful for empty states, command palettes, and anywhere a
+	 *    "you can also press X" hint should sit close to the affected
+	 *    UI rather than at the page edge.
+	 */
+	placement?: 'floating' | 'inline';
+	/**
+	 * Optional left/right slot for branding or context (e.g. the page
+	 * name) on the floating bar. Ignored when `placement="inline"`.
+	 */
+	leadingSlot?: ReactNode;
+	className?: string;
+}
+
+function ShortcutItem({ shortcut }: { shortcut: KeyboardShortcut }) {
+	return (
+		<div className="flex items-center gap-1.5">
+			<span className="flex items-center gap-0.5">
+				{shortcut.keys.map((k, idx) => (
+					<Kbd key={`${shortcut.label}-${idx}-${k}`} variant="solid">
+						{k}
+					</Kbd>
+				))}
+				{shortcut.altKeys && (
+					<>
+						<span className="text-muted-foreground/60 mx-1 text-[10px] uppercase">
+							or
+						</span>
+						{shortcut.altKeys.map((k, idx) => (
+							<Kbd key={`${shortcut.label}-alt-${idx}-${k}`} variant="solid">
+								{k}
+							</Kbd>
+						))}
+					</>
+				)}
+			</span>
+			<span className="whitespace-nowrap">{shortcut.label}</span>
+		</div>
+	);
+}
+
+/**
+ * Compact horizontal strip of `Kbd` chip + label pairs documenting
+ * the keyboard shortcuts available on the current page.
+ *
+ * Ported from `jentic-webapp`'s `<KeyboardShortcutsBar>` and
+ * generalised: in webapp the shortcuts list was hardcoded inside the
+ * component, here we accept it as a prop so the same primitive can
+ * advertise different bindings on Discover, Toolkits, Credentials,
+ * etc. (each page knows what its own keyboard map does).
+ *
+ * Layered z-indexes: floating bar sits at `z-30` so it stays below
+ * the toaster (`z-[60]`) and slide-out sheets (`z-50`) but above
+ * regular page content. On mobile we render nothing — the
+ * `BottomNavbar` already occupies that strip and packing two fixed
+ * bars at the bottom of a phone is hostile.
+ */
+export function KeyboardShortcutsBar({
+	shortcuts,
+	placement = 'floating',
+	leadingSlot,
+	className,
+}: KeyboardShortcutsBarProps) {
+	if (shortcuts.length === 0) return null;
+
+	const items = (
+		<div className="text-muted-foreground flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-xs">
+			{shortcuts.map((s) => (
+				<ShortcutItem key={s.label} shortcut={s} />
+			))}
+		</div>
+	);
+
+	if (placement === 'inline') {
+		return (
+			<div
+				className={cn('w-full py-2', className)}
+				role="region"
+				aria-label="Keyboard shortcuts"
+				data-testid="keyboard-shortcuts-bar"
+			>
+				{items}
+			</div>
+		);
+	}
+
+	return (
+		// `pointer-events-none` on the wrapper + `pointer-events-auto`
+		// on the bar itself means the gradient fade above never blocks
+		// clicks on cards beneath it (the hit area is just the bar
+		// strip). Hidden below `md` because the mobile BottomNavbar
+		// owns the bottom of the viewport on phones.
+		<div
+			className={cn(
+				'pointer-events-none fixed right-0 bottom-0 left-0 z-30 hidden md:block',
+				className,
+			)}
+			role="region"
+			aria-label="Keyboard shortcuts"
+			data-testid="keyboard-shortcuts-bar"
+		>
+			<div className="from-background h-6 bg-gradient-to-t to-transparent" />
+			<div className="border-border/60 bg-background/85 pointer-events-auto border-t backdrop-blur-sm">
+				<div className="px-page-gutter mx-auto flex items-center justify-center gap-4 py-1.5">
+					{leadingSlot && (
+						<div className="text-muted-foreground/80 hidden text-[10px] font-medium tracking-wider uppercase lg:block">
+							{leadingSlot}
+						</div>
+					)}
+					{items}
+				</div>
+			</div>
+		</div>
+	);
+}
