@@ -280,7 +280,7 @@ async def register_openapi(doc: dict, saved_path: str, force_api_id: str | None 
 # ── Arazzo registration ───────────────────────────────────────────────────────
 
 
-async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = None) -> dict:
+async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = None, parent_api_id: str | None = None) -> dict:
     """Register an Arazzo workflow file in Jentic."""
     info = doc.get("info", {})
     workflows_list = doc.get("workflows", [])
@@ -304,6 +304,29 @@ async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = No
             host = m.group(1)
             if host not in involved_apis:
                 involved_apis.append(host)
+
+    # Fallback: extract API IDs from sourceDescriptions when steps use
+    # Arazzo-native references ($sourceDescriptions.name.operationId)
+    # rather than jentic capability IDs (METHOD/host/path).
+    if not involved_apis:
+        source_descs = doc.get("sourceDescriptions", [])
+        for sd in source_descs:
+            url = sd.get("url", "")
+            # If rewritten to local spec path, look up the api_id from DB later;
+            # for now try to extract from the URL
+            if url.startswith("http"):
+                from urllib.parse import urlparse as _urlparse
+                parsed = _urlparse(url)
+                if parsed.hostname and parsed.hostname not in involved_apis:
+                    involved_apis.append(parsed.hostname)
+            elif "/" in url or url.endswith(".json") or url.endswith(".yaml"):
+                # Local spec path — resolve api_id from DB
+                pass
+
+    # If we still have nothing but the caller told us which API this
+    # workflow belongs to, use that.
+    if not involved_apis and parent_api_id:
+        involved_apis.append(parent_api_id)
 
     # Slug: prefer explicit hint, then workflowId, then filename
     if slug_hint:

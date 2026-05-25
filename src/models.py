@@ -226,6 +226,29 @@ class SearchResult(BaseModel):
         examples=[["api.github.com"]],
         description="List of upstream API hosts involved in this capability (for workflows, may list multiple)",
     )
+    matched_on: list[str] | None = Field(
+        default=None,
+        examples=[["operation_summary"]],
+        description=(
+            "Which fields the query matched against — at least one of "
+            "`name`, `operation_summary`, `description`, `tag`. Computed via "
+            "cheap substring checks post-rank; intentionally pragmatic rather "
+            "than reflecting BM25's internal matched fields."
+        ),
+    )
+    match_snippet: str | None = Field(
+        default=None,
+        examples=["…create a \u0001payment\u0001 intent on the Stripe…"],
+        description=(
+            "Short text snippet (~80 chars) around the matched substring from "
+            "the highest-priority field that matched (priority order: "
+            "`name > operation_summary > description > tag`). The matched "
+            "span is wrapped in `\\u0001` sentinel characters so the client "
+            "can render its own highlight without an XSS-prone HTML payload. "
+            "Null when the result was a BM25 hit without an exact substring "
+            "match in any field."
+        ),
+    )
     model_config = {"extra": "allow"}
 
 

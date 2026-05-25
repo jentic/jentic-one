@@ -940,3 +940,72 @@ async def execute_workflow_by_slug(slug: str, request: Request):
         agent_id=getattr(request.state, "agent_client_id", None),
         caller_bearer_token=caller_bearer,
     )
+
+
+# ── Startup backfill ──────────────────────────────────────────────────────────
+
+
+async def backfill_workflow_involved_apis() -> None:
+    """Fix workflows imported from the catalog that have empty involved_apis.
+
+    Catalog workflows saved via lazy_import_catalog_workflows before the
+    parent_api_id fix have involved_apis=[] because the Arazzo-native step
+    references couldn't be parsed by the capability-ID regex. This backfill
+    looks at the arazzo_path naming convention (catalog_{safe_id}_{slug}.json)
+    and cross-references with the apis table to fill in the correct api_id.
+    """
+    import logging
+    import re
+
+    log = logging.getLogger("jentic.backfill")
+
+    async with get_db() as db:
+        # Find workflows with empty involved_apis that look like catalog imports
+        async with db.execute(
+            """SELECT slug, arazzo_path, involved_apis FROM workflows
+               WHERE arazzo_path LIKE '%catalog_%'"""
+        ) as cur:
+            rows = await cur.fetchall()
+
+        if not rows:
+            return
+
+        # Get all known API ids for matching
+        async with db.execute("SELECT id FROM apis") as cur:
+            api_ids = {r[0] for r in await cur.fetchall()}
+
+        updated = 0
+        for slug, arazzo_path, involved_apis_json in rows:
+            existing = json.loads(involved_apis_json) if involved_apis_json else []
+            if existing:
+                continue
+
+            # Extract the safe_id from the filename: catalog_{safe_id}_{slug}.json
+            # safe_id was created with: re.sub(r"[^a-z0-9_-]", "_", source_id.lower())
+            # source_id was: api_id.replace("/", "~", 1)
+            filename = pathlib.Path(arazzo_path).stem
+            # Remove "catalog_" prefix
+            if not filename.startswith("catalog_"):
+                continue
+            remainder = filename[len("catalog_"):]
+
+            # Try to match against known api_ids
+            matched_api = None
+            for api_id in api_ids:
+                # Convert api_id to the safe format used in the filename
+                source_id = api_id.replace("/", "~", 1)
+                safe = re.sub(r"[^a-z0-9_-]", "_", source_id.lower())
+                if remainder.startswith(safe + "_") or remainder == safe:
+                    matched_api = api_id
+                    break
+
+            if matched_api:
+                await db.execute(
+                    "UPDATE workflows SET involved_apis=? WHERE slug=?",
+                    (json.dumps([matched_api]), slug),
+                )
+                updated += 1
+
+        if updated:
+            await db.commit()
+            log.info("Backfilled involved_apis for %d workflow(s)", updated)

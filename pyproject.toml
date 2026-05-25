@@ -52,6 +52,11 @@ explicit-preview-rules = true
 # conftest.py must set os.environ before any src.* imports, because
 # src/config.py reads DB_PATH at import time.
 "tests/conftest.py" = ["E402", "PLC0415"]
+# Tests routinely exercise private helpers from src/* (parser internals,
+# scoring functions, etc.) — that's the whole point of unit-level tests.
+# PLC2701 protects against private-name imports in production code; in
+# `tests/**/*.py` it just gets in the way.
+"tests/**/*.py" = ["PLC2701"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
