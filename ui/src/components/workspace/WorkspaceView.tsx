@@ -164,8 +164,14 @@ export function WorkspaceView({
 	const searchRef = useRef<WorkspaceSearchHandle>(null);
 	const apisGridRef = useRef<HTMLDivElement>(null);
 	const workflowsGridRef = useRef<HTMLDivElement>(null);
-	const onApisKeyDown = useRovingGridFocus(apisGridRef, 'button[data-testid="workspace-tile-api"]');
-	const onWorkflowsKeyDown = useRovingGridFocus(workflowsGridRef, 'button[data-testid="workspace-tile-workflow"]');
+	const onApisKeyDown = useRovingGridFocus(
+		apisGridRef,
+		'button[data-testid="workspace-tile-api"]',
+	);
+	const onWorkflowsKeyDown = useRovingGridFocus(
+		workflowsGridRef,
+		'button[data-testid="workspace-tile-workflow"]',
+	);
 	const filteredApis = useMemo<WorkspaceTileEntity[]>(() => {
 		const q = filterInput.trim();
 		return apis
@@ -193,9 +199,12 @@ export function WorkspaceView({
 							: undefined,
 					hasCredentials: hasCreds,
 					toolkitNames,
-					operationCount: typeof row.operation_count === 'number' ? row.operation_count : undefined,
-					credentialCount: typeof row.credential_count === 'number' ? row.credential_count : undefined,
-					workflowCount: typeof row.workflow_count === 'number' ? row.workflow_count : undefined,
+					operationCount:
+						typeof row.operation_count === 'number' ? row.operation_count : undefined,
+					credentialCount:
+						typeof row.credential_count === 'number' ? row.credential_count : undefined,
+					workflowCount:
+						typeof row.workflow_count === 'number' ? row.workflow_count : undefined,
 					importedAt: typeof row.created_at === 'number' ? row.created_at : undefined,
 				};
 			});

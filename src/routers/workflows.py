@@ -917,9 +917,7 @@ async def delete_workflow(
 ):
     """Permanently delete a workflow and its Arazzo file from the workspace."""
     async with get_db() as db:
-        async with db.execute(
-            "SELECT arazzo_path FROM workflows WHERE slug=?", (slug,)
-        ) as cur:
+        async with db.execute("SELECT arazzo_path FROM workflows WHERE slug=?", (slug,)) as cur:
             row = await cur.fetchone()
         if not row:
             raise HTTPException(404, "Workflow not found")
@@ -1021,7 +1019,7 @@ async def backfill_workflow_involved_apis() -> None:
             # Remove "catalog_" prefix
             if not filename.startswith("catalog_"):
                 continue
-            remainder = filename[len("catalog_"):]
+            remainder = filename[len("catalog_") :]
 
             # Try to match against known api_ids
             matched_api = None

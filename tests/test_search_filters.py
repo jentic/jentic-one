@@ -245,7 +245,7 @@ def test_type_workflow_returns_workspace_workflows_and_workflow_bearing_catalog_
             continue
         if r.get("type") == "catalog_api":
             assert r.get("has_workflows") is True, (
-                "type=workflow leaked a catalog_api without workflows: " f"{r}"
+                f"type=workflow leaked a catalog_api without workflows: {r}"
             )
             continue
         pytest.fail(f"unexpected row type for type=workflow: {r.get('type')!r} (row={r})")
@@ -270,9 +270,7 @@ def test_unknown_source_falls_back_to_all(admin_client, _seeded_workspace_api):
 # ── /apis carries has_workflows for catalog rows ─────────────────────────────
 
 
-def test_apis_endpoint_carries_has_workflows_for_catalog_rows(
-    admin_client, _seeded_workspace_api
-):
+def test_apis_endpoint_carries_has_workflows_for_catalog_rows(admin_client, _seeded_workspace_api):
     """`/apis` blends catalog rows with the workflow manifest.
 
     The directory browse grid renders the `+ workflows` chip from the
@@ -307,9 +305,7 @@ def test_apis_endpoint_carries_has_workflows_for_catalog_rows(
     local_rows = [r for r in rows if r.get("source") == "local"]
     assert local_rows, "expected at least one workspace API in /apis"
     for r in local_rows:
-        assert "has_workflows" in r, (
-            f"local row missing has_workflows field: {r}"
-        )
+        assert "has_workflows" in r, f"local row missing has_workflows field: {r}"
 
 
 # ── /apis include_imported flag ──────────────────────────────────────────────
@@ -350,8 +346,7 @@ def test_apis_catalog_excludes_imported_by_default(
     rows = resp.json()["data"]
     matching = [r for r in rows if r.get("id") == _API_ID]
     assert matching == [], (
-        "imported catalog rows must NOT appear in the default catalog "
-        f"listing (found: {matching})"
+        f"imported catalog rows must NOT appear in the default catalog listing (found: {matching})"
     )
 
 
@@ -386,9 +381,7 @@ def test_apis_catalog_include_imported_pivots_to_local_row(
     assert resp.status_code == 200, resp.text
     rows = resp.json()["data"]
     matching = [r for r in rows if r.get("id") == _API_ID]
-    assert len(matching) == 1, (
-        f"expected exactly one row for the imported api_id, got {matching}"
-    )
+    assert len(matching) == 1, f"expected exactly one row for the imported api_id, got {matching}"
     pivoted = matching[0]
     # Source flips from catalog→local so the UI renders the Ready /
     # Credential expired pill instead of Available.

@@ -20,9 +20,7 @@ CASCADE_SPEC = {
     "info": {"title": "Cascade Test API", "version": "1.0.0"},
     "servers": [{"url": "https://api.cascade-test.example.com"}],
     "components": {
-        "securitySchemes": {
-            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}
-        }
+        "securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}}
     },
     "security": [{"ApiKeyAuth": []}],
     "paths": {

@@ -97,7 +97,8 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 			while (true) {
 				const batch = await api.listOperations(apiId, 1, batchSize, { offset: off });
 				all.push(...(batch.data ?? []));
-				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize) break;
+				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize)
+					break;
 				off += batchSize;
 			}
 			return { data: all, total: all.length };

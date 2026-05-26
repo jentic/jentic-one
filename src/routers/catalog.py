@@ -321,7 +321,9 @@ async def lazy_import_catalog_workflows(api_id: str) -> list[str]:
             json.dump(single_doc, f, indent=2)
 
         try:
-            result = await register_arazzo(single_doc, arazzo_path, slug_hint=slug, parent_api_id=api_id)
+            result = await register_arazzo(
+                single_doc, arazzo_path, slug_hint=slug, parent_api_id=api_id
+            )
             imported_slugs.append(result["slug"])
         except Exception as e:
             log.warning("Failed to import workflow '%s' for '%s': %s", workflow_id, api_id, e)

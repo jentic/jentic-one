@@ -1,7 +1,8 @@
+/* eslint-disable no-restricted-syntax */
 import React, { useCallback } from 'react';
 import { Search, X } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { Input } from './Input';
+import { cn } from '@/lib/utils';
 
 type SearchInputSize = 'sm' | 'md';
 

@@ -5,7 +5,7 @@ import { DiscoveryCard } from './DiscoveryCard';
 import type { DiscoveryEntity, DiscoverySource } from './DiscoveryCard';
 import { useDiscoveryFilters } from './DiscoveryFilterBar';
 import { DiscoverEmptyState } from './DiscoverEmptyState';
-import { serverSourceToUi, apiToEntity } from './adapters';
+import { apiToEntity } from './adapters';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';

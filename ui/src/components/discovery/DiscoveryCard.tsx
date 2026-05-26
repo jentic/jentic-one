@@ -213,11 +213,11 @@ function CardShell({
 		<div
 			data-testid={testId}
 			data-accent-rail={accentRail ?? 'none'}
-		className={`group border-border bg-card relative flex h-full cursor-pointer flex-col overflow-hidden rounded-xl border transition-all ${railClass} ${
-			expanded
-				? 'border-primary/50 bg-card/80'
-				: 'hover:border-primary/50 hover:bg-card/80'
-		}`}
+			className={`group border-border bg-card relative flex h-full cursor-pointer flex-col overflow-hidden rounded-xl border transition-all ${railClass} ${
+				expanded
+					? 'border-primary/50 bg-card/80'
+					: 'hover:border-primary/50 hover:bg-card/80'
+			}`}
 		>
 			<Header
 				{...headerProps}

@@ -22,9 +22,7 @@ REIMPORT_SPEC = {
     "info": {"title": "Reimport Test API", "version": "1.0.0"},
     "servers": [{"url": "https://api.reimport-test.example.com"}],
     "components": {
-        "securitySchemes": {
-            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}
-        }
+        "securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}}
     },
     "security": [{"ApiKeyAuth": []}],
     "paths": {
@@ -123,9 +121,9 @@ def test_soft_reimport_delete(admin_client):
 def test_soft_reimport_credential_still_linked_by_api_id(admin_client):
     """After soft delete, credential still references the api_id (API row gone)."""
     creds = _get_credentials_for_api(admin_client, SOFT_REIMPORT_API_ID)
-    assert any(
-        c["label"] == "reimport-soft-cred" for c in creds
-    ), "Credential should still be queryable by api_id even though API is deleted"
+    assert any(c["label"] == "reimport-soft-cred" for c in creds), (
+        "Credential should still be queryable by api_id even though API is deleted"
+    )
 
 
 def test_soft_reimport_reimport(admin_client):

@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax */
 import { Workflow } from 'lucide-react';
 import { AppLink } from './AppLink';
 
@@ -18,7 +19,7 @@ interface WorkflowRowProps {
 export function WorkflowRow({ name, description, stepsCount, href, onClick }: WorkflowRowProps) {
 	const content = (
 		<>
-			<Workflow className="mt-0.5 h-4 w-4 shrink-0 text-accent-teal" />
+			<Workflow className="text-accent-teal mt-0.5 h-4 w-4 shrink-0" />
 			<div className="min-w-0 flex-1">
 				<p className="text-foreground truncate text-sm font-medium">{name}</p>
 				{description && description !== name && (

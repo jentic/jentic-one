@@ -28,11 +28,7 @@ INLINE_SPEC = {
     "openapi": "3.0.3",
     "info": {"title": "Inline Test API", "version": "1.0.0"},
     "servers": [{"url": "https://api.inline-test.example.com"}],
-    "components": {
-        "securitySchemes": {
-            "BearerAuth": {"type": "http", "scheme": "bearer"}
-        }
-    },
+    "components": {"securitySchemes": {"BearerAuth": {"type": "http", "scheme": "bearer"}}},
     "paths": {
         "/ping": {
             "get": {

@@ -81,9 +81,13 @@ export function SheetBody({
 			let off = 0;
 			const batchSize = 200;
 			while (true) {
-				const batch = await api.previewCatalogOperations(apiId, { offset: off, limit: batchSize });
+				const batch = await api.previewCatalogOperations(apiId, {
+					offset: off,
+					limit: batchSize,
+				});
 				all.push(...(batch.data ?? []));
-				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize) break;
+				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize)
+					break;
 				off += batchSize;
 			}
 			return { data: all, total: all.length };

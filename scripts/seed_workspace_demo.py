@@ -187,11 +187,42 @@ DEMO_TOOLKIT_CREDENTIAL_LINKS: list[tuple[str, str]] = [
 # pins how long ago it ran. We re-derive the slug list at seed time so
 # this stays in sync with whatever Arazzo files are present.
 DEMO_EXECUTIONS_TEMPLATE: list[dict[str, Any]] = [
-    {"id": "exec_seed_00001", "ago_s": 5 * 60, "duration_ms": 412, "status": "success", "http_status": 200},
-    {"id": "exec_seed_00002", "ago_s": 32 * 60, "duration_ms": 1893, "status": "success", "http_status": 200},
-    {"id": "exec_seed_00003", "ago_s": 2 * 3600, "duration_ms": 5421, "status": "error", "http_status": 500, "error": "Slack post step timed out after 5s"},
-    {"id": "exec_seed_00004", "ago_s": 6 * 3600, "duration_ms": 720, "status": "success", "http_status": 200},
-    {"id": "exec_seed_00005", "ago_s": 24 * 3600, "duration_ms": 8392, "status": "success", "http_status": 200},
+    {
+        "id": "exec_seed_00001",
+        "ago_s": 5 * 60,
+        "duration_ms": 412,
+        "status": "success",
+        "http_status": 200,
+    },
+    {
+        "id": "exec_seed_00002",
+        "ago_s": 32 * 60,
+        "duration_ms": 1893,
+        "status": "success",
+        "http_status": 200,
+    },
+    {
+        "id": "exec_seed_00003",
+        "ago_s": 2 * 3600,
+        "duration_ms": 5421,
+        "status": "error",
+        "http_status": 500,
+        "error": "Slack post step timed out after 5s",
+    },
+    {
+        "id": "exec_seed_00004",
+        "ago_s": 6 * 3600,
+        "duration_ms": 720,
+        "status": "success",
+        "http_status": 200,
+    },
+    {
+        "id": "exec_seed_00005",
+        "ago_s": 24 * 3600,
+        "duration_ms": 8392,
+        "status": "success",
+        "http_status": 200,
+    },
 ]
 
 
@@ -291,8 +322,10 @@ def seed() -> None:
         api_summary = ", ".join(apis) if apis else "—"
         print(f"  · {r['slug']:<55s}  steps={r['steps_count']:<2d}  apis={api_summary}")
     print()
-    print(f"Seeded {len(DEMO_TOOLKITS)} toolkit(s) with "
-          f"{len(DEMO_TOOLKIT_CREDENTIAL_LINKS)} credential link(s).")
+    print(
+        f"Seeded {len(DEMO_TOOLKITS)} toolkit(s) with "
+        f"{len(DEMO_TOOLKIT_CREDENTIAL_LINKS)} credential link(s)."
+    )
     print(f"Seeded {len(DEMO_EXECUTIONS_TEMPLATE)} execution(s).")
 
     conn.close()

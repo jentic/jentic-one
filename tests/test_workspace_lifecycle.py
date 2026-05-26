@@ -21,9 +21,7 @@ SAMPLE_SPEC = {
     "info": {"title": "Test Lifecycle API", "version": "1.0.0"},
     "servers": [{"url": "https://api.lifecycle-test.example.com"}],
     "components": {
-        "securitySchemes": {
-            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}
-        }
+        "securitySchemes": {"ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}}
     },
     "security": [{"ApiKeyAuth": []}],
     "paths": {

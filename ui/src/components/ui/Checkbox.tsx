@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax */
 import type { JSX, ReactNode } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -44,9 +45,7 @@ export function Checkbox({
 				disabled && 'opacity-40',
 			)}
 		>
-			{checked && (
-				<Check className={cn(sizeClasses.icon, 'text-primary-foreground')} />
-			)}
+			{checked && <Check className={cn(sizeClasses.icon, 'text-primary-foreground')} />}
 		</span>
 	);
 
@@ -85,17 +84,14 @@ export function Checkbox({
 			}}
 			disabled={disabled}
 			className={cn(
-				'group flex select-none items-center gap-3 text-left',
+				'group flex items-center gap-3 text-left select-none',
 				disabled ? 'cursor-not-allowed' : 'cursor-pointer',
 				className,
 			)}
 		>
 			<span className="shrink-0">{checkboxBox}</span>
 			<span
-				className={cn(
-					'text-muted-foreground text-sm leading-5',
-					disabled && 'opacity-50',
-				)}
+				className={cn('text-muted-foreground text-sm leading-5', disabled && 'opacity-50')}
 			>
 				{children}
 			</span>

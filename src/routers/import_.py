@@ -288,7 +288,9 @@ async def register_openapi(doc: dict, saved_path: str, force_api_id: str | None 
 # ── Arazzo registration ───────────────────────────────────────────────────────
 
 
-async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = None, parent_api_id: str | None = None) -> dict:
+async def register_arazzo(
+    doc: dict, saved_path: str, slug_hint: str | None = None, parent_api_id: str | None = None
+) -> dict:
     """Register an Arazzo workflow file in Jentic."""
     info = doc.get("info", {})
     workflows_list = doc.get("workflows", [])
@@ -324,6 +326,7 @@ async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = No
             # for now try to extract from the URL
             if url.startswith("http"):
                 from urllib.parse import urlparse as _urlparse  # noqa: PLC0415
+
                 parsed = _urlparse(url)
                 if parsed.hostname and parsed.hostname not in involved_apis:
                     involved_apis.append(parsed.hostname)

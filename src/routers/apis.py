@@ -576,9 +576,7 @@ async def list_apis(
         # `+ workflows` chip without a second round-trip per card. Set
         # is precomputed once per request so the per-row check is O(1).
         wf_manifest = load_workflow_manifest()
-        workflow_api_ids: set[str] = (
-            {e["api_id"] for e in wf_manifest} if wf_manifest else set()
-        )
+        workflow_api_ids: set[str] = {e["api_id"] for e in wf_manifest} if wf_manifest else set()
         for e in manifest:
             api_id = e["api_id"]
             if q and q.lower() not in api_id.lower():
@@ -608,11 +606,7 @@ async def list_apis(
                         "description": lr[2],
                         "base_url": lr[4],
                         "created_at": lr[5],
-                        **(
-                            {"oauth_brokers": broker_map[lr[0]]}
-                            if lr[0] in broker_map
-                            else {}
-                        ),
+                        **({"oauth_brokers": broker_map[lr[0]]} if lr[0] in broker_map else {}),
                     }
                 )
                 continue
@@ -1131,9 +1125,7 @@ async def delete_api(
 
         if cascade:
             # Gather credential IDs first for toolkit unbinding
-            async with db.execute(
-                "SELECT id FROM credentials WHERE api_id=?", (api_id,)
-            ) as cur:
+            async with db.execute("SELECT id FROM credentials WHERE api_id=?", (api_id,)) as cur:
                 cred_ids = [r[0] for r in await cur.fetchall()]
 
             # Remove toolkit bindings for these credentials

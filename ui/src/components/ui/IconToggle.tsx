@@ -1,3 +1,4 @@
+/* eslint-disable no-restricted-syntax */
 import type { LucideIcon } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
