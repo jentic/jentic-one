@@ -237,7 +237,7 @@ export default function WorkflowDetailPage() {
 		return (
 			<PageShell>
 				<PageHeader title="Workflow" />
-				<BackButton to="/workspace" label="Back to Workspace" />
+				<BackButton to="/workspace" label="Back" />
 				<div className="py-16 text-center">
 					<AlertTriangle className="text-danger mx-auto mb-3 h-8 w-8" />
 					<p className="text-foreground text-sm font-medium">Failed to load workflow</p>
@@ -280,7 +280,7 @@ export default function WorkflowDetailPage() {
 					}
 				/>
 
-				<BackButton to="/workspace" label="Back to Workspace" />
+				<BackButton to="/workspace" label="Back" />
 
 				<WorkflowMetaStrip
 					slug={slug!}
@@ -774,7 +774,7 @@ function CatalogWorkflowFallback({
 				actions={headerActions}
 			/>
 
-			<BackButton to="/workspace" label="Back to Workspace" />
+			<BackButton to="/workspace" label="Back" />
 
 			<div className="flex items-center gap-3">
 				<Badge

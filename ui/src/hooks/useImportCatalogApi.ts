@@ -99,6 +99,8 @@ export function useImportCatalogApi(): UseImportCatalogApiResult {
 			queryClient.invalidateQueries({ queryKey: ['catalog'] });
 			queryClient.invalidateQueries({ queryKey: ['apis', 'discover'] });
 			queryClient.invalidateQueries({ queryKey: ['sheet-resolve-source'] });
+			queryClient.invalidateQueries({ queryKey: ['workspace'] });
+			queryClient.invalidateQueries({ queryKey: ['workspace-stats'] });
 
 			// Re-uses the existing cross-tab event so the rest of the
 			// UX (toast in DiscoveryView, "Open in Workspace" deep link,

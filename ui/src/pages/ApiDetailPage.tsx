@@ -161,7 +161,7 @@ export default function ApiDetailPage() {
 					<p className="text-muted-foreground text-sm">
 						API not found or failed to load.
 					</p>
-					<BackButton to="/workspace" label="Back to Workspace" className="mt-4" />
+					<BackButton to="/workspace" label="Back" className="mt-4" />
 				</div>
 			</PageShell>
 		);
@@ -177,7 +177,7 @@ export default function ApiDetailPage() {
 					actions={actions}
 				/>
 
-				<BackButton to="/workspace" label="Back to Workspace" />
+				<BackButton to="/workspace" label="Back" />
 
 				{apiId ? <ApiDetailView apiId={apiId} /> : null}
 
