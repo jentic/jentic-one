@@ -120,12 +120,26 @@ function ApiCascadeInfo({
 
 	const { data: toolkits, isLoading: loadingToolkits } = useQuery({
 		queryKey: ['delete-cascade', 'api-toolkits', apiId],
-		queryFn: () => api.listToolkits(),
-		enabled: open,
-		select: (d: any) => {
-			if (!Array.isArray(d)) return [];
-			return d.filter((t: any) => t.id !== 'default' && t.credential_count > 0);
+		queryFn: async () => {
+			const allToolkits = (await api.listToolkits()) as any[];
+			if (!Array.isArray(allToolkits)) return [];
+			const candidates = allToolkits.filter((t: any) => t.credential_count > 0);
+			const details = await Promise.all(
+				candidates.map((t: any) => api.getToolkit(t.id).catch(() => null)),
+			);
+			return details
+				.filter(
+					(d: any) => d && Array.isArray(d.bound_apis) && d.bound_apis.includes(apiId),
+				)
+				.map((d: any) => ({
+					id: d.id,
+					name: d.name || (d.id === 'default' ? 'Default' : d.id),
+					credentials: (d.credentials ?? [])
+						.filter((c: any) => c.api_id === apiId)
+						.map((c: any) => c.label || c.credential_id),
+				}));
 		},
+		enabled: open,
 	});
 
 	const isLoading = loadingWorkflows || loadingCreds || loadingToolkits;
@@ -194,20 +208,59 @@ function ApiCascadeInfo({
 					)}
 
 					{affectedToolkits.length > 0 && (
-						<ImpactGroup
-							color={cascade ? 'red' : 'amber'}
-							icon={<Layers size={14} />}
-							title={
-								cascade ? 'Toolkit bindings removed' : 'Toolkits lose API access'
-							}
-							count={affectedToolkits.length}
-							subtitle={
-								cascade
+						<div
+							className={`${cascade ? 'bg-red-500/5' : 'bg-amber-500/5'} rounded-lg px-3.5 py-3`}
+						>
+							<div className="flex items-center gap-2">
+								<CircleDot
+									size={10}
+									className={`${cascade ? 'text-red-500' : 'text-amber-500'} shrink-0`}
+								/>
+								<span className="text-foreground text-xs font-medium">
+									{cascade
+										? 'Toolkit bindings removed'
+										: 'Toolkits lose API access'}
+								</span>
+								<span className="text-muted-foreground ml-auto font-mono text-[11px]">
+									{affectedToolkits.length}
+								</span>
+							</div>
+							<p className="text-muted-foreground mt-0.5 pl-[18px] text-[11px]">
+								{cascade
 									? 'Credential bindings for this API will be deleted from toolkits'
-									: "Toolkit credentials for this API won't work until re-imported"
-							}
-							items={affectedToolkits.map((t: any) => t.name || t.id)}
-						/>
+									: "Toolkit credentials for this API won't work until re-imported"}
+							</p>
+							<div className="mt-2 space-y-2 pl-[18px]">
+								{affectedToolkits.map((t: any) => (
+									<div key={t.id}>
+										<div className="flex items-center gap-2">
+											<span className="text-muted-foreground/60">
+												<Layers size={14} />
+											</span>
+											<span className="text-foreground/70 text-xs font-medium">
+												{t.name}
+											</span>
+										</div>
+										{t.credentials.length > 0 && (
+											<div className="mt-0.5 space-y-0.5 pl-[22px]">
+												{t.credentials.map((cred: string) => (
+													<div
+														key={cred}
+														className="text-muted-foreground flex items-center gap-1.5 text-[11px]"
+													>
+														<KeyRound
+															size={10}
+															className="shrink-0 opacity-50"
+														/>
+														<span className="truncate">{cred}</span>
+													</div>
+												))}
+											</div>
+										)}
+									</div>
+								))}
+							</div>
+						</div>
 					)}
 				</div>
 			)}
