@@ -85,6 +85,27 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 		staleTime: 5 * 60_000,
 	});
 
+	// When user types a filter and we haven't loaded all ops yet, fetch the rest
+	const prelimTotal = opsData?.total ?? 0;
+	const needsAll = (opsFilter.trim() !== '' || activeTag !== null) && prelimTotal > 0;
+	const { data: allOpsData } = useQuery({
+		queryKey: ['operations-all', apiId],
+		queryFn: async () => {
+			const all: any[] = [];
+			let off = 0;
+			const batchSize = 200;
+			while (true) {
+				const batch = await api.listOperations(apiId, 1, batchSize, { offset: off });
+				all.push(...(batch.data ?? []));
+				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize) break;
+				off += batchSize;
+			}
+			return { data: all, total: all.length };
+		},
+		staleTime: 5 * 60_000,
+		enabled: needsAll,
+	});
+
 	const { data: toolkits } = useQuery({
 		queryKey: ['toolkits'],
 		queryFn: () => api.listToolkits(),
@@ -145,6 +166,10 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 
 	// Accumulate operations across pages (same pattern as SheetBody)
 	const operations = useMemo(() => {
+		// When filtering and all ops are available, use the full set directly
+		if (needsAll && allOpsData?.data?.length) {
+			return allOpsData.data;
+		}
 		const incoming = opsData?.data ?? [];
 		if (incoming.length === 0) return accumulatorRef.current;
 		let changed = false;
@@ -160,10 +185,10 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 			accumulatorRef.current = next;
 		}
 		return accumulatorRef.current;
-	}, [opsData]);
+	}, [opsData, needsAll, allOpsData]);
 
 	const opsTotal = opsData?.total ?? operations.length;
-	const hasMore = operations.length < opsTotal;
+	const hasMore = !needsAll && operations.length < opsTotal;
 	const isFetchingMore = isFetching && pages > 1;
 
 	const rows: OpRow[] = useMemo(

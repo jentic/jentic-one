@@ -71,7 +71,31 @@ export function SheetBody({
 		retry: 1,
 	});
 
+	// When user types a filter and we haven't loaded all ops yet, fetch the rest
+	const prelimTotal = data?.total ?? 0;
+	const needsAll = (filter.trim() !== '' || activeTag !== null) && prelimTotal > 0;
+	const { data: allOpsData } = useQuery({
+		queryKey: ['sheet-ops-catalog-all', apiId],
+		queryFn: async () => {
+			const all: any[] = [];
+			let off = 0;
+			const batchSize = 200;
+			while (true) {
+				const batch = await api.previewCatalogOperations(apiId, { offset: off, limit: batchSize });
+				all.push(...(batch.data ?? []));
+				if (all.length >= (batch.total ?? 0) || (batch.data?.length ?? 0) < batchSize) break;
+				off += batchSize;
+			}
+			return { data: all, total: all.length };
+		},
+		staleTime: 5 * 60_000,
+		enabled: needsAll,
+	});
+
 	const operations = useMemo(() => {
+		if (needsAll && allOpsData?.data?.length) {
+			return allOpsData.data;
+		}
 		const incoming = data?.data ?? [];
 		if (incoming.length === 0) return accumulatorRef.current;
 		let changed = false;
@@ -87,10 +111,10 @@ export function SheetBody({
 			accumulatorRef.current = next;
 		}
 		return accumulatorRef.current;
-	}, [data]);
+	}, [data, needsAll, allOpsData]);
 
 	const total = data?.total ?? operations.length;
-	const hasMore = operations.length < total;
+	const hasMore = !needsAll && operations.length < total;
 	const isFetchingMore = isFetching && pages > 1;
 	const specDescription = data?.info?.description ?? initialEntity?.description;
 
