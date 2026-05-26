@@ -988,8 +988,8 @@ async def backfill_workflow_involved_apis() -> None:
     looks at the arazzo_path naming convention (catalog_{safe_id}_{slug}.json)
     and cross-references with the apis table to fill in the correct api_id.
     """
-    import logging
-    import re
+    import logging  # noqa: PLC0415
+    import re  # noqa: PLC0415
 
     log = logging.getLogger("jentic.backfill")
 

@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+
 # ── Paths ────────────────────────────────────────────────────────────────
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent  # jentic-mini/
@@ -55,7 +56,7 @@ def _load_arazzo(path: Path) -> dict[str, Any]:
     raw = path.read_text()
     if path.suffix in (".yaml", ".yml"):
         try:
-            import yaml  # type: ignore[import-untyped]
+            import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
         except ImportError:
             print(
                 f"[skip] {path.name}: PyYAML not installed; install with "

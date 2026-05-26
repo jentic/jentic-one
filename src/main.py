@@ -54,8 +54,8 @@ from src.routers import user as user_router
 from src.routers import workflows as workflows_router
 from src.routers.apis import rebuild_index_on_startup
 from src.routers.catalog import refresh_catalog_if_stale
-from src.routers.workflows import backfill_workflow_involved_apis
 from src.routers.toolkits import policy_router as toolkits_policy_router
+from src.routers.workflows import backfill_workflow_involved_apis
 from src.startup import backfill_credential_routes, seed_broker_apps, self_register
 from src.utils import build_absolute_url, build_canonical_url, route_path
 

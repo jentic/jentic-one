@@ -323,7 +323,7 @@ async def register_arazzo(doc: dict, saved_path: str, slug_hint: str | None = No
             # If rewritten to local spec path, look up the api_id from DB later;
             # for now try to extract from the URL
             if url.startswith("http"):
-                from urllib.parse import urlparse as _urlparse
+                from urllib.parse import urlparse as _urlparse  # noqa: PLC0415
                 parsed = _urlparse(url)
                 if parsed.hostname and parsed.hostname not in involved_apis:
                     involved_apis.append(parsed.hostname)

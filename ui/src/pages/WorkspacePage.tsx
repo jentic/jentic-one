@@ -60,11 +60,11 @@ export default function WorkspacePage() {
 								title="About Workspace"
 								intro={
 									<p>
-										<strong>Workspace</strong> is your home base. Everything you've
-										imported into Jentic Mini lives here — APIs you've added
-										credentials for and the workflows that orchestrate them. The
-										catalog is one click away when you need it, but it doesn't fight
-										for attention on this page.
+										<strong>Workspace</strong> is your home base. Everything
+										you've imported into Jentic Mini lives here — APIs you've
+										added credentials for and the workflows that orchestrate
+										them. The catalog is one click away when you need it, but it
+										doesn't fight for attention on this page.
 									</p>
 								}
 								sections={[
@@ -77,9 +77,9 @@ export default function WorkspacePage() {
 												<strong>workflow count</strong>,{' '}
 												<strong>toolkit count</strong>, and{' '}
 												<strong>most recent activity</strong>. Below it, two
-												grids list your APIs and workflows. Click an API tile to
-												open its detail sheet; click a workflow tile to jump to
-												the workflow editor.
+												grids list your APIs and workflows. Click an API
+												tile to open its detail sheet; click a workflow tile
+												to jump to the workflow editor.
 											</p>
 										),
 									},
@@ -87,12 +87,12 @@ export default function WorkspacePage() {
 										heading: 'Adding things',
 										body: (
 											<p>
-												Use <strong>+ Add</strong> in the page header to import
-												an OpenAPI spec or an Arazzo workflow — by URL, paste,
-												or file upload. Each section's empty state offers the
-												same shortcut. To import from the public catalog
-												instead, open <strong>Discover</strong> from the
-												sidebar.
+												Use <strong>+ Add</strong> in the page header to
+												import an OpenAPI spec or an Arazzo workflow — by
+												URL, paste, or file upload. Each section's empty
+												state offers the same shortcut. To import from the
+												public catalog instead, open{' '}
+												<strong>Discover</strong> from the sidebar.
 											</p>
 										),
 									},
@@ -102,17 +102,20 @@ export default function WorkspacePage() {
 											<p>
 												The filter box narrows the tiles you can see{' '}
 												<em>right now</em> — it's an in-memory match against
-												name and description, not a catalog search. To search
-												the public catalog by intent, open{' '}
-												<strong>Discover</strong> from the sidebar (or use the
-												link at the bottom of this page).
+												name and description, not a catalog search. To
+												search the public catalog by intent, open{' '}
+												<strong>Discover</strong> from the sidebar (or use
+												the link at the bottom of this page).
 											</p>
 										),
 									},
 								]}
 								shortcuts={[
 									{ keys: ['/'], label: 'Focus filter' },
-									{ keys: ['↑', '↓', '←', '→'], label: 'Move focus between tiles' },
+									{
+										keys: ['↑', '↓', '←', '→'],
+										label: 'Move focus between tiles',
+									},
 									{ keys: ['Home', 'End'], label: 'Jump to first / last tile' },
 									{ keys: ['Enter'], label: 'Open the focused tile' },
 									{ keys: ['Esc'], label: 'Clear filter' },
