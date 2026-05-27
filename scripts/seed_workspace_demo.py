@@ -98,10 +98,18 @@ def _derive_involved_apis(doc: dict[str, Any]) -> list[str]:
 
     for src in doc.get("sourceDescriptions", []):
         url = src.get("url", "")
-        # Match `./apis/openapi/<vendor>/...` and friends.
-        m = re.search(r"apis/openapi/([^/]+)/", url)
+        # Match `./apis/openapi/<vendor>/<sub>/<version>/openapi.json` (or
+        # `./apis/openapi/<vendor>/<sub>/<sub2>/<version>/openapi.json`).
+        # The catalog id is `<vendor>` when `<sub>` is the conventional
+        # `main`, otherwise `<vendor>/<sub>`. Capturing only the first
+        # segment collapses every nested sub-API to the bare hostname,
+        # which then doesn't resolve in the catalog (e.g.
+        # `apis/openapi/hubspot.com/CRM-contacts/v3/openapi.json` has no
+        # leaf `hubspot.com` in the manifest, only `hubspot.com/<sub>`).
+        m = re.search(r"apis/openapi/([^/]+)/([^/]+)/", url)
         if m:
-            _add(m.group(1))
+            vendor, sub = m.group(1), m.group(2)
+            _add(vendor if sub == "main" else f"{vendor}/{sub}")
 
     return found
 
