@@ -163,6 +163,25 @@ def _extract_workflow_meta(doc: dict, workflow_id: str | None = None) -> dict:
     ),
 )
 async def list_workflows(
+    page: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Page number (1-indexed). When supplied alongside `limit`, the response "
+            "switches from a bare list to a `{data, total, page, limit, total_pages}` "
+            "envelope. Default (omitted) returns the unpaginated list for backward "
+            "compatibility with existing callers."
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description=(
+            "Page size when paginating. Triggers the paginated envelope shape — "
+            "see `page`. Omit both to keep the historical bare-list behaviour."
+        ),
+    ),
     q: str | None = Query(None, description='Filter by name or API, e.g. "stripe" or "oauth"'),
     source: str | None = Query(None, description='Filter by source: "local" or "catalog"'),
 ):
@@ -171,6 +190,9 @@ async def list_workflows(
 
     Catalog entries show the API they belong to; add credentials to auto-import their workflows.
     Use ?source=local or ?source=catalog to filter. Default returns all.
+
+    Pass `page` + `limit` for a `{data, total, page, limit, total_pages}` envelope; omit
+    both to keep the original bare-list response (workspace tiles still work the old way).
     """
     # ── Local workflows ──────────────────────────────────────────────────────
     results = []
@@ -276,7 +298,25 @@ async def list_workflows(
                     }
                 )
 
-    return results
+    # Backward-compat: bare list when neither pagination param is supplied.
+    # Existing callers (stats strip, sheet body, api-detail-view, etc.)
+    # don't ask for pages and still get the historical shape.
+    if page is None and limit is None:
+        return results
+
+    effective_page = page or 1
+    effective_limit = limit or 20
+    total = len(results)
+    total_pages = max(1, (total + effective_limit - 1) // effective_limit) if total else 1
+    start = (effective_page - 1) * effective_limit
+    end = start + effective_limit
+    return {
+        "data": results[start:end],
+        "total": total,
+        "page": effective_page,
+        "limit": effective_limit,
+        "total_pages": total_pages,
+    }
 
 
 _WORKFLOW_CONTENT_TYPES = {

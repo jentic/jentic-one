@@ -5691,9 +5691,48 @@
           "catalog"
         ],
         "summary": "List workflows \u2014 browse available multi-step Arazzo workflows",
-        "description": "Returns registered workflows (source: local) plus available catalog workflow sources\n(source: catalog) \u2014 APIs in the Jentic public catalog that have associated workflows.\n\nCatalog entries show the API they belong to; add credentials to auto-import their workflows.\nUse ?source=local or ?source=catalog to filter. Default returns all.",
+        "description": "Returns registered workflows (source: local) plus available catalog workflow sources\n(source: catalog) \u2014 APIs in the Jentic public catalog that have associated workflows.\n\nCatalog entries show the API they belong to; add credentials to auto-import their workflows.\nUse ?source=local or ?source=catalog to filter. Default returns all.\n\nPass `page` + `limit` for a `{data, total, page, limit, total_pages}` envelope; omit\nboth to keep the original bare-list response (workspace tiles still work the old way).",
         "operationId": "list_workflows_workflows_get",
         "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Page number (1-indexed). When supplied alongside `limit`, the response switches from a bare list to a `{data, total, page, limit, total_pages}` envelope. Default (omitted) returns the unpaginated list for backward compatibility with existing callers.",
+              "title": "Page"
+            },
+            "description": "Page number (1-indexed). When supplied alongside `limit`, the response switches from a bare list to a `{data, total, page, limit, total_pages}` envelope. Default (omitted) returns the unpaginated list for backward compatibility with existing callers."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 100,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Page size when paginating. Triggers the paginated envelope shape \u2014 see `page`. Omit both to keep the historical bare-list behaviour.",
+              "title": "Limit"
+            },
+            "description": "Page size when paginating. Triggers the paginated envelope shape \u2014 see `page`. Omit both to keep the historical bare-list behaviour."
+          },
           {
             "name": "q",
             "in": "query",
