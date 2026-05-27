@@ -55,7 +55,7 @@ export default function JobDetailPage() {
 
 			<div className="flex items-start justify-between gap-4">
 				<div>
-					<p className="text-primary/60 font-mono text-[10px] tracking-widest uppercase">
+					<p className="text-primary/75 font-mono text-[10px] tracking-widest uppercase">
 						Job Detail
 					</p>
 					<h1 className="font-heading text-foreground mt-1 font-mono text-xl font-bold break-all">

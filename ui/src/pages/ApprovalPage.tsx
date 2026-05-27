@@ -225,7 +225,7 @@ export default function ApprovalPage() {
 					<div className="bg-muted border-border space-y-5 rounded-xl border p-6">
 						{/* Toolkit */}
 						<div>
-							<p className="text-primary/60 mb-1 font-mono text-xs tracking-widest uppercase">
+							<p className="text-primary/75 mb-1 font-mono text-xs tracking-widest uppercase">
 								Toolkit
 							</p>
 							<div className="flex items-center gap-2">
@@ -238,7 +238,7 @@ export default function ApprovalPage() {
 
 						{/* Type */}
 						<div>
-							<p className="text-primary/60 mb-1 font-mono text-xs tracking-widest uppercase">
+							<p className="text-primary/75 mb-1 font-mono text-xs tracking-widest uppercase">
 								Request Type
 							</p>
 							<Badge
@@ -254,7 +254,7 @@ export default function ApprovalPage() {
 						{/* Reason */}
 						{request.reason && (
 							<div>
-								<p className="text-primary/60 mb-1 font-mono text-xs tracking-widest uppercase">
+								<p className="text-primary/75 mb-1 font-mono text-xs tracking-widest uppercase">
 									Agent says
 								</p>
 								<p className="text-foreground bg-background border-border rounded-lg border p-3 text-sm italic">
@@ -266,7 +266,7 @@ export default function ApprovalPage() {
 						{/* Description */}
 						{request.description && (
 							<div>
-								<p className="text-primary/60 mb-1 font-mono text-xs tracking-widest uppercase">
+								<p className="text-primary/75 mb-1 font-mono text-xs tracking-widest uppercase">
 									Description
 								</p>
 								<p className="text-foreground text-sm">{request.description}</p>
@@ -276,7 +276,7 @@ export default function ApprovalPage() {
 						{/* Grant details */}
 						{request.type === 'grant' && (requestedCredId || requestedApiId) && (
 							<div>
-								<p className="text-primary/60 mb-2 font-mono text-xs tracking-widest uppercase">
+								<p className="text-primary/75 mb-2 font-mono text-xs tracking-widest uppercase">
 									Requesting Access To
 								</p>
 								<div className="bg-background border-border space-y-1 rounded-lg border p-3">
@@ -307,7 +307,7 @@ export default function ApprovalPage() {
 							requestedRules &&
 							requestedRules.length > 0 && (
 								<div>
-									<p className="text-primary/60 mb-2 font-mono text-xs tracking-widest uppercase">
+									<p className="text-primary/75 mb-2 font-mono text-xs tracking-widest uppercase">
 										Requested Permission Changes
 									</p>
 									<div className="bg-background border-border rounded-lg border p-4">
