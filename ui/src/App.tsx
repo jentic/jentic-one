@@ -5,6 +5,7 @@ import {
 	useLocation,
 	useParams,
 } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
 import { Layout } from '@/components/layout/Layout';
 import { AuthGuard } from '@/components/AuthGuard';
 import SetupPage from '@/pages/SetupPage';
@@ -116,5 +117,14 @@ const router = createBrowserRouter(
 );
 
 export default function App() {
-	return <RouterProvider router={router} />;
+	// `reducedMotion="user"` makes every framer-motion animation respect the
+	// browser's `prefers-reduced-motion` media query: motion-sensitive users
+	// see static UI, and Playwright (browser-mode tests) — which we configure
+	// with `reducedMotion: 'reduce'` — skips entrance animations so axe doesn't
+	// observe mid-animation opacity values.
+	return (
+		<MotionConfig reducedMotion="user">
+			<RouterProvider router={router} />
+		</MotionConfig>
+	);
 }
