@@ -56,7 +56,6 @@ Translation lives in adapters inside `DiscoverPage.tsx`. Pages that hit the serv
 **Shared discovery components** (`components/discovery/`):
 
 - `DiscoveryCard` — polymorphic row that dispatches to `ApiCard` / `WorkflowCard` / `EndpointCard` by `entity.type`. Endpoint cards include a parent-API breadcrumb so the "this is one call inside API X" relationship is explicit. API cards open the detail sheet; workflow + endpoint cards expand inline (Phase 2 will migrate them too)
-- `DiscoveryFilterBar` — two `SegmentedToggle`s (Source + Type, ported from `@jentic/frontend-ui`) wired to `?source` and `?type`. Renders different Type segments depending on `browseMode`. Exports `useDiscoveryFilters()`, `matchesSource()`, `browseEffectiveType()`, `searchEffectiveType()`
 - `VendorIcon` — initials-in-a-square vendor icon (deterministic hashed colour)
 - `InspectPanel` — full parameter + auth detail for an operation; used both for inline `EndpointCard` expansion AND as the second-level view inside `ApiDetailSheet`
 - `OperationsPanel` — legacy inline ops list; no longer rendered by `DiscoveryCard` (the API sheet inlines its own row renderer to support row-level click drill-down). Kept as a standalone reusable component

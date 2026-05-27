@@ -1,6 +1,4 @@
 import React, { useRef, useEffect } from 'react';
-import { DiscoveryFilterBar } from './DiscoveryFilterBar';
-import type { DiscoverySource } from './DiscoveryCard';
 import { RefreshButton } from '@/components/ui/RefreshButton';
 import { SearchInput } from '@/components/ui/SearchInput';
 
@@ -11,14 +9,7 @@ interface ToolbarProps {
 	onInput: (next: string) => void;
 	onClear: () => void;
 	isFetching: boolean;
-	hideSource: boolean;
 	placeholder?: string;
-	/**
-	 * Page-level forced source axis (e.g. `/discover` pins to `'directory'`).
-	 * Forwarded to `DiscoveryFilterBar` so the source segment can decide
-	 * whether to render itself.
-	 */
-	forcedSource?: DiscoverySource;
 	searchInputRef?: React.Ref<HTMLInputElement>;
 }
 
@@ -27,9 +18,7 @@ export function DiscoverToolbar({
 	onInput,
 	onClear,
 	isFetching,
-	hideSource,
 	placeholder,
-	forcedSource,
 	searchInputRef,
 }: ToolbarProps) {
 	const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -67,8 +56,6 @@ export function DiscoverToolbar({
 					loading={isFetching}
 					className="md:flex-1"
 				/>
-
-				<DiscoveryFilterBar hideSource={hideSource} forcedSource={forcedSource} />
 			</div>
 		</div>
 	);

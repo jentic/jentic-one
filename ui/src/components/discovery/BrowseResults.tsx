@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { DiscoveryCard } from './DiscoveryCard';
 import type { DiscoveryEntity, DiscoverySource } from './DiscoveryCard';
-import { useDiscoveryFilters } from './DiscoveryFilterBar';
 import { DiscoverEmptyState } from './DiscoverEmptyState';
 import { apiToEntity } from './adapters';
 import { api } from '@/api/client';
@@ -19,8 +18,6 @@ export function BrowseResults({
 	query,
 	expandedId,
 	onCardClick,
-	onClearFilters,
-	onSwitchToDirectory,
 	forcedSource,
 	emptyMode = 'page',
 	onShownCountChange,
@@ -31,21 +28,25 @@ export function BrowseResults({
 	query?: string;
 	expandedId: string | null;
 	onCardClick: (entity: DiscoveryEntity) => void;
-	onClearFilters: () => void;
-	onSwitchToDirectory: () => void;
-	forcedSource?: DiscoverySource;
+	/**
+	 * Required source axis. Every production caller hard-codes this
+	 * (`/discover` → `'directory'`, `/workspace` sectioned mode →
+	 * `'workspace'` for the workspace section and `'directory'` for the
+	 * catalog section). The user-facing source toggle was deleted in the
+	 * May 2026 simplification, so there is no longer a `urlSource`
+	 * fallback path.
+	 */
+	forcedSource: DiscoverySource;
 	emptyMode?: 'page' | 'inline';
 	onShownCountChange?: (shown: number | null) => void;
 	onImport?: (entity: DiscoveryEntity) => void;
 	importPendingApiId?: string | null;
 }) {
-	const { source: urlSource } = useDiscoveryFilters();
-	const source = forcedSource ?? urlSource;
+	const source = forcedSource;
 
-	const serverSource: string | undefined =
-		source === 'all' ? undefined : source === 'workspace' ? 'local' : 'catalog';
+	const serverSource: string = source === 'workspace' ? 'local' : 'catalog';
 
-	const includeImported = forcedSource === 'directory' && serverSource === 'catalog';
+	const includeImported = forcedSource === 'directory';
 
 	const [page, setPage] = useState(1);
 	const [accumulator, setAccumulator] = useState<any[]>([]);
@@ -64,7 +65,7 @@ export function BrowseResults({
 		queryKey: [
 			'apis',
 			'discover',
-			serverSource ?? 'all',
+			serverSource,
 			page,
 			BROWSE_PAGE_SIZE,
 			includeImported,
@@ -164,53 +165,14 @@ export function BrowseResults({
 			return <DiscoverEmptyState variant="zero-search" query={query} />;
 		}
 
-		const filtersActive = forcedSource ? false : source !== 'all';
-
-		if (emptyMode === 'inline') {
-			if (filtersActive) {
-				return (
-					<div
-						className="border-border/60 bg-muted/20 text-muted-foreground flex flex-col items-start gap-2 rounded-xl border border-dashed p-4 text-sm"
-						data-testid="browse-inline-empty-filtered"
-					>
-						<span>No results match the current filters.</span>
-						<Button variant="ghost" size="sm" onClick={onClearFilters}>
-							Clear filters
-						</Button>
-					</div>
-				);
-			}
-			if (forcedSource === 'workspace') {
-				return <DiscoverEmptyState variant="cold-start-sectioned" />;
-			}
-			if (forcedSource === 'directory') {
-				return <DiscoverEmptyState variant="catalog-degraded" />;
-			}
-			return (
-				<div
-					className="border-border/60 bg-muted/20 text-muted-foreground rounded-xl border border-dashed p-4 text-sm"
-					data-testid="browse-inline-empty"
-				>
-					No results.
-				</div>
-			);
+		if (emptyMode === 'inline' && forcedSource === 'workspace') {
+			return <DiscoverEmptyState variant="cold-start-sectioned" />;
 		}
-
-		if (filtersActive) {
-			return (
-				<DiscoverEmptyState
-					variant="filtered-empty"
-					onClearFilters={onClearFilters}
-					entityType="api"
-				/>
-			);
-		}
-		if (forcedSource === 'directory') {
-			return <DiscoverEmptyState variant="catalog-degraded" />;
-		}
-		return (
-			<DiscoverEmptyState variant="cold-start" onSwitchToDirectory={onSwitchToDirectory} />
-		);
+		// Both `forcedSource === 'directory'` (any emptyMode) and the
+		// `'workspace'` page-mode branch land on the catalog-degraded
+		// state — the latter only happens for the workspace section in
+		// sectioned mode (never page-mode in production).
+		return <DiscoverEmptyState variant="catalog-degraded" />;
 	}
 
 	const showInfiniteScroll = hasMore || isFetchingMore;
@@ -227,7 +189,7 @@ export function BrowseResults({
 				ref={gridRef}
 				onKeyDown={onKeyDown}
 				className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-				data-testid={forcedSource ? `browse-grid-${forcedSource}` : 'browse-grid'}
+				data-testid={`browse-grid-${forcedSource}`}
 			>
 				{entities.map((entity) => (
 					<DiscoveryCard

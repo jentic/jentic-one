@@ -15,8 +15,6 @@ export type { DiscoveryViewProps } from './DiscoveryView';
 export type { ApiDetailSheetProps } from './ApiDetailSheet';
 export type { DiscoveryEntity, DiscoveryEntityType, DiscoverySource } from './DiscoveryCard';
 export type { DiscoverEmptyStateProps } from './DiscoverEmptyState';
-export { DiscoveryFilterBar, useDiscoveryFilters } from './DiscoveryFilterBar';
-export type { SourceFilter } from './DiscoveryFilterBar';
 export { VendorIcon } from './VendorIcon';
 export { useRecentInspects, pushRecent, clearRecents } from './recentInspectStore';
 export type { RecentInspectEntry } from './recentInspectStore';

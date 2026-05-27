@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bookmark, Compass } from 'lucide-react';
 import { ApiDetailSheet } from './ApiDetailSheet';
@@ -23,7 +23,6 @@ export interface DiscoveryViewProps {
 }
 
 export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewProps = {}) {
-	const navigate = useNavigate();
 	const [searchParams, setSearchParams] = useSearchParams();
 
 	const initialQ = searchParams.get('q') ?? '';
@@ -175,33 +174,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 	useCredentialImportedSync({
 		onImported: handleCredentialImported,
 	});
-
-	function clearAllFilters() {
-		setSearchParams(
-			(prev) => {
-				const p = new URLSearchParams(prev);
-				p.delete('source');
-				p.delete('type');
-				return p;
-			},
-			{ replace: true },
-		);
-	}
-
-	function switchToDirectory() {
-		if (forcedSource) {
-			navigate('/discover');
-			return;
-		}
-		setSearchParams(
-			(prev) => {
-				const p = new URLSearchParams(prev);
-				p.set('source', 'directory');
-				return p;
-			},
-			{ replace: true },
-		);
-	}
 
 	// Sync URL → state for external navigation only
 	const urlQ = searchParams.get('q') ?? '';
@@ -415,7 +387,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 				onInput={handleInput}
 				onClear={clearSearch}
 				isFetching={false}
-				hideSource={Boolean(forcedSource) || isSectioned}
 				placeholder={
 					forcedSource === 'directory'
 						? 'Search the catalog…'
@@ -423,7 +394,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 							? 'Search APIs by name…'
 							: undefined
 				}
-				forcedSource={isSectioned ? undefined : forcedSource}
 				searchInputRef={searchInputRef}
 			/>
 
@@ -450,8 +420,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 							<BrowseResults
 								expandedId={expandedId}
 								onCardClick={handleCardClick}
-								onClearFilters={clearAllFilters}
-								onSwitchToDirectory={switchToDirectory}
 								forcedSource="workspace"
 								emptyMode="inline"
 								onImport={handleImport}
@@ -480,8 +448,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 								<BrowseResults
 									expandedId={expandedId}
 									onCardClick={handleCardClick}
-									onClearFilters={clearAllFilters}
-									onSwitchToDirectory={switchToDirectory}
 									forcedSource="directory"
 									emptyMode="inline"
 									onImport={handleImport}
@@ -491,13 +457,20 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 						</div>
 					</div>
 				) : (
+					// `forcedSource` is optional on `DiscoveryViewProps` but
+					// every production mounting site sets it (`/discover`
+					// → `'directory'`, `/workspace` → sectioned mode).
+					// Default to `'directory'` for the unreachable
+					// single-mode-without-forcedSource branch — it's the
+					// conservative production default (the `/catalog`
+					// surface that historically rendered the toggle was a
+					// router redirect to `/discover` even before the
+					// toggle was deleted).
 					<BrowseResults
 						query={query || undefined}
 						expandedId={expandedId}
 						onCardClick={handleCardClick}
-						onClearFilters={clearAllFilters}
-						onSwitchToDirectory={switchToDirectory}
-						forcedSource={forcedSource}
+						forcedSource={forcedSource ?? 'directory'}
 						onShownCountChange={!query ? setShownCount : undefined}
 						onImport={handleImport}
 						importPendingApiId={pendingApiId}
