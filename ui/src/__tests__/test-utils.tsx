@@ -22,12 +22,18 @@ export function renderWithProviders(ui: ReactElement, options: Options = {}) {
 
 	function Wrapper({ children }: { children: React.ReactNode }) {
 		return (
-			// `reducedMotion="always"` matches the production `MotionConfig`
-			// in `<App />` but forces every framer-motion animation to its
-			// final state in the test environment. Without this, axe colour-
-			// contrast checks fire while a `motion.div` is still mid-fade,
-			// observing a translucent `bg-primary` button as ~1:1 contrast.
-			<MotionConfig reducedMotion="always">
+			// `reducedMotion="always"` mirrors the production `MotionConfig` in
+			// `<App />`, but in framer-motion v12 `reducedMotion` only skips
+			// *transform* animations — `opacity` keeps tweening because it is
+			// considered an essential UX cue. That's a problem for axe
+			// colour-contrast checks: they fire at frame 0 while a `motion.div`
+			// is still at `opacity: 0` and observe a translucent `bg-primary`
+			// button as ~1:1 contrast against the page background.
+			//
+			// Forcing `transition.duration = 0` collapses every animation to
+			// its final state on the very first paint, regardless of which
+			// property is being animated.
+			<MotionConfig reducedMotion="always" transition={{ duration: 0 }}>
 				<QueryClientProvider client={queryClient}>
 					<MemoryRouter initialEntries={[route]}>
 						{path ? (
