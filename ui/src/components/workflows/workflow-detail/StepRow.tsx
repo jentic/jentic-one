@@ -6,6 +6,13 @@ interface StepRowProps {
 	isLast: boolean;
 	step: any;
 	involvedApis: string[];
+	/**
+	 * APIs that exist in the user's workspace. Steps targeting one of
+	 * these route into the workspace API view; everything else falls
+	 * back to the Discover catalog sheet so the user can inspect or
+	 * import the missing API.
+	 */
+	workspaceApiIds: Set<string>;
 }
 
 /**
@@ -17,11 +24,13 @@ interface StepRowProps {
  * workflow scans like a checklist.
  *
  * When we can resolve which API the step targets, the whole row is a
- * link into Discover's API detail sheet (`/discover?inspect=<api>&op=
- * <operationId>`), letting the user drill from "what does this
- * workflow do" to "what does this individual operation look like".
+ * link. If the API exists in the workspace we link into the workspace
+ * detail view (`/workspace/apis/<api>`) since the user has already
+ * imported it; otherwise we fall back to the Discover catalog sheet
+ * (`/discover?inspect=<api>&op=<operationId>`) so the row stays
+ * useful for browsing un-imported workflows from the catalog.
  */
-export function StepRow({ index, isLast, step, involvedApis }: StepRowProps) {
+export function StepRow({ index, isLast, step, involvedApis, workspaceApiIds }: StepRowProps) {
 	// Workflow steps come back from the API in the shape
 	// `{ id, operation, description }` (see WorkflowStep in types.ts),
 	// but some Arazzo flavours use camelCase (`stepId`, `operationId`,
@@ -90,8 +99,23 @@ export function StepRow({ index, isLast, step, involvedApis }: StepRowProps) {
 		step.outputs && typeof step.outputs === 'object' ? Object.keys(step.outputs).length : 0;
 
 	const canNavigate = Boolean(apiId && operationId);
+	// Pick the destination based on workspace state. If the API is
+	// imported, drop the user on the workspace API view so they stay
+	// in their own context. If it isn't, the Discover sheet is the
+	// only place that can render this op (and it offers an Import
+	// button), so fall back there. We deliberately don't deep-link
+	// into a specific operation in the workspace — see the workspace
+	// API view for tag/filter affordances instead.
+	const isWorkspaceApi = canNavigate && workspaceApiIds.has(apiId!);
 	const href = canNavigate
-		? `/discover?inspect=${encodeURIComponent(apiId!)}&op=${encodeURIComponent(operationId!)}`
+		? isWorkspaceApi
+			? `/workspace/apis/${encodeURIComponent(apiId!)}`
+			: `/discover?inspect=${encodeURIComponent(apiId!)}&op=${encodeURIComponent(operationId!)}`
+		: undefined;
+	const ariaLabel = canNavigate
+		? isWorkspaceApi
+			? `Open ${title} in workspace`
+			: `Open ${title} in Discover`
 		: undefined;
 
 	const rowBodyClass = canNavigate
@@ -135,7 +159,7 @@ export function StepRow({ index, isLast, step, involvedApis }: StepRowProps) {
 				<AppLink
 					href={href!}
 					className={rowBodyClass}
-					aria-label={`Open ${title} in Discover`}
+					aria-label={ariaLabel}
 					data-testid="workflow-step-body"
 				>
 					{body}

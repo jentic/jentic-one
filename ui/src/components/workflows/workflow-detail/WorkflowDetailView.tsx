@@ -1,10 +1,10 @@
-import { lazy, Suspense } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { lazy, Suspense, useMemo } from 'react';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { ArazzoErrorBoundary } from './ArazzoErrorBoundary';
 import { OverviewBody } from './OverviewBody';
 import { SlugChip } from './SlugChip';
-import { apiUrl } from '@/api/client';
+import { api, apiUrl } from '@/api/client';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { SegmentedToggle } from '@/components/ui/SegmentedToggle';
 import { WorkflowMetaStrip } from '@/components/workflows/WorkflowMetaStrip';
@@ -89,6 +89,107 @@ export function WorkflowDetailView({ slug, workflow }: WorkflowDetailViewProps) 
 	const steps: any[] = workflow.steps ?? [];
 	const involvedApis: string[] = workflow.involved_apis ?? [];
 
+	// Per-involved-API workspace lookup. `getApi(id)` returns 200 when
+	// the API is locally registered and 404 otherwise — so we can
+	// resolve membership exactly without paginating /apis or hitting
+	// the limit cap (le=100). Workflows usually declare 1-4 APIs,
+	// so this is a handful of small requests rather than a bulk scan.
+	//
+	// Keyed under `['apis', 'membership', apiId]` so the broad
+	// `invalidateQueries({ queryKey: ['apis'] })` already fired by
+	// `useImportCatalogApi` / `useCredentialImportedSync` reaches us
+	// after an import — the chip flips from "Not in workspace" to a
+	// live link without a stale window.
+	const membershipQueries = useQueries({
+		queries: involvedApis.map((apiId) => ({
+			queryKey: ['apis', 'membership', apiId] as const,
+			queryFn: async () => {
+				try {
+					await api.getApi(apiId);
+					return true;
+				} catch (err) {
+					if ((err as { status?: number })?.status === 404) return false;
+					throw err;
+				}
+			},
+			staleTime: 60_000,
+			retry: (count: number, err: unknown) => {
+				if ((err as { status?: number })?.status === 404) return false;
+				return count < 2;
+			},
+		})),
+	});
+	const workspaceApiIds = useMemo(() => {
+		const set = new Set<string>();
+		involvedApis.forEach((apiId, i) => {
+			if (membershipQueries[i]?.data === true) set.add(apiId);
+		});
+		return set;
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [involvedApis.join('|'), membershipQueries.map((q) => q.data).join('|')]);
+
+	// Per-involved-API catalog probe — does the public catalog have a
+	// leaf entry under this id? Workflows can declare api_ids that
+	// aren't catalog leaves (e.g. `hubspot.com`, where the catalog
+	// only has sub-APIs like `hubspot.com/CRM-contacts`). When that
+	// happens, sending the user to `/discover?inspect=<id>` lands
+	// them on a sheet that fails to fetch the spec, so we hide the
+	// "Open in Discover" affordance instead.
+	const catalogQueries = useQueries({
+		queries: involvedApis.map((apiId) => ({
+			queryKey: ['catalog', 'entry', apiId] as const,
+			queryFn: async () => {
+				try {
+					await api.getCatalogEntry(apiId);
+					return true;
+				} catch (err) {
+					if ((err as { status?: number })?.status === 404) return false;
+					throw err;
+				}
+			},
+			staleTime: 5 * 60_000,
+			retry: (count: number, err: unknown) => {
+				if ((err as { status?: number })?.status === 404) return false;
+				return count < 2;
+			},
+		})),
+	});
+	const catalogApiIds = useMemo(() => {
+		const set = new Set<string>();
+		involvedApis.forEach((apiId, i) => {
+			if (catalogQueries[i]?.data === true) set.add(apiId);
+		});
+		return set;
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [involvedApis.join('|'), catalogQueries.map((q) => q.data).join('|')]);
+
+	// Per-involved-API credentials probe — `listCredentials(apiId)`
+	// filters server-side, so a non-empty array means the user has at
+	// least one credential bound to that api. Keyed under
+	// `['credentials', 'for-api', apiId]` to ride the broad
+	// `['credentials']` invalidator in `useCredentialImportedSync`.
+	const credentialQueries = useQueries({
+		queries: involvedApis.map((apiId) => ({
+			queryKey: ['credentials', 'for-api', apiId] as const,
+			queryFn: () => api.listCredentials(apiId),
+			staleTime: 60_000,
+		})),
+	});
+	const credentialedApiIds = useMemo(() => {
+		const set = new Set<string>();
+		involvedApis.forEach((apiId, i) => {
+			const data = credentialQueries[i]?.data;
+			const list: unknown[] = Array.isArray(data)
+				? (data as unknown[])
+				: Array.isArray((data as { data?: unknown[] })?.data)
+					? (data as { data: unknown[] }).data
+					: [];
+			if (list.length > 0) set.add(apiId);
+		});
+		return set;
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [involvedApis.join('|'), credentialQueries.map((q) => q.data).join('|')]);
+
 	return (
 		<>
 			<WorkflowMetaStrip
@@ -109,7 +210,13 @@ export function WorkflowDetailView({ slug, workflow }: WorkflowDetailViewProps) 
 			</div>
 
 			{tab === 'overview' ? (
-				<OverviewBody steps={steps} involvedApis={involvedApis} />
+				<OverviewBody
+					steps={steps}
+					involvedApis={involvedApis}
+					workspaceApiIds={workspaceApiIds}
+					credentialedApiIds={credentialedApiIds}
+					catalogApiIds={catalogApiIds}
+				/>
 			) : isLoadingArazzo ? (
 				<LoadingState message="Loading workflow visualization..." />
 			) : arazzoDoc ? (
