@@ -121,7 +121,16 @@ function ApiDetailSheetContent({
 
 	const source: 'workspace' | 'directory' = (() => {
 		if (shouldResolve && resolvedApi) {
-			return (resolvedApi as any)?.total > 0 ? 'workspace' : 'directory';
+			// `q=` is a substring filter on the backend, so a query for
+			// the catalog leaf `slack.com` will return the locally-imported
+			// sub-api `slack.com/openai` and trigger a false-positive
+			// "imported" badge in the sheet header. Pin the resolution to
+			// an exact-id match so siblings can't bleed across the
+			// workspace/directory boundary.
+			const rows = ((resolvedApi as { data?: Array<{ id?: string }> } | undefined)?.data ??
+				[]) as Array<{ id?: string }>;
+			const exact = rows.some((r) => r?.id === apiId);
+			return exact ? 'workspace' : 'directory';
 		}
 		if (initialEntity?.source === 'workspace') return 'workspace';
 		return 'directory';

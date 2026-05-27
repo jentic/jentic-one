@@ -580,6 +580,74 @@ describe('DiscoveryView', () => {
 		expect(within(sheet).getByTestId('sheet-directory-import')).toBeInTheDocument();
 	});
 
+	// Regression for the May 2027 sheet "imported" false-positive: the
+	// resolver used to ask `/apis?source=local&q=<api_id>` and treat
+	// `total > 0` as "imported", but `q=` is a substring filter on the
+	// server. Opening the sheet for the catalog leaf `slack.com` would
+	// match the imported sub-api `slack.com/openai` and flip the header
+	// to the green "Imported" pill, hiding the import CTA. The fix
+	// requires an exact-id match against the returned rows.
+	it('sheet keeps the Available pill for a catalog leaf when only a path-style sibling is imported', async () => {
+		worker.use(
+			http.get('/apis', ({ request }) => {
+				const url = new URL(request.url);
+				const source = url.searchParams.get('source');
+				const q = url.searchParams.get('q') ?? '';
+				if (source === 'local') {
+					// Server-side `q=slack.com` substring-matches the
+					// imported sub-api. Pre-fix this fooled the sheet.
+					if (q === 'slack.com') {
+						return HttpResponse.json({
+							data: [
+								{
+									id: 'slack.com/openai',
+									name: 'Slack AI Plugin',
+									source: 'local',
+								},
+							],
+							total: 1,
+							page: 1,
+						});
+					}
+					return HttpResponse.json({ data: [], total: 0, page: 1 });
+				}
+				return HttpResponse.json({
+					data: [{ id: 'slack.com', name: 'Slack', source: 'catalog' }],
+					total: 1,
+					page: 1,
+				});
+			}),
+			http.get('/catalog/slack.com/operations', () =>
+				HttpResponse.json({
+					data: [],
+					total: 0,
+					truncated: false,
+					offset: 0,
+					limit: 25,
+					spec_url: 'https://example.com/slack.json',
+					info: { title: 'Slack', version: '1.0', description: '' },
+					security_schemes: {},
+				}),
+			),
+		);
+
+		const user = userEvent.setup();
+		renderDirectoryDiscover();
+		const card = await screen.findByTestId('discovery-card-api');
+		await user.click(within(card).getByRole('button', { name: /slack/i }));
+
+		const sheet = await screen.findByTestId('sheet-primitive');
+		// The header pill must remain "Available" — the import CTA is
+		// the user-visible signal that the row is genuinely catalog-only.
+		await waitFor(() => {
+			expect(
+				within(sheet).getByRole('button', { name: /import to workspace/i }),
+			).toBeInTheDocument();
+		});
+		expect(within(sheet).getByText(/available/i)).toBeInTheDocument();
+		expect(within(sheet).queryByText(/^imported$/i)).toBeNull();
+	});
+
 	it('clicking a directory API card opens the sheet and lazy-fetches the spec preview', async () => {
 		const user = userEvent.setup();
 		let previewCalled = 0;
