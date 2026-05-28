@@ -34,6 +34,8 @@ import { Badge } from '@/components/ui/Badge';
 import { PermissionRuleEditor } from '@/components/ui/PermissionRuleEditor';
 import { PageShell } from '@/components/layout/PageShell';
 import { toast } from '@/components/ui/toastStore';
+import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
 
 function CredentialPermissionEditor({
 	toolkitId,
@@ -161,8 +163,7 @@ function RequestAccessDialog({ toolkitId, onClose }: { toolkitId: string; onClos
 			// flat field. Surface either as a toast with a copyable action so the
 			// requester can hand the URL to the approver without us blocking the UI
 			// behind a window.alert (which broke keyboard focus and screen readers).
-			const approveUrl: string | undefined =
-				data?.approve_url || data?._links?.approve_ui;
+			const approveUrl: string | undefined = data?.approve_url || data?._links?.approve_ui;
 			toast({
 				variant: 'success',
 				title: 'Access request created',
@@ -300,6 +301,7 @@ export default function ToolkitDetailPage() {
 	const [editName, setEditName] = useState('');
 	const [editDesc, setEditDesc] = useState('');
 	const [editingPermForCred, setEditingPermForCred] = useState<string | null>(null);
+	const editSheet = useCredentialEditSheet();
 
 	const { data: toolkit, isLoading } = useQuery({
 		queryKey: ['toolkit', id],
@@ -659,9 +661,13 @@ export default function ToolkitDetailPage() {
 							>
 								<div className="flex items-center gap-3 px-4 py-3">
 									<div className="min-w-0 flex-1">
-										<span className="text-foreground text-sm font-medium">
+										<button
+											type="button"
+											onClick={() => editSheet.openSheet(cred.credential_id)}
+											className="text-foreground hover:text-primary text-left text-sm font-medium focus-visible:underline focus-visible:outline-none"
+										>
 											{cred.label}
-										</span>
+										</button>
 										{cred.api_id && (
 											<p className="text-muted-foreground truncate font-mono text-xs">
 												{cred.api_id}
@@ -806,6 +812,13 @@ export default function ToolkitDetailPage() {
 			{showRequestAccess && (
 				<RequestAccessDialog toolkitId={id!} onClose={() => setShowRequestAccess(false)} />
 			)}
+
+			<CredentialEditSheet
+				credentialId={editSheet.stickyId}
+				open={editSheet.open}
+				onClose={editSheet.closeSheet}
+				onAfterClose={editSheet.clearSticky}
+			/>
 		</PageShell>
 	);
 }

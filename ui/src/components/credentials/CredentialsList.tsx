@@ -15,6 +15,14 @@ import { PipedreamCard } from './PipedreamCard';
 
 interface CredentialsListProps {
 	loggedIn: boolean;
+	/**
+	 * Optional handler invoked when the user clicks Edit on a manual
+	 * (non-Pipedream) credential row. Hosts that mount a
+	 * `CredentialEditSheet` pass this and forward the click to the
+	 * sheet's open handler. When omitted the row falls back to the
+	 * legacy `/credentials/:id/edit` navigation, which still works.
+	 */
+	onEditCredential?: (cred: CredentialOut) => void;
 }
 
 /**
@@ -34,7 +42,7 @@ interface CredentialsListProps {
  * kind, no `if (auth_type === 'pipedream_oauth')` branching at the row
  * level.
  */
-export function CredentialsList({ loggedIn }: CredentialsListProps) {
+export function CredentialsList({ loggedIn, onEditCredential }: CredentialsListProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 
@@ -132,9 +140,7 @@ export function CredentialsList({ loggedIn }: CredentialsListProps) {
 		return <LoadingState message="Loading credentials..." />;
 	}
 	if (isError) {
-		return (
-			<ErrorAlert message="Failed to load credentials. Please try refreshing the page." />
-		);
+		return <ErrorAlert message="Failed to load credentials. Please try refreshing the page." />;
 	}
 	if (credentials.length === 0) {
 		return (
@@ -166,6 +172,7 @@ export function CredentialsList({ loggedIn }: CredentialsListProps) {
 							<CredentialRow
 								key={cred.id}
 								cred={cred}
+								onEdit={onEditCredential}
 								onDelete={() =>
 									setDeleteTarget({
 										id: cred.id,

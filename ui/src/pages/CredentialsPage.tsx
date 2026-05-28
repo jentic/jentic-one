@@ -5,12 +5,11 @@ import { Plus } from 'lucide-react';
 import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageHelp } from '@/components/ui/PageHelp';
-import {
-	KeyboardShortcutsBar,
-	MOD_KEY,
-} from '@/components/ui/KeyboardShortcutsBar';
+import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { Button } from '@/components/ui/Button';
 import { CredentialsList } from '@/components/credentials';
+import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
 import { useAuth } from '@/hooks/useAuth';
 import { subscribeCredentialImported } from '@/lib/events/credentialImported';
 
@@ -34,6 +33,7 @@ export default function CredentialsPage() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { user } = useAuth();
+	const editSheet = useCredentialEditSheet();
 
 	useEffect(() => {
 		const unsubscribe = subscribeCredentialImported(() => {
@@ -58,8 +58,8 @@ export default function CredentialsPage() {
 								title="About Credentials"
 								intro={
 									<p>
-										Credentials are the secrets your agents present when
-										calling an upstream API — bearer tokens, API keys, OAuth
+										Credentials are the secrets your agents present when calling
+										an upstream API — bearer tokens, API keys, OAuth
 										connections. Jentic stores them encrypted and never returns
 										the raw value once written; agents call through the broker,
 										which injects the right header on each upstream request.
@@ -72,10 +72,10 @@ export default function CredentialsPage() {
 											<p>
 												The dot next to each credential is its{' '}
 												<strong>health</strong>. Green means the broker has
-												used it successfully recently; red means the upstream
-												rejected it (commonly an expired OAuth grant — use{' '}
-												<strong>Reconnect</strong> to fix); a muted dot
-												means we haven't tried it yet (use{' '}
+												used it successfully recently; red means the
+												upstream rejected it (commonly an expired OAuth
+												grant — use <strong>Reconnect</strong> to fix); a
+												muted dot means we haven't tried it yet (use{' '}
 												<strong>Test connection</strong> on the edit page).
 												Each row also shows which toolkits have it bound, so
 												you can trace credentials → toolkits → agents at a
@@ -101,8 +101,8 @@ export default function CredentialsPage() {
 										heading: 'Adding credentials',
 										body: (
 											<p>
-												Click <strong>Add Credential</strong> to pick an
-												API and paste a value. Importing an API from{' '}
+												Click <strong>Add Credential</strong> to pick an API
+												and paste a value. Importing an API from{' '}
 												<strong>Discover</strong> with a "Connect" CTA also
 												lands you here pre-filled. Catalog APIs are imported
 												into your workspace as a side effect of the first
@@ -126,8 +126,18 @@ export default function CredentialsPage() {
 					}
 				/>
 
-				<CredentialsList loggedIn={!!user?.logged_in} />
+				<CredentialsList
+					loggedIn={!!user?.logged_in}
+					onEditCredential={(cred) => editSheet.openSheet(cred.id)}
+				/>
 			</PageShell>
+
+			<CredentialEditSheet
+				credentialId={editSheet.stickyId}
+				open={editSheet.open}
+				onClose={editSheet.closeSheet}
+				onAfterClose={editSheet.clearSticky}
+			/>
 
 			<KeyboardShortcutsBar
 				shortcuts={[

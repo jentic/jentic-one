@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDeleteDialog } from '@/components/ui/ConfirmDeleteDialog';
 import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { ApiDetailView } from '@/components/workspace/api-detail';
+import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
 import { api, apiUrl } from '@/api/client';
 import { isTypingTarget } from '@/lib/keyboard';
@@ -23,6 +25,7 @@ export default function ApiDetailPage() {
 	useScrollRestore();
 
 	const [deleteOpen, setDeleteOpen] = useState(false);
+	const editSheet = useCredentialEditSheet();
 
 	useEffect(() => {
 		function onKeyDown(e: KeyboardEvent) {
@@ -179,7 +182,12 @@ export default function ApiDetailPage() {
 
 				<BackButton to="/workspace" label="Back" />
 
-				{apiId ? <ApiDetailView apiId={apiId} /> : null}
+				{apiId ? (
+					<ApiDetailView
+						apiId={apiId}
+						onEditCredential={(cred) => editSheet.openSheet(cred.id)}
+					/>
+				) : null}
 
 				<ConfirmDeleteDialog
 					target={apiId ? { kind: 'api', id: apiId, name: title } : null}
@@ -189,6 +197,13 @@ export default function ApiDetailPage() {
 					loading={removeMutation.isPending}
 				/>
 			</PageShell>
+
+			<CredentialEditSheet
+				credentialId={editSheet.stickyId}
+				open={editSheet.open}
+				onClose={editSheet.closeSheet}
+				onAfterClose={editSheet.clearSticky}
+			/>
 
 			<KeyboardShortcutsBar
 				shortcuts={[

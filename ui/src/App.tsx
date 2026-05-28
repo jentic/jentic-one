@@ -70,6 +70,26 @@ export function WorkflowDetailRedirect() {
 	return <Navigate to={`/workspace/workflows/${params.slug}${search}`} replace />;
 }
 
+/**
+ * Redirect legacy `/credentials/:id/edit` deep links to the new
+ * sheet-driven edit surface at `/credentials?edit=:id`. Agent guides
+ * and external bookmarks still link here; the UI just renders them
+ * inside the credentials list with the edit sheet open instead of
+ * navigating to a dedicated form page.
+ *
+ * Preserves the query string so query-param prefills (e.g.
+ * `?label=...` from agent runbooks — only ever applied on `/new`,
+ * but harmless if forwarded through) round-trip cleanly.
+ */
+export function CredentialEditRedirect() {
+	const { search } = useLocation();
+	const params = useParams<{ id: string }>();
+	const sp = new URLSearchParams(search);
+	if (params.id) sp.set('edit', params.id);
+	const qs = sp.toString();
+	return <Navigate to={`/credentials${qs ? `?${qs}` : ''}`} replace />;
+}
+
 const router = createBrowserRouter(
 	[
 		{
@@ -101,7 +121,7 @@ const router = createBrowserRouter(
 						{ path: '/agents', element: <AgentsPage /> },
 						{ path: '/credentials', element: <CredentialsPage /> },
 						{ path: '/credentials/new', element: <CredentialFormPage /> },
-						{ path: '/credentials/:id/edit', element: <CredentialFormPage /> },
+						{ path: '/credentials/:id/edit', element: <CredentialEditRedirect /> },
 						{ path: '/oauth-brokers', element: <Navigate to="/credentials" replace /> },
 						{ path: '/monitor', element: <MonitorPage /> },
 						{ path: '/traces', element: <Navigate to="/monitor" replace /> },

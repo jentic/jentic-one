@@ -13,6 +13,14 @@ import { api } from '@/api/client';
 
 interface ApiDetailViewProps {
 	apiId: string;
+	/**
+	 * Optional callback fired when the user clicks an existing
+	 * credential row in the credentials section. When provided, hosts
+	 * (today: `ApiDetailPage`) typically open a `CredentialEditSheet`
+	 * with the clicked credential. Falls back to a route navigation
+	 * when omitted.
+	 */
+	onEditCredential?: (cred: any) => void;
 }
 
 /**
@@ -26,7 +34,7 @@ interface ApiDetailViewProps {
  * operations widget has its own state machine encapsulated in the
  * `useApiOperations` hook; everything else is presentational.
  */
-export function ApiDetailView({ apiId }: ApiDetailViewProps) {
+export function ApiDetailView({ apiId, onEditCredential }: ApiDetailViewProps) {
 	const {
 		data: apiData,
 		isLoading: isLoadingApi,
@@ -171,6 +179,7 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 				credentials={credentials}
 				isLoading={isLoadingCreds}
 				apiId={apiId}
+				onEditCredential={onEditCredential}
 			/>
 
 			<ToolkitsSection toolkits={boundToolkits} />

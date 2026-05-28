@@ -13,6 +13,18 @@ import { StatusDot, type CredentialStatus } from './StatusDot';
 interface CredentialRowProps {
 	cred: CredentialOut;
 	onDelete: () => void;
+	/**
+	 * Called when the user clicks Edit (or the credential label) on a
+	 * non-Pipedream row. When provided, this takes precedence over
+	 * navigating to `/credentials/:id/edit` — used by host pages that
+	 * mount a `CredentialEditSheet` and want the click to open the
+	 * sheet instead of leaving the page.
+	 *
+	 * Pipedream rows ignore this prop and use `onEditPipedream`
+	 * instead, because broker-managed credentials don't go through the
+	 * regular form (their value is upstream).
+	 */
+	onEdit?: (cred: CredentialOut) => void;
 	onEditPipedream?: () => void;
 	onReconnect?: () => void;
 	deleting?: boolean;
@@ -55,11 +67,27 @@ interface CredentialRowProps {
 export function CredentialRow({
 	cred,
 	onDelete,
+	onEdit,
 	onEditPipedream,
 	onReconnect,
 	deleting,
 }: CredentialRowProps) {
 	const navigate = useNavigate();
+
+	const handleEditClick = () => {
+		if (cred.auth_type === 'pipedream_oauth') {
+			if (onEditPipedream) onEditPipedream();
+			return;
+		}
+		if (onEdit) {
+			onEdit(cred);
+			return;
+		}
+		// Legacy fallback: hosts that haven't adopted the sheet still
+		// navigate to the route-based form. Will be removed in Phase 5
+		// once every host wires `onEdit`.
+		navigate(`/credentials/${encodeURIComponent(cred.id)}/edit`);
+	};
 
 	const { data: bindings = [] } = useQuery({
 		queryKey: ['credential-bindings', cred.id],
@@ -83,9 +111,7 @@ export function CredentialRow({
 					<div className="flex flex-wrap items-center gap-2">
 						<button
 							type="button"
-							onClick={() =>
-								navigate(`/credentials/${encodeURIComponent(cred.id)}/edit`)
-							}
+							onClick={handleEditClick}
 							className="text-foreground hover:text-primary truncate font-medium focus-visible:underline focus-visible:outline-none"
 						>
 							{cred.label}
@@ -149,7 +175,7 @@ export function CredentialRow({
 
 					{bindings.length > 0 && (
 						<div className="mt-2 flex flex-wrap items-center gap-1.5">
-							<span className="text-muted-foreground/80 text-[11px] uppercase tracking-wider">
+							<span className="text-muted-foreground/80 text-[11px] tracking-wider uppercase">
 								Used by
 							</span>
 							{bindings.slice(0, 3).map((b) => (
@@ -176,19 +202,7 @@ export function CredentialRow({
 							<RotateCcw className="h-4 w-4" /> Reconnect
 						</Button>
 					)}
-					<Button
-						variant="secondary"
-						size="sm"
-						onClick={() => {
-							if (isPipedream && onEditPipedream) {
-								onEditPipedream();
-							} else {
-								navigate(
-									`/credentials/${encodeURIComponent(cred.id)}/edit`,
-								);
-							}
-						}}
-					>
+					<Button variant="secondary" size="sm" onClick={handleEditClick}>
 						<Settings className="h-4 w-4" /> Edit
 					</Button>
 					{/* Delete now opens a real dialog with the toolkit

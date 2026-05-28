@@ -9,6 +9,14 @@ interface CredentialsSectionProps {
 	credentials: any[];
 	isLoading: boolean;
 	apiId: string;
+	/**
+	 * When provided, clicking a credential row fires this instead of
+	 * navigating to `/credentials/:id/edit`. Used by hosts (today:
+	 * `ApiDetailPage`) that mount a `CredentialEditSheet` and prefer
+	 * an inline edit experience to leaving the page. The fallback
+	 * `<AppLink>` path is preserved for hosts that haven't migrated.
+	 */
+	onEditCredential?: (cred: any) => void;
 }
 
 /**
@@ -22,7 +30,47 @@ interface CredentialsSectionProps {
  * to avoid a coupling of the workspace UI to credential row internals.
  * If the rules drift, lift `deriveStatus` to a shared module.
  */
-export function CredentialsSection({ credentials, isLoading, apiId }: CredentialsSectionProps) {
+export function CredentialsSection({
+	credentials,
+	isLoading,
+	apiId,
+	onEditCredential,
+}: CredentialsSectionProps) {
+	// Shared row rendering — used by both the link path (default)
+	// and the button path (when `onEditCredential` is provided).
+	const renderRowBody = (cred: any) => {
+		const status = deriveStatus(cred);
+		return (
+			<>
+				<KeyRound className="text-muted-foreground h-4 w-4 shrink-0" />
+				<div className="min-w-0 flex-1">
+					<div className="flex items-center gap-2">
+						<span className="text-foreground text-sm font-medium">
+							{cred.label || 'Unnamed'}
+						</span>
+						<StatusDot status={status.tone} label={status.label} size="sm" />
+						{cred.auth_type && (
+							<span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium uppercase">
+								{cred.auth_type}
+							</span>
+						)}
+					</div>
+					{cred.identity && (
+						<p className="text-muted-foreground mt-0.5 truncate text-xs">
+							{cred.identity}
+						</p>
+					)}
+				</div>
+				<span className="text-muted-foreground/60 text-xs whitespace-nowrap">
+					{cred.last_used_at
+						? `used ${timeAgo(cred.last_used_at)}`
+						: cred.created_at
+							? timeAgo(cred.created_at)
+							: ''}
+				</span>
+			</>
+		);
+	};
 	return (
 		<section>
 			<SectionTitle count={credentials.length}>Credentials</SectionTitle>
@@ -47,48 +95,26 @@ export function CredentialsSection({ credentials, isLoading, apiId }: Credential
 					</div>
 				) : (
 					<ul className="space-y-2">
-						{credentials.map((cred: any) => {
-							const status = deriveStatus(cred);
-							return (
-								<li key={cred.id}>
+						{credentials.map((cred: any) => (
+							<li key={cred.id}>
+								{onEditCredential ? (
+									<button
+										type="button"
+										onClick={() => onEditCredential(cred)}
+										className="border-border/50 hover:border-primary/40 hover:bg-muted/50 flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors"
+									>
+										{renderRowBody(cred)}
+									</button>
+								) : (
 									<AppLink
 										href={`/credentials/${encodeURIComponent(cred.id)}/edit`}
 										className="border-border/50 hover:border-primary/40 hover:bg-muted/50 flex items-center gap-3 rounded-lg border p-3 transition-colors"
 									>
-										<KeyRound className="text-muted-foreground h-4 w-4 shrink-0" />
-										<div className="min-w-0 flex-1">
-											<div className="flex items-center gap-2">
-												<span className="text-foreground text-sm font-medium">
-													{cred.label || 'Unnamed'}
-												</span>
-												<StatusDot
-													status={status.tone}
-													label={status.label}
-													size="sm"
-												/>
-												{cred.auth_type && (
-													<span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium uppercase">
-														{cred.auth_type}
-													</span>
-												)}
-											</div>
-											{cred.identity && (
-												<p className="text-muted-foreground mt-0.5 truncate text-xs">
-													{cred.identity}
-												</p>
-											)}
-										</div>
-										<span className="text-muted-foreground/60 text-xs whitespace-nowrap">
-											{cred.last_used_at
-												? `used ${timeAgo(cred.last_used_at)}`
-												: cred.created_at
-													? timeAgo(cred.created_at)
-													: ''}
-										</span>
+										{renderRowBody(cred)}
 									</AppLink>
-								</li>
-							);
-						})}
+								)}
+							</li>
+						))}
 						<li>
 							<AppLink
 								href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
