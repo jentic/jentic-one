@@ -321,6 +321,44 @@ export const api = {
 			headers: { 'Content-Type': 'application/json' },
 		}),
 	deleteCredential: (cid: string) => fetchJson<any>(`/credentials/${cid}`, { method: 'DELETE' }),
+	testCredential: (cid: string) =>
+		fetchJson<{
+			ok: boolean;
+			status: number | null;
+			hint: string | null;
+			probe_url: string | null;
+			message?: string;
+		}>(`/credentials/${encodeURIComponent(cid)}/test`, { method: 'POST' }),
+	credentialBindings: (cid: string) =>
+		fetchJson<Array<{ toolkit_id: string; toolkit_name: string; alias: string }>>(
+			`/credentials/${encodeURIComponent(cid)}/bindings`,
+		),
+	queryAudit: (params: {
+		credential_id?: string;
+		target_kind?: string;
+		target_id?: string;
+		event?: string;
+		limit?: number;
+		offset?: number;
+	}) => {
+		const usp = new URLSearchParams();
+		Object.entries(params).forEach(([k, v]) => {
+			if (v !== undefined && v !== null) usp.set(k, String(v));
+		});
+		return fetchJson<
+			Array<{
+				id: string;
+				ts: number;
+				actor_kind: string;
+				actor_id: string | null;
+				ip: string | null;
+				event: string;
+				target_kind: string | null;
+				target_id: string | null;
+				payload: Record<string, unknown>;
+			}>
+		>(`/audit?${usp.toString()}`);
+	},
 	deleteApi: (apiId: string, opts?: { cascade?: boolean }) =>
 		fetchJson<void>(`/apis/${apiId}${opts?.cascade ? '?cascade=true' : ''}`, {
 			method: 'DELETE',

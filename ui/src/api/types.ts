@@ -101,31 +101,36 @@ export interface CredentialOut {
 	scheme?: Record<string, unknown> | null;
 	routes?: string[] | null;
 	scheme_name?: string | null;
+	description?: string | null;
 	created_at?: number | null;
 	updated_at?: number | null;
+	last_used_at?: number | null;
 	account_id?: string | null;
 	app_slug?: string | null;
 	synced_at?: number | null;
+	healthy?: boolean | null;
 }
 
 export interface CredentialCreate {
 	label: string;
 	api_id?: string | null;
-	auth_type?: 'bearer' | 'basic' | 'apiKey' | null;
+	auth_type?: 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'none' | null;
 	identity?: string | null;
 	value: string;
 	server_variables?: Record<string, string> | null;
+	description?: string | null;
 }
 
 export interface CredentialPatch {
 	label?: string | null;
 	api_id?: string | null;
-	auth_type?: 'bearer' | 'basic' | 'apiKey' | null;
+	auth_type?: 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'none' | null;
 	identity?: string | null;
 	value?: string | null;
 	server_variables?: Record<string, string> | null;
 	scheme?: Record<string, unknown> | null;
 	routes?: string[] | null;
+	description?: string | null;
 }
 
 export interface ApiOut {
