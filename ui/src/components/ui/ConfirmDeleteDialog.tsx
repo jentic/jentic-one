@@ -8,7 +8,8 @@ import { api } from '@/api/client';
 
 export type DeleteTarget =
 	| { kind: 'api'; id: string; name: string }
-	| { kind: 'workflow'; slug: string; name: string };
+	| { kind: 'workflow'; slug: string; name: string }
+	| { kind: 'credential'; id: string; name: string; isPipedream?: boolean };
 
 interface ConfirmDeleteDialogProps {
 	target: DeleteTarget | null;
@@ -26,6 +27,7 @@ export function ConfirmDeleteDialog({
 	loading,
 }: ConfirmDeleteDialogProps) {
 	const isApi = target?.kind === 'api';
+	const isCredential = target?.kind === 'credential';
 	const [cascade, setCascade] = useState(false);
 	// Stable id for the dialog body's lead paragraph, so screen readers
 	// announce the impact summary alongside the title via aria-describedby.
@@ -39,7 +41,13 @@ export function ConfirmDeleteDialog({
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title={isApi ? 'Remove API' : 'Delete workflow'}
+			title={
+				isApi
+					? 'Remove API'
+					: isCredential
+						? 'Delete credential'
+						: 'Delete workflow'
+			}
 			size="md"
 			describedById={descriptionId}
 			footer={
@@ -61,7 +69,13 @@ export function ConfirmDeleteDialog({
 						className="flex-1"
 					>
 						<Trash2 className="h-3.5 w-3.5" />
-						{loading ? 'Removing…' : isApi ? 'Remove API' : 'Delete workflow'}
+						{loading
+							? 'Removing…'
+							: isApi
+								? 'Remove API'
+								: isCredential
+									? 'Delete credential'
+									: 'Delete workflow'}
 					</Button>
 				</div>
 			}
@@ -82,8 +96,87 @@ export function ConfirmDeleteDialog({
 					open={open}
 					descriptionId={descriptionId}
 				/>
+			) : target?.kind === 'credential' ? (
+				<CredentialCascadeInfo
+					credentialId={target.id}
+					name={target.name}
+					isPipedream={target.isPipedream}
+					open={open}
+					descriptionId={descriptionId}
+				/>
 			) : null}
 		</Dialog>
+	);
+}
+
+/**
+ * Renders the toolkit bindings that will become inert when this
+ * credential is deleted (so users get a *before* picture, not a "huh,
+ * agents stopped working" surprise after the fact). Pulls bindings
+ * from `/credentials/{id}/bindings` (Tier-1 endpoint added in Phase 0).
+ *
+ * For Pipedream creds we also call out the upstream-revoke side
+ * effect — deleting the credential row removes the OAuth grant from
+ * Pipedream, so the user cannot get the access back without
+ * reconnecting from scratch. Manual creds don't have that downside.
+ */
+function CredentialCascadeInfo({
+	credentialId,
+	name,
+	isPipedream,
+	open,
+}: {
+	credentialId: string;
+	name: string;
+	isPipedream?: boolean;
+	open: boolean;
+}) {
+	const { data: bindings = [], isLoading } = useQuery({
+		queryKey: ['delete-cascade', 'credential-bindings', credentialId],
+		queryFn: () => api.credentialBindings(credentialId),
+		enabled: open,
+	});
+
+	return (
+		<div className="space-y-5">
+			<p className="text-foreground/80 text-[13px] leading-relaxed">
+				<strong className="text-foreground font-medium">{name}</strong> will be permanently
+				deleted from your workspace.
+			</p>
+
+			{isLoading && (
+				<p className="text-muted-foreground animate-pulse text-xs">
+					Checking affected toolkits…
+				</p>
+			)}
+
+			{!isLoading && bindings.length > 0 && (
+				<ImpactGroup
+					color="amber"
+					icon={<Layers size={14} />}
+					title="Toolkits losing this credential"
+					count={bindings.length}
+					subtitle="Agents using these toolkits will fail until you bind another credential"
+					items={bindings.map((b) => b.toolkit_name || b.toolkit_id)}
+				/>
+			)}
+
+			{!isLoading && bindings.length === 0 && (
+				<p className="text-muted-foreground text-xs">
+					No toolkits reference this credential — safe to delete.
+				</p>
+			)}
+
+			{isPipedream && (
+				<div className="border-amber-500/30 bg-amber-500/5 text-foreground/80 rounded-lg border px-3.5 py-3 text-xs leading-relaxed">
+					<strong className="text-foreground">
+						Pipedream OAuth grant will also be revoked upstream.
+					</strong>{' '}
+					You'll need to reconnect from scratch to use this account again — there's no
+					way to undo this from Jentic alone.
+				</div>
+			)}
+		</div>
 	);
 }
 
