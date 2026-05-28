@@ -35,6 +35,7 @@ import { useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import { emitCredentialImported } from '@/lib/events/credentialImported';
+import { emitApiImported } from '@/lib/events/apiImported';
 import { toast } from '@/components/ui/toastStore';
 
 export interface ImportCatalogApiArgs {
@@ -102,10 +103,19 @@ export function useImportCatalogApi(): UseImportCatalogApiResult {
 			queryClient.invalidateQueries({ queryKey: ['workspace'] });
 			queryClient.invalidateQueries({ queryKey: ['workspace-stats'] });
 
-			// Re-uses the existing cross-tab event so the rest of the
-			// UX (toast in DiscoveryView, "Open in Workspace" deep link,
-			// etc.) just works. The event name is historical — see
-			// `src/lib/events/credentialImported.ts` and #437.
+			// Fire the *correct* event for this lifecycle: only an API
+			// arrived, no credential was created. v1 of this hook
+			// emitted `credentialImported` because it was the only
+			// channel; v2 of the credentials revamp split the channels
+			// (see `src/lib/events/apiImported.ts`) so subscribers can
+			// distinguish "got an API" from "got a credential" without
+			// inspecting payload shape.
+			emitApiImported({ api_id: apiId, source: 'catalog' });
+			// Keep the legacy event firing too — DiscoveryView and
+			// WorkspaceView still listen on `credentialImported` for
+			// API-import side effects. We'll cut them over in a
+			// follow-up; until then dual-emitting is harmless because
+			// both subscribers use the same query-invalidation set.
 			emitCredentialImported({ api_id: apiId });
 		},
 		onError: (err: unknown, variables) => {
