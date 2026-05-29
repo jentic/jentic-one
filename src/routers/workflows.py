@@ -506,6 +506,7 @@ async def dispatch_workflow(
             slug_or_id=slug,
             toolkit_id=toolkit_id,
             inputs=inputs,
+            agent_id=agent_id,
         )
         # Store callback URL if provided (http/https only — prevent SSRF)
         if callback_url:

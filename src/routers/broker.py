@@ -1131,6 +1131,7 @@ async def broker(request: Request, target: str):
             slug_or_id=capability_id,
             toolkit_id=toolkit_id,
             inputs={},
+            agent_id=agent_cid,
         )
         if callback_url:
             async with get_db() as _db:
@@ -1318,6 +1319,7 @@ async def broker(request: Request, target: str):
             slug_or_id=capability_id,
             toolkit_id=toolkit_id,
             inputs={},
+            agent_id=agent_cid,
         )
         async with get_db() as _db:
             await _db.execute("UPDATE jobs SET callback_url=? WHERE id=?", (callback_url, job_id))

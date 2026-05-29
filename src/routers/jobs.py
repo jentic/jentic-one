@@ -68,16 +68,22 @@ async def create_job(
     slug_or_id: str,  # workflow slug or capability ID
     toolkit_id: str | None,
     inputs: dict,
+    agent_id: str | None = None,
 ) -> str:
-    """Create a job record and return its ID."""
+    """Create a job record and return its ID.
+
+    `agent_id` is the calling agent's `client_id` for OAuth callers (`at_…`),
+    or None for toolkit-key callers / admin-initiated jobs. Stamped at INSERT
+    so the column is set even if the job never reaches `update_job`.
+    """
     job_id = "job_" + uuid.uuid4().hex[:12]
     async with get_db() as db:
         await db.execute(
             """
-            INSERT INTO jobs (id, kind, slug_or_id, toolkit_id, inputs, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            INSERT INTO jobs (id, kind, slug_or_id, toolkit_id, agent_id, inputs, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
-            (job_id, kind, slug_or_id, toolkit_id, json.dumps(inputs), time.time()),
+            (job_id, kind, slug_or_id, toolkit_id, agent_id, json.dumps(inputs), time.time()),
         )
         await db.commit()
     return job_id
@@ -147,7 +153,7 @@ async def get_job(job_id: str) -> dict | None:
     """Return job row as dict, or None if not found."""
     async with get_db() as db:
         async with db.execute(
-            "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
+            "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
             "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
             "created_at, completed_at, callback_url "
             "FROM jobs WHERE id=?",
@@ -161,6 +167,7 @@ async def get_job(job_id: str) -> dict | None:
         "kind",
         "slug_or_id",
         "toolkit_id",
+        "agent_id",
         "status",
         "result",
         "error",
@@ -197,6 +204,10 @@ def _job_response(d: dict) -> dict:
         "capability": d["slug_or_id"],
         "created_at": d["created_at"],
     }
+    if d.get("toolkit_id") is not None:
+        out["toolkit_id"] = d["toolkit_id"]
+    if d.get("agent_id") is not None:
+        out["agent_id"] = d["agent_id"]
     if d.get("completed_at"):
         out["completed_at"] = d["completed_at"]
     if d["status"] in ("complete", "upstream_async"):
@@ -238,37 +249,66 @@ async def list_jobs(
     status: str | None = Query(None, description="Filter by status"),
     page: Annotated[int, Query(description="Page number (1-indexed)", ge=1)] = 1,
     limit: Annotated[int, Query(description="Results per page (1-100)", ge=1, le=100)] = 20,
+    toolkit_id: Annotated[
+        str | None, Query(description="Filter by toolkit id (exact match)")
+    ] = None,
+    agent_id: Annotated[
+        str | None,
+        Query(description="Filter by agent client_id (exact match)."),
+    ] = None,
+    since: Annotated[
+        float | None,
+        Query(description="Lower bound on `created_at` (unix seconds, inclusive)", ge=0),
+    ] = None,
+    until: Annotated[
+        float | None,
+        Query(description="Upper bound on `created_at` (unix seconds, exclusive)", ge=0),
+    ] = None,
 ):
     offset = (page - 1) * limit
+
+    # Layer optional filters into a single WHERE; prior implementation
+    # branched on `status` only and would have grown unmanageable as we
+    # added agent / toolkit / time filters.
+    where_parts: list[str] = []
+    params: list = []
+    if status:
+        where_parts.append("status = ?")
+        params.append(status)
+    if toolkit_id is not None:
+        where_parts.append("toolkit_id = ?")
+        params.append(toolkit_id)
+    if agent_id is not None:
+        where_parts.append("agent_id = ?")
+        params.append(agent_id)
+    if since is not None:
+        where_parts.append("created_at >= ?")
+        params.append(since)
+    if until is not None:
+        where_parts.append("created_at < ?")
+        params.append(until)
+
+    where_sql = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    page_params = [*params, limit, offset]
+
     async with get_db() as db:
-        if status:
-            async with db.execute("SELECT COUNT(*) FROM jobs WHERE status=?", (status,)) as cur:
-                total = (await cur.fetchone())[0]
-            async with db.execute(
-                "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
-                "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-                "created_at, completed_at, callback_url "
-                "FROM jobs WHERE status=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            ) as cur:
-                rows = await cur.fetchall()
-        else:
-            async with db.execute("SELECT COUNT(*) FROM jobs") as cur:
-                total = (await cur.fetchone())[0]
-            async with db.execute(
-                "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
-                "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-                "created_at, completed_at, callback_url "
-                "FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ) as cur:
-                rows = await cur.fetchall()
+        async with db.execute(f"SELECT COUNT(*) FROM jobs{where_sql}", params) as cur:
+            total = (await cur.fetchone())[0]
+        async with db.execute(
+            "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
+            "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
+            "created_at, completed_at, callback_url "
+            f"FROM jobs{where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            page_params,
+        ) as cur:
+            rows = await cur.fetchall()
 
     keys = [
         "id",
         "kind",
         "slug_or_id",
         "toolkit_id",
+        "agent_id",
         "status",
         "result",
         "error",

@@ -607,7 +607,7 @@ class AccessRequestOut(BaseModel):
 class JobOut(BaseModel):
     """Async job handle for operations that couldn't complete synchronously. Poll for status and result."""
 
-    id: str = Field(examples=["job_abc123xyz"], description="Job ID (format: job_{12chars})")
+    job_id: str = Field(examples=["job_abc123xyz"], description="Job ID (format: job_{12chars})")
     kind: str | None = Field(
         default=None, examples=["workflow"], description="Job type: 'workflow' or 'broker'"
     )
@@ -616,6 +616,11 @@ class JobOut(BaseModel):
     )
     toolkit_id: str | None = Field(
         default=None, examples=["default"], description="Toolkit that initiated this job"
+    )
+    agent_id: str | None = Field(
+        default=None,
+        examples=["agnt_abc123"],
+        description="Agent client_id when the job was created via an agent access token (at_…). Null for toolkit-key callers and admin-initiated jobs.",
     )
     status: str = Field(
         examples=["completed"],
@@ -765,6 +770,94 @@ class TraceListPage(BaseModel):
     traces: list[TraceOut] = Field(
         examples=[[]], description="Array of trace records for this page"
     )
+
+
+# ── Trace usage aggregations ─────────────────────────────────────────────────
+
+
+class UsageStats(BaseModel):
+    """High-level trace counts and latency for a single time window."""
+
+    total: int = Field(examples=[1234], description="Number of traces in window")
+    success: int = Field(examples=[980], description="Traces with status=success")
+    failed: int = Field(examples=[20], description="Traces with status=failed")
+    pending: int = Field(
+        default=0, examples=[0], description="Traces still in flight (status=pending)"
+    )
+    avg_ms: float | None = Field(
+        default=None, examples=[412.3], description="Mean duration in milliseconds (success+failed)"
+    )
+    p50_ms: float | None = Field(
+        default=None, examples=[210.0], description="Median duration in milliseconds"
+    )
+    p95_ms: float | None = Field(
+        default=None, examples=[1800.0], description="95th percentile duration in milliseconds"
+    )
+    active_now: int = Field(
+        default=0,
+        examples=[3],
+        description=(
+            "Snapshot count of in-flight async jobs (status pending or running) at "
+            "query time — not bound by the [since,until) window."
+        ),
+    )
+    model_config = {"extra": "allow"}
+
+
+class UsageBucket(BaseModel):
+    """One time bucket of trace counts; the UI plots these as a stacked bar chart."""
+
+    ts: float = Field(examples=[1700000000.0], description="Unix-second start of the bucket")
+    total: int = Field(examples=[42], description="Total traces in bucket")
+    success: int = Field(examples=[40], description="Successful traces in bucket")
+    failed: int = Field(examples=[2], description="Failed traces in bucket")
+    avg_ms: float | None = Field(
+        default=None, examples=[395.0], description="Mean duration in this bucket"
+    )
+    model_config = {"extra": "allow"}
+
+
+class UsageTopRow(BaseModel):
+    """One row in the `top` list — aggregation grouped by toolkit, API host or agent."""
+
+    key: str = Field(
+        examples=["api.github.com"],
+        description="Group key — toolkit_id, agent_client_id, or api host (depending on group_by)",
+    )
+    label: str | None = Field(
+        default=None,
+        examples=["GitHub"],
+        description=(
+            "Human-readable label for the row. Same as `key` unless the backend "
+            "joined a friendly name (e.g. agent client_name)."
+        ),
+    )
+    total: int = Field(examples=[500], description="Total traces in this row")
+    success: int = Field(examples=[490], description="Successful traces")
+    failed: int = Field(examples=[10], description="Failed traces")
+    avg_ms: float | None = Field(default=None, examples=[320.0], description="Mean duration")
+    model_config = {"extra": "allow"}
+
+
+class UsageResponse(BaseModel):
+    """Aggregated trace usage for the Monitor page (HealthStrip + bar chart + breakdown)."""
+
+    since: float = Field(examples=[1699913600.0], description="Window start (unix seconds)")
+    until: float = Field(examples=[1700000000.0], description="Window end (unix seconds)")
+    bucket_seconds: int = Field(
+        examples=[3600], description="Width of one bucket in seconds (chosen by server)"
+    )
+    group_by: str = Field(
+        examples=["toolkit"],
+        description="Grouping for the `top` list: 'toolkit' | 'api' | 'agent'",
+    )
+    stats: UsageStats
+    buckets: list[UsageBucket] = Field(default_factory=list, description="Time-bucketed counts")
+    top: list[UsageTopRow] = Field(
+        default_factory=list,
+        description="Top groups by total traces, descending. Capped at `limit`.",
+    )
+    model_config = {"extra": "allow"}
 
 
 # ── Workflows (output) ────────────────────────────────────────────────────────
