@@ -41,6 +41,18 @@ VENDORS = [
     ("api.notion.com", "POST", "/v1/pages", 200, "success"),
 ]
 
+# Catalog-form api_id (matches the broker's credentials.api_id naming) plus a
+# human-readable apis.name. Both are seeded into the apis table so the Monitor
+# `LEFT JOIN apis` resolves a label for every seeded vendor instead of falling
+# back to a raw host string.
+VENDOR_CATALOG = {
+    "api.slack.com": ("slack.com", "Slack"),
+    "api.github.com": ("github.com", "GitHub"),
+    "api.stripe.com": ("stripe.com", "Stripe"),
+    "api.openai.com": ("openai.com", "OpenAI"),
+    "api.notion.com": ("notion.com", "Notion"),
+}
+
 # Fake agent identities used to scatter ownership across the seeded executions.
 # Empty string (= NULL agent_id at write-time) is included so the "Unattributed"
 # bucket still appears, mimicking legacy unregistered-agent traffic.
@@ -101,6 +113,21 @@ def main() -> None:
         )
     print(f"registered agents: {list(FAKE_AGENT_NAMES.keys())}")
 
+    # Seed catalog rows for the fake vendors so the Monitor's LEFT JOIN apis
+    # resolves a human-readable label (e.g. "Slack" for slack.com). Without
+    # this, group_by=api falls back to rendering the catalog id directly,
+    # which is fine but loses the vendor branding in the breakdowns.
+    for _host, (api_id, api_name) in VENDOR_CATALOG.items():
+        cur.execute(
+            """
+            INSERT INTO apis (id, name, created_at)
+            VALUES (?, ?, unixepoch())
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name
+            """,
+            (api_id, api_name),
+        )
+    print(f"registered apis: {[v[0] for v in VENDOR_CATALOG.values()]}")
+
     rng = random.Random(42)
     inserted_exec = 0
     inserted_jobs = 0
@@ -117,14 +144,15 @@ def main() -> None:
         if duration < 30:
             duration = 30
         agent = rng.choice(FAKE_AGENTS) or None
+        api_id = VENDOR_CATALOG[host][0]
         exec_id = f"seed_{uuid.uuid4().hex[:12]}"
         cur.execute(
             """
             INSERT INTO executions (
                 id, toolkit_id, api_key_id, operation_id, workflow_id, spec_path,
                 inputs_hash, status, http_status, duration_ms, error,
-                created_at, completed_at, agent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, completed_at, agent_id, api_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 exec_id,
@@ -141,6 +169,7 @@ def main() -> None:
                 ts,
                 ts + duration / 1000.0,
                 agent,
+                api_id,
             ),
         )
         inserted_exec += 1
@@ -156,13 +185,14 @@ def main() -> None:
         if duration < 50:
             duration = 50
         agent = rng.choice(FAKE_AGENTS) or None
+        api_id = VENDOR_CATALOG[host][0]
         cur.execute(
             """
             INSERT INTO executions (
                 id, toolkit_id, api_key_id, operation_id, workflow_id, spec_path,
                 inputs_hash, status, http_status, duration_ms, error,
-                created_at, completed_at, agent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, completed_at, agent_id, api_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 f"seed_{uuid.uuid4().hex[:12]}",
@@ -179,6 +209,7 @@ def main() -> None:
                 ts,
                 ts + duration / 1000.0,
                 agent,
+                api_id,
             ),
         )
         inserted_exec += 1
