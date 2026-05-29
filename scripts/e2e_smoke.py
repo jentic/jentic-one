@@ -19,10 +19,16 @@ What it covers:
                          (job.trace_id == trace.id == execution_id)
 3. Mixed success/error → at least one 4xx response so the Monitor's
                          "failed" bucket has live data
+4. Workflow execution  → registers a tiny inline OpenAPI + Arazzo for
+                         httpbin, runs the workflow, and asserts each
+                         child broker trace carries parent_trace_id
+                         pointing at the workflow's own trace_id (proves
+                         the X-Jentic-Parent-Trace loopback header is
+                         honoured end-to-end)
 
-What it does NOT cover (out of scope for a public-API smoke):
-- Workflow execution / parent_trace_id (needs a registered Arazzo workflow)
-- Credential injection (none required for httpbin)
+What it does NOT cover (deliberately):
+- Credential injection (httpbin needs no auth)
+- Authenticated upstream APIs (would require secrets in CI)
 
 Idempotency: re-running the script against the same backend is safe — it
 reuses the existing ``e2e-smoke`` toolkit key if one is already labelled,
@@ -52,6 +58,7 @@ DEFAULT_BASE_URL = os.environ.get("JENTIC_BASE_URL", "http://localhost:5180")
 ADMIN_USERNAME = os.environ.get("JENTIC_ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("JENTIC_ADMIN_PASSWORD", "adminadmin")
 TOOLKIT_KEY_LABEL = "e2e-smoke"
+WORKFLOW_SLUG = "e2e-smoke-httpbin"
 SYNC_PROBES = [
     ("GET", "/get", 200),
     ("GET", "/status/200", 200),
@@ -239,6 +246,200 @@ def assert_trace_link(http: HTTPClient, trace_id: str, expected_job_id: str) -> 
     }
 
 
+# ── Workflow coverage ────────────────────────────────────────────────────────
+#
+# We register a tiny inline OpenAPI for httpbin.org plus a two-step Arazzo
+# workflow that calls it. Running the workflow proves the full
+# parent_trace_id chain end-to-end:
+#
+#     POST /workflows/{slug}              ← workflow_trace_id minted here
+#       └─ subprocess (arazzo-runner)
+#            session.headers["X-Jentic-Parent-Trace"] = workflow_trace_id
+#            ├─ broker GET /httpbin.org/get      → child_trace_1
+#            └─ broker GET /httpbin.org/uuid     → child_trace_2
+#
+# Both child traces should land in `executions` with
+#     parent_trace_id == workflow_trace_id
+# which the Monitor surfaces as "part of workflow X". The header is loopback-
+# only on the broker (see `tests/test_traces_xlinks.py`), so spoofing from
+# the public API surface is impossible — we exercise the trusted path here.
+
+
+_HTTPBIN_OPENAPI = {
+    "openapi": "3.0.0",
+    "info": {"title": "httpbin.org (e2e-smoke)", "version": "1.0.0"},
+    "servers": [{"url": "https://httpbin.org"}],
+    "paths": {
+        "/get": {
+            "get": {
+                "operationId": "httpbinGet",
+                "summary": "Echo request",
+                "responses": {"200": {"description": "ok"}},
+            }
+        },
+        "/uuid": {
+            "get": {
+                "operationId": "httpbinUuid",
+                "summary": "Random UUID",
+                "responses": {"200": {"description": "ok"}},
+            }
+        },
+    },
+}
+
+
+def _build_arazzo(spec_path: str) -> dict[str, Any]:
+    """Two-step workflow against the just-imported httpbin OpenAPI.
+
+    `sourceDescriptions[0].url` MUST be the on-disk path returned by the
+    OpenAPI import (the broker preprocessor reads it to rewrite servers
+    onto loopback). The container path is what matters here, not the host
+    path — the import response gives us exactly that.
+    """
+    return {
+        "arazzo": "1.0.0",
+        "info": {
+            "title": "e2e-smoke httpbin workflow",
+            "version": "1.0.0",
+            "description": "Two-step httpbin workflow used by scripts/e2e_smoke.py",
+        },
+        "sourceDescriptions": [
+            {"name": "httpbin", "type": "openapi", "url": spec_path},
+        ],
+        "workflows": [
+            {
+                "workflowId": WORKFLOW_SLUG,
+                "summary": "GET /get then GET /uuid against httpbin",
+                "description": "Drives parent_trace_id end-to-end.",
+                "inputs": {"type": "object", "properties": {}},
+                "steps": [
+                    {
+                        "stepId": "echo",
+                        "operationId": "httpbinGet",
+                        "outputs": {"echoed": "$response.body"},
+                    },
+                    {
+                        "stepId": "uuid",
+                        "operationId": "httpbinUuid",
+                        "outputs": {"uuid": "$response.body.uuid"},
+                    },
+                ],
+                "outputs": {
+                    "echoed": "$steps.echo.outputs.echoed",
+                    "uuid": "$steps.uuid.outputs.uuid",
+                },
+            }
+        ],
+    }
+
+
+def register_workflow_artifacts(http: HTTPClient) -> str:
+    """Import the httpbin OpenAPI + the Arazzo. Returns the workflow slug.
+
+    Idempotent: POST /import uses INSERT OR REPLACE for both apis and
+    workflows tables, so re-runs simply overwrite the previous registration.
+    """
+    status, _, body = http.json_request(
+        "POST",
+        "/import",
+        json_body={
+            "sources": [
+                {
+                    "type": "inline",
+                    "filename": "e2e-smoke-httpbin.json",
+                    "content": json.dumps(_HTTPBIN_OPENAPI),
+                }
+            ]
+        },
+    )
+    if status != 200 or not isinstance(body, dict) or body.get("status") not in ("ok", "partial"):
+        raise SystemExit(f"OpenAPI import failed (HTTP {status}): {body!r}")
+    api_result = body["results"][0]
+    if api_result.get("status") != "success":
+        raise SystemExit(f"OpenAPI import returned failure: {api_result!r}")
+    spec_path = api_result.get("spec_path")
+    if not spec_path:
+        raise SystemExit(f"OpenAPI import missing spec_path: {api_result!r}")
+
+    arazzo = _build_arazzo(spec_path)
+    status, _, body = http.json_request(
+        "POST",
+        "/import",
+        json_body={
+            "sources": [
+                {
+                    "type": "inline",
+                    "filename": "e2e-smoke-httpbin.arazzo.json",
+                    "content": json.dumps(arazzo),
+                }
+            ]
+        },
+    )
+    if status != 200 or not isinstance(body, dict) or body.get("status") not in ("ok", "partial"):
+        raise SystemExit(f"Arazzo import failed (HTTP {status}): {body!r}")
+    wf_result = body["results"][0]
+    if wf_result.get("status") != "success":
+        raise SystemExit(f"Arazzo import returned failure: {wf_result!r}")
+    slug = wf_result.get("slug")
+    if not slug:
+        raise SystemExit(f"Arazzo import missing slug: {wf_result!r}")
+    return slug
+
+
+def run_workflow(http: HTTPClient, slug: str) -> dict[str, Any]:
+    """Execute the workflow synchronously via POST /workflows/{slug}.
+
+    Auth uses the agent toolkit key (X-Jentic-API-Key), which the runner
+    subprocess re-uses on every child broker call. The workflow's own
+    trace_id comes back in the response body as `trace_id` — that is what
+    we expect each child trace's parent_trace_id to point at.
+    """
+    status, hdrs, body = http.json_request(
+        "POST",
+        f"/workflows/{slug}",
+        json_body={},
+        use_agent_key=True,
+    )
+    workflow_trace_id = None
+    if isinstance(body, dict):
+        workflow_trace_id = body.get("trace_id")
+    if not workflow_trace_id:
+        # Fall back to header for older builds; harmless on current code.
+        workflow_trace_id = hdrs.get("x-jentic-execution-id")
+    return {
+        "http": status,
+        "workflow_trace_id": workflow_trace_id,
+        "body": body,
+    }
+
+
+def assert_workflow_links(
+    http: HTTPClient, workflow_trace_id: str, host: str = HTTPBIN_HOST
+) -> dict[str, Any]:
+    """Find child traces of the workflow and confirm parent_trace_id is set.
+
+    Strategy: query /traces filtered by api_id=httpbin.org, then keep only
+    rows with parent_trace_id == workflow_trace_id. We expect at least two
+    (one per Arazzo step). Anything less is a regression.
+    """
+    status, _, body = http.json_request(
+        "GET",
+        f"/traces?api_id={host}&limit=50",
+    )
+    if status != 200 or not isinstance(body, dict):
+        return {"ok": False, "http": status, "reason": "lookup_failed", "body": body}
+    items = body.get("traces") or []
+    children = [t for t in items if t.get("parent_trace_id") == workflow_trace_id]
+    return {
+        "ok": len(children) >= 2,
+        "found": len(children),
+        "expected_min": 2,
+        "scanned": len(items),
+        "child_trace_ids": [t.get("id") for t in children],
+        "child_paths": [t.get("operation_id") for t in children],
+    }
+
+
 def section(title: str) -> None:
     print(f"\n=== {title} ===")
 
@@ -315,15 +516,50 @@ def main() -> int:
         if link_failures:
             print(f"  FAIL: {link_failures} cross-link check(s) failed")
 
+    section("Workflow execution (parent_trace_id end-to-end)")
+    wf_failures = 0
+    try:
+        slug = register_workflow_artifacts(http)
+        print(f"  registered  workflow={slug}  (httpbin OpenAPI + 2-step Arazzo)")
+        wf_run = run_workflow(http, slug)
+        wf_trace = wf_run["workflow_trace_id"]
+        if wf_run["http"] != 200 or not wf_trace:
+            wf_failures += 1
+            print(f"  ERR  workflow run failed: http={wf_run['http']} body={wf_run['body']!r}")
+        else:
+            wf_status = (
+                wf_run["body"].get("status") if isinstance(wf_run["body"], dict) else "unknown"
+            )
+            print(f"  ran         workflow_trace={wf_trace}  status={wf_status}")
+            link_check = assert_workflow_links(http, wf_trace)
+            if link_check["ok"]:
+                print(
+                    f"  ok  found {link_check['found']} child trace(s) "
+                    f"linked via parent_trace_id={wf_trace}"
+                )
+                for tid, path in zip(link_check["child_trace_ids"], link_check["child_paths"]):
+                    print(f"        child trace={tid}  path={path}")
+            else:
+                wf_failures += 1
+                print(f"  ERR parent_trace_id linkage: {link_check}")
+    except SystemExit as exc:
+        wf_failures += 1
+        print(f"  ERR workflow setup: {exc}")
+
     section("Summary")
     print(f"  base_url       : {http.base_url}")
     print(f"  sync probes    : {len(sync_results)} ({len(sync_failures)} unexpected)")
     print(f"  async probes   : {len(async_results)}")
+    print(f"  workflow       : {wf_failures} failure(s)")
     monitor_url = http.base_url.replace(":5180", ":5181") + "/monitor"
     print(f"  monitor page   : {monitor_url}")
     print(f"  agents page    : {monitor_url.rsplit('/', 1)[0]}/agents")
 
-    if sync_failures or (not args.skip_async and any(not r.get("job_id") for r in async_results)):
+    if (
+        sync_failures
+        or wf_failures
+        or (not args.skip_async and any(not r.get("job_id") for r in async_results))
+    ):
         return 1
     return 0
 
