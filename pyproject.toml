@@ -7,8 +7,8 @@ authors = [{ name = "Jentic", email = "hello@jentic.com" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.136.1",
-  "uvicorn[standard]==0.47.0",
+  "fastapi==0.136.3",
+  "uvicorn[standard]==0.48.0",
   "httpx==0.28.1",
   "aiohttp>=3.9,<4",
   "cryptography==48.0.0",
@@ -30,7 +30,7 @@ Homepage = "https://github.com/jentic/jentic-mini"
 dev = [
     "pytest>=9.0.3,<10",
     "pytest-asyncio>=0.24,<2",
-    "schemathesis>=4.15.0",
+    "schemathesis>=4.20.3",
     "ruff>=0.15.14,<0.16.0",
     "poethepoet>=0.37,<0.47",
 ]
@@ -52,6 +52,11 @@ explicit-preview-rules = true
 # conftest.py must set os.environ before any src.* imports, because
 # src/config.py reads DB_PATH at import time.
 "tests/conftest.py" = ["E402", "PLC0415"]
+# Tests routinely exercise private helpers from src/* (parser internals,
+# scoring functions, etc.) — that's the whole point of unit-level tests.
+# PLC2701 protects against private-name imports in production code; in
+# `tests/**/*.py` it just gets in the way.
+"tests/**/*.py" = ["PLC2701"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2

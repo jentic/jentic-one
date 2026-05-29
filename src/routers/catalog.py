@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 from typing import Annotated
 
+import yaml
 from fastapi import APIRouter, HTTPException, Path, Query
 
 from src.config import DATA_DIR
@@ -320,7 +321,9 @@ async def lazy_import_catalog_workflows(api_id: str) -> list[str]:
             json.dump(single_doc, f, indent=2)
 
         try:
-            result = await register_arazzo(single_doc, arazzo_path, slug_hint=slug)
+            result = await register_arazzo(
+                single_doc, arazzo_path, slug_hint=slug, parent_api_id=api_id
+            )
             imported_slugs.append(result["slug"])
         except Exception as e:
             log.warning("Failed to import workflow '%s' for '%s': %s", workflow_id, api_id, e)
@@ -549,6 +552,464 @@ async def list_catalog(
         "catalog_total": len(manifest),
         "manifest_age_seconds": age,
         "status": "ok" if manifest else "empty",
+    }
+
+
+# ── Detail Sheet preview ──────────────────────────────────────────────────────
+#
+# `_PREVIEW_MAX_OPERATIONS` keeps the response cheap-ish — the API Detail Sheet
+# only needs a scannable list, anything larger would punish the wire and the
+# browser. Real consumption goes through POST /import → /apis/{id}.
+#
+# IMPORTANT — route ordering: every `/catalog/{api_id:path}/<suffix>` route
+# (`preview_catalog_operations`, `preview_catalog_workflows`, …) MUST stay
+# declared above `get_catalog_entry`. The latter uses `/catalog/{api_id:path}`
+# which greedily matches slashes — declared in the other order it would
+# swallow `/operations` and `/workflows` as part of the api_id and never
+# resolve here.
+_PREVIEW_MAX_OPERATIONS = 200
+_HTTP_METHODS = ("get", "post", "put", "patch", "delete", "head", "options")
+
+
+def _resolve_local_ref(doc: dict, ref: str) -> dict | None:
+    """Resolve a local JSON Pointer ref (`#/components/parameters/Foo`).
+
+    Returns None for non-local refs (`http://...`, `relative.yaml#/...`)
+    or broken pointers. Preview tolerates broken refs by skipping the
+    affected parameter rather than failing the whole response.
+    """
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return None
+    node: object = doc
+    for seg in ref[2:].split("/"):
+        # JSON Pointer escape sequences (`~1` → `/`, `~0` → `~`).
+        seg = seg.replace("~1", "/").replace("~0", "~")
+        if not isinstance(node, dict) or seg not in node:
+            return None
+        node = node[seg]
+    return node if isinstance(node, dict) else None
+
+
+def _project_parameter(doc: dict, p: dict) -> dict | None:
+    """Slim a parameter object down to the fields the UI renders.
+
+    Resolves `$ref` for local component refs. Returns None when the
+    parameter is malformed or its ref can't be resolved — keep the
+    response forgiving on weird specs rather than 500-ing.
+    """
+    if "$ref" in p:
+        resolved = _resolve_local_ref(doc, p["$ref"])
+        if resolved is None:
+            return None
+        p = resolved
+    name = p.get("name")
+    in_ = p.get("in")
+    if not name or not in_:
+        return None
+    return {
+        "name": name,
+        "in": in_,
+        "required": bool(p.get("required", False)),
+        "description": p.get("description") or "",
+    }
+
+
+def _flatten_security(security_raw: list | None) -> list[str]:
+    """OpenAPI per-op `security` is a disjunction of conjunctions of scheme
+    names. The Detail Sheet only needs to render *which* schemes might
+    apply, not the precise AND/OR structure — so dedupe to a flat list
+    of scheme names in source order.
+    """
+    if not isinstance(security_raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for entry in security_raw:
+        if not isinstance(entry, dict):
+            continue
+        for name in entry.keys():
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
+def _slim_security_schemes(doc: dict) -> dict[str, dict]:
+    """Project `components.securitySchemes` down to the fields the UI
+    actually renders. Drops verbose OAuth `flows` description copy and
+    schema noise — preview only needs scheme type + key fields.
+    """
+    raw = (doc.get("components") or {}).get("securitySchemes") or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for name, scheme in raw.items():
+        if not isinstance(scheme, dict):
+            continue
+        slim: dict = {
+            "type": scheme.get("type"),
+            "description": scheme.get("description") or "",
+        }
+        scheme_type = scheme.get("type")
+        if scheme_type == "apiKey":
+            slim["in"] = scheme.get("in")
+            slim["name"] = scheme.get("name")
+        elif scheme_type == "http":
+            slim["scheme"] = scheme.get("scheme")
+            slim["bearerFormat"] = scheme.get("bearerFormat")
+        elif scheme_type == "oauth2":
+            # Just the flow names — full flow objects (scopes, urls) are too
+            # heavy for the Sheet header strip.
+            flows = scheme.get("flows") or {}
+            slim["flows"] = list(flows.keys()) if isinstance(flows, dict) else []
+        elif scheme_type == "openIdConnect":
+            slim["openIdConnectUrl"] = scheme.get("openIdConnectUrl")
+        out[name] = slim
+    return out
+
+
+def _parse_preview_operations(doc: dict, *, tag: str | None = None) -> list[dict]:
+    """Extract a UI-friendly operation list from an OpenAPI doc.
+
+    Distinct from `apis.parse_operations` — that one generates DB UUIDs and
+    jentic_ids tied to a resolved base URL. The Detail Sheet only needs
+    enough to render the operation row PLUS (since F8) the inline inspect
+    panel: {method, path, summary, description, operation_id, parameters,
+    security, tags}.
+
+    Parameters are merged from path-level and op-level lists; op-level
+    overrides path-level on the same `(name, in)` key (OpenAPI rule).
+    Per-op security falls back to doc-level security per the spec.
+
+    `tag` (case-insensitive substring match against `op.tags[]`) filters
+    *inside* the projector so the caller's `total` reflects the post-filter
+    count and `truncated` is computed against the filtered list — matching
+    how the existing `truncated`/`total` envelope already works.
+    """
+    ops: list[dict] = []
+    doc_security_flat = _flatten_security(doc.get("security"))
+    tag_lower = tag.lower() if tag else None
+    for path, methods in (doc.get("paths") or {}).items():
+        if not isinstance(methods, dict):
+            continue
+        # Path-level parameters apply to every method on this path (OpenAPI).
+        path_params: list[dict] = []
+        for p in methods.get("parameters") or []:
+            if isinstance(p, dict):
+                proj = _project_parameter(doc, p)
+                if proj is not None:
+                    path_params.append(proj)
+        for method, op in methods.items():
+            if method.lower() not in _HTTP_METHODS or not isinstance(op, dict):
+                continue
+            op_params: list[dict] = []
+            for p in op.get("parameters") or []:
+                if isinstance(p, dict):
+                    proj = _project_parameter(doc, p)
+                    if proj is not None:
+                        op_params.append(proj)
+            # Op params override path params with the same (name, in).
+            op_keys = {(p["name"], p["in"]) for p in op_params}
+            merged = op_params + [p for p in path_params if (p["name"], p["in"]) not in op_keys]
+            # Op security overrides doc security entirely (even an empty
+            # array means "no auth"); explicit `null`/absence means inherit.
+            op_security_raw = op.get("security")
+            security = (
+                _flatten_security(op_security_raw)
+                if op_security_raw is not None
+                else doc_security_flat
+            )
+            raw_tags = op.get("tags") or []
+            op_tags = [t for t in raw_tags if isinstance(t, str)]
+            if tag_lower is not None and not any(tag_lower in t.lower() for t in op_tags):
+                continue
+            ops.append(
+                {
+                    "method": method.upper(),
+                    "path": path,
+                    "summary": op.get("summary") or "",
+                    "description": op.get("description") or "",
+                    "operation_id": op.get("operationId"),
+                    "parameters": merged,
+                    "security": security,
+                    "tags": op_tags,
+                }
+            )
+    return ops
+
+
+@router.get(
+    "/catalog/{api_id:path}/operations",
+    summary="Preview operations for a catalog API without importing",
+    tags=["catalog"],
+    openapi_extra=agent_hints(
+        when_to_use=(
+            "Use to render a read-only operations list for a directory (catalog) "
+            "API before the user imports it. Fetches the spec server-side from "
+            "GitHub, parses it, and returns a flat list of {method, path, summary, "
+            "description, operation_id}. Powers the API Detail Sheet on the "
+            "Discover page."
+        ),
+        prerequisites=[
+            "Requires authentication (toolkit key or human session)",
+            "Valid catalog api_id from GET /catalog",
+        ],
+        avoid_when=(
+            "Do not use for APIs already registered locally — call "
+            "GET /apis/{api_id}/operations instead (returns DB-backed operations "
+            "with stable IDs). Do not use as a replacement for POST /import."
+        ),
+        related_operations=[
+            "GET /catalog/{api_id} — get spec_url and registration status",
+            "GET /apis/{api_id}/operations — read DB-backed operations after import",
+            "POST /import — register the API locally",
+        ],
+    ),
+)
+async def preview_catalog_operations(
+    api_id: Annotated[str, Path(description="Catalog api_id to preview operations for")],
+    offset: int = Query(0, ge=0, description="Number of operations to skip (pagination)."),
+    limit: int = Query(
+        _PREVIEW_MAX_OPERATIONS,
+        ge=1,
+        le=_PREVIEW_MAX_OPERATIONS,
+        description=(
+            "Maximum operations to return after applying `offset`. The hard ceiling "
+            f"is {_PREVIEW_MAX_OPERATIONS}; combined with `offset` it powers cheap "
+            "load-more pagination from the Detail Sheet."
+        ),
+    ),
+    tag: str | None = Query(
+        None,
+        description=(
+            "Case-insensitive substring filter on `op.tags[]`. Filtering happens "
+            "*before* counting, so `total` reflects the post-filter operation count "
+            "and `truncated` is computed against the filtered list."
+        ),
+    ),
+):
+    """Server-side spec fetch + parse for the directory API preview.
+
+    Why this exists: the Detail Sheet wants to show the operation table for a
+    directory API without committing to a full import. Doing it server-side is
+    the only sane option — fetching the raw GitHub spec from the browser hits
+    CORS, plus we already have urllib + yaml plumbing here.
+
+    Returns the same `{data, total}` envelope as `GET /apis/{id}/operations`
+    so the UI can reuse the same renderer for both workspace and directory
+    APIs. Capped at `_PREVIEW_MAX_OPERATIONS` for huge specs (stripe-style).
+    """
+    entries = load_manifest()
+    entry = next((e for e in entries if e["api_id"] == api_id), None)
+    if not entry:
+        raise HTTPException(404, f"'{api_id}' not found in the public catalog.")
+
+    spec_url: str | None = entry.get("spec_url")
+    if not spec_url:
+        raise HTTPException(
+            502,
+            f"Catalog entry '{api_id}' is missing spec_url — run POST /catalog/refresh and retry.",
+        )
+
+    try:
+        req = urllib.request.Request(spec_url, headers={"User-Agent": "Jentic/0.2"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(502, f"Spec fetch failed ({exc.code}): {exc.reason}")
+    except Exception as exc:
+        raise HTTPException(502, f"Spec fetch failed: {exc}")
+
+    try:
+        doc = (
+            yaml.safe_load(raw)
+            if spec_url.endswith((".yaml", ".yml")) or raw.lstrip().startswith("openapi:")
+            else json.loads(raw)
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Spec parse failed: {exc}")
+
+    if not isinstance(doc, dict):
+        raise HTTPException(502, "Spec is not a valid OpenAPI document (expected object).")
+
+    all_ops = _parse_preview_operations(doc, tag=tag)
+    total = len(all_ops)
+    window = all_ops[offset : offset + limit]
+    # `truncated` keeps the existing semantic: there is more data after this
+    # response window. Either the offset+limit slice didn't reach `total`, or
+    # the offset itself sat past the end (treated as not truncated since the
+    # client already knows there's no more).
+    truncated = (offset + len(window)) < total
+
+    return {
+        "data": window,
+        "total": total,
+        "truncated": truncated,
+        "offset": offset,
+        "limit": limit,
+        "spec_url": spec_url,
+        "info": {
+            "title": (doc.get("info") or {}).get("title"),
+            "version": (doc.get("info") or {}).get("version"),
+            "description": (doc.get("info") or {}).get("description"),
+        },
+        # Slimmed `components.securitySchemes` so the Sheet can resolve
+        # per-op `security: [<scheme_name>...]` references to a tooltip-
+        # friendly description without a second fetch.
+        "security_schemes": _slim_security_schemes(doc),
+    }
+
+
+# ── Workflow preview ──────────────────────────────────────────────────────────
+#
+# Mirror of `preview_catalog_operations`, but for the Arazzo workflows that
+# ship alongside an API in `jentic-public-apis/workflows/{vendor}`. The
+# Detail Sheet wants to render a list of available workflows for a directory
+# API ("this vendor ships 3 workflows: process payments, refund payments,
+# create customer") so the user can decide whether to import — without
+# having to commit to the import first.
+#
+# Why a server endpoint rather than letting the UI fetch GitHub directly:
+# CORS, plus we already have the raw_url + json plumbing here, plus we
+# can recompute the same slug `register_arazzo` would produce so the UI
+# can deep-link to `/workspace/workflows/<slug>` *after* import without
+# a second round-trip.
+
+
+def _preview_workflow_slug(workflow_id: str) -> str:
+    """Recompute the slug that `lazy_import_catalog_workflows` would
+    produce for this Arazzo `workflowId`. Keeping the algorithm identical
+    here means the UI can render a post-import deep link in the preview
+    response — no need to round-trip through `/workflows` after import to
+    learn the slug."""
+    slug = re.sub(r"[^a-z0-9-]", "-", workflow_id.lower()).strip("-")[:60]
+    return re.sub(r"-+", "-", slug)
+
+
+@router.get(
+    "/catalog/{api_id:path}/workflows",
+    summary="Preview workflows for a catalog API without importing",
+    tags=["catalog"],
+    openapi_extra=agent_hints(
+        when_to_use=(
+            "Use to render a read-only workflows list for a directory (catalog) "
+            "API before the user imports it. Fetches the Arazzo file server-side "
+            "from GitHub, parses it, and returns a flat list of "
+            "{workflow_id, slug, summary, description, steps_count}. Powers the "
+            "Workflows section of the API Detail Sheet on the Discover page."
+        ),
+        prerequisites=[
+            "Requires authentication (toolkit key or human session)",
+            "Valid catalog api_id from GET /catalog",
+            "API must have an entry in the workflow manifest "
+            "(otherwise returns `{data: [], total: 0}` rather than 404 "
+            "so the UI can render an empty section without branching).",
+        ],
+        avoid_when=(
+            "Do not use for APIs already imported with their workflows — call "
+            "GET /workflows?api_id=... instead (returns DB-backed workflows "
+            "with stable slugs and full step bodies). Do not use as a "
+            "replacement for POST /credentials, which triggers the actual "
+            "import pipeline."
+        ),
+        related_operations=[
+            "GET /catalog/{api_id} — get spec_url and registration status",
+            "GET /catalog/{api_id}/operations — preview operations for the same API",
+            "POST /credentials — import the API and its workflows in one go",
+        ],
+    ),
+)
+async def preview_catalog_workflows(
+    api_id: Annotated[str, Path(description="Catalog api_id to preview workflows for")],
+):
+    """Server-side Arazzo fetch + parse for the directory workflow preview.
+
+    Returns one row per workflow inside `workflows.arazzo.json` with just
+    enough metadata to render the API Detail Sheet's Workflows section
+    (workflow id, recomputed slug, summary, description, steps count).
+
+    Empty-list response (rather than 404) when the api_id has no
+    workflow manifest entry — keeps the UI rendering path uniform: the
+    sheet always asks, sometimes the answer is "none".
+    """
+    wf_manifest = load_workflow_manifest()
+    source_id = api_id.replace("/", "~", 1)
+    entry = next((e for e in wf_manifest if e["source_id"] == source_id), None)
+
+    # Vendor fallback so `api.stripe.com` finds the `stripe.com` workflow
+    # bundle — same logic as `lazy_import_catalog_workflows`. Without it
+    # subdomain-keyed APIs would falsely report zero workflows in the
+    # preview while *successfully* lazy-importing some at credential-add
+    # time, which is the worst kind of inconsistency.
+    if not entry:
+        from src.routers.apis import extract_vendor  # noqa: PLC0415  # circular import
+
+        vendor = extract_vendor(api_id)
+        if vendor:
+            entry = next(
+                (
+                    e
+                    for e in wf_manifest
+                    if e["api_id"] == vendor or e["api_id"].startswith(vendor + "/")
+                ),
+                None,
+            )
+
+    if not entry:
+        return {
+            "data": [],
+            "total": 0,
+            "api_id": api_id,
+            "arazzo_url": None,
+            "github_url": None,
+        }
+
+    arazzo_url = (
+        f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/"
+        f"{entry['path']}/workflows.arazzo.json"
+    )
+
+    try:
+        req = urllib.request.Request(arazzo_url, headers={"User-Agent": "Jentic/0.2"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(502, f"Arazzo fetch failed ({exc.code}): {exc.reason}")
+    except Exception as exc:
+        raise HTTPException(502, f"Arazzo fetch failed: {exc}")
+
+    try:
+        doc = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(502, f"Arazzo parse failed: {exc}")
+
+    if not isinstance(doc, dict):
+        raise HTTPException(502, "Arazzo file is not a valid object.")
+
+    out = []
+    for wf in doc.get("workflows", []):
+        if not isinstance(wf, dict):
+            continue
+        workflow_id = wf.get("workflowId", "")
+        if not workflow_id:
+            continue
+        steps = wf.get("steps") if isinstance(wf.get("steps"), list) else []
+        out.append(
+            {
+                "workflow_id": workflow_id,
+                "slug": _preview_workflow_slug(workflow_id),
+                "summary": wf.get("summary"),
+                "description": wf.get("description"),
+                "steps_count": len(steps),
+            }
+        )
+
+    return {
+        "data": out,
+        "total": len(out),
+        "api_id": api_id,
+        "arazzo_url": arazzo_url,
+        "github_url": f"https://github.com/{GITHUB_REPO}/tree/main/{entry['path']}",
     }
 
 

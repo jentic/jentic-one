@@ -438,7 +438,6 @@ export default function MonitorPage(): JSX.Element {
 	return (
 		<PageShell spacing="space-y-5">
 			<PageHeader
-				category="Observability"
 				title="Monitor"
 				actions={
 					<>

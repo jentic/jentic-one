@@ -37,15 +37,15 @@ describe('Layout', () => {
 		const user = userEvent.setup();
 		renderLayout();
 
-		// Click the desktop More button (the bottom-bar More opens a sheet
-		// with a different aria-label).
-		const moreButtons = await screen.findAllByRole('button', { name: /^more$/i });
+		// Either the desktop NavTabs (`name: "More"`) or the mobile BottomNavbar
+		// (`aria-label: "More navigation items"`) renders depending on the
+		// browser-mode viewport width — match either with a permissive regex.
+		const moreButtons = await screen.findAllByRole('button', { name: /^more\b/i });
 		await user.click(moreButtons[0]);
 
 		const text = document.body.textContent ?? '';
-		expect(text).toContain('Search');
-		expect(text).toContain('API Catalog');
-		expect(text).toContain('Workflows');
+		expect(text).toContain('Discover');
+		expect(text).toContain('Workspace');
 		expect(text).toContain('Credentials');
 	});
 

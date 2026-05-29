@@ -1,6 +1,20 @@
-import { type JSX } from 'react';
 import { LayoutGroup, motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
+
+/**
+ * Faithful port of `SegmentedToggle` from `@jentic/frontend-ui` (the design
+ * system shared with `jentic-webapp`). When syncing future changes from that
+ * package, keep this file 1:1 with the source so the design language stays
+ * aligned.
+ *
+ * Behaviour: a row of touching segments with a soft pill that slides
+ * between the active one via `framer-motion`'s shared `layoutId` animation.
+ *
+ * Each instance MUST receive a unique `layoutId` — `framer-motion` uses it
+ * to scope the shared-element animation, so two toggles on the same screen
+ * would otherwise "trade" their active indicators when either selection
+ * changes.
+ */
 
 export interface SegmentedToggleOption<T extends string = string> {
 	value: T;
@@ -21,7 +35,7 @@ export function SegmentedToggle<T extends string = string>({
 	onChange,
 	layoutId,
 	className,
-}: SegmentedToggleProps<T>): JSX.Element {
+}: SegmentedToggleProps<T>) {
 	return (
 		<LayoutGroup id={layoutId}>
 			<div
@@ -30,7 +44,9 @@ export function SegmentedToggle<T extends string = string>({
 				{options.map((option) => {
 					const isActive = value === option.value;
 					return (
-						// eslint-disable-next-line no-restricted-syntax -- SegmentedToggle is a primitive
+						// Raw <button> intentional: this primitive owns its own
+						// chrome and must not inherit `<Button>`'s defaults.
+						// eslint-disable-next-line no-restricted-syntax
 						<button
 							key={option.value}
 							type="button"
@@ -42,7 +58,7 @@ export function SegmentedToggle<T extends string = string>({
 						>
 							{isActive && (
 								<motion.div
-									layoutId={`activeSegment-${layoutId}`}
+									layoutId="activeSegment"
 									className="bg-foreground/10 ring-border/50 absolute inset-0 rounded-md shadow-sm ring-1"
 									transition={{
 										type: 'spring',

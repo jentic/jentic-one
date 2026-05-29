@@ -922,7 +922,7 @@
                     "catalog"
                 ],
                 "summary": "List APIs \u2014 browse all available API providers (local and catalog)",
-                "description": "Returns paginated list of API providers \u2014 both locally registered and from the Jentic public catalog.\n\nEvery entry has:\n- `source: \"local\"` \u2014 spec is indexed locally, operations are searchable and executable\n- `source: \"catalog\"` \u2014 available from the Jentic public catalog; add credentials to use\n- `has_credentials: bool` \u2014 whether credentials have been configured for this API\n\nUse `?source=local` or `?source=catalog` to filter. Default returns all.\nTo use a catalog API: call `POST /credentials` with `api_id` set \u2014 the spec is imported automatically.",
+                "description": "Returns paginated list of API providers \u2014 both locally registered and from the Jentic public catalog.\n\nEvery entry has:\n- `source: \"local\"` \u2014 spec is indexed locally, operations are searchable and executable\n- `source: \"catalog\"` \u2014 available from the Jentic public catalog; add credentials to use\n- `has_credentials: bool` \u2014 whether credentials have been configured for this API\n- `has_workflows: bool` \u2014 only on catalog rows; `true` when the public catalog\n  also ships Arazzo workflows for this vendor (renders as a `+ workflows` chip\n  in the UI). Always `false` / omitted on local rows since those workflows are\n  already imported and listed under `GET /workflows`.\n\nUse `?source=local` or `?source=catalog` to filter. Default returns all.\nTo use a catalog API: call `POST /credentials` with `api_id` set \u2014 the spec is imported automatically.",
                 "operationId": "list_apis_apis_get",
                 "parameters": [
                     {
@@ -987,6 +987,18 @@
                             "title": "Q"
                         },
                         "description": "Substring filter on API id/name"
+                    },
+                    {
+                        "name": "include_imported",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "boolean",
+                            "description": "When `source=catalog`, controls whether catalog entries that have already been imported into the local workspace are still returned. Default `false` preserves the historical 'things you don't have yet' behaviour used by the workspace 'From the catalog' section. The `/discover` UI sets this to `true` so users keep seeing the full Jentic public catalog after importing \u2014 registered entries surface with `source: local` and a `Ready` / `Credential expired` pill instead of vanishing. No-op when `source != catalog`.",
+                            "default": false,
+                            "title": "Include Imported"
+                        },
+                        "description": "When `source=catalog`, controls whether catalog entries that have already been imported into the local workspace are still returned. Default `false` preserves the historical 'things you don't have yet' behaviour used by the workspace 'From the catalog' section. The `/discover` UI sets this to `true` so users keep seeing the full Jentic public catalog after importing \u2014 registered entries surface with `source: local` and a `Ready` / `Credential expired` pill instead of vanishing. No-op when `source != catalog`."
                     }
                 ],
                 "responses": {
@@ -1117,6 +1129,59 @@
                     ]
                 },
                 "security": []
+            },
+            "delete": {
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Remove an API from the workspace",
+                "description": "Remove an API and its single-API workflows from the workspace.\n\nBy default credentials are preserved (api_id reference kept intact) so they\nautomatically re-link if the API is re-imported later. Toolkit bindings also\nsurvive. Pass `cascade=true` to also delete all credentials and their\ntoolkit bindings for a clean slate.",
+                "operationId": "delete_api_apis__api_id__delete",
+                "parameters": [
+                    {
+                        "name": "api_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "API id to delete, e.g. api.elevenlabs.io",
+                            "title": "Api Id"
+                        },
+                        "description": "API id to delete, e.g. api.elevenlabs.io"
+                    },
+                    {
+                        "name": "cascade",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "boolean",
+                            "description": "If true, also delete credentials bound to this API",
+                            "default": false,
+                            "title": "Cascade"
+                        },
+                        "description": "If true, also delete credentials bound to this API"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Successful Response"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "HumanLogin": []
+                    }
+                ]
             }
         },
         "/apis/{api_id}/openapi.json": {
@@ -1263,7 +1328,7 @@
                     "catalog"
                 ],
                 "summary": "List operations for an API \u2014 enumerate all available actions",
-                "description": "Returns paginated list of operations for the given API. Each item has capability id, summary, and description. Use GET /inspect/{id} for full schema.",
+                "description": "Returns paginated list of operations for the given API. Each item has capability id, summary, description and OpenAPI tags. Use GET /inspect/{id} for full schema.",
                 "operationId": "list_api_operations_apis__api_id__operations_get",
                 "parameters": [
                     {
@@ -1303,6 +1368,43 @@
                             "title": "Limit"
                         },
                         "description": "Results per page"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Skip N operations (0-indexed). When provided, takes precedence over `page` for cursor-style pagination \u2014 pass `offset=N&limit=M` to grab an arbitrary window from the Detail Sheet's load-more affordance.",
+                            "title": "Offset"
+                        },
+                        "description": "Skip N operations (0-indexed). When provided, takes precedence over `page` for cursor-style pagination \u2014 pass `offset=N&limit=M` to grab an arbitrary window from the Detail Sheet's load-more affordance."
+                    },
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Case-insensitive substring filter on the operation's OpenAPI `tags[]`. Tags are projected from the spec at request time. `total` reflects the post-filter count so the page envelope stays consistent.",
+                            "title": "Tag"
+                        },
+                        "description": "Case-insensitive substring filter on the operation's OpenAPI `tags[]`. Tags are projected from the spec at request time. `total` reflects the post-filter count so the page envelope stays consistent."
                     }
                 ],
                 "responses": {
@@ -1780,6 +1882,188 @@
                         "POST /import \u2014 import the API using the spec_url returned here",
                         "GET /apis \u2014 check if API is already registered before importing",
                         "POST /credentials \u2014 add credentials after importing"
+                    ]
+                },
+                "security": [
+                    {
+                        "JenticApiKey": []
+                    },
+                    {
+                        "AgentOauthAccessToken": []
+                    },
+                    {
+                        "HumanLogin": []
+                    }
+                ]
+            }
+        },
+        "/catalog/{api_id}/operations": {
+            "get": {
+                "tags": [
+                    "catalog",
+                    "catalog"
+                ],
+                "summary": "Preview operations for a catalog API without importing",
+                "description": "Server-side spec fetch + parse for the directory API preview.\n\nWhy this exists: the Detail Sheet wants to show the operation table for a\ndirectory API without committing to a full import. Doing it server-side is\nthe only sane option \u2014 fetching the raw GitHub spec from the browser hits\nCORS, plus we already have urllib + yaml plumbing here.\n\nReturns the same `{data, total}` envelope as `GET /apis/{id}/operations`\nso the UI can reuse the same renderer for both workspace and directory\nAPIs. Capped at `_PREVIEW_MAX_OPERATIONS` for huge specs (stripe-style).",
+                "operationId": "preview_catalog_operations_catalog__api_id__operations_get",
+                "parameters": [
+                    {
+                        "name": "api_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "Catalog api_id to preview operations for",
+                            "title": "Api Id"
+                        },
+                        "description": "Catalog api_id to preview operations for"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Number of operations to skip (pagination).",
+                            "default": 0,
+                            "title": "Offset"
+                        },
+                        "description": "Number of operations to skip (pagination)."
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "maximum": 200,
+                            "minimum": 1,
+                            "description": "Maximum operations to return after applying `offset`. The hard ceiling is 200; combined with `offset` it powers cheap load-more pagination from the Detail Sheet.",
+                            "default": 200,
+                            "title": "Limit"
+                        },
+                        "description": "Maximum operations to return after applying `offset`. The hard ceiling is 200; combined with `offset` it powers cheap load-more pagination from the Detail Sheet."
+                    },
+                    {
+                        "name": "tag",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Case-insensitive substring filter on `op.tags[]`. Filtering happens *before* counting, so `total` reflects the post-filter operation count and `truncated` is computed against the filtered list.",
+                            "title": "Tag"
+                        },
+                        "description": "Case-insensitive substring filter on `op.tags[]`. Filtering happens *before* counting, so `total` reflects the post-filter operation count and `truncated` is computed against the filtered list."
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "x-agent-hints": {
+                    "when_to_use": "Use to render a read-only operations list for a directory (catalog) API before the user imports it. Fetches the spec server-side from GitHub, parses it, and returns a flat list of {method, path, summary, description, operation_id}. Powers the API Detail Sheet on the Discover page.",
+                    "prerequisites": [
+                        "Requires authentication (toolkit key or human session)",
+                        "Valid catalog api_id from GET /catalog"
+                    ],
+                    "avoid_when": "Do not use for APIs already registered locally \u2014 call GET /apis/{api_id}/operations instead (returns DB-backed operations with stable IDs). Do not use as a replacement for POST /import.",
+                    "related_operations": [
+                        "GET /catalog/{api_id} \u2014 get spec_url and registration status",
+                        "GET /apis/{api_id}/operations \u2014 read DB-backed operations after import",
+                        "POST /import \u2014 register the API locally"
+                    ]
+                },
+                "security": [
+                    {
+                        "JenticApiKey": []
+                    },
+                    {
+                        "AgentOauthAccessToken": []
+                    },
+                    {
+                        "HumanLogin": []
+                    }
+                ]
+            }
+        },
+        "/catalog/{api_id}/workflows": {
+            "get": {
+                "tags": [
+                    "catalog",
+                    "catalog"
+                ],
+                "summary": "Preview workflows for a catalog API without importing",
+                "description": "Server-side Arazzo fetch + parse for the directory workflow preview.\n\nReturns one row per workflow inside `workflows.arazzo.json` with just\nenough metadata to render the API Detail Sheet's Workflows section\n(workflow id, recomputed slug, summary, description, steps count).\n\nEmpty-list response (rather than 404) when the api_id has no\nworkflow manifest entry \u2014 keeps the UI rendering path uniform: the\nsheet always asks, sometimes the answer is \"none\".",
+                "operationId": "preview_catalog_workflows_catalog__api_id__workflows_get",
+                "parameters": [
+                    {
+                        "name": "api_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "Catalog api_id to preview workflows for",
+                            "title": "Api Id"
+                        },
+                        "description": "Catalog api_id to preview workflows for"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "x-agent-hints": {
+                    "when_to_use": "Use to render a read-only workflows list for a directory (catalog) API before the user imports it. Fetches the Arazzo file server-side from GitHub, parses it, and returns a flat list of {workflow_id, slug, summary, description, steps_count}. Powers the Workflows section of the API Detail Sheet on the Discover page.",
+                    "prerequisites": [
+                        "Requires authentication (toolkit key or human session)",
+                        "Valid catalog api_id from GET /catalog",
+                        "API must have an entry in the workflow manifest (otherwise returns `{data: [], total: 0}` rather than 404 so the UI can render an empty section without branching)."
+                    ],
+                    "avoid_when": "Do not use for APIs already imported with their workflows \u2014 call GET /workflows?api_id=... instead (returns DB-backed workflows with stable slugs and full step bodies). Do not use as a replacement for POST /credentials, which triggers the actual import pipeline.",
+                    "related_operations": [
+                        "GET /catalog/{api_id} \u2014 get spec_url and registration status",
+                        "GET /catalog/{api_id}/operations \u2014 preview operations for the same API",
+                        "POST /credentials \u2014 import the API and its workflows in one go"
                     ]
                 },
                 "security": [
@@ -3762,7 +4046,7 @@
                     "search"
                 ],
                 "summary": "Search the catalog \u2014 find operations and workflows by natural language intent",
-                "description": "BM25 search over all registered API operations, Arazzo workflows, and the Jentic public API catalog.\n\nReturns id, summary, description (\u22643 sentences), type, score, and _links.\n- `source: \"local\"` \u2014 operation or workflow in your local registry\n- `source: \"catalog\"` \u2014 API available from the Jentic public catalog; add credentials to use\n\n_links.inspect \u2192 GET /inspect/{id} for full schema and auth detail.\n_links.execute \u2192 broker URL to call directly once ready.\nTypical flow: search \u2192 inspect \u2192 execute.",
+                "description": "BM25 search over all registered API operations, Arazzo workflows, and the Jentic public API catalog.\n\nReturns id, summary, description (\u22643 sentences), type, score, and _links.\n- `source: \"local\"` \u2014 operation or workflow in your local registry\n- `source: \"catalog\"` \u2014 API available from the Jentic public catalog; add credentials to use\n\nEach row also carries `matched_on` (which fields the query hit) and an\noptional `match_snippet` with the matched span wrapped in `\u0001` markers.\n\n_links.inspect \u2192 GET /inspect/{id} for full schema and auth detail.\n_links.execute \u2192 broker URL to call directly once ready.\nTypical flow: search \u2192 inspect \u2192 execute.",
                 "operationId": "search_search_get",
                 "parameters": [
                     {
@@ -3789,6 +4073,42 @@
                             "title": "N"
                         },
                         "description": "Number of results to return"
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Restrict results by source: `workspace` (locally registered APIs and workflows) or `directory` (Jentic public catalog). Default `all` mixes both. Legacy synonyms `local`\u2192`workspace` and `catalog`\u2192`directory` are accepted for backwards compatibility.",
+                            "title": "Source"
+                        },
+                        "description": "Restrict results by source: `workspace` (locally registered APIs and workflows) or `directory` (Jentic public catalog). Default `all` mixes both. Legacy synonyms `local`\u2192`workspace` and `catalog`\u2192`directory` are accepted for backwards compatibility."
+                    },
+                    {
+                        "name": "type",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Restrict by result type: `endpoint` (workspace operations only), `workflow` (workspace workflows + directory APIs that ship workflows), or `api` (directory APIs). Default `all` returns the full mix. Directory APIs always carry a `has_workflows` boolean indicating whether the public catalog also ships Arazzo workflows for that vendor.",
+                            "title": "Type"
+                        },
+                        "description": "Restrict by result type: `endpoint` (workspace operations only), `workflow` (workspace workflows + directory APIs that ship workflows), or `api` (directory APIs). Default `all` returns the full mix. Directory APIs always carry a `has_workflows` boolean indicating whether the public catalog also ships Arazzo workflows for that vendor."
                     }
                 ],
                 "responses": {
@@ -5784,9 +6104,48 @@
                     "catalog"
                 ],
                 "summary": "List workflows \u2014 browse available multi-step Arazzo workflows",
-                "description": "Returns registered workflows (source: local) plus available catalog workflow sources\n(source: catalog) \u2014 APIs in the Jentic public catalog that have associated workflows.\n\nCatalog entries show the API they belong to; add credentials to auto-import their workflows.\nUse ?source=local or ?source=catalog to filter. Default returns all.",
+                "description": "Returns registered workflows (source: local) plus available catalog workflow sources\n(source: catalog) \u2014 APIs in the Jentic public catalog that have associated workflows.\n\nCatalog entries show the API they belong to; add credentials to auto-import their workflows.\nUse ?source=local or ?source=catalog to filter. Default returns all.\n\nPass `page` + `limit` for a `{data, total, page, limit, total_pages}` envelope; omit\nboth to keep the original bare-list response (workspace tiles still work the old way).",
                 "operationId": "list_workflows_workflows_get",
                 "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "integer",
+                                    "minimum": 1
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Page number (1-indexed). When supplied alongside `limit`, the response switches from a bare list to a `{data, total, page, limit, total_pages}` envelope. Default (omitted) returns the unpaginated list for backward compatibility with existing callers.",
+                            "title": "Page"
+                        },
+                        "description": "Page number (1-indexed). When supplied alongside `limit`, the response switches from a bare list to a `{data, total, page, limit, total_pages}` envelope. Default (omitted) returns the unpaginated list for backward compatibility with existing callers."
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "anyOf": [
+                                {
+                                    "type": "integer",
+                                    "maximum": 100,
+                                    "minimum": 1
+                                },
+                                {
+                                    "type": "null"
+                                }
+                            ],
+                            "description": "Page size when paginating. Triggers the paginated envelope shape \u2014 see `page`. Omit both to keep the historical bare-list behaviour.",
+                            "title": "Limit"
+                        },
+                        "description": "Page size when paginating. Triggers the paginated envelope shape \u2014 see `page`. Omit both to keep the historical bare-list behaviour."
+                    },
                     {
                         "name": "q",
                         "in": "query",
@@ -5942,6 +6301,53 @@
                     ]
                 },
                 "security": []
+            },
+            "delete": {
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Delete a workflow from the workspace",
+                "description": "Permanently delete a workflow and its Arazzo file from the workspace.",
+                "operationId": "delete_workflow_workflows__slug__delete",
+                "parameters": [
+                    {
+                        "name": "slug",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "Workflow slug to delete",
+                            "title": "Slug"
+                        },
+                        "description": "Workflow slug to delete"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Successful Response"
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "JenticApiKey": []
+                    },
+                    {
+                        "AgentOauthAccessToken": []
+                    },
+                    {
+                        "HumanLogin": []
+                    }
+                ]
             }
         },
         "/{target}": {
@@ -8351,6 +8757,41 @@
                             [
                                 "api.github.com"
                             ]
+                        ]
+                    },
+                    "matched_on": {
+                        "anyOf": [
+                            {
+                                "items": {
+                                    "type": "string"
+                                },
+                                "type": "array"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Matched On",
+                        "description": "Which fields the query matched against \u2014 at least one of `name`, `operation_summary`, `description`, `tag`. Computed via cheap substring checks post-rank; intentionally pragmatic rather than reflecting BM25's internal matched fields.",
+                        "examples": [
+                            [
+                                "operation_summary"
+                            ]
+                        ]
+                    },
+                    "match_snippet": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Match Snippet",
+                        "description": "Short text snippet (~80 chars) around the matched substring from the highest-priority field that matched (priority order: `name > operation_summary > description > tag`). The matched span is wrapped in `\\u0001` sentinel characters so the client can render its own highlight without an XSS-prone HTML payload. Null when the result was a BM25 hit without an exact substring match in any field.",
+                        "examples": [
+                            "\u2026create a \u0001payment\u0001 intent on the Stripe\u2026"
                         ]
                     }
                 },

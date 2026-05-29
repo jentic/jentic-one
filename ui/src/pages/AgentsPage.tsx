@@ -485,9 +485,8 @@ export default function AgentsPage() {
 	return (
 		<PageShell>
 			<PageHeader
-				category="Security"
 				title="Agents"
-				description="Click an agent for details, toolkit access, and reachable credentials (aggregated in the browser from each granted toolkit)."
+				subtitle="Click an agent for details, toolkit access, and reachable credentials."
 			/>
 
 			<div className="mt-6">

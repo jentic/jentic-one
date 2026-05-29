@@ -102,7 +102,7 @@ export default function DashboardPage() {
 					{ label: 'Recent Traces', value: (tracesPage as any)?.total ?? '—' },
 				].map((stat) => (
 					<div key={stat.label} className="bg-muted border-border rounded-xl border p-4">
-						<div className="text-primary/60 mb-1 font-mono text-xs tracking-wider uppercase">
+						<div className="text-primary/75 mb-1 font-mono text-xs tracking-wider uppercase">
 							{stat.label}
 						</div>
 						<div className="text-foreground text-3xl font-bold">{stat.value}</div>
@@ -116,10 +116,10 @@ export default function DashboardPage() {
 				</h2>
 				<div className="grid grid-cols-2 gap-3 md:grid-cols-4">
 					{[
-						{ href: '/search', label: 'Search Catalog' },
+						{ href: '/catalog', label: 'Discover APIs' },
 						{ href: '/credentials', label: 'Add Credential' },
 						{ href: '/toolkits', label: 'Create Toolkit' },
-						{ href: '/catalog', label: 'Import an API' },
+						{ href: '/workspace', label: 'Open Workspace' },
 					].map((action) => (
 						<AppLink
 							key={action.href}

@@ -55,6 +55,7 @@ from src.routers import workflows as workflows_router
 from src.routers.apis import rebuild_index_on_startup
 from src.routers.catalog import refresh_catalog_if_stale
 from src.routers.toolkits import policy_router as toolkits_policy_router
+from src.routers.workflows import backfill_workflow_involved_apis
 from src.startup import backfill_credential_routes, seed_broker_apps, self_register
 from src.utils import build_absolute_url, build_canonical_url, route_path
 
@@ -79,6 +80,8 @@ async def lifespan(app: FastAPI):
     await self_register(app)
     log.info("Jentic refreshing catalog manifest")
     await refresh_catalog_if_stale()
+    log.info("Jentic backfilling workflow associations")
+    await backfill_workflow_involved_apis()
     log.info("Jentic seeding broker app mappings")
     await seed_broker_apps()
     log.info("Jentic loading OAuth brokers")

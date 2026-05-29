@@ -19,7 +19,7 @@ test.describe('Credentials page', () => {
 		const errors = captureConsoleErrors(page);
 		await page.goto('/');
 		await navigateTo(page, '/credentials');
-		await expect(page.getByRole('heading', { name: /credentials vault/i })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /^credentials$/i })).toBeVisible();
 		expect(errors).toHaveLength(0);
 	});
 

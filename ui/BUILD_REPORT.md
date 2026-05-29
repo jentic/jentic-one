@@ -4,44 +4,64 @@
 
 ### 1. **New Pages Built** ✅
 
-#### SearchPage (`/search`)
+#### DiscoverPage (`/catalog`) — unified Discover surface
 
-- Full-text search with BM25 over local operations, workflows, and public catalog
-- Debounced search input (400ms)
-- Result cards with:
-    - Type badge (operation/workflow)
-    - Source badge (local/catalog) with icons
-    - HTTP method badge (for operations)
-    - Relevance score (percentage)
-    - Capability ID with copy button
-- Expandable inline detail panel per result:
-    - Full parameter schema (name, type, required, description)
-    - Authentication requirements
-    - Links to API docs and trace history
-- Example query chips for empty state
-- Load more pagination (10/20/50 results)
-- Clean empty state with link to catalog
+Replaces the former `SearchPage` and `CatalogPage` with a single search-first page. `/search` redirects to `/catalog` preserving `?q=`.
 
-#### CatalogPage (`/catalog`)
+**Two modes in one page:**
 
-**Two tabs:**
+- **Browse mode** (`?q=` empty) — grid of APIs (default) or Workflows depending on the Type segment. APIs come from `GET /apis?source=…` which already merges + dedupes workspace and directory rows on the server; we no longer call `GET /catalog` separately (it returned a sparser shape that caused the "directory isn't showing" bug).
+- **Search mode** (`?q=<query>`) — BM25 results from `GET /search` rendered in up-to-three labelled sections (Endpoints, Workflows, APIs from the directory) so the entity-type distinction is unmissable.
 
-1. **Your APIs (registered)**:
-    - Lists all locally registered APIs
-    - Expandable operation list per API (first 50, with truncation notice)
-    - Operation cards show method badge, summary, path
-    - Link to search for each API
-    - Pagination (20 per page)
-    - Filter by name/ID
+**Entity types** (single source of truth in `DiscoveryCard.tsx`) — three only:
 
-2. **Public Catalog**:
-    - Browse Jentic public API catalog (jentic/jentic-public-apis)
-    - Filter: All | Registered | Unregistered
-    - Import button for unregistered APIs (routes to credential form)
-    - Refresh button (pulls fresh manifest from GitHub)
-    - Manifest age display
-    - Empty state with sync button
-    - GitHub links for each entry
+| Type | Browse | Search | Notes |
+|---|:---:|:---:|---|
+| `api` | ✅ default | ✅ (via server blend) | A whole HTTP API provider. `catalog_api`/`catalog_workflow_source` search hits collapse into this type with `source: directory` |
+| `workflow` | ✅ opt-in | ✅ | Arazzo multi-step recipe |
+| `endpoint` | ❌ hidden | ✅ | A single HTTP call. Renamed from "operation" because the intent of search queries like "send an email" matches endpoints, not vendors — and "endpoint" is friendlier than the Arazzo "operation" term |
+
+**Why no `importable` type and no explicit-import button?** An earlier iteration carved out `catalog_api` search hits as a fourth "Importable" type with its own filter segment, plus a `CatalogPanel` component with an "Import this API" button accessible by expanding the card. Both were removed because **adding a credential silently imports** (`POST /credentials` → `ensure_catalog_api_imported`). The workspace-vs-directory distinction is already carried by the Source axis, so a separate Type was duplicating it; and the explicit "Import this API" button duplicated the credential path with no value-add (you'd still need credentials to actually use the API). Directory APIs now render as regular `ApiCard`s with inline `+ Add credential` and a small `View on GitHub` external link (from `_links.github`).
+
+**API cards open a slide-out detail sheet; everything else expands inline.** Both workspace and directory API cards are clickable surfaces — click opens `ApiDetailSheet` (driven by `?inspect=<api_id>`). Workflows and endpoints still expand inline (they'll move into the sheet in Phase 2 once the pattern proves out for APIs). Inline action buttons on directory cards (`+ Add credential`, `View on GitHub`) call `e.stopPropagation()` so clicking them doesn't ALSO open the sheet.
+
+Each `DiscoveryCard` variant has visually distinct chrome (VendorIcon for APIs, teal-tinted Workflow icon, colored HTTP method badge for endpoints) plus an explicit leading type pill, so the three kinds can be told apart at a glance. Directory APIs get a **synthetic description** in `apiToEntity()` so their cards match the height of workspace cards in the grid (the catalog manifest doesn't carry a description field); the sheet's directory body prefers the live `info.description` from the parsed spec once the preview query resolves.
+
+**API Detail Sheet** (`components/discovery/ApiDetailSheet.tsx`) is the canonical "tell me about this API" surface — right-side slide-out built on the ported `SheetPrimitive`. URL-driven via `?inspect=<api_id>`; share-friendly (deep links open the sheet on page load); two-level navigation via `?op=<capability_id>` for the operation detail drill-down (workspace only). Workspace body queries `/apis/{id}/operations`; directory body queries `/catalog/{id}/operations` (a server-side spec preview that fetches + parses from GitHub, see `src/routers/catalog.py:preview_catalog_operations`). Op rows are clickable buttons for workspace (drill into `InspectPanel`), read-only for directory (until the user adds a credential and the API is imported).
+
+**Layout** — search input + Source/Type segments share a single sticky toolbar (`sticky top-12 z-20`) that bleeds to the viewport edge via `-mx-page-gutter`. Filters stay reachable while scrolling; on mobile they wrap below the search.
+
+**UI vocabulary** — diverges from the server contract on purpose:
+
+| UI label | Server `source` | Meaning |
+|---|---|---|
+| **My workspace** | `'local'` | Registered locally — ready to call |
+| **Public directory** | `'catalog'` | Available in the upstream catalog — adding a credential silently imports it |
+| **Endpoint** | search `operation` | A single HTTP call inside an API |
+| (no UI label) | search `catalog_api` / `catalog_workflow_source` | Folded into regular `ApiCard` rendering with `source: directory` — see "Why no `importable` type" above |
+
+Translation lives in adapters inside `DiscoverPage.tsx`. Pages that hit the server directly (`CredentialFormPage`, `DashboardPage`, etc.) continue to use the wire format.
+
+**URL contract** (single-select segments + sheet state):
+
+| Param | Browse values | Search values | Default |
+|-------|--------------|--------------|---------|
+| `?source` | `workspace` \| `directory` | `workspace` \| `directory` | absent → All |
+| `?type` | `api` (default, omittable) \| `workflow` | `endpoint` \| `workflow` | absent → All in search; `api` in browse |
+| `?inspect` | any api_id | any api_id | absent → sheet closed |
+| `?op` | any capability_id | any capability_id | absent → sheet shows API summary, not op detail |
+
+`?inspect` is orthogonal to search mode — `clearSearch` does NOT touch it. Backward-compat parser normalises any legacy URL to the new vocab: `?source=local` → `workspace`, `?source=catalog` → `directory`, comma-lists → `all`; `?type=operation` → `endpoint`, `?type=importable` → `all` (importable used to be a top-level type), comma-lists → `all`. On clearing the search box, search-only type values are dropped so the browse segment isn't visibly out of sync.
+
+**Shared discovery components** (`components/discovery/`):
+
+- `DiscoveryCard` — polymorphic row that dispatches to `ApiCard` / `WorkflowCard` / `EndpointCard` by `entity.type`. Endpoint cards include a parent-API breadcrumb so the "this is one call inside API X" relationship is explicit. API cards open the detail sheet; workflow + endpoint cards expand inline (Phase 2 will migrate them too)
+- `VendorIcon` — initials-in-a-square vendor icon (deterministic hashed colour)
+- `InspectPanel` — full parameter + auth detail for an operation; used both for inline `EndpointCard` expansion AND as the second-level view inside `ApiDetailSheet`
+- `OperationsPanel` — legacy inline ops list; no longer rendered by `DiscoveryCard` (the API sheet inlines its own row renderer to support row-level click drill-down). Kept as a standalone reusable component
+- `ApiDetailSheet` — right-side slide-out with workspace + directory bodies, operations list, and `?op=` drill-down. Built on `SheetPrimitive` (also ported from `@jentic/frontend-ui`)
+
+`CatalogPanel.tsx` and `hooks/useImportCatalogApi.ts` were **deleted** when the explicit-import UI was removed. The backend `POST /import` endpoint still exists; it's invoked transparently by `POST /credentials` via `ensure_catalog_api_imported`. The new `GET /catalog/{api_id}/operations` preview endpoint serves the read-only spec view inside the detail sheet without committing to a full import.
 
 #### WorkflowDetailPage (`/workflows/:slug`)
 
@@ -212,8 +232,7 @@ Import for `InspectService` added.
 
 ### Fully Covered ✅
 
-- Search (`/search`)
-- Catalog browsing (`/catalog` + `/catalog/{api_id}`)
+- Discover surface (`/catalog`) — browse + BM25 search (replaces former `/search` and `/catalog`)
 - Workflows list + detail (`/workflows`, `/workflows/:slug`)
 - Toolkits CRUD + keys + credentials + permissions + access requests
 - Credentials CRUD + vault management
@@ -301,10 +320,14 @@ Both gaps are expected — overlays and notes are advanced admin features, not c
 
 All requested features complete:
 
-- ✅ SearchPage and CatalogPage fully built
+- ✅ Unified DiscoverPage replacing SearchPage and CatalogPage
 - ✅ All static → dynamic text issues fixed
 - ✅ Permission request dialogs working with easy URLs
 - ✅ API coverage gaps reviewed (none critical)
 - ✅ Build passing with zero errors
+- ✅ Workspace page with full CRUD lifecycle, cascade delete with impact info, keyboard shortcuts, mobile responsive cards, expandable descriptions, stats strip, and credential re-link on re-import
+- ✅ Operations filtering works across full dataset (batch-fetched) when filter/tag is active
+- ✅ Post-import/delete state sync across pages (Discover → Workspace, cross-tab)
+- ✅ Navbar active-tab animation fixed for scroll scenarios
 
-The UI is now feature-complete for all core user journeys. Permission management, credential binding, search, catalog import, and approval flows all work end-to-end.
+The UI is now feature-complete for all core user journeys. Permission management, credential binding, search, catalog import, workspace management, and approval flows all work end-to-end.

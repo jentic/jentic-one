@@ -277,9 +277,22 @@ export async function mockTraceDetail(page: Page, id = 'trace-1') {
 }
 
 export async function mockWorkflows(page: Page) {
+	// `/workflows` returns a bare array by default (every consumer outside
+	// the workspace grid expects this). When the workspace pagination
+	// fan-out passes `page`/`limit`, switch to the
+	// `{data, total, page, limit, total_pages}` envelope. Mirrors the MSW
+	// handler in `ui/src/__tests__/mocks/handlers.ts`.
 	await page.route('**/workflows', (route) => {
 		if (!isApiRequest(route)) return route.continue();
 		return route.fulfill({ json: [] });
+	});
+	await page.route('**/workflows?*', (route) => {
+		if (!isApiRequest(route)) return route.continue();
+		const url = new URL(route.request().url());
+		const paged = url.searchParams.has('page') || url.searchParams.has('limit');
+		return route.fulfill({
+			json: paged ? { data: [], total: 0, page: 1, limit: 20, total_pages: 1 } : [],
+		});
 	});
 }
 

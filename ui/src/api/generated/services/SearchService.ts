@@ -15,6 +15,9 @@ export class SearchService {
      * - `source: "local"` — operation or workflow in your local registry
      * - `source: "catalog"` — API available from the Jentic public catalog; add credentials to use
      *
+     * Each row also carries `matched_on` (which fields the query hit) and an
+     * optional `match_snippet` with the matched span wrapped in `` markers.
+     *
      * _links.inspect → GET /inspect/{id} for full schema and auth detail.
      * _links.execute → broker URL to call directly once ready.
      * Typical flow: search → inspect → execute.
@@ -24,6 +27,8 @@ export class SearchService {
     public static searchSearchGet({
         q,
         n = 10,
+        source,
+        type,
     }: {
         /**
          * Search query, e.g. "send an email" or "create payment"
@@ -33,6 +38,14 @@ export class SearchService {
          * Number of results to return
          */
         n?: number,
+        /**
+         * Restrict results by source: `workspace` (locally registered APIs and workflows) or `directory` (Jentic public catalog). Default `all` mixes both. Legacy synonyms `local`→`workspace` and `catalog`→`directory` are accepted for backwards compatibility.
+         */
+        source?: (string | null),
+        /**
+         * Restrict by result type: `endpoint` (workspace operations only), `workflow` (workspace workflows + directory APIs that ship workflows), or `api` (directory APIs). Default `all` returns the full mix. Directory APIs always carry a `has_workflows` boolean indicating whether the public catalog also ships Arazzo workflows for that vendor.
+         */
+        type?: (string | null),
     }): CancelablePromise<Array<SearchResult>> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -40,6 +53,8 @@ export class SearchService {
             query: {
                 'q': q,
                 'n': n,
+                'source': source,
+                'type': type,
             },
             errors: {
                 422: `Validation Error`,

@@ -1,12 +1,11 @@
 import {
 	Activity,
 	Bot,
-	BookOpen,
+	Compass,
 	FolderOpen,
 	KeyRound,
 	LayoutDashboard,
-	Search,
-	Workflow,
+	LayoutGrid,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -24,21 +23,28 @@ export type NavItem = {
  * "More ▾" dropdown (`BottomNavbar` uses a fixed `TILE_LIMIT` instead).
  *
  * Order is deliberate — frequently-touched routes first, observability and
- * Search last (Search has its own keyboard affordance elsewhere). This is
- * NOT the same order as the old sidebar; expect muscle-memory drift.
+ * settings last.
  *
- * Icon choices mirror `jentic-webapp` where the concepts overlap
- * (Toolkits → FolderOpen, Workflows → Workflow, Traces → Activity).
- * Mini-only routes (Dashboard, Credentials, Catalog, Agents, Async Jobs,
- * Search) keep semantically appropriate Lucide icons.
+ * The IA splits the discovery surface in two:
+ *   - `Workspace` (`/workspace`) — what you've imported and have
+ *     credentials for. Lists both APIs and your own Arazzo workflows.
+ *   - `Discover` (`/discover`) — the public catalog you can pull from,
+ *     including the catalog of workflows.
+ *
+ * Observability is unified under `Monitor` (`/monitor`), a single page
+ * with three tabs (Overview, Execution Log, Jobs) that replaces the
+ * previously-separate Traces and Async Jobs nav items. The old
+ * `/traces` and `/jobs` routes redirect to `/monitor` (see App.tsx).
+ *
+ * Search has been folded into Discover; the `/workflows` list was
+ * retired in favour of Workspace.
  */
 export const NAV_ITEMS: NavItem[] = [
 	{ href: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+	{ href: '/workspace', label: 'Workspace', icon: LayoutGrid },
+	{ href: '/discover', label: 'Discover', icon: Compass },
 	{ href: '/toolkits', label: 'Toolkits', icon: FolderOpen },
 	{ href: '/credentials', label: 'Credentials', icon: KeyRound },
-	{ href: '/catalog', label: 'API Catalog', icon: BookOpen },
-	{ href: '/workflows', label: 'Workflows', icon: Workflow },
 	{ href: '/agents', label: 'Agents', icon: Bot },
 	{ href: '/monitor', label: 'Monitor', icon: Activity },
-	{ href: '/search', label: 'Search', icon: Search },
 ];

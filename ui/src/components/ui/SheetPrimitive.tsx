@@ -1,10 +1,17 @@
 /**
- * SheetPrimitive — accessible side/bottom slide-over.
+ * SheetPrimitive
  *
- * Ported from `@jentic/frontend-ui` so the monitor detail sheet can render
- * without pulling in the workspace-internal package. Renders into a portal,
- * traps focus, restores focus on close, and locks background scroll via
- * `overscroll-behavior: contain` (Chrome 144+).
+ * Low-level accessible sheet/drawer that slides in from an edge of the
+ * viewport. Ported verbatim from `@jentic/frontend-ui` so the Discover Detail
+ * Sheet behaves the same as the webapp. Keep this file dumb — no business
+ * logic, no data fetching, just focus management + animation + portaling.
+ *
+ * Behaviour:
+ *   - Slides from right (default), left, or bottom
+ *   - Focus trap + restoration to the trigger on close
+ *   - Escape + backdrop click close (opt-out with `preventClose`)
+ *   - Body scroll lock via `overscroll-behavior: contain`
+ *   - ARIA dialog semantics
  */
 
 import {
@@ -20,16 +27,27 @@ import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
 export interface SheetPrimitiveProps {
+	/** Whether the sheet is open. */
 	open: boolean;
+	/** Fired when the sheet should close (Escape, backdrop click, etc.). */
 	onClose: () => void;
+	/** Sheet content. */
 	children: ReactNode;
+	/** Which side the sheet slides from. */
 	side?: 'right' | 'bottom' | 'left';
+	/** Extra classes for the sheet panel. */
 	className?: string;
+	/** Extra classes for the backdrop overlay. */
 	overlayClassName?: string;
+	/** If true, clicking outside / Escape will NOT close the sheet. */
 	preventClose?: boolean;
+	/** Ref to the element that should receive focus when the sheet opens. */
 	initialFocus?: RefObject<HTMLElement | null>;
+	/** Fired after the closing animation has fully completed. */
 	onAfterClose?: () => void;
+	/** ARIA label for the sheet. */
 	ariaLabel?: string;
+	/** ID of the element that labels the sheet (preferred over ariaLabel). */
 	ariaLabelledBy?: string;
 }
 
@@ -46,20 +64,20 @@ const ANIMATION_DURATION = 300;
 
 const SIDE_STYLES = {
 	right: {
-		container: 'inset-y-0 right-0',
-		panel: 'h-full w-full sm:w-[480px] sm:max-w-[90vw]',
+		container: 'inset-y-0 inset-x-0 sm:left-auto sm:right-0',
+		panel: 'h-full w-full max-w-full sm:w-[480px] sm:max-w-[90vw]',
 		enter: 'translate-x-0',
 		exit: 'translate-x-full',
 	},
 	left: {
-		container: 'inset-y-0 left-0',
-		panel: 'h-full w-full sm:w-[480px] sm:max-w-[90vw]',
+		container: 'inset-y-0 inset-x-0 sm:right-auto sm:left-0',
+		panel: 'h-full w-full max-w-full sm:w-[480px] sm:max-w-[90vw]',
 		enter: 'translate-x-0',
 		exit: '-translate-x-full',
 	},
 	bottom: {
 		container: 'inset-x-0 bottom-0',
-		panel: 'w-full max-h-[85dvh] rounded-t-xl overflow-hidden flex flex-col',
+		panel: 'flex max-h-[85dvh] w-full flex-col overflow-hidden rounded-t-xl',
 		enter: 'translate-y-0',
 		exit: 'translate-y-full',
 	},
@@ -91,36 +109,59 @@ export function SheetPrimitive({
 		setMounted(true);
 	}, []);
 
+	// `open` is the only dependency — animationState is the internal state we drive.
+	// Including it would create races between user toggles and animation timers.
 	useEffect(() => {
 		if (open) {
-			if (animationState === 'closed') {
-				setAnimationState('entering');
-			}
+			if (animationState === 'closed') setAnimationState('entering');
 		} else {
 			if (animationState === 'open' || animationState === 'entering') {
 				setAnimationState('exiting');
 			}
 		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
+
+	// `onAfterClose` lives in a ref so callers can pass an inline closure
+	// without resetting the 300ms exit timer on every parent render. Including
+	// the prop in the effect deps below would cancel + restart `setTimeout`
+	// every render — for parents that re-render frequently (e.g. data
+	// loading) the timer never actually fires and the sheet won't close.
+	const onAfterCloseRef = useRef(onAfterClose);
+	useEffect(() => {
+		onAfterCloseRef.current = onAfterClose;
+	}, [onAfterClose]);
 
 	useEffect(() => {
 		if (animationState === 'entering') {
+			// Double rAF: first frame paints with `exit` transform, next frame swaps
+			// to `enter` so the transition fires. Single rAF flickers in Chromium.
+			let cancelled = false;
 			const enterTimer = requestAnimationFrame(() => {
 				requestAnimationFrame(() => {
-					setAnimationState('open');
+					if (!cancelled) {
+						// Functional update: only commit `open` if we're still entering.
+						// Guards against a fast close while the rAF was queued — without
+						// this, the queued `setState('open')` would override a freshly
+						// transitioned `'exiting'` state, leaving the sheet stuck open.
+						setAnimationState((s) => (s === 'entering' ? 'open' : s));
+					}
 				});
 			});
-			return () => cancelAnimationFrame(enterTimer);
+			return (): void => {
+				cancelled = true;
+				cancelAnimationFrame(enterTimer);
+			};
 		}
 
 		if (animationState === 'exiting') {
 			const exitTimer = setTimeout(() => {
 				setAnimationState('closed');
-				onAfterClose?.();
+				onAfterCloseRef.current?.();
 			}, ANIMATION_DURATION);
-			return () => clearTimeout(exitTimer);
+			return (): void => clearTimeout(exitTimer);
 		}
-	}, [animationState, onAfterClose]);
+	}, [animationState]);
 
 	useEffect(() => {
 		if (animationState === 'entering') {
@@ -137,7 +178,7 @@ export function SheetPrimitive({
 					firstFocusable?.focus();
 				}
 			}, 50);
-			return () => clearTimeout(timer);
+			return (): void => clearTimeout(timer);
 		}
 	}, [animationState, initialFocus]);
 
@@ -151,6 +192,9 @@ export function SheetPrimitive({
 		}
 	}, [animationState]);
 
+	// `overscroll-behavior: contain` (Chrome 144+) is the modern scroll-lock.
+	// Older browsers will allow background scroll; the backdrop still blocks
+	// pointer events so the UX degrades gracefully without layout shift.
 	useEffect(() => {
 		if (animationState !== 'closed') {
 			document.documentElement.style.setProperty('overscroll-behavior', 'contain');
@@ -162,7 +206,7 @@ export function SheetPrimitive({
 	}, [animationState]);
 
 	useEffect(() => {
-		return () => {
+		return (): void => {
 			document.documentElement.style.removeProperty('overscroll-behavior');
 			document.body.style.removeProperty('overscroll-behavior');
 		};
@@ -182,8 +226,10 @@ export function SheetPrimitive({
 				const focusable =
 					sheetRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
 				if (!focusable?.length) return;
+
 				const first = focusable[0];
 				const last = focusable[focusable.length - 1];
+
 				if (e.shiftKey && document.activeElement === first) {
 					e.preventDefault();
 					last.focus();
@@ -198,7 +244,7 @@ export function SheetPrimitive({
 
 	useEffect(() => {
 		document.addEventListener('keydown', handleKeyDown);
-		return () => document.removeEventListener('keydown', handleKeyDown);
+		return (): void => document.removeEventListener('keydown', handleKeyDown);
 	}, [handleKeyDown]);
 
 	const handleBackdropClick = useCallback(() => {
@@ -225,7 +271,7 @@ export function SheetPrimitive({
 				aria-hidden="true"
 			/>
 
-			<div className={cn('fixed', styles.container)}>
+			<div className={cn('fixed max-w-full', styles.container)}>
 				<div
 					ref={sheetRef}
 					role="dialog"
@@ -233,7 +279,7 @@ export function SheetPrimitive({
 					aria-label={ariaLabel}
 					aria-labelledby={ariaLabelledBy}
 					className={cn(
-						'bg-card border-border shadow-xl',
+						'bg-card border-border overflow-x-hidden shadow-xl',
 						'transition-transform duration-300 ease-out',
 						styles.panel,
 						side === 'right' && 'border-l',
@@ -246,6 +292,7 @@ export function SheetPrimitive({
 						willChange: 'transform',
 						overscrollBehavior: 'contain',
 					}}
+					data-testid="sheet-primitive"
 				>
 					{children}
 				</div>

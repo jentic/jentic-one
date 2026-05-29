@@ -21,6 +21,10 @@ export class CatalogService {
      * - `source: "local"` — spec is indexed locally, operations are searchable and executable
      * - `source: "catalog"` — available from the Jentic public catalog; add credentials to use
      * - `has_credentials: bool` — whether credentials have been configured for this API
+     * - `has_workflows: bool` — only on catalog rows; `true` when the public catalog
+     * also ships Arazzo workflows for this vendor (renders as a `+ workflows` chip
+     * in the UI). Always `false` / omitted on local rows since those workflows are
+     * already imported and listed under `GET /workflows`.
      *
      * Use `?source=local` or `?source=catalog` to filter. Default returns all.
      * To use a catalog API: call `POST /credentials` with `api_id` set — the spec is imported automatically.
@@ -32,6 +36,7 @@ export class CatalogService {
         limit = 20,
         source,
         q,
+        includeImported = false,
     }: {
         /**
          * Page number (1-indexed)
@@ -49,6 +54,10 @@ export class CatalogService {
          * Substring filter on API id/name
          */
         q?: (string | null),
+        /**
+         * When `source=catalog`, controls whether catalog entries that have already been imported into the local workspace are still returned. Default `false` preserves the historical 'things you don't have yet' behaviour used by the workspace 'From the catalog' section. The `/discover` UI sets this to `true` so users keep seeing the full Jentic public catalog after importing — registered entries surface with `source: local` and a `Ready` / `Credential expired` pill instead of vanishing. No-op when `source != catalog`.
+         */
+        includeImported?: boolean,
     }): CancelablePromise<ApiListPage> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -58,6 +67,7 @@ export class CatalogService {
                 'limit': limit,
                 'source': source,
                 'q': q,
+                'include_imported': includeImported,
             },
             errors: {
                 422: `Validation Error`,
@@ -119,6 +129,44 @@ export class CatalogService {
             },
             query: {
                 'sections': sections,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Remove an API from the workspace
+     * Remove an API and its single-API workflows from the workspace.
+     *
+     * By default credentials are preserved (api_id reference kept intact) so they
+     * automatically re-link if the API is re-imported later. Toolkit bindings also
+     * survive. Pass `cascade=true` to also delete all credentials and their
+     * toolkit bindings for a clean slate.
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteApiApisApiIdDelete({
+        apiId,
+        cascade = false,
+    }: {
+        /**
+         * API id to delete, e.g. api.elevenlabs.io
+         */
+        apiId: string,
+        /**
+         * If true, also delete credentials bound to this API
+         */
+        cascade?: boolean,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/apis/{api_id}',
+            path: {
+                'api_id': apiId,
+            },
+            query: {
+                'cascade': cascade,
             },
             errors: {
                 422: `Validation Error`,
@@ -197,7 +245,7 @@ export class CatalogService {
     }
     /**
      * List operations for an API — enumerate all available actions
-     * Returns paginated list of operations for the given API. Each item has capability id, summary, and description. Use GET /inspect/{id} for full schema.
+     * Returns paginated list of operations for the given API. Each item has capability id, summary, description and OpenAPI tags. Use GET /inspect/{id} for full schema.
      * @returns OperationListPage Operation list — format controlled by Accept header.
      * @throws ApiError
      */
@@ -205,6 +253,8 @@ export class CatalogService {
         apiId,
         page = 1,
         limit = 50,
+        offset,
+        tag,
     }: {
         /**
          * API ID to list operations for
@@ -218,6 +268,14 @@ export class CatalogService {
          * Results per page
          */
         limit?: number,
+        /**
+         * Skip N operations (0-indexed). When provided, takes precedence over `page` for cursor-style pagination — pass `offset=N&limit=M` to grab an arbitrary window from the Detail Sheet's load-more affordance.
+         */
+        offset?: (number | null),
+        /**
+         * Case-insensitive substring filter on the operation's OpenAPI `tags[]`. Tags are projected from the spec at request time. `total` reflects the post-filter count so the page envelope stays consistent.
+         */
+        tag?: (string | null),
     }): CancelablePromise<OperationListPage> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -228,6 +286,8 @@ export class CatalogService {
             query: {
                 'page': page,
                 'limit': limit,
+                'offset': offset,
+                'tag': tag,
             },
             errors: {
                 422: `Validation Error`,
@@ -441,6 +501,93 @@ export class CatalogService {
         });
     }
     /**
+     * Preview operations for a catalog API without importing
+     * Server-side spec fetch + parse for the directory API preview.
+     *
+     * Why this exists: the Detail Sheet wants to show the operation table for a
+     * directory API without committing to a full import. Doing it server-side is
+     * the only sane option — fetching the raw GitHub spec from the browser hits
+     * CORS, plus we already have urllib + yaml plumbing here.
+     *
+     * Returns the same `{data, total}` envelope as `GET /apis/{id}/operations`
+     * so the UI can reuse the same renderer for both workspace and directory
+     * APIs. Capped at `_PREVIEW_MAX_OPERATIONS` for huge specs (stripe-style).
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static previewCatalogOperationsCatalogApiIdOperationsGet({
+        apiId,
+        offset,
+        limit = 200,
+        tag,
+    }: {
+        /**
+         * Catalog api_id to preview operations for
+         */
+        apiId: string,
+        /**
+         * Number of operations to skip (pagination).
+         */
+        offset?: number,
+        /**
+         * Maximum operations to return after applying `offset`. The hard ceiling is 200; combined with `offset` it powers cheap load-more pagination from the Detail Sheet.
+         */
+        limit?: number,
+        /**
+         * Case-insensitive substring filter on `op.tags[]`. Filtering happens *before* counting, so `total` reflects the post-filter operation count and `truncated` is computed against the filtered list.
+         */
+        tag?: (string | null),
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/catalog/{api_id}/operations',
+            path: {
+                'api_id': apiId,
+            },
+            query: {
+                'offset': offset,
+                'limit': limit,
+                'tag': tag,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Preview workflows for a catalog API without importing
+     * Server-side Arazzo fetch + parse for the directory workflow preview.
+     *
+     * Returns one row per workflow inside `workflows.arazzo.json` with just
+     * enough metadata to render the API Detail Sheet's Workflows section
+     * (workflow id, recomputed slug, summary, description, steps count).
+     *
+     * Empty-list response (rather than 404) when the api_id has no
+     * workflow manifest entry — keeps the UI rendering path uniform: the
+     * sheet always asks, sometimes the answer is "none".
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static previewCatalogWorkflowsCatalogApiIdWorkflowsGet({
+        apiId,
+    }: {
+        /**
+         * Catalog api_id to preview workflows for
+         */
+        apiId: string,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/catalog/{api_id}/workflows',
+            path: {
+                'api_id': apiId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * Import an API spec or workflow — add to the searchable catalog
      * Registers an OpenAPI spec or Arazzo workflow into the catalog and BM25 index.
      * Source types: path (local file), url (fetch from URL), inline (spec content in request body).
@@ -571,13 +718,26 @@ export class CatalogService {
      *
      * Catalog entries show the API they belong to; add credentials to auto-import their workflows.
      * Use ?source=local or ?source=catalog to filter. Default returns all.
+     *
+     * Pass `page` + `limit` for a `{data, total, page, limit, total_pages}` envelope; omit
+     * both to keep the original bare-list response (workspace tiles still work the old way).
      * @returns any Successful Response
      * @throws ApiError
      */
     public static listWorkflowsWorkflowsGet({
+        page,
+        limit,
         q,
         source,
     }: {
+        /**
+         * Page number (1-indexed). When supplied alongside `limit`, the response switches from a bare list to a `{data, total, page, limit, total_pages}` envelope. Default (omitted) returns the unpaginated list for backward compatibility with existing callers.
+         */
+        page?: (number | null),
+        /**
+         * Page size when paginating. Triggers the paginated envelope shape — see `page`. Omit both to keep the historical bare-list behaviour.
+         */
+        limit?: (number | null),
         /**
          * Filter by name or API, e.g. "stripe" or "oauth"
          */
@@ -591,6 +751,8 @@ export class CatalogService {
             method: 'GET',
             url: '/workflows',
             query: {
+                'page': page,
+                'limit': limit,
                 'q': q,
                 'source': source,
             },
@@ -621,6 +783,31 @@ export class CatalogService {
     }): CancelablePromise<Record<string, any>> {
         return __request(OpenAPI, {
             method: 'GET',
+            url: '/workflows/{slug}',
+            path: {
+                'slug': slug,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete a workflow from the workspace
+     * Permanently delete a workflow and its Arazzo file from the workspace.
+     * @returns void
+     * @throws ApiError
+     */
+    public static deleteWorkflowWorkflowsSlugDelete({
+        slug,
+    }: {
+        /**
+         * Workflow slug to delete
+         */
+        slug: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
             url: '/workflows/{slug}',
             path: {
                 'slug': slug,
