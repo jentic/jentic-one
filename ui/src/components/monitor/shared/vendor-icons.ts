@@ -1,87 +1,92 @@
 /**
- * Vendor icon configuration shared across all monitor chart components.
- * Centralises colours, CDN icon URLs, and helper functions.
+ * Vendor icon configuration for Monitor charts.
+ *
+ * Thin function-style facade over `@/lib/vendor-registry`, the single source
+ * of truth shared with `discovery/VendorIcon`. The chart code consumes
+ * `getVendorConfig(vendor)` (returning bg / ring / text / iconUrl as
+ * raw strings) so we can drive SVG `fill=` attributes directly without
+ * spinning up a React component for every cell.
+ *
+ * Behaviour:
+ *  - Curated brands (`VENDOR_REGISTRY` in `vendor-registry.ts`) get their
+ *    real brand colour and the Simple Icons SVG.
+ *  - 2-label hosts (e.g. `linear.app`, `posthog.com`) auto-derive an icon
+ *    URL but use a hashed palette colour rather than a guessed brand bg.
+ *  - Anything else (no vendor at all, multi-label hosts, IPs) gets a
+ *    palette colour with no icon — initials only.
+ *
+ * The hashed palette (16 distinct colours) is deterministic per vendor
+ * string, so the same API renders the same colour across the bubble
+ * chart, the daily bar chart, the breakdown table, and the active-APIs
+ * strip.
  */
 
+import { getIconUrl, resolveBrand, vendorPalette } from '@/lib/vendor-registry';
+
 export interface VendorConfig {
+	/** Solid hex used for chart fills, table swatches, etc. */
 	bg: string;
+	/** Slightly lighter hex for hover/focus rings on the bubble chart. */
 	ring: string;
+	/** `#fff` or a near-black, depending on bg luminance. */
 	text: string;
+	/**
+	 * Simple Icons CDN URL. Empty string when we don't have an icon —
+	 * callers fall back to `getInitials()` text.
+	 */
 	iconUrl: string;
 }
 
-export const VENDOR_ICONS: Record<string, VendorConfig> = {
-	slack: {
-		bg: '#4A154B',
-		ring: '#E01E5A',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/slack.svg',
-	},
-	github: {
-		bg: '#24292f',
-		ring: '#6e7681',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/github.svg',
-	},
-	sendgrid: {
-		bg: '#1A82E2',
-		ring: '#00B2E3',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/sendgrid.svg',
-	},
-	hubspot: {
-		bg: '#FF7A59',
-		ring: '#FF5C35',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/hubspot.svg',
-	},
-	google: {
-		bg: '#0F9D58',
-		ring: '#34A853',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/googlesheets.svg',
-	},
-	jira: {
-		bg: '#0052CC',
-		ring: '#2684FF',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/jira.svg',
-	},
-	zendesk: {
-		bg: '#03363D',
-		ring: '#17494D',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/zendesk.svg',
-	},
-	airtable: {
-		bg: '#18BFFF',
-		ring: '#FCB400',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/airtable.svg',
-	},
-	mailchimp: {
-		bg: '#FFE01B',
-		ring: '#241C15',
-		text: '#241C15',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/mailchimp.svg',
-	},
-	notion: {
-		bg: '#000000',
-		ring: '#505050',
-		text: '#fff',
-		iconUrl: 'https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/notion.svg',
-	},
-};
-
-const DEFAULT_CONFIG: VendorConfig = {
-	bg: '#6366f1',
-	ring: '#818cf8',
-	text: '#fff',
-	iconUrl: '',
-};
-
+/**
+ * Resolve a vendor (host or registry key) to its chart-ready config.
+ *
+ * Lookup order:
+ *  1. Curated registry hit → real brand colour + icon.
+ *  2. Auto-derivable 2-label host → icon from Simple Icons (CDN may 404
+ *     for less famous brands; chart code can ignore the icon and just use
+ *     the palette colour) + hashed palette colour.
+ *  3. Anything else → no icon, hashed palette colour.
+ *
+ * The hashed palette guarantees that two unknown vendors don't share a
+ * colour — fixing the long-standing "every API in the chart is the same
+ * indigo" bug from when the fallback was a single hard-coded swatch.
+ */
 export function getVendorConfig(vendor: string): VendorConfig {
-	return VENDOR_ICONS[vendor.toLowerCase()] ?? DEFAULT_CONFIG;
+	const brand = resolveBrand(vendor);
+
+	if (brand && brand.bg !== null) {
+		// Curated brand: the registry pins the bg; ring is a slightly lighter
+		// shade derived per-brand below for the few cases that need it. For
+		// the rest we just reuse the bg as the ring (visually fine on the
+		// bubble hover state where the ring sits 2.5px outside the bubble).
+		return {
+			bg: brand.bg,
+			ring: brand.bg,
+			text: brand.invert ? '#fff' : '#1a1a1a',
+			iconUrl: getIconUrl(brand.slug),
+		};
+	}
+
+	const palette = vendorPalette(vendor);
+
+	if (brand) {
+		// Auto-derived slug — we don't trust the brand colour (we don't
+		// have one), so we ride the palette but keep the icon URL.
+		return {
+			bg: palette.bg,
+			ring: palette.ring,
+			text: palette.text,
+			iconUrl: getIconUrl(brand.slug),
+		};
+	}
+
+	// No brand at all — colour-only.
+	return {
+		bg: palette.bg,
+		ring: palette.ring,
+		text: palette.text,
+		iconUrl: '',
+	};
 }
 
 export function getInitials(name: string): string {

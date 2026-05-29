@@ -4,7 +4,6 @@ export { SparklineChart } from './SparklineChart';
 export { formatDuration, formatLatency, formatPercent, formatRelativeTime } from './format';
 export { encodeApiKey, decodeApiKeyVendor, decodeApiKeyName } from './api-key';
 export {
-	VENDOR_ICONS,
 	getVendorConfig,
 	getInitials,
 	getIconFilterId,
