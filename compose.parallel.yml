@@ -1,0 +1,36 @@
+# compose.parallel.yml — Run jentic-mini-parallel alongside the original
+# jentic-mini stack without colliding on container names, host ports, or the
+# in-network backend hostname.
+#
+# Usage (from jentic-mini-parallel/):
+#   docker compose -p jentic-mini-parallel \
+#     -f compose.yml -f compose.dev.yml -f compose.parallel.yml \
+#     up
+#
+# Endpoints:
+#   Backend: http://localhost:5180
+#   Vite UI: http://localhost:5181
+#
+# The `-p jentic-mini-parallel` project flag namespaces networks and volumes
+# (e.g. ui_node_modules → jentic-mini-parallel_ui_node_modules) so nothing is
+# shared with the original stack.
+#
+# !override on `ports` is required — Compose merges sequence fields by default,
+# so without it both 8900:8900 and 5180:8900 (and 5173:5173 + 5181:5173) would
+# be published, colliding with the original stack on the lower host ports.
+
+services:
+  jentic-mini:
+    container_name: jentic-mini-parallel
+    image: jentic-mini-parallel:latest
+    ports: !override
+      - "5180:8900"
+
+  vite:
+    ports: !override
+      - "5181:5173"
+    environment:
+      # Inside the parallel project's network the backend container is named
+      # jentic-mini-parallel, so Vite must proxy to that hostname instead of
+      # the default `jentic-mini` defined in compose.dev.yml.
+      VITE_API_HOST: http://jentic-mini-parallel:8900
