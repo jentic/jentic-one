@@ -4,13 +4,21 @@ Seed fake executions and jobs into the parallel jentic-mini DB so the Monitor
 page has visible data. Idempotent: rows are tagged with ``seed_*`` IDs and the
 script clears prior seeds before inserting.
 
-Usage (from inside the parallel container):
+Usage:
+    # In the parallel container (default DB path):
     docker exec jentic-mini-parallel python /app/scripts/seed_monitor_data.py
+
+    # On the host, against a local DB file:
+    DB_PATH=./data/jentic-mini.db python3 scripts/seed_monitor_data.py
+
+The container path is the default; ``DB_PATH`` overrides it for host runs and
+matches the env var FastAPI itself reads at startup (see src/config.py).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import sqlite3
 import time
@@ -18,7 +26,7 @@ import uuid
 from pathlib import Path
 
 
-DB_PATH = Path("/app/data/jentic-mini.db")
+DB_PATH = Path(os.environ.get("DB_PATH", "/app/data/jentic-mini.db"))
 
 VENDORS = [
     ("api.slack.com", "POST", "/api/chat.postMessage", 200, "success"),
