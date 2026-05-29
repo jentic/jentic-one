@@ -246,7 +246,26 @@ def _job_response(d: dict) -> dict:
     ),
 )
 async def list_jobs(
-    status: str | None = Query(None, description="Filter by status"),
+    status: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by status. Accepts a single value or a comma-separated set "
+                "(e.g. `pending,running` for in-flight only). Whitespace tolerated."
+            )
+        ),
+    ] = None,
+    kind: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by job kind: `workflow` (multi-step Arazzo runs) or `broker` "
+                "(individual API calls dispatched async). Used by the Monitor Jobs tab "
+                "to split workflow runs from broker calls in separate views."
+            ),
+            pattern="^(workflow|broker)$",
+        ),
+    ] = None,
     page: Annotated[int, Query(description="Page number (1-indexed)", ge=1)] = 1,
     limit: Annotated[int, Query(description="Results per page (1-100)", ge=1, le=100)] = 20,
     toolkit_id: Annotated[
@@ -273,8 +292,20 @@ async def list_jobs(
     where_parts: list[str] = []
     params: list = []
     if status:
-        where_parts.append("status = ?")
-        params.append(status)
+        # Comma-list → IN(?,?,...). The Monitor Jobs tab sends e.g.
+        # `status=pending,running` to display only in-flight jobs; previously
+        # only single-value status was supported.
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            where_parts.append("status = ?")
+            params.append(statuses[0])
+        elif statuses:
+            placeholders = ",".join("?" * len(statuses))
+            where_parts.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+    if kind is not None:
+        where_parts.append("kind = ?")
+        params.append(kind)
     if toolkit_id is not None:
         where_parts.append("toolkit_id = ?")
         params.append(toolkit_id)
