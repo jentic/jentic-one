@@ -7,7 +7,7 @@ authors = [{ name = "Jentic", email = "hello@jentic.com" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [
-  "fastapi==0.136.1",
+  "fastapi==0.136.3",
   "uvicorn[standard]==0.48.0",
   "httpx==0.28.1",
   "aiohttp>=3.9,<4",
