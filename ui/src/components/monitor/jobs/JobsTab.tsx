@@ -42,8 +42,9 @@ const POLL_INTERVAL_MS = 15_000;
 /**
  * Translate the UI's `JobStatusFilter` into the backend's `?status=` query
  * shape. The backend understands a comma-separated list (`status IN (...)`),
- * which we exploit for the synthetic "all in-flight" filter we may add later;
- * for now each filter value maps 1:1.
+ * which we exploit for the synthetic "in-flight" filter (pending+running)
+ * surfaced as a single dropdown choice in `JobsFilters`. The `active_now`
+ * pill on the Monitor page header routes here too.
  *
  * `cancelled` is not a backend value (cancelled rows store `status='failed'`),
  * so we drop it here and let the table-level transform tag the row instead.
@@ -51,6 +52,7 @@ const POLL_INTERVAL_MS = 15_000;
  */
 function statusFilterToBackend(filter: JobStatusFilter): string | undefined {
 	if (filter === 'all') return undefined;
+	if (filter === 'inflight') return 'pending,running';
 	return filter;
 }
 

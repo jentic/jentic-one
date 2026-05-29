@@ -28,6 +28,7 @@ interface JobsFiltersProps {
 
 const STATUS_OPTIONS: Array<{ value: JobStatusFilter; label: string }> = [
 	{ value: 'all', label: 'All' },
+	{ value: 'inflight', label: 'In-flight' },
 	{ value: 'pending', label: 'Pending' },
 	{ value: 'running', label: 'Running' },
 	{ value: 'complete', label: 'Complete' },

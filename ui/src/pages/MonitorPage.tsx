@@ -6,7 +6,9 @@ import { api } from '@/api/client';
 import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SegmentedToggle } from '@/components/ui/SegmentedToggle';
+import { HoverTooltip } from '@/components/ui/HoverTooltip';
 import { RefreshButton } from '@/components/ui/RefreshButton';
+import { Button } from '@/components/ui/Button';
 import { OverviewTab } from '@/components/monitor/overview/OverviewTab';
 import { ExecutionLogTab } from '@/components/monitor/execution-log/ExecutionLogTab';
 import { ExecutionDetailSheet } from '@/components/monitor/execution-log/ExecutionDetailSheet';
@@ -77,6 +79,7 @@ function readTab(params: URLSearchParams): MonitorTab {
 function readJobStatus(params: URLSearchParams): JobStatusFilter {
 	const v = params.get('jobStatus');
 	if (
+		v === 'inflight' ||
 		v === 'pending' ||
 		v === 'running' ||
 		v === 'complete' ||
@@ -426,6 +429,21 @@ export default function MonitorPage(): JSX.Element {
 		usageAgentQuery.isLoading ||
 		recentTracesQuery.isLoading;
 
+	// `isFetching` is true on every refetch (including background polls and
+	// manual refreshes); `isLoading` is only true on the very first fetch
+	// while there's no cached data. We feed `isFetching` into the refresh
+	// button's spinner so a manual click keeps spinning until every query
+	// resolves — visual ack that "your refresh is doing work" even though
+	// we deliberately keep the previous data on screen instead of yanking
+	// it away with a skeleton.
+	const isAnyFetching =
+		usageStatsQuery.isFetching ||
+		usageApiQuery.isFetching ||
+		usageAgentQuery.isFetching ||
+		recentTracesQuery.isFetching ||
+		filteredTracesQuery.isFetching ||
+		inFlightJobsQuery.isFetching;
+
 	const handleRefresh = () => {
 		usageStatsQuery.refetch();
 		usageApiQuery.refetch();
@@ -439,6 +457,7 @@ export default function MonitorPage(): JSX.Element {
 		<PageShell spacing="space-y-5">
 			<PageHeader
 				title="Monitor"
+				subtitle="Real-time view of every broker call, async job, and workflow execution."
 				actions={
 					<>
 						<SegmentedToggle
@@ -447,7 +466,11 @@ export default function MonitorPage(): JSX.Element {
 							value={range}
 							onChange={handleRangeChange}
 						/>
-						<RefreshButton onRefresh={handleRefresh} disabled={isOverviewLoading} />
+						<RefreshButton
+							onRefresh={handleRefresh}
+							pending={isAnyFetching}
+							disabled={isOverviewLoading}
+						/>
 					</>
 				}
 			/>
@@ -465,15 +488,47 @@ export default function MonitorPage(): JSX.Element {
 					onChange={handleTabChange}
 				/>
 				{stats && stats.activeNow > 0 && (
-					<div className="border-accent-blue/25 bg-accent-blue/8 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs">
-						<span className="relative flex h-2 w-2">
-							<span className="bg-accent-blue absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
-							<span className="bg-accent-blue relative inline-flex h-2 w-2 rounded-full" />
-						</span>
-						<span className="text-accent-blue font-medium">
-							{stats.activeNow} active now
-						</span>
-					</div>
+					<HoverTooltip
+						side="bottom"
+						closeOnTooltipHover
+						triggerClassName="inline-flex"
+						content={
+							<div className="space-y-1">
+								<p className="font-medium">
+									{stats.activeNow} async job{stats.activeNow === 1 ? '' : 's'}{' '}
+									currently in flight
+								</p>
+								<p className="text-muted-foreground text-[11px]">
+									Counts jobs in <code>pending</code> or <code>running</code>{' '}
+									state — async broker calls and workflow executions that
+									haven&apos;t reached a terminal state yet. Click to open the
+									Jobs tab filtered to in-flight.
+								</p>
+							</div>
+						}
+					>
+						<Button
+							type="button"
+							variant="ghost"
+							onClick={() => {
+								const p = new URLSearchParams(searchParams);
+								p.set('tab', 'jobs');
+								p.set('jobStatus', 'inflight');
+								p.delete('page');
+								setSearchParams(p, { replace: true });
+							}}
+							className="border-accent-blue/25 bg-accent-blue/8 hover:bg-accent-blue/15 hover:border-accent-blue/40 focus-visible:ring-accent-blue/50 flex h-auto cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs"
+							aria-label={`${stats.activeNow} active async jobs — open Jobs tab filtered to in-flight`}
+						>
+							<span className="relative flex h-2 w-2">
+								<span className="bg-accent-blue absolute inline-flex h-full w-full animate-ping rounded-full opacity-75" />
+								<span className="bg-accent-blue relative inline-flex h-2 w-2 rounded-full" />
+							</span>
+							<span className="text-accent-blue font-medium">
+								{stats.activeNow} active now
+							</span>
+						</Button>
+					</HoverTooltip>
 				)}
 			</motion.div>
 

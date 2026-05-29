@@ -29,6 +29,7 @@ export type JobKindFilter = 'all' | 'workflow' | 'broker';
  */
 export type JobStatusFilter =
 	| 'all'
+	| 'inflight'
 	| 'pending'
 	| 'running'
 	| 'complete'
