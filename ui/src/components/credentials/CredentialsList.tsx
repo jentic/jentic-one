@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { Key } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { CredentialRow } from './CredentialRow';
+import { PipedreamCard } from './PipedreamCard';
 import type { CredentialOut } from '@/api/types';
 import { api, oauthBrokers } from '@/api/client';
 import { Button } from '@/components/ui/Button';
@@ -10,8 +12,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorAlert } from '@/components/ui/ErrorAlert';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { SectionTitle } from '@/components/discovery/SectionTitle';
-import { CredentialRow } from './CredentialRow';
-import { PipedreamCard } from './PipedreamCard';
 
 interface CredentialsListProps {
 	loggedIn: boolean;
@@ -23,6 +23,14 @@ interface CredentialsListProps {
 	 * legacy `/credentials/:id/edit` navigation, which still works.
 	 */
 	onEditCredential?: (cred: CredentialOut) => void;
+	/**
+	 * Optional handler for the "Add your first credential" CTA in the
+	 * empty state. Hosts that mount an `<AddCredentialDialog>` wire
+	 * this to the dialog's `openWorkspace()` action. Falls back to a
+	 * `/credentials/new` navigation when omitted, preserving the
+	 * standalone deeplink behaviour.
+	 */
+	onAddCredential?: () => void;
 }
 
 /**
@@ -42,7 +50,11 @@ interface CredentialsListProps {
  * kind, no `if (auth_type === 'pipedream_oauth')` branching at the row
  * level.
  */
-export function CredentialsList({ loggedIn, onEditCredential }: CredentialsListProps) {
+export function CredentialsList({
+	loggedIn,
+	onEditCredential,
+	onAddCredential,
+}: CredentialsListProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 
@@ -151,7 +163,11 @@ export function CredentialsList({ loggedIn, onEditCredential }: CredentialsListP
 					title="No credentials stored"
 					description="Add a credential to authenticate agents with external APIs."
 					action={
-						<Button onClick={() => navigate('/credentials/new')}>
+						<Button
+							onClick={() =>
+								onAddCredential ? onAddCredential() : navigate('/credentials/new')
+							}
+						>
 							Add your first credential
 						</Button>
 					}

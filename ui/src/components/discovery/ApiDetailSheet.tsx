@@ -47,6 +47,14 @@ export interface ApiDetailSheetProps {
 	onSelectWf: (wfId: string | null) => void;
 	/** Switch the sheet to a different api_id from the recents strip. */
 	onSelectApi?: (apiId: string) => void;
+	/**
+	 * Optional handler bound to the sheet's "Add credential" action
+	 * bar button. When provided, the button opens the host's
+	 * `<AddCredentialDialog>` instead of routing to the legacy
+	 * `/credentials/new?api_id=…` page — which would unmount this
+	 * sheet. Falls back to the deeplink path when omitted.
+	 */
+	onAddCredential?: (apiId: string) => void;
 }
 
 export function ApiDetailSheet({
@@ -60,6 +68,7 @@ export function ApiDetailSheet({
 	onSelectOp,
 	onSelectWf,
 	onSelectApi,
+	onAddCredential,
 }: ApiDetailSheetProps) {
 	return (
 		<SheetPrimitive
@@ -79,6 +88,7 @@ export function ApiDetailSheet({
 					onSelectOp={onSelectOp}
 					onSelectWf={onSelectWf}
 					onSelectApi={onSelectApi}
+					onAddCredential={onAddCredential}
 				/>
 			)}
 		</SheetPrimitive>
@@ -96,6 +106,7 @@ interface ContentProps {
 	onSelectOp: (opId: string | null) => void;
 	onSelectWf: (wfId: string | null) => void;
 	onSelectApi?: (apiId: string) => void;
+	onAddCredential?: (apiId: string) => void;
 }
 
 function ApiDetailSheetContent({
@@ -107,6 +118,7 @@ function ApiDetailSheetContent({
 	onSelectOp,
 	onSelectWf,
 	onSelectApi,
+	onAddCredential,
 }: ContentProps) {
 	// Resolve source: trust initialEntity if present, otherwise ask the server.
 	// ALWAYS query when the initial source is 'directory' — after import the
@@ -217,6 +229,7 @@ function ApiDetailSheetContent({
 					sourceResolving={sourceResolving}
 					onSelectOp={onSelectOp}
 					onSelectWf={onSelectWf}
+					onAddCredential={onAddCredential}
 				/>
 			</div>
 		</div>

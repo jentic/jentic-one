@@ -30,6 +30,15 @@ export interface SheetBodyProps {
 	sourceResolving?: boolean;
 	onSelectOp: (opId: string) => void;
 	onSelectWf: (wfId: string | null) => void;
+	/**
+	 * Optional handler for the "Add credential" CTA in the sheet
+	 * action bar. Discover hosts that mount an `<AddCredentialDialog>`
+	 * wire this so the dialog opens on top of the sheet (rather than
+	 * the sheet unmounting on a route-level navigation). When omitted
+	 * we fall back to the deeplink `<AppLink>`, preserving the
+	 * legacy behaviour.
+	 */
+	onAddCredential?: (apiId: string) => void;
 }
 
 export function SheetBody({
@@ -39,6 +48,7 @@ export function SheetBody({
 	sourceResolving = false,
 	onSelectOp,
 	onSelectWf,
+	onAddCredential,
 }: SheetBodyProps) {
 	const githubUrl: string | undefined = initialEntity?.raw?._links?.github;
 	const specUrl: string | undefined =
@@ -182,12 +192,23 @@ export function SheetBody({
 							   productive than separate steps. We render it as a
 							   secondary action so the recommended "just look at
 							   the API first" path stays primary. */}
-							<AppLink
-								href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-								className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
-							>
-								<KeyRound size={14} /> Add credential
-							</AppLink>
+							{onAddCredential ? (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => onAddCredential(apiId)}
+									className="h-9 gap-1.5 px-3"
+								>
+									<KeyRound size={14} /> Add credential
+								</Button>
+							) : (
+								<AppLink
+									href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
+									className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
+								>
+									<KeyRound size={14} /> Add credential
+								</AppLink>
+							)}
 						</>
 					) : (
 						<>
@@ -197,12 +218,23 @@ export function SheetBody({
 							>
 								Open in Workspace
 							</AppLink>
-							<AppLink
-								href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-								className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
-							>
-								<KeyRound size={14} /> Add credential
-							</AppLink>
+							{onAddCredential ? (
+								<Button
+									variant="outline"
+									size="sm"
+									onClick={() => onAddCredential(apiId)}
+									className="h-9 gap-1.5 px-3"
+								>
+									<KeyRound size={14} /> Add credential
+								</Button>
+							) : (
+								<AppLink
+									href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
+									className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
+								>
+									<KeyRound size={14} /> Add credential
+								</AppLink>
+							)}
 						</>
 					)}
 					{githubUrl && (

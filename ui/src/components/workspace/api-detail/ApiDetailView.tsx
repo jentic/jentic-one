@@ -21,6 +21,14 @@ interface ApiDetailViewProps {
 	 * when omitted.
 	 */
 	onEditCredential?: (cred: any) => void;
+	/**
+	 * Optional callback fired when the user clicks "Add credential"
+	 * inside the credentials section (header link or empty-state
+	 * CTA). Hosts that mount an `<AddCredentialDialog>` wire this to
+	 * the dialog's `openForApi(apiData)` action; falls back to the
+	 * deeplink path when omitted.
+	 */
+	onAddCredential?: () => void;
 }
 
 /**
@@ -34,7 +42,7 @@ interface ApiDetailViewProps {
  * operations widget has its own state machine encapsulated in the
  * `useApiOperations` hook; everything else is presentational.
  */
-export function ApiDetailView({ apiId, onEditCredential }: ApiDetailViewProps) {
+export function ApiDetailView({ apiId, onEditCredential, onAddCredential }: ApiDetailViewProps) {
 	const {
 		data: apiData,
 		isLoading: isLoadingApi,
@@ -180,6 +188,7 @@ export function ApiDetailView({ apiId, onEditCredential }: ApiDetailViewProps) {
 				isLoading={isLoadingCreds}
 				apiId={apiId}
 				onEditCredential={onEditCredential}
+				onAddCredential={onAddCredential}
 			/>
 
 			<ToolkitsSection toolkits={boundToolkits} />

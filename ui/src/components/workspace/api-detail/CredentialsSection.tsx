@@ -1,5 +1,6 @@
 import { Plus, Key, KeyRound } from 'lucide-react';
 import { AppLink } from '@/components/ui/AppLink';
+import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SectionTitle } from '@/components/discovery/SectionTitle';
 import { StatusDot, type CredentialStatus } from '@/components/credentials';
@@ -17,6 +18,13 @@ interface CredentialsSectionProps {
 	 * `<AppLink>` path is preserved for hosts that haven't migrated.
 	 */
 	onEditCredential?: (cred: any) => void;
+	/**
+	 * When provided, the inline "Add credential" affordances (empty
+	 * state CTA + footer link) call this instead of routing to
+	 * `/credentials/new?api_id=…`. Hosts that mount the v3 add
+	 * dialog wire this to `dialog.openForApi(apiData)`.
+	 */
+	onAddCredential?: () => void;
 }
 
 /**
@@ -35,6 +43,7 @@ export function CredentialsSection({
 	isLoading,
 	apiId,
 	onEditCredential,
+	onAddCredential,
 }: CredentialsSectionProps) {
 	// Shared row rendering — used by both the link path (default)
 	// and the button path (when `onEditCredential` is provided).
@@ -86,12 +95,23 @@ export function CredentialsSection({
 						<p className="text-muted-foreground mt-2 text-sm">
 							No credentials configured yet.
 						</p>
-						<AppLink
-							href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-							className="text-primary hover:text-primary/80 mt-2 inline-flex items-center gap-1 text-sm font-medium"
-						>
-							<Plus className="h-3.5 w-3.5" /> Add credential
-						</AppLink>
+						{onAddCredential ? (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={onAddCredential}
+								className="text-primary hover:text-primary/80 mt-2 inline-flex items-center gap-1 text-sm font-medium"
+							>
+								<Plus className="h-3.5 w-3.5" /> Add credential
+							</Button>
+						) : (
+							<AppLink
+								href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
+								className="text-primary hover:text-primary/80 mt-2 inline-flex items-center gap-1 text-sm font-medium"
+							>
+								<Plus className="h-3.5 w-3.5" /> Add credential
+							</AppLink>
+						)}
 					</div>
 				) : (
 					<ul className="space-y-2">
@@ -116,12 +136,23 @@ export function CredentialsSection({
 							</li>
 						))}
 						<li>
-							<AppLink
-								href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-								className="text-primary hover:text-primary/80 mt-1 inline-flex items-center gap-1 text-sm font-medium"
-							>
-								<Plus className="h-3.5 w-3.5" /> Add credential
-							</AppLink>
+							{onAddCredential ? (
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={onAddCredential}
+									className="text-primary hover:text-primary/80 mt-1 inline-flex items-center gap-1 text-sm font-medium"
+								>
+									<Plus className="h-3.5 w-3.5" /> Add credential
+								</Button>
+							) : (
+								<AppLink
+									href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
+									className="text-primary hover:text-primary/80 mt-1 inline-flex items-center gap-1 text-sm font-medium"
+								>
+									<Plus className="h-3.5 w-3.5" /> Add credential
+								</AppLink>
+							)}
 						</li>
 					</ul>
 				)}

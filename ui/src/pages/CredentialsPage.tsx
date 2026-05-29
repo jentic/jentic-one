@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { PageShell } from '@/components/layout/PageShell';
@@ -9,7 +8,9 @@ import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcuts
 import { Button } from '@/components/ui/Button';
 import { CredentialsList } from '@/components/credentials';
 import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialog';
 import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
+import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
 import { useAuth } from '@/hooks/useAuth';
 import { subscribeCredentialImported } from '@/lib/events/credentialImported';
 
@@ -30,10 +31,10 @@ import { subscribeCredentialImported } from '@/lib/events/credentialImported';
  * Workspace's concern — splitting the two is in Phase 4 of the revamp.
  */
 export default function CredentialsPage() {
-	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { user } = useAuth();
 	const editSheet = useCredentialEditSheet();
+	const addDialog = useAddCredentialDialog();
 
 	useEffect(() => {
 		const unsubscribe = subscribeCredentialImported(() => {
@@ -51,7 +52,7 @@ export default function CredentialsPage() {
 					subtitle="Stored secrets your agents use to call upstream APIs."
 					actions={
 						<>
-							<Button onClick={() => navigate('/credentials/new')}>
+							<Button onClick={() => addDialog.openWorkspace()}>
 								<Plus className="h-4 w-4" /> Add Credential
 							</Button>
 							<PageHelp
@@ -129,6 +130,7 @@ export default function CredentialsPage() {
 				<CredentialsList
 					loggedIn={!!user?.logged_in}
 					onEditCredential={(cred) => editSheet.openSheet(cred.id)}
+					onAddCredential={() => addDialog.openWorkspace()}
 				/>
 			</PageShell>
 
@@ -137,6 +139,14 @@ export default function CredentialsPage() {
 				open={editSheet.open}
 				onClose={editSheet.closeSheet}
 				onAfterClose={editSheet.clearSticky}
+			/>
+
+			<AddCredentialDialog
+				state={addDialog.state}
+				onClose={addDialog.close}
+				onGoToStep={addDialog.goToStep}
+				onSelectApi={addDialog.setSelectedApi}
+				onSavedCredentialId={addDialog.setSavedCredentialId}
 			/>
 
 			<KeyboardShortcutsBar

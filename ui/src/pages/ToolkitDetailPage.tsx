@@ -35,7 +35,9 @@ import { PermissionRuleEditor } from '@/components/ui/PermissionRuleEditor';
 import { PageShell } from '@/components/layout/PageShell';
 import { toast } from '@/components/ui/toastStore';
 import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialog';
 import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
+import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
 
 function CredentialPermissionEditor({
 	toolkitId,
@@ -302,6 +304,7 @@ export default function ToolkitDetailPage() {
 	const [editDesc, setEditDesc] = useState('');
 	const [editingPermForCred, setEditingPermForCred] = useState<string | null>(null);
 	const editSheet = useCredentialEditSheet();
+	const addDialog = useAddCredentialDialog();
 
 	const { data: toolkit, isLoading } = useQuery({
 		queryKey: ['toolkit', id],
@@ -644,15 +647,47 @@ export default function ToolkitDetailPage() {
 					<h3 className="font-heading text-foreground font-semibold">
 						Bound Credentials ({credentials.length})
 					</h3>
-					<Button variant="secondary" size="sm" onClick={() => navigate('/credentials')}>
-						<LinkIcon className="h-4 w-4" /> Manage Credentials
-					</Button>
+					<div className="flex items-center gap-2">
+						{id !== 'default' && (
+							<Button
+								size="sm"
+								onClick={() =>
+									addDialog.openForToolkit(id!, toolkit.name ?? toolkit.id)
+								}
+							>
+								<Plus className="h-4 w-4" /> Add credential
+							</Button>
+						)}
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => navigate('/credentials')}
+						>
+							<LinkIcon className="h-4 w-4" /> Manage
+						</Button>
+					</div>
 				</div>
 				<div className="space-y-2 px-5 py-4">
 					{credentials.length === 0 ? (
-						<p className="text-muted-foreground text-sm">
-							No credentials bound. Bind credentials to grant this toolkit API access.
-						</p>
+						<div className="border-border/50 rounded-lg border border-dashed px-5 py-6 text-center">
+							<Key className="text-muted-foreground/50 mx-auto h-6 w-6" />
+							<p className="text-muted-foreground mt-2 text-sm">
+								No credentials bound. Bind credentials to grant this toolkit API
+								access.
+							</p>
+							{id !== 'default' && (
+								<Button
+									variant="ghost"
+									size="sm"
+									onClick={() =>
+										addDialog.openForToolkit(id!, toolkit.name ?? toolkit.id)
+									}
+									className="text-primary hover:text-primary/80 mt-2 inline-flex items-center gap-1 text-sm font-medium"
+								>
+									<Plus className="h-3.5 w-3.5" /> Add credential
+								</Button>
+							)}
+						</div>
 					) : (
 						credentials.map((cred: any) => (
 							<div
@@ -818,6 +853,14 @@ export default function ToolkitDetailPage() {
 				open={editSheet.open}
 				onClose={editSheet.closeSheet}
 				onAfterClose={editSheet.clearSticky}
+			/>
+
+			<AddCredentialDialog
+				state={addDialog.state}
+				onClose={addDialog.close}
+				onGoToStep={addDialog.goToStep}
+				onSelectApi={addDialog.setSelectedApi}
+				onSavedCredentialId={addDialog.setSavedCredentialId}
 			/>
 		</PageShell>
 	);

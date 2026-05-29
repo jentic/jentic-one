@@ -12,7 +12,9 @@ import { ConfirmDeleteDialog } from '@/components/ui/ConfirmDeleteDialog';
 import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { ApiDetailView } from '@/components/workspace/api-detail';
 import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialog';
 import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
+import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
 import { api, apiUrl } from '@/api/client';
 import { isTypingTarget } from '@/lib/keyboard';
@@ -26,6 +28,7 @@ export default function ApiDetailPage() {
 
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const editSheet = useCredentialEditSheet();
+	const addDialog = useAddCredentialDialog();
 
 	useEffect(() => {
 		function onKeyDown(e: KeyboardEvent) {
@@ -85,12 +88,14 @@ export default function ApiDetailPage() {
 					<ExternalLink className="h-3.5 w-3.5" /> Docs
 				</AppLink>
 			)}
-			<AppLink
-				href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-				className="border-border bg-background hover:bg-muted inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors"
+			<Button
+				variant="outline"
+				size="sm"
+				onClick={() => apiData && addDialog.openForApi(apiData)}
+				className="h-8 gap-1.5 px-3 text-xs"
 			>
 				<Key className="h-3.5 w-3.5" /> Add credential
-			</AppLink>
+			</Button>
 			<AppLink
 				href={apiUrl(`/apis/${apiId}/openapi.json`)}
 				external
@@ -186,6 +191,7 @@ export default function ApiDetailPage() {
 					<ApiDetailView
 						apiId={apiId}
 						onEditCredential={(cred) => editSheet.openSheet(cred.id)}
+						onAddCredential={() => apiData && addDialog.openForApi(apiData)}
 					/>
 				) : null}
 
@@ -203,6 +209,14 @@ export default function ApiDetailPage() {
 				open={editSheet.open}
 				onClose={editSheet.closeSheet}
 				onAfterClose={editSheet.clearSticky}
+			/>
+
+			<AddCredentialDialog
+				state={addDialog.state}
+				onClose={addDialog.close}
+				onGoToStep={addDialog.goToStep}
+				onSelectApi={addDialog.setSelectedApi}
+				onSavedCredentialId={addDialog.setSavedCredentialId}
 			/>
 
 			<KeyboardShortcutsBar
