@@ -1,0 +1,31 @@
+# compose.barrikade.yml — Docker Compose stack for Jentic Mini + Barrikade
+#
+# This file stacks on top of the base compose.yml to add the Barrikade API service
+# and configure Jentic Mini to route security scans to it over internal Docker networking.
+#
+# Usage:
+#   docker compose -f compose.yml -f compose.barrikade.yml up -d
+#
+# To also run the hot-reloading frontend UI (Vite dev server) alongside both:
+#   docker compose -f compose.yml -f compose.dev.yml -f compose.barrikade.yml up -d
+
+services:
+  barrikade:
+    image: barrikadelabs/barrikade-core:latest
+    container_name: barrikade
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    entrypoint: ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    volumes:
+      - "/Users/ishaan/Documents/Data Science/FYP/code:/app"
+
+  jentic-mini:
+    environment:
+      # Link internally to the Barrikade container using Docker's service name
+      BARRIKADE_URL: "http://barrikade:8000"
+      BARRIKADE_TIMEOUT_MS: "10000"
+      BARRIKADE_FAIL_OPEN: "false" # Fail closed for tests to actively block if issues arise
+      DB_PATH: "data/jentic.db"
+    depends_on:
+      - barrikade
