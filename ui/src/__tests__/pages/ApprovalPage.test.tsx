@@ -54,7 +54,7 @@ describe('ApprovalPage', () => {
 
 		renderWithProviders(<ApprovalPage />, { route: ROUTE, path: PATH });
 
-		expect(screen.getByText('Loading...')).toBeInTheDocument();
+		expect(screen.getByRole('status')).toBeInTheDocument();
 	});
 
 	it('approves request and shows success message', async () => {

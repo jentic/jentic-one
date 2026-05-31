@@ -55,4 +55,58 @@ describe('Pagination', () => {
 		const results = await axe.run(container);
 		expect(results.violations).toEqual([]);
 	});
+
+	// ── Range-summary variant (webapp-style) ─────────────────────────────────
+
+	describe('range-summary variant', () => {
+		it('renders an "X–Y of N" range when totalCount + pageSize are provided', () => {
+			render(
+				<Pagination
+					page={2}
+					totalPages={5}
+					totalCount={123}
+					pageSize={24}
+					onPageChange={vi.fn()}
+				/>,
+			);
+			expect(screen.getByText('25–48 of 123')).toBeInTheDocument();
+			expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /previous page/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /next page/i })).toBeInTheDocument();
+		});
+
+		it('clamps the range end to the total count on the last page', () => {
+			render(
+				<Pagination
+					page={5}
+					totalPages={5}
+					totalCount={107}
+					pageSize={24}
+					onPageChange={vi.fn()}
+				/>,
+			);
+			expect(screen.getByText('97–107 of 107')).toBeInTheDocument();
+		});
+
+		it('disables boundary buttons in the range variant', () => {
+			render(
+				<Pagination
+					page={1}
+					totalPages={3}
+					totalCount={50}
+					pageSize={24}
+					onPageChange={vi.fn()}
+				/>,
+			);
+			expect(screen.getByRole('button', { name: /previous page/i })).toBeDisabled();
+			expect(screen.getByRole('button', { name: /next page/i })).not.toBeDisabled();
+		});
+
+		it('falls back to the simple variant when totalCount is omitted', () => {
+			render(<Pagination page={2} totalPages={5} pageSize={24} onPageChange={vi.fn()} />);
+			expect(screen.queryByText(/of 123/)).toBeNull();
+			expect(screen.getByRole('button', { name: /previous/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /next/i })).toBeInTheDocument();
+		});
+	});
 });

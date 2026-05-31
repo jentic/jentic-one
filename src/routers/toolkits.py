@@ -599,6 +599,14 @@ async def delete_toolkit(toolkit_id: Annotated[str, Path(description="Toolkit ID
     if toolkit_id == DEFAULT_TOOLKIT_ID:
         raise HTTPException(403, "The default toolkit cannot be deleted.")
     async with get_db() as db:
+        async with db.execute("SELECT id FROM toolkits WHERE id=?", (toolkit_id,)) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(404, "Toolkit not found")
+        # Explicit cleanup (belt-and-suspenders alongside CASCADE)
+        await db.execute("DELETE FROM toolkit_keys WHERE toolkit_id=?", (toolkit_id,))
+        await db.execute("DELETE FROM toolkit_credentials WHERE toolkit_id=?", (toolkit_id,))
+        await db.execute("DELETE FROM toolkit_policies WHERE toolkit_id=?", (toolkit_id,))
+        await db.execute("DELETE FROM permission_requests WHERE toolkit_id=?", (toolkit_id,))
         await db.execute("DELETE FROM toolkits WHERE id=?", (toolkit_id,))
         await db.commit()
 

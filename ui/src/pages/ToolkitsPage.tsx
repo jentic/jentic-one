@@ -143,7 +143,6 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 	return (
 		<PageShell>
 			<PageHeader
-				category="Management"
 				title="Toolkits"
 				actions={
 					<Button onClick={() => setShowCreate(true)}>

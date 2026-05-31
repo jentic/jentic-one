@@ -64,7 +64,7 @@ describe('CredentialsPage', () => {
 		renderWithProviders(<CredentialsPage />);
 
 		expect(
-			await screen.findByRole('heading', { name: /credentials vault/i }),
+			await screen.findByRole('heading', { name: /^credentials$/i, level: 1 }),
 		).toBeInTheDocument();
 	});
 });

@@ -41,7 +41,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
 						aria-describedby={errorId}
 						aria-invalid={error ? true : undefined}
 						className={cn(
-							'bg-muted border-border text-foreground placeholder:text-muted-foreground w-full rounded-lg border transition-colors',
+							'bg-card border-border text-foreground placeholder:text-muted-foreground w-full rounded-lg border transition-colors',
 							'focus:border-primary focus:outline-hidden',
 							sizeClasses[size],
 							startIcon && 'pl-9',

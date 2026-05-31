@@ -498,8 +498,7 @@ export default function CredentialsPage() {
 	return (
 		<PageShell spacing="space-y-5">
 			<PageHeader
-				category="Management"
-				title="Credentials Vault"
+				title="Credentials"
 				actions={
 					<Button onClick={() => navigate('/credentials/new')}>
 						<Plus className="h-4 w-4" /> Add Credential

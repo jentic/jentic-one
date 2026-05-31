@@ -2,8 +2,13 @@ import { render, screen } from '@testing-library/react';
 import { LoadingState } from '@/components/ui/LoadingState';
 
 describe('LoadingState', () => {
-	it('renders default "Loading..." message', () => {
+	it('renders the spinner with role="status" when no message is provided', () => {
 		render(<LoadingState />);
+		expect(screen.getByRole('status')).toBeInTheDocument();
+	});
+
+	it('renders a visible message when one is provided', () => {
+		render(<LoadingState message="Loading..." />);
 		expect(screen.getByText('Loading...')).toBeInTheDocument();
 	});
 

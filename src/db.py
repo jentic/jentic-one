@@ -2,6 +2,8 @@
 
 import os
 import secrets
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 import aiosqlite
 from alembic import command
@@ -24,9 +26,12 @@ def run_migrations() -> None:
     command.upgrade(alembic_cfg, "head")
 
 
-def get_db() -> aiosqlite.Connection:
-    """Return an async context-manager for a DB connection."""
-    return aiosqlite.connect(DB_PATH)
+@asynccontextmanager
+async def get_db() -> AsyncIterator[aiosqlite.Connection]:
+    """Return an async context-manager for a DB connection with foreign keys enabled."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys = ON")
+        yield db
 
 
 async def get_setting(key: str) -> str | None:

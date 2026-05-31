@@ -3,7 +3,6 @@ import {
 	CatalogService,
 	ToolkitsService,
 	UserService,
-	SearchService,
 	ObserveService,
 	InspectService,
 } from './generated';
@@ -42,16 +41,157 @@ export const api = {
 	createUser: (username: string, password: string) =>
 		UserService.createUserUserCreatePost({ requestBody: { username, password } }),
 	generateDefaultKey: () => UserService.generateDefaultKeyDefaultApiKeyGeneratePost(),
-	listApis: (page = 1, limit = 20, source?: string, q?: string) => {
+	listApis: (
+		page = 1,
+		limit = 20,
+		source?: string,
+		q?: string,
+		opts?: { includeImported?: boolean },
+	) => {
 		const params = new URLSearchParams({ page: String(page), limit: String(limit) });
 		if (source) params.set('source', source);
 		if (q) params.set('q', q);
+		// `include_imported=true` is meaningful only when source=catalog.
+		// /discover sets it so the user keeps seeing already-imported
+		// catalog APIs (rendered with `source=local`); /workspace's
+		// "From the catalog" section omits it because that section is
+		// "things you don't have yet".
+		if (opts?.includeImported) params.set('include_imported', 'true');
 		return fetchJson<any>(`/apis?${params}`);
 	},
 	getApi: (apiId: string) => fetchJson<any>(`/apis/${apiId}`),
 	getCatalogEntry: (apiId: string) => fetchJson<any>(`/catalog/${apiId}`),
-	listOperations: (apiId: string, page = 1, limit = 50) =>
-		CatalogService.listApiOperationsApisApiIdOperationsGet({ apiId, page, limit }),
+	// Detail-Sheet preview for directory (catalog) APIs: server fetches the
+	// spec from GitHub and returns a flat operations list. Mirrors the
+	// `{data, total}` envelope of `listOperations` so the same renderer works
+	// for both workspace and directory APIs. See `src/routers/catalog.py`.
+	previewCatalogOperations: (
+		apiId: string,
+		opts?: { offset?: number; limit?: number; tag?: string },
+	) => {
+		const params = new URLSearchParams();
+		if (opts?.offset != null) params.set('offset', String(opts.offset));
+		if (opts?.limit != null) params.set('limit', String(opts.limit));
+		if (opts?.tag) params.set('tag', opts.tag);
+		const qs = params.toString();
+		return fetchJson<{
+			data: Array<{
+				method: string;
+				path: string;
+				summary?: string;
+				description?: string;
+				operation_id?: string | null;
+				/**
+				 * Path-level + op-level parameters merged per OpenAPI rules.
+				 * Slimmed to the fields the Sheet renders to keep payloads
+				 * cheap for large specs (Stripe-style 200+ ops).
+				 */
+				parameters?: Array<{
+					name: string;
+					in: string;
+					required: boolean;
+					description?: string;
+				}>;
+				/**
+				 * Flat, deduplicated list of security scheme names that apply
+				 * to this op (OAS array-of-{scheme: scopes} flattened — the
+				 * Sheet doesn't render the AND/OR structure).
+				 */
+				security?: string[];
+				/**
+				 * OpenAPI tags projected per op. Powers the `tag` filter and
+				 * the per-row tag chips. Empty array when the op has no tags.
+				 */
+				tags?: string[];
+			}>;
+			total: number;
+			truncated: boolean;
+			/** Echoed pagination cursor — same value the caller sent in `?offset`. */
+			offset: number;
+			/** Echoed page size — same value the caller sent in `?limit`. */
+			limit: number;
+			spec_url: string;
+			info: { title?: string | null; version?: string | null; description?: string | null };
+			/**
+			 * `components.securitySchemes` projected to the fields the Sheet
+			 * renders. Keys match the names referenced by per-op `security`.
+			 */
+			security_schemes?: Record<
+				string,
+				{
+					type?: string;
+					description?: string;
+					in?: string;
+					name?: string;
+					scheme?: string;
+					bearerFormat?: string;
+					flows?: string[];
+					openIdConnectUrl?: string;
+				}
+			>;
+		}>(`/catalog/${apiId}/operations${qs ? `?${qs}` : ''}`);
+	},
+	// Detail-Sheet preview for directory (catalog) workflows: server fetches the
+	// vendor's `workflows.arazzo.json` from GitHub on demand and projects each
+	// workflow into a slim row. Mirrors `previewCatalogOperations` and lives at
+	// the same `/catalog/{api_id}/...` namespace. Returns an empty envelope
+	// (rather than 404) when the vendor ships no workflows so the sheet's
+	// rendering path is uniform — sometimes "Workflows" is just an empty
+	// section, never a missing one.
+	previewCatalogWorkflows: (apiId: string) =>
+		fetchJson<{
+			data: Array<{
+				/** Original Arazzo `workflowId` — display name and stable identity. */
+				workflow_id: string;
+				/**
+				 * The slug `lazy_import_catalog_workflows` would assign at import
+				 * time. Lets the UI render a deep link to
+				 * `/workspace/workflows/<slug>` that resolves correctly *after*
+				 * the user adds a credential and triggers the lazy import.
+				 */
+				slug: string;
+				summary?: string | null;
+				description?: string | null;
+				steps_count: number;
+			}>;
+			total: number;
+			api_id: string;
+			/** Raw GitHub URL for the Arazzo file — `null` when no manifest entry. */
+			arazzo_url: string | null;
+			/** GitHub tree URL for the workflow folder — `null` when no manifest entry. */
+			github_url: string | null;
+		}>(`/catalog/${apiId}/workflows`),
+	listOperations: (
+		apiId: string,
+		page = 1,
+		limit = 50,
+		opts?: { offset?: number; tag?: string },
+	) => {
+		// Hand-rolled to expose the new `offset`/`tag` query params without
+		// regenerating the OpenAPI client. Keeps the legacy `page`-based
+		// callers working — backend treats `offset` as the override when
+		// supplied, otherwise falls back to `(page - 1) * limit`.
+		const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+		if (opts?.offset != null) params.set('offset', String(opts.offset));
+		if (opts?.tag) params.set('tag', opts.tag);
+		return fetchJson<{
+			data: Array<{
+				id: string;
+				summary?: string;
+				description?: string;
+				/** OpenAPI tags projected per op (always present, may be empty). */
+				tags: string[];
+			}>;
+			page: number;
+			limit: number;
+			offset: number;
+			total: number;
+			total_pages: number;
+			has_more: boolean;
+			truncated: boolean;
+			_links?: Record<string, string>;
+		}>(`/apis/${apiId}/operations?${params}`);
+	},
 	listOverlays: (apiId: string) => CatalogService.listOverlaysApisApiIdOverlaysGet({ apiId }),
 	submitOverlay: (apiId: string, overlay: any, contributedBy?: string) =>
 		CatalogService.submitOverlayApisApiIdOverlaysPost({
@@ -69,7 +209,25 @@ export const api = {
 		}),
 	refreshCatalog: () => CatalogService.refreshCatalogCatalogRefreshPost(),
 	importFromCatalog: (apiId: string) => CatalogService.getCatalogEntryCatalogApiIdGet({ apiId }),
-	listWorkflows: () => CatalogService.listWorkflowsWorkflowsGet({}),
+	listWorkflows: (q?: string, source?: string) =>
+		CatalogService.listWorkflowsWorkflowsGet({ q: q ?? null, source: source ?? null }),
+	// Paginated variant — backend returns `{data, total, page, limit, total_pages}`
+	// when *either* `page` or `limit` is present, otherwise it falls back to
+	// the historical bare-array shape consumed by `listWorkflows()`. Exposed
+	// separately so the workspace grid can fan out across pages without
+	// breaking the half-dozen surfaces that still expect a flat list.
+	listWorkflowsPaged: (page = 1, limit = 20, source?: string, q?: string) => {
+		const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+		if (source) params.set('source', source);
+		if (q) params.set('q', q);
+		return fetchJson<{
+			data: Array<Record<string, unknown>>;
+			total: number;
+			page: number;
+			limit: number;
+			total_pages: number;
+		}>(`/workflows?${params}`);
+	},
 	getWorkflow: (slug: string) => CatalogService.getWorkflowWorkflowsSlugGet({ slug }),
 	addNote: (resource: string, note: string, type?: string) =>
 		CatalogService.createNoteNotesPost({ requestBody: { resource, note, type: type ?? null } }),
@@ -163,7 +321,50 @@ export const api = {
 			headers: { 'Content-Type': 'application/json' },
 		}),
 	deleteCredential: (cid: string) => fetchJson<any>(`/credentials/${cid}`, { method: 'DELETE' }),
-	search: (q: string, n = 10) => SearchService.searchSearchGet({ q, n }),
+	deleteApi: (apiId: string, opts?: { cascade?: boolean }) =>
+		fetchJson<void>(`/apis/${apiId}${opts?.cascade ? '?cascade=true' : ''}`, {
+			method: 'DELETE',
+		}),
+	deleteWorkflow: (slug: string) => fetchJson<void>(`/workflows/${slug}`, { method: 'DELETE' }),
+	search: (
+		q: string,
+		n = 10,
+		opts?: {
+			source?: 'workspace' | 'directory' | 'all' | 'local' | 'catalog';
+			type?: 'all' | 'endpoint' | 'workflow' | 'api';
+		},
+	) => {
+		// Hand-rolled (instead of `SearchService.searchSearchGet`) so the
+		// new `source` / `type` params and `matched_on` / `match_snippet`
+		// response fields work without regenerating the OpenAPI client.
+		// Mirrors the `listApis` pattern at the top of this file.
+		const params = new URLSearchParams({ q, n: String(n) });
+		if (opts?.source) params.set('source', opts.source);
+		if (opts?.type) params.set('type', opts.type);
+		return fetchJson<
+			Array<{
+				type: string;
+				id: string;
+				slug?: string;
+				summary?: string | null;
+				description?: string | null;
+				score: number;
+				involved_apis?: string[];
+				source?: string;
+				/** Which fields the query matched against (post-rank substring scan). */
+				matched_on?: string[];
+				/**
+				 * ~80-char window around the matched span from the highest-priority
+				 * matched field. The matched span is wrapped in `\u0001` sentinel
+				 * chars so the client can render its own highlight without HTML.
+				 * `null` when the row was a BM25 hit without an exact substring match.
+				 */
+				match_snippet?: string | null;
+				api_id?: string;
+				_links?: Record<string, string>;
+			}>
+		>(`/search?${params}`);
+	},
 	inspectCapability: (capabilityId: string, toolkitId?: string) =>
 		InspectService.getCapabilityInspectCapabilityIdGet({ capabilityId, toolkitId }),
 	listTraces: ({

@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { LayoutGroup, motion } from 'framer-motion';
 import { NAV_ITEMS } from './navbar.constants';
 import type { NavItem } from './navbar.constants';
 import { AppLink } from '@/components/ui/AppLink';
@@ -29,6 +29,7 @@ function NavTab({ item, isActive }: { item: NavItem; isActive: boolean }) {
 					layoutId="activeNavTab"
 					className="bg-muted absolute inset-0 -z-0 rounded-md"
 					transition={NAV_SPRING}
+					style={{ originY: '0px' }}
 					aria-hidden="true"
 				/>
 			)}
@@ -80,82 +81,66 @@ export function NavTabs() {
 	);
 
 	return (
-		// Outer row gets `containerRef` — it fills the parent's available width
-		// (the parent is `min-w-0 flex-1` in TopNavbar), so its `offsetWidth`
-		// is the budget the measurement loop above uses.
-		<div ref={containerRef} className="flex items-center">
-			{/* Strip shrink-wraps to the visible tabs so the "More" button
-			   sits immediately after the last tab instead of being shoved to
-			   the far right of the navbar.
-			   NOTE: do NOT add `overflow-hidden` here. The active pill is a
-			   `motion.span` with `layoutId="activeNavTab"` that springs
-			   between tabs with a touch of follow-through (damping 35) —
-			   clipping the strip would shave that overshoot off and make
-			   the longest jumps (first ↔ last) look flat. The
-			   ResizeObserver loop above already constrains how many tabs
-			   render, so steady-state overflow is impossible. */}
-			<div className="flex min-w-0 items-center gap-0.5">
-				{primary.map((item) => {
-					const isActive = item.exact
-						? pathname === item.href
-						: pathname.startsWith(item.href);
-					return <NavTab key={item.href} item={item} isActive={isActive} />;
-				})}
-			</div>
-
-			{overflow.length > 0 && (
-				<div ref={overflowRef} className="relative shrink-0">
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={() => setOverflowOpen((o) => !o)}
-						aria-haspopup="menu"
-						aria-expanded={overflowOpen}
-						className={cn(
-							'shrink-0 gap-1.5 rounded-md',
-							overflowActive
-								? 'bg-muted text-foreground hover:bg-muted hover:text-foreground'
-								: 'text-muted-foreground hover:text-foreground',
-						)}
-					>
-						More
-						<ChevronDown
-							className={cn(
-								'h-3.5 w-3.5 transition-transform duration-150',
-								overflowOpen && 'rotate-180',
-							)}
-						/>
-					</Button>
-
-					{overflowOpen && (
-						// `align="left"` keeps the dropdown visually anchored
-						// to the More button's left edge — since More now sits
-						// next to the last tab (not at the far-right of the
-						// header), the popover extends rightward into open
-						// space and can't be clipped by the viewport.
-						<MenuPanel align="left">
-							{overflow.map((item) => {
-								const isActive = item.exact
-									? pathname === item.href
-									: pathname.startsWith(item.href);
-								const Icon = item.icon;
-								return (
-									<AppLink
-										key={item.href}
-										href={item.href}
-										role="menuitem"
-										onClick={closeOverflow}
-										className={menuItemClass(isActive)}
-									>
-										<Icon className="h-4 w-4 shrink-0" />
-										{item.label}
-									</AppLink>
-								);
-							})}
-						</MenuPanel>
-					)}
+		<LayoutGroup id="nav-tabs">
+			<div ref={containerRef} className="flex items-center">
+				<div className="flex min-w-0 items-center gap-0.5">
+					{primary.map((item) => {
+						const isActive = item.exact
+							? pathname === item.href
+							: pathname.startsWith(item.href);
+						return <NavTab key={item.href} item={item} isActive={isActive} />;
+					})}
 				</div>
-			)}
-		</div>
+
+				{overflow.length > 0 && (
+					<div ref={overflowRef} className="relative shrink-0">
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => setOverflowOpen((o) => !o)}
+							aria-haspopup="menu"
+							aria-expanded={overflowOpen}
+							className={cn(
+								'shrink-0 gap-1.5 rounded-md',
+								overflowActive
+									? 'bg-muted text-foreground hover:bg-muted hover:text-foreground'
+									: 'text-muted-foreground hover:text-foreground',
+							)}
+						>
+							More
+							<ChevronDown
+								className={cn(
+									'h-3.5 w-3.5 transition-transform duration-150',
+									overflowOpen && 'rotate-180',
+								)}
+							/>
+						</Button>
+
+						{overflowOpen && (
+							<MenuPanel align="left">
+								{overflow.map((item) => {
+									const isActive = item.exact
+										? pathname === item.href
+										: pathname.startsWith(item.href);
+									const Icon = item.icon;
+									return (
+										<AppLink
+											key={item.href}
+											href={item.href}
+											role="menuitem"
+											onClick={closeOverflow}
+											className={menuItemClass(isActive)}
+										>
+											<Icon className="h-4 w-4 shrink-0" />
+											{item.label}
+										</AppLink>
+									);
+								})}
+							</MenuPanel>
+						)}
+					</div>
+				)}
+			</div>
+		</LayoutGroup>
 	);
 }

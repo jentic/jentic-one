@@ -92,10 +92,10 @@ describe('DashboardPage', () => {
 		renderWithProviders(<DashboardPage />);
 		await screen.findByRole('heading', { name: /dashboard/i });
 
-		expect(screen.getByText('Search Catalog')).toBeInTheDocument();
+		expect(screen.getByText('Discover APIs')).toBeInTheDocument();
 		expect(screen.getByText('Add Credential')).toBeInTheDocument();
 		expect(screen.getByText('Create Toolkit')).toBeInTheDocument();
-		expect(screen.getByText('Import an API')).toBeInTheDocument();
+		expect(screen.getByText('Open Workspace')).toBeInTheDocument();
 	});
 
 	it('has no accessibility violations', async () => {

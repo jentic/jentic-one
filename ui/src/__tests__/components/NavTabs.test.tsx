@@ -25,12 +25,13 @@ describe('NavTabs', () => {
 		if (moreButtons.length > 0) await user.click(moreButtons[0]);
 
 		const toolkits = screen.getAllByText('Toolkits')[0];
-		// The text node sits inside an inner `<span>{label}</span>`; the
-		// styled wrapper (carrying active / idle classes) is its parent.
-		// For NavTab rows the styled wrapper is a `<span>`; for the More
-		// menu rows it's the `<AppLink>` itself.
-		const styled = toolkits.parentElement;
-		expect(styled?.className ?? '').toMatch(/text-foreground/);
+		// The active indicator lives somewhere in the element's ancestor
+		// chain. For primary NavTab rows the styled wrapper is the parent
+		// <span>; for More menu rows it's the <AppLink> (rendered as <a>)
+		// which carries the menuItemClass. Walk up to find the ancestor
+		// with `text-foreground` (or check the element itself for menu items).
+		const styled = toolkits.closest('[class*="text-foreground"]');
+		expect(styled).not.toBeNull();
 	});
 
 	describe('overflow into "More" dropdown', () => {

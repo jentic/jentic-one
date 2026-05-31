@@ -36,7 +36,7 @@ describe('DataTable', () => {
 
 	it('shows loading state', () => {
 		render(<DataTable columns={columns} data={[]} getRowKey={(r) => r.id} isLoading />);
-		expect(screen.getByText('Loading...')).toBeInTheDocument();
+		expect(screen.getByRole('status')).toBeInTheDocument();
 	});
 
 	it('calls onRowClick when row is clicked', () => {

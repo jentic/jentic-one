@@ -163,6 +163,25 @@ def _extract_workflow_meta(doc: dict, workflow_id: str | None = None) -> dict:
     ),
 )
 async def list_workflows(
+    page: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Page number (1-indexed). When supplied alongside `limit`, the response "
+            "switches from a bare list to a `{data, total, page, limit, total_pages}` "
+            "envelope. Default (omitted) returns the unpaginated list for backward "
+            "compatibility with existing callers."
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description=(
+            "Page size when paginating. Triggers the paginated envelope shape — "
+            "see `page`. Omit both to keep the historical bare-list behaviour."
+        ),
+    ),
     q: str | None = Query(None, description='Filter by name or API, e.g. "stripe" or "oauth"'),
     source: str | None = Query(None, description='Filter by source: "local" or "catalog"'),
 ):
@@ -171,6 +190,9 @@ async def list_workflows(
 
     Catalog entries show the API they belong to; add credentials to auto-import their workflows.
     Use ?source=local or ?source=catalog to filter. Default returns all.
+
+    Pass `page` + `limit` for a `{data, total, page, limit, total_pages}` envelope; omit
+    both to keep the original bare-list response (workspace tiles still work the old way).
     """
     # ── Local workflows ──────────────────────────────────────────────────────
     results = []
@@ -276,7 +298,25 @@ async def list_workflows(
                     }
                 )
 
-    return results
+    # Backward-compat: bare list when neither pagination param is supplied.
+    # Existing callers (stats strip, sheet body, api-detail-view, etc.)
+    # don't ask for pages and still get the historical shape.
+    if page is None and limit is None:
+        return results
+
+    effective_page = page or 1
+    effective_limit = limit or 20
+    total = len(results)
+    total_pages = max(1, (total + effective_limit - 1) // effective_limit) if total else 1
+    start = (effective_page - 1) * effective_limit
+    end = start + effective_limit
+    return {
+        "data": results[start:end],
+        "total": total,
+        "page": effective_page,
+        "limit": effective_limit,
+        "total_pages": total_pages,
+    }
 
 
 _WORKFLOW_CONTENT_TYPES = {
@@ -906,6 +946,38 @@ print(json.dumps(out, default=str))
     )
 
 
+@router.delete(
+    "/workflows/{slug}",
+    status_code=204,
+    summary="Delete a workflow from the workspace",
+    tags=["catalog"],
+)
+async def delete_workflow(
+    slug: Annotated[str, Path(description="Workflow slug to delete")],
+):
+    """Permanently delete a workflow and its Arazzo file from the workspace."""
+    async with get_db() as db:
+        async with db.execute("SELECT arazzo_path FROM workflows WHERE slug=?", (slug,)) as cur:
+            row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, "Workflow not found")
+        arazzo_path = row[0]
+
+        await db.execute("DELETE FROM workflows WHERE slug=?", (slug,))
+        await db.commit()
+
+    if arazzo_path:
+        try:
+            pathlib.Path(arazzo_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    # Rebuild BM25 index (no per-entry removal supported)
+    from src.routers.apis import rebuild_index  # noqa: PLC0415
+
+    await rebuild_index()
+
+
 @router.post(
     "/workflows/{slug}", summary="Execute workflow", tags=["execute"], include_in_schema=False
 )
@@ -940,3 +1012,72 @@ async def execute_workflow_by_slug(slug: str, request: Request):
         agent_id=getattr(request.state, "agent_client_id", None),
         caller_bearer_token=caller_bearer,
     )
+
+
+# ── Startup backfill ──────────────────────────────────────────────────────────
+
+
+async def backfill_workflow_involved_apis() -> None:
+    """Fix workflows imported from the catalog that have empty involved_apis.
+
+    Catalog workflows saved via lazy_import_catalog_workflows before the
+    parent_api_id fix have involved_apis=[] because the Arazzo-native step
+    references couldn't be parsed by the capability-ID regex. This backfill
+    looks at the arazzo_path naming convention (catalog_{safe_id}_{slug}.json)
+    and cross-references with the apis table to fill in the correct api_id.
+    """
+    import logging  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    log = logging.getLogger("jentic.backfill")
+
+    async with get_db() as db:
+        # Find workflows with empty involved_apis that look like catalog imports
+        async with db.execute(
+            """SELECT slug, arazzo_path, involved_apis FROM workflows
+               WHERE arazzo_path LIKE '%catalog_%'"""
+        ) as cur:
+            rows = await cur.fetchall()
+
+        if not rows:
+            return
+
+        # Get all known API ids for matching
+        async with db.execute("SELECT id FROM apis") as cur:
+            api_ids = {r[0] for r in await cur.fetchall()}
+
+        updated = 0
+        for slug, arazzo_path, involved_apis_json in rows:
+            existing = json.loads(involved_apis_json) if involved_apis_json else []
+            if existing:
+                continue
+
+            # Extract the safe_id from the filename: catalog_{safe_id}_{slug}.json
+            # safe_id was created with: re.sub(r"[^a-z0-9_-]", "_", source_id.lower())
+            # source_id was: api_id.replace("/", "~", 1)
+            filename = pathlib.Path(arazzo_path).stem
+            # Remove "catalog_" prefix
+            if not filename.startswith("catalog_"):
+                continue
+            remainder = filename[len("catalog_") :]
+
+            # Try to match against known api_ids
+            matched_api = None
+            for api_id in api_ids:
+                # Convert api_id to the safe format used in the filename
+                source_id = api_id.replace("/", "~", 1)
+                safe = re.sub(r"[^a-z0-9_-]", "_", source_id.lower())
+                if remainder.startswith(safe + "_") or remainder == safe:
+                    matched_api = api_id
+                    break
+
+            if matched_api:
+                await db.execute(
+                    "UPDATE workflows SET involved_apis=? WHERE slug=?",
+                    (json.dumps([matched_api]), slug),
+                )
+                updated += 1
+
+        if updated:
+            await db.commit()
+            log.info("Backfilled involved_apis for %d workflow(s)", updated)

@@ -24,7 +24,17 @@ export const handlers = [
 
 	http.get('/toolkits', () => HttpResponse.json([])),
 
-	http.get('/workflows', () => HttpResponse.json([])),
+	http.get('/workflows', ({ request }) => {
+		// `/workflows` returns a bare array by default (every consumer
+		// outside the workspace grid expects this). When the workspace
+		// pagination fan-out passes `page`/`limit`, switch to the
+		// `{data, total, page, limit, total_pages}` envelope.
+		const url = new URL(request.url);
+		const paged = url.searchParams.has('page') || url.searchParams.has('limit');
+		return HttpResponse.json(
+			paged ? { data: [], total: 0, page: 1, limit: 20, total_pages: 1 } : [],
+		);
+	}),
 
 	http.get('/traces', () => HttpResponse.json({ traces: [], total: 0 })),
 
@@ -128,12 +138,25 @@ export const handlers = [
 
 	// ── Search & inspect ──────────────────────────────────────────
 	http.get('/search', () => HttpResponse.json([])),
+	// Mirror the real backend shape returned by `src/routers/capability.py`:
+	// `parameters` is a dict keyed by location (NOT an array), and auth
+	// lives under `auth` (NOT `auth_instructions`). Two early bugs in
+	// InspectPanel were silently rendering nothing because the mock here
+	// had drifted from the real response — keep them aligned.
 	http.get('/inspect/:id', () =>
 		HttpResponse.json({
-			capability_id: 'test-cap',
+			id: 'GET/api.example.com/test',
 			method: 'GET',
-			path: '/test',
+			url: 'https://api.example.com/test',
+			name: 'getTest',
 			summary: 'Test operation',
+			parameters: { query: [{ name: 'limit', required: false, description: 'Page size' }] },
+			auth: [{ scheme: 'apiKey', type: 'api_key', in: 'header', name: 'X-API-Key' }],
+			api: { id: 'example.com', name: 'example.com' },
+			_links: {
+				self: '/inspect/GET%2Fapi.example.com%2Ftest',
+				upstream: 'https://api.example.com/test',
+			},
 		}),
 	),
 
@@ -147,7 +170,9 @@ export const handlers = [
 		}),
 	),
 	http.post('/catalog/refresh', () => HttpResponse.json({ status: 'ok' })),
-	http.post('/import', () => HttpResponse.json({ id: 'import-1', status: 'ok' })),
+	http.post('/import', () =>
+		HttpResponse.json({ results: [{ status: 'success', api_id: 'imported-api' }] }),
+	),
 
 	// ── Approval ──────────────────────────────────────────────────
 	http.get('/toolkits/:id/access-requests/:reqId', ({ params }) =>

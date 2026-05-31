@@ -13,6 +13,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { Label } from '@/components/ui/Label';
 import { ErrorAlert } from '@/components/ui/ErrorAlert';
+import { emitCredentialImported } from '@/lib/events/credentialImported';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { PageShell } from '@/components/layout/PageShell';
 
@@ -271,7 +272,7 @@ function ApiPicker({ onSelect }: { onSelect: (api: ApiOut) => void }) {
 			{catalog.length > 0 && (
 				<div>
 					<p className="text-muted-foreground mb-1.5 px-1 font-mono text-[10px] tracking-widest uppercase">
-						From public catalog
+						From the Jentic public catalog
 					</p>
 					<div className="space-y-1">
 						{catalog.map((a: ApiOut) => (
@@ -449,8 +450,15 @@ function CredentialFields({
 
 	const createMutation = useMutation({
 		mutationFn: (d: CredentialCreate) => api.createCredential(d),
-		onSuccess: () => {
+		onSuccess: (created) => {
 			queryClient.invalidateQueries({ queryKey: ['credentials'] });
+			// P8: tell any open Discover tab that a credential just landed.
+			// `created` may carry counts in the future; for now the api_id
+			// is enough to trigger the close-the-loop toast.
+			emitCredentialImported({
+				api_id:
+					selectedApi?.id ?? (created as { api_id?: string } | undefined)?.api_id ?? '',
+			});
 			onSaved();
 		},
 		onError: (e: Error) => setError(e),
@@ -1028,9 +1036,30 @@ export default function CredentialFormPage() {
 		<PageShell width="form">
 			<BackButton to="/credentials" label="Back to Credentials" />
 
+			{/*
+			 * Title varies by intent:
+			 *   - Edit existing credential → "Edit Credential".
+			 *   - New credential, target API is in workspace already
+			 *       → "Add Credential" (the credential is the only new thing).
+			 *   - New credential, target API is a catalog row not yet imported
+			 *       → "Import to Workspace" — the credential POST is the
+			 *         server-side trigger for `ensure_catalog_api_imported`,
+			 *         so what the user *experiences* is an import. Calling it
+			 *         "Add credential" before the API is local was confusing
+			 *         (May 2026 review).
+			 *
+			 * `selectedApi.source === 'catalog'` is the only durable signal
+			 * the form has for "this is a directory row" — it's set both in
+			 * the deeplink path (`?api_id=...`) and in the picker step.
+			 */}
 			<PageHeader
-				category="Management"
-				title={isEdit ? 'Edit Credential' : 'Add Credential'}
+				title={
+					isEdit
+						? 'Edit Credential'
+						: selectedApi?.source === 'catalog'
+							? 'Import to Workspace'
+							: 'Add Credential'
+				}
 			/>
 
 			{/* Step indicator */}

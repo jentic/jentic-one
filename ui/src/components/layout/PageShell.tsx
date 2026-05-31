@@ -2,20 +2,22 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /**
- * Width variants for in-Layout pages. The outer Layout already handles top/bottom
- * chrome padding and horizontal gutters (`p-4 md:p-6`), so PageShell only owns the
- * inner content width cap and vertical rhythm.
+ * Width variants for in-Layout pages. `Layout` adds NO horizontal padding,
+ * so `PageShell` owns both the horizontal gutter (via the `--spacing-page-gutter`
+ * theme token → `px-page-gutter` utility) and the vertical rhythm.
  *
  * - `wide` (default): dashboards, lists, tables, anything that wants the screen.
+ *   No max-width — pairs with the full-bleed `<PageHeader>` so the content
+ *   edge aligns with the header band's edge on any monitor.
  * - `reading`: detail pages with long prose / sequential sections.
  * - `form`: single-column forms.
  */
 type PageWidth = 'wide' | 'reading' | 'form';
 
 const WIDTH_CLASS: Record<PageWidth, string> = {
-	wide: 'max-w-screen-2xl',
-	reading: 'max-w-4xl',
-	form: 'max-w-2xl',
+	wide: '',
+	reading: 'mx-auto max-w-4xl',
+	form: 'mx-auto max-w-2xl',
 };
 
 export interface PageShellProps {
@@ -38,9 +40,10 @@ export interface PageShellProps {
  * </PageShell>
  * ```
  *
- * Picks a sensible max-width and a consistent vertical rhythm so every page
- * lays out the same way across the app. Auth-only pages (Login, Setup,
- * Approval) intentionally do NOT use this — they render their own centred card.
+ * Picks a sensible max-width, owns the shared horizontal gutter, and applies
+ * a consistent vertical rhythm so every page lays out the same way.
+ * Auth-only pages (Login, Setup, Approval) intentionally do NOT use this —
+ * they render their own centred card.
  */
 export function PageShell({
 	children,
@@ -49,7 +52,14 @@ export function PageShell({
 	className,
 }: PageShellProps) {
 	return (
-		<div className={cn('mx-auto w-full', WIDTH_CLASS[width], spacing, className)}>
+		<div
+			className={cn(
+				'px-page-gutter w-full overflow-x-clip py-6',
+				WIDTH_CLASS[width],
+				spacing,
+				className,
+			)}
+		>
 			{children}
 		</div>
 	);

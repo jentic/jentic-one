@@ -36,7 +36,10 @@ export default function TracesPage() {
 
 	return (
 		<PageShell spacing="space-y-5">
-			<PageHeader category="Observability" title="Execution Traces" />
+			<PageHeader
+				title="Traces"
+				subtitle="Every authenticated request, with redaction and latency."
+			/>
 
 			{(toolkit || workflow) && (
 				<div className="flex flex-wrap items-center gap-2">

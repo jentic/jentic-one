@@ -19,7 +19,7 @@ test.describe('Traces page', () => {
 		const errors = captureConsoleErrors(page);
 		await page.goto('/');
 		await navigateTo(page, '/traces');
-		await expect(page.getByRole('heading', { name: /execution traces/i })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /^traces$/i })).toBeVisible();
 		expect(errors).toHaveLength(0);
 	});
 

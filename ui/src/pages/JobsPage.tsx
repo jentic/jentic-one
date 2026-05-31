@@ -41,7 +41,10 @@ export default function JobsPage() {
 
 	return (
 		<PageShell spacing="space-y-5">
-			<PageHeader category="Observability" title="Background Jobs" />
+			<PageHeader
+				title="Background jobs"
+				subtitle="Async workflow executions you've dispatched."
+			/>
 
 			<div className="flex flex-wrap items-center gap-2">
 				<span className="text-muted-foreground text-xs">Status:</span>
