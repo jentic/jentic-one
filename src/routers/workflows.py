@@ -884,6 +884,7 @@ print(json.dumps(out, default=str))
         duration_ms=duration_ms,
         error=result_data.get("error") if isinstance(result_data, dict) else str(result_data),
         step_outputs=step_outputs,
+        arazzo_steps=arazzo_steps,
     )
 
     response_headers = {"X-Jentic-Trace-Id": trace_id}

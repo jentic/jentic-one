@@ -158,10 +158,32 @@ export interface ExecutionStepResult {
 	createdAt: string;
 }
 
+/**
+ * Per-step backend record for the workflow steps panel in the drawer.
+ * Mirrors the `TraceStepOut` shape returned by `GET /traces/{id}.steps`,
+ * trimmed to the fields the drawer renders. Optional everywhere because
+ * the writer populates them lazily — old traces predating M5 will have
+ * `operation` and `status` as `null`.
+ */
+export interface ExecutionStepRow {
+	stepId: string;
+	stepIndex: number;
+	operation: string | null;
+	status: string | null;
+	httpStatus: number | null;
+	error: string | null;
+}
+
 export interface ExecutionDetail extends ExecutionLogEntry {
 	inputs: Record<string, unknown>;
 	outputs?: Record<string, unknown>;
 	stepResults?: ExecutionStepResult[];
+	/**
+	 * Per-step trace rows surfaced from `GET /traces/{id}`. Replaces the
+	 * webapp-flavoured `stepResults` for the mini Monitor drawer, which
+	 * has access to the raw backend shape.
+	 */
+	stepRows?: ExecutionStepRow[];
 	/** True when the trace endpoint can only return seed/limited fields (no request/response bodies). */
 	isSeedOnlyRow?: boolean;
 }

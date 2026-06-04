@@ -382,6 +382,18 @@ export default function MonitorPage(): JSX.Element {
 		if (!entry.isJobOnly) {
 			api.getTrace(entry.executionId)
 				.then((trace) => {
+					const traceObj = trace as Record<string, unknown>;
+					const rawSteps = Array.isArray(traceObj.steps)
+						? (traceObj.steps as Array<Record<string, unknown>>)
+						: [];
+					const stepRows = rawSteps.map((s, index) => ({
+						stepId: (s.step_id as string | null) ?? String(index + 1),
+						stepIndex: index,
+						operation: (s.operation as string | null) ?? null,
+						status: (s.status as string | null) ?? null,
+						httpStatus: (s.http_status as number | null) ?? null,
+						error: (s.error as string | null) ?? null,
+					}));
 					setSelectedExecution((prev) =>
 						prev && prev.executionId === entry.executionId
 							? {
@@ -397,6 +409,7 @@ export default function MonitorPage(): JSX.Element {
 										((trace as Record<string, unknown>).error as
 											| string
 											| undefined) ?? prev.errorMessage,
+									stepRows,
 									isSeedOnlyRow: false,
 								}
 							: prev,

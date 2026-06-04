@@ -43,6 +43,7 @@ async def write_trace(
     duration_ms: int | None,
     error: str | None,
     step_outputs: dict | None = None,
+    arazzo_steps: dict[str, dict] | None = None,
     agent_id: str | None = None,
     job_id: str | None = None,
     parent_trace_id: str | None = None,
@@ -57,6 +58,11 @@ async def write_trace(
     workflow rows pass None because they're multi-API by definition. NULL is
     fine — the read-side LEFT JOIN renders unattributed rows the same way it
     handles unknown toolkits/agents.
+
+    `arazzo_steps` is an optional `{step_id: arazzo_step_def}` map used to
+    enrich per-step rows in `execution_steps`. Workflow runs pass it through
+    so the drawer can show what each step actually called (operationId,
+    workflowId, etc.) instead of just an opaque step_id and an error blob.
     """
     async with get_db() as db:
         await db.execute(
@@ -98,14 +104,36 @@ async def write_trace(
                 )
                 step_http = err_ctx.get("http_code") if isinstance(err_ctx, dict) else None
                 step_err = step_data.get("error") if isinstance(step_data, dict) else None
+                # Per-step status: explicit `error` field wins; otherwise infer
+                # from runner_error_context presence; otherwise treat as success.
+                # `step_outputs` is only populated by the runner once the step
+                # finished, so "no error signal" == "ran cleanly".
+                if step_err or err_ctx:
+                    step_status = "error"
+                else:
+                    step_status = "success"
+                # Resolve `operation` from the Arazzo step definition when the
+                # caller passed the lookup map. The Arazzo runner doesn't echo
+                # this back inside step_data so the writer has no other source.
+                step_operation: str | None = None
+                if arazzo_steps and step_id in arazzo_steps:
+                    arazzo_step = arazzo_steps[step_id]
+                    step_operation = (
+                        arazzo_step.get("operationId")
+                        or arazzo_step.get("operationPath")
+                        or arazzo_step.get("workflowId")
+                    )
                 await db.execute(
                     """INSERT INTO execution_steps
-                       (id, execution_id, step_id, http_status, output, error)
-                       VALUES (?,?,?,?,?,?)""",
+                       (id, execution_id, step_id, operation, status,
+                        http_status, output, error)
+                       VALUES (?,?,?,?,?,?,?,?)""",
                     (
                         str(uuid.uuid4()),
                         trace_id,
                         step_id,
+                        step_operation,
+                        step_status,
                         step_http,
                         json.dumps(step_data),
                         step_err,
@@ -693,8 +721,15 @@ async def get_trace(
             "operation": s[2],
             "status": s[3],
             "http_status": s[4],
-            "output": json.loads(s[5]) if s[5] else None,  # inputs stored in output col
-            "detail": json.loads(s[6]) if s[6] else None,
+            # Column 5 is `inputs`; current writer leaves it NULL because the
+            # Arazzo runner doesn't expose per-step inputs. Surface it anyway
+            # so a future writer change reads through without UI work.
+            "inputs": json.loads(s[5]) if s[5] else None,
+            # Column 6 is `output` — the JSON-encoded step_data blob from the
+            # runner. Includes upstream response, error context, and any
+            # outputs the workflow declared. The drawer renders this as a
+            # collapsible blob; TraceDetailPage just shows whether it exists.
+            "output": json.loads(s[6]) if s[6] else None,
             "error": s[7],
             "started_at": s[8],
             "completed_at": s[9],

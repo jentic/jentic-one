@@ -272,6 +272,67 @@ export function ExecutionDetailSheet({
 								);
 							})()}
 
+							{execution.stepRows && execution.stepRows.length > 0 && (
+								<div className="space-y-2">
+									<h4 className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+										Steps ({execution.stepRows.length})
+									</h4>
+									<div className="space-y-1.5">
+										{execution.stepRows.map((step) => (
+											<div
+												key={`${step.stepIndex}-${step.stepId}`}
+												className="border-border bg-muted/20 rounded-lg border p-2.5"
+											>
+												<div className="flex items-start gap-2">
+													<div className="bg-primary/10 border-primary/30 text-primary flex h-5 w-5 shrink-0 items-center justify-center rounded-full border font-mono text-[10px]">
+														{step.stepIndex + 1}
+													</div>
+													<div className="min-w-0 flex-1">
+														<div className="flex flex-wrap items-center gap-1.5">
+															<code className="text-muted-foreground font-mono text-[11px]">
+																{step.stepId}
+															</code>
+															{step.operation && (
+																<code className="text-foreground truncate font-mono text-xs">
+																	{step.operation}
+																</code>
+															)}
+															{step.httpStatus !== null && (
+																<span className="text-muted-foreground bg-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
+																	HTTP {step.httpStatus}
+																</span>
+															)}
+															{step.status && (
+																<span
+																	className={cn(
+																		'rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+																		step.status === 'success' &&
+																			'bg-accent-green/10 text-accent-green',
+																		step.status === 'error' &&
+																			'bg-accent-red/10 text-accent-red',
+																		step.status !== 'success' &&
+																			step.status !==
+																				'error' &&
+																			'bg-muted text-muted-foreground',
+																	)}
+																>
+																	{step.status}
+																</span>
+															)}
+														</div>
+														{step.error && (
+															<p className="text-accent-red mt-1 font-mono text-[11px] break-words whitespace-pre-wrap">
+																{step.error}
+															</p>
+														)}
+													</div>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
+
 							{execution.inputs && Object.keys(execution.inputs).length > 0 && (
 								<div className="space-y-2">
 									<h4 className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
