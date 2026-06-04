@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from src.db import get_db
 from src.models import TraceListPage, TraceOut, UsageResponse
 from src.openapi_helpers import agent_hints
+from src.routers.jobs import _jobs_scope_clause
 
 
 router = APIRouter()
@@ -478,10 +479,15 @@ async def get_usage(
                 else:
                     p95_ms = value
 
-        # Active-now: in-flight jobs (pending/running) — snapshot at query time,
-        # not bound to the window. Cheap COUNT, no scope-clause complications.
+        # Active-now: in-flight jobs (pending/running) — snapshot at query
+        # time, not bound to the window. Scoped to the same tenant as the
+        # rest of `get_usage` so an agent doesn't see "5 active" because
+        # somebody else's workflow is running.
+        jobs_scope_sql, jobs_scope_params = _jobs_scope_clause(request)
         async with db.execute(
-            "SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')"
+            f"SELECT COUNT(*) FROM jobs "
+            f"WHERE {jobs_scope_sql} AND status IN ('pending', 'running')",
+            jobs_scope_params,
         ) as cur:
             active_now = int((await cur.fetchone())[0] or 0)
 

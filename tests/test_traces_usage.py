@@ -234,6 +234,56 @@ def test_default_window_is_24h(admin_client, seeded_usage):  # noqa: ARG001
     assert body["bucket_seconds"] == 3600
 
 
+def test_active_now_is_tenant_scoped(admin_client, agent_only_client, seeded_usage):  # noqa: ARG001
+    """`stats.active_now` counts in-flight jobs for the caller's tenant only.
+
+    Seed two pending jobs — one in toolkit `default` (agent_only_client's
+    binding), one in `isolated_toolkit`. Admin's window-wide active_now must
+    include both; the toolkit-key caller's must include only the first.
+    Regression for the pre-fix global `SELECT COUNT(*) FROM jobs WHERE
+    status IN (...)` that leaked cross-tenant in-flight counts onto every
+    Monitor stats card.
+    """
+    now = seeded_usage["now"]
+    with sqlite3.connect(DB_PATH) as cx:
+        cx.executemany(
+            """INSERT INTO jobs (id, kind, slug_or_id, toolkit_id, agent_id,
+                                 status, created_at, inputs)
+               VALUES (?, 'broker', 'GET/api.example.com/x', ?, NULL,
+                       'pending', ?, '{}')""",
+            [
+                ("job_active_def01", "default", now - 5),
+                ("job_active_iso01", "isolated_toolkit", now - 5),
+            ],
+        )
+        cx.commit()
+    try:
+        admin_active = admin_client.get(f"/traces/usage?since={now - 3600}&until={now + 1}").json()[
+            "stats"
+        ]["active_now"]
+        agent_active = agent_only_client.get(
+            f"/traces/usage?since={now - 3600}&until={now + 1}"
+        ).json()["stats"]["active_now"]
+        # Admin sees at least both seeded rows (others may be in-flight from
+        # parallel tests sharing the DB; >= guards against flakiness).
+        assert admin_active >= 2
+        # Toolkit-key caller scoped to "default" sees the default row but not
+        # the isolated one. Other tests may seed default-scoped jobs, so this
+        # is also `>= 1` not `== 1`. The strict gap (admin_active > agent_active)
+        # below is the actual regression assertion.
+        assert agent_active >= 1
+        assert admin_active > agent_active, (
+            f"active_now leaked across tenants: admin={admin_active} agent={agent_active}"
+        )
+    finally:
+        with sqlite3.connect(DB_PATH) as cx:
+            cx.execute(
+                "DELETE FROM jobs WHERE id IN (?, ?)",
+                ("job_active_def01", "job_active_iso01"),
+            )
+            cx.commit()
+
+
 def test_filter_by_api_id_uses_exact_match_not_substring(admin_client, seeded_usage):
     """Regression: `/traces/usage?api_id=` filters on the `api_id` column,
     not a substring of `operation_id`. A row whose operation_id contains
