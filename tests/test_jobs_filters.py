@@ -2,9 +2,9 @@
 
 The legacy `?status=` filter is preserved; this test focuses on the new
 toolkit_id / agent_id / since / until parameters and their composition. We use
-the admin client because filtering is independent of tenant scoping (the
-/jobs route does not currently enforce per-tenant scoping; that is a separate
-issue tracked in `risks.md` and explicitly out of scope per the user).
+the admin client because we want to hit every fixture row regardless of
+tenant scoping; per-tenant scoping behaviour is covered separately by
+`test_jobs_scoping.py`.
 """
 
 import sqlite3

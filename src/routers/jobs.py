@@ -32,7 +32,7 @@ import uuid
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from src.db import get_db
 from src.models import JobListPage, JobOut
@@ -43,6 +43,36 @@ router = APIRouter(prefix="/jobs", tags=["observe"])
 
 # In-memory registry of running background tasks so we can cancel them
 _running_tasks: dict[str, asyncio.Task] = {}
+
+
+def _jobs_scope_clause(request: Request, prefix: str = "") -> tuple[str, list]:
+    """Return (sql_predicate, params) restricting job reads to the caller's tenant.
+
+    Mirrors `_trace_scope_clause` in `routers/traces.py`. Same rules:
+      - Human admin sessions see every job.
+      - Agent OAuth callers see only jobs stamped with their agent_id.
+      - Toolkit-key callers see every job tagged with their toolkit, regardless
+        of agent_id (operator-credential semantics, see traces helper docstring).
+      - Anonymous callers fail closed (the auth middleware rejects them earlier,
+        but if a future code path forgets to set state we don't want every job
+        listed).
+
+    `prefix` lets callers qualify column refs when joining other tables.
+    Migration 0007 added a partial index on `jobs(agent_id, created_at)`
+    keyed for the agent-scoped read. The toolkit-key fallback falls back
+    to a scan, but the jobs table is bounded by the active workload —
+    pre-emptive optimisation isn't worth a second index until profiling
+    says otherwise.
+    """
+    if getattr(request.state, "is_admin", False):
+        return "1=1", []
+    agent_id = getattr(request.state, "agent_client_id", None)
+    if agent_id:
+        return f"{prefix}agent_id = ?", [agent_id]
+    toolkit_id = getattr(request.state, "toolkit_id", None)
+    if toolkit_id:
+        return f"{prefix}toolkit_id = ?", [toolkit_id]
+    return "0=1", []
 
 
 def register_task(job_id: str, task: asyncio.Task) -> None:
@@ -246,6 +276,7 @@ def _job_response(d: dict) -> dict:
     ),
 )
 async def list_jobs(
+    request: Request,
     status: Annotated[
         str | None,
         Query(
@@ -286,11 +317,11 @@ async def list_jobs(
 ):
     offset = (page - 1) * limit
 
-    # Layer optional filters into a single WHERE; prior implementation
-    # branched on `status` only and would have grown unmanageable as we
-    # added agent / toolkit / time filters.
-    where_parts: list[str] = []
-    params: list = []
+    # Tenant scoping first — the rest of the WHERE layers user-supplied
+    # filters on top. Anonymous principals fail closed (`0=1`).
+    scope_sql, scope_params = _jobs_scope_clause(request)
+    where_parts: list[str] = [scope_sql]
+    params: list = list(scope_params)
     if status:
         # Comma-list → IN(?,?,...). The Monitor Jobs tab sends e.g.
         # `status=pending,running` to display only in-flight jobs; previously
@@ -319,7 +350,9 @@ async def list_jobs(
         where_parts.append("created_at < ?")
         params.append(until)
 
-    where_sql = (" WHERE " + " AND ".join(where_parts)) if where_parts else ""
+    # `where_parts` always contains at least the scope predicate, so the
+    # WHERE clause is unconditional now.
+    where_sql = " WHERE " + " AND ".join(where_parts)
     page_params = [*params, limit, offset]
 
     async with get_db() as db:
@@ -407,10 +440,27 @@ async def list_jobs(
         ],
     ),
 )
-async def get_job_route(job_id: Annotated[str, Path(description="Job ID (format: job_{12chars})")]):
+async def get_job_route(
+    request: Request,
+    job_id: Annotated[str, Path(description="Job ID (format: job_{12chars})")],
+):
     d = await get_job(job_id)
     if not d:
         raise HTTPException(404, f"Job '{job_id}' not found")
+    # Tenant scoping: pretend non-owners don't see the row at all (404, not 403),
+    # mirroring the pattern in /traces/{id} — leaks no existence information.
+    if not getattr(request.state, "is_admin", False):
+        agent_id = getattr(request.state, "agent_client_id", None)
+        toolkit_id = getattr(request.state, "toolkit_id", None)
+        if agent_id:
+            if d.get("agent_id") != agent_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        elif toolkit_id:
+            if d.get("toolkit_id") != toolkit_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        else:
+            # Anonymous-with-state-set is unexpected; fail closed.
+            raise HTTPException(404, f"Job '{job_id}' not found")
     return _job_response(d)
 
 
@@ -426,12 +476,28 @@ async def get_job_route(job_id: Annotated[str, Path(description="Job ID (format:
         "Has no effect on already-completed jobs."
     ),
 )
-async def cancel_job(job_id: Annotated[str, Path(description="Job ID to cancel")]):
+async def cancel_job(
+    request: Request,
+    job_id: Annotated[str, Path(description="Job ID to cancel")],
+):
     d = await get_job(job_id)
     if not d:
         raise HTTPException(404, f"Job '{job_id}' not found")
+    # Same tenant-scoping pattern as GET /jobs/{id}: non-owners see 404.
+    # Without this, any authenticated caller could cancel any other tenant's
+    # in-flight jobs by guessing job_ids.
+    if not getattr(request.state, "is_admin", False):
+        agent_id = getattr(request.state, "agent_client_id", None)
+        toolkit_id = getattr(request.state, "toolkit_id", None)
+        if agent_id:
+            if d.get("agent_id") != agent_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        elif toolkit_id:
+            if d.get("toolkit_id") != toolkit_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        else:
+            raise HTTPException(404, f"Job '{job_id}' not found")
     if d["status"] in ("complete", "failed", "upstream_async"):
         return  # already done, 204 is fine
-    # Cancel the asyncio task if running
     cancel_task(job_id)
     await update_job(job_id, status="failed", error="Cancelled by client")
