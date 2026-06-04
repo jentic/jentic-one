@@ -90,7 +90,12 @@ export function ExecutionTable({
 			header: 'Toolkit',
 			className: 'w-[160px]',
 			render: (row) => (
-				<span className="text-muted-foreground text-xs">{row.toolkitName ?? '—'}</span>
+				<div className="flex flex-col leading-tight">
+					<span className="text-foreground text-xs">{row.toolkitName ?? '—'}</span>
+					<span className="text-muted-foreground text-[10px] capitalize">
+						{row.executionType}
+					</span>
+				</div>
 			),
 		},
 		{
