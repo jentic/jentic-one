@@ -185,7 +185,12 @@ async def get_job(job_id: str) -> dict | None:
         async with db.execute(
             "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
             "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-            "created_at, completed_at, callback_url "
+            "created_at, completed_at, callback_url, "
+            # Correlated lookup so a child broker job (one whose owning trace
+            # has parent_trace_id set) can render "part of workflow X" in the
+            # Job drawer without a second round-trip. NULL when the job has
+            # no trace yet (pending) or the trace is top-level.
+            "(SELECT parent_trace_id FROM executions WHERE id = jobs.trace_id) AS parent_trace_id "
             "FROM jobs WHERE id=?",
             (job_id,),
         ) as cur:
@@ -209,6 +214,7 @@ async def get_job(job_id: str) -> dict | None:
         "created_at",
         "completed_at",
         "callback_url",
+        "parent_trace_id",
     ]
     d = dict(zip(keys, row))
     if d.get("result"):
@@ -258,6 +264,8 @@ def _job_response(d: dict) -> dict:
         }
     else:
         out["_links"] = {"self": f"/jobs/{d['id']}"}
+    if d.get("parent_trace_id"):
+        out["parent_trace_id"] = d["parent_trace_id"]
     return out
 
 
@@ -361,7 +369,10 @@ async def list_jobs(
         async with db.execute(
             "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
             "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-            "created_at, completed_at, callback_url "
+            "created_at, completed_at, callback_url, "
+            # See `get_job` — correlated lookup avoids a JOIN that would
+            # collide with the unqualified column names in `where_sql`.
+            "(SELECT parent_trace_id FROM executions WHERE id = jobs.trace_id) AS parent_trace_id "
             f"FROM jobs{where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             page_params,
         ) as cur:
@@ -384,6 +395,7 @@ async def list_jobs(
         "created_at",
         "completed_at",
         "callback_url",
+        "parent_trace_id",
     ]
     items = []
     for row in rows:

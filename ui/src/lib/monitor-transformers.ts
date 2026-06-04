@@ -194,7 +194,7 @@ export function jobToLogEntry(
 		completedAt: job.completed_at != null ? toIso(job.completed_at) : undefined,
 		isJobOnly: true,
 		jobId: job.job_id,
-		parentTraceId: null,
+		parentTraceId: (job.parent_trace_id as string | null | undefined) ?? null,
 	};
 }
 
@@ -432,6 +432,7 @@ export function jobToJobLogEntry(
 		agentId,
 		agentName: agentId ? (agentNameById.get(agentId) ?? agentId) : null,
 		traceId: (job.trace_id as string | null | undefined) ?? null,
+		parentTraceId: (job.parent_trace_id as string | null | undefined) ?? null,
 		upstreamJobUrl: (job.upstream_job_url as string | null | undefined) ?? null,
 		httpStatus: (job.http_status as number | null | undefined) ?? null,
 		errorMessage: status === 'cancelled' ? null : errorMessage,

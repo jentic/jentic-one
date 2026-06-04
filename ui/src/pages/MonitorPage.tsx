@@ -122,6 +122,12 @@ export default function MonitorPage(): JSX.Element {
 	const jobStatusFilter = readJobStatus(searchParams);
 	const jobKindFilter = readJobKind(searchParams);
 	const page = parseInt(searchParams.get('page') ?? '1', 10) || 1;
+	// Deep-link ids. `?id=` opens the Execution Detail drawer for a trace,
+	// `?job=` opens the Job Detail drawer in the Jobs tab. They're mutually
+	// exclusive: opening one clears the other so a back-and-forth between
+	// drawers doesn't accumulate history-stack noise.
+	const selectedExecIdParam = readSearchParam(searchParams, 'id');
+	const selectedJobIdParam = readSearchParam(searchParams, 'job');
 
 	const [selectedExecution, setSelectedExecution] = useState<ExecutionDetail | null>(null);
 	const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -356,81 +362,151 @@ export default function MonitorPage(): JSX.Element {
 	};
 
 	const handleOpenJob = (jobId: string) => {
-		updateParam({ tab: 'jobs' });
-		// The Jobs tab opens its own detail sheet on row click. Direct deep
-		// linking by job id is a follow-up — for now the cross-link drops the
-		// user on the correct tab and the polling table includes the job.
-		void jobId;
+		// Cross-link from the Execution Log drawer → Jobs tab. We:
+		//   1. Switch to the Jobs tab
+		//   2. Stamp `?job=` so JobsTab can open its drawer for this id
+		//   3. Clear `?id=` and close any open exec drawer so we don't end up
+		//      with two drawers stacked
+		updateParam({ tab: 'jobs', job: jobId, id: null });
+		setIsSheetOpen(false);
+		setSelectedExecution(null);
 	};
 
 	const handleOpenTrace = (traceId: string) => {
-		updateParam({ tab: 'log' });
-		// Likewise: navigating to /traces/{id} programmatically is a follow-up.
-		// The Execution Log shows the most recent traces; the user can find
-		// the row from there.
-		void traceId;
+		// Cross-link to the Execution Log. Stamping `?id=` is enough — the
+		// effect below picks it up, fetches the trace, and opens the drawer.
+		// The Jobs-side drawer is closed by clearing `?job=`.
+		updateParam({ tab: 'log', id: traceId, job: null });
+	};
+
+	const fetchAndPopulateTraceDetail = (traceId: string) => {
+		api.getTrace(traceId)
+			.then((trace) => {
+				const traceObj = trace as Record<string, unknown>;
+				const rawSteps = Array.isArray(traceObj.steps)
+					? (traceObj.steps as Array<Record<string, unknown>>)
+					: [];
+				const stepRows = rawSteps.map((s, index) => ({
+					stepId: (s.step_id as string | null) ?? String(index + 1),
+					stepIndex: index,
+					operation: (s.operation as string | null) ?? null,
+					status: (s.status as string | null) ?? null,
+					httpStatus: (s.http_status as number | null) ?? null,
+					error: (s.error as string | null) ?? null,
+				}));
+				// Backend returns workflow-only inputs/outputs columns; broker
+				// rows arrive null and the panels stay empty (matches webapp).
+				const traceInputs =
+					(traceObj.inputs as Record<string, unknown> | null | undefined) ?? {};
+				const traceOutputs =
+					(traceObj.outputs as Record<string, unknown> | null | undefined) ?? undefined;
+				setSelectedExecution((prev) =>
+					prev && prev.executionId === traceId
+						? {
+								...prev,
+								inputs: traceInputs,
+								outputs: traceOutputs,
+								errorMessage:
+									((trace as Record<string, unknown>).error as
+										| string
+										| undefined) ?? prev.errorMessage,
+								stepRows,
+								isSeedOnlyRow: false,
+								// Backend returns these too — keep them on the
+								// detail so the "Linked Context" panel renders
+								// even when we landed here from a deep link
+								// (i.e. without going through handleRowClick
+								// which inherits from the table row).
+								parentTraceId:
+									(traceObj.parent_trace_id as string | null | undefined) ??
+									prev.parentTraceId ??
+									null,
+								jobId:
+									(traceObj.job_id as string | null | undefined) ??
+									prev.jobId ??
+									null,
+							}
+						: prev,
+				);
+			})
+			.catch(() => {
+				setSelectedExecution((prev) =>
+					prev && prev.executionId === traceId ? { ...prev, isSeedOnlyRow: true } : prev,
+				);
+			});
 	};
 
 	const handleRowClick = (entry: ExecutionLogEntry) => {
-		const detail: ExecutionDetail = {
-			...entry,
-			inputs: {},
-			outputs: undefined,
-			isSeedOnlyRow: entry.isJobOnly === true,
-		};
-		setSelectedExecution(detail);
-		setIsSheetOpen(true);
-		if (!entry.isJobOnly) {
-			api.getTrace(entry.executionId)
-				.then((trace) => {
-					const traceObj = trace as Record<string, unknown>;
-					const rawSteps = Array.isArray(traceObj.steps)
-						? (traceObj.steps as Array<Record<string, unknown>>)
-						: [];
-					const stepRows = rawSteps.map((s, index) => ({
-						stepId: (s.step_id as string | null) ?? String(index + 1),
-						stepIndex: index,
-						operation: (s.operation as string | null) ?? null,
-						status: (s.status as string | null) ?? null,
-						httpStatus: (s.http_status as number | null) ?? null,
-						error: (s.error as string | null) ?? null,
-					}));
-					// Backend returns workflow-only inputs/outputs columns; broker
-					// rows arrive null and the panels stay empty (matches webapp).
-					const traceInputs =
-						(traceObj.inputs as Record<string, unknown> | null | undefined) ?? {};
-					const traceOutputs =
-						(traceObj.outputs as Record<string, unknown> | null | undefined) ??
-						undefined;
-					setSelectedExecution((prev) =>
-						prev && prev.executionId === entry.executionId
-							? {
-									...prev,
-									inputs: traceInputs,
-									outputs: traceOutputs,
-									errorMessage:
-										((trace as Record<string, unknown>).error as
-											| string
-											| undefined) ?? prev.errorMessage,
-									stepRows,
-									isSeedOnlyRow: false,
-								}
-							: prev,
-					);
-				})
-				.catch(() => {
-					setSelectedExecution((prev) =>
-						prev && prev.executionId === entry.executionId
-							? { ...prev, isSeedOnlyRow: true }
-							: prev,
-					);
-				});
-		}
+		// User clicked a row in the table. Stamp the URL so the deep-link is
+		// shareable and so reopening from the back button works. The effect
+		// below sees `?id=…` and triggers the actual open.
+		updateParam({ id: entry.executionId, job: null });
 	};
 
 	const handleSheetClose = () => {
 		setIsSheetOpen(false);
+		// Clearing the URL param is what actually drives the close — this
+		// setState is just to make the close feel instant before the URL
+		// update propagates.
+		updateParam({ id: null });
 	};
+
+	// Drive the Execution Detail drawer from `?id=`. Single source of truth:
+	// row clicks, deep links, browser history, and the cross-link from the
+	// Job drawer all funnel through this effect. The effect re-fetches when
+	// the id changes and skips fetching for "job-only" rows (jobs with no
+	// trace yet — pending workflow runs that haven't produced an executions
+	// row yet).
+	useEffect(() => {
+		if (!selectedExecIdParam) {
+			setIsSheetOpen(false);
+			setSelectedExecution(null);
+			return;
+		}
+		// Try to find the row in the merged table data first so we have
+		// header context (status pill, timestamps, vendor) before the fetch
+		// completes. Falls back to a minimal stub if the trace isn't in the
+		// current page — the fetch will fill the rest.
+		const rowFromTable: ExecutionLogEntry | undefined = mergedExecutions.find(
+			(r: ExecutionLogEntry) => r.executionId === selectedExecIdParam,
+		);
+		const seed: ExecutionDetail = rowFromTable
+			? {
+					...rowFromTable,
+					inputs: {},
+					outputs: undefined,
+					isSeedOnlyRow: rowFromTable.isJobOnly === true,
+				}
+			: ({
+					executionId: selectedExecIdParam,
+					executionLogId: selectedExecIdParam,
+					executionType: 'operation',
+					status: 'pending',
+					workflowId: null,
+					workflowName: null,
+					operationName: null,
+					toolkitId: null,
+					toolkitName: null,
+					agentId: null,
+					agentName: null,
+					apiVendor: null,
+					apiName: null,
+					createdAt: new Date().toISOString(),
+					inputs: {},
+					outputs: undefined,
+					isSeedOnlyRow: true,
+					parentTraceId: null,
+					jobId: null,
+				} as unknown as ExecutionDetail);
+		setSelectedExecution(seed);
+		setIsSheetOpen(true);
+		if (!seed.isSeedOnlyRow || !rowFromTable) {
+			fetchAndPopulateTraceDetail(selectedExecIdParam);
+		}
+		// `mergedExecutions` is intentionally excluded — refetching when
+		// the table polls would re-trigger the fetch effect needlessly.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectedExecIdParam]);
 
 	useEffect(() => {
 		const data = filteredTracesQuery.data as unknown as { traces?: unknown[] } | undefined;
@@ -738,6 +814,10 @@ export default function MonitorPage(): JSX.Element {
 					onClearFilters={handleClearJobsFilters}
 					onPageChange={handlePageChange}
 					onOpenTrace={handleOpenTrace}
+					selectedJobId={selectedJobIdParam}
+					onSelectionChange={(jobId) =>
+						updateParam(jobId ? { job: jobId } : { job: null })
+					}
 				/>
 			)}
 

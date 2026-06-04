@@ -7577,6 +7577,19 @@
 						"description": "Execution trace ID for this job",
 						"examples": ["trace_xyz789"]
 					},
+					"parent_trace_id": {
+						"anyOf": [
+							{
+								"type": "string"
+							},
+							{
+								"type": "null"
+							}
+						],
+						"title": "Parent Trace Id",
+						"description": "Parent workflow trace this job's trace is a child step of. Mirrored from `executions.parent_trace_id` so a child broker job (e.g. an async wait=0 hop spawned inside an arazzo workflow) can render \"part of workflow X\" in the Job drawer without a second fetch. Null for top-level jobs.",
+						"examples": ["exec_abc123xyz"]
+					},
 					"created_at": {
 						"anyOf": [
 							{

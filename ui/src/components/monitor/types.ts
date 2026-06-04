@@ -138,6 +138,7 @@ export interface JobLogEntry {
 	agentId: string | null;
 	agentName: string | null;
 	traceId: string | null;
+	parentTraceId: string | null;
 	upstreamJobUrl: string | null;
 	httpStatus: number | null;
 	errorMessage: string | null;

@@ -675,6 +675,16 @@ class JobOut(BaseModel):
     trace_id: str | None = Field(
         default=None, examples=["trace_xyz789"], description="Execution trace ID for this job"
     )
+    parent_trace_id: str | None = Field(
+        default=None,
+        examples=["exec_abc123xyz"],
+        description=(
+            "Parent workflow trace this job's trace is a child step of. Mirrored from "
+            "`executions.parent_trace_id` so a child broker job (e.g. an async wait=0 hop "
+            'spawned inside an arazzo workflow) can render "part of workflow X" in the '
+            "Job drawer without a second fetch. Null for top-level jobs."
+        ),
+    )
     created_at: float | None = Field(
         default=None, examples=[1672531200.0], description="Unix timestamp when job was created"
     )

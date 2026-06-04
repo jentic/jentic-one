@@ -295,6 +295,7 @@ export interface JobOut {
 	upstream_async?: boolean;
 	upstream_job_url?: string | null;
 	trace_id?: string | null;
+	parent_trace_id?: string | null;
 	created_at?: number | null;
 	completed_at?: number | null;
 	[key: string]: unknown;

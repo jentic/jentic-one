@@ -1,4 +1,4 @@
-import { type JSX, useMemo, useState } from 'react';
+import { type JSX, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { JobsFilters } from './JobsFilters';
@@ -35,6 +35,14 @@ interface JobsTabProps {
 	onClearFilters: () => void;
 	onPageChange: (page: number) => void;
 	onOpenTrace?: (traceId: string) => void;
+	/** Deep-link: when set, JobsTab opens the drawer for this job once the
+	 * row appears in the polling query. Driven by the URL so refresh and
+	 * cross-link from the Execution Log drawer both work. */
+	selectedJobId?: string | null;
+	/** Notifies the parent when the user opens or closes a job drawer.
+	 * The parent owns the URL param so back/forward and shareable deep
+	 * links stay consistent. */
+	onSelectionChange?: (jobId: string | null) => void;
 }
 
 const POLL_INTERVAL_MS = 15_000;
@@ -81,6 +89,8 @@ export function JobsTab({
 	onClearFilters,
 	onPageChange,
 	onOpenTrace,
+	selectedJobId,
+	onSelectionChange,
 }: JobsTabProps): JSX.Element {
 	const queryClient = useQueryClient();
 	const [selected, setSelected] = useState<JobLogEntry | null>(null);
@@ -139,11 +149,39 @@ export function JobsTab({
 	const handleRowClick = (entry: JobLogEntry) => {
 		setSelected(entry);
 		setIsSheetOpen(true);
+		onSelectionChange?.(entry.jobId);
 	};
 
 	const handleSheetClose = () => {
 		setIsSheetOpen(false);
+		onSelectionChange?.(null);
 	};
+
+	// Deep-link: open the drawer when `selectedJobId` arrives in the props
+	// (e.g. coming from `?job=…` on first paint or from a cross-link in the
+	// Execution Log drawer). We wait for the row to appear in the polling
+	// query so the header has the same shape as a click-driven open. While
+	// waiting, isSheetOpen stays false — better than rendering an empty
+	// drawer.
+	useEffect(() => {
+		if (!selectedJobId) {
+			// Parent cleared the deep link (e.g. user closed sheet via URL
+			// back-button). Mirror that into local sheet state.
+			if (isSheetOpen) setIsSheetOpen(false);
+			return;
+		}
+		if (selected?.jobId === selectedJobId && isSheetOpen) return;
+		const match = entries.find((e) => e.jobId === selectedJobId);
+		if (match) {
+			setSelected(match);
+			setIsSheetOpen(true);
+		}
+		// `entries` changes on every poll; the early-return guard above keeps
+		// us from re-opening on each refresh when the user has already seen
+		// the drawer. Local `selected`/`isSheetOpen` are intentionally not
+		// in deps — they're guards, not triggers.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [selectedJobId, entries]);
 
 	const handleCancel = (jobId: string) => {
 		cancelMutation.mutate(jobId);

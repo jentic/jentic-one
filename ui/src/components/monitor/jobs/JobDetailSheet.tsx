@@ -174,30 +174,63 @@ export function JobDetailSheet({
 								)}
 							</div>
 
-							{job.traceId &&
-								(() => {
-									const traceId = job.traceId;
-									return (
-										<div className="border-border bg-muted/20 rounded-lg border px-3 py-2">
-											<p className="text-muted-foreground text-[10px] tracking-wider uppercase">
-												Linked Execution Trace
-											</p>
-											{onOpenTrace ? (
-												<button
-													type="button"
-													onClick={() => onOpenTrace(traceId)}
-													className="text-foreground hover:text-accent-blue mt-0.5 truncate font-mono text-xs underline-offset-2 hover:underline"
-												>
-													{traceId}
-												</button>
-											) : (
-												<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-													{traceId}
-												</p>
-											)}
-										</div>
-									);
-								})()}
+							{(job.traceId || job.parentTraceId) && (
+								<div className="border-border bg-muted/20 space-y-1.5 rounded-lg border px-3 py-2">
+									<p className="text-muted-foreground text-[10px] tracking-wider uppercase">
+										Linked Context
+									</p>
+									{job.parentTraceId &&
+										(() => {
+											const parentTraceId = job.parentTraceId;
+											return (
+												<div className="flex items-center gap-2">
+													<span className="text-muted-foreground text-[10px] uppercase">
+														Parent
+													</span>
+													{onOpenTrace ? (
+														<button
+															type="button"
+															onClick={() =>
+																onOpenTrace(parentTraceId)
+															}
+															className="text-foreground hover:text-accent-blue truncate font-mono text-xs underline-offset-2 hover:underline"
+														>
+															{parentTraceId}
+														</button>
+													) : (
+														<span className="text-muted-foreground truncate font-mono text-xs">
+															{parentTraceId}
+														</span>
+													)}
+												</div>
+											);
+										})()}
+									{job.traceId &&
+										(() => {
+											const traceId = job.traceId;
+											return (
+												<div className="flex items-center gap-2">
+													<span className="text-muted-foreground text-[10px] uppercase">
+														Trace
+													</span>
+													{onOpenTrace ? (
+														<button
+															type="button"
+															onClick={() => onOpenTrace(traceId)}
+															className="text-foreground hover:text-accent-blue truncate font-mono text-xs underline-offset-2 hover:underline"
+														>
+															{traceId}
+														</button>
+													) : (
+														<span className="text-muted-foreground truncate font-mono text-xs">
+															{traceId}
+														</span>
+													)}
+												</div>
+											);
+										})()}
+								</div>
+							)}
 
 							{job.upstreamJobUrl && (
 								<div className="border-border bg-muted/20 rounded-lg border px-3 py-2">
