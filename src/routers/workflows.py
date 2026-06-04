@@ -576,6 +576,7 @@ async def dispatch_workflow(
                     trace_id=None,
                     agent_id=agent_id,
                     caller_bearer_token=caller_bearer_token,
+                    job_id=job_id,
                 )
                 # Parse the JSONResponse to extract result
                 body = json.loads(result_response.body)
@@ -698,6 +699,7 @@ async def execute_workflow_core(
     trace_id: str | None,
     agent_id: str | None = None,
     caller_bearer_token: str | None = None,
+    job_id: str | None = None,
 ):
     if not trace_id:
         trace_id = new_trace_id()
@@ -872,6 +874,7 @@ print(json.dumps(out, default=str))
                     break
 
     # ── Write trace ───────────────────────────────────────────────────────────
+    wf_outputs = result_data.get("outputs") if isinstance(result_data, dict) else None
     await write_trace(
         trace_id=trace_id,
         toolkit_id=toolkit_id,
@@ -885,6 +888,9 @@ print(json.dumps(out, default=str))
         error=result_data.get("error") if isinstance(result_data, dict) else str(result_data),
         step_outputs=step_outputs,
         arazzo_steps=arazzo_steps,
+        inputs=inputs if isinstance(inputs, dict) else None,
+        outputs=wf_outputs if isinstance(wf_outputs, dict) else None,
+        job_id=job_id,
     )
 
     response_headers = {"X-Jentic-Trace-Id": trace_id}

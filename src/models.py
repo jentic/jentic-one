@@ -818,6 +818,26 @@ class TraceOut(BaseModel):
             "was written) — frontend falls back to rendering `api_id` directly."
         ),
     )
+    inputs: dict | None = Field(
+        default=None,
+        examples=[{"owner": "octocat", "repo": "hello"}],
+        description=(
+            "Workflow inputs captured by the runner when this trace is a workflow "
+            "execution. Always null for broker (single-operation) traces — request "
+            "bodies are not persisted to keep PII out of the trace store. The Monitor "
+            "drawer renders this in the Inputs panel."
+        ),
+    )
+    outputs: dict | None = Field(
+        default=None,
+        examples=[{"issue_url": "https://github.com/.../issues/42"}],
+        description=(
+            "Workflow outputs returned by the runner when this trace is a workflow "
+            "execution. Always null for broker traces (no upstream response body is "
+            "persisted) and for failed/pending workflow runs. The Monitor drawer "
+            "renders this in the Outputs panel."
+        ),
+    )
     steps: list[TraceStepOut] = Field(
         default_factory=list,
         examples=[[]],

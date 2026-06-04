@@ -394,17 +394,19 @@ export default function MonitorPage(): JSX.Element {
 						httpStatus: (s.http_status as number | null) ?? null,
 						error: (s.error as string | null) ?? null,
 					}));
+					// Backend returns workflow-only inputs/outputs columns; broker
+					// rows arrive null and the panels stay empty (matches webapp).
+					const traceInputs =
+						(traceObj.inputs as Record<string, unknown> | null | undefined) ?? {};
+					const traceOutputs =
+						(traceObj.outputs as Record<string, unknown> | null | undefined) ??
+						undefined;
 					setSelectedExecution((prev) =>
 						prev && prev.executionId === entry.executionId
 							? {
 									...prev,
-									inputs:
-										((trace as Record<string, unknown>).request as
-											| Record<string, unknown>
-											| undefined) ?? {},
-									outputs: (trace as Record<string, unknown>).response as
-										| Record<string, unknown>
-										| undefined,
+									inputs: traceInputs,
+									outputs: traceOutputs,
 									errorMessage:
 										((trace as Record<string, unknown>).error as
 											| string

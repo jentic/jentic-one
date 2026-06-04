@@ -48,6 +48,8 @@ async def write_trace(
     job_id: str | None = None,
     parent_trace_id: str | None = None,
     api_id: str | None = None,
+    inputs: dict | None = None,
+    outputs: dict | None = None,
 ) -> str:
     """Write an execution trace (+ optional step records) to the DB.
 
@@ -63,14 +65,21 @@ async def write_trace(
     enrich per-step rows in `execution_steps`. Workflow runs pass it through
     so the drawer can show what each step actually called (operationId,
     workflowId, etc.) instead of just an opaque step_id and an error blob.
+
+    `inputs` / `outputs` are workflow-level JSON payloads shown in the
+    drawer's Inputs / Outputs panels. Workflow runs pass these from the
+    runner result; broker calls leave them None — request/response bodies
+    aren't persisted (PII / size). Stored as JSON-encoded TEXT; UPSERT
+    preserves prior non-null values via COALESCE so an async-job status
+    update doesn't blow them away.
     """
     async with get_db() as db:
         await db.execute(
             """INSERT INTO executions
                (id, toolkit_id, agent_id, operation_id, workflow_id, spec_path,
                 status, http_status, duration_ms, error, job_id, parent_trace_id,
-                api_id, created_at, completed_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch(),unixepoch())
+                api_id, inputs, outputs, created_at, completed_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch(),unixepoch())
                ON CONFLICT(id) DO UPDATE SET
                  status=excluded.status,
                  http_status=excluded.http_status,
@@ -79,6 +88,8 @@ async def write_trace(
                  job_id=COALESCE(executions.job_id, excluded.job_id),
                  parent_trace_id=COALESCE(executions.parent_trace_id, excluded.parent_trace_id),
                  api_id=COALESCE(executions.api_id, excluded.api_id),
+                 inputs=COALESCE(executions.inputs, excluded.inputs),
+                 outputs=COALESCE(executions.outputs, excluded.outputs),
                  completed_at=unixepoch()""",
             (
                 trace_id,
@@ -94,6 +105,8 @@ async def write_trace(
                 job_id,
                 parent_trace_id,
                 api_id,
+                json.dumps(inputs) if inputs is not None else None,
+                json.dumps(outputs) if outputs is not None else None,
             ),
         )
 
@@ -694,7 +707,8 @@ async def get_trace(
                       e.spec_path, e.status, e.http_status, e.duration_ms, e.error,
                       e.created_at, e.completed_at,
                       e.job_id, e.parent_trace_id,
-                      e.api_id, a.name AS api_name
+                      e.api_id, a.name AS api_name,
+                      e.inputs, e.outputs
                FROM executions e
                LEFT JOIN apis a ON a.id = e.api_id
                WHERE e.id=? AND {scope_sql}""",
@@ -754,6 +768,8 @@ async def get_trace(
         "parent_trace_id": row[13],
         "api_id": row[14],
         "api_name": row[15],
+        "inputs": json.loads(row[16]) if row[16] else None,
+        "outputs": json.loads(row[17]) if row[17] else None,
         "steps": steps,
         "_links": {"self": f"/traces/{row[0]}"},
     }

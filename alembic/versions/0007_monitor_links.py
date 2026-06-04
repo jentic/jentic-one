@@ -12,6 +12,12 @@ to add cross-table linkage columns used by the Monitor page:
                                'stripe.com'). Populated at write time by the broker
                                from the credential record; legacy rows are
                                backfilled in this migration via operations.jentic_id.
+- executions.inputs          - JSON-encoded workflow inputs surfaced in the drawer's
+                               Inputs panel. Workflow rows only — broker rows leave
+                               these NULL (request/response bodies are intentionally
+                               not persisted to avoid PII leakage).
+- executions.outputs         - JSON-encoded workflow outputs surfaced in the drawer's
+                               Outputs panel. Same workflow-only semantics as inputs.
 
 Plus partial indexes for the lookups the Monitor surfaces depend on:
 - idx_jobs_agent_created      - "list this agent's jobs over time"
@@ -57,7 +63,7 @@ def upgrade() -> None:
         "WHERE agent_id IS NOT NULL"
     )
 
-    # ── executions.job_id, executions.parent_trace_id, executions.api_id ───
+    # ── executions.job_id, parent_trace_id, api_id, inputs, outputs ────────
     exec_cols = {row[1] for row in bind.execute(text("PRAGMA table_info(executions)"))}
     if "job_id" not in exec_cols:
         op.execute("ALTER TABLE executions ADD COLUMN job_id TEXT DEFAULT NULL")
@@ -65,6 +71,16 @@ def upgrade() -> None:
         op.execute("ALTER TABLE executions ADD COLUMN parent_trace_id TEXT DEFAULT NULL")
     if "api_id" not in exec_cols:
         op.execute("ALTER TABLE executions ADD COLUMN api_id TEXT DEFAULT NULL")
+    # Workflow inputs / outputs surfaced in the execution drawer. JSON-encoded
+    # and nullable: legacy rows keep rendering with empty input/output panels
+    # exactly as they do today (the UI guards on truthiness). Broker rows
+    # don't write these columns — request/response bodies stay out of the DB
+    # for PII reasons; the broker drawer surfaces operation/headers from the
+    # existing `operation_id` and structured columns.
+    if "inputs" not in exec_cols:
+        op.execute("ALTER TABLE executions ADD COLUMN inputs TEXT DEFAULT NULL")
+    if "outputs" not in exec_cols:
+        op.execute("ALTER TABLE executions ADD COLUMN outputs TEXT DEFAULT NULL")
 
     # Cross-link lookups: small partial indexes keyed off the new columns.
     op.execute(

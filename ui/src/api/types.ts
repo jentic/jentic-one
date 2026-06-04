@@ -212,6 +212,8 @@ export interface TraceOut {
 	parent_trace_id?: string | null;
 	api_id?: string | null;
 	api_name?: string | null;
+	inputs?: Record<string, unknown> | null;
+	outputs?: Record<string, unknown> | null;
 	steps?: TraceStepOut[];
 	[key: string]: unknown;
 }
