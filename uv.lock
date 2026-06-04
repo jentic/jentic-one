@@ -727,11 +727,11 @@ wheels = [
 
 [[package]]
 name = "harfile"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/88/56/06ebfce8ee11b906db9984d7442edfb05e8eb495ed2f553857c1c793dbd5/harfile-0.4.0.tar.gz", hash = "sha256:34e2d9ef34101d769566bffab3c420e147776174308bed1a036ed8db600cabde", size = 10055, upload-time = "2025-09-24T09:12:42.202Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8a/0e/ffbb98cd1910f1f898ddc62d649dbf0e3d68026ee9313d3cff035206b727/harfile-0.5.0.tar.gz", hash = "sha256:c1524b8f0a39dd9f19365760aefb3adbba951818310d17b2eaa293de1f4c170a", size = 10293, upload-time = "2026-05-29T11:50:03.358Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/b7/aff025c4b69bd611f1594b22e4793ee0ac68600d12c687d09f665c40f88e/harfile-0.4.0-py3-none-any.whl", hash = "sha256:ddb1483cb30f7549ddc67c0b7fdc6424f1feb19373b67e33e429b02f09bf43a8", size = 6935, upload-time = "2025-09-24T09:12:40.886Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/21/949c004d730d610dac63bcf5964f2585e98aa7bd44ff570ef8844472e76b/harfile-0.5.0-py3-none-any.whl", hash = "sha256:ab8a01d0d21d3b7f5ad57e7dc56b8b829f6a8855c1fa143aad464e7e8169f5e3", size = 7172, upload-time = "2026-05-29T11:50:02.206Z" },
 ]
 
 [[package]]
@@ -819,15 +819,15 @@ wheels = [
 
 [[package]]
 name = "hypothesis-graphql"
-version = "0.12.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "graphql-core" },
     { name = "hypothesis" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/d7/aa6d3cacb0fa7ae02fe7810c05dad025ce2fef88c817d959a862aab3ed4a/hypothesis_graphql-0.12.0.tar.gz", hash = "sha256:15f5f69b6e0b9ad889f59d340e091d7d481471373eb6a8a8591d126aa56e7700", size = 747809, upload-time = "2026-02-04T21:32:05.296Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/8c/3f0ebc9b557073986234c42bd21ea9c7ea146e7e2616b7b0739f5e81cf2b/hypothesis_graphql-0.13.0.tar.gz", hash = "sha256:788d89be1bbb561f27616f3a7077290054e4f664f88315a0ad03edee93e5d681", size = 750971, upload-time = "2026-05-29T20:57:04.619Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/9c/e6baef1c1188d2d12dcd2b344a166cbe5b220db215c6177bedcf0fa8cac7/hypothesis_graphql-0.12.0-py3-none-any.whl", hash = "sha256:d200d3d4320e772248075f13c656f4b1de01e7f0f5e7d9fd6fea7da759b325f3", size = 20320, upload-time = "2026-02-04T21:32:03.398Z" },
+    { url = "https://files.pythonhosted.org/packages/58/3e/9e4b29a509fadec889dcd1f115fcc30655fd5296bd00198dcd8a0ea78d64/hypothesis_graphql-0.13.0-py3-none-any.whl", hash = "sha256:0f866e4d338dca76286a9bd5f1412785a2426daf41854bd74ff2c9525e71eae8", size = 22706, upload-time = "2026-05-29T20:57:05.749Z" },
 ]
 
 [[package]]
@@ -915,7 +915,7 @@ dev = [
     { name = "pytest", specifier = ">=9.0.3,<10" },
     { name = "pytest-asyncio", specifier = ">=1.4.0,<2" },
     { name = "ruff", specifier = ">=0.15.15,<0.16.0" },
-    { name = "schemathesis", specifier = ">=4.20.3" },
+    { name = "schemathesis", specifier = ">=4.21.0" },
 ]
 
 [[package]]
@@ -1917,7 +1917,7 @@ wheels = [
 
 [[package]]
 name = "schemathesis"
-version = "4.20.3"
+version = "4.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1938,9 +1938,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/5c/b04277777f6316565af1a45ffb4d71941d2fd8bdf3541af4dcefd3f51f4d/schemathesis-4.20.3.tar.gz", hash = "sha256:fed6b67d926543f55e55b68d1d99c5bc1b7ef4ae4b36287d14b207bb3aaef906", size = 2263670, upload-time = "2026-05-29T07:27:32.448Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/8b/344b6b91f4b35a91d59f56b8528fd02bf13233828dea8dcdf6c6c91c81f6/schemathesis-4.21.0.tar.gz", hash = "sha256:38228318f94024cd1186b632761a2eaef21a4b22db73b6dbddd59cccb92643bb", size = 2274538, upload-time = "2026-05-31T23:18:42.838Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/bd/2f1f24580691e43b1cf50ace2167d154804321a2d843efc31e50e0b07115/schemathesis-4.20.3-py3-none-any.whl", hash = "sha256:c04f32d242f3f3652df997b6917f4f6855a7bf78a0bb63bcdc7c11a6cb6432ac", size = 745158, upload-time = "2026-05-29T07:27:30.564Z" },
+    { url = "https://files.pythonhosted.org/packages/72/27/6c8a117114dc9909ccc1d928e44472835bfb505c01da538f509e98b8afb8/schemathesis-4.21.0-py3-none-any.whl", hash = "sha256:b9ff765ff5c1c5a47a6503a23e5b5882ddea3019eda463c05ca11c4390423de8", size = 752102, upload-time = "2026-05-31T23:18:40.981Z" },
 ]
 
 [[package]]
