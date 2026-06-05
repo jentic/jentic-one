@@ -14,6 +14,7 @@ For agent-facing usage (search / inspect / execute), see [AGENTS.md](../AGENTS.m
 - [credential-deeplink.md](credential-deeplink.md) — `/credentials/new` deep-link query params for agent-assisted credential entry
 - [credentials.md](credentials.md) — vault, credential lifecycle, overlay flywheel, toolkit binding
 - [decisions.md](decisions.md) — architectural decision log
+- [monitor.md](monitor.md) — Monitor page: Overview / Execution Log / Jobs, trace–job cross-linking, usage API
 - [oauth-broker.md](oauth-broker.md) — `OAuthBroker` protocol, token vs proxy modes, registry, DB schema
 - [pipedream.md](pipedream.md) — Pipedream Connect integration: setup, connect-link, sync, supported apps
 - [self-registration.md](self-registration.md) — how the server registers its own OpenAPI spec at startup
