@@ -213,8 +213,9 @@ def test_usage_group_by_api_uses_column_and_catalog_label(
     rows = {r["key"]: r for r in resp.json()["top"]}
     assert rows["github.com"]["label"] == "GitHub"
     # Unregistered host carries through as a key with a null label.
-    assert "unregistered.example.com" in rows
-    assert rows["unregistered.example.com"]["label"] is None
+    unknown_row = rows.get("unregistered.example.com")
+    assert unknown_row is not None
+    assert unknown_row["label"] is None
 
 
 def test_backfill_recovers_api_id_from_operations_table(
