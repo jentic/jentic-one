@@ -114,6 +114,7 @@ export function JobsFilters({
 					options={STATUS_OPTIONS}
 					value={statusFilter}
 					onChange={onStatusChange}
+					className="w-max [&>button]:whitespace-nowrap"
 				/>
 			</div>
 
@@ -135,6 +136,7 @@ export function JobsFilters({
 					options={KIND_OPTIONS}
 					value={kindFilter}
 					onChange={onKindChange}
+					className="[&>button]:whitespace-nowrap"
 				/>
 
 				<FilterDropdown

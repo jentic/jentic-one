@@ -108,6 +108,7 @@ export function ExecutionFilters({
 					options={STATUS_OPTIONS}
 					value={statusFilter}
 					onChange={onStatusChange}
+					className="w-max [&>button]:whitespace-nowrap"
 				/>
 			</div>
 
