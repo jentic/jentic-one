@@ -5,28 +5,39 @@ import {
 	mockTraces,
 	mockTraceDetail,
 	mockToolkits,
+	mockJobs,
 	navigateTo,
 } from './fixtures';
 
-test.describe('Traces page', () => {
+test.describe('Monitor page (Execution Log)', () => {
 	test.beforeEach(async ({ page }) => {
 		await mockAuthenticatedUser(page);
 		await mockTraces(page);
+		await mockJobs(page);
 		await mockToolkits(page);
 	});
 
 	test('renders without errors', async ({ page }) => {
 		const errors = captureConsoleErrors(page);
 		await page.goto('/');
-		await navigateTo(page, '/traces');
-		await expect(page.getByRole('heading', { name: /^traces$/i })).toBeVisible();
+		// /traces now redirects to the unified Monitor page.
+		await navigateTo(page, '/monitor');
+		await expect(page.getByRole('heading', { name: /^monitor$/i })).toBeVisible();
 		expect(errors).toHaveLength(0);
 	});
 
-	test('shows empty state when no traces', async ({ page }) => {
+	test('shows the Execution Log tab', async ({ page }) => {
+		await page.goto('/');
+		await navigateTo(page, '/monitor');
+		await page.getByRole('button', { name: 'Execution Log' }).click();
+		await expect(page.getByText(/no executions match your filters/i)).toBeVisible();
+	});
+
+	test('legacy /traces route redirects to Monitor', async ({ page }) => {
 		await page.goto('/');
 		await navigateTo(page, '/traces');
-		await expect(page.getByText(/no traces found/i)).toBeVisible();
+		await expect(page).toHaveURL(/\/monitor/);
+		await expect(page.getByRole('heading', { name: /^monitor$/i })).toBeVisible();
 	});
 });
 
