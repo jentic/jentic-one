@@ -19,7 +19,13 @@ interface JobsTabProps {
 	kindFilter: JobKindFilter;
 	toolkitFilter: string | null;
 	agentFilter: string | null;
+	/** Raw, undebounced value bound to the controlled search input so typing
+	 * feels instant. Drives display only — NOT the query. */
 	searchQuery: string;
+	/** Debounced/committed search value that actually drives the jobs query.
+	 * Threading this separately keeps the input echo immediate while the
+	 * network request (and queryKey churn) only fires once typing settles. */
+	searchQueryDebounced: string;
 	page: number;
 	pageSize: number;
 	since: number;
@@ -76,6 +82,7 @@ export function JobsTab({
 	toolkitFilter,
 	agentFilter,
 	searchQuery,
+	searchQueryDebounced,
 	page,
 	pageSize,
 	since,
@@ -111,7 +118,7 @@ export function JobsTab({
 			kindFilter,
 			toolkitFilter,
 			agentFilter,
-			searchQuery,
+			searchQueryDebounced,
 			since,
 		],
 		queryFn: () =>
@@ -127,7 +134,7 @@ export function JobsTab({
 				// query plan stays identical to the current one — backend has
 				// the same guard but skipping the param keeps queryKey churn
 				// proportional to user intent.
-				q: searchQuery.trim() ? searchQuery.trim() : undefined,
+				q: searchQueryDebounced.trim() ? searchQueryDebounced.trim() : undefined,
 			}),
 		// Polling — same cadence as the in-flight execution log so the user
 		// experiences consistent "freshness" across tabs. 15s is the sweet

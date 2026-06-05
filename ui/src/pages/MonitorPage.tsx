@@ -258,16 +258,25 @@ export default function MonitorPage(): JSX.Element {
 		refetchInterval: 15_000,
 	});
 
+	// In-flight jobs surfaced at the top of the Execution Log so a running
+	// async job is visible before its trace finalises. We only fetch these
+	// when no status/api filter is active that would logically exclude them:
+	// a status filter (e.g. "success") or an API filter contradicts "show me
+	// the pending/running jobs", and in-flight jobs carry no api_id to match
+	// against anyway. `since` is included so the window matches the trace
+	// query and the key churns with it.
+	const showInFlightJobs = statusFilter === 'ALL' && apiFilter === null && !qParam.trim();
 	const inFlightJobsQuery = useQuery({
-		queryKey: ['monitor', 'log', 'jobs', toolkitFilter, agentFilter],
+		queryKey: ['monitor', 'log', 'jobs', toolkitFilter, agentFilter, since],
 		queryFn: () =>
 			api.listJobs({
 				status: 'pending,running',
 				limit: 50,
 				toolkitId: toolkitFilter,
 				agentId: agentFilter,
+				since,
 			}),
-		enabled: tab === 'log',
+		enabled: tab === 'log' && showInFlightJobs,
 		refetchInterval: 5_000,
 	});
 
@@ -576,11 +585,17 @@ export default function MonitorPage(): JSX.Element {
 	// land on page 7 of the previous result set.
 	useEffect(() => {
 		if (debouncedSearch === qParam) return;
+		// Guard against a stale debounced value clobbering a fresh edit: only
+		// push once the debounce has actually caught up to the live input.
+		// Without this, clearing the field (searchInput='' + q=null) races the
+		// lagging debouncedSearch ('stripe'), which would re-push q=stripe and
+		// undo the clear — the "clear flap" bug.
+		if (debouncedSearch !== searchInput) return;
 		updateParam({ q: debouncedSearch || null }, { resetPage: true });
 		// updateParam is not memoised; including it would loop. The
 		// closure captures the latest searchParams via the outer hook.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [debouncedSearch, qParam]);
+	}, [debouncedSearch, qParam, searchInput]);
 
 	// Sync the URL → input on external changes (back/forward, deep
 	// link). The `searchInput !== qParam` guard prevents this from
@@ -887,6 +902,7 @@ export default function MonitorPage(): JSX.Element {
 					toolkitFilter={toolkitFilter}
 					agentFilter={agentFilter}
 					searchQuery={searchInput}
+					searchQueryDebounced={debouncedSearch}
 					page={page}
 					pageSize={PAGE_SIZE}
 					since={since}
