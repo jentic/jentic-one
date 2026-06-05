@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
+import { SchemePillBar } from './SchemePillBar';
+import { ServerVariablesFields } from './ServerVariablesFields';
+import { OAuthBrokerFields } from './OAuthBrokerFields';
+import { AdvancedBrokerFields } from './AdvancedBrokerFields';
+import { AuthTypeFields } from './AuthTypeFields';
+import { TestConnectionButton } from '@/components/credentials/TestConnectionButton';
 import type { ApiOut, CredentialCreate, CredentialOut, CredentialPatch } from '@/api/types';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/Button';
@@ -21,12 +27,6 @@ import {
 	type SchemeOption,
 	type SchemeType,
 } from '@/lib/credentials/schemes';
-import { TestConnectionButton } from '../TestConnectionButton';
-import { SchemePillBar } from './SchemePillBar';
-import { ServerVariablesFields } from './ServerVariablesFields';
-import { OAuthBrokerFields } from './OAuthBrokerFields';
-import { AdvancedBrokerFields } from './AdvancedBrokerFields';
-import { AuthTypeFields } from './AuthTypeFields';
 
 /**
  * Optional values used to prefill a new credential — e.g. coming from

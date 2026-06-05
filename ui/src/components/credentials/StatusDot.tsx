@@ -46,10 +46,7 @@ const SIZE = {
 
 export function StatusDot({ status, label, size = 'sm', children, className }: StatusDotProps) {
 	return (
-		<span
-			className={`inline-flex items-center gap-1.5 ${className ?? ''}`}
-			title={label}
-		>
+		<span className={`inline-flex items-center gap-1.5 ${className ?? ''}`} title={label}>
 			<span
 				role="img"
 				aria-label={label}

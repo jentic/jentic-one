@@ -721,6 +721,7 @@ export default function ToolkitDetailPage() {
 							>
 								<div className="flex items-center gap-3 px-4 py-3">
 									<div className="min-w-0 flex-1">
+										{/* eslint-disable-next-line no-restricted-syntax -- inline text link to open edit sheet, not a Button-styled control */}
 										<button
 											type="button"
 											onClick={() => editSheet.openSheet(cred.credential_id)}

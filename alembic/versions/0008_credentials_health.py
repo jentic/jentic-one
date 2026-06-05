@@ -17,8 +17,8 @@ Adds the columns + table that unblock the credentials revamp UI:
                                        the UI render an actual audit panel
                                        (was log-only before this).
 
-Revision ID: 0007
-Revises: 0006
+Revision ID: 0008
+Revises: 0007
 Create Date: 2026-05-28
 """
 
@@ -26,8 +26,8 @@ from alembic import op
 from sqlalchemy import text
 
 
-revision = "0007"
-down_revision = "0006"
+revision = "0008"
+down_revision = "0007"
 branch_labels = None
 depends_on = None
 

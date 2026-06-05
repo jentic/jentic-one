@@ -2852,10 +2852,29 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by status",
+              "description": "Filter by status. Accepts a single value or a comma-separated set (e.g. `pending,running` for in-flight only). Whitespace tolerated.",
               "title": "Status"
             },
-            "description": "Filter by status"
+            "description": "Filter by status. Accepts a single value or a comma-separated set (e.g. `pending,running` for in-flight only). Whitespace tolerated."
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(workflow|broker)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by job kind: `workflow` (multi-step Arazzo runs) or `broker` (individual API calls dispatched async). Used by the Monitor Jobs tab to split workflow runs from broker calls in separate views.",
+              "title": "Kind"
+            },
+            "description": "Filter by job kind: `workflow` (multi-step Arazzo runs) or `broker` (individual API calls dispatched async). Used by the Monitor Jobs tab to split workflow runs from broker calls in separate views."
           },
           {
             "name": "page",
@@ -2883,6 +2902,100 @@
               "title": "Limit"
             },
             "description": "Results per page (1-100)"
+          },
+          {
+            "name": "toolkit_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by toolkit id (exact match)",
+              "title": "Toolkit Id"
+            },
+            "description": "Filter by toolkit id (exact match)"
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by agent client_id (exact match).",
+              "title": "Agent Id"
+            },
+            "description": "Filter by agent client_id (exact match)."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Lower bound on `created_at` (unix seconds, inclusive)",
+              "title": "Since"
+            },
+            "description": "Lower bound on `created_at` (unix seconds, inclusive)"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Upper bound on `created_at` (unix seconds, exclusive)",
+              "title": "Until"
+            },
+            "description": "Upper bound on `created_at` (unix seconds, exclusive)"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Free-text substring match (case-insensitive) across the columns the Jobs tab row renders: `slug_or_id` (workflow slug or broker capability id), `agent_id`, `toolkit_id`, and `upstream_job_url` (so a search for the upstream provider's job-id snippet still finds the right row). Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. None of those columns are indexed for prefix lookups, so `q` always implies a scan over the rows that the tenant + time-window clauses already select \u2014 fine for the Monitor page (24h default) but don't use it as a general-purpose search.",
+              "title": "Q"
+            },
+            "description": "Free-text substring match (case-insensitive) across the columns the Jobs tab row renders: `slug_or_id` (workflow slug or broker capability id), `agent_id`, `toolkit_id`, and `upstream_job_url` (so a search for the upstream provider's job-id snippet still finds the right row). Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. None of those columns are indexed for prefix lookups, so `q` always implies a scan over the rows that the tenant + time-window clauses already select \u2014 fine for the Monitor page (24h default) but don't use it as a general-purpose search."
           }
         ],
         "responses": {
@@ -5575,6 +5688,154 @@
               "title": "Offset"
             },
             "description": "Number of traces to skip for pagination"
+          },
+          {
+            "name": "toolkit_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by toolkit id (exact match)",
+              "title": "Toolkit Id"
+            },
+            "description": "Filter by toolkit id (exact match)"
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by agent client_id (exact match). Admin-only signal.",
+              "title": "Agent Id"
+            },
+            "description": "Filter by agent client_id (exact match). Admin-only signal."
+          },
+          {
+            "name": "api_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by upstream API. Exact match against the `api_id` column on executions, which is the catalog-form `apis.id` (e.g. `stripe.com`, `github.com`). Indexed; use this in preference to scanning `operation_id` substrings.",
+              "title": "Api Id"
+            },
+            "description": "Filter by upstream API. Exact match against the `api_id` column on executions, which is the catalog-form `apis.id` (e.g. `stripe.com`, `github.com`). Indexed; use this in preference to scanning `operation_id` substrings."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by trace status (`success` | `failed` | `pending`)",
+              "title": "Status"
+            },
+            "description": "Filter by trace status (`success` | `failed` | `pending`)"
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Lower bound on `created_at` (unix seconds, inclusive)",
+              "title": "Since"
+            },
+            "description": "Lower bound on `created_at` (unix seconds, inclusive)"
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Upper bound on `created_at` (unix seconds, exclusive)",
+              "title": "Until"
+            },
+            "description": "Upper bound on `created_at` (unix seconds, exclusive)"
+          },
+          {
+            "name": "capability_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by exact capability id. Matches `operation_id` for broker calls or `workflow_id` for workflow runs.",
+              "title": "Capability Id"
+            },
+            "description": "Filter by exact capability id. Matches `operation_id` for broker calls or `workflow_id` for workflow runs."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Free-text substring match (case-insensitive) over the columns the Monitor row renders: `operation_id`, `workflow_id`, `api_id`, `agent_id`. Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. Note: none of these columns are indexed for prefix lookups, so `q` always implies a scan over the rows the tenant + time-window clauses already select \u2014 fine for the Monitor page (range capped to 24h by default) but don't use it as a general-purpose search.",
+              "title": "Q"
+            },
+            "description": "Free-text substring match (case-insensitive) over the columns the Monitor row renders: `operation_id`, `workflow_id`, `api_id`, `agent_id`. Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. Note: none of these columns are indexed for prefix lookups, so `q` always implies a scan over the rows the tenant + time-window clauses already select \u2014 fine for the Monitor page (range capped to 24h by default) but don't use it as a general-purpose search."
           }
         ],
         "responses": {
@@ -5609,6 +5870,198 @@
             "GET /traces/{id} \u2014 get full trace with step-by-step detail",
             "GET /{target} (broker) \u2014 returns X-Jentic-Execution-Id header pointing to trace",
             "POST /workflows/{slug} \u2014 workflow execution returns trace_id in response body"
+          ]
+        },
+        "security": [
+          {
+            "JenticApiKey": []
+          },
+          {
+            "AgentOauthAccessToken": []
+          },
+          {
+            "HumanLogin": []
+          }
+        ]
+      }
+    },
+    "/traces/usage": {
+      "get": {
+        "tags": [
+          "observe"
+        ],
+        "summary": "Trace usage aggregations \u2014 bucketed counts and top groups",
+        "description": "Aggregate execution traces in a time window for monitoring dashboards.\n\nThe endpoint serves three pieces of information in one round-trip:\n\n1. `stats` \u2014 totals, success/failed split, mean and p50/p95 latency, and a\n   point-in-time count of in-flight async jobs. Powers the HealthStrip.\n2. `buckets` \u2014 equally-sized time slices for stacking success/failed bar\n   charts. Bucket width is chosen by the server based on the window:\n   windows \u2264 1h use 60s buckets, \u2264 24h use 1h buckets, anything bigger\n   uses 1d buckets. We never return more than ~144 buckets.\n3. `top` \u2014 the top N groups (toolkits, agents or API hosts) by trace count.\n\nAll filters compose with AND semantics on top of the tenant scope.",
+        "operationId": "get_usage_traces_usage_get",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Window start (unix seconds, inclusive). Defaults to 24h ago.",
+              "title": "Since"
+            },
+            "description": "Window start (unix seconds, inclusive). Defaults to 24h ago."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Window end (unix seconds, exclusive). Defaults to now.",
+              "title": "Until"
+            },
+            "description": "Window end (unix seconds, exclusive). Defaults to now."
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "What to group the `top` list by: 'toolkit' | 'api' | 'agent'.",
+              "default": "toolkit",
+              "title": "Group By"
+            },
+            "description": "What to group the `top` list by: 'toolkit' | 'api' | 'agent'."
+          },
+          {
+            "name": "top_limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "Maximum rows in `top` list (1\u201350)",
+              "default": 10,
+              "title": "Top Limit"
+            },
+            "description": "Maximum rows in `top` list (1\u201350)"
+          },
+          {
+            "name": "toolkit_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one toolkit before aggregating",
+              "title": "Toolkit Id"
+            },
+            "description": "Filter to one toolkit before aggregating"
+          },
+          {
+            "name": "agent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to one agent before aggregating",
+              "title": "Agent Id"
+            },
+            "description": "Filter to one agent before aggregating"
+          },
+          {
+            "name": "api_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by upstream API. Exact match against the indexed `api_id` column on executions (catalog-form `apis.id`, e.g. `stripe.com`). Same semantics as `/traces?api_id=`.",
+              "title": "Api Id"
+            },
+            "description": "Filter by upstream API. Exact match against the indexed `api_id` column on executions (catalog-form `apis.id`, e.g. `stripe.com`). Same semantics as `/traces?api_id=`."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a single status before aggregating",
+              "title": "Status"
+            },
+            "description": "Filter to a single status before aggregating"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-agent-hints": {
+          "when_to_use": "Use when an operator UI needs aggregate signals (totals, success rate, latency, recent activity over time) instead of paginating raw traces. Mirrors the data shown on the Monitor page's HealthStrip and bar chart. Returns a single window summary, equally-sized time buckets, and the top groups by toolkit, API host, or agent.",
+          "prerequisites": [
+            "Requires authentication (toolkit key or human session)"
+          ],
+          "avoid_when": "Do not use for individual trace lookup \u2014 use GET /traces or GET /traces/{id}. Do not use for raw timeline data \u2014 bucket widths are chosen by the server (1 minute to 1 day depending on window length).",
+          "related_operations": [
+            "GET /traces \u2014 list raw traces with the same filter set",
+            "GET /jobs?status=running \u2014 count of in-flight async jobs"
           ]
         },
         "security": [
@@ -7812,9 +8265,9 @@
       },
       "JobOut": {
         "properties": {
-          "id": {
+          "job_id": {
             "type": "string",
-            "title": "Id",
+            "title": "Job Id",
             "description": "Job ID (format: job_{12chars})",
             "examples": [
               "job_abc123xyz"
@@ -7835,7 +8288,7 @@
               "workflow"
             ]
           },
-          "slug_or_id": {
+          "capability": {
             "anyOf": [
               {
                 "type": "string"
@@ -7844,8 +8297,8 @@
                 "type": "null"
               }
             ],
-            "title": "Slug Or Id",
-            "description": "Workflow slug or capability ID",
+            "title": "Capability",
+            "description": "Workflow slug or capability ID (the broker operation id or arazzo workflow slug this job runs)",
             "examples": [
               "github-create-issue"
             ]
@@ -7865,12 +8318,27 @@
               "default"
             ]
           },
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id",
+            "description": "Agent client_id when the job was created via an agent access token (at_\u2026). Null for toolkit-key callers and admin-initiated jobs.",
+            "examples": [
+              "agnt_abc123"
+            ]
+          },
           "status": {
             "type": "string",
             "title": "Status",
             "description": "Job status: pending, running, complete, failed, or upstream_async",
             "examples": [
-              "completed"
+              "complete"
             ]
           },
           "result": {
@@ -7952,6 +8420,21 @@
               "trace_xyz789"
             ]
           },
+          "parent_trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Trace Id",
+            "description": "Parent workflow trace this job's trace is a child step of. Mirrored from `executions.parent_trace_id` so a child broker job (e.g. an async wait=0 hop spawned inside an arazzo workflow) can render \"part of workflow X\" in the Job drawer without a second fetch. Null for top-level jobs.",
+            "examples": [
+              "exec_abc123xyz"
+            ]
+          },
           "created_at": {
             "anyOf": [
               {
@@ -7986,7 +8469,7 @@
         "additionalProperties": true,
         "type": "object",
         "required": [
-          "id",
+          "job_id",
           "status"
         ],
         "title": "JobOut",
@@ -9205,6 +9688,130 @@
         "title": "ToolkitPatch",
         "description": "Update toolkit metadata or toggle disabled/simulate flags. Only provided fields are changed."
       },
+      "TraceChildOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Child trace id",
+            "examples": [
+              "exec_abc123xyz"
+            ]
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation Id",
+            "description": "Operation capability id of the broker call (always set \u2014 children are broker traces).",
+            "examples": [
+              "GET/api.github.com/repos/{owner}/{repo}"
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "description": "Child trace status: success, failed, or pending.",
+            "examples": [
+              "success"
+            ]
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status",
+            "description": "Final HTTP status code from the upstream call.",
+            "examples": [
+              200
+            ]
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms",
+            "description": "Child trace duration in milliseconds.",
+            "examples": [
+              412
+            ]
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At",
+            "description": "Unix timestamp when the child trace started; the panel orders by this.",
+            "examples": [
+              1672531200.0
+            ]
+          },
+          "api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Id",
+            "description": "Catalog id of the child trace's upstream API (joined from `executions.api_id`).",
+            "examples": [
+              "api.github.com"
+            ]
+          },
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Name",
+            "description": "Human-readable api name from the catalog; null when api_id is unset or stale.",
+            "examples": [
+              "GitHub"
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "TraceChildOut",
+        "description": "Compact child broker trace summary referenced from a workflow's `children[]` panel."
+      },
       "TraceListPage": {
         "properties": {
           "total": {
@@ -9421,6 +10028,103 @@
               1672531201.0
             ]
           },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id",
+            "description": "Async job that owns this trace, when the trace was produced inside a job's lifecycle (Prefer: wait=0 broker call, upstream-202, or async workflow run). Null for synchronous calls. The Monitor page renders a [job \u2197] cross-link in the Execution Log when this is set.",
+            "examples": [
+              "job_abc123xyz"
+            ]
+          },
+          "parent_trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Trace Id",
+            "description": "Parent workflow trace this trace is a child step of. Set on broker traces spawned by an arazzo-runner workflow execution; null for top-level broker calls and for the workflow trace itself. Used to render \"part of workflow X\" context in the Execution Detail panel.",
+            "examples": [
+              "exec_abc123xyz"
+            ]
+          },
+          "api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Id",
+            "description": "Catalog id of the upstream API the broker proxied to (`apis.id`). Set at write time from the matched credential's `api_id`; null for workflow traces (which are multi-API by definition) and for unattributed broker calls where no credential matched. Use this as the join key when correlating traces with the registered API \u2014 the read endpoints already join `apis` and surface `api_name` alongside.",
+            "examples": [
+              "stripe.com"
+            ]
+          },
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Name",
+            "description": "Human-readable API name from the catalog (`apis.name`) joined via `api_id`. Null when `api_id` is null, or when `api_id` references a row that no longer exists (e.g. the API was deleted from the catalog after the trace was written) \u2014 frontend falls back to rendering `api_id` directly.",
+            "examples": [
+              "Stripe API"
+            ]
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs",
+            "description": "Workflow inputs captured by the runner when this trace is a workflow execution. Always null for broker (single-operation) traces \u2014 request bodies are not persisted to keep PII out of the trace store. The Monitor drawer renders this in the Inputs panel.",
+            "examples": [
+              {
+                "owner": "octocat",
+                "repo": "hello"
+              }
+            ]
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputs",
+            "description": "Workflow outputs returned by the runner when this trace is a workflow execution. Always null for broker traces (no upstream response body is persisted) and for failed/pending workflow runs. The Monitor drawer renders this in the Outputs panel.",
+            "examples": [
+              {
+                "issue_url": "https://github.com/.../issues/42"
+              }
+            ]
+          },
           "steps": {
             "items": {
               "$ref": "#/components/schemas/TraceStepOut"
@@ -9428,6 +10132,17 @@
             "type": "array",
             "title": "Steps",
             "description": "Step-by-step execution log (for workflows)",
+            "examples": [
+              []
+            ]
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/TraceChildOut"
+            },
+            "type": "array",
+            "title": "Children",
+            "description": "Child broker traces spawned by this trace (rows where `executions.parent_trace_id` equals this trace's id). Populated for workflow traces; always empty for broker traces. The Monitor Execution drawer renders these as a `Child broker calls` panel with cross-links into each child's own drawer. Ordered by `created_at` ascending so the rendered list reads in step order.",
             "examples": [
               []
             ]
@@ -9519,6 +10234,16 @@
               200
             ]
           },
+          "inputs": {
+            "title": "Inputs",
+            "description": "Step input arguments (resolved parameters passed to this step's operation)",
+            "examples": [
+              {
+                "owner": "jentic",
+                "repo": "jentic-mini"
+              }
+            ]
+          },
           "output": {
             "title": "Output",
             "description": "Step output data",
@@ -9527,13 +10252,6 @@
                 "name": "jentic-mini",
                 "stars": 42
               }
-            ]
-          },
-          "detail": {
-            "title": "Detail",
-            "description": "Additional step metadata or runner context",
-            "examples": [
-              null
             ]
           },
           "error": {
@@ -9586,6 +10304,340 @@
         "type": "object",
         "title": "TraceStepOut",
         "description": "Individual workflow step execution details including inputs, outputs, and timing."
+      },
+      "UsageBucket": {
+        "properties": {
+          "ts": {
+            "type": "number",
+            "title": "Ts",
+            "description": "Unix-second start of the bucket",
+            "examples": [
+              1700000000.0
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total traces in bucket",
+            "examples": [
+              42
+            ]
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success",
+            "description": "Successful traces in bucket",
+            "examples": [
+              40
+            ]
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "Failed traces in bucket",
+            "examples": [
+              2
+            ]
+          },
+          "avg_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Ms",
+            "description": "Mean duration in this bucket",
+            "examples": [
+              395.0
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "ts",
+          "total",
+          "success",
+          "failed"
+        ],
+        "title": "UsageBucket",
+        "description": "One time bucket of trace counts; the UI plots these as a stacked bar chart."
+      },
+      "UsageResponse": {
+        "properties": {
+          "since": {
+            "type": "number",
+            "title": "Since",
+            "description": "Window start (unix seconds)",
+            "examples": [
+              1699913600.0
+            ]
+          },
+          "until": {
+            "type": "number",
+            "title": "Until",
+            "description": "Window end (unix seconds)",
+            "examples": [
+              1700000000.0
+            ]
+          },
+          "bucket_seconds": {
+            "type": "integer",
+            "title": "Bucket Seconds",
+            "description": "Width of one bucket in seconds (chosen by server)",
+            "examples": [
+              3600
+            ]
+          },
+          "group_by": {
+            "type": "string",
+            "title": "Group By",
+            "description": "Grouping for the `top` list: 'toolkit' | 'api' | 'agent'",
+            "examples": [
+              "toolkit"
+            ]
+          },
+          "stats": {
+            "$ref": "#/components/schemas/UsageStats"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/UsageBucket"
+            },
+            "type": "array",
+            "title": "Buckets",
+            "description": "Time-bucketed counts"
+          },
+          "top": {
+            "items": {
+              "$ref": "#/components/schemas/UsageTopRow"
+            },
+            "type": "array",
+            "title": "Top",
+            "description": "Top groups by total traces, descending. Capped at `limit`."
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "since",
+          "until",
+          "bucket_seconds",
+          "group_by",
+          "stats"
+        ],
+        "title": "UsageResponse",
+        "description": "Aggregated trace usage for the Monitor page (HealthStrip + bar chart + breakdown)."
+      },
+      "UsageStats": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Number of traces in window",
+            "examples": [
+              1234
+            ]
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success",
+            "description": "Traces with status=success",
+            "examples": [
+              980
+            ]
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "Traces with status=failed",
+            "examples": [
+              20
+            ]
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "description": "Traces still in flight (status=pending)",
+            "default": 0,
+            "examples": [
+              0
+            ]
+          },
+          "avg_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Ms",
+            "description": "Mean duration in milliseconds (success+failed)",
+            "examples": [
+              412.3
+            ]
+          },
+          "p50_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Ms",
+            "description": "Median duration in milliseconds",
+            "examples": [
+              210.0
+            ]
+          },
+          "p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Ms",
+            "description": "95th percentile duration in milliseconds",
+            "examples": [
+              1800.0
+            ]
+          },
+          "active_now": {
+            "type": "integer",
+            "title": "Active Now",
+            "description": "Snapshot count of in-flight async jobs (status pending or running) at query time \u2014 not bound by the [since,until) window.",
+            "default": 0,
+            "examples": [
+              3
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "total",
+          "success",
+          "failed"
+        ],
+        "title": "UsageStats",
+        "description": "High-level trace counts and latency for a single time window."
+      },
+      "UsageTopRow": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Group key \u2014 toolkit_id, agent_client_id, or api host (depending on group_by)",
+            "examples": [
+              "api.github.com"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Human-readable label for the row. For `group_by=agent` this is the agent's `client_name`; for `group_by=api` it is `apis.name` when the API is registered in the catalog (null otherwise \u2014 the frontend falls back to rendering `key`). For `group_by=toolkit` the label is null (toolkit ids are already human-readable slugs).",
+            "examples": [
+              "GitHub"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Total traces in this row",
+            "examples": [
+              500
+            ]
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success",
+            "description": "Successful traces",
+            "examples": [
+              490
+            ]
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "description": "Failed traces",
+            "examples": [
+              10
+            ]
+          },
+          "avg_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Ms",
+            "description": "Mean duration",
+            "examples": [
+              320.0
+            ]
+          },
+          "trend": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trend",
+            "description": "Compact time-series of trace counts for this row across the window, aligned to a fixed number of equally-sized buckets (12 by default). Used to render per-row sparklines on the Monitor page Breakdown table. Independent of the top-level `buckets` field \u2014 this one always has the same length regardless of window size, while `buckets` width is chosen by the server.",
+            "examples": [
+              [
+                3,
+                5,
+                2,
+                8,
+                11,
+                7,
+                4,
+                6,
+                9,
+                5,
+                3,
+                7
+              ]
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "key",
+          "total",
+          "success",
+          "failed"
+        ],
+        "title": "UsageTopRow",
+        "description": "One row in the `top` list \u2014 aggregation grouped by toolkit, API host or agent."
       },
       "UserCreate": {
         "properties": {

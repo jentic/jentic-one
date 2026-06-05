@@ -50,9 +50,7 @@ export function useCredentialImportedSync(opts: { onImported: (apiId: string) =>
 				action: {
 					label: 'View in Workspace',
 					onClick: () => {
-						window.location.assign(
-							`/workspace/apis/${encodeURIComponent(evt.api_id)}`,
-						);
+						window.location.assign(`/workspace/apis/${encodeURIComponent(evt.api_id)}`);
 					},
 				},
 			});

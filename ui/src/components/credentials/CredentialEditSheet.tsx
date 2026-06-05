@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, X } from 'lucide-react';
+import { CredentialFormFields } from './form/CredentialFormFields';
 import { api } from '@/api/client';
 import type { ApiOut } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { SheetPrimitive } from '@/components/ui/SheetPrimitive';
-import { CredentialFormFields } from './form/CredentialFormFields';
 
 /**
  * Right-side slide-over for editing an existing credential.

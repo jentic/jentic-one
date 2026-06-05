@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Settings, Trash2, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { StatusDot, type CredentialStatus } from './StatusDot';
 import type { CredentialOut } from '@/api/types';
 import { api } from '@/api/client';
 import { AppLink } from '@/components/ui/AppLink';
@@ -8,7 +9,6 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
 import { timeAgo } from '@/lib/time';
-import { StatusDot, type CredentialStatus } from './StatusDot';
 
 interface CredentialRowProps {
 	cred: CredentialOut;

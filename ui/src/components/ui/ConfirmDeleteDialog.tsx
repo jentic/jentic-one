@@ -41,13 +41,7 @@ export function ConfirmDeleteDialog({
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title={
-				isApi
-					? 'Remove API'
-					: isCredential
-						? 'Delete credential'
-						: 'Delete workflow'
-			}
+			title={isApi ? 'Remove API' : isCredential ? 'Delete credential' : 'Delete workflow'}
 			size="md"
 			describedById={descriptionId}
 			footer={
@@ -102,7 +96,6 @@ export function ConfirmDeleteDialog({
 					name={target.name}
 					isPipedream={target.isPipedream}
 					open={open}
-					descriptionId={descriptionId}
 				/>
 			) : null}
 		</Dialog>
@@ -168,12 +161,12 @@ function CredentialCascadeInfo({
 			)}
 
 			{isPipedream && (
-				<div className="border-amber-500/30 bg-amber-500/5 text-foreground/80 rounded-lg border px-3.5 py-3 text-xs leading-relaxed">
+				<div className="text-foreground/80 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3.5 py-3 text-xs leading-relaxed">
 					<strong className="text-foreground">
 						Pipedream OAuth grant will also be revoked upstream.
 					</strong>{' '}
-					You'll need to reconnect from scratch to use this account again — there's no
-					way to undo this from Jentic alone.
+					You'll need to reconnect from scratch to use this account again — there's no way
+					to undo this from Jentic alone.
 				</div>
 			)}
 		</div>
