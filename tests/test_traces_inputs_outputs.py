@@ -118,3 +118,44 @@ async def test_upsert_preserves_inputs_outputs(admin_client, cleanup_inout_trace
     assert body["status"] == "success"
     assert body["inputs"] == inputs
     assert body["outputs"] == outputs
+
+
+@pytest.mark.asyncio
+async def test_pending_insert_leaves_completed_at_null(
+    admin_client,
+    cleanup_inout_trace,  # noqa: ARG001
+):
+    """An in-flight async trace is first written with status='pending'. It has
+    not completed, so completed_at must stay NULL — otherwise the Monitor UI
+    renders a bogus completion time equal to the start. The terminal status
+    update then fills completed_at via the ON CONFLICT branch."""
+    await write_trace(
+        trace_id=_FIXTURE_TRACE_ID,
+        toolkit_id="default",
+        operation_id="GET/api.example.com/things",
+        workflow_id=None,
+        spec_path=None,
+        status="pending",
+        http_status=202,
+        duration_ms=None,
+        error=None,
+    )
+    pending = admin_client.get(f"/traces/{_FIXTURE_TRACE_ID}")
+    assert pending.status_code == 200
+    assert pending.json()["completed_at"] is None
+
+    # Terminal update — completed_at should now be stamped.
+    await write_trace(
+        trace_id=_FIXTURE_TRACE_ID,
+        toolkit_id="default",
+        operation_id="GET/api.example.com/things",
+        workflow_id=None,
+        spec_path=None,
+        status="success",
+        http_status=200,
+        duration_ms=51,
+        error=None,
+    )
+    done = admin_client.get(f"/traces/{_FIXTURE_TRACE_ID}")
+    assert done.status_code == 200
+    assert done.json()["completed_at"] is not None

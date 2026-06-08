@@ -79,7 +79,8 @@ async def write_trace(
                (id, toolkit_id, agent_id, operation_id, workflow_id, spec_path,
                 status, http_status, duration_ms, error, job_id, parent_trace_id,
                 api_id, inputs, outputs, created_at, completed_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch(),unixepoch())
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,unixepoch(),
+                       CASE WHEN ?='pending' THEN NULL ELSE unixepoch() END)
                ON CONFLICT(id) DO UPDATE SET
                  status=excluded.status,
                  http_status=excluded.http_status,
@@ -107,6 +108,10 @@ async def write_trace(
                 api_id,
                 json.dumps(inputs) if inputs is not None else None,
                 json.dumps(outputs) if outputs is not None else None,
+                # Bound again for the completed_at CASE: a 'pending' insert has
+                # not completed, so completed_at stays NULL until a terminal
+                # status update fills it via the ON CONFLICT branch below.
+                status,
             ),
         )
 
