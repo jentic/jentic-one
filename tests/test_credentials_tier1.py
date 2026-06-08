@@ -81,6 +81,10 @@ def test_test_endpoint_returns_ok_shape_for_unreachable_host(admin_client):
     We pick a TLD that doesn't resolve so we never actually hit the network — the
     contract under test is the Pydantic-shaped JSON response (`ok`, `status`, `hint`,
     `probe_url`), not whether a specific upstream API is reachable from CI.
+
+    Note: a non-resolvable host is now caught by the SSRF guard (which fails closed
+    on resolution failure) and returns `blocked_host` before any outbound call — the
+    response shape is identical, which is what this test asserts.
     """
     api_id = "tier1-test-unreachable.invalid"
     _register_api(admin_client, api_id)
@@ -90,9 +94,9 @@ def test_test_endpoint_returns_ok_shape_for_unreachable_host(admin_client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert set(body.keys()) >= {"ok", "status", "hint", "probe_url"}
-    # Unreachable host → ok=False, hint is one of the network-error sentinels.
+    # Unreachable / non-resolvable host → ok=False with a network/guard sentinel.
     assert body["ok"] is False
-    assert body["hint"] in {"timeout", "network_error"}
+    assert body["hint"] in {"timeout", "network_error", "blocked_host"}
     assert body["probe_url"] and body["probe_url"].startswith("https://")
 
 
@@ -105,8 +109,10 @@ def test_test_endpoint_pipedream_returns_diagnostic(admin_client):
     """Pipedream credentials can't be probed directly — endpoint returns a hint."""
     api_id = "tier1-pipedream.example.com"
     _register_api(admin_client, api_id, scheme_type="apiKey")
-    # Bypass the `auth_type` literal at the API by writing directly via vault —
-    # `pipedream_oauth` is a reserved value that the create endpoint rejects.
+    # Seed a pipedream_oauth credential by writing directly via the vault — the
+    # create endpoint correctly rejects this reserved auth_type (see
+    # test_create_rejects_reserved_pipedream_oauth), so we bypass it here to set
+    # up the state that the Pipedream sync would otherwise produce.
     import asyncio  # noqa: PLC0415
 
     import src.vault as vault  # noqa: PLC0415
@@ -240,6 +246,128 @@ def test_credential_out_includes_new_fields(admin_client):
     got = admin_client.get(f"/credentials/{cid}").json()
     assert got["description"] == "Used by the nightly digest job"
     assert got["last_used_at"] is None
+
+
+# ── reserved auth_type rejection ──────────────────────────────────────────────
+
+
+def test_create_rejects_reserved_pipedream_oauth(admin_client):
+    """`pipedream_oauth` is reserved for the Pipedream sync — create must reject it
+    so a caller can't self-assign it and create a credential with no backing broker."""
+    api_id = "tier1-reserved-create.example.com"
+    _register_api(admin_client, api_id, scheme_type="apiKey")
+    resp = admin_client.post(
+        "/credentials",
+        json={
+            "label": "reserved-attempt",
+            "value": "secret",
+            "api_id": api_id,
+            "auth_type": "pipedream_oauth",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    assert "reserved" in resp.text.lower()
+
+
+def test_create_rejects_reserved_jentic_api_key(admin_client):
+    """`JenticApiKey` marks the internal admin key — never settable via the API."""
+    api_id = "tier1-reserved-jentic.example.com"
+    _register_api(admin_client, api_id, scheme_type="apiKey")
+    resp = admin_client.post(
+        "/credentials",
+        json={
+            "label": "reserved-attempt-2",
+            "value": "secret",
+            "api_id": api_id,
+            "auth_type": "JenticApiKey",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+
+
+def test_patch_rejects_reserved_auth_type(admin_client):
+    """Patching auth_type to a reserved value is rejected too."""
+    api_id = "tier1-reserved-patch.example.com"
+    _register_api(admin_client, api_id)
+    cid = _create_credential(admin_client, api_id, label="reserved-patch")
+    resp = admin_client.patch(f"/credentials/{cid}", json={"auth_type": "pipedream_oauth"})
+    assert resp.status_code == 400, resp.text
+    assert "reserved" in resp.text.lower()
+
+
+# ── /test SSRF guard ──────────────────────────────────────────────────────────
+
+
+def test_test_endpoint_blocks_private_host(admin_client):
+    """The /test probe must refuse private / loopback / metadata hosts even when a
+    valid credential is bound — the probe URL is derived from user-controlled input.
+
+    Seed the credential directly via the vault (no spec import) so the probe URL
+    falls back to ``https://{api_id}/`` and we exercise the SSRF guard itself
+    rather than the import-time self-hosted overlay.
+    """
+    import asyncio  # noqa: PLC0415
+
+    import src.vault as vault  # noqa: PLC0415
+
+    async def _seed(host: str, label: str) -> str:
+        cred = await vault.create_credential(
+            label, "secret-value", api_id=host, scheme_name="bearer"
+        )
+        return cred["id"]
+
+    # 169.254.169.254 = cloud metadata endpoint (link-local).
+    cid = asyncio.run(_seed("169.254.169.254", "ssrf-metadata"))
+    resp = admin_client.post(f"/credentials/{cid}/test")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["hint"] == "blocked_host", body
+
+
+def test_test_endpoint_blocks_loopback_host(admin_client):
+    import asyncio  # noqa: PLC0415
+
+    import src.vault as vault  # noqa: PLC0415
+
+    async def _seed() -> str:
+        cred = await vault.create_credential(
+            "ssrf-loopback", "secret-value", api_id="127.0.0.1", scheme_name="bearer"
+        )
+        return cred["id"]
+
+    cid = asyncio.run(_seed())
+    resp = admin_client.post(f"/credentials/{cid}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hint"] == "blocked_host"
+
+
+# ── agent authorization gating (P0-1 / P2-4) ──────────────────────────────────
+
+
+def test_test_endpoint_rejects_ungranted_agent(admin_client, agent_only_client):
+    """An agent key without an explicit POST /credentials allow rule cannot probe a
+    credential — the probe decrypts and uses the secret, so it is gated like a write."""
+    api_id = "tier1-agent-test-gate.example.com"
+    _register_api(admin_client, api_id)
+    cid = _create_credential(admin_client, api_id, label="agent-test-gate")
+
+    resp = agent_only_client.post(f"/credentials/{cid}/test")
+    assert resp.status_code == 403, resp.text
+
+
+def test_bindings_requires_human_session(admin_client, agent_only_client):
+    api_id = "tier1-agent-bindings-gate.example.com"
+    _register_api(admin_client, api_id)
+    cid = _create_credential(admin_client, api_id, label="agent-bindings-gate")
+
+    resp = agent_only_client.get(f"/credentials/{cid}/bindings")
+    assert resp.status_code == 403, resp.text
+
+
+def test_audit_requires_human_session(agent_only_client):
+    resp = agent_only_client.get("/audit")
+    assert resp.status_code == 403, resp.text
 
 
 # ── Pipedream revoke cascade on DELETE /credentials ───────────────────────────

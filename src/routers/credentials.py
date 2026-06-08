@@ -6,12 +6,12 @@ from typing import Annotated, Any
 
 import httpx
 import yaml
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 
 import src.vault as vault
 from src.audit import persist_audit, query_audit
-from src.auth import client_ip
+from src.auth import client_ip, require_human_session
 from src.config import JENTIC_PUBLIC_HOSTNAME
 from src.db import get_db
 from src.models import CredentialCreate, CredentialOut, CredentialPatch
@@ -21,6 +21,11 @@ from src.routers.toolkits import check_credential_policy
 
 log = logging.getLogger("jentic")
 audit_log = logging.getLogger("jentic.audit")
+
+# auth_type values written only by internal integrations — never settable via the
+# public create/patch API. `pipedream_oauth` is written by the Pipedream sync;
+# `JenticApiKey` marks the internal jentic-mini admin key.
+_RESERVED_AUTH_TYPES = frozenset({"pipedream_oauth", "JenticApiKey"})
 
 
 def _self_api_id() -> str:
@@ -161,6 +166,19 @@ async def create(body: CredentialCreate, request: Request):
             )
     api_id = getattr(body, "api_id", None)
     scheme_name = getattr(body, "auth_type", None)
+
+    # Reserved auth types are written only by internal integrations (Pipedream sync
+    # writes `pipedream_oauth`; `JenticApiKey` is the internal admin-key marker).
+    # Reject them on the public write path so a caller can't self-assign a reserved
+    # value and create an unsupported credential with no backing broker account.
+    if scheme_name in _RESERVED_AUTH_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"auth_type '{scheme_name}' is reserved for internal integrations and "
+                "cannot be set manually."
+            ),
+        )
 
     if api_id and scheme_name != "none":
         # ── Lazy import: if api_id is a catalog API not yet locally registered, import it now ──
@@ -353,6 +371,7 @@ async def create(body: CredentialCreate, request: Request):
 )
 async def test_credential(
     cid: Annotated[str, Path(description="Credential ID to test")],
+    request: Request,
 ):
     """Verify a credential by issuing a single 5-second probe to the upstream API.
 
@@ -367,10 +386,25 @@ async def test_credential(
     credential is rejected. 404/405 on a probe path is treated as `ok=true` since the
     upstream **did respond** — we only care that the credential is plausibly valid.
 
-    No body is sent. No agent-policy involvement. Used by the credentials UI's
-    "Test connection" button on the form page and (later) inline next to the
-    credential row in the list.
+    No body is sent.
+
+    **Auth:** Requires a human session, or an agent key with an explicit
+    `POST /credentials` allow rule on the jentic-mini credential. This probe
+    decrypts and uses the stored secret to make an authenticated outbound call,
+    so it is gated like the credential write endpoints — an agent cannot use it
+    as an oracle against credentials it has no permission for.
     """
+    if not request.state.is_human_session:
+        if not await _agent_has_credential_write_permission(
+            request.state.toolkit_id, "POST", "/credentials"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Testing a credential requires a human session, or an agent key with an "
+                    "explicit POST /credentials allow rule on the jentic-mini credential."
+                ),
+            )
     cred = await vault.get_credential(cid)
     if not cred:
         raise HTTPException(404, "Credential not found")
@@ -394,11 +428,11 @@ async def test_credential(
             "message": "Could not determine a probe URL from the spec or credential routes.",
         }
 
-    headers, _cred_with_value = await vault.build_inject_headers_for_credential(cid)
     if cred.get("auth_type") == "pipedream_oauth":
         # Pipedream credentials don't carry a direct token we can inject — the broker
         # proxies through Pipedream. Surface this as a non-fatal diagnostic so the UI
-        # can show an informative tooltip rather than a fake red.
+        # can show an informative tooltip rather than a fake red. (Checked before the
+        # SSRF guard since we never make an outbound call for these.)
         return {
             "ok": False,
             "status": None,
@@ -409,6 +443,26 @@ async def test_credential(
                 "is mediated by Pipedream. Use the broker (e.g. a small workflow run) to validate."
             ),
         }
+
+    # SSRF guard: the probe URL is derived from user-controlled api_id / routes /
+    # imported spec, and we attach the decrypted secret to the request. Refuse to
+    # probe private, loopback, link-local (incl. 169.254.169.254 cloud metadata),
+    # or otherwise-reserved hosts — and fail closed if the host cannot be resolved.
+    from src.routers.apis import is_private_server_url  # noqa: PLC0415
+
+    if is_private_server_url(probe_url, resolve=True):
+        return {
+            "ok": False,
+            "status": None,
+            "hint": "blocked_host",
+            "probe_url": probe_url,
+            "message": (
+                "Refusing to probe a private, loopback, or non-resolvable host. "
+                "Credential tests only run against public upstream APIs."
+            ),
+        }
+
+    headers, _cred_with_value = await vault.build_inject_headers_for_credential(cid)
 
     try:
         async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
@@ -457,6 +511,7 @@ async def test_credential(
 @router.get(
     "/{cid:path}/bindings",
     summary="List toolkits this credential is bound to",
+    dependencies=[Depends(require_human_session)],
 )
 async def list_credential_bindings(
     cid: Annotated[str, Path(description="Credential ID")],
@@ -529,6 +584,14 @@ async def patch(
                 status_code=403,
                 detail="Updating credentials requires a human session, or an agent key with an explicit PATCH /credentials allow rule on the jentic-mini credential.",
             )
+    if body.auth_type in _RESERVED_AUTH_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"auth_type '{body.auth_type}' is reserved for internal integrations and "
+                "cannot be set manually."
+            ),
+        )
     row = await vault.patch_credential(
         cid,
         body.label,
@@ -813,7 +876,11 @@ def _pick_probe_url(spec: dict | None, fallback_host: str | None) -> str | None:
 # ── Audit log query (top-level for cross-resource use) ────────────────────────
 
 
-audit_router = APIRouter(prefix="/audit", tags=["credentials"])
+audit_router = APIRouter(
+    prefix="/audit",
+    tags=["credentials"],
+    dependencies=[Depends(require_human_session)],
+)
 
 
 @audit_router.get("", summary="Query the persistent audit log")
