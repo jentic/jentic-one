@@ -14,13 +14,13 @@ spins up real upstream HTTP and (b) we want to assert the storage shape
 independent of dispatch concerns.
 """
 
-import inspect
 import sqlite3
 
 import pytest
 from src.db import DB_PATH
-from src.routers import broker as broker_module
+from src.main import app
 from src.routers.traces import write_trace
+from starlette.testclient import TestClient
 
 
 _FIXTURE_TRACE_IDS = (
@@ -136,19 +136,63 @@ async def test_upsert_does_not_clobber_links(admin_client, cleanup_xlink_traces)
 # ── X-Jentic-Parent-Trace loopback gating ──────────────────────────────────
 
 
-def test_parent_trace_header_loopback_only(admin_client):  # noqa: ARG001
-    """The broker honors X-Jentic-Parent-Trace only from 127.0.0.1 / ::1.
+def _broker_parent_trace_id(client_addr, agent_key: str) -> tuple[str, str | None]:
+    """Fire one broker call carrying X-Jentic-Parent-Trace from `client_addr`
+    and return (trace_id, stored parent_trace_id).
 
-    External callers cannot forge workflow parentage by setting the header
-    on regular broker requests. We assert the loopback-vs-non-loopback
-    branch is present in the broker source without standing up a real
-    upstream (which would require auth, credentials, and network).
+    We target a host with no configured credential so the broker writes a
+    `policy_denied` trace and returns 403 *before* any upstream network call —
+    parent_trace_id is resolved earlier (the loopback gate), so it lands on
+    the stored row regardless. The trace id comes back in X-Jentic-Execution-Id.
     """
-    src = inspect.getsource(broker_module.broker)
-    assert "X-Jentic-Parent-Trace" in src
-    # Loopback set must be checked before the value is assigned to
-    # parent_trace_id. Verify both pieces appear and the loopback hosts are
-    # canonical (127.0.0.1 / ::1 / localhost).
-    assert '"127.0.0.1"' in src
-    assert '"::1"' in src
-    assert "parent_trace_id = raw_parent" in src
+    with TestClient(app, raise_server_exceptions=False, client=client_addr) as c:
+        resp = c.get(
+            "/api.nonexistent-xlink.test/v1/thing",
+            headers={
+                "X-Jentic-API-Key": agent_key,
+                "X-Jentic-Parent-Trace": "exec_xlink_forged_parent",
+            },
+        )
+    trace_id = resp.headers["X-Jentic-Execution-Id"]
+    with sqlite3.connect(DB_PATH) as cx:
+        row = cx.execute(
+            "SELECT parent_trace_id FROM executions WHERE id = ?", (trace_id,)
+        ).fetchone()
+    return trace_id, (row[0] if row else None)
+
+
+@pytest.fixture
+def cleanup_parent_trace_probe():
+    yield
+    with sqlite3.connect(DB_PATH) as cx:
+        cx.execute(
+            "DELETE FROM executions WHERE parent_trace_id = ? OR operation_id LIKE ?",
+            ("exec_xlink_forged_parent", "%nonexistent-xlink.test%"),
+        )
+        cx.commit()
+
+
+def test_parent_trace_header_ignored_from_non_loopback(
+    agent_key,
+    cleanup_parent_trace_probe,  # noqa: ARG001
+):
+    """An external (non-loopback) caller cannot forge workflow parentage.
+
+    The broker must drop X-Jentic-Parent-Trace when request.client.host is not
+    loopback. 10.0.0.5 is in a trusted subnet (so the agent key authenticates)
+    but is NOT loopback, so the header must be ignored and the stored trace's
+    parent_trace_id must be NULL.
+    """
+    _, parent = _broker_parent_trace_id(("10.0.0.5", 50001), agent_key)
+    assert parent is None, "non-loopback caller forged parent_trace_id"
+
+
+def test_parent_trace_header_honored_from_loopback(
+    agent_key,
+    cleanup_parent_trace_probe,  # noqa: ARG001
+):
+    """The legitimate path: the arazzo-runner subprocess connects over
+    loopback, so a 127.0.0.1 caller's X-Jentic-Parent-Trace IS honored and
+    written onto the child trace."""
+    _, parent = _broker_parent_trace_id(("127.0.0.1", 50002), agent_key)
+    assert parent == "exec_xlink_forged_parent", "loopback parent_trace_id not honored"
