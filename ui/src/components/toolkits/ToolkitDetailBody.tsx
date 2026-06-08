@@ -369,11 +369,16 @@ export function ToolkitDetailBody({
 		},
 	});
 
+	const prevShowSettings = React.useRef(false);
 	React.useEffect(() => {
-		if (toolkit && showSettings) {
+		// Seed the edit fields once, on the open transition only — not on every
+		// background refetch of `toolkit` while the dialog is open (that would
+		// clobber the user's in-progress edits). See dialog-state-lifecycle.mdc.
+		if (showSettings && !prevShowSettings.current && toolkit) {
 			setEditName(toolkit.name);
 			setEditDesc(toolkit.description ?? '');
 		}
+		prevShowSettings.current = showSettings;
 	}, [toolkit, showSettings]);
 
 	const id = toolkitId;
@@ -877,7 +882,7 @@ export function ToolkitDetailBody({
 						<h3 className="font-heading text-foreground font-semibold">
 							Bound Agents ({agents.length})
 						</h3>
-						{toolkit.disabled && agents.length > 0 && (
+						{toolkit.disabled && (
 							<span className="bg-danger/15 text-danger border-danger/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-xs">
 								<Ban className="h-3 w-3" />
 								Agents blocked

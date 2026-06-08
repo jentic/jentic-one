@@ -12,6 +12,7 @@ import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialo
 import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
 import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
 import { useAuth } from '@/hooks/useAuth';
+import { isTypingTarget } from '@/lib/keyboard';
 import { subscribeCredentialImported } from '@/lib/events/credentialImported';
 
 /**
@@ -43,6 +44,24 @@ export default function CredentialsPage() {
 		});
 		return unsubscribe;
 	}, [queryClient]);
+
+	// `n` → open the Add Credential dialog (advertised in PageHelp /
+	// KeyboardShortcutsBar). Skip while typing in a field, while a modifier is
+	// held, or when the add dialog / edit sheet is already open.
+	const addDialogOpen = addDialog.state.open;
+	const editSheetOpen = editSheet.open;
+	const openAddDialog = addDialog.openWorkspace;
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key !== 'n' || e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isTypingTarget(e.target)) return;
+			if (addDialogOpen || editSheetOpen) return;
+			e.preventDefault();
+			openAddDialog();
+		};
+		document.addEventListener('keydown', onKeyDown);
+		return () => document.removeEventListener('keydown', onKeyDown);
+	}, [openAddDialog, addDialogOpen, editSheetOpen]);
 
 	return (
 		<>

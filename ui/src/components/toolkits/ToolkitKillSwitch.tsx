@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useId } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Power, Loader2, Ban, ShieldCheck } from 'lucide-react';
 import { api } from '@/api/client';
+import { toast } from '@/components/ui/toastStore';
 import { cn } from '@/lib/utils';
 
 /**
@@ -26,6 +27,8 @@ export interface ToolkitKillSwitchProps {
 export function ToolkitKillSwitch({ toolkitId, disabled, className }: ToolkitKillSwitchProps) {
 	const queryClient = useQueryClient();
 	const [confirming, setConfirming] = useState(false);
+	const confirmId = useId();
+	const confirmBtnRef = useRef<HTMLButtonElement>(null);
 
 	const mutation = useMutation({
 		mutationFn: (next: boolean) => api.updateToolkit(toolkitId, { disabled: next }),
@@ -34,10 +37,25 @@ export function ToolkitKillSwitch({ toolkitId, disabled, className }: ToolkitKil
 			queryClient.invalidateQueries({ queryKey: ['toolkits'] });
 			setConfirming(false);
 		},
+		onError: (err: unknown) => {
+			setConfirming(false);
+			const e = err as { body?: { error?: string }; message?: string };
+			toast({
+				title: 'Failed to update toolkit',
+				description: e?.body?.error ?? e?.message ?? 'The server rejected the change.',
+				variant: 'error',
+			});
+		},
 	});
 
 	const pending = mutation.isPending;
 	const active = !disabled;
+
+	// Move focus onto the confirm button when the inline confirm opens so a
+	// destructive action is reachable from the keyboard without re-tabbing.
+	useEffect(() => {
+		if (confirming) confirmBtnRef.current?.focus();
+	}, [confirming]);
 
 	return (
 		<div className={cn('inline-flex items-center gap-2', className)}>
@@ -46,6 +64,8 @@ export function ToolkitKillSwitch({ toolkitId, disabled, className }: ToolkitKil
 				onClick={() => setConfirming((c) => !c)}
 				disabled={pending}
 				aria-pressed={active}
+				aria-expanded={confirming}
+				aria-controls={confirming ? confirmId : undefined}
 				aria-label={active ? 'Suspend toolkit (kill switch)' : 'Restore toolkit access'}
 				className={cn(
 					'group relative flex h-8 cursor-pointer items-center gap-2 rounded-full px-3 text-xs font-medium transition-all disabled:pointer-events-none disabled:opacity-50',
@@ -70,6 +90,11 @@ export function ToolkitKillSwitch({ toolkitId, disabled, className }: ToolkitKil
 
 			{confirming && (
 				<motion.div
+					id={confirmId}
+					role="group"
+					aria-label={
+						active ? 'Confirm suspending toolkit' : 'Confirm restoring toolkit access'
+					}
 					initial={{ opacity: 0, x: -4 }}
 					animate={{ opacity: 1, x: 0 }}
 					transition={{ duration: 0.15 }}
@@ -82,6 +107,7 @@ export function ToolkitKillSwitch({ toolkitId, disabled, className }: ToolkitKil
 						{active ? 'Block keys + agents?' : 'Restore access?'}
 					</span>
 					<button
+						ref={confirmBtnRef}
 						type="button"
 						onClick={() => mutation.mutate(active)}
 						disabled={pending}
