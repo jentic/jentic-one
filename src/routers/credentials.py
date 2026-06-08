@@ -651,10 +651,12 @@ async def delete(
         raise HTTPException(404, "Credential not found")
 
     pipedream_revoked: bool | None = None
+    pipedream_account: tuple[str, str] | None = None
     if cred.get("auth_type") == "pipedream_oauth":
-        # Map credential row → broker/account so we can revoke upstream. The
-        # link is materialized in oauth_broker_accounts; we keep this query
-        # tight rather than parsing the cred id format.
+        # Map credential row → broker/account so we can revoke upstream *after*
+        # the local delete commits. The link is materialized in
+        # oauth_broker_accounts; we keep this query tight rather than parsing the
+        # cred id format.
         async with get_db() as db:
             async with db.execute(
                 "SELECT broker_id, account_id FROM oauth_broker_accounts "
@@ -664,22 +666,20 @@ async def delete(
             ) as cur:
                 row = await cur.fetchone()
         if row:
-            from src.routers.oauth_brokers import (  # noqa: PLC0415  (lazy import avoids circular dependency)
-                revoke_pipedream_account_upstream,
-            )
+            pipedream_account = (row[0], row[1])
 
-            pipedream_revoked = await revoke_pipedream_account_upstream(row[0], row[1])
-            # Drop the local oauth_broker_accounts row(s) bound to this credential
-            async with get_db() as db:
-                await db.execute(
-                    "DELETE FROM oauth_broker_accounts "
-                    "WHERE broker_id || '-' || account_id || '-' || replace(api_host, '.', '-') = ?",
-                    (cid,),
-                )
-                await db.commit()
-
-    if not await vault.delete_credential(cid):
+    # Atomic local delete (credential + routes + oauth_broker_accounts link) in a
+    # single transaction. Local state is the source of truth, so the best-effort
+    # upstream revoke runs only *after* this commit succeeds.
+    if not await vault.delete_credential_cascade(cid):
         raise HTTPException(404, "Credential not found")
+
+    if pipedream_account is not None:
+        from src.routers.oauth_brokers import (  # noqa: PLC0415  (lazy import avoids circular dependency)
+            revoke_pipedream_account_upstream,
+        )
+
+        pipedream_revoked = await revoke_pipedream_account_upstream(*pipedream_account)
     actor = "human" if request.state.is_human_session else f"toolkit={request.state.toolkit_id}"
     await persist_audit(
         event="CREDENTIAL_DELETED",

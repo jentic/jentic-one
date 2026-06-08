@@ -616,12 +616,24 @@ async def broker(request: Request, target: str):
     current_api_id: str | None = None
 
     # Helper to write broker traces (reduces duplication across 10+ call sites)
-    async def _write_trace(status: str, http_status: int, error: str | None = None) -> None:
-        """Write trace for this broker call. All broker exit points should call this."""
+    async def _write_trace(
+        status: str,
+        http_status: int,
+        error: str | None = None,
+        *,
+        toolkit_id_override: str | None = None,
+    ) -> None:
+        """Write trace for this broker call. All broker exit points should call this.
+
+        ``toolkit_id_override`` lets denial paths attribute the trace to a
+        specific (e.g. suspended) toolkit even when the request-level
+        ``toolkit_id`` is None — see the agent all-grants-suspended path where
+        the killed toolkit id is known from ``suspended_ids`` (P2-8).
+        """
         if not is_simulate:
             await safe_write_trace(
                 trace_id=execution_id,
-                toolkit_id=toolkit_id,
+                toolkit_id=toolkit_id_override or toolkit_id,
                 agent_id=agent_cid,
                 operation_id=f"{request.method}/{upstream_host}{upstream_path}",
                 workflow_id=None,
@@ -649,7 +661,12 @@ async def broker(request: Request, target: str):
         #   2. The agent genuinely has no grants — an admin must add one.
         if suspended_ids:
             _tid = suspended_ids[0]
-            await _write_trace("toolkit_suspended", 403, f"Toolkit '{_tid}' suspended")
+            await _write_trace(
+                "toolkit_suspended",
+                403,
+                f"Toolkit '{_tid}' suspended",
+                toolkit_id_override=_tid,
+            )
             return Response(
                 content=json.dumps(
                     {
@@ -677,8 +694,12 @@ async def broker(request: Request, target: str):
             headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
         )
 
-    # ── Killswitch: reject if any bound toolkit is suspended ───────────────────
-    _kits_to_check = list(grant_ids) if grant_ids else ([toolkit_id] if toolkit_id else [])
+    # ── Killswitch: reject if the bound toolkit is suspended ───────────────────
+    # Agent path: `auth.py` already filtered disabled toolkits out of `grant_ids`
+    # (and surfaced them via `suspended_ids`, handled above), so re-checking each
+    # grant here is a redundant per-iteration DB round-trip. Only the toolkit-key
+    # (`tk_`) path — a single `toolkit_id` with no grants — still needs a check.
+    _kits_to_check = [] if grant_ids else ([toolkit_id] if toolkit_id else [])
     for _tid in _kits_to_check:
         async with get_db() as _ks_db:
             async with _ks_db.execute(

@@ -511,6 +511,30 @@ async def delete_credential(cid: str) -> bool:
     return cur.rowcount > 0
 
 
+async def delete_credential_cascade(cid: str) -> bool:
+    """Delete a credential and all locally-owned rows that reference it, atomically.
+
+    Removes `credential_routes`, the `credentials` row, and any
+    `oauth_broker_accounts` rows whose synthesized id matches `cid`, in a single
+    transaction (one commit). This is the "local is source of truth" delete: a
+    mid-sequence crash can no longer orphan an encrypted credential row or leave
+    a dangling broker-account link. Any best-effort upstream revoke (Pipedream)
+    must run *after* this commit, never before.
+
+    Returns True if a `credentials` row was actually removed.
+    """
+    async with get_db() as db:
+        await db.execute("DELETE FROM credential_routes WHERE credential_id=?", (cid,))
+        await db.execute(
+            "DELETE FROM oauth_broker_accounts "
+            "WHERE broker_id || '-' || account_id || '-' || replace(api_host, '.', '-') = ?",
+            (cid,),
+        )
+        cur = await db.execute("DELETE FROM credentials WHERE id=?", (cid,))
+        await db.commit()
+    return cur.rowcount > 0
+
+
 async def mark_credential_used(cid: str) -> None:
     """Best-effort write of `last_used_at` after a successful upstream call.
 
