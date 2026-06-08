@@ -122,11 +122,18 @@ def test_broker_strips_jentic_control_headers_from_upstream(
             "X-Jentic-Credential": "some-alias",
             "X-Jentic-Service": "some-service",
             "X-Jentic-Callback": "https://cb.example/cb",
+            "X-Jentic-Parent-Trace": "trace-internal-should-not-leak",
         },
     )
     assert resp.status_code == 200, f"Simulate failed: {resp.text}"
     forwarded = {k.lower(): v for k, v in resp.json()["would_send"]["headers"].items()}
-    sensitive = {"x-jentic-api-key", "x-jentic-simulate", "x-jentic-credential", "x-jentic-service"}
+    sensitive = {
+        "x-jentic-api-key",
+        "x-jentic-simulate",
+        "x-jentic-credential",
+        "x-jentic-service",
+        "x-jentic-parent-trace",
+    }
     leaked = sensitive & set(forwarded)
     assert not leaked, (
         f"Jentic control headers leaked upstream: {sorted(leaked)}. "
