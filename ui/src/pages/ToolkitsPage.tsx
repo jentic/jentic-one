@@ -240,12 +240,6 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 									{ keys: ['n'], label: 'Create toolkit' },
 									{ keys: [MOD_KEY, '/'], chord: true, label: 'Show this help' },
 								]}
-								links={[
-									{
-										href: 'https://docs.jentic.com/toolkits',
-										label: 'Toolkit docs',
-									},
-								]}
 							/>
 						</>
 					}

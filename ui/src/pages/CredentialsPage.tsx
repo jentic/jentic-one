@@ -135,12 +135,6 @@ export default function CredentialsPage() {
 									{ keys: ['n'], label: 'Add credential' },
 									{ keys: [MOD_KEY, '/'], chord: true, label: 'Show this help' },
 								]}
-								links={[
-									{
-										href: 'https://docs.jentic.com/credentials',
-										label: 'Credential management docs',
-									},
-								]}
 							/>
 						</>
 					}
