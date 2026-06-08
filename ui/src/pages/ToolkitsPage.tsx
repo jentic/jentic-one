@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -14,6 +14,8 @@ import { Label } from '@/components/ui/Label';
 import { ErrorAlert } from '@/components/ui/ErrorAlert';
 import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { PageHelp } from '@/components/ui/PageHelp';
+import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import {
 	ToolkitCard,
 	ToolkitsListSkeleton,
@@ -23,6 +25,7 @@ import { ToolkitsEmptyState } from '@/components/toolkits/ToolkitsEmptyState';
 import { ToolkitDetailSheet } from '@/components/toolkits/ToolkitDetailSheet';
 import { useToolkitDetailSheet } from '@/hooks/useToolkitDetailSheet';
 import { useToolkitCardEnrichment } from '@/hooks/useToolkitCardEnrichment';
+import { isTypingTarget } from '@/lib/keyboard';
 
 const gridVariants = {
 	hidden: { opacity: 1 },
@@ -133,6 +136,22 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 	const [showCreate, setShowCreate] = useState(createNew);
 	const detailSheet = useToolkitDetailSheet();
 
+	// `n` → open the Create Toolkit modal (advertised in PageHelp /
+	// KeyboardShortcutsBar). Skip while typing in a field, while a modifier is
+	// held, or when the create modal / detail sheet is already open.
+	const detailSheetOpen = detailSheet.open;
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key !== 'n' || e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isTypingTarget(e.target)) return;
+			if (showCreate || detailSheetOpen) return;
+			e.preventDefault();
+			setShowCreate(true);
+		};
+		document.addEventListener('keydown', onKeyDown);
+		return () => document.removeEventListener('keydown', onKeyDown);
+	}, [showCreate, detailSheetOpen]);
+
 	const {
 		data: toolkitsRaw,
 		isLoading,
@@ -156,66 +175,140 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 	);
 
 	return (
-		<PageShell>
-			<PageHeader
-				title="Toolkits"
-				actions={
-					<Button onClick={() => setShowCreate(true)}>
-						<Plus className="h-4 w-4" /> Create Toolkit
-					</Button>
-				}
-			/>
-
-			{isLoading ? (
-				<ToolkitsListSkeleton />
-			) : isError ? (
-				<ErrorAlert message="Failed to load toolkits. Please try refreshing the page." />
-			) : !toolkits || toolkits.length === 0 ? (
-				<ToolkitsEmptyState onCreate={() => setShowCreate(true)} />
-			) : (
-				<motion.div
-					variants={gridVariants}
-					initial="hidden"
-					animate="visible"
-					className="grid grid-cols-1 gap-4 md:grid-cols-2"
-				>
-					{toolkits.map((toolkit) => {
-						const enriched = enrichment.get(toolkit.id);
-						return (
-							<ToolkitCard
-								key={toolkit.id}
-								toolkit={{
-									...toolkit,
-									apiIds: enriched?.apiIds,
-									agentCount: enriched?.agentCount,
-								}}
-								pendingCount={pendingByToolkit[toolkit.id] ?? 0}
-								onOpen={detailSheet.openSheet}
+		<>
+			<PageShell spacing="space-y-5" className="md:pb-12">
+				<PageHeader
+					title="Toolkits"
+					subtitle="Scoped bundles of credentials and policy your agents act through."
+					actions={
+						<>
+							<Button onClick={() => setShowCreate(true)}>
+								<Plus className="h-4 w-4" /> Create Toolkit
+							</Button>
+							<PageHelp
+								title="About Toolkits"
+								intro={
+									<p>
+										A toolkit is the unit of access you hand to an agent: a
+										client API key, a set of bound credentials, and the policy
+										that governs what calls are allowed. Agents call through the
+										broker using the toolkit's key; the broker injects the right
+										upstream credential per request and enforces the toolkit's
+										rules.
+									</p>
+								}
+								sections={[
+									{
+										heading: 'Reading a card',
+										body: (
+											<p>
+												Each card shows the APIs the toolkit touches (from
+												its bound credentials) and how many agents are
+												granted it, so you can trace toolkits → agents at a
+												glance. The <strong>default</strong> toolkit
+												implicitly contains every credential, so it shows no
+												API pile. Open a card to inspect keys, bound
+												credentials, agents, and the kill switch.
+											</p>
+										),
+									},
+									{
+										heading: 'Multiple credentials',
+										body: (
+											<p>
+												A toolkit can hold several credentials at once — the
+												broker disambiguates per request by API
+												(longest-prefix match), by service name, or by an
+												explicit <strong>X-Jentic-Credential</strong> alias.
+												Binding the same credential twice is a no-op.
+											</p>
+										),
+									},
+									{
+										heading: 'Suspending access',
+										body: (
+											<p>
+												The kill switch on a toolkit's detail view suspends
+												it entirely — both API key calls and agent
+												executions are blocked with a clear error until you
+												restore it.
+											</p>
+										),
+									},
+								]}
+								shortcuts={[
+									{ keys: ['n'], label: 'Create toolkit' },
+									{ keys: [MOD_KEY, '/'], chord: true, label: 'Show this help' },
+								]}
+								links={[
+									{
+										href: 'https://docs.jentic.com/toolkits',
+										label: 'Toolkit docs',
+									},
+								]}
 							/>
-						);
-					})}
-				</motion.div>
-			)}
+						</>
+					}
+				/>
 
-			<ToolkitDetailSheet
-				toolkitId={detailSheet.stickyId}
-				open={detailSheet.open}
-				onClose={detailSheet.closeSheet}
-				onAfterClose={detailSheet.clearSticky}
-			/>
+				{isLoading ? (
+					<ToolkitsListSkeleton />
+				) : isError ? (
+					<ErrorAlert message="Failed to load toolkits. Please try refreshing the page." />
+				) : !toolkits || toolkits.length === 0 ? (
+					<ToolkitsEmptyState onCreate={() => setShowCreate(true)} />
+				) : (
+					<motion.div
+						variants={gridVariants}
+						initial="hidden"
+						animate="visible"
+						className="grid grid-cols-1 gap-4 md:grid-cols-2"
+					>
+						{toolkits.map((toolkit) => {
+							const enriched = enrichment.get(toolkit.id);
+							return (
+								<ToolkitCard
+									key={toolkit.id}
+									toolkit={{
+										...toolkit,
+										apiIds: enriched?.apiIds,
+										agentCount: enriched?.agentCount,
+									}}
+									pendingCount={pendingByToolkit[toolkit.id] ?? 0}
+									onOpen={detailSheet.openSheet}
+								/>
+							);
+						})}
+					</motion.div>
+				)}
 
-			<CreateModal
-				open={showCreate}
-				onClose={() => {
-					setShowCreate(false);
-					if (createNew) navigate('/toolkits');
-				}}
-				onCreated={(id) => {
-					setShowCreate(false);
-					if (createNew) navigate('/toolkits');
-					detailSheet.openSheet(id);
-				}}
+				<ToolkitDetailSheet
+					toolkitId={detailSheet.stickyId}
+					open={detailSheet.open}
+					onClose={detailSheet.closeSheet}
+					onAfterClose={detailSheet.clearSticky}
+				/>
+
+				<CreateModal
+					open={showCreate}
+					onClose={() => {
+						setShowCreate(false);
+						if (createNew) navigate('/toolkits');
+					}}
+					onCreated={(id) => {
+						setShowCreate(false);
+						if (createNew) navigate('/toolkits');
+						detailSheet.openSheet(id);
+					}}
+				/>
+			</PageShell>
+
+			<KeyboardShortcutsBar
+				shortcuts={[
+					{ keys: ['n'], label: 'create' },
+					{ keys: [MOD_KEY, '/'], chord: true, label: 'help' },
+				]}
 			/>
-		</PageShell>
+		</>
 	);
 }
