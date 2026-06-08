@@ -114,7 +114,10 @@ export interface CredentialOut {
 	server_variables?: Record<string, string> | null;
 	scheme?: Record<string, unknown> | null;
 	routes?: string[] | null;
-	scheme_name?: string | null;
+	// NB: the backend / generated client narrow `auth_type` to a fixed enum; we
+	// keep it as a free string here because the UI also renders Pipedream-synced
+	// values. `scheme_name` is deliberately NOT on this type — it is only
+	// returned by CredentialBindingOut, never by GET /credentials.
 	description?: string | null;
 	created_at?: number | null;
 	updated_at?: number | null;

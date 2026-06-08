@@ -145,10 +145,6 @@ export function CredentialRow({
 							<Badge variant="default" className="text-[10px]">
 								OAuth via Pipedream
 							</Badge>
-						) : cred.scheme_name ? (
-							<Badge variant="default" className="text-[10px]">
-								{cred.scheme_name}
-							</Badge>
 						) : cred.auth_type ? (
 							<Badge variant="default" className="text-[10px]">
 								{cred.auth_type}

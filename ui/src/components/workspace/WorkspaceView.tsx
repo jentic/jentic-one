@@ -274,52 +274,23 @@ export function WorkspaceView({
 
 	const toolkitEnrichment = useToolkitCardEnrichment(toolkitCards.map((t) => t.id));
 
-	// One credentials lookup per toolkit. The `enabled` gate keeps these
-	// from firing until the parent toolkits list resolves.
-	const toolkitCredsQueries = useQuery({
-		queryKey: [
-			'workspace',
-			'toolkit-credentials',
-			toolkits
-				.map((t) => t.id)
-				.sort()
-				.join(','),
-		],
-		queryFn: async () => {
-			const entries = await Promise.all(
-				toolkits.map(async (t) => {
-					try {
-						const creds = await api.listToolkitCredentials(t.id);
-						return [t, Array.isArray(creds) ? creds : []] as const;
-					} catch {
-						return [t, []] as const;
-					}
-				}),
-			);
-			return entries;
-		},
-		enabled: toolkits.length > 0,
-		staleTime: 60_000,
-	});
-
+	// Reverse the per-toolkit enrichment (toolkit → apiIds) into the apiId →
+	// toolkit-names map the API tiles need. Reusing the enrichment hook's
+	// per-toolkit credential queries avoids the duplicate `listToolkitCredentials`
+	// fan-out this view used to fire on its own.
 	const apiToolkitMap = useMemo<Map<string, string[]>>(() => {
 		const map = new Map<string, string[]>();
-		const data = toolkitCredsQueries.data;
-		if (!data) return map;
-		for (const [toolkit, creds] of data) {
-			if (toolkit.id === 'default') continue;
-			const seenForTk = new Set<string>();
-			for (const cred of creds as Array<{ api_id?: unknown }>) {
-				const apiId = typeof cred?.api_id === 'string' ? cred.api_id : null;
-				if (!apiId || seenForTk.has(apiId)) continue;
-				seenForTk.add(apiId);
+		for (const t of toolkits) {
+			if (t.id === 'default') continue;
+			const apiIds = toolkitEnrichment.get(t.id)?.apiIds ?? [];
+			for (const apiId of apiIds) {
 				const existing = map.get(apiId) ?? [];
-				if (!existing.includes(toolkit.name)) existing.push(toolkit.name);
+				if (!existing.includes(t.name)) existing.push(t.name);
 				map.set(apiId, existing);
 			}
 		}
 		return map;
-	}, [toolkitCredsQueries.data]);
+	}, [toolkits, toolkitEnrichment]);
 
 	const hasDefaultToolkit = toolkits.some((t) => t.id === 'default');
 
