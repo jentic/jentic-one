@@ -21,9 +21,7 @@ to add cross-table linkage columns used by the Monitor page:
 
 Plus partial indexes for the lookups the Monitor surfaces depend on:
 - idx_jobs_agent_created      - "list this agent's jobs over time"
-- idx_executions_job_id       - "show all traces for this job"
 - idx_executions_parent_trace - "show all child hops of this workflow trace"
-- idx_jobs_trace_id           - "find the job that produced this trace" (cross-link badge)
 - idx_executions_api_id       - "list traces for this API" + group_by=api in /traces/usage
 
 All ALTERs are idempotent (PRAGMA-guarded). All indexes are partial (WHERE col
@@ -82,21 +80,12 @@ def upgrade() -> None:
     if "outputs" not in exec_cols:
         op.execute("ALTER TABLE executions ADD COLUMN outputs TEXT DEFAULT NULL")
 
-    # Cross-link lookups: small partial indexes keyed off the new columns.
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_executions_job_id "
-        "ON executions(job_id) "
-        "WHERE job_id IS NOT NULL"
-    )
+    # Cross-link lookup: the trace detail drawer's "child broker calls" panel
+    # queries executions WHERE parent_trace_id = ? (see src/routers/traces.py).
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_executions_parent_trace "
         "ON executions(parent_trace_id) "
         "WHERE parent_trace_id IS NOT NULL"
-    )
-    # Reverse: "find the job for this trace". Used by the Execution Log
-    # cross-link badge — needs to be cheap on every row render.
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_jobs_trace_id ON jobs(trace_id) WHERE trace_id IS NOT NULL"
     )
     # Powers `/traces?api_id=X` filter and group_by=api aggregation.
     op.execute(
@@ -137,7 +126,5 @@ def downgrade() -> None:
     # downgrade, same convention as 0005's executions.agent_id. Drop only
     # the indexes so the schema is structurally reversible.
     op.execute("DROP INDEX IF EXISTS idx_executions_api_id")
-    op.execute("DROP INDEX IF EXISTS idx_jobs_trace_id")
     op.execute("DROP INDEX IF EXISTS idx_executions_parent_trace")
-    op.execute("DROP INDEX IF EXISTS idx_executions_job_id")
     op.execute("DROP INDEX IF EXISTS idx_jobs_agent_created")
