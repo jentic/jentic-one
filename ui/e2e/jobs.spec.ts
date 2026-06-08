@@ -4,37 +4,48 @@ import {
 	mockAuthenticatedUser,
 	mockJobs,
 	mockJobDetail,
+	mockTraces,
 	mockToolkits,
 	navigateTo,
 } from './fixtures';
 
-test.describe('Jobs page', () => {
+test.describe('Monitor page (Jobs)', () => {
 	test.beforeEach(async ({ page }) => {
 		await mockAuthenticatedUser(page);
 		await mockJobs(page);
+		await mockTraces(page);
 		await mockToolkits(page);
 	});
 
 	test('renders without errors', async ({ page }) => {
 		const errors = captureConsoleErrors(page);
 		await page.goto('/');
-		await navigateTo(page, '/jobs');
-		await expect(page.getByRole('heading', { name: /background jobs/i })).toBeVisible();
+		// /jobs now redirects to the unified Monitor page.
+		await navigateTo(page, '/monitor');
+		await expect(page.getByRole('heading', { name: /^monitor$/i })).toBeVisible();
 		expect(errors).toHaveLength(0);
 	});
 
-	test('shows status filter pills', async ({ page }) => {
+	test('shows monitor tabs', async ({ page }) => {
 		await page.goto('/');
-		await navigateTo(page, '/jobs');
-		await expect(page.getByRole('button', { name: 'all' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'pending' })).toBeVisible();
-		await expect(page.getByRole('button', { name: 'running' })).toBeVisible();
+		await navigateTo(page, '/monitor');
+		await expect(page.getByRole('button', { name: 'Overview' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Execution Log' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Jobs' })).toBeVisible();
 	});
 
-	test('shows empty state when no jobs', async ({ page }) => {
+	test('shows empty state on the Jobs tab', async ({ page }) => {
+		await page.goto('/');
+		await navigateTo(page, '/monitor');
+		await page.getByRole('button', { name: 'Jobs' }).click();
+		await expect(page.getByText(/no jobs match your filters/i)).toBeVisible();
+	});
+
+	test('legacy /jobs route redirects to Monitor', async ({ page }) => {
 		await page.goto('/');
 		await navigateTo(page, '/jobs');
-		await expect(page.getByText(/no jobs found/i)).toBeVisible();
+		await expect(page).toHaveURL(/\/monitor/);
+		await expect(page.getByRole('heading', { name: /^monitor$/i })).toBeVisible();
 	});
 });
 

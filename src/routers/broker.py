@@ -91,6 +91,21 @@ _HOP_BY_HOP = {
     "x-jentic-credential",
     "x-jentic-service",
     "x-jentic-callback",
+    # Internal cross-process workflow attribution — set by the arazzo-runner
+    # subprocess on loopback hops and consumed here (see the X-Jentic-Parent-Trace
+    # read below). Must never reach the real upstream: it would leak Jentic's
+    # internal trace IDs to every API a workflow calls.
+    "x-jentic-parent-trace",
+    # Browser session cookies (jentic_session JWT in particular) authenticate
+    # the caller to *Jentic*, not to the upstream API. Forwarding them would
+    # (a) leak the JWT to whatever upstream is being proxied (it gets logged
+    # there and echoed back into broker job result bodies for any GET /jobs
+    # admin to read), and (b) be the wrong identity for the upstream anyway.
+    # See #56 for the response-side analogue (closed wontfix because response
+    # headers are legitimate application data); the request-side reasoning is
+    # different — the agent's Cookie is never intended for the upstream when
+    # called through the broker.
+    "cookie",
     # Host is set from the target URL
     "host",
     # Reverse-proxy headers injected by nginx/traefik/etc. — these describe
@@ -571,6 +586,34 @@ async def broker(request: Request, target: str):
         or request.headers.get("x-jentic-simulate", "").lower() == "true"
     )
 
+    # Cross-process workflow attribution. The arazzo-runner subprocess (spawned
+    # by workflows.execute_workflow_core) sets X-Jentic-Parent-Trace to the
+    # workflow's own trace id on every broker hop, so we can stamp child broker
+    # traces with parent_trace_id and render "part of workflow X" in the UI.
+    #
+    # Loopback-only on purpose: the runner connects via http://localhost:{port}
+    # so we trust the header from there. External callers can't spoof workflow
+    # parentage.
+    parent_trace_id: str | None = None
+    raw_parent = request.headers.get("X-Jentic-Parent-Trace")
+    if raw_parent:
+        client_host = request.client.host if request.client else None
+        if client_host in ("127.0.0.1", "::1", "localhost"):
+            parent_trace_id = raw_parent
+
+    # Filled in by the async dispatch branches below when this broker call
+    # gets wrapped in a job. _write_trace closes over this name, so updates
+    # made before each exit point flow through.
+    current_job_id: str | None = None
+
+    # Catalog-form `apis.id` for the upstream API. Filled in after the
+    # credential lookup runs (see `_find_credential_for_host` below); stays
+    # None for the early-error exit points that fail before credentials are
+    # resolved (e.g. policy denials, malformed targets) and for anonymous
+    # broker calls where no credential matched. The read-side LEFT JOIN
+    # treats NULL as "unattributed", same as toolkit_id/agent_id.
+    current_api_id: str | None = None
+
     # Helper to write broker traces (reduces duplication across 10+ call sites)
     async def _write_trace(status: str, http_status: int, error: str | None = None) -> None:
         """Write trace for this broker call. All broker exit points should call this."""
@@ -587,6 +630,9 @@ async def broker(request: Request, target: str):
                 duration_ms=int((time.time() - started_at) * 1000),
                 error=error,
                 step_outputs=None,
+                job_id=current_job_id,
+                parent_trace_id=parent_trace_id,
+                api_id=current_api_id,
             )
 
     credential_alias = request.headers.get("x-jentic-credential")
@@ -816,6 +862,12 @@ async def broker(request: Request, target: str):
             service=credential_service,
             toolkit_ids=grant_ids,
         )
+        # Stamp the catalog-form api id onto the trace so the Monitor surfaces
+        # can JOIN apis at read time. _find_credential_for_host returns the
+        # `api_id` taken straight from the matched credential record, which
+        # for catalog imports is the canonical SLD form (e.g. `stripe.com`).
+        # Stays None when no credential matched (anonymous calls / no-auth APIs).
+        current_api_id = api_id
     except ServiceNotFoundError as e:
         await _write_trace("error", 409, str(e))
         return Response(
@@ -1131,7 +1183,13 @@ async def broker(request: Request, target: str):
             slug_or_id=capability_id,
             toolkit_id=toolkit_id,
             inputs={},
+            agent_id=agent_cid,
         )
+        # Bind the job into the trace-writer closure so subsequent _write_trace
+        # calls in this scope (and the background task below) stamp the trace
+        # with this job_id, enabling the [job ↗] cross-link in the Execution
+        # Log.
+        current_job_id = job_id
         if callback_url:
             async with get_db() as _db:
                 await _db.execute(
@@ -1141,7 +1199,7 @@ async def broker(request: Request, target: str):
 
         async def _broker_bg():
             try:
-                await update_job(job_id, status="running")
+                await update_job(job_id, status="running", trace_id=execution_id)
                 fwd_hdrs = {
                     k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP
                 }
@@ -1174,19 +1232,28 @@ async def broker(request: Request, target: str):
                         http_status=202,
                         upstream_async=True,
                         upstream_job_url=upstream_loc,
+                        trace_id=execution_id,
                     )
                 elif resp.status < 400:
                     await update_job(
-                        job_id, status="complete", result=result, http_status=resp.status
+                        job_id,
+                        status="complete",
+                        result=result,
+                        http_status=resp.status,
+                        trace_id=execution_id,
                     )
                 else:
                     await update_job(
-                        job_id, status="failed", error=resp_text[:512], http_status=resp.status
+                        job_id,
+                        status="failed",
+                        error=resp_text[:512],
+                        http_status=resp.status,
+                        trace_id=execution_id,
                     )
             except Exception as exc:
                 # Update trace on exception
                 await _write_trace("error", 500, f"Background task error: {str(exc)}")
-                await update_job(job_id, status="failed", error=str(exc))
+                await update_job(job_id, status="failed", error=str(exc), trace_id=execution_id)
             finally:
                 discard_task(job_id)
 
@@ -1318,7 +1385,11 @@ async def broker(request: Request, target: str):
             slug_or_id=capability_id,
             toolkit_id=toolkit_id,
             inputs={},
+            agent_id=agent_cid,
         )
+        # Bind the job into the trace-writer closure so the trace written
+        # below carries job_id (Execution Log [job ↗] cross-link).
+        current_job_id = job_id
         async with get_db() as _db:
             await _db.execute("UPDATE jobs SET callback_url=? WHERE id=?", (callback_url, job_id))
             await _db.commit()
@@ -1329,6 +1400,7 @@ async def broker(request: Request, target: str):
             http_status=202,
             upstream_async=True,
             upstream_job_url=upstream_loc,
+            trace_id=execution_id,
         )
         response_headers["X-Jentic-Job-Id"] = job_id
         response_headers["Location"] = f"/jobs/{job_id}"

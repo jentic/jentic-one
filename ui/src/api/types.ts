@@ -198,58 +198,129 @@ export interface WorkflowStep {
 export interface TraceOut {
 	id: string;
 	toolkit_id?: string | null;
-	toolkit_name?: string | null;
+	agent_id?: string | null;
 	operation_id?: string | null;
 	workflow_id?: string | null;
-	capability_id?: string | null;
-	workflow_slug?: string | null;
 	spec_path?: string | null;
 	status?: string | null;
 	http_status?: number | null;
 	duration_ms?: number | null;
-	created_at?: number | null;
-	steps?: TraceStepOut[];
-	request?: Record<string, unknown>;
-	response?: Record<string, unknown>;
 	error?: string | null;
+	created_at?: number | null;
+	completed_at?: number | null;
+	job_id?: string | null;
+	parent_trace_id?: string | null;
+	api_id?: string | null;
+	api_name?: string | null;
+	inputs?: Record<string, unknown> | null;
+	outputs?: Record<string, unknown> | null;
+	steps?: TraceStepOut[];
+	children?: TraceChildOut[];
+	[key: string]: unknown;
+}
+
+export interface TraceChildOut {
+	id: string;
+	operation_id?: string | null;
+	status?: string | null;
+	http_status?: number | null;
+	duration_ms?: number | null;
+	created_at?: number | null;
+	api_id?: string | null;
+	api_name?: string | null;
 	[key: string]: unknown;
 }
 
 export interface TraceStepOut {
+	id?: string | null;
 	step_id?: string | null;
-	capability_id?: string | null;
+	operation?: string | null;
+	status?: string | null;
 	http_status?: number | null;
-	duration_ms?: number | null;
 	output?: unknown;
+	inputs?: unknown;
 	error?: string | null;
+	started_at?: number | null;
+	completed_at?: number | null;
 	[key: string]: unknown;
 }
 
 export interface TraceListPage {
 	traces: TraceOut[];
 	total?: number | null;
-	page?: number | null;
-	size?: number | null;
+	limit?: number | null;
+	offset?: number | null;
+}
+
+export interface UsageStats {
+	total: number;
+	success: number;
+	failed: number;
+	pending: number;
+	avg_ms?: number | null;
+	p50_ms?: number | null;
+	p95_ms?: number | null;
+	active_now: number;
+	[key: string]: unknown;
+}
+
+export interface UsageBucket {
+	ts: number;
+	total: number;
+	success: number;
+	failed: number;
+	avg_ms?: number | null;
+	[key: string]: unknown;
+}
+
+export interface UsageTopRow {
+	key: string;
+	label?: string | null;
+	total: number;
+	success: number;
+	failed: number;
+	avg_ms?: number | null;
+	trend?: number[] | null;
+	[key: string]: unknown;
+}
+
+export interface UsageResponse {
+	since: number;
+	until: number;
+	bucket_seconds: number;
+	group_by: 'toolkit' | 'api' | 'agent' | string;
+	stats: UsageStats;
+	buckets: UsageBucket[];
+	top: UsageTopRow[];
+	[key: string]: unknown;
 }
 
 export interface JobOut {
-	id: string;
+	job_id: string;
 	kind?: string | null;
+	capability?: string | null;
 	toolkit_id?: string | null;
-	status?: 'pending' | 'running' | 'complete' | 'failed' | string;
+	agent_id?: string | null;
+	status: 'pending' | 'running' | 'complete' | 'failed' | 'upstream_async' | string;
 	result?: unknown;
 	error?: string | null;
+	http_status?: number | null;
+	upstream_async?: boolean;
 	upstream_job_url?: string | null;
+	trace_id?: string | null;
+	parent_trace_id?: string | null;
 	created_at?: number | null;
-	updated_at?: number | null;
+	completed_at?: number | null;
 	[key: string]: unknown;
 }
 
 export interface JobListPage {
-	items: JobOut[];
+	data: JobOut[];
 	total?: number | null;
 	page?: number | null;
-	size?: number | null;
+	limit?: number | null;
+	total_pages?: number | null;
+	has_more?: boolean;
 }
 
 export interface ImportRequest {

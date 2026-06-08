@@ -371,25 +371,104 @@ export const api = {
 		limit = 20,
 		offset = 0,
 		page,
+		toolkitId,
+		agentId,
+		apiId,
+		status,
+		since,
+		until,
+		q,
 		toolkit: _toolkit,
 		workflow: _workflow,
 	}: {
 		limit?: number;
 		offset?: number;
 		page?: number;
+		toolkitId?: string | null;
+		agentId?: string | null;
+		apiId?: string | null;
+		status?: string | null;
+		since?: number | null;
+		until?: number | null;
+		q?: string | null;
 		toolkit?: string;
 		workflow?: string;
 	} = {}) => {
 		const effectiveOffset = page != null ? (page - 1) * (limit ?? 20) : (offset ?? 0);
-		return ObserveService.listTracesTracesGet({ limit, offset: effectiveOffset });
+		return ObserveService.listTracesTracesGet({
+			limit,
+			offset: effectiveOffset,
+			toolkitId,
+			agentId,
+			apiId,
+			status,
+			since,
+			until,
+			q,
+		});
 	},
 	getTrace: (traceId: string) => ObserveService.getTraceTracesTraceIdGet({ traceId }),
 	listJobs: ({
 		status,
+		kind,
 		page = 1,
 		limit = 20,
-	}: { status?: string; page?: number; limit?: number } = {}) =>
-		ObserveService.listJobsJobsGet({ status: status ?? null, page, limit }),
+		toolkitId,
+		agentId,
+		since,
+		until,
+		q,
+	}: {
+		status?: string;
+		kind?: 'workflow' | 'broker' | null;
+		page?: number;
+		limit?: number;
+		toolkitId?: string | null;
+		agentId?: string | null;
+		since?: number | null;
+		until?: number | null;
+		q?: string | null;
+	} = {}) =>
+		ObserveService.listJobsJobsGet({
+			status: status ?? null,
+			kind: kind ?? null,
+			page,
+			limit,
+			toolkitId,
+			agentId,
+			since,
+			until,
+			q,
+		}),
+	getTracesUsage: ({
+		since,
+		until,
+		groupBy = 'toolkit',
+		topLimit = 10,
+		toolkitId,
+		agentId,
+		apiId,
+		status,
+	}: {
+		since?: number | null;
+		until?: number | null;
+		groupBy?: 'toolkit' | 'agent' | 'api';
+		topLimit?: number;
+		toolkitId?: string | null;
+		agentId?: string | null;
+		apiId?: string | null;
+		status?: string | null;
+	} = {}) =>
+		ObserveService.getUsageTracesUsageGet({
+			since,
+			until,
+			groupBy,
+			topLimit,
+			toolkitId,
+			agentId,
+			apiId,
+			status,
+		}),
 	getJob: (jobId: string) => ObserveService.getJobRouteJobsJobIdGet({ jobId }),
 	cancelJob: (jobId: string) => ObserveService.cancelJobJobsJobIdDelete({ jobId }),
 };

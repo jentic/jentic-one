@@ -37,6 +37,26 @@ export const handlers = [
 	}),
 
 	http.get('/traces', () => HttpResponse.json({ traces: [], total: 0 })),
+	http.get('/traces/usage', () =>
+		HttpResponse.json({
+			since: 0,
+			until: 0,
+			bucket_seconds: 60,
+			group_by: 'toolkit',
+			top_limit: 10,
+			stats: {
+				total: 0,
+				success: 0,
+				failed: 0,
+				avg_ms: 0,
+				p50_ms: null,
+				p95_ms: null,
+				active_now: 0,
+			},
+			buckets: [],
+			top: [],
+		}),
+	),
 
 	// ── Toolkit detail ──────────────────────────────────────────────
 	http.get('/toolkits/:id', ({ params }) =>
@@ -194,8 +214,10 @@ export const handlers = [
 	),
 
 	// ── Jobs ──────────────────────────────────────────────────────
-	http.get('/jobs', () => HttpResponse.json({ items: [], total: 0 })),
+	http.get('/jobs', () => HttpResponse.json({ data: [], total: 0 })),
 	http.delete('/jobs/:id', () => new HttpResponse(null, { status: 204 })),
+
+	http.get('/agents', () => HttpResponse.json([])),
 
 	// ── OAuth brokers ─────────────────────────────────────────────
 	http.get('/oauth-brokers', () => HttpResponse.json([])),

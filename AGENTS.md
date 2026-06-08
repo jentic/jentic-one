@@ -208,8 +208,18 @@ A human approves the request, then retry the original call.
 
 ## Observability
 
-- `GET /traces` — list recent execution traces
-- `GET /traces/{trace_id}` — full trace detail (timing, status, step outputs)
+- `GET /traces` — list recent execution traces. Filter with `toolkit_id`,
+  `agent_id`, `api_id` (host substring), `status`, `capability_id`,
+  `since`, `until`. All filters compose with AND.
+- `GET /traces/{trace_id}` — full trace detail (timing, status, step outputs).
+- `GET /traces/usage` — aggregate stats, time buckets, and top groups for the
+  Monitor page. Defaults to last 24h. `group_by={toolkit|api|agent}` (default
+  `toolkit`). Bucket width is chosen by the server (60s → 1d) based on the
+  window length.
+- `GET /jobs` — list async jobs. Filter with `status`, `toolkit_id`,
+  `agent_id`, `since`, `until`. Returns `agent_id` on each row when the job
+  was created via an agent access token (`at_…`).
+- `GET /jobs/{job_id}` — poll a single async job for completion.
 
 ## API Reference
 
@@ -229,8 +239,8 @@ OpenAPI spec at `/openapi.json`.
 | Inspect | `GET /inspect/{capability_id}` |
 | Execute | `{METHOD} /{upstream_host}/{path}` |
 | Workflows | `GET /workflows`, `POST /workflows/{slug}` |
-| Traces | `GET /traces`, `GET /traces/{trace_id}` |
-| Async jobs | `GET /jobs/{job_id}` |
+| Traces | `GET /traces`, `GET /traces/{trace_id}`, `GET /traces/usage` |
+| Async jobs | `GET /jobs`, `GET /jobs/{job_id}` |
 | Catalog | `GET /apis`, `GET /catalog` |
 | Escalation | `POST /toolkits/{id}/access-requests` |
 

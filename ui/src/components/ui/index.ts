@@ -18,6 +18,7 @@ export { DataTable } from './DataTable';
 export type { Column } from './DataTable';
 export { Pagination } from './Pagination';
 export { ConfirmInline } from './ConfirmInline';
+export { HoverTooltip } from './HoverTooltip';
 export { JenticLogo } from './Logo';
 export { OneTimeKeyDisplay } from './OneTimeKeyDisplay';
 export { PermissionRuleDisplay } from './PermissionRuleDisplay';

@@ -630,18 +630,25 @@ class AccessRequestOut(BaseModel):
 class JobOut(BaseModel):
     """Async job handle for operations that couldn't complete synchronously. Poll for status and result."""
 
-    id: str = Field(examples=["job_abc123xyz"], description="Job ID (format: job_{12chars})")
+    job_id: str = Field(examples=["job_abc123xyz"], description="Job ID (format: job_{12chars})")
     kind: str | None = Field(
         default=None, examples=["workflow"], description="Job type: 'workflow' or 'broker'"
     )
-    slug_or_id: str | None = Field(
-        default=None, examples=["github-create-issue"], description="Workflow slug or capability ID"
+    capability: str | None = Field(
+        default=None,
+        examples=["github-create-issue"],
+        description="Workflow slug or capability ID (the broker operation id or arazzo workflow slug this job runs)",
     )
     toolkit_id: str | None = Field(
         default=None, examples=["default"], description="Toolkit that initiated this job"
     )
+    agent_id: str | None = Field(
+        default=None,
+        examples=["agnt_abc123"],
+        description="Agent client_id when the job was created via an agent access token (at_…). Null for toolkit-key callers and admin-initiated jobs.",
+    )
     status: str = Field(
-        examples=["completed"],
+        examples=["complete"],
         description="Job status: pending, running, complete, failed, or upstream_async",
     )
     result: Any = Field(
@@ -669,6 +676,16 @@ class JobOut(BaseModel):
     )
     trace_id: str | None = Field(
         default=None, examples=["trace_xyz789"], description="Execution trace ID for this job"
+    )
+    parent_trace_id: str | None = Field(
+        default=None,
+        examples=["exec_abc123xyz"],
+        description=(
+            "Parent workflow trace this job's trace is a child step of. Mirrored from "
+            "`executions.parent_trace_id` so a child broker job (e.g. an async wait=0 hop "
+            'spawned inside an arazzo workflow) can render "part of workflow X" in the '
+            "Job drawer without a second fetch. Null for top-level jobs."
+        ),
     )
     created_at: float | None = Field(
         default=None, examples=[1672531200.0], description="Unix timestamp when job was created"
@@ -706,13 +723,15 @@ class TraceStepOut(BaseModel):
     http_status: int | None = Field(
         default=None, examples=[200], description="HTTP status code from this step's API call"
     )
+    inputs: Any = Field(
+        default=None,
+        examples=[{"owner": "jentic", "repo": "jentic-mini"}],
+        description="Step input arguments (resolved parameters passed to this step's operation)",
+    )
     output: Any = Field(
         default=None,
         examples=[{"name": "jentic-mini", "stars": 42}],
         description="Step output data",
-    )
-    detail: Any = Field(
-        default=None, examples=[None], description="Additional step metadata or runner context"
     )
     error: str | None = Field(
         default=None, examples=[None], description="Error message if step failed"
@@ -722,6 +741,44 @@ class TraceStepOut(BaseModel):
     )
     completed_at: float | None = Field(
         default=None, examples=[1672531201.0], description="Unix timestamp when step completed"
+    )
+    model_config = {"extra": "allow"}
+
+
+class TraceChildOut(BaseModel):
+    """Compact child broker trace summary referenced from a workflow's `children[]` panel."""
+
+    id: str = Field(examples=["exec_abc123xyz"], description="Child trace id")
+    operation_id: str | None = Field(
+        default=None,
+        examples=["GET/api.github.com/repos/{owner}/{repo}"],
+        description="Operation capability id of the broker call (always set — children are broker traces).",
+    )
+    status: str | None = Field(
+        default=None,
+        examples=["success"],
+        description="Child trace status: success, failed, or pending.",
+    )
+    http_status: int | None = Field(
+        default=None, examples=[200], description="Final HTTP status code from the upstream call."
+    )
+    duration_ms: int | None = Field(
+        default=None, examples=[412], description="Child trace duration in milliseconds."
+    )
+    created_at: float | None = Field(
+        default=None,
+        examples=[1672531200.0],
+        description="Unix timestamp when the child trace started; the panel orders by this.",
+    )
+    api_id: str | None = Field(
+        default=None,
+        examples=["api.github.com"],
+        description="Catalog id of the child trace's upstream API (joined from `executions.api_id`).",
+    )
+    api_name: str | None = Field(
+        default=None,
+        examples=["GitHub"],
+        description="Human-readable api name from the catalog; null when api_id is unset or stale.",
     )
     model_config = {"extra": "allow"}
 
@@ -771,10 +828,84 @@ class TraceOut(BaseModel):
     completed_at: float | None = Field(
         default=None, examples=[1672531201.0], description="Unix timestamp when execution completed"
     )
+    job_id: str | None = Field(
+        default=None,
+        examples=["job_abc123xyz"],
+        description=(
+            "Async job that owns this trace, when the trace was produced inside a job's "
+            "lifecycle (Prefer: wait=0 broker call, upstream-202, or async workflow run). "
+            "Null for synchronous calls. The Monitor page renders a [job ↗] cross-link "
+            "in the Execution Log when this is set."
+        ),
+    )
+    parent_trace_id: str | None = Field(
+        default=None,
+        examples=["exec_abc123xyz"],
+        description=(
+            "Parent workflow trace this trace is a child step of. Set on broker traces "
+            "spawned by an arazzo-runner workflow execution; null for top-level broker "
+            'calls and for the workflow trace itself. Used to render "part of workflow X" '
+            "context in the Execution Detail panel."
+        ),
+    )
+    api_id: str | None = Field(
+        default=None,
+        examples=["stripe.com"],
+        description=(
+            "Catalog id of the upstream API the broker proxied to (`apis.id`). Set at "
+            "write time from the matched credential's `api_id`; null for workflow traces "
+            "(which are multi-API by definition) and for unattributed broker calls "
+            "where no credential matched. Use this as the join key when correlating "
+            "traces with the registered API — the read endpoints already join `apis` "
+            "and surface `api_name` alongside."
+        ),
+    )
+    api_name: str | None = Field(
+        default=None,
+        examples=["Stripe API"],
+        description=(
+            "Human-readable API name from the catalog (`apis.name`) joined via `api_id`. "
+            "Null when `api_id` is null, or when `api_id` references a row that no "
+            "longer exists (e.g. the API was deleted from the catalog after the trace "
+            "was written) — frontend falls back to rendering `api_id` directly."
+        ),
+    )
+    inputs: dict | None = Field(
+        default=None,
+        examples=[{"owner": "octocat", "repo": "hello"}],
+        description=(
+            "Workflow inputs captured by the runner when this trace is a workflow "
+            "execution. Always null for broker (single-operation) traces — request "
+            "bodies are not persisted to keep PII out of the trace store. The Monitor "
+            "drawer renders this in the Inputs panel."
+        ),
+    )
+    outputs: dict | None = Field(
+        default=None,
+        examples=[{"issue_url": "https://github.com/.../issues/42"}],
+        description=(
+            "Workflow outputs returned by the runner when this trace is a workflow "
+            "execution. Always null for broker traces (no upstream response body is "
+            "persisted) and for failed/pending workflow runs. The Monitor drawer "
+            "renders this in the Outputs panel."
+        ),
+    )
     steps: list[TraceStepOut] = Field(
         default_factory=list,
         examples=[[]],
         description="Step-by-step execution log (for workflows)",
+    )
+    children: list[TraceChildOut] = Field(
+        default_factory=list,
+        examples=[[]],
+        description=(
+            "Child broker traces spawned by this trace (rows where "
+            "`executions.parent_trace_id` equals this trace's id). Populated "
+            "for workflow traces; always empty for broker traces. The Monitor "
+            "Execution drawer renders these as a `Child broker calls` panel "
+            "with cross-links into each child's own drawer. Ordered by "
+            "`created_at` ascending so the rendered list reads in step order."
+        ),
     )
     model_config = {"extra": "allow"}
 
@@ -788,6 +919,109 @@ class TraceListPage(BaseModel):
     traces: list[TraceOut] = Field(
         examples=[[]], description="Array of trace records for this page"
     )
+
+
+# ── Trace usage aggregations ─────────────────────────────────────────────────
+
+
+class UsageStats(BaseModel):
+    """High-level trace counts and latency for a single time window."""
+
+    total: int = Field(examples=[1234], description="Number of traces in window")
+    success: int = Field(examples=[980], description="Traces with status=success")
+    failed: int = Field(examples=[20], description="Traces with status=failed")
+    pending: int = Field(
+        default=0, examples=[0], description="Traces still in flight (status=pending)"
+    )
+    avg_ms: float | None = Field(
+        default=None, examples=[412.3], description="Mean duration in milliseconds (success+failed)"
+    )
+    p50_ms: float | None = Field(
+        default=None, examples=[210.0], description="Median duration in milliseconds"
+    )
+    p95_ms: float | None = Field(
+        default=None, examples=[1800.0], description="95th percentile duration in milliseconds"
+    )
+    active_now: int = Field(
+        default=0,
+        examples=[3],
+        description=(
+            "Snapshot count of in-flight async jobs (status pending or running) at "
+            "query time — not bound by the [since,until) window."
+        ),
+    )
+    model_config = {"extra": "allow"}
+
+
+class UsageBucket(BaseModel):
+    """One time bucket of trace counts; the UI plots these as a stacked bar chart."""
+
+    ts: float = Field(examples=[1700000000.0], description="Unix-second start of the bucket")
+    total: int = Field(examples=[42], description="Total traces in bucket")
+    success: int = Field(examples=[40], description="Successful traces in bucket")
+    failed: int = Field(examples=[2], description="Failed traces in bucket")
+    avg_ms: float | None = Field(
+        default=None, examples=[395.0], description="Mean duration in this bucket"
+    )
+    model_config = {"extra": "allow"}
+
+
+class UsageTopRow(BaseModel):
+    """One row in the `top` list — aggregation grouped by toolkit, API host or agent."""
+
+    key: str = Field(
+        examples=["api.github.com"],
+        description="Group key — toolkit_id, agent_client_id, or api host (depending on group_by)",
+    )
+    label: str | None = Field(
+        default=None,
+        examples=["GitHub"],
+        description=(
+            "Human-readable label for the row. For `group_by=agent` this is the "
+            "agent's `client_name`; for `group_by=api` it is `apis.name` when the "
+            "API is registered in the catalog (null otherwise — the frontend falls "
+            "back to rendering `key`). For `group_by=toolkit` the label is null "
+            "(toolkit ids are already human-readable slugs)."
+        ),
+    )
+    total: int = Field(examples=[500], description="Total traces in this row")
+    success: int = Field(examples=[490], description="Successful traces")
+    failed: int = Field(examples=[10], description="Failed traces")
+    avg_ms: float | None = Field(default=None, examples=[320.0], description="Mean duration")
+    trend: list[int] | None = Field(
+        default=None,
+        examples=[[3, 5, 2, 8, 11, 7, 4, 6, 9, 5, 3, 7]],
+        description=(
+            "Compact time-series of trace counts for this row across the window, "
+            "aligned to a fixed number of equally-sized buckets (12 by default). "
+            "Used to render per-row sparklines on the Monitor page Breakdown table. "
+            "Independent of the top-level `buckets` field — this one always has the "
+            "same length regardless of window size, while `buckets` width is chosen "
+            "by the server."
+        ),
+    )
+    model_config = {"extra": "allow"}
+
+
+class UsageResponse(BaseModel):
+    """Aggregated trace usage for the Monitor page (HealthStrip + bar chart + breakdown)."""
+
+    since: float = Field(examples=[1699913600.0], description="Window start (unix seconds)")
+    until: float = Field(examples=[1700000000.0], description="Window end (unix seconds)")
+    bucket_seconds: int = Field(
+        examples=[3600], description="Width of one bucket in seconds (chosen by server)"
+    )
+    group_by: str = Field(
+        examples=["toolkit"],
+        description="Grouping for the `top` list: 'toolkit' | 'api' | 'agent'",
+    )
+    stats: UsageStats
+    buckets: list[UsageBucket] = Field(default_factory=list, description="Time-bucketed counts")
+    top: list[UsageTopRow] = Field(
+        default_factory=list,
+        description="Top groups by total traces, descending. Capped at `limit`.",
+    )
+    model_config = {"extra": "allow"}
 
 
 # ── Workflows (output) ────────────────────────────────────────────────────────

@@ -142,7 +142,7 @@ export function Dialog({
 			onCancel={handleCancel}
 			onClick={handleBackdropClick}
 			className={cn(
-				'bg-card border-border m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] rounded-xl border p-0 shadow-xl backdrop:bg-black/60 sm:w-full',
+				'bg-card border-border m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-hidden rounded-xl border p-0 shadow-xl backdrop:bg-black/60 sm:w-full',
 				'overscroll-contain',
 				sizeClasses[size],
 				className,

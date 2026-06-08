@@ -32,7 +32,7 @@ import uuid
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 
 from src.db import get_db
 from src.models import JobListPage, JobOut
@@ -43,6 +43,47 @@ router = APIRouter(prefix="/jobs", tags=["observe"])
 
 # In-memory registry of running background tasks so we can cancel them
 _running_tasks: dict[str, asyncio.Task] = {}
+
+
+def _like_escape(term: str) -> str:
+    r"""Escape SQL ``LIKE`` metacharacters in a user-supplied search term.
+
+    ``%`` and ``_`` are wildcards in ``LIKE``; without escaping, a search for
+    ``100%`` or ``a_b`` silently turns into a wildcard match (and ``q=%`` would
+    match every row). We backslash-escape ``\``, ``%`` and ``_`` so the term is
+    matched literally — callers MUST pair this with an ``ESCAPE '\'`` clause.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _jobs_scope_clause(request: Request, prefix: str = "") -> tuple[str, list]:
+    """Return (sql_predicate, params) restricting job reads to the caller's tenant.
+
+    Mirrors `_trace_scope_clause` in `routers/traces.py`. Same rules:
+      - Human admin sessions see every job.
+      - Agent OAuth callers see only jobs stamped with their agent_id.
+      - Toolkit-key callers see every job tagged with their toolkit, regardless
+        of agent_id (operator-credential semantics, see traces helper docstring).
+      - Anonymous callers fail closed (the auth middleware rejects them earlier,
+        but if a future code path forgets to set state we don't want every job
+        listed).
+
+    `prefix` lets callers qualify column refs when joining other tables.
+    Migration 0007 added a partial index on `jobs(agent_id, created_at)`
+    keyed for the agent-scoped read. The toolkit-key fallback falls back
+    to a scan, but the jobs table is bounded by the active workload —
+    pre-emptive optimisation isn't worth a second index until profiling
+    says otherwise.
+    """
+    if getattr(request.state, "is_admin", False):
+        return "1=1", []
+    agent_id = getattr(request.state, "agent_client_id", None)
+    if agent_id:
+        return f"{prefix}agent_id = ?", [agent_id]
+    toolkit_id = getattr(request.state, "toolkit_id", None)
+    if toolkit_id:
+        return f"{prefix}toolkit_id = ?", [toolkit_id]
+    return "0=1", []
 
 
 def register_task(job_id: str, task: asyncio.Task) -> None:
@@ -68,16 +109,22 @@ async def create_job(
     slug_or_id: str,  # workflow slug or capability ID
     toolkit_id: str | None,
     inputs: dict,
+    agent_id: str | None = None,
 ) -> str:
-    """Create a job record and return its ID."""
+    """Create a job record and return its ID.
+
+    `agent_id` is the calling agent's `client_id` for OAuth callers (`at_…`),
+    or None for toolkit-key callers / admin-initiated jobs. Stamped at INSERT
+    so the column is set even if the job never reaches `update_job`.
+    """
     job_id = "job_" + uuid.uuid4().hex[:12]
     async with get_db() as db:
         await db.execute(
             """
-            INSERT INTO jobs (id, kind, slug_or_id, toolkit_id, inputs, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            INSERT INTO jobs (id, kind, slug_or_id, toolkit_id, agent_id, inputs, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
-            (job_id, kind, slug_or_id, toolkit_id, json.dumps(inputs), time.time()),
+            (job_id, kind, slug_or_id, toolkit_id, agent_id, json.dumps(inputs), time.time()),
         )
         await db.commit()
     return job_id
@@ -147,9 +194,14 @@ async def get_job(job_id: str) -> dict | None:
     """Return job row as dict, or None if not found."""
     async with get_db() as db:
         async with db.execute(
-            "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
+            "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
             "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-            "created_at, completed_at, callback_url "
+            "created_at, completed_at, callback_url, "
+            # Correlated lookup so a child broker job (one whose owning trace
+            # has parent_trace_id set) can render "part of workflow X" in the
+            # Job drawer without a second round-trip. NULL when the job has
+            # no trace yet (pending) or the trace is top-level.
+            "(SELECT parent_trace_id FROM executions WHERE id = jobs.trace_id) AS parent_trace_id "
             "FROM jobs WHERE id=?",
             (job_id,),
         ) as cur:
@@ -161,6 +213,7 @@ async def get_job(job_id: str) -> dict | None:
         "kind",
         "slug_or_id",
         "toolkit_id",
+        "agent_id",
         "status",
         "result",
         "error",
@@ -172,6 +225,7 @@ async def get_job(job_id: str) -> dict | None:
         "created_at",
         "completed_at",
         "callback_url",
+        "parent_trace_id",
     ]
     d = dict(zip(keys, row))
     if d.get("result"):
@@ -197,6 +251,10 @@ def _job_response(d: dict) -> dict:
         "capability": d["slug_or_id"],
         "created_at": d["created_at"],
     }
+    if d.get("toolkit_id") is not None:
+        out["toolkit_id"] = d["toolkit_id"]
+    if d.get("agent_id") is not None:
+        out["agent_id"] = d["agent_id"]
     if d.get("completed_at"):
         out["completed_at"] = d["completed_at"]
     if d["status"] in ("complete", "upstream_async"):
@@ -217,6 +275,8 @@ def _job_response(d: dict) -> dict:
         }
     else:
         out["_links"] = {"self": f"/jobs/{d['id']}"}
+    if d.get("parent_trace_id"):
+        out["parent_trace_id"] = d["parent_trace_id"]
     return out
 
 
@@ -235,40 +295,136 @@ def _job_response(d: dict) -> dict:
     ),
 )
 async def list_jobs(
-    status: str | None = Query(None, description="Filter by status"),
+    request: Request,
+    status: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by status. Accepts a single value or a comma-separated set "
+                "(e.g. `pending,running` for in-flight only). Whitespace tolerated."
+            )
+        ),
+    ] = None,
+    kind: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter by job kind: `workflow` (multi-step Arazzo runs) or `broker` "
+                "(individual API calls dispatched async). Used by the Monitor Jobs tab "
+                "to split workflow runs from broker calls in separate views."
+            ),
+            pattern="^(workflow|broker)$",
+        ),
+    ] = None,
     page: Annotated[int, Query(description="Page number (1-indexed)", ge=1)] = 1,
     limit: Annotated[int, Query(description="Results per page (1-100)", ge=1, le=100)] = 20,
+    toolkit_id: Annotated[
+        str | None, Query(description="Filter by toolkit id (exact match)")
+    ] = None,
+    agent_id: Annotated[
+        str | None,
+        Query(description="Filter by agent client_id (exact match)."),
+    ] = None,
+    since: Annotated[
+        float | None,
+        Query(description="Lower bound on `created_at` (unix seconds, inclusive)", ge=0),
+    ] = None,
+    until: Annotated[
+        float | None,
+        Query(description="Upper bound on `created_at` (unix seconds, exclusive)", ge=0),
+    ] = None,
+    q: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Free-text substring match (case-insensitive) across the columns the "
+                "Jobs tab row renders: `slug_or_id` (workflow slug or broker capability "
+                "id), `agent_id`, `toolkit_id`, and `upstream_job_url` (so a search for "
+                "the upstream provider's job-id snippet still finds the right row). "
+                "Empty/whitespace strings are treated as not set so the no-filter plan "
+                "stays cheap. None of those columns are indexed for prefix lookups, so "
+                "`q` always implies a scan over the rows that the tenant + time-window "
+                "clauses already select — fine for the Monitor page (24h default) but "
+                "don't use it as a general-purpose search."
+            ),
+            min_length=1,
+            max_length=200,
+        ),
+    ] = None,
 ):
     offset = (page - 1) * limit
+
+    # Tenant scoping first — the rest of the WHERE layers user-supplied
+    # filters on top. Anonymous principals fail closed (`0=1`).
+    scope_sql, scope_params = _jobs_scope_clause(request)
+    where_parts: list[str] = [scope_sql]
+    params: list = list(scope_params)
+    if status:
+        # Comma-list → IN(?,?,...). The Monitor Jobs tab sends e.g.
+        # `status=pending,running` to display only in-flight jobs; previously
+        # only single-value status was supported.
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            where_parts.append("status = ?")
+            params.append(statuses[0])
+        elif statuses:
+            placeholders = ",".join("?" * len(statuses))
+            where_parts.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+    if kind is not None:
+        where_parts.append("kind = ?")
+        params.append(kind)
+    if toolkit_id is not None:
+        where_parts.append("toolkit_id = ?")
+        params.append(toolkit_id)
+    if agent_id is not None:
+        where_parts.append("agent_id = ?")
+        params.append(agent_id)
+    if since is not None:
+        where_parts.append("created_at >= ?")
+        params.append(since)
+    if until is not None:
+        where_parts.append("created_at < ?")
+        params.append(until)
+    if q is not None and q.strip():
+        # Substring match across the four columns the Jobs row renders. The
+        # OR list mirrors the column order of the table so a typed token
+        # like "stripe" matches whether it landed in slug_or_id, the agent
+        # client_id, toolkit, or the upstream provider URL. See the docstring
+        # on the parameter for the cost story.
+        like = f"%{_like_escape(q.strip())}%"
+        where_parts.append(
+            "(slug_or_id LIKE ? ESCAPE '\\' OR agent_id LIKE ? ESCAPE '\\' "
+            "OR toolkit_id LIKE ? ESCAPE '\\' OR upstream_job_url LIKE ? ESCAPE '\\')"
+        )
+        params.extend([like, like, like, like])
+
+    # `where_parts` always contains at least the scope predicate, so the
+    # WHERE clause is unconditional now.
+    where_sql = " WHERE " + " AND ".join(where_parts)
+    page_params = [*params, limit, offset]
+
     async with get_db() as db:
-        if status:
-            async with db.execute("SELECT COUNT(*) FROM jobs WHERE status=?", (status,)) as cur:
-                total = (await cur.fetchone())[0]
-            async with db.execute(
-                "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
-                "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-                "created_at, completed_at, callback_url "
-                "FROM jobs WHERE status=? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (status, limit, offset),
-            ) as cur:
-                rows = await cur.fetchall()
-        else:
-            async with db.execute("SELECT COUNT(*) FROM jobs") as cur:
-                total = (await cur.fetchone())[0]
-            async with db.execute(
-                "SELECT id, kind, slug_or_id, toolkit_id, status, result, error, "
-                "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
-                "created_at, completed_at, callback_url "
-                "FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ) as cur:
-                rows = await cur.fetchall()
+        async with db.execute(f"SELECT COUNT(*) FROM jobs{where_sql}", params) as cur:
+            total = (await cur.fetchone())[0]
+        async with db.execute(
+            "SELECT id, kind, slug_or_id, toolkit_id, agent_id, status, result, error, "
+            "http_status, upstream_async, upstream_job_url, trace_id, inputs, "
+            "created_at, completed_at, callback_url, "
+            # See `get_job` — correlated lookup avoids a JOIN that would
+            # collide with the unqualified column names in `where_sql`.
+            "(SELECT parent_trace_id FROM executions WHERE id = jobs.trace_id) AS parent_trace_id "
+            f"FROM jobs{where_sql} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            page_params,
+        ) as cur:
+            rows = await cur.fetchall()
 
     keys = [
         "id",
         "kind",
         "slug_or_id",
         "toolkit_id",
+        "agent_id",
         "status",
         "result",
         "error",
@@ -280,6 +436,7 @@ async def list_jobs(
         "created_at",
         "completed_at",
         "callback_url",
+        "parent_trace_id",
     ]
     items = []
     for row in rows:
@@ -336,10 +493,27 @@ async def list_jobs(
         ],
     ),
 )
-async def get_job_route(job_id: Annotated[str, Path(description="Job ID (format: job_{12chars})")]):
+async def get_job_route(
+    request: Request,
+    job_id: Annotated[str, Path(description="Job ID (format: job_{12chars})")],
+):
     d = await get_job(job_id)
     if not d:
         raise HTTPException(404, f"Job '{job_id}' not found")
+    # Tenant scoping: pretend non-owners don't see the row at all (404, not 403),
+    # mirroring the pattern in /traces/{id} — leaks no existence information.
+    if not getattr(request.state, "is_admin", False):
+        agent_id = getattr(request.state, "agent_client_id", None)
+        toolkit_id = getattr(request.state, "toolkit_id", None)
+        if agent_id:
+            if d.get("agent_id") != agent_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        elif toolkit_id:
+            if d.get("toolkit_id") != toolkit_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        else:
+            # Anonymous-with-state-set is unexpected; fail closed.
+            raise HTTPException(404, f"Job '{job_id}' not found")
     return _job_response(d)
 
 
@@ -355,12 +529,28 @@ async def get_job_route(job_id: Annotated[str, Path(description="Job ID (format:
         "Has no effect on already-completed jobs."
     ),
 )
-async def cancel_job(job_id: Annotated[str, Path(description="Job ID to cancel")]):
+async def cancel_job(
+    request: Request,
+    job_id: Annotated[str, Path(description="Job ID to cancel")],
+):
     d = await get_job(job_id)
     if not d:
         raise HTTPException(404, f"Job '{job_id}' not found")
+    # Same tenant-scoping pattern as GET /jobs/{id}: non-owners see 404.
+    # Without this, any authenticated caller could cancel any other tenant's
+    # in-flight jobs by guessing job_ids.
+    if not getattr(request.state, "is_admin", False):
+        agent_id = getattr(request.state, "agent_client_id", None)
+        toolkit_id = getattr(request.state, "toolkit_id", None)
+        if agent_id:
+            if d.get("agent_id") != agent_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        elif toolkit_id:
+            if d.get("toolkit_id") != toolkit_id:
+                raise HTTPException(404, f"Job '{job_id}' not found")
+        else:
+            raise HTTPException(404, f"Job '{job_id}' not found")
     if d["status"] in ("complete", "failed", "upstream_async"):
         return  # already done, 204 is fine
-    # Cancel the asyncio task if running
     cancel_task(job_id)
     await update_job(job_id, status="failed", error="Cancelled by client")

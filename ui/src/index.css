@@ -39,6 +39,8 @@
 	--color-accent-teal: hsl(var(--accent-green)); /* alias — no distinct teal in the palette */
 	--color-accent-pink: hsl(var(--accent-pink));
 	--color-accent-blue: hsl(var(--accent-blue));
+	--color-accent-red: hsl(var(--destructive)); /* alias — no distinct red token */
+	--color-accent-amber: hsl(var(--accent-orange)); /* alias — no distinct amber token */
 
 	/* State colors */
 	--color-success: hsl(var(--success));

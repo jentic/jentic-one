@@ -84,6 +84,7 @@ export default defineConfig({
 			'/jobs': spaRoute,
 			'/workflows': spaRoute,
 			'/catalog': spaRoute,
+			'/agents': spaRoute,
 		},
 	},
 });

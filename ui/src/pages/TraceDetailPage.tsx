@@ -182,26 +182,26 @@ export default function TraceDetailPage() {
 				</Card>
 			)}
 
-			{trace.request && (
+			{trace.inputs && Object.keys(trace.inputs).length > 0 && (
 				<Card>
 					<CardHeader>
-						<h2 className="font-heading text-foreground font-semibold">Request</h2>
+						<h2 className="font-heading text-foreground font-semibold">Inputs</h2>
 					</CardHeader>
 					<CardBody>
 						<pre className="bg-background border-border text-foreground max-h-64 overflow-auto rounded-lg border p-4 font-mono text-xs">
-							{JSON.stringify(trace.request, null, 2)}
+							{JSON.stringify(trace.inputs, null, 2)}
 						</pre>
 					</CardBody>
 				</Card>
 			)}
-			{trace.response && (
+			{trace.outputs && Object.keys(trace.outputs).length > 0 && (
 				<Card>
 					<CardHeader>
-						<h2 className="font-heading text-foreground font-semibold">Response</h2>
+						<h2 className="font-heading text-foreground font-semibold">Outputs</h2>
 					</CardHeader>
 					<CardBody>
 						<pre className="bg-background border-border text-foreground max-h-64 overflow-auto rounded-lg border p-4 font-mono text-xs">
-							{JSON.stringify(trace.response, null, 2)}
+							{JSON.stringify(trace.outputs, null, 2)}
 						</pre>
 					</CardBody>
 				</Card>

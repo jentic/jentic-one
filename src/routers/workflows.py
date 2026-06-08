@@ -546,6 +546,7 @@ async def dispatch_workflow(
             slug_or_id=slug,
             toolkit_id=toolkit_id,
             inputs=inputs,
+            agent_id=agent_id,
         )
         # Store callback URL if provided (http/https only — prevent SSRF)
         if callback_url:
@@ -575,6 +576,7 @@ async def dispatch_workflow(
                     trace_id=None,
                     agent_id=agent_id,
                     caller_bearer_token=caller_bearer_token,
+                    job_id=job_id,
                 )
                 # Parse the JSONResponse to extract result
                 body = json.loads(result_response.body)
@@ -697,6 +699,7 @@ async def execute_workflow_core(
     trace_id: str | None,
     agent_id: str | None = None,
     caller_bearer_token: str | None = None,
+    job_id: str | None = None,
 ):
     if not trace_id:
         trace_id = new_trace_id()
@@ -714,6 +717,12 @@ async def execute_workflow_core(
     # the broker can look up the right toolkit's credentials.
     # caller_api_key passed in as parameter
 
+    # Mint the workflow's own trace_id before building the runner script so
+    # we can stamp every child broker call with X-Jentic-Parent-Trace. The
+    # broker reads this header (loopback-only) and writes parent_trace_id on
+    # the child trace, enabling "part of workflow X" attribution in the UI.
+    workflow_trace_id = new_trace_id()
+
     script = f"""
 from arazzo_runner import ArazzoRunner
 import os
@@ -726,6 +735,7 @@ if _bearer:
     session.headers["Authorization"] = "Bearer " + _bearer
 else:
     session.headers["X-Jentic-API-Key"] = os.environ["_JENTIC_CALLER_KEY"]
+session.headers["X-Jentic-Parent-Trace"] = {repr(workflow_trace_id)}
 runner = ArazzoRunner.from_arazzo_path({repr(temp_arazzo)}, http_client=session)
 result = runner.execute_workflow({repr(workflow_id)}, {repr(inputs)})
 if hasattr(result, '__dataclass_fields__') or hasattr(result, '__dict__'):
@@ -741,7 +751,7 @@ else:
     out = result
 print(json.dumps(out, default=str))
 """
-    trace_id = new_trace_id()
+    trace_id = workflow_trace_id
     env = dict(os.environ)
     env["_JENTIC_CALLER_KEY"] = caller_api_key or ""
     if caller_bearer_token:
@@ -864,6 +874,7 @@ print(json.dumps(out, default=str))
                     break
 
     # ── Write trace ───────────────────────────────────────────────────────────
+    wf_outputs = result_data.get("outputs") if isinstance(result_data, dict) else None
     await write_trace(
         trace_id=trace_id,
         toolkit_id=toolkit_id,
@@ -876,6 +887,10 @@ print(json.dumps(out, default=str))
         duration_ms=duration_ms,
         error=result_data.get("error") if isinstance(result_data, dict) else str(result_data),
         step_outputs=step_outputs,
+        arazzo_steps=arazzo_steps,
+        inputs=inputs if isinstance(inputs, dict) else None,
+        outputs=wf_outputs if isinstance(wf_outputs, dict) else None,
+        job_id=job_id,
     )
 
     response_headers = {"X-Jentic-Trace-Id": trace_id}

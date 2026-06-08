@@ -19,10 +19,9 @@ import CredentialsPage from '@/pages/CredentialsPage';
 import CredentialFormPage from '@/pages/CredentialFormPage';
 import WorkflowDetailPage from '@/pages/WorkflowDetailPage';
 import ApiDetailPage from '@/pages/ApiDetailPage';
-import TracesPage from '@/pages/TracesPage';
-import JobsPage from '@/pages/JobsPage';
-import JobDetailPage from '@/pages/JobDetailPage';
 import TraceDetailPage from '@/pages/TraceDetailPage';
+import JobDetailPage from '@/pages/JobDetailPage';
+import MonitorPage from '@/pages/MonitorPage';
 import ApprovalPage from '@/pages/ApprovalPage';
 import AgentsPage from '@/pages/AgentsPage';
 
@@ -104,9 +103,10 @@ const router = createBrowserRouter(
 						{ path: '/credentials/new', element: <CredentialFormPage /> },
 						{ path: '/credentials/:id/edit', element: <CredentialFormPage /> },
 						{ path: '/oauth-brokers', element: <Navigate to="/credentials" replace /> },
-						{ path: '/traces', element: <TracesPage /> },
+						{ path: '/monitor', element: <MonitorPage /> },
+						{ path: '/traces', element: <Navigate to="/monitor" replace /> },
 						{ path: '/traces/:id', element: <TraceDetailPage /> },
-						{ path: '/jobs', element: <JobsPage /> },
+						{ path: '/jobs', element: <Navigate to="/monitor?tab=log" replace /> },
 						{ path: '/jobs/:id', element: <JobDetailPage /> },
 					],
 				},
