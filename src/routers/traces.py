@@ -779,7 +779,7 @@ async def get_trace(
                    FROM executions e
                    LEFT JOIN apis a ON a.id = e.api_id
                    WHERE e.parent_trace_id = ? AND {scope_sql}
-                   ORDER BY e.created_at ASC""",
+                   ORDER BY e.created_at ASC, e.id ASC""",
                 (trace_id, *scope_params),
             ) as cur:
                 child_rows = await cur.fetchall()
