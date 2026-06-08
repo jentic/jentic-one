@@ -37,7 +37,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
  *      <DiscoverEmptyState variant="catalog-degraded" onRetry={refetch} />
  *
  * 4. `zero-search` — A query is active but produced zero hits. Surfaces
- *    vendor credential suggestions and inline switch shortcuts.
+ *    vendor suggestions and inline switch shortcuts.
  *
  *    @example
  *      <DiscoverEmptyState
@@ -211,8 +211,7 @@ function ColdStartSectioned() {
 			<div>
 				<p className="text-foreground font-medium">Your workspace is empty.</p>
 				<p className="mt-0.5">
-					Pick an API from the catalog below — adding a credential imports it into your
-					workspace.
+					Pick an API from the catalog below to import it into your workspace.
 				</p>
 			</div>
 		</div>

@@ -55,6 +55,20 @@ export interface ToolkitOut {
 	pending_requests?: number;
 }
 
+/** A single agent granted access to a toolkit (reverse of agent grants). */
+export interface ToolkitAgentRow {
+	client_id: string;
+	client_name: string;
+	status: string;
+	granted_at?: number | null;
+	granted_by?: string | null;
+}
+
+/** Response shape of `GET /toolkits/{id}/agents`. */
+export interface ToolkitAgentsResponse {
+	agents: ToolkitAgentRow[];
+}
+
 export interface ToolkitCreate {
 	name: string;
 	description?: string | null;

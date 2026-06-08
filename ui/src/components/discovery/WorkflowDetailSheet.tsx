@@ -10,7 +10,7 @@
  * individual workflow, and the actual Arazzo documents are only
  * fetched at import time (see `lazy_import_catalog_workflows`). Rather
  * than show a sheet that's effectively a duplicate of the API sheet
- * (same `api_id`, same `+ workflows` chip, same "add credential" CTA),
+ * (same `api_id`, same `+ workflows` chip, same import CTA),
  * `DiscoveryView.handleCardClick` redirects directory workflow rows
  * straight to the API sheet for the underlying `api_id`. Deep links
  * to `?inspect_wf=catalog:workflows:<id>` are likewise rewritten by

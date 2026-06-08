@@ -24,7 +24,7 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 			{rules.map((rule, i) => (
 				<div
 					key={i}
-					className="bg-background border-border flex items-start gap-2 rounded-lg border p-3"
+					className="bg-muted/30 border-border/60 flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-start"
 				>
 					{/* Effect */}
 					<Select
@@ -32,6 +32,7 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 						onChange={(e) =>
 							updateRule(i, { effect: e.target.value as 'allow' | 'deny' })
 						}
+						className="w-full sm:w-auto"
 					>
 						<option value="allow">Allow</option>
 						<option value="deny">Deny</option>
@@ -43,36 +44,38 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 						value={rule.path ?? ''}
 						onChange={(e) => updateRule(i, { path: e.target.value || null })}
 						placeholder="/path/prefix or *"
-						className="flex-1 font-mono"
+						className="w-full flex-1 font-mono"
 					/>
 
 					{/* Methods */}
-					<Input
-						type="text"
-						value={rule.methods?.join(', ') ?? ''}
-						onChange={(e) =>
-							updateRule(i, {
-								methods: e.target.value
-									? e.target.value
-											.split(',')
-											.map((s) => s.trim().toUpperCase())
-											.filter(Boolean)
-									: null,
-							})
-						}
-						placeholder="GET, POST (blank=any)"
-						className="w-40 font-mono"
-					/>
+					<div className="flex items-start gap-2">
+						<Input
+							type="text"
+							value={rule.methods?.join(', ') ?? ''}
+							onChange={(e) =>
+								updateRule(i, {
+									methods: e.target.value
+										? e.target.value
+												.split(',')
+												.map((s) => s.trim().toUpperCase())
+												.filter(Boolean)
+										: null,
+								})
+							}
+							placeholder="GET, POST (blank=any)"
+							className="w-full flex-1 font-mono sm:w-40 sm:flex-none"
+						/>
 
-					<Button
-						variant="ghost"
-						size="icon"
-						onClick={() => removeRule(i)}
-						aria-label="Remove rule"
-						className="text-danger hover:text-danger/80 mt-1 shrink-0"
-					>
-						<Trash2 className="h-4 w-4" />
-					</Button>
+						<Button
+							variant="ghost"
+							size="icon"
+							onClick={() => removeRule(i)}
+							aria-label="Remove rule"
+							className="text-danger hover:text-danger/80 mt-1 shrink-0"
+						>
+							<Trash2 className="h-4 w-4" />
+						</Button>
+					</div>
 				</div>
 			))}
 

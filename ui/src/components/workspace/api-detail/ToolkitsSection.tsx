@@ -10,6 +10,13 @@ export interface BoundToolkit {
 
 interface ToolkitsSectionProps {
 	toolkits: BoundToolkit[];
+	/**
+	 * Optional handler. When provided, clicking a toolkit row opens the
+	 * toolkit detail sheet in-place instead of navigating to the full
+	 * `/toolkits/:id` page. The `href` is preserved so modified clicks
+	 * (⌘/Ctrl/middle) still deep-link to the page in a new tab.
+	 */
+	onOpenToolkit?: (id: string) => void;
 }
 
 /**
@@ -18,7 +25,7 @@ interface ToolkitsSectionProps {
  * that toolkit which point at this specific API, so the user can see
  * exactly which keys would break if the API were removed.
  */
-export function ToolkitsSection({ toolkits }: ToolkitsSectionProps) {
+export function ToolkitsSection({ toolkits, onOpenToolkit }: ToolkitsSectionProps) {
 	return (
 		<section>
 			<SectionTitle count={toolkits.length}>Toolkits</SectionTitle>
@@ -28,6 +35,23 @@ export function ToolkitsSection({ toolkits }: ToolkitsSectionProps) {
 						<li key={tk.id}>
 							<AppLink
 								href={`/toolkits/${tk.id}`}
+								onClick={
+									onOpenToolkit
+										? (e) => {
+												if (
+													e.metaKey ||
+													e.ctrlKey ||
+													e.shiftKey ||
+													e.altKey ||
+													e.button !== 0
+												) {
+													return;
+												}
+												e.preventDefault();
+												onOpenToolkit(tk.id);
+											}
+										: undefined
+								}
 								className="border-border/50 hover:border-primary/40 hover:bg-muted/50 block rounded-lg border p-3 transition-colors"
 							>
 								<div className="flex items-center gap-2">

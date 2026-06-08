@@ -331,4 +331,34 @@ export class AgentsService {
             },
         });
     }
+    /**
+     * List agents granted access to this toolkit
+     * List the OAuth agents currently granted access to this toolkit.
+     *
+     * The reverse of ``GET /agents/{agent_id}/grants`` — given a toolkit, return
+     * every active (non-deregistered) agent that holds a grant on it, so the
+     * toolkit detail view can show its bound agents without an N+1 client fan-out.
+     * Admin-only.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static listToolkitAgentsToolkitsToolkitIdAgentsGet({
+        toolkitId,
+    }: {
+        /**
+         * Toolkit ID (e.g. 'default' or custom toolkit identifier)
+         */
+        toolkitId: string,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/toolkits/{toolkit_id}/agents',
+            path: {
+                'toolkit_id': toolkitId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
 }

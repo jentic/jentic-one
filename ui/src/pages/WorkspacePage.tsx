@@ -76,10 +76,11 @@ export default function WorkspacePage() {
 												<strong>API count</strong>,{' '}
 												<strong>workflow count</strong>,{' '}
 												<strong>toolkit count</strong>, and{' '}
-												<strong>most recent activity</strong>. Below it, two
-												grids list your APIs and workflows. Click an API
-												tile to open its detail sheet; click a workflow tile
-												to jump to the workflow editor.
+												<strong>most recent activity</strong>. Below it,
+												grids list your APIs, workflows, and toolkits. Click
+												an API tile to open its detail sheet, a workflow
+												tile to jump to the workflow editor, or a toolkit
+												tile to open its detail sheet.
 											</p>
 										),
 									},

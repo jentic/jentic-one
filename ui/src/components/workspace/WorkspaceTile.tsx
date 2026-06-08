@@ -9,6 +9,7 @@ import {
 	Calendar,
 } from 'lucide-react';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
+import { VendorPile } from '@/components/discovery/VendorPile';
 import { timeAgo } from '@/lib/time';
 
 /**
@@ -96,7 +97,12 @@ export function WorkspaceTile({ entity, onOpen }: WorkspaceTileProps) {
 			</div>
 
 			{entity.kind === 'workflow' && entity.involvedApis && entity.involvedApis.length > 0 ? (
-				<WorkflowVendorPile vendors={entity.involvedApis} />
+				<VendorPile
+					vendors={entity.involvedApis}
+					className="mt-2"
+					testId="workspace-tile-vendor-pile"
+					ariaLabel={`Touches ${entity.involvedApis.length} API${entity.involvedApis.length === 1 ? '' : 's'}: ${entity.involvedApis.join(', ')}`}
+				/>
 			) : null}
 
 			<div className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
@@ -179,35 +185,5 @@ export function WorkspaceTile({ entity, onOpen }: WorkspaceTileProps) {
 				)}
 			</div>
 		</button>
-	);
-}
-
-/**
- * Compact vendor-logo pile shown on workflow tiles. Renders up to
- * `MAX_VENDORS` icons inline with a `+N` counter for the rest. Uses
- * sm-sized `<VendorIcon>` so the row stays under ~22 px tall and
- * doesn't visually compete with the workflow name.
- */
-const MAX_VENDORS = 4;
-function WorkflowVendorPile({ vendors }: { vendors: string[] }) {
-	const visible = vendors.slice(0, MAX_VENDORS);
-	const overflow = vendors.length - visible.length;
-	return (
-		<div
-			className="mt-2 flex items-center gap-1.5"
-			data-testid="workspace-tile-vendor-pile"
-			aria-label={`Touches ${vendors.length} API${vendors.length === 1 ? '' : 's'}: ${vendors.join(', ')}`}
-		>
-			{visible.map((v) => (
-				<span key={v} title={v} className="inline-flex">
-					<VendorIcon name={v} vendor={v} size="sm" />
-				</span>
-			))}
-			{overflow > 0 ? (
-				<span className="text-muted-foreground bg-muted/60 inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 text-[10px] font-medium">
-					+{overflow}
-				</span>
-			) : null}
-		</div>
 	);
 }

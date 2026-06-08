@@ -20,9 +20,7 @@ import { AppLink } from '@/components/ui/AppLink';
  *   api       — an HTTP API provider. Sources: workspace (locally registered)
  *               or directory (in the public catalog, importable). Search-blender
  *               `catalog_api` / `catalog_workflow_source` rows collapse to this
- *               type with `source: directory` — there's no separate "importable"
- *               concept exposed to users because adding a credential silently
- *               imports anyway.
+ *               type with `source: directory`.
  *   workflow  — an Arazzo multi-step recipe (from /workflows or /search).
  *   endpoint  — a single HTTP operation. Search-only — appears as a top-level
  *               hit because intent queries like "send an email" match endpoints,
@@ -60,8 +58,6 @@ export interface DiscoveryEntity {
 	/** Parent API id derived from an endpoint id (`stripe.com` from
 	 *  `GET/stripe.com/v1/customers`). Used in the endpoint breadcrumb. */
 	apiId?: string;
-	/** Whether the API has credentials configured (only for `type === 'api'`). */
-	hasCredentials?: boolean;
 	/** Whether the API is registered locally (only for `type === 'api'`). */
 	registered?: boolean;
 	/** Step count (only for `type === 'workflow'`). */

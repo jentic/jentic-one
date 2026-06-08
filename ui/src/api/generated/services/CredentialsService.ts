@@ -16,6 +16,61 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class CredentialsService {
     /**
+     * Query the persistent audit log
+     * Return audit rows newest-first. Drives the credential history panel in the UI.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static queryAuditEventsAuditGet({
+        targetKind,
+        targetId,
+        credentialId,
+        event,
+        limit = 50,
+        offset,
+    }: {
+        /**
+         * Filter by target kind (e.g. 'credential', 'toolkit')
+         */
+        targetKind?: (string | null),
+        /**
+         * Filter by target ID
+         */
+        targetId?: (string | null),
+        /**
+         * Convenience: equivalent to target_kind=credential&target_id=<this>
+         */
+        credentialId?: (string | null),
+        /**
+         * Filter by event name
+         */
+        event?: (string | null),
+        /**
+         * Max rows to return
+         */
+        limit?: number,
+        /**
+         * Pagination offset
+         */
+        offset?: number,
+    }): CancelablePromise<Array<Record<string, any>>> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/audit',
+            query: {
+                'target_kind': targetKind,
+                'target_id': targetId,
+                'credential_id': credentialId,
+                'event': event,
+                'limit': limit,
+                'offset': offset,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * Store an upstream API credential — add a secret to the vault for broker injection
      * Store an encrypted credential in the vault for automatic broker injection.
      *
@@ -184,6 +239,11 @@ export class CredentialsService {
      * The credential is removed from the vault and unbound from all toolkits that reference it.
      * Agents using toolkits with this credential will immediately lose access to the upstream API.
      *
+     * For credentials backed by Pipedream OAuth (`auth_type == 'pipedream_oauth'`), the
+     * upstream Pipedream grant is also revoked so the connection cannot be re-used out-of-band.
+     * Failures on the upstream revoke are logged but do not block local deletion — local
+     * cleanup is the source of truth.
+     *
      * **Auth:** Requires human session OR agent key with explicit `DELETE /credentials` allow rule on jentic-mini credential.
      *
      * **Warning:** This operation cannot be undone. The secret value is irrecoverably destroyed.
@@ -201,6 +261,75 @@ export class CredentialsService {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/credentials/{cid}',
+            path: {
+                'cid': cid,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List toolkits this credential is bound to
+     * Return `[{toolkit_id, toolkit_name, alias}]` for every toolkit this credential is bound to.
+     *
+     * Powers the per-row "Used by N toolkits" chip cluster in the credentials list and the
+     * cascade-impact preview in `ConfirmDeleteDialog`'s credential variant. A single indexed
+     * JOIN — avoids the N+1 fan-out the UI would otherwise have to do.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static listCredentialBindingsCredentialsCidBindingsGet({
+        cid,
+    }: {
+        /**
+         * Credential ID
+         */
+        cid: string,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/credentials/{cid}/bindings',
+            path: {
+                'cid': cid,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Test a credential by issuing a low-impact upstream probe
+     * Verify a credential by issuing a single 5-second probe to the upstream API.
+     *
+     * The probe URL is chosen, in priority order:
+     * 1. `x-jentic-healthcheck` declared in the API's OpenAPI spec
+     * 2. The first `GET` operation in the spec with no required parameters
+     * 3. The root URL of the API's first declared server
+     * 4. The credential's first declared route host
+     *
+     * Response shape: `{ ok: bool, status: int | null, hint: string | null, probe_url: string | null }`.
+     * A 2xx upstream response is `ok=true`. 401/403 returns `ok=false` with a hint that the
+     * credential is rejected. 404/405 on a probe path is treated as `ok=true` since the
+     * upstream **did respond** — we only care that the credential is plausibly valid.
+     *
+     * No body is sent. No agent-policy involvement. Used by the credentials UI's
+     * "Test connection" button on the form page and (later) inline next to the
+     * credential row in the list.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static testCredentialCredentialsCidTestPost({
+        cid,
+    }: {
+        /**
+         * Credential ID to test
+         */
+        cid: string,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/credentials/{cid}/test',
             path: {
                 'cid': cid,
             },

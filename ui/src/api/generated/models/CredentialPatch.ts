@@ -5,12 +5,13 @@
 export type CredentialPatch = {
     label?: (string | null);
     value?: (string | null);
+    description?: (string | null);
     identity?: (string | null);
     api_id?: (string | null);
     /**
      * Update the auth type for this credential. See `POST /credentials` for valid values and semantics.
      */
-    auth_type?: ('bearer' | 'basic' | 'apiKey' | 'none' | null);
+    auth_type?: ('bearer' | 'basic' | 'apiKey' | 'none' | 'oauth2' | 'pipedream_oauth' | 'JenticApiKey' | null);
     server_variables?: (Record<string, string> | null);
     /**
      * Update the self-describing injection rule. See POST /credentials for format.

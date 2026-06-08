@@ -34,7 +34,7 @@ describe('ToolkitDetailPage — read states', () => {
 		);
 
 		renderToolkit();
-		expect(screen.getByText(/loading toolkit/i)).toBeInTheDocument();
+		expect(screen.getByTestId('toolkit-loading')).toBeInTheDocument();
 		expect(await screen.findByText('Test Toolkit')).toBeInTheDocument();
 	});
 
@@ -240,10 +240,13 @@ describe('ToolkitDetailPage — kill switch', () => {
 		renderToolkit();
 		await screen.findByText('Test Toolkit');
 
-		await user.click(screen.getByRole('button', { name: /kill switch/i }));
-		expect(screen.getByText(/block all api access/i)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /suspend toolkit/i }));
+		expect(screen.getByText(/block keys \+ agents/i)).toBeInTheDocument();
 
-		await user.click(screen.getByRole('button', { name: /kill access/i }));
+		const killBtn = screen
+			.getAllByRole('button')
+			.find((btn) => btn.textContent?.trim() === 'Kill')!;
+		await user.click(killBtn);
 
 		await waitFor(() => expect(patched).toBe(true));
 	});
@@ -287,6 +290,175 @@ describe('ToolkitDetailPage — unbind credential', () => {
 	});
 });
 
+describe('ToolkitDetailPage — credential permissions (no duplication)', () => {
+	const SYSTEM_RULES = [
+		{
+			effect: 'deny',
+			path: 'admin|pay|billing|webhook|secret|token',
+			_system: true,
+			_comment: 'Deny requests to sensitive path segments',
+		},
+		{
+			effect: 'deny',
+			methods: ['POST', 'PUT', 'PATCH', 'DELETE'],
+			_system: true,
+			_comment: 'Deny write methods by default',
+		},
+		{ effect: 'allow', _system: true, _comment: 'Allow everything else' },
+	];
+
+	function mockToolkitWithCredential() {
+		worker.use(
+			http.get('/toolkits/:id', () =>
+				HttpResponse.json({
+					id: 'test-tk',
+					name: 'Test Toolkit',
+					description: 'desc',
+					disabled: false,
+					credentials: [
+						{ credential_id: 'c1', label: 'Stripe Token', api_id: 'stripe.com' },
+					],
+				}),
+			),
+		);
+	}
+
+	async function openPermissionEditor(user: ReturnType<typeof userEvent.setup>) {
+		await user.click(screen.getByRole('button', { name: /permissions/i }));
+		await screen.findByText(/permission rules for/i);
+	}
+
+	it('loads only agent rules into the editor — system rules are excluded', async () => {
+		const user = userEvent.setup();
+		mockToolkitWithCredential();
+		worker.use(
+			// GET returns one agent rule + the three appended system rules.
+			http.get('/toolkits/:id/credentials/:credId/permissions', () =>
+				HttpResponse.json([
+					{ effect: 'allow', methods: ['GET'], path: '^/v1/charges$' },
+					...SYSTEM_RULES,
+				]),
+			),
+		);
+
+		renderToolkit();
+		await screen.findByText('Stripe Token');
+		await openPermissionEditor(user);
+
+		// Only the single agent rule should be present as an editable row.
+		// Each rule row has an "Allow/Deny" select; system rules must NOT
+		// be loaded (otherwise saving re-persists them → duplication).
+		const selects = await screen.findAllByRole('combobox');
+		expect(selects).toHaveLength(1);
+		expect(selects[0]).toHaveValue('allow');
+	});
+
+	it('does NOT send system rules back on save (prevents duplication)', async () => {
+		const user = userEvent.setup();
+		let savedBody: any[] | null = null;
+		mockToolkitWithCredential();
+		worker.use(
+			http.get('/toolkits/:id/credentials/:credId/permissions', () =>
+				HttpResponse.json([
+					{ effect: 'allow', methods: ['GET'], path: '^/v1/charges$' },
+					...SYSTEM_RULES,
+				]),
+			),
+			http.put('/toolkits/:id/credentials/:credId/permissions', async ({ request }) => {
+				savedBody = (await request.json()) as any[];
+				return HttpResponse.json([...(savedBody ?? []), ...SYSTEM_RULES]);
+			}),
+		);
+
+		renderToolkit();
+		await screen.findByText('Stripe Token');
+		await openPermissionEditor(user);
+
+		await user.click(screen.getByRole('button', { name: /save rules/i }));
+
+		await waitFor(() => expect(savedBody).not.toBeNull());
+		// Exactly the one agent rule round-trips — no system rules, no dupes.
+		expect(savedBody).toHaveLength(1);
+		expect(savedBody!.every((r) => !('_system' in r))).toBe(true);
+		expect(savedBody![0]).toMatchObject({
+			effect: 'allow',
+			methods: ['GET'],
+			path: '^/v1/charges$',
+		});
+	});
+
+	it('strips empty methods/path and read-only fields from the saved payload', async () => {
+		const user = userEvent.setup();
+		let savedBody: any[] | null = null;
+		mockToolkitWithCredential();
+		worker.use(
+			// An agent rule with empty path + empty methods (as the editor
+			// produces for a freshly-added blank rule).
+			http.get('/toolkits/:id/credentials/:credId/permissions', () =>
+				HttpResponse.json([{ effect: 'deny', path: '', methods: [] }, ...SYSTEM_RULES]),
+			),
+			http.put('/toolkits/:id/credentials/:credId/permissions', async ({ request }) => {
+				savedBody = (await request.json()) as any[];
+				return HttpResponse.json([...(savedBody ?? []), ...SYSTEM_RULES]);
+			}),
+		);
+
+		renderToolkit();
+		await screen.findByText('Stripe Token');
+		await openPermissionEditor(user);
+
+		await user.click(screen.getByRole('button', { name: /save rules/i }));
+
+		await waitFor(() => expect(savedBody).not.toBeNull());
+		expect(savedBody).toHaveLength(1);
+		// Empty path/methods are dropped — only `effect` survives.
+		expect(savedBody![0]).toEqual({ effect: 'deny' });
+	});
+
+	it('repeated open→save cycles never grow the agent rule list', async () => {
+		const user = userEvent.setup();
+		const putBodies: any[][] = [];
+		mockToolkitWithCredential();
+
+		// Simulate the server: stored agent rules start with one entry, and
+		// GET always returns stored + system rules. If the bug regressed,
+		// the editor would re-save system rules and the list would grow.
+		let stored: any[] = [{ effect: 'allow', methods: ['GET'], path: '^/v1/charges$' }];
+		worker.use(
+			http.get('/toolkits/:id/credentials/:credId/permissions', () =>
+				HttpResponse.json([...stored, ...SYSTEM_RULES]),
+			),
+			http.put('/toolkits/:id/credentials/:credId/permissions', async ({ request }) => {
+				const body = (await request.json()) as any[];
+				putBodies.push(body);
+				stored = body; // server persists ONLY what the client sent
+				return HttpResponse.json([...stored, ...SYSTEM_RULES]);
+			}),
+		);
+
+		renderToolkit();
+		await screen.findByText('Stripe Token');
+
+		// First cycle
+		await openPermissionEditor(user);
+		await user.click(screen.getByRole('button', { name: /save rules/i }));
+		await waitFor(() => expect(putBodies).toHaveLength(1));
+
+		// Second cycle — reopen and save again
+		await waitFor(() =>
+			expect(screen.queryByText(/permission rules for/i)).not.toBeInTheDocument(),
+		);
+		await openPermissionEditor(user);
+		await user.click(screen.getByRole('button', { name: /save rules/i }));
+		await waitFor(() => expect(putBodies).toHaveLength(2));
+
+		// Both saves persisted exactly one agent rule — no growth.
+		expect(putBodies[0]).toHaveLength(1);
+		expect(putBodies[1]).toHaveLength(1);
+		expect(stored).toHaveLength(1);
+	});
+});
+
 describe('ToolkitDetailPage — mutation errors', () => {
 	it('reverts kill switch toggle on server error', async () => {
 		const user = userEvent.setup();
@@ -296,10 +468,13 @@ describe('ToolkitDetailPage — mutation errors', () => {
 		renderToolkit();
 		await screen.findByText('Test Toolkit');
 
-		await user.click(screen.getByRole('button', { name: /kill switch/i }));
-		expect(screen.getByText(/block all api access/i)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /suspend toolkit/i }));
+		expect(screen.getByText(/block keys \+ agents/i)).toBeInTheDocument();
 
-		await user.click(screen.getByRole('button', { name: /kill access/i }));
+		const killBtn = screen
+			.getAllByRole('button')
+			.find((btn) => btn.textContent?.trim() === 'Kill')!;
+		await user.click(killBtn);
 
 		await waitFor(() => {
 			expect(screen.queryByText(/toolkit suspended/i)).not.toBeInTheDocument();

@@ -123,23 +123,28 @@ export function CredentialEditSheet({
 					</Button>
 				</header>
 
-				<div className="flex-1 overflow-y-auto px-5 py-4">
+				<div className="flex-1 overflow-hidden">
 					{!credentialId && null}
 					{credentialId && (loadingCred || loadingApi || !existingApi) && (
-						<LoadingState
-							message={loadingCred ? 'Loading credential…' : 'Loading API…'}
-							icon={<Loader2 className="h-5 w-5 animate-spin" />}
-						/>
+						<div className="px-5 py-4">
+							<LoadingState
+								message={loadingCred ? 'Loading credential…' : 'Loading API…'}
+								icon={<Loader2 className="h-5 w-5 animate-spin" />}
+							/>
+						</div>
 					)}
 					{credentialId && existing && existingApi && (
-						<CredentialFormFields
-							selectedApi={existingApi as ApiOut}
-							editId={credentialId}
-							existing={existing}
-							onBack={onClose}
-							onSaved={onClose}
-							hideApiSummary
-						/>
+						<div className="h-full">
+							<CredentialFormFields
+								selectedApi={existingApi as ApiOut}
+								editId={credentialId}
+								existing={existing}
+								onBack={onClose}
+								onSaved={onClose}
+								hideApiSummary
+								layout="sheet"
+							/>
+						</div>
 					)}
 				</div>
 			</div>

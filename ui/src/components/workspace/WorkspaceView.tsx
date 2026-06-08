@@ -10,6 +10,10 @@ import type { ImportTab } from './ImportSourceDialog';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ToolkitCard, type ToolkitCardData } from '@/components/toolkits/ToolkitCard';
+import { ToolkitDetailSheet } from '@/components/toolkits/ToolkitDetailSheet';
+import { useToolkitDetailSheet } from '@/hooks/useToolkitDetailSheet';
+import { useToolkitCardEnrichment } from '@/hooks/useToolkitCardEnrichment';
 import { useRovingGridFocus } from '@/hooks/useRovingGridFocus';
 import { isTypingTarget } from '@/lib/keyboard';
 import { subscribeCredentialImported } from '@/lib/events/credentialImported';
@@ -51,6 +55,7 @@ export function WorkspaceView({
 } = {}) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const toolkitSheet = useToolkitDetailSheet();
 
 	// ── Filter input ──────────────────────────────────────────────────────
 	//
@@ -247,6 +252,27 @@ export function WorkspaceView({
 				}))
 			: [];
 	}, [toolkitsQuery.data]);
+
+	// Full card data for the Toolkits section. Reuses the SAME query as the
+	// coverage map above (no extra network call) — we just keep the roll-up
+	// fields (`disabled` / `simulate` / counts) that `ToolkitCard` reads.
+	const toolkitCards = useMemo<ToolkitCardData[]>(() => {
+		const data = toolkitsQuery.data as Array<Record<string, unknown>> | undefined;
+		if (!Array.isArray(data)) return [];
+		return data.map((t) => ({
+			id: String(t?.id ?? ''),
+			name: String(t?.name ?? t?.id ?? ''),
+			description: typeof t?.description === 'string' ? t.description : null,
+			created_at: typeof t?.created_at === 'number' ? t.created_at : null,
+			simulate: Boolean(t?.simulate),
+			disabled: Boolean(t?.disabled),
+			key_count: typeof t?.key_count === 'number' ? t.key_count : undefined,
+			credential_count:
+				typeof t?.credential_count === 'number' ? t.credential_count : undefined,
+		}));
+	}, [toolkitsQuery.data]);
+
+	const toolkitEnrichment = useToolkitCardEnrichment(toolkitCards.map((t) => t.id));
 
 	// One credentials lookup per toolkit. The `enabled` gate keeps these
 	// from firing until the parent toolkits list resolves.
@@ -578,10 +604,52 @@ export function WorkspaceView({
 							)}
 						</section>
 					) : null}
+
+					{toolkitCards.length > 0 ? (
+						<section data-testid="workspace-section-toolkits" className="space-y-3">
+							<header className="flex items-baseline justify-between gap-2">
+								<h2 className="text-foreground text-base font-semibold tracking-tight">
+									Toolkits
+									<span
+										className="text-muted-foreground/80 ml-2 font-mono text-xs"
+										data-testid="workspace-section-toolkits-count"
+									>
+										· {toolkitCards.length.toLocaleString()}
+									</span>
+								</h2>
+							</header>
+							<div
+								className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
+								data-testid="workspace-grid-toolkits"
+							>
+								{toolkitCards.map((tk) => {
+									const enriched = toolkitEnrichment.get(tk.id);
+									return (
+										<ToolkitCard
+											key={tk.id}
+											toolkit={{
+												...tk,
+												apiIds: enriched?.apiIds,
+												agentCount: enriched?.agentCount,
+											}}
+											onOpen={toolkitSheet.openSheet}
+										/>
+									);
+								})}
+							</div>
+						</section>
+					) : null}
 				</div>
 			)}
 
 			<WorkspaceCatalogFooter />
+
+			<ToolkitDetailSheet
+				toolkitId={toolkitSheet.stickyId}
+				open={toolkitSheet.open}
+				onClose={toolkitSheet.closeSheet}
+				onAfterClose={toolkitSheet.clearSticky}
+			/>
 		</>
 	);
 }

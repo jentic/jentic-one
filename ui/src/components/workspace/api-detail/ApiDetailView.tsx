@@ -29,6 +29,13 @@ interface ApiDetailViewProps {
 	 * deeplink path when omitted.
 	 */
 	onAddCredential?: () => void;
+	/**
+	 * Optional callback fired when the user clicks a bound toolkit in the
+	 * toolkits section. When provided, hosts open a `ToolkitDetailSheet`
+	 * in-place; falls back to a route navigation to `/toolkits/:id` when
+	 * omitted.
+	 */
+	onOpenToolkit?: (id: string) => void;
 }
 
 /**
@@ -42,7 +49,12 @@ interface ApiDetailViewProps {
  * operations widget has its own state machine encapsulated in the
  * `useApiOperations` hook; everything else is presentational.
  */
-export function ApiDetailView({ apiId, onEditCredential, onAddCredential }: ApiDetailViewProps) {
+export function ApiDetailView({
+	apiId,
+	onEditCredential,
+	onAddCredential,
+	onOpenToolkit,
+}: ApiDetailViewProps) {
 	const {
 		data: apiData,
 		isLoading: isLoadingApi,
@@ -191,7 +203,7 @@ export function ApiDetailView({ apiId, onEditCredential, onAddCredential }: ApiD
 				onAddCredential={onAddCredential}
 			/>
 
-			<ToolkitsSection toolkits={boundToolkits} />
+			<ToolkitsSection toolkits={boundToolkits} onOpenToolkit={onOpenToolkit} />
 
 			<OperationsSection
 				rows={ops.rows}

@@ -3,7 +3,6 @@
 import json
 import logging
 from typing import Annotated, Any
-from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -480,10 +479,7 @@ async def list_credential_bindings(
             (cid,),
         ) as cur:
             rows = await cur.fetchall()
-    return [
-        {"toolkit_id": r[0], "toolkit_name": r[1], "alias": r[2]}
-        for r in rows
-    ]
+    return [{"toolkit_id": r[0], "toolkit_name": r[1], "alias": r[2]} for r in rows]
 
 
 @router.get(
@@ -605,7 +601,9 @@ async def delete(
             ) as cur:
                 row = await cur.fetchone()
         if row:
-            from src.routers.oauth_brokers import revoke_pipedream_account_upstream
+            from src.routers.oauth_brokers import (  # noqa: PLC0415  (lazy import avoids circular dependency)
+                revoke_pipedream_account_upstream,
+            )
 
             pipedream_revoked = await revoke_pipedream_account_upstream(row[0], row[1])
             # Drop the local oauth_broker_accounts row(s) bound to this credential

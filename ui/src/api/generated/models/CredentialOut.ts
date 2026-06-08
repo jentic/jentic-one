@@ -8,6 +8,7 @@
 export type CredentialOut = {
     id: string;
     label: string;
+    description?: (string | null);
     identity?: (string | null);
     api_id?: (string | null);
     auth_type?: (string | null);
@@ -16,8 +17,10 @@ export type CredentialOut = {
     routes?: (Array<string> | null);
     created_at?: (number | null);
     updated_at?: (number | null);
+    last_used_at?: (number | null);
     account_id?: (string | null);
     app_slug?: (string | null);
     synced_at?: (number | null);
+    healthy?: (boolean | null);
 };
 

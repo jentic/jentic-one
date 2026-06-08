@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, KeyRound, Loader2, Plus } from 'lucide-react';
+import { ExternalLink, Loader2, Plus } from 'lucide-react';
 import { SectionTitle } from './SectionTitle';
 import { ApiSummary } from './ApiSummary';
 import {
@@ -30,15 +30,6 @@ export interface SheetBodyProps {
 	sourceResolving?: boolean;
 	onSelectOp: (opId: string) => void;
 	onSelectWf: (wfId: string | null) => void;
-	/**
-	 * Optional handler for the "Add credential" CTA in the sheet
-	 * action bar. Discover hosts that mount an `<AddCredentialDialog>`
-	 * wire this so the dialog opens on top of the sheet (rather than
-	 * the sheet unmounting on a route-level navigation). When omitted
-	 * we fall back to the deeplink `<AppLink>`, preserving the
-	 * legacy behaviour.
-	 */
-	onAddCredential?: (apiId: string) => void;
 }
 
 export function SheetBody({
@@ -48,7 +39,6 @@ export function SheetBody({
 	sourceResolving = false,
 	onSelectOp,
 	onSelectWf,
-	onAddCredential,
 }: SheetBodyProps) {
 	const githubUrl: string | undefined = initialEntity?.raw?._links?.github;
 	const specUrl: string | undefined =
@@ -162,80 +152,33 @@ export function SheetBody({
 					{sourceResolving ? (
 						<Skeleton className="h-9 w-40 rounded-lg" />
 					) : source === 'directory' ? (
-						<>
-							<Button
-								onClick={() => {
-									if (isImporting) return;
-									void importApi({ apiId, specUrl });
-								}}
-								disabled={isImporting}
-								data-testid="sheet-directory-import"
-							>
-								{isImporting ? (
-									<>
-										<Loader2 size={14} className="animate-spin" />
-										Importing…
-									</>
-								) : (
-									<>
-										<Plus size={14} />
-										Import to workspace
-									</>
-								)}
-							</Button>
-							{/* Lets a user skip the two-step "Import → Workspace
-							   → Add credential" path when they already know they
-							   want a runnable API. The credential-form treats
-							   `?api_id=…` as a catalog deeplink, imports the spec
-							   on save, and emits both `apiImported` and
-							   `credentialImported`, so it's strictly more
-							   productive than separate steps. We render it as a
-							   secondary action so the recommended "just look at
-							   the API first" path stays primary. */}
-							{onAddCredential ? (
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => onAddCredential(apiId)}
-									className="h-9 gap-1.5 px-3"
-								>
-									<KeyRound size={14} /> Add credential
-								</Button>
+						<Button
+							onClick={() => {
+								if (isImporting) return;
+								void importApi({ apiId, specUrl });
+							}}
+							disabled={isImporting}
+							data-testid="sheet-directory-import"
+						>
+							{isImporting ? (
+								<>
+									<Loader2 size={14} className="animate-spin" />
+									Importing…
+								</>
 							) : (
-								<AppLink
-									href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-									className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
-								>
-									<KeyRound size={14} /> Add credential
-								</AppLink>
+								<>
+									<Plus size={14} />
+									Import to workspace
+								</>
 							)}
-						</>
+						</Button>
 					) : (
-						<>
-							<AppLink
-								href={`/workspace/apis/${encodeURIComponent(apiId)}`}
-								className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors"
-							>
-								Open in Workspace
-							</AppLink>
-							{onAddCredential ? (
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => onAddCredential(apiId)}
-									className="h-9 gap-1.5 px-3"
-								>
-									<KeyRound size={14} /> Add credential
-								</Button>
-							) : (
-								<AppLink
-									href={`/credentials/new?api_id=${encodeURIComponent(apiId)}`}
-									className="border-border text-muted-foreground hover:text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors"
-								>
-									<KeyRound size={14} /> Add credential
-								</AppLink>
-							)}
-						</>
+						<AppLink
+							href={`/workspace/apis/${encodeURIComponent(apiId)}`}
+							className="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors"
+						>
+							Open in Workspace
+						</AppLink>
 					)}
 					{githubUrl && (
 						<AppLink
@@ -249,8 +192,8 @@ export function SheetBody({
 
 				{!sourceResolving && source === 'directory' && (
 					<p className="text-muted-foreground/80 text-xs">
-						Importing registers the spec locally so operations become browsable. Add
-						credentials from Workspace to make them runnable.
+						Importing registers the spec locally so its operations and workflows become
+						browsable in your workspace.
 					</p>
 				)}
 			</div>

@@ -580,6 +580,7 @@ async def broker(request: Request, target: str):
     toolkit_id: str | None = getattr(request.state, "toolkit_id", None)
     grant_ids: list[str] | None = getattr(request.state, "granted_toolkit_ids", None)
     agent_cid: str | None = getattr(request.state, "agent_client_id", None)
+    suspended_ids: list[str] | None = getattr(request.state, "suspended_toolkit_ids", None)
 
     is_simulate = (
         getattr(request.state, "simulate", False)
@@ -642,6 +643,25 @@ async def broker(request: Request, target: str):
         raise HTTPException(400, "X-Jentic-Callback must be an http or https URL")
 
     if agent_cid is not None and grant_ids is not None and len(grant_ids) == 0:
+        # Distinguish two empty-grant cases so the error message is truthful:
+        #   1. The agent's grants ALL point at suspended (killed) toolkits — the
+        #      grants exist, the toolkits were disabled. Report toolkit_suspended.
+        #   2. The agent genuinely has no grants — an admin must add one.
+        if suspended_ids:
+            _tid = suspended_ids[0]
+            await _write_trace("toolkit_suspended", 403, f"Toolkit '{_tid}' suspended")
+            return Response(
+                content=json.dumps(
+                    {
+                        "error": "toolkit_suspended",
+                        "message": f"Toolkit '{_tid}' has been suspended. All API access is blocked. Contact the toolkit owner to restore access.",
+                        "toolkit_id": _tid,
+                    }
+                ),
+                status_code=403,
+                media_type="application/json",
+                headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
+            )
         await _write_trace("policy_denied", 403, "Agent has no toolkit grants")
         return Response(
             content=json.dumps(
@@ -666,6 +686,7 @@ async def broker(request: Request, target: str):
             ) as _ks_cur:
                 _ks_row = await _ks_cur.fetchone()
         if _ks_row and _ks_row[0]:
+            await _write_trace("toolkit_suspended", 403, f"Toolkit '{_tid}' suspended")
             return Response(
                 content=json.dumps(
                     {
@@ -676,7 +697,7 @@ async def broker(request: Request, target: str):
                 ),
                 status_code=403,
                 media_type="application/json",
-                headers={"X-Jentic-Error": "true"},
+                headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
             )
 
     # ── Prefer: wait=N for single broker calls ────────────────────────────────

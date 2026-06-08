@@ -78,6 +78,18 @@ export interface CredentialFormFieldsProps {
 	 * dialog where the API is locked-in by an earlier step.
 	 */
 	hideApiSummary?: boolean;
+	/**
+	 * Layout mode:
+	 *  - `'inline'` (default): the form is a normal block; fields and
+	 *    a sticky-on-scroll footer flow in the host's own scroll
+	 *    container. Used by the page form and the add dialog.
+	 *  - `'sheet'`: the form owns a full-height flex column — fields
+	 *    scroll in the middle and the Save/Cancel footer is pinned
+	 *    flush to the bottom edge with a solid divider (no blur /
+	 *    negative-margin hack). Used by `CredentialEditSheet`, whose
+	 *    host gives the form `h-full`.
+	 */
+	layout?: 'inline' | 'sheet';
 }
 
 const AUTH_TYPE_MAP: Record<SchemeType, CredentialCreate['auth_type']> = {
@@ -125,9 +137,11 @@ export function CredentialFormFields({
 	onBack,
 	onSaved,
 	hideApiSummary,
+	layout = 'inline',
 }: CredentialFormFieldsProps) {
 	const queryClient = useQueryClient();
 	const isEdit = !!editId;
+	const isSheet = layout === 'sheet';
 
 	const { schemes, loading: schemesLoading, localDetail, spec } = useApiSchemes(selectedApi);
 	const serverVarDefs = useApiServerVarDefs(selectedApi, localDetail, spec);
@@ -321,122 +335,132 @@ export function CredentialFormFields({
 	}
 
 	return (
-		<form onSubmit={handleSubmit} className="space-y-5">
-			{!hideApiSummary && (
-				<div className="bg-muted/50 border-border flex items-center gap-2 rounded-lg border px-3 py-2.5">
-					<div className="min-w-0 flex-1">
-						<p className="text-foreground text-sm font-medium">
-							{selectedApi.name ?? selectedApi.id}
-						</p>
-						<p className="text-muted-foreground truncate font-mono text-xs">
-							{selectedApi.id}
-						</p>
+		<form onSubmit={handleSubmit} className={isSheet ? 'flex h-full flex-col' : 'space-y-5'}>
+			<div className={isSheet ? 'flex-1 space-y-5 overflow-y-auto px-5 py-4' : 'space-y-5'}>
+				{!hideApiSummary && (
+					<div className="bg-muted/50 border-border flex items-center gap-2 rounded-lg border px-3 py-2.5">
+						<div className="min-w-0 flex-1">
+							<p className="text-foreground text-sm font-medium">
+								{selectedApi.name ?? selectedApi.id}
+							</p>
+							<p className="text-muted-foreground truncate font-mono text-xs">
+								{selectedApi.id}
+							</p>
+						</div>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={onBack}
+							className="text-muted-foreground hover:text-foreground shrink-0 text-xs transition-colors"
+						>
+							Change
+						</Button>
 					</div>
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={onBack}
-						className="text-muted-foreground hover:text-foreground shrink-0 text-xs transition-colors"
+				)}
+
+				<SchemePillBar
+					options={schemeOptions}
+					active={activeScheme}
+					onChange={setSelectedScheme}
+				/>
+
+				<ServerVariablesFields
+					defs={serverVarDefs}
+					values={serverVars}
+					onChange={(name, val) => setServerVars((prev) => ({ ...prev, [name]: val }))}
+				/>
+
+				<div>
+					<Label
+						htmlFor="cred-label"
+						className="text-muted-foreground mb-1 block text-xs"
 					>
-						Change
-					</Button>
+						Label
+					</Label>
+					<Input
+						id="cred-label"
+						type="text"
+						value={label}
+						onChange={(e) => setLabel(e.target.value)}
+						required
+						className="bg-background"
+					/>
 				</div>
-			)}
 
-			<SchemePillBar
-				options={schemeOptions}
-				active={activeScheme}
-				onChange={setSelectedScheme}
-			/>
-
-			<ServerVariablesFields
-				defs={serverVarDefs}
-				values={serverVars}
-				onChange={(name, val) => setServerVars((prev) => ({ ...prev, [name]: val }))}
-			/>
-
-			<div>
-				<Label htmlFor="cred-label" className="text-muted-foreground mb-1 block text-xs">
-					Label
-				</Label>
-				<Input
-					id="cred-label"
-					type="text"
-					value={label}
-					onChange={(e) => setLabel(e.target.value)}
-					required
-					className="bg-background"
-				/>
-			</div>
-
-			<div>
-				<Label
-					htmlFor="cred-description"
-					className="text-muted-foreground mb-1 block text-xs"
-				>
-					Description <span className="text-muted-foreground/60">(optional)</span>
-				</Label>
-				<Textarea
-					id="cred-description"
-					value={description}
-					onChange={(e) => setDescription(e.target.value)}
-					placeholder="What is this credential used for? When was it rotated?"
-					rows={2}
-					className="bg-background"
-				/>
-			</div>
-
-			{schemeType === 'oauth2' && (
-				<OAuthBrokerFields selectedApi={selectedApi} label={label} />
-			)}
-
-			<AuthTypeFields
-				schemeType={schemeType}
-				isEdit={isEdit}
-				value={value}
-				onValueChange={setValue}
-				identity={identity}
-				onIdentityChange={setIdentity}
-				compound={compound}
-				secretLabel={secretLabel}
-				identityLabel={identityLabel}
-			/>
-
-			{error && <ErrorAlert message={error} />}
-
-			{schemeType !== 'oauth2' && (
-				<AdvancedBrokerFields
-					open={showAdvanced}
-					onToggle={() => setShowAdvanced((v) => !v)}
-					schemeJson={schemeJson}
-					onSchemeJsonChange={setSchemeJson}
-					routesText={routesText}
-					onRoutesTextChange={setRoutesText}
-				/>
-			)}
-
-			{/* Test connection — edit mode only.
-			 *
-			 * The probe needs a saved credential ID (the backend
-			 * decrypts the value from `credentials.id`), so we only
-			 * render this when we're editing an existing credential.
-			 * New credentials get tested by clicking back into the
-			 * row in the list after save. */}
-			{isEdit && editId && (
-				<div className="border-border/60 rounded-lg border border-dashed p-3">
-					<p className="text-muted-foreground mb-2 text-xs">
-						Verify the credential by issuing a single, low-impact probe to the upstream
-						API. Bearer / API key creds only — Pipedream OAuth grants are validated by
-						the broker.
-					</p>
-					<TestConnectionButton credentialId={editId} />
+				<div>
+					<Label
+						htmlFor="cred-description"
+						className="text-muted-foreground mb-1 block text-xs"
+					>
+						Description <span className="text-muted-foreground/60">(optional)</span>
+					</Label>
+					<Textarea
+						id="cred-description"
+						value={description}
+						onChange={(e) => setDescription(e.target.value)}
+						placeholder="What is this credential used for? When was it rotated?"
+						rows={2}
+						className="bg-background"
+					/>
 				</div>
-			)}
+
+				{schemeType === 'oauth2' && (
+					<OAuthBrokerFields selectedApi={selectedApi} label={label} />
+				)}
+
+				<AuthTypeFields
+					schemeType={schemeType}
+					isEdit={isEdit}
+					value={value}
+					onValueChange={setValue}
+					identity={identity}
+					onIdentityChange={setIdentity}
+					compound={compound}
+					secretLabel={secretLabel}
+					identityLabel={identityLabel}
+				/>
+
+				{error && <ErrorAlert message={error} />}
+
+				{schemeType !== 'oauth2' && (
+					<AdvancedBrokerFields
+						open={showAdvanced}
+						onToggle={() => setShowAdvanced((v) => !v)}
+						schemeJson={schemeJson}
+						onSchemeJsonChange={setSchemeJson}
+						routesText={routesText}
+						onRoutesTextChange={setRoutesText}
+					/>
+				)}
+
+				{/* Test connection — edit mode only.
+				 *
+				 * The probe needs a saved credential ID (the backend
+				 * decrypts the value from `credentials.id`), so we only
+				 * render this when we're editing an existing credential.
+				 * New credentials get tested by clicking back into the
+				 * row in the list after save. */}
+				{isEdit && editId && (
+					<div className="border-border/60 rounded-lg border border-dashed p-3">
+						<p className="text-muted-foreground mb-2 text-xs">
+							Verify the credential by issuing a single, low-impact probe to the
+							upstream API. Bearer / API key creds only — Pipedream OAuth grants are
+							validated by the broker.
+						</p>
+						<TestConnectionButton credentialId={editId} />
+					</div>
+				)}
+			</div>
 
 			{/* Save / Cancel footer.
 			 *
-			 * Sticky on long forms so users never have to hunt for
-			 * the submit button.
+			 * Sheet layout: a solid `shrink-0` footer pinned flush to
+			 * the bottom edge of the flex column, matching the sheet
+			 * panel surface (`bg-card`) with a clean divider.
+			 *
+			 * Inline layout: sticky-on-scroll with a translucent blur
+			 * so the page/dialog hosts keep the submit button reachable
+			 * on long forms without a hard footer.
 			 *
 			 * For NEW OAuth2 credentials we hide submit — the
 			 * Pipedream "Connect" flow above is the actual save
@@ -445,7 +469,13 @@ export function CredentialFormFields({
 			 * label/description/etc. without touching the upstream
 			 * grant. */}
 			{(isEdit || schemeType !== 'oauth2') && (
-				<div className="bg-background/95 border-border supports-[backdrop-filter]:bg-background/80 sticky bottom-0 -mx-1 mt-2 flex gap-2 border-t px-1 pt-3 pb-2 backdrop-blur">
+				<div
+					className={
+						isSheet
+							? 'border-border bg-card flex shrink-0 gap-2 border-t px-5 py-4'
+							: 'bg-background/95 border-border supports-[backdrop-filter]:bg-background/80 sticky bottom-0 -mx-1 mt-2 flex gap-2 border-t px-1 pt-3 pb-2 backdrop-blur'
+					}
+				>
 					<Button type="submit" loading={isPending} fullWidth>
 						{isEdit ? 'Update Credential' : 'Save Credential'}
 					</Button>

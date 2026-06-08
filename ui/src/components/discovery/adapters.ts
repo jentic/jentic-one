@@ -27,7 +27,6 @@ export function apiToEntity(entry: any): DiscoveryEntity {
 		// Workspace descriptions (real `info.description` text) stay
 		// untouched. Server-side description hydration is tracked in #437.
 		description: entry.description ?? undefined,
-		hasCredentials: Boolean(entry.has_credentials),
 		// `/apis` populates `has_workflows` on catalog rows from the workflow
 		// manifest (mirrors what `/search`'s catalog blender does). Surfacing
 		// it here lets the directory browse grid render the `+ workflows`

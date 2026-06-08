@@ -64,7 +64,7 @@ export function PipedreamCard() {
 
 	if (showConfigure && pipedream) {
 		return (
-			<div className="bg-muted border-border space-y-4 rounded-xl border p-5">
+			<div className="bg-card border-border space-y-4 rounded-xl border p-5">
 				<div className="flex items-center justify-between">
 					<h2 className="text-foreground text-sm font-semibold">
 						Configure Pipedream OAuth
@@ -239,7 +239,7 @@ function PipedreamForm({
 		: !!(form.client_id || form.client_secret || form.project_id);
 
 	return (
-		<div className="bg-muted border-border space-y-4 rounded-xl border p-5">
+		<div className="bg-card border-border space-y-4 rounded-xl border p-5">
 			<h2 className="text-foreground text-sm font-semibold">
 				{isNew ? 'Enable OAuth with Pipedream' : 'Edit Pipedream configuration'}
 			</h2>

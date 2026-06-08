@@ -12,12 +12,11 @@ not just direct vault writes.
 """
 
 import json
-import re
-
-import pytest
 
 
-def _register_api(client, api_id: str, *, scheme_type: str = "bearer", with_healthcheck: bool = False):
+def _register_api(
+    client, api_id: str, *, scheme_type: str = "bearer", with_healthcheck: bool = False
+):
     """Import a minimal API spec so credentials can be stored against it.
 
     `with_healthcheck=True` adds an `x-jentic-healthcheck: true` to a no-required-params
@@ -57,7 +56,9 @@ def _register_api(client, api_id: str, *, scheme_type: str = "bearer", with_heal
     assert resp.status_code in (200, 201), f"Import failed: {resp.text}"
 
 
-def _create_credential(client, api_id: str, *, auth_type: str = "bearer", label: str = "tier1") -> str:
+def _create_credential(
+    client, api_id: str, *, auth_type: str = "bearer", label: str = "tier1"
+) -> str:
     resp = client.post(
         "/credentials",
         json={
@@ -106,9 +107,9 @@ def test_test_endpoint_pipedream_returns_diagnostic(admin_client):
     _register_api(admin_client, api_id, scheme_type="apiKey")
     # Bypass the `auth_type` literal at the API by writing directly via vault —
     # `pipedream_oauth` is a reserved value that the create endpoint rejects.
-    import asyncio
+    import asyncio  # noqa: PLC0415
 
-    import src.vault as vault
+    import src.vault as vault  # noqa: PLC0415
 
     async def _seed():
         cred = await vault.create_credential(
@@ -249,9 +250,9 @@ def test_delete_pipedream_credential_does_not_500_without_broker(admin_client):
     when no broker config or live registry entry can be found upstream — the
     local row is the source of truth and cleanup proceeds.
     """
-    import asyncio
+    import asyncio  # noqa: PLC0415
 
-    import src.vault as vault
+    import src.vault as vault  # noqa: PLC0415
 
     api_id = "tier1-pd-cascade.example.com"
     _register_api(admin_client, api_id, scheme_type="apiKey")

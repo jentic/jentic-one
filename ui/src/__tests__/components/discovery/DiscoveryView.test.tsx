@@ -1578,64 +1578,6 @@ describe('DiscoveryView', () => {
 	// `?` (open keyboard-shortcuts help) is owned by `<PageHelp>` mounted on
 	// the page shells (`/workspace`, `/discover`), not by `DiscoveryView`.
 	// That binding is exercised in the per-page shell tests instead.
-
-	// ── P8 — Credential close-the-loop ────────────────────────────────────
-
-	it('emits a success toast when a credentialImported event arrives for the open sheet', async () => {
-		const { emitCredentialImported } = await import('@/lib/events/credentialImported');
-		const toastModule = await import('@/components/ui/toastStore');
-		toastModule.clearAllToasts();
-
-		worker.use(
-			http.get('/apis', ({ request }) => {
-				const url = new URL(request.url);
-				const q = url.searchParams.get('q');
-				if (q === 'stripe.com') {
-					return HttpResponse.json({
-						data: [{ id: 'stripe.com', name: 'Stripe', source: 'local' }],
-						total: 1,
-						page: 1,
-					});
-				}
-				return HttpResponse.json({
-					data: [{ id: 'stripe.com', name: 'Stripe', source: 'local' }],
-					total: 1,
-					page: 1,
-				});
-			}),
-			http.get('/catalog/stripe.com/operations', () =>
-				HttpResponse.json({
-					data: [],
-					total: 0,
-					truncated: false,
-					offset: 0,
-					limit: 25,
-					spec_url: '',
-					info: { title: 'Stripe', version: '1.0', description: '' },
-					security_schemes: {},
-				}),
-			),
-		);
-		renderDirectoryDiscover('/discover?inspect=stripe.com');
-		await screen.findByTestId('sheet-primitive');
-
-		// Probe component to read the store via the hook.
-		let liveToasts: ReturnType<typeof toastModule.useToasts> = [];
-		function Probe() {
-			liveToasts = toastModule.useToasts();
-			return null;
-		}
-		const { render } = await import('@testing-library/react');
-		render(<Probe />);
-
-		emitCredentialImported({ api_id: 'stripe.com' });
-
-		await waitFor(() => {
-			expect(liveToasts.length).toBeGreaterThan(0);
-		});
-		expect(liveToasts[0].title).toMatch(/imported to workspace/i);
-		expect(liveToasts[0].variant).toBe('success');
-	});
 });
 
 // ── Sectioned mode (used by /workspace) ──────────────────────────────────────

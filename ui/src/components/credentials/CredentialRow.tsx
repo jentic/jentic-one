@@ -57,8 +57,10 @@ interface CredentialRowProps {
  *    so a credential bound to many toolkits stays scannable; overflow goes
  *    into a `+N more` chip that's also a link (to the credentials filter).
  *
- * 4. **Local / Catalog** badge surfaced via `cred.api_source` (set by the
+ * 4. **Local / Available** badge surfaced via `cred.api_source` (set by the
  *    parent component since the API row lives in `apis.list` not the cred).
+ *    "Available" mirrors the Discover surface wording for directory APIs
+ *    not yet imported (vs the internal `catalog`/`directory` source value).
  *
  * The row is intentionally NOT a single big link — the row is multi-action
  * (Edit, Delete, sometimes Reconnect) and a wrapping `<a>` would steal
@@ -100,7 +102,7 @@ export function CredentialRow({
 	const isPipedream = cred.auth_type === 'pipedream_oauth';
 
 	return (
-		<div className="bg-muted border-border rounded-xl border p-4">
+		<div className="group border-border/60 bg-card hover:border-border rounded-xl border p-4 transition-all hover:shadow-sm">
 			<div className="flex items-center gap-3">
 				<VendorIcon
 					name={cred.label || cred.id}
@@ -136,7 +138,7 @@ export function CredentialRow({
 							>
 								{(cred as CredentialOut & { api_local?: boolean }).api_local
 									? 'Local'
-									: 'Catalog'}
+									: 'Available'}
 							</Badge>
 						)}
 						{isPipedream ? (

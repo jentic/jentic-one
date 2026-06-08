@@ -5,7 +5,9 @@ import {
 	UserService,
 	ObserveService,
 	InspectService,
+	AgentsService,
 } from './generated';
+import type { ToolkitAgentsResponse } from './types';
 
 // Path component of the active mount, derived from the backend-injected
 // <base href>. Empty when unmounted; "/jentic" (no trailing slash) under
@@ -255,6 +257,12 @@ export const api = {
 		}),
 	listToolkitCredentials: (toolkitId: string) =>
 		ToolkitsService.listToolkitCredentialsToolkitsToolkitIdCredentialsGet({ toolkitId }),
+	listToolkitAgents: (toolkitId: string) =>
+		ToolkitsService.listToolkitAgentsToolkitsToolkitIdAgentsGet({
+			toolkitId,
+		}) as Promise<ToolkitAgentsResponse>,
+	revokeAgentGrant: (agentId: string, toolkitId: string) =>
+		AgentsService.deleteGrantAgentsAgentIdGrantsToolkitIdDelete({ agentId, toolkitId }),
 	bindCredential: (toolkitId: string, credentialId: string) =>
 		ToolkitsService.addCredentialToToolkitToolkitsToolkitIdCredentialsPost({
 			toolkitId,

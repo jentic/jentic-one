@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from './Button';
 
 type Variant = 'danger' | 'default';
@@ -30,7 +31,13 @@ export function ConfirmInline({
 	}
 
 	return (
-		<div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+		<motion.div
+			initial={{ opacity: 0, x: 6 }}
+			animate={{ opacity: 1, x: 0 }}
+			transition={{ duration: 0.15, ease: 'easeOut' }}
+			className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1.5"
+			onClick={(e) => e.stopPropagation()}
+		>
 			<span className="text-muted-foreground text-xs">{message}</span>
 			<Button
 				size="sm"
@@ -45,6 +52,6 @@ export function ConfirmInline({
 			<Button size="sm" variant="ghost" onClick={() => setPending(false)}>
 				Cancel
 			</Button>
-		</div>
+		</motion.div>
 	);
 }

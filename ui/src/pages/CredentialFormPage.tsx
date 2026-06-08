@@ -183,7 +183,7 @@ export default function CredentialFormPage() {
 									<p>
 										The picker shows both your workspace APIs (
 										<strong>Local</strong> badge) and the public catalog (
-										<strong>Catalog</strong> badge). Picking a catalog API
+										<strong>Available</strong> badge). Picking an available API
 										imports it into your workspace as a side effect of saving
 										the credential — there's no separate import step.
 									</p>

@@ -522,9 +522,7 @@ async def mark_credential_used(cid: str) -> None:
         return
     try:
         async with get_db() as db:
-            await db.execute(
-                "UPDATE credentials SET last_used_at = unixepoch() WHERE id=?", (cid,)
-            )
+            await db.execute("UPDATE credentials SET last_used_at = unixepoch() WHERE id=?", (cid,))
             await db.commit()
     except Exception:
         # Non-fatal: keep the response path clean.
@@ -550,9 +548,7 @@ async def build_inject_headers_for_credential(cid: str) -> tuple[dict[str, str],
             return {}, None
         cred = _row_to_dict(row)
         # _row_to_dict omits encrypted_value — fetch it separately.
-        async with db.execute(
-            "SELECT encrypted_value FROM credentials WHERE id=?", (cid,)
-        ) as cur:
+        async with db.execute("SELECT encrypted_value FROM credentials WHERE id=?", (cid,)) as cur:
             v_row = await cur.fetchone()
     value = decrypt(v_row[0]) if v_row and v_row[0] else None
     cred["value"] = value

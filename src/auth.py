@@ -307,17 +307,23 @@ async def _authenticate_agent_access_token(request: Request, bearer: str) -> boo
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT g.toolkit_id FROM agent_toolkit_grants g
+            """SELECT g.toolkit_id, tk.disabled FROM agent_toolkit_grants g
                JOIN toolkits tk ON tk.id = g.toolkit_id
-               WHERE g.client_id=? AND tk.disabled = 0
+               WHERE g.client_id=?
                ORDER BY g.granted_at ASC""",
             (cid,),
         ) as cur:
             grant_rows = await cur.fetchall()
-    grants = [r["toolkit_id"] for r in grant_rows]
+    # Usable grants exclude killed (disabled) toolkits — an agent can never route
+    # to a suspended toolkit. We separately track the suspended ones so the broker
+    # can return a truthful "toolkit_suspended" error instead of a misleading
+    # "no grants" error when every grant points at a killed toolkit.
+    grants = [r["toolkit_id"] for r in grant_rows if not r["disabled"]]
+    suspended = [r["toolkit_id"] for r in grant_rows if r["disabled"]]
 
     request.state.agent_client_id = cid
     request.state.granted_toolkit_ids = grants
+    request.state.suspended_toolkit_ids = suspended
     request.state.toolkit_id = grants[0] if grants else None
     request.state.is_admin = False
     request.state.is_human_session = False
@@ -417,6 +423,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         request.state.simulate = False
         request.state.agent_client_id = None
         request.state.granted_toolkit_ids = None
+        request.state.suspended_toolkit_ids = None
 
         # Resolve client IP early — used by multiple auth steps below
         req_ip = client_ip(request)

@@ -73,7 +73,7 @@ export function CredentialsList({
 		enabled: loggedIn,
 	});
 
-	// API list is needed to badge each credential row "Local" vs "Catalog".
+	// API list is needed to badge each credential row "Local" vs "Available".
 	// We grab it once and stitch onto each cred — cheaper than fanning out
 	// from the row component.
 	const { data: apis } = useQuery({

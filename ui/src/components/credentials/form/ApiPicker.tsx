@@ -96,8 +96,8 @@ export function ApiPicker({ onSelect }: ApiPickerProps) {
 					</p>
 					{local.length === 0 && (
 						<p className="text-muted-foreground/80 mb-2 text-xs">
-							Picking a catalog API imports it into your workspace as part of saving
-							this credential — there's no separate import step.
+							Picking an available API imports it into your workspace as part of
+							saving this credential — there's no separate import step.
 						</p>
 					)}
 					<div className="space-y-1">

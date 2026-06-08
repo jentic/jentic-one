@@ -11,11 +11,14 @@ KNOWN AUTH BOUNDARY MISMATCHES (code vs OpenAPI spec declaration):
    - POST /toolkits/{id}/keys                    (201 - issues new key)
    - PATCH /toolkits/{id}/keys/{key_id}          (404 - no auth check)
    - DELETE /toolkits/{id}/keys/{key_id}         (404 - no auth check)
-   - DELETE /toolkits/{id}/credentials/{cred_id} (204 - unbinds credential)
 
    ROOT CAUSE: Missing dependencies=[Depends(require_human_session)] in code.
-   FIX: Add dependency to src/routers/toolkits.py (5 endpoints).
+   FIX: Add dependency to src/routers/toolkits.py.
    TODO: Phase 2/3 - add require_human_session to enforce spec declaration.
+
+   FIXED: DELETE /toolkits/{id}/credentials/{cred_id} now enforces an inline
+   is_admin check (matching POST /toolkits/{id}/credentials), so agents can no
+   longer unbind credentials. See test_unbind_credential_rejects_agent_key.
 
 2. Spec says public (security: []), runtime requires auth (401 without key):
    - GET /search, GET /apis, GET /workflows, etc.
@@ -93,15 +96,12 @@ AGENT_ACCESSIBLE_ENDPOINTS = {
     # TODO Phase 2/3: Add dependencies=[Depends(require_human_session)] to:
     #   - src/routers/toolkits.py:206 POST /toolkits
     #   - src/routers/toolkits.py:515 POST /toolkits/{id}/keys
-    #   - src/routers/toolkits.py:725 DELETE /toolkits/{id}/credentials/{cred_id}
     #   - src/routers/toolkits.py PATCH /toolkits/{id}/keys/{key_id}
     #   - src/routers/toolkits.py DELETE /toolkits/{id}/keys/{key_id}
+    # NOTE: DELETE /toolkits/{id}/credentials/{cred_id} was FIXED — it now enforces
+    # an inline is_admin check and rejects agent keys (see HUMAN_ONLY_ENDPOINTS).
     ("POST", "/toolkits"),  # 201 - agents can create toolkits (should be human-only)
     ("POST", "/toolkits/{id}/keys"),  # 201 - agents can issue keys (should be human-only)
-    (
-        "DELETE",
-        "/toolkits/{id}/credentials/{cred_id}",
-    ),  # 204 - agents can unbind (should be human-only)
     ("PATCH", "/toolkits/{id}/keys/{key_id}"),  # 404 when key doesn't exist, but no auth check
     ("DELETE", "/toolkits/{id}/keys/{key_id}"),  # 404 when key doesn't exist, but no auth check
     # Access requests (agents can file, view own)
@@ -256,7 +256,9 @@ def test_human_only_endpoints_reject_agent_key(client, agent_key_header):
     # - POST /toolkits/{id}/keys → 201 (issues new key)
     # - PATCH /toolkits/{id}/keys/{key_id} → 404 (no auth check, fails on missing resource)
     # - DELETE /toolkits/{id}/keys/{key_id} → 404 (no auth check, fails on missing resource)
-    # - DELETE /toolkits/{id}/credentials/{cred_id} → 204 (unbinds credential)
+    #
+    # NOTE: DELETE /toolkits/{id}/credentials/{cred_id} is now correctly human-only
+    # (inline is_admin check) and is covered by test_unbind_credential_rejects_agent_key.
     #
     # These are intentionally NOT tested here (would pass incorrectly). They're
     # documented in AGENT_ACCESSIBLE_ENDPOINTS with TODO markers for Phase 2/3 fix.
@@ -281,6 +283,80 @@ def test_human_only_endpoints_reject_agent_key(client, agent_key_header):
     assert response.status_code in (403, 404), "PATCH /toolkits should reject agent key"
 
 
+def test_unbind_credential_rejects_agent_key(admin_client, client, agent_key_header):
+    """DELETE /toolkits/{id}/credentials/{cred_id} must reject agent keys.
+
+    Regression for the auth-guard gap: the unbind endpoint previously had no
+    explicit auth check, so any authenticated caller (including agent keys)
+    could detach a credential. It now mirrors the bind endpoint's inline
+    is_admin check. Admin must still be able to unbind (204).
+    """
+    import json as _json  # noqa: PLC0415
+
+    # Admin sets up a dedicated toolkit + an API (so a credential can be stored
+    # against it) + credential + binding.
+    tk = admin_client.post("/toolkits", json={"name": "unbind-auth-test"})
+    assert tk.status_code in (200, 201), tk.text
+    toolkit_id = tk.json()["id"]
+
+    api_id = "unbind-auth.example.com"
+    spec = {
+        "openapi": "3.1.0",
+        "info": {"title": api_id, "version": "1.0.0"},
+        "servers": [{"url": f"https://{api_id}"}],
+        "components": {"securitySchemes": {"BearerAuth": {"type": "http", "scheme": "bearer"}}},
+        "paths": {
+            "/status/200": {
+                "get": {"operationId": "ok", "responses": {"200": {"description": "ok"}}}
+            }
+        },
+    }
+    imp = admin_client.post(
+        "/import",
+        json={
+            "sources": [
+                {"type": "inline", "content": _json.dumps(spec), "filename": f"{api_id}.json"}
+            ]
+        },
+    )
+    assert imp.status_code in (200, 201), imp.text
+
+    cred = admin_client.post(
+        "/credentials",
+        json={
+            "label": "Unbind Auth Cred",
+            "value": "secret",
+            "api_id": api_id,
+            "auth_type": "bearer",
+        },
+    )
+    assert cred.status_code in (200, 201), cred.text
+    cred_id = cred.json()["id"]
+
+    bind = admin_client.post(f"/toolkits/{toolkit_id}/credentials", json={"credential_id": cred_id})
+    assert bind.status_code in (200, 201), bind.text
+
+    # Agent key must NOT be able to unbind.
+    agent_resp = client.delete(
+        f"/toolkits/{toolkit_id}/credentials/{cred_id}", headers=agent_key_header
+    )
+    assert agent_resp.status_code == 403, (
+        f"Agent key should be rejected (403) on unbind, got {agent_resp.status_code}"
+    )
+
+    # The binding must still exist after the rejected agent attempt.
+    bound = admin_client.get(f"/toolkits/{toolkit_id}/credentials").json()
+    assert any(b["credential_id"] == cred_id for b in bound), (
+        "Credential should remain bound after a rejected agent unbind"
+    )
+
+    # Admin can unbind (204).
+    admin_resp = admin_client.delete(f"/toolkits/{toolkit_id}/credentials/{cred_id}")
+    assert admin_resp.status_code == 204, (
+        f"Admin should be able to unbind (204), got {admin_resp.status_code}"
+    )
+
+
 def test_openapi_spec_endpoint_count_unchanged(client):
     """Verify the total number of endpoints hasn't changed unexpectedly.
 
@@ -298,7 +374,7 @@ def test_openapi_spec_endpoint_count_unchanged(client):
 
     # This is the baseline from v0.7.1 + Phase 1 changes
     # If this fails, audit the diff to ensure new endpoints have correct auth
-    EXPECTED_OPERATION_COUNT = 94  # main's 90 + GET /traces/usage (Monitor page) + credentials revamp v2 (POST /credentials/{id}/test, GET /credentials/{id}/bindings, GET /audit)
+    EXPECTED_OPERATION_COUNT = 95  # main's 90 + GET /traces/usage (Monitor page) + credentials revamp v2 (POST /credentials/{id}/test, GET /credentials/{id}/bindings, GET /audit) + GET /toolkits/{id}/agents (toolkit detail agents layer)
 
     assert total_operations == EXPECTED_OPERATION_COUNT, (
         f"Expected {EXPECTED_OPERATION_COUNT} operations, found {total_operations}. "

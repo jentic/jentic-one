@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Search } from 'lucide-react';
+import { KeyRound, Filter } from 'lucide-react';
 import type { CredentialOut } from '@/api/types';
 import { api } from '@/api/client';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
+import { SearchInput } from '@/components/ui/SearchInput';
 import { ErrorAlert } from '@/components/ui/ErrorAlert';
 import { LoadingState } from '@/components/ui/LoadingState';
 import { StatusDot, type CredentialStatus } from '@/components/credentials';
@@ -113,17 +114,13 @@ export function BindExistingCredentialDialog({
 						credential itself.
 					</p>
 
-					<div className="relative">
-						<Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-						<input
-							type="text"
-							value={filter}
-							onChange={(e) => setFilter(e.target.value)}
-							placeholder="Filter by label, API, or identity"
-							className="border-border bg-background focus:ring-primary/40 h-9 w-full rounded-lg border pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
-							aria-label="Filter credentials"
-						/>
-					</div>
+					<SearchInput
+						value={filter}
+						onValueChange={setFilter}
+						icon={<Filter className="h-3.5 w-3.5" />}
+						placeholder="Filter by label, API, or identity"
+						aria-label="Filter credentials"
+					/>
 
 					{error && <ErrorAlert message={error} />}
 

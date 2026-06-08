@@ -12,8 +12,10 @@ import { ConfirmDeleteDialog } from '@/components/ui/ConfirmDeleteDialog';
 import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { ApiDetailView } from '@/components/workspace/api-detail';
 import { CredentialEditSheet } from '@/components/credentials/CredentialEditSheet';
+import { ToolkitDetailSheet } from '@/components/toolkits/ToolkitDetailSheet';
 import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialog';
 import { useCredentialEditSheet } from '@/hooks/useCredentialEditSheet';
+import { useToolkitDetailSheet } from '@/hooks/useToolkitDetailSheet';
 import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
 import { api, apiUrl } from '@/api/client';
@@ -28,6 +30,7 @@ export default function ApiDetailPage() {
 
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const editSheet = useCredentialEditSheet();
+	const toolkitSheet = useToolkitDetailSheet();
 	const addDialog = useAddCredentialDialog();
 
 	useEffect(() => {
@@ -192,6 +195,7 @@ export default function ApiDetailPage() {
 						apiId={apiId}
 						onEditCredential={(cred) => editSheet.openSheet(cred.id)}
 						onAddCredential={() => apiData && addDialog.openForApi(apiData)}
+						onOpenToolkit={(id) => toolkitSheet.openSheet(id)}
 					/>
 				) : null}
 
@@ -209,6 +213,13 @@ export default function ApiDetailPage() {
 				open={editSheet.open}
 				onClose={editSheet.closeSheet}
 				onAfterClose={editSheet.clearSticky}
+			/>
+
+			<ToolkitDetailSheet
+				toolkitId={toolkitSheet.stickyId}
+				open={toolkitSheet.open}
+				onClose={toolkitSheet.closeSheet}
+				onAfterClose={toolkitSheet.clearSticky}
 			/>
 
 			<AddCredentialDialog

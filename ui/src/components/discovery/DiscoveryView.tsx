@@ -15,9 +15,6 @@ import { AppLink } from '@/components/ui/AppLink';
 import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { toast } from '@/components/ui/toastStore';
 import { useImportCatalogApi } from '@/hooks/useImportCatalogApi';
-import { useCredentialImportedSync } from '@/hooks/useCredentialImportedSync';
-import { useAddCredentialDialog } from '@/hooks/useAddCredentialDialog';
-import { AddCredentialDialog } from '@/components/credentials/AddCredentialDialog';
 
 export interface DiscoveryViewProps {
 	forcedSource?: DiscoverySource;
@@ -40,24 +37,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 	const wfParam = searchParams.get('wf');
 	const [stickyInspect, setStickyInspect] = useState<string | null>(inspectParam);
 	const [selectedEntity, setSelectedEntity] = useState<DiscoveryEntity | undefined>(undefined);
-
-	// Hosts the v3 "Add credential" dialog so it overlays on top of
-	// `ApiDetailSheet` rather than route-navigating away from it. The
-	// dialog and the sheet are siblings in the React tree, both
-	// portaled into `document.body` via their respective primitives;
-	// Esc only dismisses the topmost layer (the dialog).
-	const addDialog = useAddCredentialDialog();
-	const handleAddCredentialFromSheet = useCallback(
-		(apiId: string) => {
-			const stub = {
-				id: apiId,
-				name: selectedEntity?.summary ?? apiId,
-				source: selectedEntity?.source ?? 'directory',
-			} as unknown as Parameters<typeof addDialog.openForApi>[0];
-			addDialog.openForApi(stub);
-		},
-		[addDialog, selectedEntity?.summary, selectedEntity?.source],
-	);
 
 	useEffect(() => {
 		if (inspectParam) {
@@ -177,23 +156,8 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 		};
 	}, [input, inspectParam, inspectWfParam, setSearchParams]);
 
-	// ── Credential import listener ───────────────────────────────────────
+	// ── Catalog refresh / query client ───────────────────────────────────
 	const queryClient = useQueryClient();
-	const selectedEntityRef = useRef(selectedEntity);
-	selectedEntityRef.current = selectedEntity;
-
-	const handleCredentialImported = useCallback((apiId: string) => {
-		setSelectedEntity((prev) => {
-			if (prev?.id === apiId) {
-				return { ...prev, source: 'workspace' };
-			}
-			return prev;
-		});
-	}, []);
-
-	useCredentialImportedSync({
-		onImported: handleCredentialImported,
-	});
 
 	// Sync URL → state for external navigation only
 	const urlQ = searchParams.get('q') ?? '';
@@ -512,15 +476,6 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 				onSelectOp={handleSelectOp}
 				onSelectWf={handleSelectWf}
 				onSelectApi={handleSelectApi}
-				onAddCredential={handleAddCredentialFromSheet}
-			/>
-
-			<AddCredentialDialog
-				state={addDialog.state}
-				onClose={addDialog.close}
-				onGoToStep={addDialog.goToStep}
-				onSelectApi={addDialog.setSelectedApi}
-				onSavedCredentialId={addDialog.setSavedCredentialId}
 			/>
 
 			<WorkflowDetailSheet
