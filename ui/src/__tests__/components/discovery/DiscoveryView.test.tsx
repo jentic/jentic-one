@@ -1306,10 +1306,18 @@ describe('DiscoveryView', () => {
 
 		const input = within(sheet).getByTestId('ops-filter-input');
 		await user.type(input, 'needle');
-		await waitFor(() => {
-			const visibleRows = within(sheet).getAllByTestId('sheet-ops-row');
-			expect(visibleRows).toHaveLength(1);
-		});
+		// The filter narrows client-side, but typing can interleave with a
+		// re-render (the sheet refetches the full op list when a filter is
+		// active). Wait for the non-matching rows to drop out before counting,
+		// with explicit headroom so a loaded CI runner doesn't sample mid-transition.
+		await waitFor(
+			() => {
+				expect(within(sheet).queryByText('Boring item 0')).toBeNull();
+				const visibleRows = within(sheet).getAllByTestId('sheet-ops-row');
+				expect(visibleRows).toHaveLength(1);
+			},
+			{ timeout: 4000 },
+		);
 		expect(within(sheet).getByText('Find a needle')).toBeInTheDocument();
 	});
 
