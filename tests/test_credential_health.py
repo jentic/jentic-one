@@ -193,6 +193,62 @@ def test_test_endpoint_leaves_healthy_untouched_on_429(admin_client, monkeypatch
     assert row["healthy"] is None, "429 must not write a health verdict"
 
 
+def test_test_endpoint_leaves_healthy_untouched_on_404(admin_client, monkeypatch):
+    """404/405 = probe path missing, not a credential verdict — must not flip green.
+
+    The /test response still reports ok=True for a 404 (the host answered, the
+    credential wasn't rejected), but a previously-broken credential must NOT be
+    silently marked healthy just because a bare-root probe 404s. This mirrors the
+    broker, which only writes positive health on status < 400.
+    """
+    api_id = "health-writeback-404.example.com"
+    _register_api(admin_client, api_id)
+    cid = _create_credential(admin_client, api_id)
+
+    # Drive it broken through the real path first (401 probe), so we prove a
+    # subsequent 404 does NOT clear the red — no event-loop juggling needed.
+    _patch_probe(monkeypatch, 401)
+    admin_client.post(f"/credentials/{cid}/test")
+    broken = next(c for c in admin_client.get("/credentials").json() if c["id"] == cid)
+    assert broken["healthy"] is False
+
+    _patch_probe(monkeypatch, 404)
+    resp = admin_client.post(f"/credentials/{cid}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True, "404 is still 'ok' for the UI (host answered)"
+
+    listed = admin_client.get("/credentials").json()
+    row = next(c for c in listed if c["id"] == cid)
+    assert row["healthy"] is False, "404 must not flip a broken credential green"
+
+
+def test_test_endpoint_leaves_healthy_untouched_on_500(admin_client, monkeypatch):
+    """5xx = upstream availability problem, not a credential verdict.
+
+    A previously-healthy credential must stay green through a transient upstream
+    500 — and a previously-broken one must stay red. We assert the green case
+    here (the broker treats 5xx as "leave health alone", not "broken").
+    """
+    api_id = "health-writeback-500.example.com"
+    _register_api(admin_client, api_id)
+    cid = _create_credential(admin_client, api_id)
+
+    # Drive it healthy first (2xx probe), then prove a 500 leaves it green.
+    _patch_probe(monkeypatch, 200)
+    admin_client.post(f"/credentials/{cid}/test")
+    healthy = next(c for c in admin_client.get("/credentials").json() if c["id"] == cid)
+    assert healthy["healthy"] is True
+
+    _patch_probe(monkeypatch, 503)
+    resp = admin_client.post(f"/credentials/{cid}/test")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["hint"] == "upstream_error"
+
+    listed = admin_client.get("/credentials").json()
+    row = next(c for c in listed if c["id"] == cid)
+    assert row["healthy"] is True, "5xx must not flip a healthy credential to broken"
+
+
 # ── SSRF DNS-rebinding guard ─────────────────────────────────────────────────
 #
 # The /test guard used to validate the host, then let httpx independently

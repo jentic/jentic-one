@@ -115,6 +115,10 @@ export function CredentialsList({
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['credentials'] });
+			// Deleting a Pipedream connection removes its oauth_broker_accounts
+			// row; the broker-accounts query backs the connection cards, so it
+			// must refresh too or the deleted connection lingers.
+			queryClient.invalidateQueries({ queryKey: ['oauth-broker-accounts'] });
 			queryClient.invalidateQueries({ queryKey: ['toolkit-card-enrichment'] });
 			queryClient.invalidateQueries({ queryKey: ['workspace'] });
 			setDeleteTarget(null);

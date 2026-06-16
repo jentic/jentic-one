@@ -513,7 +513,7 @@ async def test_credential(
 
     # 401/403 = the credential was rejected by the upstream; this is an authoritative
     # "broken" signal. 404/405 means the probe path doesn't exist but the host responded —
-    # we count that as "ok" because the credential itself wasn't rejected.
+    # we count that as "ok" for the UI because the credential itself wasn't rejected.
     ok = (status < 400) or (status in (404, 405))
     hint: str | None = None
     if status in (401, 403):
@@ -524,11 +524,13 @@ async def test_credential(
         hint = "upstream_error"
 
     # Persist the verdict so the StatusDot reflects the explicit test, mirroring
-    # what the broker writes on live traffic. Only 401/403 is an authoritative
-    # "rejected" signal; an `ok` probe means the credential was accepted. We
-    # deliberately don't touch `healthy` for ambiguous statuses (429/5xx) — those
-    # are upstream availability problems, not credential verdicts.
-    if ok:
+    # what the broker writes on live traffic. We only persist a *positive* verdict
+    # on a genuine success (status < 400) — a 404/405 means the probe path didn't
+    # exist, which is no evidence the credential works, so we must NOT flip a
+    # previously-broken credential green. Only 401/403 is an authoritative
+    # "rejected" signal. Ambiguous statuses (404/405/429/5xx) leave `healthy`
+    # untouched. This matches the broker's <400-only positive-health rule.
+    if status < 400:
         await vault.mark_credential_used(cid)
         await vault.mark_credential_health(cid, healthy=True)
     elif status in (401, 403):
