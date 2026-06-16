@@ -503,12 +503,17 @@ async def test_credential(
             "message": "Probe timed out after 5 seconds.",
         }
     except httpx.HTTPError as exc:
+        # Log the detail server-side for debugging, but don't echo the exception
+        # text to the caller — httpx error messages can embed the resolved host,
+        # IP, or other connection internals (CodeQL: information exposure through
+        # an exception). The agent only needs to know the probe failed.
+        log.info("Credential test probe failed for %s: %s", cid, exc)
         return {
             "ok": False,
             "status": None,
             "hint": "network_error",
             "probe_url": probe_url,
-            "message": f"Network error: {exc}",
+            "message": "Could not reach the upstream host.",
         }
 
     # 401/403 = the credential was rejected by the upstream; this is an authoritative
