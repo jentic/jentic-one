@@ -21,21 +21,26 @@ export function SchemePillBar({ options, active, onChange }: SchemePillBarProps)
 		<fieldset>
 			<legend className="text-muted-foreground mb-1.5 block text-xs">Auth method</legend>
 			<div className="flex flex-wrap gap-1.5">
-				{options.map((opt) => (
-					<Button
-						key={opt.name}
-						variant={active?.name === opt.name ? 'primary' : 'outline'}
-						size="sm"
-						onClick={() => onChange(opt)}
-						className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
-							active?.name === opt.name
-								? 'font-medium'
-								: 'bg-background text-muted-foreground border-border hover:text-foreground'
-						}`}
-					>
-						{opt.label}
-					</Button>
-				))}
+				{options.map((opt) => {
+					const isActive = active?.name === opt.name;
+					return (
+						<Button
+							key={opt.name}
+							type="button"
+							aria-pressed={isActive}
+							variant={isActive ? 'primary' : 'outline'}
+							size="sm"
+							onClick={() => onChange(opt)}
+							className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
+								isActive
+									? 'font-medium'
+									: 'bg-background text-muted-foreground border-border hover:text-foreground'
+							}`}
+						>
+							{opt.label}
+						</Button>
+					);
+				})}
 			</div>
 		</fieldset>
 	);
