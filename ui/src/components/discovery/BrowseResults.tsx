@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRovingGridFocus } from '@/hooks/useRovingGridFocus';
-import { subscribeCredentialImported } from '@/lib/events/credentialImported';
+import { subscribeApiImported } from '@/lib/events/apiImported';
 
 const BROWSE_PAGE_SIZE = 24;
 
@@ -117,9 +117,15 @@ export function BrowseResults({
 		});
 	}, [apisPage, page, apisQuery.isPlaceholderData]);
 
-	// Optimistically flip a row from directory → workspace on import
+	// Optimistically flip a row from directory → workspace on import.
+	// Subscribes to the canonical `apiImported` channel introduced in
+	// the credentials revamp v2 split — the legacy `credentialImported`
+	// dual-emit was removed in v3 cleanup, so subscribers that care
+	// about API arrival (this one) listen here, while subscribers that
+	// care about credential arrival (toasts in WorkspaceView) listen on
+	// `credentialImported`.
 	useEffect(() => {
-		const off = subscribeCredentialImported((evt) => {
+		const off = subscribeApiImported((evt) => {
 			if (!evt.api_id) return;
 			setAccumulator((prev) => {
 				const idx = prev.findIndex((row) => row?.id === evt.api_id);

@@ -85,7 +85,7 @@ describe('WorkspacePage', () => {
 		const stripeTile = tiles.find((t) => t.dataset.tileId === 'stripe.com')!;
 		const githubTile = tiles.find((t) => t.dataset.tileId === 'github.com')!;
 		expect(within(stripeTile).getByText(/1 credential/)).toBeInTheDocument();
-		expect(within(githubTile).getByText(/No credential/)).toBeInTheDocument();
+		expect(within(githubTile).getByText(/Add credential/)).toBeInTheDocument();
 	});
 
 	it('renders the Workflows section with an empty CTA when there are no workflows yet', async () => {
@@ -262,6 +262,41 @@ describe('WorkspacePage', () => {
 		});
 		// Tiles whose API isn't bound to any toolkit don't show a toolkit count.
 		expect(within(githubTile).queryByText(/toolkit/i)).toBeNull();
+	});
+
+	it('opens the toolkit detail sheet (not the full page) when a toolkit card is clicked', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/toolkits', () =>
+				HttpResponse.json([
+					{
+						id: 'tk-billing',
+						name: 'Billing Ops',
+						description: 'Billing reconciliation',
+					},
+				]),
+			),
+			http.get('/toolkits/tk-billing', () =>
+				HttpResponse.json({
+					id: 'tk-billing',
+					name: 'Billing Ops',
+					description: 'Billing reconciliation',
+					disabled: false,
+					credentials: [],
+				}),
+			),
+		);
+		renderWorkspace();
+
+		const card = await screen.findByRole('link', { name: /billing ops/i });
+		await user.click(card);
+
+		// The detail sheet (a dialog) opens in-place rather than navigating
+		// to the full /toolkits/:id page. Assert the toolkit sheet itself is
+		// what opened by finding its body content.
+		const dialog = await screen.findByRole('dialog');
+		expect(dialog).toBeInTheDocument();
+		expect(await within(dialog).findByText(/bound agents/i)).toBeInTheDocument();
 	});
 
 	it('filters the visible API tiles via the server when the user types', async () => {

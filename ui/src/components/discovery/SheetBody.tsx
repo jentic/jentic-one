@@ -192,8 +192,8 @@ export function SheetBody({
 
 				{!sourceResolving && source === 'directory' && (
 					<p className="text-muted-foreground/80 text-xs">
-						Importing registers the spec locally so operations become browsable. Add
-						credentials from Workspace to make them runnable.
+						Importing registers the spec locally so its operations and workflows become
+						browsable in your workspace.
 					</p>
 				)}
 			</div>

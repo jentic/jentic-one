@@ -55,6 +55,20 @@ export interface ToolkitOut {
 	pending_requests?: number;
 }
 
+/** A single agent granted access to a toolkit (reverse of agent grants). */
+export interface ToolkitAgentRow {
+	client_id: string;
+	client_name: string;
+	status: string;
+	granted_at?: number | null;
+	granted_by?: string | null;
+}
+
+/** Response shape of `GET /toolkits/{id}/agents`. */
+export interface ToolkitAgentsResponse {
+	agents: ToolkitAgentRow[];
+}
+
 export interface ToolkitCreate {
 	name: string;
 	description?: string | null;
@@ -100,32 +114,47 @@ export interface CredentialOut {
 	server_variables?: Record<string, string> | null;
 	scheme?: Record<string, unknown> | null;
 	routes?: string[] | null;
-	scheme_name?: string | null;
+	// NB: the backend / generated client narrow `auth_type` to a fixed enum; we
+	// keep it as a free string here because the UI also renders Pipedream-synced
+	// values. `scheme_name` is deliberately NOT on this type — it is only
+	// returned by CredentialBindingOut, never by GET /credentials.
+	description?: string | null;
 	created_at?: number | null;
 	updated_at?: number | null;
+	last_used_at?: number | null;
 	account_id?: string | null;
 	app_slug?: string | null;
 	synced_at?: number | null;
+	healthy?: boolean | null;
+	/**
+	 * Unix timestamp of the last health observation — a broker call verdict
+	 * (<400 → healthy, 401/403 → broken) or an explicit Test connection.
+	 * Null until the credential has been exercised. Drives the "checked Xm ago"
+	 * line in the StatusDot tooltip.
+	 */
+	health_checked_at?: number | null;
 }
 
 export interface CredentialCreate {
 	label: string;
 	api_id?: string | null;
-	auth_type?: 'bearer' | 'basic' | 'apiKey' | null;
+	auth_type?: 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'none' | null;
 	identity?: string | null;
 	value: string;
 	server_variables?: Record<string, string> | null;
+	description?: string | null;
 }
 
 export interface CredentialPatch {
 	label?: string | null;
 	api_id?: string | null;
-	auth_type?: 'bearer' | 'basic' | 'apiKey' | null;
+	auth_type?: 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'none' | null;
 	identity?: string | null;
 	value?: string | null;
 	server_variables?: Record<string, string> | null;
 	scheme?: Record<string, unknown> | null;
 	routes?: string[] | null;
+	description?: string | null;
 }
 
 export interface ApiOut {

@@ -51,6 +51,7 @@ export type { ToolkitKeyCreated } from './models/ToolkitKeyCreated';
 export type { ToolkitKeyOut } from './models/ToolkitKeyOut';
 export type { ToolkitOut } from './models/ToolkitOut';
 export type { ToolkitPatch } from './models/ToolkitPatch';
+export type { TraceChildOut } from './models/TraceChildOut';
 export type { TraceListPage } from './models/TraceListPage';
 export type { TraceOut } from './models/TraceOut';
 export type { TraceStepOut } from './models/TraceStepOut';

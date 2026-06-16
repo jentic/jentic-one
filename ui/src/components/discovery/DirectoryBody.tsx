@@ -142,8 +142,8 @@ export function DirectoryBody({
 				</div>
 
 				<p className="text-muted-foreground/80 text-xs">
-					Importing registers the spec locally so operations become browsable. Add
-					credentials from Workspace to make them runnable.
+					Importing registers the spec locally so its operations and workflows become
+					browsable in your workspace.
 				</p>
 			</div>
 
@@ -266,8 +266,8 @@ function DirectoryWorkflowsSection({ apiId }: { apiId: string }) {
 		<section data-testid="sheet-workflows-section-directory">
 			<SectionTitle count={workflows.length}>Workflows</SectionTitle>
 			<p className="text-muted-foreground/80 mb-2 text-xs italic">
-				These ship with the public catalog. Add a credential and they'll be imported
-				alongside the API spec.
+				These ship with the public catalog. Import the API and they'll come along with the
+				spec.
 			</p>
 			<ul className="divide-border/40 -mx-2 divide-y" data-testid="sheet-wf-list-directory">
 				{workflows.map((wf) => {
@@ -432,7 +432,7 @@ export function DirectoryInspectPanel({
 							</Button>
 						</div>
 						<p className="text-muted-foreground text-xs">
-							Import this API to make this operation executable with your credentials.
+							Import this API to make this operation browsable in your workspace.
 						</p>
 					</div>
 				) : undefined

@@ -61,3 +61,38 @@ function extractMessage(body: unknown): string | null {
 
 	return null;
 }
+
+/**
+ * Turn a *thrown* error from the generated OpenAPI client (`ApiError`, which
+ * already carries `{ status, statusText, body }`) — or any unknown error — into
+ * a short, human-readable message suitable for `ErrorAlert`/`toast`.
+ *
+ * The generated client's own `.message` is the unhelpful
+ * `"Generic Error: status: 409; status text: Conflict; body: {...}"`, so we
+ * prefer the parsed `body` (FastAPI's `{ detail }`) and fall back to a
+ * status-specific phrase before ever exposing that raw string.
+ */
+export function messageFromApiError(err: unknown, fallback?: string): string {
+	if (!err) return fallback ?? 'An unknown error occurred.';
+	const e = err as { status?: number; statusText?: string; body?: unknown; message?: unknown };
+
+	const fromBody = extractMessage(e.body);
+	if (fromBody) return fromBody;
+
+	switch (e.status) {
+		case 401:
+			return 'Not authenticated — please log in first.';
+		case 403:
+			return 'You do not have permission to perform this action.';
+		case 404:
+			return 'Not found — it may have already been removed.';
+		case 409:
+			return 'Conflict — this may have already been done.';
+	}
+
+	if (typeof e.message === 'string' && e.message && !e.message.startsWith('Generic Error:')) {
+		return e.message;
+	}
+	if (e.statusText && e.status) return `${e.status}: ${e.statusText}`;
+	return fallback ?? `Unexpected error (HTTP ${e.status ?? '?'})`;
+}

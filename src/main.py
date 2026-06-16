@@ -309,6 +309,7 @@ app.include_router(
 app.include_router(apis_router.router, tags=["catalog"])
 app.include_router(search_router.router, tags=["search"])
 app.include_router(creds_router.router, tags=["credentials"])
+app.include_router(creds_router.audit_router)
 app.include_router(toolkits_router.router, tags=["toolkits"])
 app.include_router(toolkits_policy_router, prefix="/toolkits", tags=["toolkits"])
 app.include_router(access_requests_router.router, prefix="/toolkits", tags=["toolkits"])

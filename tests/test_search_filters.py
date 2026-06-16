@@ -36,11 +36,16 @@ def _seed_catalog_manifests(monkeypatch, tmp_path):
     api_manifest.write_text(
         json.dumps(
             [
-                # Use a vendor that is NOT covered by the workspace seed
-                # below so the dedup heuristic doesn't strip it.
+                # Use a vendor that no other test registers as a workspace
+                # API. The dedup heuristic in /apis drops a catalog row when a
+                # local API already covers its leaf vendor (extract_vendor →
+                # last two dot-parts). `.test.io` collided with
+                # `forced-petstore.test.io` from test_multi_source_lifecycle in
+                # full-suite runs (shared session DB), dropping this row. A
+                # dedicated `.sffixture.invalid` vendor is collision-proof.
                 {
-                    "api_id": "stripe-charge-cat.test.io",
-                    "path": "apis/openapi/stripe-charge-cat.test.io",
+                    "api_id": "stripe-charge-cat.sffixture.invalid",
+                    "path": "apis/openapi/stripe-charge-cat.sffixture.invalid",
                     "spec_url": "https://example.invalid/stripe-charge-cat.json",
                 }
             ]
@@ -51,9 +56,9 @@ def _seed_catalog_manifests(monkeypatch, tmp_path):
         json.dumps(
             [
                 {
-                    "api_id": "stripe-charge-cat.test.io",
-                    "source_id": "stripe-charge-cat.test.io",
-                    "path": "workflows/stripe-charge-cat.test.io",
+                    "api_id": "stripe-charge-cat.sffixture.invalid",
+                    "source_id": "stripe-charge-cat.sffixture.invalid",
+                    "path": "workflows/stripe-charge-cat.sffixture.invalid",
                 }
             ]
         )
@@ -164,7 +169,8 @@ def test_default_returns_mixed_local_and_catalog_rows(admin_client, _seeded_work
         (
             r
             for r in rows
-            if r.get("type") == "catalog_api" and r.get("api_id") == "stripe-charge-cat.test.io"
+            if r.get("type") == "catalog_api"
+            and r.get("api_id") == "stripe-charge-cat.sffixture.invalid"
         ),
         None,
     )
@@ -281,28 +287,37 @@ def test_apis_endpoint_carries_has_workflows_for_catalog_rows(admin_client, _see
     contract so the field can't silently disappear from `/apis` again.
 
     `_seed_catalog_manifests` (autouse) provides:
-      - one catalog API: `stripe-charge-cat.test.io`
+      - one catalog API: `stripe-charge-cat.sffixture.invalid`
       - one matching workflow manifest entry for the same `api_id`
 
     Local rows must NOT carry the field — workspace workflows are
     already first-class entities listed under `GET /workflows` and
     don't need the chip.
-    """
-    resp = admin_client.get("/apis")
-    assert resp.status_code == 200, resp.text
-    rows = resp.json()["data"]
 
+    NOTE: `/apis` orders local rows before catalog rows and paginates
+    (default limit 20). In a full-suite run the shared session DB holds
+    far more than 20 workspace APIs, which would push the seeded catalog
+    row off page 1 of the unfiltered listing. We therefore query each
+    source explicitly with a high limit so the assertions are
+    order-independent — this is a test-isolation concern, not a product
+    behaviour we want to pin.
+    """
     # Catalog row for the seeded vendor must carry has_workflows=True.
+    catalog_resp = admin_client.get("/apis", params={"source": "catalog", "limit": 100})
+    assert catalog_resp.status_code == 200, catalog_resp.text
+    catalog_rows = catalog_resp.json()["data"]
     seeded = next(
-        (r for r in rows if r.get("id") == "stripe-charge-cat.test.io"),
+        (r for r in catalog_rows if r.get("id") == "stripe-charge-cat.sffixture.invalid"),
         None,
     )
-    assert seeded is not None, "expected the seeded catalog row in /apis"
+    assert seeded is not None, "expected the seeded catalog row in /apis?source=catalog"
     assert seeded.get("source") == "catalog"
     assert seeded.get("has_workflows") is True
 
     # Local rows now also carry has_workflows (from workspace enrichment).
-    local_rows = [r for r in rows if r.get("source") == "local"]
+    local_resp = admin_client.get("/apis", params={"source": "local", "limit": 100})
+    assert local_resp.status_code == 200, local_resp.text
+    local_rows = [r for r in local_resp.json()["data"] if r.get("source") == "local"]
     assert local_rows, "expected at least one workspace API in /apis"
     for r in local_rows:
         assert "has_workflows" in r, f"local row missing has_workflows field: {r}"

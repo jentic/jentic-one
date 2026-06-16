@@ -94,14 +94,17 @@ test.describe('Reverse-proxy prefix mount', () => {
 			.first()
 			.click();
 		await expect(page).toHaveURL(`${PREFIX_BASE}/credentials`);
-		await expect(page.getByRole('heading', { name: /credentials/i })).toBeVisible({
+		// Exact match on the page title — the credentials list renders section
+		// headings like "Credentials 1" that also match /credentials/i, which
+		// trips Playwright strict mode.
+		await expect(page.getByRole('heading', { name: 'Credentials', exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
 
 		// 3. Cold-boot deep-link path — reloading must keep the URL and re-render.
 		await page.reload();
 		await expect(page).toHaveURL(`${PREFIX_BASE}/credentials`);
-		await expect(page.getByRole('heading', { name: /credentials/i })).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Credentials', exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
 	});

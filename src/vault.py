@@ -1,5 +1,6 @@
 """Fernet-encrypted credential vault."""
 
+import base64
 import json
 import logging
 import os
@@ -149,7 +150,15 @@ def _fernet() -> Fernet:
         try:
             return Fernet(key.encode())
         except Exception:
-            pass  # fall through to auto-generate
+            # A malformed JENTIC_VAULT_KEY would otherwise silently fall through
+            # to a freshly generated key, leaving every existing ciphertext
+            # permanently undecryptable. Warn loudly so the misconfiguration is
+            # visible rather than manifesting as opaque decrypt failures later.
+            _vault_log.warning(
+                "JENTIC_VAULT_KEY is set but invalid; ignoring it and falling back to "
+                "the on-disk key. Existing credentials encrypted with a different key "
+                "will fail to decrypt. Verify JENTIC_VAULT_KEY is a valid Fernet key."
+            )
     # Auto-generate and persist a key on first use
     if _KEY_FILE.exists():
         key = _KEY_FILE.read_text().strip()
@@ -285,6 +294,7 @@ async def create_credential(
     server_variables: dict[str, str] | None = None,
     scheme: dict | None = None,
     routes: list[str] | None = None,
+    description: str | None = None,
 ) -> dict:
     base_slug = _credential_slug(api_id, label)
     enc = encrypt(value)
@@ -328,8 +338,19 @@ async def create_credential(
         scheme_json = json.dumps(scheme) if scheme else None
 
         await db.execute(
-            "INSERT INTO credentials (id, label, env_var, encrypted_value, api_id, auth_type, identity, server_variables, scheme) VALUES (?,?,?,?,?,?,?,?,?)",
-            (cid, label, env_var, enc, api_id, scheme_name, identity, sv_json, scheme_json),
+            "INSERT INTO credentials (id, label, env_var, encrypted_value, api_id, auth_type, identity, server_variables, scheme, description) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                cid,
+                label,
+                env_var,
+                enc,
+                api_id,
+                scheme_name,
+                identity,
+                sv_json,
+                scheme_json,
+                description,
+            ),
         )
 
         # Insert into credential_routes
@@ -349,7 +370,8 @@ async def create_credential(
 # Explicit column list — insulates _row_to_dict from schema churn.
 # If a column is added/removed, only this query and _row_to_dict need updating.
 _CREDENTIAL_COLS = (
-    "id, label, created_at, updated_at, api_id, auth_type, identity, server_variables, scheme"
+    "id, label, created_at, updated_at, api_id, auth_type, identity, server_variables, scheme, "
+    "last_used_at, description, healthy, health_checked_at"
 )
 
 
@@ -388,6 +410,7 @@ async def patch_credential(
     server_variables: dict[str, str] | None = None,
     scheme: dict | None = None,
     routes: list[str] | None = None,
+    description: str | None = None,
 ) -> dict | None:
     async with get_db() as db:
         if label:
@@ -413,6 +436,11 @@ async def patch_credential(
             await db.execute(
                 "UPDATE credentials SET identity=?, updated_at=unixepoch() WHERE id=?",
                 (identity, cid),
+            )
+        if description is not None:
+            await db.execute(
+                "UPDATE credentials SET description=?, updated_at=unixepoch() WHERE id=?",
+                (description, cid),
             )
         if server_variables is not None:
             sv_json = json.dumps(server_variables) if server_variables else None
@@ -489,6 +517,161 @@ async def delete_credential(cid: str) -> bool:
         cur = await db.execute("DELETE FROM credentials WHERE id=?", (cid,))
         await db.commit()
     return cur.rowcount > 0
+
+
+async def delete_credential_cascade(cid: str) -> bool:
+    """Delete a credential and all locally-owned rows that reference it, atomically.
+
+    Removes `credential_routes`, the `credentials` row, and any
+    `oauth_broker_accounts` rows whose synthesized id matches `cid`, in a single
+    transaction (one commit). This is the "local is source of truth" delete: a
+    mid-sequence crash can no longer orphan an encrypted credential row or leave
+    a dangling broker-account link. Any best-effort upstream revoke (Pipedream)
+    must run *after* this commit, never before.
+
+    Returns True if a `credentials` row was actually removed.
+    """
+    async with get_db() as db:
+        await db.execute("DELETE FROM credential_routes WHERE credential_id=?", (cid,))
+        await db.execute(
+            "DELETE FROM oauth_broker_accounts "
+            "WHERE broker_id || '-' || account_id || '-' || replace(api_host, '.', '-') = ?",
+            (cid,),
+        )
+        cur = await db.execute("DELETE FROM credentials WHERE id=?", (cid,))
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def mark_credential_used(cid: str) -> None:
+    """Best-effort write of `last_used_at` after a successful upstream call.
+
+    Called by the broker on responses with `status_code < 400`. Swallows all
+    exceptions — this must never block or fail the response path. Powers the
+    "Used 2h ago" / "Never used" affordance in the credentials UI.
+    """
+    if not cid:
+        return
+    try:
+        async with get_db() as db:
+            await db.execute("UPDATE credentials SET last_used_at = unixepoch() WHERE id=?", (cid,))
+            await db.commit()
+    except Exception:
+        # Non-fatal: keep the response path clean.
+        _vault_log.debug("mark_credential_used: failed for cid=%s", cid, exc_info=True)
+
+
+async def mark_credential_health(cid: str, healthy: bool) -> None:
+    """Best-effort write of a manual credential's tri-state `healthy` flag.
+
+    Mirrors, for manually-stored credentials, the health signal that Pipedream
+    OAuth credentials already get via `oauth_broker_accounts.healthy`:
+
+      - ``healthy=False`` — the upstream returned 401/403, i.e. the credential
+        was authoritatively rejected. Surfaces as the red `StatusDot` and an
+        "expired / invalid" hint in the credentials UI.
+      - ``healthy=True``  — the upstream accepted the credential (a <400
+        response on a real call, or a successful Test connection probe).
+
+    Written by the broker after each manual-credential call and by
+    `POST /credentials/{id}/test`. Also stamps `health_checked_at` so the UI
+    can say "checked 5m ago". Swallows all exceptions — like
+    `mark_credential_used`, this must never block or fail the response path.
+
+    Note: Pipedream credentials carry their health on `oauth_broker_accounts`
+    (the list query joins it), so this only ever needs to touch manual rows.
+    A blind UPDATE is fine — the broker only calls it with the manual
+    credential id it actually used.
+    """
+    if not cid:
+        return
+    try:
+        async with get_db() as db:
+            await db.execute(
+                "UPDATE credentials SET healthy=?, health_checked_at=unixepoch() WHERE id=?",
+                (1 if healthy else 0, cid),
+            )
+            await db.commit()
+    except Exception:
+        # Non-fatal: keep the response path clean.
+        _vault_log.debug("mark_credential_health: failed for cid=%s", cid, exc_info=True)
+
+
+async def build_inject_headers_for_credential(cid: str) -> tuple[dict[str, str], dict | None]:
+    """Build the headers that the broker would inject for a single credential.
+
+    Returns `(headers, credential_dict)`. `credential_dict` is the metadata
+    record (with decrypted `value` filled in), or `None` if the credential
+    doesn't exist. Headers are empty for `auth_type='none'` and for
+    `auth_type='pipedream_oauth'` (those flows don't have a self-test path
+    that doesn't go through the Pipedream proxy).
+
+    Mirrors the per-credential injection branch in `routers/broker.py:_resolve_inject_for_host`
+    so the `POST /credentials/{id}/test` endpoint produces the same wire shape
+    a real proxied call would. Keep these in sync.
+    """
+    async with get_db() as db:
+        row = await _fetch_credential_row(db, cid)
+        if not row:
+            return {}, None
+        cred = _row_to_dict(row)
+        # _row_to_dict omits encrypted_value — fetch it separately.
+        async with db.execute("SELECT encrypted_value FROM credentials WHERE id=?", (cid,)) as cur:
+            v_row = await cur.fetchone()
+    value = decrypt(v_row[0]) if v_row and v_row[0] else None
+    cred["value"] = value
+
+    auth_type = cred.get("auth_type")
+    headers: dict[str, str] = {}
+    if not value or auth_type in ("none", "pipedream_oauth"):
+        return headers, cred
+
+    cred_scheme = cred.get("scheme")
+    identity = cred.get("identity")
+
+    if cred_scheme:
+        if "secret" in cred_scheme:
+            s = cred_scheme["secret"]
+            s_pfx = s.get("prefix", "")
+            if s.get("in") == "header":
+                headers[s["name"]] = f"{s_pfx}{value}"
+            if "identity" in cred_scheme and identity:
+                si = cred_scheme["identity"]
+                if si.get("in") == "header":
+                    headers[si["name"]] = identity
+            return headers, cred
+
+        s_in = cred_scheme.get("in")
+        s_name = cred_scheme.get("name", "Authorization")
+        s_pfx = cred_scheme.get("prefix", "")
+        s_enc = cred_scheme.get("encode")
+        if s_in == "header":
+            if s_enc == "base64":
+                if identity:
+                    raw = f"{identity}:{value}"
+                elif ":" in value:
+                    raw = value
+                else:
+                    raw = f"token:{value}"
+                headers[s_name] = f"{s_pfx}{base64.b64encode(raw.encode()).decode()}"
+            else:
+                headers[s_name] = f"{s_pfx}{value}"
+            if cred_scheme.get("identity_name") and identity:
+                headers[cred_scheme["identity_name"]] = identity
+        return headers, cred
+
+    # No scheme blob — minimal fallback by auth_type.
+    if auth_type in ("bearer", "oauth2"):
+        headers["Authorization"] = f"Bearer {value}"
+    elif auth_type == "basic":
+        if ":" in value:
+            raw = value
+        elif identity:
+            raw = f"{identity}:{value}"
+        else:
+            raw = f"token:{value}"
+        headers["Authorization"] = f"Basic {base64.b64encode(raw.encode()).decode()}"
+    return headers, cred
 
 
 async def get_credential_value(db, vault_id: str) -> str | None:
@@ -660,7 +843,8 @@ async def get_credentials_for_grants(toolkit_ids: list[str], host: str, path: st
 def _row_to_dict(row) -> dict:
     # Columns from _CREDENTIAL_COLS (explicit SELECT — immune to schema churn):
     # 0:id, 1:label, 2:created_at, 3:updated_at, 4:api_id, 5:auth_type,
-    # 6:identity, 7:server_variables, 8:scheme
+    # 6:identity, 7:server_variables, 8:scheme, 9:last_used_at, 10:description,
+    # 11:healthy, 12:health_checked_at
     # routes is synthetic — appended by _fetch_credential_row as the last element
     sv_raw = row[7] if len(row) > 7 else None
     try:
@@ -668,8 +852,13 @@ def _row_to_dict(row) -> dict:
     except Exception:
         server_variables = None
     scheme_raw = row[8] if len(row) > 8 else None
+    last_used_at = row[9] if len(row) > 9 and not isinstance(row[9], list) else None
+    description = row[10] if len(row) > 10 and not isinstance(row[10], list) else None
+    healthy_raw = row[11] if len(row) > 11 and not isinstance(row[11], list) else None
+    healthy = None if healthy_raw is None else bool(healthy_raw)
+    health_checked_at = row[12] if len(row) > 12 and not isinstance(row[12], list) else None
     # routes is the synthetic last element added by _fetch_credential_row
-    routes = row[-1] if len(row) > 9 and isinstance(row[-1], list) else None
+    routes = row[-1] if len(row) > 13 and isinstance(row[-1], list) else None
     return {
         "id": row[0],
         "label": row[1],
@@ -681,4 +870,8 @@ def _row_to_dict(row) -> dict:
         "server_variables": server_variables,
         "scheme": json.loads(scheme_raw) if scheme_raw else None,
         "routes": routes,
+        "last_used_at": last_used_at,
+        "description": description,
+        "healthy": healthy,
+        "health_checked_at": health_checked_at,
     }

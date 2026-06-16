@@ -42,6 +42,12 @@ export default defineConfig({
 		globals: true,
 		setupFiles: ['./src/__tests__/setup.ts'],
 		include: ['src/**/*.test.{ts,tsx}'],
+		// Browser-mode tests share a single Chromium page; on a loaded CI runner
+		// async React re-renders and MSW responses can land mid-assertion and
+		// trip a transient duplicate/not-yet-narrowed match. Retry on CI only —
+		// real regressions fail every attempt, so this won't mask them. Mirrors
+		// the Playwright config's `retries: process.env.CI ? 2 : 0`.
+		retry: process.env.CI ? 2 : 0,
 		coverage: {
 			provider: 'istanbul',
 			reporter: ['text', 'html', 'lcov'],

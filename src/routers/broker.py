@@ -580,6 +580,7 @@ async def broker(request: Request, target: str):
     toolkit_id: str | None = getattr(request.state, "toolkit_id", None)
     grant_ids: list[str] | None = getattr(request.state, "granted_toolkit_ids", None)
     agent_cid: str | None = getattr(request.state, "agent_client_id", None)
+    suspended_ids: list[str] | None = getattr(request.state, "suspended_toolkit_ids", None)
 
     is_simulate = (
         getattr(request.state, "simulate", False)
@@ -615,12 +616,24 @@ async def broker(request: Request, target: str):
     current_api_id: str | None = None
 
     # Helper to write broker traces (reduces duplication across 10+ call sites)
-    async def _write_trace(status: str, http_status: int, error: str | None = None) -> None:
-        """Write trace for this broker call. All broker exit points should call this."""
+    async def _write_trace(
+        status: str,
+        http_status: int,
+        error: str | None = None,
+        *,
+        toolkit_id_override: str | None = None,
+    ) -> None:
+        """Write trace for this broker call. All broker exit points should call this.
+
+        ``toolkit_id_override`` lets denial paths attribute the trace to a
+        specific (e.g. suspended) toolkit even when the request-level
+        ``toolkit_id`` is None — see the agent all-grants-suspended path where
+        the killed toolkit id is known from ``suspended_ids`` (P2-8).
+        """
         if not is_simulate:
             await safe_write_trace(
                 trace_id=execution_id,
-                toolkit_id=toolkit_id,
+                toolkit_id=toolkit_id_override or toolkit_id,
                 agent_id=agent_cid,
                 operation_id=f"{request.method}/{upstream_host}{upstream_path}",
                 workflow_id=None,
@@ -642,6 +655,30 @@ async def broker(request: Request, target: str):
         raise HTTPException(400, "X-Jentic-Callback must be an http or https URL")
 
     if agent_cid is not None and grant_ids is not None and len(grant_ids) == 0:
+        # Distinguish two empty-grant cases so the error message is truthful:
+        #   1. The agent's grants ALL point at suspended (killed) toolkits — the
+        #      grants exist, the toolkits were disabled. Report toolkit_suspended.
+        #   2. The agent genuinely has no grants — an admin must add one.
+        if suspended_ids:
+            _tid = suspended_ids[0]
+            await _write_trace(
+                "toolkit_suspended",
+                403,
+                f"Toolkit '{_tid}' suspended",
+                toolkit_id_override=_tid,
+            )
+            return Response(
+                content=json.dumps(
+                    {
+                        "error": "toolkit_suspended",
+                        "message": f"Toolkit '{_tid}' has been suspended. All API access is blocked. Contact the toolkit owner to restore access.",
+                        "toolkit_id": _tid,
+                    }
+                ),
+                status_code=403,
+                media_type="application/json",
+                headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
+            )
         await _write_trace("policy_denied", 403, "Agent has no toolkit grants")
         return Response(
             content=json.dumps(
@@ -657,8 +694,12 @@ async def broker(request: Request, target: str):
             headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
         )
 
-    # ── Killswitch: reject if any bound toolkit is suspended ───────────────────
-    _kits_to_check = list(grant_ids) if grant_ids else ([toolkit_id] if toolkit_id else [])
+    # ── Killswitch: reject if the bound toolkit is suspended ───────────────────
+    # Agent path: `auth.py` already filtered disabled toolkits out of `grant_ids`
+    # (and surfaced them via `suspended_ids`, handled above), so re-checking each
+    # grant here is a redundant per-iteration DB round-trip. Only the toolkit-key
+    # (`tk_`) path — a single `toolkit_id` with no grants — still needs a check.
+    _kits_to_check = [] if grant_ids else ([toolkit_id] if toolkit_id else [])
     for _tid in _kits_to_check:
         async with get_db() as _ks_db:
             async with _ks_db.execute(
@@ -666,6 +707,7 @@ async def broker(request: Request, target: str):
             ) as _ks_cur:
                 _ks_row = await _ks_cur.fetchone()
         if _ks_row and _ks_row[0]:
+            await _write_trace("toolkit_suspended", 403, f"Toolkit '{_tid}' suspended")
             return Response(
                 content=json.dumps(
                     {
@@ -676,7 +718,7 @@ async def broker(request: Request, target: str):
                 ),
                 status_code=403,
                 media_type="application/json",
-                headers={"X-Jentic-Error": "true"},
+                headers={"X-Jentic-Error": "true", "X-Jentic-Execution-Id": execution_id},
             )
 
     # ── Prefer: wait=N for single broker calls ────────────────────────────────
@@ -1082,6 +1124,43 @@ async def broker(request: Request, target: str):
                     # Write trace for Pipedream proxy call
                     trace_status = "success" if _pd_resp.status_code < 400 else "error"
                     await _write_trace(trace_status, _pd_resp.status_code)
+                    if _pd_resp.status_code < 400:
+                        await vault.mark_credential_used(pd_cred_id)
+                    # Track OAuth account health: 401/403 = broken grant; <400 = healthy.
+                    # Powers the red/green StatusDot in the credentials list and the
+                    # inline Reconnect affordance on the workspace API detail page.
+                    if _pd_resp.status_code in (401, 403):
+                        try:
+                            async with get_db() as _hdb:
+                                await _hdb.execute(
+                                    "UPDATE oauth_broker_accounts SET healthy=0 "
+                                    "WHERE account_id=? AND api_host=?",
+                                    (pd_account_id, routing_host),
+                                )
+                                await _hdb.commit()
+                        except Exception:
+                            log.debug(
+                                "Pipedream health write (unhealthy) failed for account %s host %s",
+                                pd_account_id,
+                                routing_host,
+                                exc_info=True,
+                            )
+                    elif _pd_resp.status_code < 400:
+                        try:
+                            async with get_db() as _hdb:
+                                await _hdb.execute(
+                                    "UPDATE oauth_broker_accounts SET healthy=1 "
+                                    "WHERE account_id=? AND api_host=? AND healthy IS NOT 1",
+                                    (pd_account_id, routing_host),
+                                )
+                                await _hdb.commit()
+                        except Exception:
+                            log.debug(
+                                "Pipedream health write (healthy) failed for account %s host %s",
+                                pd_account_id,
+                                routing_host,
+                                exc_info=True,
+                            )
                     _pd_resp_headers = {
                         k: v
                         for k, v in _pd_resp.headers.items()
@@ -1223,6 +1302,12 @@ async def broker(request: Request, target: str):
                 # Update trace with final status
                 trace_status = "success" if resp.status < 400 else "error"
                 await _write_trace(trace_status, resp.status)
+                if credential_id:
+                    if resp.status < 400:
+                        await vault.mark_credential_used(credential_id)
+                        await vault.mark_credential_health(credential_id, healthy=True)
+                    elif resp.status in (401, 403):
+                        await vault.mark_credential_health(credential_id, healthy=False)
 
                 if upstream_async_flag:
                     await update_job(
@@ -1342,6 +1427,20 @@ async def broker(request: Request, target: str):
             await confirm_overlay(api_id, execution_id)
         except Exception:
             pass  # non-fatal
+
+    # ── Mark credential health + last_used_at from the upstream's verdict ─────
+    # Best-effort; failures are swallowed inside vault.* (never blocks the path).
+    # This is the manual-credential counterpart to the Pipedream OAuth-account
+    # health write above: <400 means the upstream accepted the credential
+    # (healthy + bump last_used_at); 401/403 means it was rejected (unhealthy →
+    # red StatusDot). Other statuses (404/429/5xx) are not credential verdicts,
+    # so we leave `healthy` untouched rather than flapping it on a flaky upstream.
+    if credential_id:
+        if _upstream_status < 400:
+            await vault.mark_credential_used(credential_id)
+            await vault.mark_credential_health(credential_id, healthy=True)
+        elif _upstream_status in (401, 403):
+            await vault.mark_credential_health(credential_id, healthy=False)
 
     # ── Auth failure hint for BasicAuth ───────────────────────────────────────
     # When a BasicAuth call gets 401/403, the likely cause is the wrong

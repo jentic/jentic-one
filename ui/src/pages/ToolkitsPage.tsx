@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Wrench, AlertTriangle, Key, Ban } from 'lucide-react';
-import { AppLink } from '@/components/ui/AppLink';
+import { motion } from 'framer-motion';
+import { Plus } from 'lucide-react';
 import { api } from '@/api/client';
 import { usePendingRequests } from '@/hooks/usePendingRequests';
 import type { ToolkitCreate } from '@/api/types';
@@ -12,10 +12,25 @@ import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Label } from '@/components/ui/Label';
 import { ErrorAlert } from '@/components/ui/ErrorAlert';
-import { LoadingState } from '@/components/ui/LoadingState';
 import { PageShell } from '@/components/layout/PageShell';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { PageHelp } from '@/components/ui/PageHelp';
+import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
+import {
+	ToolkitCard,
+	ToolkitsListSkeleton,
+	type ToolkitCardData,
+} from '@/components/toolkits/ToolkitCard';
+import { ToolkitsEmptyState } from '@/components/toolkits/ToolkitsEmptyState';
+import { ToolkitDetailSheet } from '@/components/toolkits/ToolkitDetailSheet';
+import { useToolkitDetailSheet } from '@/hooks/useToolkitDetailSheet';
+import { useToolkitCardEnrichment } from '@/hooks/useToolkitCardEnrichment';
+import { isTypingTarget } from '@/lib/keyboard';
+
+const gridVariants = {
+	hidden: { opacity: 1 },
+	visible: { opacity: 1, transition: { staggerChildren: 0.04 } },
+};
 
 function CreateModal({
 	open,
@@ -119,6 +134,23 @@ interface ToolkitsPageProps {
 export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 	const navigate = useNavigate();
 	const [showCreate, setShowCreate] = useState(createNew);
+	const detailSheet = useToolkitDetailSheet();
+
+	// `n` → open the Create Toolkit modal (advertised in PageHelp /
+	// KeyboardShortcutsBar). Skip while typing in a field, while a modifier is
+	// held, or when the create modal / detail sheet is already open.
+	const detailSheetOpen = detailSheet.open;
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key !== 'n' || e.metaKey || e.ctrlKey || e.altKey) return;
+			if (isTypingTarget(e.target)) return;
+			if (showCreate || detailSheetOpen) return;
+			e.preventDefault();
+			setShowCreate(true);
+		};
+		document.addEventListener('keydown', onKeyDown);
+		return () => document.removeEventListener('keydown', onKeyDown);
+	}, [showCreate, detailSheetOpen]);
 
 	const {
 		data: toolkitsRaw,
@@ -129,7 +161,9 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 		queryFn: api.listToolkits,
 		refetchInterval: 30000,
 	});
-	const toolkits = Array.isArray(toolkitsRaw) ? toolkitsRaw : [];
+	const toolkits = (Array.isArray(toolkitsRaw) ? toolkitsRaw : []) as ToolkitCardData[];
+
+	const enrichment = useToolkitCardEnrichment(toolkits.map((t) => t.id));
 
 	const { data: pendingRequests } = usePendingRequests();
 	const pendingByToolkit = (pendingRequests ?? []).reduce<Record<string, number>>(
@@ -141,103 +175,134 @@ export default function ToolkitsPage({ createNew = false }: ToolkitsPageProps) {
 	);
 
 	return (
-		<PageShell>
-			<PageHeader
-				title="Toolkits"
-				actions={
-					<Button onClick={() => setShowCreate(true)}>
-						<Plus className="h-4 w-4" /> Create Toolkit
-					</Button>
-				}
-			/>
-
-			{isLoading ? (
-				<LoadingState message="Loading toolkits..." />
-			) : isError ? (
-				<ErrorAlert message="Failed to load toolkits. Please try refreshing the page." />
-			) : !toolkits || toolkits.length === 0 ? (
-				<EmptyState
-					icon={<Wrench className="h-10 w-10 opacity-30" />}
-					title="No toolkits yet"
-					description="Create a toolkit to give an agent scoped access to your APIs."
-					action={
-						<Button onClick={() => setShowCreate(true)}>
-							Create your first toolkit
-						</Button>
+		<>
+			<PageShell spacing="space-y-5" className="md:pb-12">
+				<PageHeader
+					title="Toolkits"
+					subtitle="Scoped bundles of credentials and policy your agents act through."
+					actions={
+						<>
+							<Button onClick={() => setShowCreate(true)}>
+								<Plus className="h-4 w-4" /> Create Toolkit
+							</Button>
+							<PageHelp
+								title="About Toolkits"
+								intro={
+									<p>
+										A toolkit is the unit of access you hand to an agent: a
+										client API key, a set of bound credentials, and the policy
+										that governs what calls are allowed. Agents call through the
+										broker using the toolkit's key; the broker injects the right
+										upstream credential per request and enforces the toolkit's
+										rules.
+									</p>
+								}
+								sections={[
+									{
+										heading: 'Reading a card',
+										body: (
+											<p>
+												Each card shows the APIs the toolkit touches (from
+												its bound credentials) and how many agents are
+												granted it, so you can trace toolkits → agents at a
+												glance. The <strong>default</strong> toolkit
+												implicitly contains every credential, so it shows no
+												API pile. Open a card to inspect keys, bound
+												credentials, agents, and the kill switch.
+											</p>
+										),
+									},
+									{
+										heading: 'Multiple credentials',
+										body: (
+											<p>
+												A toolkit can hold several credentials at once — the
+												broker disambiguates per request by API
+												(longest-prefix match), by service name, or by an
+												explicit <strong>X-Jentic-Credential</strong> alias.
+												Binding the same credential twice is a no-op.
+											</p>
+										),
+									},
+									{
+										heading: 'Suspending access',
+										body: (
+											<p>
+												The kill switch on a toolkit's detail view suspends
+												it entirely — both API key calls and agent
+												executions are blocked with a clear error until you
+												restore it.
+											</p>
+										),
+									},
+								]}
+								shortcuts={[
+									{ keys: ['n'], label: 'Create toolkit' },
+									{ keys: [MOD_KEY, '/'], chord: true, label: 'Show this help' },
+								]}
+							/>
+						</>
 					}
 				/>
-			) : (
-				<div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-					{toolkits.map((toolkit) => {
-						const pendingCount = pendingByToolkit[toolkit.id] ?? 0;
-						return (
-							<AppLink
-								href={`/toolkits/${toolkit.id}`}
-								key={toolkit.id}
-								className={`bg-muted hover:border-primary/50 hover:bg-muted/80 block space-y-3 rounded-xl border p-5 transition-all ${toolkit.disabled ? 'border-danger/40 opacity-70' : 'border-border'}`}
-							>
-								<div className="flex items-start justify-between gap-2">
-									<div>
-										<div className="flex flex-wrap items-center gap-2">
-											<h2 className="font-heading text-foreground font-semibold">
-												{toolkit.name}
-											</h2>
-											{toolkit.disabled && (
-												<span className="bg-danger/10 text-danger border-danger/30 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-xs">
-													<Ban className="h-3 w-3" />
-													SUSPENDED
-												</span>
-											)}
-											{pendingCount > 0 && (
-												<span className="bg-warning/10 text-warning border-warning/20 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-xs">
-													<AlertTriangle className="h-3 w-3" />
-													{pendingCount} pending
-												</span>
-											)}
-											{toolkit.simulate && (
-												<span className="bg-primary/10 text-primary border-primary/20 rounded-full border px-2 py-0.5 font-mono text-[10px]">
-													simulate
-												</span>
-											)}
-										</div>
-										{toolkit.description && (
-											<p className="text-muted-foreground mt-0.5 text-xs">
-												{toolkit.description}
-											</p>
-										)}
-									</div>
-									<Wrench className="text-accent-teal mt-0.5 h-4 w-4 shrink-0" />
-								</div>
-								<div className="text-muted-foreground flex items-center gap-4 text-xs">
-									<span className="flex items-center gap-1">
-										<Key className="h-3 w-3" />
-										{toolkit.key_count ?? '—'} keys
-									</span>
-									<span>
-										{toolkit.credential_count != null
-											? `${toolkit.credential_count} credentials`
-											: toolkit.credentials?.length != null
-												? `${toolkit.credentials.length} credentials`
-												: '—'}
-									</span>
-								</div>
-							</AppLink>
-						);
-					})}
-				</div>
-			)}
 
-			<CreateModal
-				open={showCreate}
-				onClose={() => {
-					setShowCreate(false);
-					if (createNew) navigate('/toolkits');
-				}}
-				onCreated={(id) => {
-					setShowCreate(false);
-					navigate(`/toolkits/${id}`);
-				}}
+				{isLoading ? (
+					<ToolkitsListSkeleton />
+				) : isError ? (
+					<ErrorAlert message="Failed to load toolkits. Please try refreshing the page." />
+				) : !toolkits || toolkits.length === 0 ? (
+					<ToolkitsEmptyState onCreate={() => setShowCreate(true)} />
+				) : (
+					<motion.div
+						variants={gridVariants}
+						initial="hidden"
+						animate="visible"
+						className="grid grid-cols-1 gap-4 md:grid-cols-2"
+					>
+						{toolkits.map((toolkit) => {
+							const enriched = enrichment.get(toolkit.id);
+							return (
+								<ToolkitCard
+									key={toolkit.id}
+									toolkit={{
+										...toolkit,
+										apiIds: enriched?.apiIds,
+										agentCount: enriched?.agentCount,
+									}}
+									pendingCount={pendingByToolkit[toolkit.id] ?? 0}
+									onOpen={detailSheet.openSheet}
+								/>
+							);
+						})}
+					</motion.div>
+				)}
+
+				<ToolkitDetailSheet
+					toolkitId={detailSheet.stickyId}
+					open={detailSheet.open}
+					onClose={detailSheet.closeSheet}
+					onAfterClose={detailSheet.clearSticky}
+				/>
+
+				<CreateModal
+					open={showCreate}
+					onClose={() => {
+						setShowCreate(false);
+						if (createNew) navigate('/toolkits');
+					}}
+					onCreated={(id) => {
+						setShowCreate(false);
+						if (createNew) navigate('/toolkits');
+						detailSheet.openSheet(id);
+					}}
+				/>
+			</PageShell>
+
+			<KeyboardShortcutsBar
+				shortcuts={[
+					{ keys: ['n'], label: 'create' },
+					{ keys: [MOD_KEY, '/'], chord: true, label: 'help' },
+				]}
 			/>
-		</PageShell>
+		</>
 	);
 }

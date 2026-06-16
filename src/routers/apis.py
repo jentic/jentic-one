@@ -2,9 +2,11 @@
 
 import asyncio
 import copy
+import ipaddress
 import json
 import pathlib
 import re
+import socket
 import uuid
 from typing import Annotated
 from urllib.parse import urlparse
@@ -163,32 +165,125 @@ def _strip_version_suffix(path: str) -> str:
     return re.sub(r"(/v\d+(\.\d+)*|/\d{4}-\d{2}-\d{2}|/\d+\.\d+|/\d+)$", "", path)
 
 
-def is_private_server_url(url: str) -> bool:
-    """Return True if the URL's host is a private/localhost address.
+def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
+    """An IP that must never be the target of a server-side outbound request."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local  # 169.254.0.0/16 + fe80::/10 (cloud metadata!)
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified  # 0.0.0.0, ::
+    )
 
-    Detects: localhost, 127.x, 10.x, 192.168.x, 172.16-31.x, bare 'localhost'
-    without scheme, and pure template-variable hostnames like http://{host}.
+
+def _host_is_private(host: str, *, resolve: bool) -> bool:
+    """Return True if ``host`` is, or resolves to, a private/loopback/link-local IP.
+
+    - Literal IPs (v4/v6) are checked directly.
+    - ``localhost`` is always private.
+    - When ``resolve`` is True, hostnames are DNS-resolved and *every* returned
+      address is checked (fail-closed for SSRF callers). When False, an
+      unresolved hostname is treated as public (preserves import/registry
+      behaviour, which must not depend on DNS at registration time).
+    """
+    host = host.strip().lower().rstrip(".")
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    # Literal IP (handles IPv4, IPv6, and bracketless forms)
+    try:
+        return _ip_is_blocked(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    if not resolve:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        # Cannot resolve — treat as blocked for SSRF callers (fail-closed).
+        return True
+    for info in infos:
+        addr = info[4][0]
+        try:
+            if _ip_is_blocked(ipaddress.ip_address(addr.split("%")[0])):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def safe_resolve_public_ips(host: str) -> list[str] | None:
+    """Resolve ``host`` once and return its IPs iff *every* one is public.
+
+    This is the anti-DNS-rebinding primitive for SSRF-sensitive callers: rather
+    than checking the host and then letting a second, independent DNS lookup
+    pick the address actually connected to (the TOCTOU window an attacker with
+    low-TTL DNS exploits), the caller resolves here exactly once and then pins
+    the connection to one of the returned IPs.
+
+    Returns ``None`` (blocked) when the host is a literal/`localhost` private
+    address, when resolution fails, or when *any* resolved address is private /
+    loopback / link-local / reserved (fail-closed — a host that mixes a public
+    and a private answer is rejected wholesale).
+    """
+    host = host.strip().lower().rstrip(".")
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return None
+
+    # Literal IP — no DNS, validate directly.
+    try:
+        ip = ipaddress.ip_address(host)
+        return None if _ip_is_blocked(ip) else [host]
+    except ValueError:
+        pass
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return None
+
+    ips: list[str] = []
+    for info in infos:
+        addr = info[4][0].split("%")[0]
+        try:
+            if _ip_is_blocked(ipaddress.ip_address(addr)):
+                return None
+        except ValueError:
+            return None
+        if addr not in ips:
+            ips.append(addr)
+    return ips or None
+
+
+def is_private_server_url(url: str, *, resolve: bool = False) -> bool:
+    """Return True if the URL's host is a private/localhost/link-local address.
+
+    Detects literal private/loopback/link-local/reserved IPv4 **and IPv6**
+    addresses (incl. the 169.254.169.254 cloud-metadata endpoint), ``localhost``,
+    and pure template-variable hostnames like ``http://{host}``.
+
+    Pass ``resolve=True`` (e.g. from the credential-test SSRF guard) to also
+    DNS-resolve hostnames and block any that resolve to a private address;
+    resolution failures are then treated as blocked (fail-closed). The default
+    (``resolve=False``) keeps the original non-resolving behaviour relied on by
+    the spec-import / registry callers.
     """
     if not url:
         return False
-    parsed = urlparse(url)
-    host = parsed.hostname or parsed.netloc or ""
-    # Strip port
-    host = host.split(":")[0].lower()
+    parsed = urlparse(url if "//" in url else f"//{url}")
+    host = parsed.hostname or ""
+    if not host:
+        # urlparse couldn't isolate a host (e.g. bare "localhost:8080")
+        host = (parsed.path or url).split("/")[0].split(":")[0]
+    host = host.lower()
     if not host:
         return False
     # Pure template variable host — e.g. http://{host} — treat as self-hosted
     if host.startswith("{") and host.endswith("}"):
         return True
-    if host in ("localhost", "127.0.0.1", "0.0.0.0"):
-        return True
-    if host.startswith("10."):
-        return True
-    if host.startswith("192.168."):
-        return True
-    if re.match(r"172\.(1[6-9]|2[0-9]|3[0-1])\.", host):
-        return True
-    return False
+    return _host_is_private(host, resolve=resolve)
 
 
 def _title_to_local_api_id(title: str) -> str:
@@ -523,6 +618,7 @@ async def list_apis(
             "name": r[1],
             "vendor": extract_vendor(r[0]),
             "source": "local",
+            "local": True,
             "has_credentials": r[0] in cred_api_ids,
             "has_workflows": r[0] in wf_local_api_ids,
             "description": r[2],
@@ -616,6 +712,7 @@ async def list_apis(
                         "name": lr[1] or api_id,
                         "vendor": extract_vendor(lr[0]),
                         "source": "local",
+                        "local": True,
                         "has_credentials": lr[0] in cred_api_ids,
                         "has_workflows": lr[0] in wf_local_api_ids or api_id in workflow_api_ids,
                         "description": lr[2],
@@ -645,6 +742,7 @@ async def list_apis(
                     "name": api_id,
                     "vendor": extract_vendor(api_id),
                     "source": "catalog",
+                    "local": False,
                     "has_credentials": False,
                     "has_workflows": api_id in workflow_api_ids,
                     "description": None,
@@ -1064,6 +1162,12 @@ async def get_api(
         "id": row[0],
         "name": row[1],
         "vendor": extract_vendor(row[0]),
+        # `get_api` is a local-only lookup (404 above if the row isn't in `apis`),
+        # so an API surfaced here is always imported. The credentials form's
+        # ApiPicker uses `source` to render the Local/Catalog badge — keep this
+        # in sync with `list_apis`.
+        "source": "local",
+        "local": True,
         "description": spec_description,
         "base_url": row[4],
         "created_at": row[5],

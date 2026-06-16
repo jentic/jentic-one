@@ -77,6 +77,8 @@ export const handlers = [
 
 	http.get('/toolkits/:id/credentials', () => HttpResponse.json([])),
 
+	http.get('/toolkits/:id/agents', () => HttpResponse.json({ agents: [] })),
+
 	// ── Toolkit mutations ───────────────────────────────────────────
 	http.post('/toolkits', () =>
 		HttpResponse.json({ id: 'new-tk', name: 'New Toolkit', description: '', credentials: [] }),

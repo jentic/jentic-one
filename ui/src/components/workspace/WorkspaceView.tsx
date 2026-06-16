@@ -10,6 +10,10 @@ import type { ImportTab } from './ImportSourceDialog';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ToolkitCard, type ToolkitCardData } from '@/components/toolkits/ToolkitCard';
+import { ToolkitDetailSheet } from '@/components/toolkits/ToolkitDetailSheet';
+import { useToolkitDetailSheet } from '@/hooks/useToolkitDetailSheet';
+import { useToolkitCardEnrichment } from '@/hooks/useToolkitCardEnrichment';
 import { useRovingGridFocus } from '@/hooks/useRovingGridFocus';
 import { isTypingTarget } from '@/lib/keyboard';
 import { subscribeCredentialImported } from '@/lib/events/credentialImported';
@@ -51,6 +55,7 @@ export function WorkspaceView({
 } = {}) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const toolkitSheet = useToolkitDetailSheet();
 
 	// ── Filter input ──────────────────────────────────────────────────────
 	//
@@ -248,52 +253,44 @@ export function WorkspaceView({
 			: [];
 	}, [toolkitsQuery.data]);
 
-	// One credentials lookup per toolkit. The `enabled` gate keeps these
-	// from firing until the parent toolkits list resolves.
-	const toolkitCredsQueries = useQuery({
-		queryKey: [
-			'workspace',
-			'toolkit-credentials',
-			toolkits
-				.map((t) => t.id)
-				.sort()
-				.join(','),
-		],
-		queryFn: async () => {
-			const entries = await Promise.all(
-				toolkits.map(async (t) => {
-					try {
-						const creds = await api.listToolkitCredentials(t.id);
-						return [t, Array.isArray(creds) ? creds : []] as const;
-					} catch {
-						return [t, []] as const;
-					}
-				}),
-			);
-			return entries;
-		},
-		enabled: toolkits.length > 0,
-		staleTime: 60_000,
-	});
+	// Full card data for the Toolkits section. Reuses the SAME query as the
+	// coverage map above (no extra network call) — we just keep the roll-up
+	// fields (`disabled` / `simulate` / counts) that `ToolkitCard` reads.
+	const toolkitCards = useMemo<ToolkitCardData[]>(() => {
+		const data = toolkitsQuery.data as Array<Record<string, unknown>> | undefined;
+		if (!Array.isArray(data)) return [];
+		return data.map((t) => ({
+			id: String(t?.id ?? ''),
+			name: String(t?.name ?? t?.id ?? ''),
+			description: typeof t?.description === 'string' ? t.description : null,
+			created_at: typeof t?.created_at === 'number' ? t.created_at : null,
+			simulate: Boolean(t?.simulate),
+			disabled: Boolean(t?.disabled),
+			key_count: typeof t?.key_count === 'number' ? t.key_count : undefined,
+			credential_count:
+				typeof t?.credential_count === 'number' ? t.credential_count : undefined,
+		}));
+	}, [toolkitsQuery.data]);
 
+	const toolkitEnrichment = useToolkitCardEnrichment(toolkitCards.map((t) => t.id));
+
+	// Reverse the per-toolkit enrichment (toolkit → apiIds) into the apiId →
+	// toolkit-names map the API tiles need. Reusing the enrichment hook's
+	// per-toolkit credential queries avoids the duplicate `listToolkitCredentials`
+	// fan-out this view used to fire on its own.
 	const apiToolkitMap = useMemo<Map<string, string[]>>(() => {
 		const map = new Map<string, string[]>();
-		const data = toolkitCredsQueries.data;
-		if (!data) return map;
-		for (const [toolkit, creds] of data) {
-			if (toolkit.id === 'default') continue;
-			const seenForTk = new Set<string>();
-			for (const cred of creds as Array<{ api_id?: unknown }>) {
-				const apiId = typeof cred?.api_id === 'string' ? cred.api_id : null;
-				if (!apiId || seenForTk.has(apiId)) continue;
-				seenForTk.add(apiId);
+		for (const t of toolkits) {
+			if (t.id === 'default') continue;
+			const apiIds = toolkitEnrichment.get(t.id)?.apiIds ?? [];
+			for (const apiId of apiIds) {
 				const existing = map.get(apiId) ?? [];
-				if (!existing.includes(toolkit.name)) existing.push(toolkit.name);
+				if (!existing.includes(t.name)) existing.push(t.name);
 				map.set(apiId, existing);
 			}
 		}
 		return map;
-	}, [toolkitCredsQueries.data]);
+	}, [toolkits, toolkitEnrichment]);
 
 	const hasDefaultToolkit = toolkits.some((t) => t.id === 'default');
 
@@ -393,6 +390,9 @@ export function WorkspaceView({
 			queryClient.invalidateQueries({ queryKey: ['workspace', 'apis'] });
 			queryClient.invalidateQueries({ queryKey: ['workspace', 'workflows'] });
 			queryClient.invalidateQueries({ queryKey: ['workspace-stats'] });
+			// A credential bound to an API that backs a toolkit changes the
+			// toolkit card piles/counts, so refresh the enrichment too.
+			queryClient.invalidateQueries({ queryKey: ['toolkit-card-enrichment'] });
 			toast({
 				title: 'Credential saved',
 				description: `${evt.api_id} is ready to run.`,
@@ -578,10 +578,52 @@ export function WorkspaceView({
 							)}
 						</section>
 					) : null}
+
+					{toolkitCards.length > 0 ? (
+						<section data-testid="workspace-section-toolkits" className="space-y-3">
+							<header className="flex items-baseline justify-between gap-2">
+								<h2 className="text-foreground text-base font-semibold tracking-tight">
+									Toolkits
+									<span
+										className="text-muted-foreground/80 ml-2 font-mono text-xs"
+										data-testid="workspace-section-toolkits-count"
+									>
+										· {toolkitCards.length.toLocaleString()}
+									</span>
+								</h2>
+							</header>
+							<div
+								className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3"
+								data-testid="workspace-grid-toolkits"
+							>
+								{toolkitCards.map((tk) => {
+									const enriched = toolkitEnrichment.get(tk.id);
+									return (
+										<ToolkitCard
+											key={tk.id}
+											toolkit={{
+												...tk,
+												apiIds: enriched?.apiIds,
+												agentCount: enriched?.agentCount,
+											}}
+											onOpen={toolkitSheet.openSheet}
+										/>
+									);
+								})}
+							</div>
+						</section>
+					) : null}
 				</div>
 			)}
 
 			<WorkspaceCatalogFooter />
+
+			<ToolkitDetailSheet
+				toolkitId={toolkitSheet.stickyId}
+				open={toolkitSheet.open}
+				onClose={toolkitSheet.closeSheet}
+				onAfterClose={toolkitSheet.clearSticky}
+			/>
 		</>
 	);
 }

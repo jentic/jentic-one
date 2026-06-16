@@ -61,7 +61,7 @@ export class ObserveService {
          */
         until?: (number | null),
         /**
-         * Free-text substring match across slug_or_id, agent_id, toolkit_id, upstream_job_url. Whitespace-only treated as unset.
+         * Free-text substring match (case-insensitive) across the columns the Jobs tab row renders: `slug_or_id` (workflow slug or broker capability id), `agent_id`, `toolkit_id`, and `upstream_job_url` (so a search for the upstream provider's job-id snippet still finds the right row). Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. None of those columns are indexed for prefix lookups, so `q` always implies a scan over the rows that the tenant + time-window clauses already select — fine for the Monitor page (24h default) but don't use it as a general-purpose search.
          */
         q?: (string | null),
     }): CancelablePromise<JobListPage> {
@@ -189,7 +189,7 @@ export class ObserveService {
          */
         capabilityId?: (string | null),
         /**
-         * Free-text substring match across operation_id, workflow_id, api_id, agent_id. Whitespace-only treated as unset.
+         * Free-text substring match (case-insensitive) over the columns the Monitor row renders: `operation_id`, `workflow_id`, `api_id`, `agent_id`. Empty/whitespace strings are treated as not set so the no-filter plan stays cheap. Note: none of these columns are indexed for prefix lookups, so `q` always implies a scan over the rows the tenant + time-window clauses already select — fine for the Monitor page (range capped to 24h by default) but don't use it as a general-purpose search.
          */
         q?: (string | null),
     }): CancelablePromise<TraceListPage> {

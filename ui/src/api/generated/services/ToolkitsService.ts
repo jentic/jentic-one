@@ -250,6 +250,36 @@ export class ToolkitsService {
         });
     }
     /**
+     * List agents granted access to this toolkit
+     * List the OAuth agents currently granted access to this toolkit.
+     *
+     * The reverse of ``GET /agents/{agent_id}/grants`` — given a toolkit, return
+     * every active (non-deregistered) agent that holds a grant on it, so the
+     * toolkit detail view can show its bound agents without an N+1 client fan-out.
+     * Admin-only.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static listToolkitAgentsToolkitsToolkitIdAgentsGet({
+        toolkitId,
+    }: {
+        /**
+         * Toolkit ID (e.g. 'default' or custom toolkit identifier)
+         */
+        toolkitId: string,
+    }): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/toolkits/{toolkit_id}/agents',
+            path: {
+                'toolkit_id': toolkitId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * Bind an upstream API credential to this toolkit — enable broker injection
      * Enrolls an existing upstream API credential in this toolkit. The broker automatically injects it into outbound calls for the API it's bound to, when the agent calls using this toolkit's client API key.
      * @returns CredentialBindingOut Successful Response

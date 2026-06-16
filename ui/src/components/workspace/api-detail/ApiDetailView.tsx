@@ -13,6 +13,29 @@ import { api } from '@/api/client';
 
 interface ApiDetailViewProps {
 	apiId: string;
+	/**
+	 * Optional callback fired when the user clicks an existing
+	 * credential row in the credentials section. When provided, hosts
+	 * (today: `ApiDetailPage`) typically open a `CredentialEditSheet`
+	 * with the clicked credential. Falls back to a route navigation
+	 * when omitted.
+	 */
+	onEditCredential?: (cred: any) => void;
+	/**
+	 * Optional callback fired when the user clicks "Add credential"
+	 * inside the credentials section (header link or empty-state
+	 * CTA). Hosts that mount an `<AddCredentialDialog>` wire this to
+	 * the dialog's `openForApi(apiData)` action; falls back to the
+	 * deeplink path when omitted.
+	 */
+	onAddCredential?: () => void;
+	/**
+	 * Optional callback fired when the user clicks a bound toolkit in the
+	 * toolkits section. When provided, hosts open a `ToolkitDetailSheet`
+	 * in-place; falls back to a route navigation to `/toolkits/:id` when
+	 * omitted.
+	 */
+	onOpenToolkit?: (id: string) => void;
 }
 
 /**
@@ -26,7 +49,12 @@ interface ApiDetailViewProps {
  * operations widget has its own state machine encapsulated in the
  * `useApiOperations` hook; everything else is presentational.
  */
-export function ApiDetailView({ apiId }: ApiDetailViewProps) {
+export function ApiDetailView({
+	apiId,
+	onEditCredential,
+	onAddCredential,
+	onOpenToolkit,
+}: ApiDetailViewProps) {
 	const {
 		data: apiData,
 		isLoading: isLoadingApi,
@@ -171,9 +199,11 @@ export function ApiDetailView({ apiId }: ApiDetailViewProps) {
 				credentials={credentials}
 				isLoading={isLoadingCreds}
 				apiId={apiId}
+				onEditCredential={onEditCredential}
+				onAddCredential={onAddCredential}
 			/>
 
-			<ToolkitsSection toolkits={boundToolkits} />
+			<ToolkitsSection toolkits={boundToolkits} onOpenToolkit={onOpenToolkit} />
 
 			<OperationsSection
 				rows={ops.rows}

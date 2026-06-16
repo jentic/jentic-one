@@ -436,7 +436,9 @@ class PipedreamOAuthBroker:
             "expires_at": expires_at,
         }
 
-    async def discover_accounts(self, external_user_id: str) -> int:
+    async def discover_accounts(
+        self, external_user_id: str, raise_on_auth_error: bool = False
+    ) -> int:
         """Fetch connected accounts from Pipedream, populate oauth_broker_accounts,
         and create/update credentials in the vault so they can be provisioned to toolkits.
 
@@ -446,11 +448,21 @@ class PipedreamOAuthBroker:
         set at connect-link time; otherwise fall back to the app slug.
 
         Returns the count of account-host pairs discovered.
+
+        By default a bad token or an upstream rejection (e.g. wrong client
+        secret → 401) is swallowed and reported as ``0`` — that suits the
+        best-effort callers (startup seeding, the post-OAuth callback) where a
+        transient blip shouldn't break the flow. Set ``raise_on_auth_error`` to
+        re-raise those failures instead; the user-initiated sync uses this so a
+        misconfigured broker surfaces as an error rather than a silent "0
+        accounts" that looks indistinguishable from a valid-but-empty broker.
         """
         try:
             pd_token = await self._get_access_token()
         except Exception as exc:
             log.error("PipedreamOAuthBroker: can't get token for discovery: %s", exc)
+            if raise_on_auth_error:
+                raise
             return 0
 
         try:
@@ -467,6 +479,8 @@ class PipedreamOAuthBroker:
                 data = resp.json()
         except Exception as exc:
             log.warning("PipedreamOAuthBroker: discovery request failed: %s", exc)
+            if raise_on_auth_error:
+                raise
             return 0
 
         accounts = data.get("accounts", data.get("data", []))

@@ -5,6 +5,16 @@ pre-fill form fields. This lets an agent configure everything it knows
 (API ID, label, username, server URL) and send the user a direct link to
 complete only the secret — keeping sensitive values out of the conversation.
 
+> **Two surfaces, one contract.** Since the credentials revamp v3 the UI
+> also offers an in-page **Add Credential** dialog (and an inline edit
+> sheet), reachable from the workspace, API detail, toolkit detail, and
+> Discover surfaces — no page navigation. The deeplink format documented
+> below is unchanged: it is the canonical contract for **agent-driven
+> handoffs** and continues to resolve to the standalone form route. The
+> dialog is the **human-driven** entry point for the same flow and never
+> requires a deeplink. Use deeplinks when an agent needs to hand a user
+> a one-shot URL; use the in-page dialog otherwise.
+
 ## URL format
 
 ```

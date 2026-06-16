@@ -42,6 +42,59 @@ audit_log = logging.getLogger("jentic.audit")
 router = APIRouter(prefix="/oauth-brokers", tags=["credentials"])
 
 
+async def revoke_pipedream_account_upstream(broker_id: str, account_id: str) -> bool:
+    """Revoke a Pipedream-connected account upstream (best-effort).
+
+    Used by both `DELETE /oauth-brokers/{id}/accounts/{aid}` and the
+    `DELETE /credentials/{cid}` Pipedream cascade so a single function owns
+    the upstream revoke contract. Returns True on success, False on any
+    failure (we never block local cleanup on an upstream miss).
+    """
+    live_broker = next(
+        (b for b in oauth_broker_registry.brokers if getattr(b, "broker_id", None) == broker_id),
+        None,
+    )
+    if live_broker is None:
+        try:
+            brokers = await PipedreamOAuthBroker.from_db()
+        except Exception:
+            log.warning(
+                "revoke_pipedream_account_upstream: failed to load brokers from DB", exc_info=True
+            )
+            return False
+        live_broker = next((b for b in brokers if b.broker_id == broker_id), None)
+
+    if live_broker is None:
+        return False
+
+    try:
+        pd_token = await live_broker._get_access_token()
+        pd_url = (
+            f"https://api.pipedream.com/v1/connect/{live_broker.project_id}/accounts/{account_id}"
+        )
+        req = urllib.request.Request(pd_url, method="DELETE")
+        req.add_header("Authorization", f"Bearer {pd_token}")
+        req.add_header("X-PD-Environment", live_broker.environment)
+        try:
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+            log.info("Pipedream account %s revoked via API", account_id)
+            return True
+        except urllib.error.HTTPError as http_err:
+            body = http_err.read().decode("utf-8", errors="replace")
+            log.warning(
+                "Failed to revoke Pipedream account %s: HTTP %s %s — body: %s",
+                account_id,
+                http_err.code,
+                http_err.reason,
+                body,
+            )
+            return False
+    except Exception as exc:
+        log.warning("Failed to revoke Pipedream account %s: %s", account_id, exc)
+        return False
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
 
 _PIPEDREAM_CONFIG_EXAMPLE = {
@@ -853,7 +906,19 @@ async def sync_broker_accounts(broker_id: BrokerIdPath, body: SyncRequest, reque
         raise HTTPException(500, "Broker found in DB but could not be instantiated")
 
     try:
-        count = await live_broker.discover_accounts(body.external_user_id)
+        count = await live_broker.discover_accounts(body.external_user_id, raise_on_auth_error=True)
+    except httpx.HTTPStatusError as exc:
+        # Pipedream rejected the broker's own credentials (wrong client id /
+        # secret / project id). Surface it as 401 so the caller can tell
+        # "bad credentials" apart from a valid broker with nothing connected
+        # (which returns count=0 with a 200).
+        if exc.response is not None and exc.response.status_code in (401, 403):
+            raise HTTPException(
+                401,
+                "Pipedream rejected these credentials. "
+                "Check the client ID, secret, and project ID.",
+            )
+        raise HTTPException(502, f"Sync failed: {exc}")
     except Exception as exc:
         raise HTTPException(502, f"Sync failed: {exc}")
 
@@ -966,42 +1031,7 @@ async def delete_broker_account(
     cred_ids = [broker_credential_id(broker_id, account_id, r[1]) for r in rows]
 
     # 1. Revoke upstream in Pipedream
-    pipedream_revoked = False
-    live_broker = next(
-        (b for b in oauth_broker_registry.brokers if getattr(b, "broker_id", None) == broker_id),
-        None,
-    )
-    if live_broker is None:
-        brokers = await PipedreamOAuthBroker.from_db()
-        live_broker = next((b for b in brokers if b.broker_id == broker_id), None)
-
-    if live_broker is not None:
-        try:
-            pd_token = await live_broker._get_access_token()
-            pd_url = f"https://api.pipedream.com/v1/connect/{live_broker.project_id}/accounts/{account_id}"
-            req = urllib.request.Request(pd_url, method="DELETE")
-            req.add_header("Authorization", f"Bearer {pd_token}")
-            req.add_header("X-PD-Environment", live_broker.environment)
-            try:
-                with urllib.request.urlopen(req, timeout=10):
-                    pass
-                pipedream_revoked = True
-                log.info("Pipedream account %s revoked via API", account_id)
-            except urllib.error.HTTPError as http_err:
-                body = http_err.read().decode("utf-8", errors="replace")
-                log.warning(
-                    "Failed to revoke Pipedream account %s: HTTP %s %s — body: %s — continuing with local cleanup",
-                    account_id,
-                    http_err.code,
-                    http_err.reason,
-                    body,
-                )
-        except Exception as exc:
-            log.warning(
-                "Failed to revoke Pipedream account %s: %s — continuing with local cleanup",
-                account_id,
-                exc,
-            )
+    pipedream_revoked = await revoke_pipedream_account_upstream(broker_id, account_id)
 
     # 2. Remove from toolkit provisioning + vault for all host mappings
     async with get_db() as db:

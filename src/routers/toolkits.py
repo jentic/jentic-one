@@ -20,6 +20,7 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import BaseModel, Field
 
+from src.audit import persist_audit
 from src.auth import client_ip, default_allowed_ips, require_human_session
 from src.db import DEFAULT_TOOLKIT_ID, get_db
 from src.models import (
@@ -522,6 +523,58 @@ async def get_toolkit(
     return data
 
 
+@router.get(
+    "/{toolkit_id}/agents",
+    summary="List agents granted access to this toolkit",
+    dependencies=[Depends(require_human_session)],
+    tags=["agents"],
+)
+async def list_toolkit_agents(
+    toolkit_id: Annotated[
+        str, Path(description="Toolkit ID (e.g. 'default' or custom toolkit identifier)")
+    ],
+):
+    """List the OAuth agents currently granted access to this toolkit.
+
+    The reverse of ``GET /agents/{agent_id}/grants`` — given a toolkit, return
+    every active (non-deregistered) agent that holds a grant on it, so the
+    toolkit detail view can show its bound agents without an N+1 client fan-out.
+    Admin-only.
+    """
+    async with get_db() as db:
+        async with db.execute(
+            "SELECT id FROM toolkits WHERE id=?",
+            (toolkit_id,),
+        ) as cur:
+            if not await cur.fetchone():
+                raise HTTPException(404, f"Toolkit '{toolkit_id}' not found")
+
+        async with db.execute(
+            """SELECT a.client_id, a.client_name, a.status, g.granted_at, g.granted_by
+               FROM agent_toolkit_grants g
+               JOIN agents a ON a.client_id = g.client_id
+               WHERE g.toolkit_id = ?
+                 AND a.deleted_at IS NULL
+                 AND a.status != 'denied'
+               ORDER BY g.granted_at ASC""",
+            (toolkit_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+
+    return {
+        "agents": [
+            {
+                "client_id": r[0],
+                "client_name": r[1],
+                "status": r[2],
+                "granted_at": r[3],
+                "granted_by": r[4],
+            }
+            for r in rows
+        ]
+    }
+
+
 @router.patch(
     "/{toolkit_id}",
     summary="Update toolkit — rename or update description",
@@ -919,6 +972,7 @@ async def list_toolkit_credentials(
 async def remove_credential_from_toolkit(
     toolkit_id: Annotated[str, Path(description="Toolkit ID")],
     credential_id: Annotated[str, Path(description="Credential ID to unbind")],
+    request: Request,
 ):
     """
     Unbind a credential from this toolkit.
@@ -928,6 +982,8 @@ async def remove_credential_from_toolkit(
 
     To delete the credential entirely (from all toolkits), use `DELETE /credentials/{id}`.
     """
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403, "Only the admin key can modify toolkit credentials.")
     async with get_db() as db:
         await db.execute(
             "DELETE FROM toolkit_credentials WHERE toolkit_id=? AND credential_id=?",
@@ -1012,6 +1068,14 @@ async def set_credential_permissions(
         len(rules_list),
         client_ip(request),
     )
+    await persist_audit(
+        event="PERMISSIONS_SET",
+        actor_kind="human",
+        ip=client_ip(request),
+        target_kind="credential",
+        target_id=cred_id,
+        payload={"toolkit_id": toolkit_id, "rules": len(rules_list)},
+    )
     return result
 
 
@@ -1072,6 +1136,14 @@ async def patch_credential_permissions(
         added,
         removed,
         client_ip(request),
+    )
+    await persist_audit(
+        event="PERMISSIONS_PATCHED",
+        actor_kind="human",
+        ip=client_ip(request),
+        target_kind="credential",
+        target_id=cred_id,
+        payload={"toolkit_id": toolkit_id, "added": added, "removed": removed},
     )
     return result
 

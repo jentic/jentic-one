@@ -15,7 +15,6 @@ import { AppLink } from '@/components/ui/AppLink';
 import { KeyboardShortcutsBar, MOD_KEY } from '@/components/ui/KeyboardShortcutsBar';
 import { toast } from '@/components/ui/toastStore';
 import { useImportCatalogApi } from '@/hooks/useImportCatalogApi';
-import { useCredentialImportedSync } from '@/hooks/useCredentialImportedSync';
 
 export interface DiscoveryViewProps {
 	forcedSource?: DiscoverySource;
@@ -157,23 +156,8 @@ export function DiscoveryView({ forcedSource, mode = 'single' }: DiscoveryViewPr
 		};
 	}, [input, inspectParam, inspectWfParam, setSearchParams]);
 
-	// ── Credential import listener ───────────────────────────────────────
+	// ── Catalog refresh / query client ───────────────────────────────────
 	const queryClient = useQueryClient();
-	const selectedEntityRef = useRef(selectedEntity);
-	selectedEntityRef.current = selectedEntity;
-
-	const handleCredentialImported = useCallback((apiId: string) => {
-		setSelectedEntity((prev) => {
-			if (prev?.id === apiId) {
-				return { ...prev, source: 'workspace' };
-			}
-			return prev;
-		});
-	}, []);
-
-	useCredentialImportedSync({
-		onImported: handleCredentialImported,
-	});
 
 	// Sync URL → state for external navigation only
 	const urlQ = searchParams.get('q') ?? '';

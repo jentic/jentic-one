@@ -9,6 +9,7 @@ import {
 	Calendar,
 } from 'lucide-react';
 import { VendorIcon } from '@/components/discovery/VendorIcon';
+import { VendorPile } from '@/components/discovery/VendorPile';
 import { timeAgo } from '@/lib/time';
 
 /**
@@ -96,7 +97,12 @@ export function WorkspaceTile({ entity, onOpen }: WorkspaceTileProps) {
 			</div>
 
 			{entity.kind === 'workflow' && entity.involvedApis && entity.involvedApis.length > 0 ? (
-				<WorkflowVendorPile vendors={entity.involvedApis} />
+				<VendorPile
+					vendors={entity.involvedApis}
+					className="mt-2"
+					testId="workspace-tile-vendor-pile"
+					ariaLabel={`Touches ${entity.involvedApis.length} API${entity.involvedApis.length === 1 ? '' : 's'}: ${entity.involvedApis.join(', ')}`}
+				/>
 			) : null}
 
 			<div className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
@@ -122,9 +128,17 @@ export function WorkspaceTile({ entity, onOpen }: WorkspaceTileProps) {
 								{entity.credentialCount === 1 ? '' : 's'}
 							</span>
 						) : (
+							// We can't nest a real <a> here — the tile itself is a
+							// <button> for keyboard semantics — so instead we hand the
+							// user a strong visual nudge ("Add credential →"). Clicking
+							// the tile takes them to the API detail page where the
+							// CredentialsSection's empty-state CTA links straight to
+							// /credentials/new?api_id=…, which is the same destination.
+							// A nested <a> would cause `validateDOMNesting` warnings
+							// and break VoiceOver's tile-as-single-control behaviour.
 							<span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
 								<AlertTriangle size={11} aria-hidden="true" />
-								No credential
+								Add credential →
 							</span>
 						)}
 						{entity.toolkitNames && entity.toolkitNames.length > 0 ? (
@@ -171,35 +185,5 @@ export function WorkspaceTile({ entity, onOpen }: WorkspaceTileProps) {
 				)}
 			</div>
 		</button>
-	);
-}
-
-/**
- * Compact vendor-logo pile shown on workflow tiles. Renders up to
- * `MAX_VENDORS` icons inline with a `+N` counter for the rest. Uses
- * sm-sized `<VendorIcon>` so the row stays under ~22 px tall and
- * doesn't visually compete with the workflow name.
- */
-const MAX_VENDORS = 4;
-function WorkflowVendorPile({ vendors }: { vendors: string[] }) {
-	const visible = vendors.slice(0, MAX_VENDORS);
-	const overflow = vendors.length - visible.length;
-	return (
-		<div
-			className="mt-2 flex items-center gap-1.5"
-			data-testid="workspace-tile-vendor-pile"
-			aria-label={`Touches ${vendors.length} API${vendors.length === 1 ? '' : 's'}: ${vendors.join(', ')}`}
-		>
-			{visible.map((v) => (
-				<span key={v} title={v} className="inline-flex">
-					<VendorIcon name={v} vendor={v} size="sm" />
-				</span>
-			))}
-			{overflow > 0 ? (
-				<span className="text-muted-foreground bg-muted/60 inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 text-[10px] font-medium">
-					+{overflow}
-				</span>
-			) : null}
-		</div>
 	);
 }

@@ -20,6 +20,9 @@ class CredentialCreate(NormModel):
     value: str = ""
     """Plain-text secret; encrypted before storage. Always the primary credential — token, password, API key.
     May be empty string for no-auth APIs where the credential exists only to carry server_variables."""
+    description: str | None = None
+    """Optional free-text notes describing what this credential is for or how it was obtained.
+    Surfaced in the credentials UI; never injected into upstream requests."""
     identity: str | None = None
     """Optional identity field — username, client ID, account SID etc.
     Required for http/basic and http/digest schemes (username + password).
@@ -44,7 +47,10 @@ class CredentialCreate(NormModel):
     Omit (or set ``null``) for public SaaS APIs whose server URL is fixed.
     Use ``GET /apis/{api_id}`` to see which variables the spec declares.
     """
-    auth_type: Literal["bearer", "basic", "apiKey", "none"] | None = Field(
+    auth_type: (
+        Literal["bearer", "basic", "apiKey", "none", "oauth2", "pipedream_oauth", "JenticApiKey"]
+        | None
+    ) = Field(
         default=None,
         examples=["bearer"],
         description=(
@@ -56,7 +62,10 @@ class CredentialCreate(NormModel):
             "| `bearer` | `Authorization: Bearer {value}` | REST APIs, OAuth access tokens, JWTs. GitHub REST API, Deepgram, Slack, etc. |\n"
             "| `basic` | `Authorization: Basic base64({identity??'token'}:{value})` | HTTP Basic auth, git-over-HTTPS. Set `identity` to the username; omit for GitHub PATs (any username accepted). |\n"
             "| `apiKey` | Custom header or query param `= {value}` | API key in a named header (X-API-Key, Api-Key, X-Auth-Key, etc.). For **compound** schemes (e.g. Discourse Api-Key + Api-Username) where the overlay uses canonical `Secret`/`Identity` scheme names, set `identity` to the username/account — a single credential covers both headers. |\n"
-            "| `none` | *(nothing injected)* | No-auth APIs where the credential exists only to carry `server_variables` for routing. |"
+            "| `none` | *(nothing injected)* | No-auth APIs where the credential exists only to carry `server_variables` for routing. |\n"
+            "| `oauth2` | `Authorization: Bearer {value}` | OAuth access token already obtained by the caller (no refresh handling). |\n"
+            "| `pipedream_oauth` | *(reserved)* | Set by Pipedream sync — do not assign manually. |\n"
+            "| `JenticApiKey` | *(reserved)* | Internal jentic-mini admin key — do not assign manually. |"
         ),
     )
     scheme: dict | None = Field(
@@ -83,10 +92,15 @@ class CredentialCreate(NormModel):
 class CredentialPatch(NormModel):
     label: str | None = None
     value: str | None = None
+    description: str | None = None
+    """Update the optional free-text notes describing what this credential is for."""
     identity: str | None = None
     """Update the identity (username / client ID) for this credential."""
     api_id: str | None = None
-    auth_type: Literal["bearer", "basic", "apiKey", "none"] | None = Field(
+    auth_type: (
+        Literal["bearer", "basic", "apiKey", "none", "oauth2", "pipedream_oauth", "JenticApiKey"]
+        | None
+    ) = Field(
         default=None,
         description="Update the auth type for this credential. See `POST /credentials` for valid values and semantics.",
     )
@@ -145,6 +159,23 @@ class ApiOut(BaseModel):
     )
     created_at: float | None = Field(
         default=None, examples=[1672531200.0], description="Unix timestamp when API was imported"
+    )
+    source: Literal["local", "catalog"] | None = Field(
+        default=None,
+        examples=["local"],
+        description=(
+            "Provenance of this row: 'local' = imported into the workspace and indexed locally; "
+            "'catalog' = surfaced from the public catalog and not yet imported. The credentials "
+            "form's API picker uses this to badge each option as 'Local' or 'Catalog'."
+        ),
+    )
+    local: bool | None = Field(
+        default=None,
+        examples=[True],
+        description=(
+            "Convenience boolean mirroring `source == 'local'`. Surfaced for clients that want "
+            "a single-bit check without parsing a string union."
+        ),
     )
     model_config = {"extra": "allow"}
 
@@ -317,6 +348,8 @@ class CredentialOut(BaseModel):
     model_config = {"extra": "ignore"}
     id: str
     label: str
+    description: str | None = None
+    """Optional free-text notes describing what this credential is for."""
     identity: str | None = None
     """Identity field (username, client ID, etc.) — returned so clients can confirm what was stored."""
     api_id: str | None = None
@@ -329,9 +362,27 @@ class CredentialOut(BaseModel):
     """Host+path patterns this credential matches — stored in credential_routes table."""
     created_at: float | None = None
     updated_at: float | None = None
+    last_used_at: float | None = None
+    """Unix timestamp of the last successful upstream call that used this credential.
+    Best-effort — written by the broker after a < 400 response. Null until first successful use."""
     account_id: str | None = None
     app_slug: str | None = None
     synced_at: float | None = None
+    healthy: bool | None = None
+    """Tri-state OAuth grant health: True = upstream call succeeded recently;
+    False = upstream returned 401/403 and the grant needs to be reconnected;
+    None = unknown / not applicable (manual bearer/api-key credentials, or
+    an OAuth account that hasn't been used yet). Surfaced as `StatusDot`
+    in the credential list and as a 'Reconnect' inline action.
+
+    For manual credentials this is sourced from `credentials.healthy`, written
+    by the broker on each call (<400 → True, 401/403 → False) and by
+    `POST /credentials/{id}/test`. For Pipedream credentials it comes from the
+    joined `oauth_broker_accounts.healthy`, which takes precedence."""
+    health_checked_at: float | None = None
+    """Unix timestamp of the last health observation (a broker call verdict or an
+    explicit Test connection). Null until the credential has been exercised.
+    Lets the UI say 'checked 5m ago' in the StatusDot tooltip."""
 
 
 # ── Toolkits (output) ─────────────────────────────────────────────────────────
