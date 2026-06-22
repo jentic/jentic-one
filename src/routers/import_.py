@@ -53,7 +53,8 @@ class ImportSource(NormModel):
     """Single import source for an OpenAPI spec or Arazzo workflow. Can be local file, URL, or inline content."""
 
     type: NormStr = Field(
-        description="Source type: 'path' (local file), 'url' (fetch from URL), or 'inline' (spec content in request)"
+        description="Source type: 'path' (local file), 'url' (fetch from URL), or 'inline' (spec content in request)",
+        enum=["inline", "url", "path"],
     )
     path: str | None = Field(
         default=None, description="Local file system path (required if type='path')"
@@ -141,7 +142,7 @@ def _load_doc(source: ImportSource) -> tuple[dict, str | None]:
         return doc, str(dest)
 
     else:
-        raise ValueError(f"Unknown source type: {source.type!r}")
+        raise ValueError(f"Unknown source type: {source.type!r}. Valid: inline, url, path")
 
 
 def _is_arazzo(doc: dict) -> bool:

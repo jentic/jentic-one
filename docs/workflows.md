@@ -143,6 +143,16 @@ A `POST /localhost/transform` pseudo-operation accepting `{data, filter}` is a p
 
 `POST /import` accepts a batch of sources. The endpoint auto-detects OpenAPI vs Arazzo by inspecting the document — there is no top-level `type: "workflow"` field on the request.
 
+### Source Types
+
+`POST /import` accepts `sources[].type` with three valid values: `inline`, `url`, `path`. Each type requires different companion fields:
+
+| Type     | Required Field(s)        | Optional Field(s)    | Description                                      |
+|----------|--------------------------|----------------------|--------------------------------------------------|
+| `inline` | `content` (JSON string)  | `filename`           | Spec content posted directly in the request      |
+| `url`    | `url` (fetch spec URL)   | `filename`           | Fetch spec from a remote HTTP/HTTPS URL          |
+| `path`   | `path` (local file path) | —                    | Local filesystem path already accessible to container |
+
 ### From a URL
 
 ```http
