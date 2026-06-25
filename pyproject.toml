@@ -18,7 +18,7 @@ dependencies = [
   "bcrypt==5.0.0",
   "pyjwt==2.13.0",
   "python-multipart>=0.0.32",
-  "alembic>=1.18.4,<2",
+  "alembic>=1.18.5,<2",
   "jentic-openapi-common>=1.0.0a57",
   "arazzo-runner>=0.9.5",
 ]
