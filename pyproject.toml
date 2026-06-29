@@ -32,7 +32,7 @@ dev = [
     "pytest-asyncio>=1.4.0,<2",
     "schemathesis>=4.21.10",
     "ruff>=0.15.20,<0.16.0",
-    "poethepoet>=0.37,<0.47",
+    "poethepoet>=0.47.0,<0.48",
 ]
 
 [tool.uv]
