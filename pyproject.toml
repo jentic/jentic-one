@@ -30,7 +30,7 @@ Homepage = "https://github.com/jentic/jentic-mini"
 dev = [
     "pytest>=9.1.1,<10",
     "pytest-asyncio>=1.4.0,<2",
-    "schemathesis>=4.21.10",
+    "schemathesis>=4.22.0",
     "ruff>=0.15.20,<0.16.0",
     "poethepoet>=0.47.0,<0.48",
 ]
