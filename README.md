@@ -17,11 +17,23 @@
   <img src="https://img.shields.io/badge/lint-ruff-FDBD79.svg?logo=ruff&logoColor=black" alt="Linted with Ruff">
   <img src="https://img.shields.io/badge/types-mypy_strict-F1E38B.svg" alt="mypy strict">
   <a href="https://www.conventionalcommits.org/"><img src="https://img.shields.io/badge/commits-conventional-EDADAF.svg?logo=conventionalcommits&logoColor=white" alt="Conventional Commits"></a>
-</p>
-
----
-
+ </p>
+ 
+> [!WARNING]
+> **Jentic One is currently in Public Beta.**  
+> APIs, database schemas, and CLI commands are subject to breaking changes without a major version bump. We do not recommend running this in production yet.
+ 
 Jentic One is a backend platform for secure third-party API execution. A stateless **Broker** proxy injects stored credentials into outbound requests so secrets never leave the data plane, while a **Control Plane** (Registry, Admin, Control) manages the catalogue of available APIs, access grants, and credential storage.
+
+## Quick Start
+
+Install `jenticctl` to deploy Jentic One locally or manage an existing environment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+```
+
+*For Docker, Helm, or manual deployments, see the full [Installation Guide](docs/installation.md).*
 
 ## What is Jentic One?
 
