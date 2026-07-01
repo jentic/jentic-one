@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Float, cast, func, literal, select, tuple_
+from sqlalchemy import Float, cast, func, literal, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.operations import Operation
@@ -24,7 +25,13 @@ from jentic_one.registry.repos.search.protocol import SearchCursor, SearchHit
 from jentic_one.registry.repos.search.registry import register_strategy
 from jentic_one.shared.models import ApiRevisionState
 
-_TS_CONFIG = "english"
+# The text-search configuration must reach Postgres as a ``regconfig``, not a
+# bound VARCHAR: ``to_tsvector`` / ``websearch_to_tsquery`` only overload on
+# ``(regconfig, text)``. A bound ``literal("english")`` renders as ``$n::VARCHAR``
+# and fails with ``function to_tsvector(character varying, text) does not exist``.
+# Render it inline as a regconfig literal instead. The value is a fixed constant
+# (never user input), so inlining is safe from injection.
+_TS_CONFIG: ColumnElement[str] = literal_column("'english'::regconfig")
 
 
 @register_strategy
@@ -44,8 +51,8 @@ class PostgresLexicalStrategy:
         limit: int = 20,
         cursor: SearchCursor | None = None,
     ) -> list[SearchHit]:
-        document = func.to_tsvector(literal(_TS_CONFIG), func.coalesce(Operation.search_text, ""))
-        tsquery = func.websearch_to_tsquery(literal(_TS_CONFIG), query)
+        document = func.to_tsvector(_TS_CONFIG, func.coalesce(Operation.search_text, ""))
+        tsquery = func.websearch_to_tsquery(_TS_CONFIG, query)
         rank = func.ts_rank_cd(document, tsquery)
         # Squash unbounded rank into (0, 1] distance (see module docstring).
         distance = cast(1.0 / (rank + 1.0), Float).label("distance")
