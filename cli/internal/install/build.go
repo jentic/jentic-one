@@ -138,9 +138,30 @@ func (p BuildPlan) Execute(w io.Writer) error {
 		}
 	}
 
-	if err := run(w, "uv", "venv", p.VenvDir); err != nil {
+	if err := run(w, "uv", "venv", "--python", "3.12", p.VenvDir); err != nil {
 		return fmt.Errorf("create venv: %w", err)
 	}
+
+	uiDir := filepath.Join(p.SourceDir, "ui")
+	if _, err := os.Stat(filepath.Join(uiDir, "package.json")); err == nil {
+		if _, err := exec.LookPath("npm"); err == nil {
+			fmt.Fprint(w, mutedStyle.Render("  Building UI...\n"))
+			if err := runDir(w, uiDir, "npm", "ci"); err != nil {
+				return fmt.Errorf("npm ci: %w", err)
+			}
+			if err := runDir(w, uiDir, "npm", "run", "build"); err != nil {
+				return fmt.Errorf("npm build: %w", err)
+			}
+			srcStatic := filepath.Join(p.SourceDir, "src", "jentic_one", "static")
+			_ = os.RemoveAll(srcStatic)
+			if err := copyDir(filepath.Join(uiDir, "dist"), srcStatic); err != nil {
+				return fmt.Errorf("copy static assets: %w", err)
+			}
+		} else {
+			fmt.Fprint(w, warnStyle.Render("  npm not found; skipping UI build (SPA will not be available)\n"))
+		}
+	}
+
 	if err := run(w, "uv", "pip", "install", "--python", p.VenvPython(), "-e", p.SourceDir); err != nil {
 		return fmt.Errorf("install %s from %s: %w", projectName, p.SourceDir, err)
 	}
@@ -287,6 +308,38 @@ func redactGitArgs(args []string) []string {
 func isGitRepo(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, ".git"))
 	return err == nil && info.IsDir()
+}
+
+// runDir runs a command in the specified directory, streaming output to w.
+func runDir(w io.Writer, dir, name string, args ...string) error {
+	fmt.Fprintf(w, "\n[cd %s] $ %s %s\n", dir, name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = w
+	cmd.Stderr = w
+	return cmd.Run()
+}
+
+// copyDir recursively copies the src directory to dst.
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
 }
 
 func run(w io.Writer, name string, args ...string) error {
