@@ -2,8 +2,8 @@
 
 Ranks operations by SQLite's built-in ``bm25()`` over the ``operations_fts``
 virtual table, joins back to ``operations``/``api_revisions`` to apply the same
-revision-pin and published-state filters as every other strategy, and returns
-distance-ordered hits with keyset pagination.
+revision-pin and active-state (published or imported) filters as every other
+strategy, and returns distance-ordered hits with keyset pagination.
 
 SQLite's ``bm25()`` returns a value where a *more negative* number is a better
 match. We negate it into a non-negative relevance score, squash the unbounded
@@ -50,6 +50,16 @@ class SqliteLexicalStrategy:
 
         where_clauses = ["operations_fts MATCH :query"]
 
+        # Active revision states a search can surface (mirrors the
+        # ``ix_api_revisions_one_active`` index): a catalog import lands as
+        # IMPORTED and must be searchable without a manual promote.
+        active_binds = []
+        for i, state in enumerate((ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED)):
+            key = f"active_state_{i}"
+            active_binds.append(f":{key}")
+            params[key] = state.value
+        active_clause = "ar.state IN (" + ", ".join(active_binds) + ")"
+
         pins = revision_pins or {}
         if pins:
             pin_api_binds = []
@@ -64,13 +74,11 @@ class SqliteLexicalStrategy:
                 params[key] = str(rev_id)
             where_clauses.append(
                 "((ar.api_id NOT IN (" + ", ".join(pin_api_binds) + ")"
-                " AND ar.state = :published_state)"
+                " AND " + active_clause + ")"
                 " OR ar.id IN (" + ", ".join(pin_rev_binds) + "))"
             )
-            params["published_state"] = ApiRevisionState.PUBLISHED.value
         else:
-            where_clauses.append("ar.state = :published_state")
-            params["published_state"] = ApiRevisionState.PUBLISHED.value
+            where_clauses.append(active_clause)
 
         if api_filters:
             filter_binds = []

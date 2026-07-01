@@ -2,8 +2,9 @@
 
 Uses PostgreSQL's native full-text search: ``to_tsvector`` over the operation's
 ``search_text`` matched against ``websearch_to_tsquery`` and ranked with
-``ts_rank_cd``. Applies the same revision-pin and published-state filters as the
-other strategies and paginates with a keyset cursor on ``(distance, id)``.
+``ts_rank_cd``. Applies the same revision-pin and active-state (published or
+imported) filters as the other strategies and paginates with a keyset cursor on
+``(distance, id)``.
 
 ``ts_rank_cd`` is unbounded and always non-negative. We squash it into ``[0, 1)``
 via ``rank / (rank + 1)`` and expose ``distance = 1 - squashed = 1 / (rank + 1)``
@@ -32,6 +33,12 @@ from jentic_one.shared.models import ApiRevisionState
 # Render it inline as a regconfig literal instead. The value is a fixed constant
 # (never user input), so inlining is safe from injection.
 _TS_CONFIG: ColumnElement[str] = literal_column("'english'::regconfig")
+
+# The set of "active" revision states a search can surface. Mirrors the
+# ``ix_api_revisions_one_active`` partial unique index and ``is_current`` — a
+# catalog import lands as IMPORTED and must be searchable without a manual
+# promote to PUBLISHED.
+_ACTIVE_STATES = (ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED)
 
 
 @register_strategy
@@ -73,12 +80,12 @@ class PostgresLexicalStrategy:
             stmt = stmt.where(
                 (
                     ApiRevision.api_id.notin_(list(pins.keys()))
-                    & (ApiRevision.state == ApiRevisionState.PUBLISHED)
+                    & ApiRevision.state.in_(_ACTIVE_STATES)
                 )
                 | ApiRevision.id.in_(list(pins.values()))
             )
         else:
-            stmt = stmt.where(ApiRevision.state == ApiRevisionState.PUBLISHED)
+            stmt = stmt.where(ApiRevision.state.in_(_ACTIVE_STATES))
 
         if api_filters:
             stmt = stmt.where(ApiRevision.api_id.in_(api_filters))
