@@ -26,7 +26,8 @@ def _rendered_fts_sql() -> str:
     document = func.to_tsvector(cfg, func.coalesce(Operation.search_text, ""))
     tsquery = func.websearch_to_tsquery(cfg, "spreadsheet values")
     stmt = select(Operation.id).where(document.op("@@")(tsquery))
-    return str(stmt.compile(dialect=postgresql.dialect()))
+    compiled = stmt.compile(dialect=postgresql.dialect())  # type: ignore[no-untyped-call]
+    return str(compiled)
 
 
 def test_fts_config_rendered_as_regconfig() -> None:
