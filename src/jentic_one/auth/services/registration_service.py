@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorScopeGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
@@ -99,7 +102,7 @@ class RegistrationService:
         rat_ttl = self._ctx.config.auth.rat_ttl_seconds
         rat_expires_at = datetime.now(UTC) + timedelta(seconds=rat_ttl)
 
-        async with self._ctx.admin_db.transaction() as session:
+        async def _write(session: AsyncSession) -> Agent:
             agent = await AgentRepository.create_dcr(
                 session,
                 name=client_name,
@@ -137,6 +140,14 @@ class RegistrationService:
                 actor_id=agent.id,
                 actor_type=ActorType.AGENT.value,
             )
+            return agent
+
+        # Route through run_in_transaction so a transient SQLite write-lock —
+        # DCR contends on the admin DB with the background job worker's poll and
+        # concurrent token-mint traffic — is retried (with WAL + busy_timeout)
+        # rather than surfaced as a 500 "database is locked" on first contention.
+        # The RAT is generated above so its plaintext stays stable across a retry.
+        agent = await self._ctx.admin_db.run_in_transaction(_write)
 
         base_url = self._ctx.config.auth.canonical_base_url
         return RegisterResult(
