@@ -27,6 +27,7 @@ CREDENTIALS_READ = "credentials:read"
 CREDENTIALS_WRITE = "credentials:write"
 APIS_READ = "apis:read"
 APIS_WRITE = "apis:write"
+CATALOG_IMPORT = "catalog:import"
 EXECUTIONS_READ = "executions:read"
 AUDIT_READ = "audit:read"
 AGENTS_READ = "agents:read"
@@ -67,6 +68,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 CREDENTIALS_WRITE,
                 APIS_READ,
                 APIS_WRITE,
+                CATALOG_IMPORT,
                 EXECUTIONS_READ,
                 AUDIT_READ,
                 AGENTS_WRITE,
@@ -139,6 +141,11 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     APIS_WRITE: Permission(
         name=APIS_WRITE,
         description="Import, update, and delete API definitions and their revisions",
+        implies=frozenset({APIS_READ, CATALOG_IMPORT}),
+    ),
+    CATALOG_IMPORT: Permission(
+        name=CATALOG_IMPORT,
+        description="Import an API from the public catalog into the local registry",
         implies=frozenset({APIS_READ}),
     ),
     EXECUTIONS_READ: Permission(

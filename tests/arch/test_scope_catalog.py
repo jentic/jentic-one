@@ -96,6 +96,23 @@ def test_default_agent_scopes_are_catalogued() -> None:
 
 
 @pytest.mark.arch
+def test_catalog_import_family_and_implications() -> None:
+    """The catalog:import scope forms its own family and wires the expected graph."""
+    catalog = build_scope_catalog()
+    by_name = {s["name"]: s for s in catalog["scopes"]}
+    catalog_import = by_name["catalog:import"]
+    assert catalog_import["family"] == "catalog"
+    assert catalog_import["action"] == "import"
+    assert catalog_import["implies"] == ["apis:read"]
+
+    fam = next(f for f in catalog["families"] if f["name"] == "catalog")
+    assert fam["label"] == "Catalog"
+    # apis:write ⇒ catalog:import ⇒ apis:read (transitive closure).
+    assert "catalog:import" in by_name["apis:write"]["implies_transitive"]
+    assert "apis:read" in by_name["catalog:import"]["implies_transitive"]
+
+
+@pytest.mark.arch
 def test_owner_shared_constants_are_catalogued() -> None:
     """Every OWNER_* shared scope constant must be a key in ALL_PERMISSIONS."""
     owner_constants = {

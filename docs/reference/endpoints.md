@@ -30,7 +30,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 _Total endpoints: **150**._
 
 
-## Agent-facing (typically agent / service-account / toolkit) (30)
+## Agent-facing (typically agent / service-account / toolkit) (31)
 
 
 ### `apis`
@@ -66,6 +66,7 @@ _Total endpoints: **150**._
 | GET | `/catalog` | `capabilities:read` | agent | List Catalog |
 | GET | `/catalog/{api_id}` | `capabilities:read` | agent | Get Catalog Entry |
 | GET | `/catalog/{api_id}/operations` | `capabilities:read` | agent | Preview Catalog Operations |
+| POST | `/catalog/{api_id}:import` | `catalog:import` | agent | Import Catalog Entry |
 
 ### `events`
 
@@ -199,7 +200,7 @@ _Total endpoints: **150**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (60)
+## Any authenticated actor (59)
 
 
 ### `access-requests`
@@ -241,12 +242,6 @@ _Total endpoints: **150**._
 | DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |
-
-### `catalog`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/catalog/{api_id}:import` | `apis:write` | any | Import Catalog Entry |
 
 ### `credentials`
 

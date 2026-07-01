@@ -200,7 +200,7 @@ async def refresh_catalog(
 async def import_catalog_entry(
     request: Request,
     api_id: str,
-    identity: Identity = get_current_identity(required_permissions=["apis:write"]),
+    identity: Identity = get_current_identity(required_permissions=["catalog:import"]),
     svc: CatalogService = Depends(get_catalog_service),
 ) -> JSONResponse:
     """Enqueue an async import of a catalog entry into the local registry."""

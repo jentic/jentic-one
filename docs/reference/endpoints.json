@@ -754,7 +754,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "POST",
@@ -780,7 +781,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "DELETE",
@@ -830,7 +832,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "PATCH",
@@ -928,7 +931,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "POST",
@@ -954,7 +958,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "DELETE",
@@ -1004,7 +1009,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "PATCH",
@@ -1030,7 +1036,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "POST",
@@ -1080,7 +1087,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "DELETE",
@@ -1178,7 +1186,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "POST",
@@ -1204,7 +1213,8 @@
       "group": "Any authenticated actor",
       "implied_scopes": {
         "apis:write": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ]
       },
       "method": "POST",
@@ -1416,9 +1426,9 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Agent-facing (typically agent / service-account / toolkit)",
       "implied_scopes": {
-        "apis:write": [
+        "catalog:import": [
           "apis:read"
         ]
       },
@@ -1427,11 +1437,11 @@
       "path": "/catalog/{api_id}:import",
       "public": false,
       "required_scopes": [
-        "apis:write"
+        "catalog:import"
       ],
       "summary": "Import Catalog Entry",
       "surface": "catalog",
-      "typical_caller": "any"
+      "typical_caller": "agent"
     },
     {
       "actor_types": [
@@ -1452,6 +1462,7 @@
           "audit:read",
           "capabilities:execute",
           "capabilities:read",
+          "catalog:import",
           "config:read",
           "config:write",
           "credentials:read",
@@ -2029,6 +2040,7 @@
           "audit:read",
           "capabilities:execute",
           "capabilities:read",
+          "catalog:import",
           "config:read",
           "config:write",
           "credentials:read",
@@ -2076,6 +2088,7 @@
           "audit:read",
           "capabilities:execute",
           "capabilities:read",
+          "catalog:import",
           "config:read",
           "config:write",
           "credentials:read",
@@ -3594,6 +3607,7 @@
               "audit:read",
               "capabilities:execute",
               "capabilities:read",
+              "catalog:import",
               "config:read",
               "config:write",
               "credentials:read",
@@ -3618,6 +3632,7 @@
               "audit:read",
               "capabilities:execute",
               "capabilities:read",
+              "catalog:import",
               "config:read",
               "config:write",
               "credentials:read",
@@ -3720,13 +3735,35 @@
             "description": "Import, update, and delete API definitions and their revisions",
             "family": "apis",
             "implies": [
+              "apis:read",
+              "catalog:import"
+            ],
+            "implies_transitive": [
+              "apis:read",
+              "catalog:import"
+            ],
+            "is_superuser": false,
+            "name": "apis:write"
+          }
+        ]
+      },
+      {
+        "blurb": "Importing public catalog APIs into the local registry.",
+        "label": "Catalog",
+        "name": "catalog",
+        "scopes": [
+          {
+            "action": "import",
+            "description": "Import an API from the public catalog into the local registry",
+            "family": "catalog",
+            "implies": [
               "apis:read"
             ],
             "implies_transitive": [
               "apis:read"
             ],
             "is_superuser": false,
-            "name": "apis:write"
+            "name": "catalog:import"
           }
         ]
       },
@@ -4073,10 +4110,12 @@
         "description": "Import, update, and delete API definitions and their revisions",
         "family": "apis",
         "implies": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ],
         "implies_transitive": [
-          "apis:read"
+          "apis:read",
+          "catalog:import"
         ],
         "is_superuser": false,
         "name": "apis:write"
@@ -4115,6 +4154,19 @@
         "implies_transitive": [],
         "is_superuser": false,
         "name": "capabilities:read"
+      },
+      {
+        "action": "import",
+        "description": "Import an API from the public catalog into the local registry",
+        "family": "catalog",
+        "implies": [
+          "apis:read"
+        ],
+        "implies_transitive": [
+          "apis:read"
+        ],
+        "is_superuser": false,
+        "name": "catalog:import"
       },
       {
         "action": "read",
@@ -4225,6 +4277,7 @@
           "audit:read",
           "capabilities:execute",
           "capabilities:read",
+          "catalog:import",
           "config:read",
           "config:write",
           "credentials:read",
@@ -4249,6 +4302,7 @@
           "audit:read",
           "capabilities:execute",
           "capabilities:read",
+          "catalog:import",
           "config:read",
           "config:write",
           "credentials:read",
@@ -4397,7 +4451,7 @@
         "name": "users:write"
       }
     ],
-    "total": 29
+    "total": 30
   },
   "total": 150
 }
