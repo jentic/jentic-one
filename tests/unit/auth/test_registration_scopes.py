@@ -14,6 +14,14 @@ def _make_ctx() -> MagicMock:
     mock_session.commit = AsyncMock()
     ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    # register() routes its write through run_in_transaction; mirror the real
+    # helper by invoking the passed callback against the mock session so the
+    # _write body (create_dcr + scope grants) actually runs.
+    async def _run_in_transaction(fn: Any, **_kwargs: Any) -> Any:
+        return await fn(mock_session)
+
+    ctx.admin_db.run_in_transaction = AsyncMock(side_effect=_run_in_transaction)
     ctx.config.auth.rat_ttl_seconds = 900
     ctx.config.auth.canonical_base_url = "https://auth.example.com"
     return ctx
