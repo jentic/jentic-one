@@ -195,7 +195,22 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 	common := append([]string{"-c", "credential.helper="}, gitAuthArgs()...)
 
 	if isGitRepo(p.SourceDir) {
-		return runGit(w, p.SourceDir, append(append([]string{}, common...), "pull", "--ff-only")...)
+		// Sync to the remote's default branch by fetch + hard reset rather than
+		// `pull --ff-only`. A fast-forward pull dead-ends ("Not possible to
+		// fast-forward") whenever upstream history was rewritten/force-pushed —
+		// e.g. after an OSS re-baseline of the published repo. $SourceDir is a
+		// throwaway build checkout under ~/.jentic (never a tree the user edits),
+		// so matching the remote exactly is the correct, always-succeeding sync.
+		fetch := append(append([]string{}, common...), "fetch", "--prune", "origin")
+		if err := runGit(w, p.SourceDir, fetch...); err != nil {
+			return fmt.Errorf("fetch source: %w", err)
+		}
+		branch := remoteDefaultBranch(p.SourceDir)
+		reset := append(append([]string{}, common...), "reset", "--hard", "origin/"+branch)
+		if err := runGit(w, p.SourceDir, reset...); err != nil {
+			return fmt.Errorf("sync source to origin/%s: %w", branch, err)
+		}
+		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(p.SourceDir), 0o700); err != nil {
 		return fmt.Errorf("create source parent: %w", err)
@@ -212,6 +227,20 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 		return fmt.Errorf("clone failed (check the ref and your token's access): %w", err)
 	}
 	return nil
+}
+
+// remoteDefaultBranch returns origin's default branch name (e.g. "main"),
+// falling back to "main" when it can't be resolved. Lets the build checkout
+// re-sync to whatever branch the remote publishes as HEAD.
+func remoteDefaultBranch(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short",
+		"refs/remotes/origin/HEAD").Output() //nolint:gosec // dir is a CLI-internal build checkout path.
+	if err == nil {
+		if b := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/")); b != "" {
+			return b
+		}
+	}
+	return "main"
 }
 
 // gitAuthArgs returns a `git -c http.extraheader=...` prefix carrying a Basic
