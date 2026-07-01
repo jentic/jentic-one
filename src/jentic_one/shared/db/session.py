@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import (
 from jentic_one.shared.config import DatabaseConfig
 from jentic_one.shared.db.backends import (
     configure_sqlite_pragmas,
-    enable_sqlite_immediate_begin,
+    enable_sqlite_manual_begin,
     get_backend,
 )
 from jentic_one.shared.db.backends.base import DatabaseBackend
@@ -44,6 +44,7 @@ class DatabaseSession:
         self._backend = get_backend(config)
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
+        self._is_sqlite = self._backend.dialect_name == "sqlite"
 
     @property
     def engine(self) -> AsyncEngine:
@@ -74,7 +75,7 @@ class DatabaseSession:
                 journal_mode=self._config.journal_mode,
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
-            enable_sqlite_immediate_begin(self._engine)
+            enable_sqlite_manual_begin(self._engine)
         self._session_factory = async_sessionmaker(bind=self._engine, expire_on_commit=False)
 
     async def close(self) -> None:
@@ -105,10 +106,24 @@ class DatabaseSession:
 
         The *retries* parameter controls how many times a transient error during
         commit is retried before giving up (default 1 retry).
+
+        On SQLite this opens the transaction with ``BEGIN IMMEDIATE`` so the
+        write lock is taken up front (see ``enable_sqlite_manual_begin``): it
+        avoids the read→write upgrade that raises ``SQLITE_BUSY_SNAPSHOT``, and
+        it is scoped to this write path only — reads via :meth:`session` stay in
+        autocommit so WAL's reader/writer concurrency is preserved.
         """
         factory = self.session_factory
         async with factory() as sess:
             try:
+                if self._is_sqlite:
+                    # isolation_level=None disabled the DBAPI's implicit BEGIN,
+                    # so start the write transaction explicitly and eagerly
+                    # acquire the write lock. busy_timeout governs the wait; a
+                    # timeout surfaces here as OperationalError and is mapped to
+                    # DatabaseUnavailableError (and retried via run_in_transaction).
+                    conn = await sess.connection()
+                    await conn.exec_driver_sql("BEGIN IMMEDIATE")
                 yield sess
             except IntegrityError as exc:
                 await sess.rollback()

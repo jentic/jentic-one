@@ -68,23 +68,29 @@ def configure_sqlite_pragmas(
         cursor.close()
 
 
-def enable_sqlite_immediate_begin(engine: AsyncEngine) -> None:
-    """Make SQLite transactions begin with ``BEGIN IMMEDIATE``.
+def enable_sqlite_manual_begin(engine: AsyncEngine) -> None:
+    """Hand transaction control to the application so writes can BEGIN IMMEDIATE.
 
-    By default pysqlite/aiosqlite open transactions in *deferred* mode: the
-    write lock is only acquired when the first write statement runs. A
-    transaction that reads first (e.g. ``UPDATE ... WHERE id = (SELECT ...)``)
-    therefore holds a read snapshot and then tries to *upgrade* to a writer. If
-    another connection has committed a write in the meantime, SQLite raises
+    Setting ``isolation_level = None`` on each raw DBAPI connection disables
+    pysqlite's legacy implicit ``BEGIN``. This leaves reads in autocommit — a
+    plain ``SELECT`` via a read-only session takes only a shared read lock, so
+    WAL's reader/writer concurrency is preserved — and lets the *write* path
+    issue an explicit ``BEGIN IMMEDIATE`` (see ``DatabaseSession.transaction``).
+
+    Why the write path needs ``BEGIN IMMEDIATE``: under a *deferred* begin a
+    write transaction that reads first (e.g. ``UPDATE ... WHERE id = (SELECT
+    ...)``) holds a read snapshot and then tries to *upgrade* to a writer. If
+    another connection committed a write in the meantime, SQLite raises
     ``SQLITE_BUSY_SNAPSHOT`` ("database is locked") *immediately* — ``PRAGMA
     busy_timeout`` does not apply to snapshot-upgrade conflicts, only to
-    acquiring an initial lock.
+    acquiring an initial lock. ``BEGIN IMMEDIATE`` takes the write lock up
+    front, so there is no read→write upgrade to fail on and ``busy_timeout``
+    governs the wait.
 
-    Emitting ``BEGIN IMMEDIATE`` takes the write lock up front, so there is no
-    read→write upgrade to fail on and ``busy_timeout`` governs the wait. This
-    serialises writers (the price of SQLite) but eliminates the spurious
-    "database is locked" errors between concurrent writers such as the job
-    worker and request handlers.
+    Crucially this is applied to writes only, not reads: a global
+    ``BEGIN IMMEDIATE`` (via a ``begin`` event) would fire on every session's
+    autobegin — including read-only ones — making every read take a write lock
+    and defeating WAL.
     """
 
     sync_engine = engine.sync_engine
@@ -93,13 +99,7 @@ def enable_sqlite_immediate_begin(engine: AsyncEngine) -> None:
     def _disable_pysqlite_implicit_begin(
         dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
     ) -> None:
-        # Stop the DBAPI from emitting its own implicit (deferred) BEGIN so we
-        # can control transaction start with the event below.
         dbapi_connection.isolation_level = None
-
-    @event.listens_for(sync_engine, "begin")
-    def _emit_begin_immediate(conn: Any) -> None:
-        conn.exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
