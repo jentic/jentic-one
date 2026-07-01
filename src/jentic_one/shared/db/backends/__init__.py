@@ -11,6 +11,7 @@ from jentic_one.shared.db.backends.postgres import PostgresBackend
 from jentic_one.shared.db.backends.registry import get_backend
 from jentic_one.shared.db.backends.sqlite import (
     SqliteBackend,
+    configure_sqlite_deferred_control,
     configure_sqlite_pragmas,
     enable_sqlite_foreign_keys,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "DatabaseBackend",
     "PostgresBackend",
     "SqliteBackend",
+    "configure_sqlite_deferred_control",
     "configure_sqlite_pragmas",
     "enable_sqlite_foreign_keys",
     "get_backend",

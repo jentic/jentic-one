@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import TypeVar
 
 import structlog
+from sqlalchemy import text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DisconnectionError, IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import (
@@ -18,7 +19,11 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from jentic_one.shared.config import DatabaseConfig
-from jentic_one.shared.db.backends import configure_sqlite_pragmas, get_backend
+from jentic_one.shared.db.backends import (
+    configure_sqlite_deferred_control,
+    configure_sqlite_pragmas,
+    get_backend,
+)
 from jentic_one.shared.db.backends.base import DatabaseBackend
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 
@@ -40,6 +45,9 @@ class DatabaseSession:
         self._backend = get_backend(config)
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
+        # SQLite hands transaction control to us (isolation_level=None), so the
+        # write path must open its transaction explicitly with BEGIN IMMEDIATE.
+        self._is_sqlite = self._backend.dialect_name == "sqlite"
 
     @property
     def engine(self) -> AsyncEngine:
@@ -70,6 +78,7 @@ class DatabaseSession:
                 journal_mode=self._config.journal_mode,
                 busy_timeout_ms=self._config.busy_timeout_ms,
             )
+            configure_sqlite_deferred_control(self._engine)
         self._session_factory = async_sessionmaker(bind=self._engine, expire_on_commit=False)
 
     async def close(self) -> None:
@@ -89,6 +98,22 @@ class DatabaseSession:
             finally:
                 await sess.close()
 
+    async def _begin_write(self, sess: AsyncSession) -> None:
+        """Open the write transaction with the write lock already held (SQLite).
+
+        SQLite hands transaction control to us (``isolation_level=None``), so the
+        write path opens its transaction explicitly with ``BEGIN IMMEDIATE`` —
+        taking the single-writer file lock up front rather than starting as a
+        reader and failing to upgrade under WAL (which surfaces as an instant
+        ``database is locked``, ignoring ``busy_timeout``). Read-only
+        :meth:`session` blocks skip this and stay lock-free, so a read session
+        can safely nest a write transaction on the same file.
+
+        A no-op on Postgres, whose MVCC needs no explicit write-lock priming.
+        """
+        if self._is_sqlite:
+            await sess.execute(text("BEGIN IMMEDIATE"))
+
     @asynccontextmanager
     async def transaction(self, *, retries: int = 1) -> AsyncGenerator[AsyncSession, None]:
         """Yield a session inside a transaction that commits on clean exit.
@@ -104,6 +129,7 @@ class DatabaseSession:
         factory = self.session_factory
         async with factory() as sess:
             try:
+                await self._begin_write(sess)
                 yield sess
             except IntegrityError as exc:
                 await sess.rollback()
