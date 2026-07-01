@@ -313,14 +313,16 @@ func isGitRepo(dir string) bool {
 // runDir runs a command in the specified directory, streaming output to w.
 func runDir(w io.Writer, dir, name string, args ...string) error {
 	fmt.Fprintf(w, "\n[cd %s] $ %s %s\n", dir, name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
+	cmd := exec.Command(name, args...) //nolint:gosec // name/args are CLI-internal build commands (npm), not user input.
 	cmd.Dir = dir
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()
 }
 
-// copyDir recursively copies the src directory to dst.
+// copyDir recursively copies the src directory to dst. Both paths are
+// CLI-internal build locations (npm's `ui/dist` output and the repo's packaged
+// static dir), never user input, so the gosec file/path findings are waived.
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -332,13 +334,13 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, 0755)
+			return os.MkdirAll(target, 0o750)
 		}
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // path is under the CLI-internal build src dir, not user input.
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, info.Mode())
+		return os.WriteFile(target, data, info.Mode()) //nolint:gosec // target is under the CLI-internal build dst dir, not user input.
 	})
 }
 
