@@ -33,8 +33,6 @@ Install `jenticctl` to deploy Jentic One locally or manage an existing environme
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
-*For Docker, Helm, or manual deployments, see the full [Installation Guide](docs/installation.md).*
-
 ## What is Jentic One?
 
 AI agents increasingly need to call real third-party APIs — but handing an agent your raw API keys is a security problem. Jentic One is a **self-hosted gateway** that keeps that from happening: you register the APIs an agent may use, store the credentials once, and the agent calls out through the Broker. The Broker injects the right credential at execution time and forwards the request, so **secrets never leave your infrastructure** and never reach the agent. Every call is governed by fine-grained permissions and recorded in an append-only audit log.
