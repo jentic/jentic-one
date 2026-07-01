@@ -95,11 +95,13 @@ func Preflight(d *Draft) []CheckResult {
 	return results
 }
 
-// Missing returns the checks whose tool was not found.
+// Missing returns the checks whose tool was not found, or whose daemon probe failed.
 func Missing(results []CheckResult) []CheckResult {
 	var missing []CheckResult
 	for _, r := range results {
-		if !r.Found {
+		// A check is missing if the tool itself is absent, OR if it has a daemon
+		// requirement that failed (i.e. the docker daemon is not responding).
+		if !r.Found || (r.DaemonChecked && !r.Healthy) {
 			missing = append(missing, r)
 		}
 	}
@@ -244,14 +246,22 @@ func RenderPreflight(results []CheckResult) string {
 	return b.String()
 }
 
-// MissingError builds an actionable error for missing required tools.
+// MissingError builds an actionable error for missing required tools or unhealthy daemons.
 func MissingError(missing []CheckResult) error {
 	names := make([]string, 0, len(missing))
 	var hints strings.Builder
 	for _, r := range missing {
 		names = append(names, r.Req.Name)
-		fmt.Fprintf(&hints, "\n  %s: %s", r.Req.Name, r.Req.URL)
+		if !r.Found {
+			fmt.Fprintf(&hints, "\n  %s: %s", r.Req.Name, r.Req.URL)
+		} else if r.DaemonChecked && !r.Healthy {
+			detail := r.DaemonDetail
+			if detail == "" {
+				detail = "the Docker daemon is not reachable"
+			}
+			fmt.Fprintf(&hints, "\n  docker daemon: %s — start Docker Desktop and re-run", detail)
+		}
 	}
-	return fmt.Errorf("missing required tool(s): %s — install and re-run:%s",
+	return fmt.Errorf("missing required tool(s) or daemons down: %s — install/start and re-run:%s",
 		strings.Join(names, ", "), hints.String())
 }
