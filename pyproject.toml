@@ -8,13 +8,13 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Jentic" }]
 dependencies = [
     "aiosqlite>=0.20.0",
-    "alembic>=1.16.0",
+    "alembic>=1.18.5",
     "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0",
-    "fastapi>=0.138.0",
+    "fastapi>=0.139.0",
     "httpx>=0.28.1",
     "jentic-problem-details>=0.1.0",
-    "opentelemetry-api>=1.20",
+    "opentelemetry-api>=1.43.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-exporter-prometheus>=0.44b0",
     "opentelemetry-instrumentation-asyncpg>=0.44b0",
@@ -36,7 +36,7 @@ dependencies = [
 
 [project.optional-dependencies]
 redis = [
-    "redis>=8.0.0",
+    "redis>=8.0.1",
 ]
 
 [build-system]
@@ -71,7 +71,7 @@ jentic-one = "jentic_one.__main__:main"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.18",
+    "ruff>=0.15.20",
     "mypy>=1.11.0",
     "pytest>=9.1.1",
     "pytest-cov>=5.0.0",
@@ -81,12 +81,12 @@ dev = [
     "lefthook>=2.1.8",
     "detect-secrets>=1.5.0",
     "commitizen>=4.16.4",
-    "click>=8.1",
+    "click>=8.4.2",
     "respx>=0.21",
     # redis is an optional runtime extra (see [project.optional-dependencies]);
     # the dev env always installs it so the state-backend unit tests (which build
     # the redis backend) run without needing the extra enabled explicitly.
-    "redis>=8.0.0",
+    "redis>=8.0.1",
     "python-multipart>=0.0.32",
 ]
 
