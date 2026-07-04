@@ -1,0 +1,29 @@
+name: "💡 Idea / Suggestion"
+description: "An early-stage idea, suggestion, or 'what if' — not yet a concrete feature request."
+title: "[idea] "
+labels: ["type:idea", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Half-formed thoughts welcome. Add an `area:` label after filing if you know which part of Jentic One this touches — otherwise leave it for triage."
+  - type: textarea
+    id: idea
+    attributes:
+      label: What's the idea?
+      description: Describe it in your own words — no need for a polished proposal.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why might this be valuable?
+      description: What would it enable or improve?
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Prior art, rough sketches, links, open questions.
+    validations:
+      required: false

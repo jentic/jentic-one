@@ -1,0 +1,49 @@
+name: "🐛 Bug"
+description: "Something is broken, errors out, crashes, or produces wrong output."
+title: "[bug] "
+labels: ["type:bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Add a `severity:` label after filing, and an `area:` label if you know which part of Jentic One this is — otherwise leave the area for triage.
+        🔒 **Redact secrets.** Paste real error output **verbatim** in the code blocks below.
+  - type: textarea
+    id: what
+    attributes:
+      label: What's broken
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: false
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual (paste exact output/errors)
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      value: |
+        - Jentic One version/commit:
+        - OS:
+        - Install method (install.sh / source / Docker):
+    validations:
+      required: false

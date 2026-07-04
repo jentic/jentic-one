@@ -1,0 +1,27 @@
+name: "✨ Feature"
+description: "Something missing you wanted, or an improvement to something that exists."
+title: "[feature] "
+labels: ["type:feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Add an `area:` label after filing if you know which part of Jentic One this is about — otherwise leave it for triage."
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: Focus on the need, not a pre-baked solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like instead?
+    validations:
+      required: false
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround (if any)
+    validations:
+      required: false

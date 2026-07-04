@@ -1,0 +1,24 @@
+name: "📖 Docs"
+description: "Documentation is missing, wrong, outdated, or unclear."
+title: "[docs] "
+labels: ["type:docs", "area:docs", "needs-triage"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Which doc / page / section?
+      placeholder: "docs/development/README.md, or a URL"
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's missing, wrong, or unclear?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect the docs to tell you?
+    validations:
+      required: false

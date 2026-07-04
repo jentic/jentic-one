@@ -1,0 +1,49 @@
+name: "🤕 Pain point"
+description: "Friction, confusion, or a dead end during a real workflow — even if nothing technically broke. (Our top priority.)"
+title: "[pain-point] "
+labels: ["type:pain-point", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting friction. **This is exactly what we most want during dogfooding.**
+        Add a `severity:` label after filing, and an `area:` label if you know which part of Jentic One this is — otherwise leave the area for triage.
+        🔒 **Redact secrets** — never paste API keys, tokens, or passwords.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Describe the moment of friction in your own words.
+      placeholder: "I ran `jentic register` and it succeeded, but I had no idea what to do next…"
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where (command or page)
+      placeholder: "jentic register  /  UI → Credentials page"
+    validations:
+      required: false
+  - type: textarea
+    id: friction
+    attributes:
+      label: Why it was a pain point
+      description: What confused you, what you had to guess, where you nearly gave up.
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: false
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      value: |
+        - Jentic One version/commit:
+        - OS:
+        - Install method (install.sh / source / Docker):
+    validations:
+      required: false
