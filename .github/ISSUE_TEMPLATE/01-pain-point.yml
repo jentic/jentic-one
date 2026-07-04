@@ -1,7 +1,7 @@
 name: "🤕 Pain point"
 description: "Friction, confusion, or a dead end during a real workflow — even if nothing technically broke. (Our top priority.)"
 title: "[pain-point] "
-labels: ["type:pain-point", "needs-triage"]
+labels: ["pain-point", "needs-triage"]
 body:
   - type: markdown
     attributes:

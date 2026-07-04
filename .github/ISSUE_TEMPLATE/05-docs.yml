@@ -1,7 +1,7 @@
 name: "📖 Docs"
 description: "Documentation is missing, wrong, outdated, or unclear."
 title: "[docs] "
-labels: ["type:docs", "area:docs", "needs-triage"]
+labels: ["documentation", "area:docs", "needs-triage"]
 body:
   - type: input
     id: where

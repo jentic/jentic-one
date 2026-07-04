@@ -1,7 +1,7 @@
 name: "💡 Idea / Suggestion"
 description: "An early-stage idea, suggestion, or 'what if' — not yet a concrete feature request."
 title: "[idea] "
-labels: ["type:idea", "needs-triage"]
+labels: ["idea", "needs-triage"]
 body:
   - type: markdown
     attributes:

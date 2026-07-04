@@ -38,8 +38,8 @@ jobs:
           case "$LABELS" in
             *"severity:blocker"*) emoji="🚨" ;;
             *"severity:major"*)   emoji="⚠️" ;;
-            *"type:pain-point"*)  emoji="🤕" ;;
-            *"type:bug"*)         emoji="🐛" ;;
+            *"pain-point"*)       emoji="🤕" ;;
+            *"bug"*)              emoji="🐛" ;;
           esac
 
           # Render each label as `emoji `label`` so the labels line is scannable.
@@ -51,14 +51,15 @@ jobs:
               lbl="$(echo "$raw" | sed 's/^ *//;s/ *$//')"   # trim spaces
               [ -z "$lbl" ] && continue
               case "$lbl" in
-                "type:bug")         le="🐛" ;;
-                "type:pain-point")  le="🤕" ;;
-                "type:feature")     le="💡" ;;
-                "type:docs")        le="📖" ;;
+                "bug")              le="🐛" ;;
+                "pain-point")       le="🤕" ;;
+                "enhancement")      le="✨" ;;
+                "idea")             le="💡" ;;
+                "documentation")    le="📖" ;;
                 "severity:blocker") le="🚨" ;;
                 "severity:major")   le="⚠️" ;;
                 "severity:minor")   le="🔹" ;;
-                surface:*)          le="🧭" ;;
+                area:*)             le="🧭" ;;
                 "needs-triage")     le="🕵️" ;;
                 "confirmed")        le="✅" ;;
                 "duplicate")        le="🔁" ;;

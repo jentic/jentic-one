@@ -1,7 +1,7 @@
 name: "✨ Feature"
 description: "Something missing you wanted, or an improvement to something that exists."
 title: "[feature] "
-labels: ["type:feature", "needs-triage"]
+labels: ["enhancement", "needs-triage"]
 body:
   - type: markdown
     attributes:
