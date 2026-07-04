@@ -19,3 +19,13 @@ Key conventions, in one breath:
   (`alwaysApply`).
 
 When `CLAUDE.md` and this file disagree, `CLAUDE.md` wins.
+
+## Filing an issue (not changing code)
+
+If your task is to **file an issue** (bug, feedback, idea) rather than change the
+codebase, follow the agent protocol in
+[`CONTRIBUTING.md` → Filing an Issue with an AI Agent](CONTRIBUTING.md#filing-an-issue-with-an-ai-agent).
+
+One thing up front: this is a **public** repo, so you **cannot apply labels**
+(GitHub silently drops `--label` for non-maintainers). Put a `Suggested labels`
+block in the issue body instead — the protocol explains the rest.
