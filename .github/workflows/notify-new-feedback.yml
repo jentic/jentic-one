@@ -1,0 +1,113 @@
+name: Notify Slack on new feedback
+
+# Posts every newly opened issue to Slack via an incoming webhook.
+# Highlights severity:blocker / severity:major so urgent pain points stand out.
+#
+# Setup: add a repo secret SLACK_WEBHOOK_URL (a Slack incoming webhook URL).
+# If the secret is absent the job no-ops (so forks / dry runs don't fail).
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: read
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Slack
+        shell: bash
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TITLE: ${{ github.event.issue.title }}
+          URL: ${{ github.event.issue.html_url }}
+          NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ', ') }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set — skipping Slack notification."
+            exit 0
+          fi
+
+          # Pick a header emoji from the severity label (default 📝).
+          emoji="📝"
+          case "$LABELS" in
+            *"severity:blocker"*) emoji="🚨" ;;
+            *"severity:major"*)   emoji="⚠️" ;;
+            *"type:pain-point"*)  emoji="🤕" ;;
+            *"type:bug"*)         emoji="🐛" ;;
+          esac
+
+          # Render each label as `emoji `label`` so the labels line is scannable.
+          # Split on ", " and prefix a per-label emoji.
+          labels_fmt=""
+          if [ -n "$LABELS" ]; then
+            IFS=',' read -ra parts <<< "$LABELS"
+            for raw in "${parts[@]}"; do
+              lbl="$(echo "$raw" | sed 's/^ *//;s/ *$//')"   # trim spaces
+              [ -z "$lbl" ] && continue
+              case "$lbl" in
+                "type:bug")         le="🐛" ;;
+                "type:pain-point")  le="🤕" ;;
+                "type:feature")     le="💡" ;;
+                "type:docs")        le="📖" ;;
+                "severity:blocker") le="🚨" ;;
+                "severity:major")   le="⚠️" ;;
+                "severity:minor")   le="🔹" ;;
+                surface:*)          le="🧭" ;;
+                "needs-triage")     le="🕵️" ;;
+                "confirmed")        le="✅" ;;
+                "duplicate")        le="🔁" ;;
+                "agent-filed")      le="🤖" ;;
+                *)                  le="🏷️" ;;
+              esac
+              labels_fmt="${labels_fmt}${le} \`${lbl}\`   "
+            done
+          fi
+          [ -z "$labels_fmt" ] && labels_fmt="_no labels yet_"
+
+          # Brief summary from the issue body: strip markdown headers/blank lines,
+          # collapse whitespace, take the first ~240 chars.
+          summary="$(printf '%s' "$BODY" \
+            | sed 's/^#\{1,\}[[:space:]]*//; s/\r//g' \
+            | tr '\n' ' ' \
+            | sed 's/  */ /g; s/^ *//; s/ *$//' \
+            | cut -c1-240)"
+          if [ -z "$summary" ]; then
+            summary="_No description provided._"
+          elif [ "${#BODY}" -gt 240 ]; then
+            summary="${summary}…"
+          fi
+
+          # Build the Slack Block Kit payload with jq so all fields are safely escaped.
+          payload=$(jq -n \
+            --arg header "$emoji New feedback: #$NUMBER" \
+            --arg title "$TITLE" \
+            --arg url "$URL" \
+            --arg author "$AUTHOR" \
+            --arg labels "$labels_fmt" \
+            --arg summary "$summary" \
+            '{
+              blocks: [
+                { type: "header", text: { type: "plain_text", text: $header, emoji: true } },
+                { type: "section", text: { type: "mrkdwn", text: ("*<" + $url + "|" + $title + ">*") } },
+                { type: "section", text: { type: "mrkdwn", text: $summary } },
+                { type: "section", text: { type: "mrkdwn", text: ("*Labels:*\n" + $labels) } },
+                { type: "context", elements: [
+                    { type: "mrkdwn", text: ("Filed by *" + $author + "*") }
+                ] },
+                { type: "context", elements: [
+                    { type: "mrkdwn", text: "📋 <https://github.com/jentic/jentic-one|Repo: jentic-one> · <https://github.com/jentic/jentic-one/issues/new/choose|Create new feedback issue>" }
+                ] }
+              ]
+            }')
+
+          code=$(curl -sS -o /tmp/resp -w "%{http_code}" \
+            -X POST -H 'Content-type: application/json' \
+            --data "$payload" "$SLACK_WEBHOOK_URL")
+          echo "Slack responded: $code $(cat /tmp/resp)"
+          [ "$code" = "200" ] || { echo "Slack post failed"; exit 1; }
