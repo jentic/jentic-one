@@ -164,21 +164,6 @@ export function useRevokeKey(toolkitId: string) {
 	});
 }
 
-export function useDeleteKey(toolkitId: string) {
-	const queryClient = useQueryClient();
-	return useMutation({
-		mutationFn: (keyId: string) => client.deleteKey(toolkitId, keyId),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.keys(toolkitId) });
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
-			toast({ title: 'API key deleted', variant: 'success' });
-		},
-		onError: (err: Error) =>
-			toast({ title: 'Failed to delete key', description: err.message, variant: 'error' }),
-	});
-}
-
 // --- Credential bindings --------------------------------------------------
 
 export function useToolkitBindings(toolkitId: string | null, opts: { poll?: boolean } = {}) {
@@ -240,15 +225,6 @@ export function useBindableCredentials(opts: { enabled?: boolean } = {}) {
 }
 
 // --- Per-binding permission rules ----------------------------------------
-
-export function useToolkitPermissions(toolkitId: string, credentialId: string | null) {
-	return useQuery({
-		queryKey: toolkitKeys.permissions(toolkitId, credentialId ?? ''),
-		queryFn: () => client.listPermissions(toolkitId, credentialId as string),
-		enabled: credentialId != null,
-		select: (res) => res.data,
-	});
-}
 
 export function useReplacePermissions(toolkitId: string, credentialId: string) {
 	const queryClient = useQueryClient();
