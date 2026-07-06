@@ -41,7 +41,7 @@ common tasks.
 
 1. Write code following the conventions enforced by the architecture tests (`make test-arch`).
 2. Add or update tests for your change.
-3. Run `make check` (lint + type check + secrets audit + architecture tests)
+3. Run `make check` (lint + OpenAPI score + secrets audit + architecture tests)
    before pushing. `make fix` auto-fixes formatting and lint issues.
 
 ### Commits
