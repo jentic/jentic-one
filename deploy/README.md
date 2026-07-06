@@ -265,7 +265,7 @@ JENTIC__OBSERVABILITY__METRICS__EXPORTER=prometheus
 When `exporter=prometheus`, use the overlay:
 
 ```bash
-make deploy-local MODE=combined
+uv run python -m tools.deploy up --mode combined
 # Then layer the prometheus overlay:
 helm upgrade jentic deploy/helm/jentic-one \
   -f deploy/helm/values/local-combined.yaml \
@@ -358,10 +358,10 @@ uv run python -m tools.deploy up --mode parts           # Redeploy with individu
 
 ### Image loading
 
-`deploy-local` only loads the images that the chosen `MODE` actually needs
+`tools.deploy up` only loads the images that the chosen `--mode` actually needs
 into the kind cluster, to keep the deploy fast:
 
-| `MODE`     | Images loaded                          |
+| `--mode`   | Images loaded                          |
 | ---------- | -------------------------------------- |
 | `combined` | `app`, `broker`                        |
 | `parts`    | `registry`, `admin`, `control`, `broker` |
@@ -407,7 +407,7 @@ uv run python -m tools.deploy ui                # k9s scoped to the jentic names
 ```
 
 That's a terminal UI — pods, services, logs, exec, port-forward, all
-keyboard-driven. Fastest way to see what's happening during `deploy-local`.
+keyboard-driven. Fastest way to see what's happening during a `tools.deploy up`.
 
 ### Full LGTM stack: Grafana + Loki + Tempo + Prometheus
 
