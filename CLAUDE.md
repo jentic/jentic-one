@@ -62,11 +62,17 @@ uv run python -m tools.deploy --help
 ## Project Layout
 
 ```
+cli/                  # Go CLI module (two binaries: jenticctl + jentic) — see cli/README.md
+├── cmd/              #   Binary entry points (jenticctl, jentic, clidocs)
+└── internal/         #   Shared Go packages (install wizard, catalog, profiles)
 tools/
-└── deploy/           # Deploy CLI (kind, Helm, obs lifecycle)
-    ├── cli.py        #   Click commands
-    ├── config.py     #   Constants and path helpers
-    └── runner.py     #   Subprocess wrapper + preflight checks
+├── deploy/           # Deploy CLI (kind, Helm, obs lifecycle)
+│   ├── cli.py        #   Click commands
+│   ├── config.py     #   Constants and path helpers
+│   └── runner.py     #   Subprocess wrapper + preflight checks
+├── openapi_export.py # Regenerate control-plane OpenAPI spec from code (make openapi)
+├── endpoint_tree.py  # Regenerate endpoint + scope reference (make endpoints)
+└── broker_reference.py # Regenerate Broker OpenAPI artifact (make broker-reference)
 src/jentic_one/
 ├── __init__.py       # Package version
 ├── __main__.py       # CLI entry point (python -m jentic_one)
@@ -97,6 +103,8 @@ src/jentic_one/
     ├── scopes.py     # Scope/permission constants
     ├── url.py        # URL utilities (server-variable substitution)
     ├── url_validation.py # Upstream URL validation (SSRF guard)
+    ├── lookups.py    # Shared cross-surface lookup helpers
+    ├── provider_config_store.py # Dynamic OAuth2 provider configuration store
     ├── audit/        # Audit-log helpers
     ├── auth/         # Shared auth primitives (JWKS, tokens)
     ├── broker/       # Shared broker protocols
@@ -108,11 +116,15 @@ src/jentic_one/
     ├── resilience/   # Rate limiting, retries
     ├── schemas/      # Shared API schemas
     ├── state/        # State backend (in-memory / redis)
+    ├── telemetry/    # Anonymous product-telemetry client (opt-in, off by default)
     ├── web/          # Shared web layer (app factory, deps, errors, OpenAPI meta)
     └── db/           # Database package (SQLAlchemy async)
         ├── __init__.py   # Re-exports DatabaseSession, get_database_url
         ├── base.py       # Declarative bases (RegistryBase, ControlBase, AdminBase)
-        └── session.py    # Async engine + session factory management
+        ├── session.py    # Async engine + session factory management
+        ├── backends/     # Per-backend URL/engine config (postgres, sqlite)
+        ├── errors.py     # DatabaseIntegrityError, DatabaseUnavailableError
+        └── utils.py      # DB helpers (utcnow, etc.)
 tests/
 ├── unit/                 # Unit tests (no external services required)
 ├── integration/          # Integration tests (require running fixtures)
