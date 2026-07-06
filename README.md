@@ -114,7 +114,7 @@ Common `make` targets (run `make help` for the full list):
 
 | Target | Description |
 | ------ | ----------- |
-| `make install` | Full dev setup: sync deps + install git hooks |
+| `make install` | Full dev setup: sync deps + UI deps + install git hooks |
 | `make check` | Lint, score, secrets audit, and arch tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
