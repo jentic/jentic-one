@@ -80,8 +80,8 @@ curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/instal
 Or work from source:
 
 ```bash
-make install   # install dependencies and git hooks
-make check     # lint + typecheck + tests
+make install   # install dependencies, UI deps, and git hooks
+make check     # lint + score + secrets audit + arch tests
 make start-app # run the application locally
 ```
 
@@ -115,7 +115,7 @@ Common `make` targets (run `make help` for the full list):
 | Target | Description |
 | ------ | ----------- |
 | `make install` | Full dev setup: sync deps + install git hooks |
-| `make check` | Lint, score, secrets audit, unit + arch tests |
+| `make check` | Lint, score, secrets audit, and arch tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
 | `make start-app` | Start the combined app (all surfaces) |

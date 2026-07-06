@@ -3,8 +3,8 @@
 ## Quick Start
 
 ```bash
-make install   # Full dev setup: sync deps + install lefthook hooks
-make check     # Run lint + typecheck + score + tests
+make install   # Full dev setup: sync deps + UI deps + install lefthook hooks
+make check     # Run lint + score + secrets audit + arch tests
 ```
 
 ## Rules & Guides
@@ -23,7 +23,7 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 | Target              | Description                                       |
 | ------------------- | ------------------------------------------------- |
 | `help`              | Show available targets                            |
-| `install`           | Full dev setup: sync deps + install lefthook hooks|
+| `install`           | Full dev setup: sync deps + UI deps + install lefthook hooks|
 | `sync`              | Install/sync project + dev dependencies           |
 | `lock`              | Refresh the lockfile                              |
 | `upgrade`           | Upgrade locked dependencies                       |
@@ -39,7 +39,7 @@ in [`tests/arch/`](tests/arch/) and the scoped rules under
 | `test-smoke`        | Run smoke tests (requires running services)       |
 | `cov`               | Run tests with coverage report                    |
 | `score`             | Validate OpenAPI specs with scorecard (80+ req)   |
-| `check`             | Run lint, score, secrets audit, unit + arch tests |
+| `check`             | Run lint, score, secrets audit, and arch tests    |
 | `hooks`             | Install lefthook git hooks (pre-commit + commit-msg) |
 | `clean`             | Remove caches and build artifacts                 |
 | `start-fixtures`    | Start Docker database fixtures                    |
