@@ -6,7 +6,8 @@ Application configuration files for jentic-one.
 
 | File | Purpose |
 |------|---------|
-| `local.yaml` | Local development — matches `docker/local-setup/docker-compose.yaml` ports |
+| `local.yaml` | Local development (PostgreSQL) — matches `docker/local-setup/docker-compose.yaml` ports |
+| `local-sqlite.yaml` | Local development on embedded SQLite (one file per surface under `./.data/`, no external services) — used by `make start-app-sqlite` |
 | `production.yaml.example` | Production template — copy and fill in real values |
 
 ## Usage
