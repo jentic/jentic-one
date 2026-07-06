@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `jentic_one.shared` package provides the foundational configuration and context system. All modules (broker, control) consume these shared components.
+The `jentic_one.shared` package provides the foundational configuration and context system. All surfaces (registry, control, admin, auth, broker) consume these shared components.
 
 ## Configuration
 
@@ -26,6 +26,22 @@ databases:
 ```
 
 All other fields have sensible defaults (localhost:5432, pool sizes, etc.).
+
+### SQLite backend
+
+Each database can instead use an embedded SQLite file by setting `backend: sqlite`
+and a `path` (the Postgres connection fields are then ignored):
+
+```yaml
+databases:
+  registry:
+    backend: sqlite
+    path: .data/registry.db
+    schema_name: registry
+```
+
+See [`config/local-sqlite.yaml`](../config/local-sqlite.yaml) for a full
+single-file-per-surface local setup, or run `make start-app-sqlite`.
 
 ### Secret handling
 
@@ -66,11 +82,14 @@ Each property returns a `DatabaseSession` instance with:
 
 ## Database Layer
 
-The database layer uses **SQLAlchemy async** (with `asyncpg` as the underlying driver), following the same pattern as `jentic/core`:
+The database layer uses **SQLAlchemy async** and supports two backends selected
+per database via `DatabaseConfig.backend`: **PostgreSQL** (default, `postgresql+asyncpg`
+driver) and **SQLite** (`sqlite+aiosqlite` driver, a single-file database). It
+follows the same pattern as `jentic/core`:
 
-- `Base` — declarative base class for all ORM models (import from `jentic_one.shared.db`)
+- `RegistryBase` / `ControlBase` / `AdminBase` — per-database declarative bases for ORM models (import from `jentic_one.shared.db`)
 - `DatabaseSession` — manages an async engine and session factory per database
-- `get_database_url(config)` — builds a `sqlalchemy.engine.URL` for `postgresql+asyncpg` from a `DatabaseConfig`
+- `get_database_url(config)` — builds a `sqlalchemy.engine.URL` for the configured backend from a `DatabaseConfig`
 
 ### ORM Models
 
