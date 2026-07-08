@@ -1,97 +1,143 @@
 # Product Scope
 
-> **STATUS: DRAFT — needs product-owner review.**
-> This document was drafted by inferring scope from `README.md`, `CLAUDE.md`, and
-> the codebase. It exists to give the issue-intake harness (see
-> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../.harness/ISSUE_INTAKE_STANDARDS.md)) an
-> authoritative rubric for scoring **product fit**. Every `TODO(product)` marks a
-> spot where a human must confirm or correct the inferred intent. Until those are
-> resolved, treat fit scores as advisory.
+> **Purpose.** This document gives the issue-intake harness (see
+> [`.harness/ISSUE_INTAKE_STANDARDS.md`](../.harness/ISSUE_INTAKE_STANDARDS.md)) a
+> rubric for scoring an issue's **product fit** (`fit:high/med/low`). It is grounded
+> only in **public** sources — `README.md`, `SECURITY.md`, `SUPPORT.md`,
+> `docs/security/hardening.md`, and the code in this repo. It deliberately does **not**
+> restate internal roadmap/prioritization detail; where a finer-grained or
+> forward-looking judgment is needed, defer to the maintainers (label `needs-human`)
+> rather than guessing.
 
 ## One-line definition
 
 Jentic One is a **self-hosted gateway for secure third-party API execution by AI
 agents**: you register the APIs an agent may use, store the credentials once, and
 the agent calls out through a credential-injecting Broker so **secrets never leave
-your infrastructure and never reach the agent**.
+your infrastructure and never reach the agent** (`README.md`, `SECURITY.md`).
 
 ## Who it's for
 
-- Teams running AI agents that must call real third-party APIs (SaaS, internal
-  services) without handing the agent raw API keys.
-- Operators who want fine-grained, auditable control over which agent may call
-  which API, with which credential, under which permissions.
+**Primary — the self-hosting operator / small team** who installs, configures,
+secures, and operates a Jentic One instance (`SECURITY.md` operator guidance;
+`SUPPORT.md` "community-supported for self-hosted deployments"). It must be
+installable and operable by a small team without Jentic's help.
 
-TODO(product): confirm the primary persona(s) and whether there is a secondary
-audience (e.g. platform teams embedding Jentic One vs. individual developers).
+Deployment personas the public docs call out (`docs/security/hardening.md`):
+
+- **Local coding-agent developer** — running Jentic One next to a local coding agent
+  (e.g. Claude Code, Cursor) for dev / trying it out.
+- **Provisioned agent/service in a private network / VPC** — the production shape: an
+  agent inside the same VPC calls Jentic One over private DNS ("recommended for real
+  use").
+- **Issue filer / contributor** — including AI agents filing issues (this harness's
+  own audience; see `CONTRIBUTING.md`).
+
+**Commercial-support boundary:** self-hosting is free and is the real product;
+"host it for me / run it at scale / SLAs / managed edition" is a commercial
+conversation, **not** a product issue (`README.md` Enterprise section, `SUPPORT.md`).
 
 ## What's in scope (the product is about this)
 
-The four surfaces, from `README.md`:
+The runtime surfaces (from the public code / `README.md`):
 
-- **Broker** — stateless credential-injecting HTTP proxy (the data plane).
-- **Registry** — the catalogue of registered APIs (immutable revisions, operations,
-  security schemes, servers).
-- **Control** — credential storage (polymorphic: API keys, OAuth2 client
-  credentials, bearer, basic auth).
-- **Admin** — operator account, permissions / access grants, async jobs, append-only
-  audit log, execution telemetry.
+- **Broker** — stateless credential-injecting HTTP proxy; the data plane. One
+  upstream call per execution (single-call interceptor pipeline), run as its own
+  service.
+- **Registry** — catalogue of registered APIs (immutable revisions, operations,
+  security schemes, servers); **APIs only**.
+- **Control** — credential storage + toolkit/credential bindings + access-request
+  lifecycle.
+- **Admin** — operator accounts, role-based permissions/access grants, async jobs,
+  append-only audit log, execution telemetry; serves the operator UI.
+- **Auth** — agent self-registration, token minting, OAuth client, service accounts,
+  and identity/`/me` discovery.
 
-Plus the supporting surfaces that make the above usable:
+Plus the supporting surfaces that make the above usable: **shared** infra, the
+**CLI** (`jenticctl` lifecycle + `jentic` agent/catalog/execute), **install /
+onboarding**, the **Web UI**, **deploy** (Docker, Helm, Terraform, k8s), and
+**docs**.
 
-- **CLI** — `jenticctl` (install / lifecycle) and `jentic` (agent identity + catalog
-  + execute).
-- **Install / onboarding** — the install wizard, `install.sh`, first-run flow.
-- **Web UI** — operator-facing management of the above.
-- **Deploy** — Docker, Helm, Terraform, k8s, versioning.
-- **Docs** — guides for the above.
+Supported specifics worth knowing (so the harness doesn't mis-score them as out of
+scope):
+
+- **Credential schemes:** API key (header/query/cookie), basic, static bearer,
+  session token, and OAuth2 (client-credentials, authorization-code, implicit), plus
+  no-auth (`shared/models/credentials.py`).
+- **Database backends:** Postgres **and** SQLite — SQLite is a supported *production*
+  target, not dev-only (`shared/db/backends/sqlite.py`).
+- **ML/embeddings** exist but are **registry-search-only**; core surfaces don't use
+  them (`tests/arch/test_no_ml_in_core_surfaces.py`).
 
 An issue is **in scope** when it improves the security, correctness, reliability,
 usability, or operability of one of these surfaces for the audience above.
 
 ## Explicit non-goals (score fit LOW)
 
-These are the load-bearing part of this doc — they let the harness confidently
-score a request as a poor fit rather than guessing.
+- **Not a workflow / multi-step orchestration engine (iPaaS).** *(Grounded in code.)*
+  The Registry is **APIs only** (`registry/services/catalog/service.py`) and ingest
+  **rejects** Arazzo (workflow-spec) documents
+  (`registry/ingest/stages/validation.py`). The Broker does single-call proxying, not
+  branching workflows — an agent that needs multi-step orchestration composes broker
+  calls itself.
+- **Not co-located with the agent for _real / high-value credentials_.** *(Grounded —
+  security model.)* The "credentials never leave the data plane" guarantee does not
+  hold when the agent runs as the same OS user / same host as the broker
+  (`SECURITY.md`, `docs/security/hardening.md`). **Nuance:** same-host use *is*
+  supported for trying it out / non-real credentials — so a local/dev-mode request is
+  **not** automatically out of scope; only "use real credentials in the agent's trust
+  boundary" is.
+- **Not a general-purpose API gateway for _non-agent_ traffic** (Kong/NGINX). The
+  Broker governs credential-injecting **agent** calls, not arbitrary traffic
+  management.
+- **Not an agent framework / agent loop.** Jentic One executes and governs API calls
+  on behalf of an agent harness; it does not build, host, prompt, or reason as the
+  agent (no agent-reasoning path exists in the core surfaces).
+- **Not a general secrets manager (Vault-sense).** It stores the credentials it
+  injects; it is not an org-wide secret store.
+- **Not a hosted SaaS.** Self-hosted and open source; "please host this for me" is
+  commercial support (`README.md`, `SUPPORT.md`).
 
-- **Not an agent framework / LLM orchestrator.** Jentic One executes API calls on
-  behalf of agents; it does not build, host, prompt, or reason as the agent.
-- **Not a general-purpose API gateway / reverse proxy** for non-agent traffic
-  (Kong/NGINX territory). The Broker's job is credential injection for governed
-  agent calls, not arbitrary traffic management.
-- **Not an iPaaS / workflow-automation builder** (Zapier/n8n). It executes single
-  governed calls; it does not own multi-step business-workflow orchestration.
-- **Not a secrets manager** in the Vault sense. It stores the credentials it injects,
-  but it is not a general org-wide secret store.
-- **Not a hosted SaaS.** It is self-hosted and open source; "please host this for me"
-  is a commercial-support conversation, not a product issue. (See `SUPPORT.md`.)
-- **Not running in the same trust boundary as the agent** by design — requests to
-  co-locate the agent and broker in one process contradict the security model.
-
-TODO(product): confirm / extend this list — non-goals are the highest-value input
-to fit scoring and the most likely to be wrong when inferred.
+> Some new-capability requests (e.g. an LLM-API proxy, webhooks, additional protocol
+> modules) are **forward-looking product calls**, not clear yes/no scope questions —
+> the harness should not decide them from this doc. Score them `fit:med` and escalate
+> `needs-human`.
 
 ## Product principles (tie-breakers for fit & priority)
 
-1. **Secrets never leak.** Anything that risks exposing a credential to the agent,
-   the network, or logs is high priority regardless of size.
-2. **Secure and auditable by default.** Default-deny permissions; append-only audit.
-3. **Self-hostable and operable.** It must be installable and operable by a small
-   team without Jentic's help.
-4. **Public Beta honesty.** Breaking changes are acceptable pre-1.0; polish that
-   assumes stability is lower priority than correctness and security.
+Ordered by how strongly the public docs emphasize each.
 
-TODO(product): confirm these principles and their ordering — the harness uses them
-as tie-breakers when fit is borderline.
+1. **Secrets never leave / never reach the agent.** The most-repeated value across
+   the tagline, `README.md`, `SECURITY.md`, and the hardening threat model, and
+   enforced in code (credentials "never returned after create"; central redaction).
+   Anything risking credential exposure is at least `severity:major` regardless of
+   size.
+2. **Secure & auditable by default.** Default-deny permissions (a rule-less binding
+   blocks everything); append-only audit log; operator-supplied encryption keyset
+   required (`SECURITY.md`, `control/web/schemas/toolkits.py`).
+3. **Self-hostable & operable by a small team.** One-command install; tiered
+   self-serve hardening path (`README.md`, `docs/security/hardening.md`).
+4. **Telemetry opt-in / off by default / closed-schema; observability self-hosted.**
+   No telemetry unless explicitly enabled; the event schema structurally can't carry
+   PII (`SECURITY.md`, `tests/arch/test_telemetry_no_pii.py`).
+5. **Public-Beta honesty.** Pre-1.0; breaking changes acceptable; not recommended for
+   production yet — correctness/security outrank polish that assumes stability
+   (`README.md`).
 
 ## How the harness should use this doc
 
-- **fit:high** — squarely improves an in-scope surface for the audience, aligned
-  with a principle.
-- **fit:med** — plausibly in scope but adjacent, speculative, or needs product
-  judgment (e.g. a new surface, a large new capability).
-- **fit:low** — matches a non-goal, or is for an audience/use-case this product
-  does not serve.
+- **fit:high** — improves the security, correctness, or operability of a core surface
+  (broker / registry / control / admin / auth) or the CLI/UI/deploy that serve them,
+  for the self-hosting operator. **Security and credential-safety issues are high fit
+  regardless of size.**
+- **fit:med** — plausibly in scope but adjacent, speculative, a large new capability,
+  or a forward-looking product call this doc can't settle → pair with `needs-human`.
+- **fit:low** — matches a non-goal above (workflow orchestration; real credentials
+  inside the agent's trust boundary; non-agent gateway traffic; hosted-SaaS request).
 
-Fit is about *"should this exist in Jentic One?"* — it is **independent** of
-`feasibility` (can we build it) and `severity` (how much it hurts today).
+Fit is about *"should this exist in Jentic One?"* — **independent** of `feasibility`
+(can we build it) and `severity` (how much it hurts today).
+
+> **Note.** This rubric is intentionally coarse and public-safe. Finer prioritization
+> (release sequencing, internal roadmap ordering) is a maintainer decision and is not
+> encoded here — when fit depends on it, escalate `needs-human`.
