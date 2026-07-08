@@ -116,6 +116,9 @@
 - name: duplicate
   color: cfd3d7
   description: This issue or pull request already exists
+- name: duplicate-candidate
+  color: cfd3d7
+  description: "Harness: looks like a duplicate — awaiting human confirmation (author may veto)"
 - name: invalid
   color: e4e669
   description: This doesn't seem right
