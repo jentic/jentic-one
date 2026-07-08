@@ -74,12 +74,10 @@ usability, or operability of one of these surfaces for the audience above.
 
 ## Explicit non-goals (score fit LOW)
 
-- **Not a workflow / multi-step orchestration engine (iPaaS).** *(Grounded in code.)*
-  The Registry is **APIs only** (`registry/services/catalog/service.py`) and ingest
-  **rejects** Arazzo (workflow-spec) documents
-  (`registry/ingest/stages/validation.py`). The Broker does single-call proxying, not
-  branching workflows — an agent that needs multi-step orchestration composes broker
-  calls itself.
+- **Not a workflow / multi-step orchestration engine (iPaaS).** The Registry
+  catalogues **individual APIs**, and the Broker does **single-call proxying** — one
+  governed upstream call per execution, not branching multi-step workflows. An agent
+  that needs multi-step orchestration composes broker calls itself.
 - **Not co-located with the agent for _real / high-value credentials_.** *(Grounded —
   security model.)* The "credentials never leave the data plane" guarantee does not
   hold when the agent runs as the same OS user / same host as the broker

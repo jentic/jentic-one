@@ -130,9 +130,6 @@
 - name: ai-intake
   color: 5319e7
   description: Trigger the issue-intake harness (auto-applied on new issues)
-- name: agent-filed
-  color: c5def5
-  description: Issue filed by an AI agent
 - name: Agent-Harness
   color: eda5c1
   description: Handled by the Jentic agent harness

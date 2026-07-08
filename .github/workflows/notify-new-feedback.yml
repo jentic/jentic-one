@@ -94,7 +94,6 @@ jobs:
               confirmed)          le="✅" ;;
               duplicate-candidate) le="🔎" ;;
               duplicate)          le="🔁" ;;
-              agent-filed)        le="🤖" ;;
               ai-intake)          le="📥" ;;
               *)                  le="🏷️" ;;
             esac

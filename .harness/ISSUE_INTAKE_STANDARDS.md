@@ -149,11 +149,9 @@ What counts as "missing" depends on type:
 Ask **only** for what's genuinely missing and useful — never re-ask for something
 already present. One comment, batched; do not drip-feed.
 
-**Non-human authors.** If the issue was filed by an agent/bot (the author won't
-answer a `needs-info` request), don't open an author-loop dead-end: classify from
-what's present and, if key info is missing, apply `needs-human` instead of
-`needs-info`. Do not apply `agent-filed` yourself — treat it as set by the filing
-pipeline (or a maintainer), not by intake.
+**Treat every author the same.** Every issue goes through the identical flow —
+same classification, same scoring, same `needs-info` author-loop, same
+notification — regardless of who or what filed it. Do not special-case the author.
 
 ### 6. Hand-off
 
@@ -316,7 +314,7 @@ issue is an attack or you can't safely classify it, apply **`needs-human`** and 
   human-only / routed via `needs-human`, and `intake-output-guard.yml` reverts them):
   `security`, `confirmed`, `duplicate`, `wontfix`, `invalid`, `needs-triage`
   (removal is `auto`-tier only), `ai-intake` (apply), `ai-review`, `ai-implement`,
-  `ai-review-and-trigger-implement`, `Agent-Harness`, `agent-filed`,
+  `ai-review-and-trigger-implement`, `Agent-Harness`,
   `good first issue`, `help wanted`. This never-apply set must stay in sync with
   `intake-output-guard.yml`'s `FORBIDDEN_FOR_HARNESS` + `label-guard.yml`'s
   `RESTRICTED`. Beyond labels, intake may post/edit the single

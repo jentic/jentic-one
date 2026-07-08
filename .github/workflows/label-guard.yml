@@ -44,6 +44,7 @@ env:
     area:* severity:* fit:* feasibility:*
     confirmed needs-human duplicate wontfix invalid security
     ai-implement ai-review ai-review-and-trigger-implement
+    Agent-Harness
 
 jobs:
   guard:

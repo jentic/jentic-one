@@ -40,6 +40,7 @@ env:
   FORBIDDEN_FOR_HARNESS: >-
     security confirmed duplicate wontfix invalid
     ai-implement ai-review ai-review-and-trigger-implement
+    Agent-Harness
 
 jobs:
   guard:
