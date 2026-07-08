@@ -8,7 +8,7 @@ import (
 )
 
 // buildStub returns a minimal built-in-style tree builder for tests.
-func buildStub(deps *AppContainer) *cobra.Command {
+func buildStub(_ *AppContainer) *cobra.Command {
 	root := &cobra.Command{Use: "jentic"}
 	root.AddCommand(&cobra.Command{Use: "register"})
 	return root
@@ -31,8 +31,8 @@ func TestNewRootCmdAppendsExtraCommands(t *testing.T) {
 		Out: io.Discard,
 		Err: io.Discard,
 		ExtraCommands: []CommandFactory{
-			func(d *AppContainer) *cobra.Command { return &cobra.Command{Use: "proxy"} },
-			func(d *AppContainer) *cobra.Command { return &cobra.Command{Use: "trust"} },
+			func(_ *AppContainer) *cobra.Command { return &cobra.Command{Use: "proxy"} },
+			func(_ *AppContainer) *cobra.Command { return &cobra.Command{Use: "trust"} },
 		},
 	}
 	root := NewRootCmd(deps, buildStub)
