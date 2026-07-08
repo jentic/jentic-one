@@ -1,6 +1,62 @@
 # Contributing to Jentic One
 
-Thanks for your interest in contributing. This guide covers local setup, the
+Thanks for your interest in contributing. This guide covers **filing issues**
+(bugs, feedback, ideas) and **contributing code** (local setup, workflow, and the
+conventions the project enforces).
+
+---
+
+## Filing an Issue
+
+The fastest way to help is to tell us what broke, confused you, or is missing.
+
+1. **Search first** — check [open and closed issues](https://github.com/jentic/jentic-one/issues?q=is%3Aissue)
+   for a duplicate. If you find one, add your context as a comment instead of
+   opening a new one.
+2. **Open a new issue** at [New issue](https://github.com/jentic/jentic-one/issues/new/choose)
+   and pick one of the two forms:
+   - 🐛 **Bug** — something broken / errored / wrong output.
+   - 💡 **Request or feedback** — a feature, an improvement, a rough idea, a pain
+     point (friction/confusion during real use), or a docs gap. One form covers all
+     of these — you don't need to categorize it.
+3. **Fill in the template.** Only the first field is required — but concrete beats
+   vague: exact commands, exact errors, what you expected vs. what happened.
+4. **Redact secrets** — never paste API keys, tokens, OAuth secrets, or passwords.
+   Replace them with `***`.
+5. **Security vulnerabilities do not go here** — follow
+   [SECURITY.md](https://github.com/jentic/jentic-one/blob/main/SECURITY.md) for
+   private disclosure.
+
+### What happens next — automated intake, no manual triage
+
+You don't need to know Jentic One's internals or apply any labels. When you open an
+issue, an **automated intake assistant** reads it and, in one pass:
+
+- **classifies** it (type + which part of the product it touches),
+- **scores** it for product fit and feasibility,
+- **prioritizes** it (severity), and
+- **checks for duplicates**.
+
+If something important is missing, the assistant will **comment and @-mention you**
+with a short checklist of what would help (e.g. the exact error text, or which
+command you ran) — you're never blocked from filing, and you stay in the loop. A
+maintainer steps in only when the assistant flags an issue as needing a human. You
+never have to set labels yourself; in fact, on a public repo you can't.
+
+## Filing an Issue with an AI Agent
+
+If you use an AI coding agent to file issues on your behalf, keep it simple: have it
+write a clear, faithful issue through one of the two forms above, with the **exact
+error/output pasted verbatim** and secrets redacted (`***`). Don't have it pass
+`--label` — on a public repo GitHub silently drops labels from non-maintainers, and
+our intake assistant applies the labels anyway. If the agent knows the type/area/
+severity, it can mention that in the body; the assistant will confirm it.
+
+---
+
+## Contributing Code
+
+Ready to open a pull request? The rest of this guide covers local setup, the
 development workflow, and the conventions the project enforces.
 
 ## Getting Started
