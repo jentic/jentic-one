@@ -7,11 +7,11 @@ import {
 	within,
 	userEvent,
 	checkA11y,
-} from '@/__tests__/test-utils';
-import { setToken } from '@/shared/api';
-import { Toaster } from '@/shared/ui';
-import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
-import AgentDetailPage from '@/modules/agents/pages/AgentDetailPage';
+} from '@oss-internal/__tests__/test-utils';
+import { setToken } from '@oss-internal/shared/api';
+import { Toaster } from '@oss-internal/shared/ui';
+import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
+import AgentDetailPage from '@oss-internal/modules/agents/pages/AgentDetailPage';
 
 function renderDetail(agentId: string) {
 	return renderWithProviders(
@@ -82,8 +82,8 @@ describe('AgentDetailPage', () => {
 
 	it('keeps the deny dialog open and toasts when the deny fails', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));
 
 		renderDetail('agnt_pending_1');

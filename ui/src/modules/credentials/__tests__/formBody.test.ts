@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CredentialType } from '@/modules/credentials/api';
-import { EMPTY_FORM } from '@/modules/credentials/components/CredentialTypeFields';
+import { CredentialType } from '@oss-internal/modules/credentials/api';
+import { EMPTY_FORM } from '@oss-internal/modules/credentials/components/CredentialTypeFields';
 import {
 	buildCreateBody,
 	buildRuntimeConfig,
@@ -12,7 +12,7 @@ import {
 	seedServerVars,
 	validateCreate,
 	validateServerVars,
-} from '@/modules/credentials/lib/formBody';
+} from '@oss-internal/modules/credentials/lib/formBody';
 
 describe('buildCreateBody', () => {
 	it('builds a bearer_token body', () => {

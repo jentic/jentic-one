@@ -32,17 +32,17 @@ import {
 	SearchInput,
 	OperationDetail,
 	type OperationDetailData,
-} from '@/shared/ui';
+} from '@oss-internal/shared/ui';
 import { ChevronDown, ChevronLeft, ChevronRight, Filter, ListTree, Loader2 } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 import {
 	useApiOperations,
 	useApiSpec,
 	parseSpecOperations,
 	opDetailKey,
 	WorkspaceApiError,
-} from '@/modules/workspace/api';
-import type { ApiKey, ApiOperation, ParsedSpec } from '@/modules/workspace/api';
+} from '@oss-internal/modules/workspace/api';
+import type { ApiKey, ApiOperation, ParsedSpec } from '@oss-internal/modules/workspace/api';
 
 /** Operations rendered per page (the filter still spans all loaded ops). */
 const PAGE_SIZE = 25;

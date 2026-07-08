@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.admin.repos.event_repo import EventRepository
 from jentic_one.shared.models.events import EVENT_TAGS, EventSeverity, EventTag, EventType
-from jentic_one.shared.telemetry.events import TELEMETRY_EVENTS
+from jentic_one.shared.telemetry.events import resolve_wire_name
 from jentic_one.shared.telemetry.sink import get_active_sink
 
 logger = structlog.get_logger(__name__)
@@ -48,8 +48,9 @@ def _forward_to_telemetry(type: str, valid_tags: list[EventTag], actor_type: str
     if sink is None or not sink.enabled:
         return
     # Only forward events on the telemetry allowlist (internal-only events stay
-    # internal); the tag set has already been validated by the caller.
-    wire_name = TELEMETRY_EVENTS.get(type)
+    # internal); the tag set has already been validated by the caller. The
+    # resolver consults the built-in map first, then the runtime registry.
+    wire_name = resolve_wire_name(type)
     if wire_name is None:
         return
     sink.record(wire_name, valid_tags, actor_type)

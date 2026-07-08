@@ -18,24 +18,24 @@ import {
 	RefreshButton,
 	SegmentedToggle,
 	ActorLabel,
-} from '@/shared/ui';
-import { eventSeverityIcon } from '@/shared/lib';
+} from '@oss-internal/shared/ui';
+import { eventSeverityIcon } from '@oss-internal/shared/lib';
 import {
 	useEvents,
 	useEventStream,
 	useAcknowledgeEvent,
 	EventSeverity,
 	type EventResponse,
-} from '@/modules/monitor/api';
-import { CursorPager } from '@/modules/monitor/components/CursorPager';
+} from '@oss-internal/modules/monitor/api';
+import { CursorPager } from '@oss-internal/modules/monitor/components/CursorPager';
 import {
 	MonitorList,
 	MonitorRow,
 	type MonitorAccent,
-} from '@/modules/monitor/components/MonitorList';
-import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
-import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
-import { formatRelative } from '@/modules/monitor/lib/format';
+} from '@oss-internal/modules/monitor/components/MonitorList';
+import { useMonitorFilters } from '@oss-internal/modules/monitor/lib/useMonitorFilters';
+import { useCursorStack } from '@oss-internal/modules/monitor/lib/useCursorStack';
+import { formatRelative } from '@oss-internal/modules/monitor/lib/format';
 
 type EventFilter = 'all' | 'action' | 'unacknowledged';
 

@@ -14,17 +14,17 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, FileText, SquareTerminal, ShieldCheck, Plug, Box } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { JenticLogo, Input, useDismissable } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { JenticLogo, Input, useDismissable } from '@oss-internal/shared/ui';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 import {
 	buildSearchIndex,
 	searchIndex,
 	type BrokerSearchSource,
 	type SearchItem,
 	type SearchKind,
-} from '@/modules/docs/lib/search';
-import type { CliBinary, ReferencePayload } from '@/modules/docs/api/types';
-import { cn } from '@/shared/lib/utils';
+} from '@oss-internal/modules/docs/lib/search';
+import type { CliBinary, ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 const KIND_META: Record<SearchKind, { icon: LucideIcon; label: string }> = {
 	section: { icon: FileText, label: 'Section' },

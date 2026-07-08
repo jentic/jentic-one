@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { renderWithProviders, screen } from '@/__tests__/test-utils';
-import { KeyboardShortcutsBar } from '@/shared/ui/KeyboardShortcutsBar';
-import { isTypingTarget, MOD_KEY } from '@/shared/lib/keyboard';
+import { renderWithProviders, screen } from '@oss-internal/__tests__/test-utils';
+import { KeyboardShortcutsBar } from '@oss-internal/shared/ui/KeyboardShortcutsBar';
+import { isTypingTarget, MOD_KEY } from '@oss-internal/shared/lib/keyboard';
 
 describe('isTypingTarget', () => {
 	it('returns true for form fields and contentEditable, false otherwise', () => {

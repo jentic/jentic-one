@@ -1,13 +1,13 @@
 import React, { useId } from 'react';
-import { CopyButton, Input, Label, Select, ScopePicker } from '@/shared/ui';
+import { CopyButton, Input, Label, Select, ScopePicker } from '@oss-internal/shared/ui';
 import {
 	CredentialType,
 	KEY_LOCATIONS,
 	type ProviderDiscoveryEntryResponse,
-} from '@/modules/credentials/api';
-import { isManagedProvider, providerOptions } from '@/modules/credentials/config';
-import type { EnhancedScope } from '@/shared/lib';
-import type { OAuth2FlowDef } from '@/modules/credentials/lib/schemes';
+} from '@oss-internal/modules/credentials/api';
+import { isManagedProvider, providerOptions } from '@oss-internal/modules/credentials/config';
+import type { EnhancedScope } from '@oss-internal/shared/lib';
+import type { OAuth2FlowDef } from '@oss-internal/modules/credentials/lib/schemes';
 
 /**
  * The full create form state — a superset of every per-type field. Only the

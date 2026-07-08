@@ -23,8 +23,8 @@
  * Building links: prefer `monitorHref(...)` so callers don't hand-assemble
  * query strings (and so cross-references always carry their id).
  */
-import type { MonitorTab } from '@/modules/monitor/api';
-import { ROUTES } from '@/shared/app';
+import type { MonitorTab } from '@oss-internal/modules/monitor/api';
+import { ROUTES } from '@oss-internal/shared/app';
 
 /**
  * The backend stores `trace_id="unknown"` for executions/jobs that ran without

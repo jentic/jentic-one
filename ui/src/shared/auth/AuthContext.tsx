@@ -18,7 +18,7 @@ import {
 	type CreateAdminRequest,
 	type CurrentUserResponse,
 	type LoginRequest,
-} from '@/shared/api';
+} from '@oss-internal/shared/api';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 

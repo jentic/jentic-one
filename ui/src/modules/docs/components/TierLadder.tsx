@@ -7,7 +7,7 @@
  * more. Purely presentational — no data dependency.
  */
 import { Crown, Pencil, Eye, Zap, ArrowRight } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 const TIERS = [
 	{

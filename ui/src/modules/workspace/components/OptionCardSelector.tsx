@@ -20,7 +20,7 @@
 import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { Check } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type OptionCardVariant = 'default' | 'compact';
 

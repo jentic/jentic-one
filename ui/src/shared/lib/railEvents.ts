@@ -24,7 +24,7 @@ import {
 	type EventListResponse,
 	type EventResponse,
 	type EventSeverity,
-} from '@/shared/api';
+} from '@oss-internal/shared/api';
 
 /**
  * Sentinel error for rail repository calls. Callers branch on

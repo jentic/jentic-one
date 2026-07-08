@@ -23,11 +23,14 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from jentic_one.migrations.targets import DB_METADATA
-
-VALID_DBS: tuple[str, ...] = tuple(DB_METADATA.keys())
+from jentic_one.migrations.targets import DB_TARGETS
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parent
+
+
+def _valid_dbs() -> tuple[str, ...]:
+    """Live target names (dynamic so targets registered post-import count)."""
+    return tuple(DB_TARGETS.keys())
 
 
 def _build_config(db_name: str) -> Config:
@@ -42,10 +45,16 @@ def _build_config(db_name: str) -> Config:
 
 def upgrade(db_name: str, target: str = "head") -> None:
     """Apply migrations for a single database up to ``target``."""
-    if db_name not in VALID_DBS:
-        raise ValueError(f"Unknown database {db_name!r}; expected one of {VALID_DBS}")
-    cfg = _build_config(db_name)
-    command.upgrade(cfg, target)
+    if db_name not in DB_TARGETS:
+        raise ValueError(f"Unknown database {db_name!r}; expected one of {_valid_dbs()}")
+    command.upgrade(_build_config(db_name), target)
+
+
+def downgrade(db_name: str, target: str) -> None:
+    """Roll a single database back to ``target`` (e.g. ``"-1"`` or a revision/base)."""
+    if db_name not in DB_TARGETS:
+        raise ValueError(f"Unknown database {db_name!r}; expected one of {_valid_dbs()}")
+    command.downgrade(_build_config(db_name), target)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,21 +62,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--db",
         action="append",
-        choices=VALID_DBS,
-        help="Database to migrate (repeatable). Defaults to all databases.",
+        choices=_valid_dbs(),
+        help="Database to migrate (repeatable). Defaults to all, in dependency order.",
+    )
+    parser.add_argument(
+        "--direction",
+        choices=("up", "down"),
+        default="up",
+        help="Migration direction (default: up).",
     )
     parser.add_argument(
         "--target",
-        default="head",
-        help="Target revision (default: head).",
+        default=None,
+        help="Target revision. Default: 'head' (up) / '-1' (down).",
     )
     args = parser.parse_args(argv)
 
-    databases = args.db or list(VALID_DBS)
-    for db_name in databases:
-        print(f"==> Migrating {db_name} to {args.target}", flush=True)
-        upgrade(db_name, args.target)
-        print(f"==> {db_name} complete", flush=True)
+    order = args.db or list(_valid_dbs())
+    if args.direction == "down":
+        # Rollback reverses registration order so a dependent schema tears down
+        # before the schema it FKs into. Critical for FK safety.
+        order = list(reversed(order))
+        target = args.target or "-1"
+        for db_name in order:
+            print(f"==> Rolling back {db_name} to {target}", flush=True)
+            downgrade(db_name, target)
+            print(f"==> {db_name} rolled back", flush=True)
+    else:
+        target = args.target or "head"
+        for db_name in order:
+            print(f"==> Migrating {db_name} to {target}", flush=True)
+            upgrade(db_name, target)
+            print(f"==> {db_name} complete", flush=True)
     return 0
 
 

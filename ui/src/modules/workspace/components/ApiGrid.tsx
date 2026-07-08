@@ -3,10 +3,10 @@
  * states. Pure presentation: the page owns the data + the import CTA, the grid
  * just renders the rows it's given.
  */
-import { Skeleton, EmptyState, ErrorAlert, Button } from '@/shared/ui';
+import { Skeleton, EmptyState, ErrorAlert, Button } from '@oss-internal/shared/ui';
 import { Boxes } from 'lucide-react';
-import { ApiCard } from '@/modules/workspace/components/ApiCard';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import { ApiCard } from '@oss-internal/modules/workspace/components/ApiCard';
+import type { WorkspaceApi } from '@oss-internal/modules/workspace/api';
 
 const GRID = 'grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3';
 

@@ -1,6 +1,6 @@
 import type { JSX, ReactNode } from 'react';
 import { Check } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 type CheckboxSize = 'sm' | 'md' | 'lg';
 

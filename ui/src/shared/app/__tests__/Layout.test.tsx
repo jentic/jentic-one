@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
-import { Layout } from '@/shared/app/Layout';
-import { AuthProvider } from '@/shared/auth/AuthContext';
-import { setToken } from '@/shared/api';
-import { isNavItemActive, navItems } from '@/shared/app/nav';
+import { renderWithProviders, screen, userEvent } from '@oss-internal/__tests__/test-utils';
+import { Layout } from '@oss-internal/shared/app/Layout';
+import { AuthProvider } from '@oss-internal/shared/auth/AuthContext';
+import { setToken } from '@oss-internal/shared/api';
+import { isNavItemActive, navItems } from '@oss-internal/shared/app/nav';
 
 /**
  * The Layout renders behind the AuthGuard, so it always has a user. These

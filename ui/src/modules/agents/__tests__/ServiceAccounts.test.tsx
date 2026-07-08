@@ -1,9 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
-import { setToken } from '@/shared/api';
-import { Toaster } from '@/shared/ui';
-import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
-import AgentsPage from '@/modules/agents/pages/AgentsPage';
+import {
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+	userEvent,
+} from '@oss-internal/__tests__/test-utils';
+import { setToken } from '@oss-internal/shared/api';
+import { Toaster } from '@oss-internal/shared/ui';
+import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
+import AgentsPage from '@oss-internal/modules/agents/pages/AgentsPage';
 
 async function gotoServiceAccounts(user: ReturnType<typeof userEvent.setup>) {
 	renderWithProviders(

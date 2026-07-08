@@ -1,5 +1,5 @@
 import React from 'react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type Variant = 'default' | 'success' | 'warning' | 'danger' | 'pending';
 

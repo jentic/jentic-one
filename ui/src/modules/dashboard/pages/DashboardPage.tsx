@@ -1,13 +1,13 @@
-import { PageShell, PageHeader, PageHelp, RefreshButton } from '@/shared/ui';
+import { PageShell, PageHeader, PageHelp, RefreshButton } from '@oss-internal/shared/ui';
 import { useQueryClient } from '@tanstack/react-query';
-import { dashboardKeys } from '@/modules/dashboard/api';
-import { OverviewCards } from '@/modules/dashboard/components/OverviewCards';
-import { PendingAgentsCard } from '@/modules/dashboard/components/PendingAgentsCard';
-import { PendingAccessRequestsCard } from '@/modules/dashboard/components/PendingAccessRequestsCard';
-import { AlertsCard } from '@/modules/dashboard/components/AlertsCard';
-import { RecentActivityCard } from '@/modules/dashboard/components/RecentActivityCard';
-import { QuickActions } from '@/modules/dashboard/components/QuickActions';
-import { ROUTES } from '@/shared/app/routes';
+import { dashboardKeys } from '@oss-internal/modules/dashboard/api';
+import { OverviewCards } from '@oss-internal/modules/dashboard/components/OverviewCards';
+import { PendingAgentsCard } from '@oss-internal/modules/dashboard/components/PendingAgentsCard';
+import { PendingAccessRequestsCard } from '@oss-internal/modules/dashboard/components/PendingAccessRequestsCard';
+import { AlertsCard } from '@oss-internal/modules/dashboard/components/AlertsCard';
+import { RecentActivityCard } from '@oss-internal/modules/dashboard/components/RecentActivityCard';
+import { QuickActions } from '@oss-internal/modules/dashboard/components/QuickActions';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 
 /**
  * Dashboard — the `/app` index (landing) page.

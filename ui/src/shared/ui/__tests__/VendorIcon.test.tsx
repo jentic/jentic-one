@@ -1,5 +1,5 @@
-import { renderWithProviders, checkA11y } from '@/__tests__/test-utils';
-import { VendorIcon } from '@/shared/ui/VendorIcon';
+import { renderWithProviders, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { VendorIcon } from '@oss-internal/shared/ui/VendorIcon';
 
 describe('VendorIcon', () => {
 	it('renders two-letter initials from the name in the gradient fallback', () => {

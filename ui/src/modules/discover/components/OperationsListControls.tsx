@@ -7,7 +7,7 @@
  * so a search covers every operation in the spec — not just the loaded page.
  * Presentational only.
  */
-import { Button, SearchInput } from '@/shared/ui';
+import { Button, SearchInput } from '@oss-internal/shared/ui';
 
 /**
  * Row shape the list renders. The sheet projects each

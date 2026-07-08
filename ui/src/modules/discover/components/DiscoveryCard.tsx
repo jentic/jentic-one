@@ -18,10 +18,10 @@
  * shared `AppLink` (safe new-tab handling).
  */
 import { ArrowRight, ChevronRight, ExternalLink, Plus } from 'lucide-react';
-import { AppLink, Button, VendorIcon } from '@/shared/ui';
-import { ROUTES } from '@/shared/app';
-import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
-import type { DiscoveryEntity } from '@/modules/discover/api';
+import { AppLink, Button, VendorIcon } from '@oss-internal/shared/ui';
+import { ROUTES } from '@oss-internal/shared/app';
+import { CardStatusPill } from '@oss-internal/modules/discover/components/CardStatusPill';
+import type { DiscoveryEntity } from '@oss-internal/modules/discover/api';
 
 interface DiscoveryCardProps {
 	entity: DiscoveryEntity;

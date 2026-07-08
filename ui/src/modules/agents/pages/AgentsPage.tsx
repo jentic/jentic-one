@@ -20,7 +20,7 @@ import {
 	PageHelp,
 	SegmentedToggle,
 	ErrorAlert,
-} from '@/shared/ui';
+} from '@oss-internal/shared/ui';
 import {
 	useAgents,
 	useApproveAgent,
@@ -37,12 +37,15 @@ import {
 	type AgentEntity,
 	type ServiceAccountEntity,
 	type AgentAction,
-} from '@/modules/agents/api';
-import { AgentRoster, ServiceAccountRoster } from '@/modules/agents/components/ActorRoster';
-import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
-import { ServiceAccountCreateSheet } from '@/modules/agents/components/ServiceAccountCreateSheet';
-import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+} from '@oss-internal/modules/agents/api';
+import {
+	AgentRoster,
+	ServiceAccountRoster,
+} from '@oss-internal/modules/agents/components/ActorRoster';
+import { AgentCreateSheet } from '@oss-internal/modules/agents/components/AgentCreateSheet';
+import { ServiceAccountCreateSheet } from '@oss-internal/modules/agents/components/ServiceAccountCreateSheet';
+import { DenyDialog } from '@oss-internal/modules/agents/components/confirm/DenyDialog';
+import { ConfirmDialog } from '@oss-internal/modules/agents/components/confirm/ConfirmDialog';
 
 type Tab = 'agents' | 'service-accounts';
 

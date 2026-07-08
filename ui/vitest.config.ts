@@ -12,7 +12,7 @@ export default defineConfig({
 	plugins: [react(), tailwindcss()],
 	resolve: {
 		alias: {
-			'@': resolve(__dirname, 'src'),
+			'@oss-internal': resolve(__dirname, 'src'),
 		},
 	},
 	// Pre-bundle test-only deps so Vitest's browser provider doesn't discover

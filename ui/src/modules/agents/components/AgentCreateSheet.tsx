@@ -6,8 +6,8 @@
  * only after a successful create; a dismissal preserves the draft.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
-import { useCreateAgent } from '@/modules/agents/api';
+import { Button, Input, Label, Textarea, SheetPrimitive } from '@oss-internal/shared/ui';
+import { useCreateAgent } from '@oss-internal/modules/agents/api';
 
 interface AgentCreateSheetProps {
 	open: boolean;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Button } from '@/shared/ui/Button';
-import { cn } from '@/shared/lib/utils';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 interface PageHeaderProps {
 	title: string;

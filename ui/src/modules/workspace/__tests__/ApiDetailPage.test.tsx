@@ -7,10 +7,10 @@ import {
 	userEvent,
 	within,
 	checkA11y,
-} from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { setToken } from '@/shared/api';
-import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
+} from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { setToken } from '@oss-internal/shared/api';
+import ApiDetailPage from '@oss-internal/modules/workspace/pages/ApiDetailPage';
 
 /** See WorkspacePage.test for why we settle the PageHeader entrance animation. */
 async function settleAnimations(container: HTMLElement): Promise<void> {

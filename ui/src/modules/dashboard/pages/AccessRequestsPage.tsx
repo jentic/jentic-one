@@ -18,11 +18,15 @@ import {
 	AgentBadge,
 	type BadgeVariant,
 	type SegmentedToggleOption,
-} from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app';
-import { useAccessRequestsQueue, dashboardKeys, type AccessRequest } from '@/modules/dashboard/api';
-import { ROUTES } from '@/shared/app/routes';
-import { timeAgo } from '@/shared/lib/utils';
+} from '@oss-internal/shared/ui';
+import { AccessRequestDialog } from '@oss-internal/shared/app';
+import {
+	useAccessRequestsQueue,
+	dashboardKeys,
+	type AccessRequest,
+} from '@oss-internal/modules/dashboard/api';
+import { ROUTES } from '@oss-internal/shared/app/routes';
+import { timeAgo } from '@oss-internal/shared/lib/utils';
 
 type StatusFilter = 'pending' | 'approved' | 'denied' | 'all';
 

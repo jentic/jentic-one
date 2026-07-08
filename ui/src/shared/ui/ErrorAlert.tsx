@@ -1,8 +1,8 @@
 import { AlertTriangle, Copy, Check, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
-import { ApiError } from '@/shared/api';
-import { Button } from '@/shared/ui/Button';
-import { cn } from '@/shared/lib/utils';
+import { ApiError } from '@oss-internal/shared/api';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 interface ErrorAlertProps {
 	/** Either a raw message string or an Error / ApiError instance. */

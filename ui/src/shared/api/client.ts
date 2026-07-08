@@ -12,9 +12,9 @@
  * Import generated services/models from `@/shared/api` (the facade), not from
  * `./generated` directly, so this configuration is always applied first.
  */
-import { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
-import { ApiError } from '@/shared/api/generated/core/ApiError';
-import { getToken } from '@/shared/api/token-store';
+import { OpenAPI } from '@oss-internal/shared/api/generated/core/OpenAPI';
+import { ApiError } from '@oss-internal/shared/api/generated/core/ApiError';
+import { getToken } from '@oss-internal/shared/api/token-store';
 
 // Clear any absolute URL hardcoded by codegen (e.g. from openapi.json servers block).
 // This ensures relative routing works in dev/test/MSW.

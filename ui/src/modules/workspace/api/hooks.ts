@@ -15,7 +15,7 @@ import {
 	useQueryClient,
 	type UseQueryResult,
 } from '@tanstack/react-query';
-import { toast } from '@/shared/ui';
+import { toast } from '@oss-internal/shared/ui';
 import {
 	archiveRevision,
 	deleteApi,
@@ -28,9 +28,9 @@ import {
 	listOperations,
 	listRevisions,
 	promoteRevision,
-} from '@/modules/workspace/api/client';
-import type { ApiKey } from '@/modules/workspace/api/apiId';
-import { formatApiKey } from '@/modules/workspace/api/apiId';
+} from '@oss-internal/modules/workspace/api/client';
+import type { ApiKey } from '@oss-internal/modules/workspace/api/apiId';
+import { formatApiKey } from '@oss-internal/modules/workspace/api/apiId';
 import type {
 	ApiOperation,
 	ApiRevision,
@@ -38,8 +38,8 @@ import type {
 	ImportSource,
 	JobStatus,
 	WorkspaceApi,
-} from '@/modules/workspace/api/types';
-import { sharedQueryKeys } from '@/shared/api';
+} from '@oss-internal/modules/workspace/api/types';
+import { sharedQueryKeys } from '@oss-internal/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const workspaceKeys = {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@/__tests__/test-utils';
-import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import type { StreamEvent } from '@/shared/lib/agentStream';
+import { render, screen } from '@oss-internal/__tests__/test-utils';
+import { RailEventRow } from '@oss-internal/shared/app/rail/RailEventRow';
+import type { StreamEvent } from '@oss-internal/shared/lib/agentStream';
 
 function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 	const base: StreamEvent = {

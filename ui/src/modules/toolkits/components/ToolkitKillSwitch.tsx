@@ -1,9 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Ban, Power, ShieldCheck } from 'lucide-react';
-import { Button } from '@/shared/ui';
-import { cn } from '@/shared/lib/utils';
-import { useSetToolkitActive } from '@/modules/toolkits/api';
+import { Button } from '@oss-internal/shared/ui';
+import { cn } from '@oss-internal/shared/lib/utils';
+import { useSetToolkitActive } from '@oss-internal/modules/toolkits/api';
 
 /**
  * Toolkit-level kill switch — a Power-toggle pill that suspends or restores ALL

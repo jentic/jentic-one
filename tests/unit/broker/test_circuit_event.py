@@ -11,7 +11,7 @@ from jentic_one.broker.core.exceptions import CircuitOpenError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import (
     _circuit_event_last_emitted,
-    default_pipeline,
+    default_broker,
     run_execution,
 )
 
@@ -52,7 +52,7 @@ def _clear_dedup() -> None:
 async def test_circuit_open_emits_event() -> None:
     """When CircuitOpenError is raised, emit_event should be called."""
     session = AsyncMock()
-    pipeline = default_pipeline(_CircuitOpenRunner())
+    broker = default_broker(_CircuitOpenRunner())
 
     with (
         patch(
@@ -70,7 +70,7 @@ async def test_circuit_open_emits_event() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
         )
@@ -89,7 +89,7 @@ async def test_circuit_open_emits_event() -> None:
 async def test_circuit_open_dedup_suppresses_second_emit() -> None:
     """A second CircuitOpenError for the same host within the cooldown should not emit."""
     session = AsyncMock()
-    pipeline = default_pipeline(_CircuitOpenRunner())
+    broker = default_broker(_CircuitOpenRunner())
 
     with (
         patch(
@@ -108,7 +108,7 @@ async def test_circuit_open_dedup_suppresses_second_emit() -> None:
                     body=None,
                     headers=None,
                     session=session,
-                    pipeline=pipeline,
+                    broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",
                 )
@@ -135,14 +135,14 @@ async def test_circuit_open_different_hosts_emit_independently() -> None:
         ) as mock_emit,
     ):
         for host in ("alpha.example.com", "beta.example.com"):
-            pipeline = default_pipeline(_CircuitOpenRunner())
+            broker = default_broker(_CircuitOpenRunner())
             with pytest.raises(CircuitOpenError):
                 await run_execution(
                     _ctx_req(host=host),
                     body=None,
                     headers=None,
                     session=session,
-                    pipeline=pipeline,
+                    broker=broker,
                     actor_id="agt_abc123",
                     actor_type="agent",
                 )

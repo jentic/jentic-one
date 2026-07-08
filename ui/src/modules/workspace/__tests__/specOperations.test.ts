@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
+import {
+	parseSpecOperations,
+	opDetailKey,
+} from '@oss-internal/modules/workspace/api/specOperations';
 
 describe('parseSpecOperations', () => {
 	it('returns empty structures for a non-object / partial spec', () => {

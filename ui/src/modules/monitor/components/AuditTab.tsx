@@ -15,21 +15,28 @@
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowUpRight, ShieldAlert, ShieldX, User } from 'lucide-react';
-import { AppLink, Badge, EmptyState, ErrorAlert, RefreshButton, ActorLabel } from '@/shared/ui';
+import {
+	AppLink,
+	Badge,
+	EmptyState,
+	ErrorAlert,
+	RefreshButton,
+	ActorLabel,
+} from '@oss-internal/shared/ui';
 import {
 	useAudit,
 	MonitorApiError,
 	AuditTargetType,
 	type AuditResponse,
 	type ListAuditParams,
-} from '@/modules/monitor/api';
-import { formatRelative } from '@/modules/monitor/lib/format';
-import { monitorHref, hasTrace } from '@/modules/monitor/lib/links';
-import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
-import { CursorPager } from '@/modules/monitor/components/CursorPager';
-import { MonitorList, MonitorRow } from '@/modules/monitor/components/MonitorList';
-import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
-import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
+} from '@oss-internal/modules/monitor/api';
+import { formatRelative } from '@oss-internal/modules/monitor/lib/format';
+import { monitorHref, hasTrace } from '@oss-internal/modules/monitor/lib/links';
+import { usePermission, ORG_ADMIN } from '@oss-internal/modules/monitor/lib/usePermission';
+import { CursorPager } from '@oss-internal/modules/monitor/components/CursorPager';
+import { MonitorList, MonitorRow } from '@oss-internal/modules/monitor/components/MonitorList';
+import { useMonitorFilters } from '@oss-internal/modules/monitor/lib/useMonitorFilters';
+import { useCursorStack } from '@oss-internal/modules/monitor/lib/useCursorStack';
 
 export function AuditTab() {
 	const isAdmin = usePermission(ORG_ADMIN);

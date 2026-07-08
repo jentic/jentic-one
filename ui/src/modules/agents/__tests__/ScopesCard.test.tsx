@@ -6,11 +6,11 @@ import {
 	within,
 	userEvent,
 	checkA11y,
-} from '@/__tests__/test-utils';
-import { setToken } from '@/shared/api';
-import { Toaster } from '@/shared/ui';
-import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
-import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+} from '@oss-internal/__tests__/test-utils';
+import { setToken } from '@oss-internal/shared/api';
+import { Toaster } from '@oss-internal/shared/ui';
+import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
+import { ScopesCard } from '@oss-internal/modules/agents/components/ScopesCard';
 
 function renderCard(props: {
 	actorKind: 'agent' | 'service-account';
@@ -126,8 +126,8 @@ describe('ScopesCard', () => {
 		// component handles a 403 defensively (e.g. future enforcement / a perms
 		// change mid-session). Inject one to cover that path.
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {
 				status: 403,
@@ -204,7 +204,7 @@ describe('ScopesCard', () => {
 		// save must include it untouched — dropping it would silently revoke it.
 		const user = userEvent.setup();
 		let putBody: { scopes?: string[] } | undefined;
-		const { worker } = await import('@/mocks/browser');
+		const { worker } = await import('@oss-internal/mocks/browser');
 		const { http, HttpResponse } = await import('msw');
 		worker.use(
 			http.put('/agents/:id/scopes', async ({ request }) => {
@@ -267,7 +267,7 @@ describe('ScopesCard', () => {
 		// revoke it — the card must require explicit confirmation first.
 		const user = userEvent.setup();
 		let putBody: { scopes?: string[] } | undefined;
-		const { worker } = await import('@/mocks/browser');
+		const { worker } = await import('@oss-internal/mocks/browser');
 		const { http, HttpResponse } = await import('msw');
 		worker.use(
 			http.get('/permissions', () =>
@@ -320,8 +320,8 @@ describe('ScopesCard', () => {
 
 	it('keeps the dialog open and shows the error when a scope is malformed (422)', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {
 				status: 422,
@@ -344,8 +344,8 @@ describe('ScopesCard', () => {
 
 	it('keeps the dialog open and surfaces a network error on save', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(createErrorHandler('put', '/agents/:id/scopes', { networkError: true }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
@@ -366,8 +366,8 @@ describe('ScopesCard', () => {
 	});
 
 	it('shows an error (and hides Edit) when the actor scopes fail to load', async () => {
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(createErrorHandler('get', '/agents/:id/scopes', { status: 500 }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
@@ -380,8 +380,8 @@ describe('ScopesCard', () => {
 
 	it('disables Save when the permission catalogue fails to load', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		const { worker } = await import('@oss-internal/mocks/browser');
+		const { createErrorHandler } = await import('@oss-internal/__tests__/test-utils');
 		worker.use(createErrorHandler('get', '/permissions', { status: 500 }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });

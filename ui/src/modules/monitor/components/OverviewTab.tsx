@@ -11,11 +11,11 @@
  */
 import { BarChart3 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { EmptyState, ErrorAlert, LoadingState, SegmentedToggle } from '@/shared/ui';
-import { useExecutionStats } from '@/modules/monitor/api';
-import { HealthStrip } from '@/modules/monitor/components/HealthStrip';
-import { UsageCharts } from '@/modules/monitor/components/UsageCharts';
-import { TopOperations } from '@/modules/monitor/components/TopOperations';
+import { EmptyState, ErrorAlert, LoadingState, SegmentedToggle } from '@oss-internal/shared/ui';
+import { useExecutionStats } from '@oss-internal/modules/monitor/api';
+import { HealthStrip } from '@oss-internal/modules/monitor/components/HealthStrip';
+import { UsageCharts } from '@oss-internal/modules/monitor/components/UsageCharts';
+import { TopOperations } from '@oss-internal/modules/monitor/components/TopOperations';
 
 const WINDOW_OPTIONS = [
 	{ value: '1', label: '24h' },

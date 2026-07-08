@@ -1,5 +1,10 @@
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { Button } from '@/shared/ui/Button';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { Button } from '@oss-internal/shared/ui/Button';
 
 describe('Button', () => {
 	it('renders its children', () => {

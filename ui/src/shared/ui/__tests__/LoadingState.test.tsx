@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { LoadingState } from '@/shared/ui/LoadingState';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { LoadingState } from '@oss-internal/shared/ui/LoadingState';
 
 describe('LoadingState', () => {
 	it('exposes a polite status region', () => {

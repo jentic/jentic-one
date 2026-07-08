@@ -17,29 +17,29 @@
  */
 import { useCallback, useMemo, useState } from 'react';
 import { BookOpen, Network } from 'lucide-react';
-import { LoadingState, ErrorAlert } from '@/shared/ui';
-import { useDocs, useCliReference, useBrokerSpec } from '@/modules/docs/api/hooks';
-import type { ReferencePayload } from '@/modules/docs/api/types';
-import { DocsSidebar } from '@/modules/docs/components/DocsSidebar';
-import { DocsMobileNav } from '@/modules/docs/components/DocsMobileNav';
-import { DocsTopNav } from '@/modules/docs/components/DocsTopNav';
-import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
-import { OverviewSection } from '@/modules/docs/components/sections/OverviewSection';
-import { InstallationSection } from '@/modules/docs/components/sections/InstallationSection';
-import { QuickstartSection } from '@/modules/docs/components/sections/QuickstartSection';
-import { ArchitectureSection } from '@/modules/docs/components/sections/ArchitectureSection';
-import { PermissionsSection } from '@/modules/docs/components/sections/PermissionsSection';
-import { CliReferenceView } from '@/modules/docs/components/CliReference';
+import { LoadingState, ErrorAlert } from '@oss-internal/shared/ui';
+import { useDocs, useCliReference, useBrokerSpec } from '@oss-internal/modules/docs/api/hooks';
+import type { ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import { DocsSidebar } from '@oss-internal/modules/docs/components/DocsSidebar';
+import { DocsMobileNav } from '@oss-internal/modules/docs/components/DocsMobileNav';
+import { DocsTopNav } from '@oss-internal/modules/docs/components/DocsTopNav';
+import { DocsSectionBlock } from '@oss-internal/modules/docs/components/DocsSectionBlock';
+import { OverviewSection } from '@oss-internal/modules/docs/components/sections/OverviewSection';
+import { InstallationSection } from '@oss-internal/modules/docs/components/sections/InstallationSection';
+import { QuickstartSection } from '@oss-internal/modules/docs/components/sections/QuickstartSection';
+import { ArchitectureSection } from '@oss-internal/modules/docs/components/sections/ArchitectureSection';
+import { PermissionsSection } from '@oss-internal/modules/docs/components/sections/PermissionsSection';
+import { CliReferenceView } from '@oss-internal/modules/docs/components/CliReference';
 import {
 	ApiReferenceView,
 	tagGroupAnchorId,
 	MODELS_ANCHOR,
-} from '@/modules/docs/components/ApiReference';
-import { parseSpec } from '@/modules/docs/lib/apiSpec';
-import { scrollToAnchor } from '@/modules/docs/lib/anchor';
-import { DOCS_SECTIONS } from '@/modules/docs/lib/nav';
-import type { DocsSubSection } from '@/modules/docs/lib/nav';
-import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
+} from '@oss-internal/modules/docs/components/ApiReference';
+import { parseSpec } from '@oss-internal/modules/docs/lib/apiSpec';
+import { scrollToAnchor } from '@oss-internal/modules/docs/lib/anchor';
+import { DOCS_SECTIONS } from '@oss-internal/modules/docs/lib/nav';
+import type { DocsSubSection } from '@oss-internal/modules/docs/lib/nav';
+import { useScrollSpy } from '@oss-internal/modules/docs/lib/useScrollSpy';
 
 const SECTION_IDS = DOCS_SECTIONS.map((s) => s.id);
 /** Sub-anchor ids (e.g. CLI binaries) for the secondary scroll-spy. */

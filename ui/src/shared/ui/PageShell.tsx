@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 /**
  * Width variants for in-Layout pages. `PageShell` owns both the

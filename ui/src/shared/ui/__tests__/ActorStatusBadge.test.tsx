@@ -1,10 +1,10 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
 import {
 	ActorStatusBadge,
 	STATUS_BADGE_VARIANT,
 	STATUS_LABELS,
 	toActorStatus,
-} from '@/shared/ui/ActorStatusBadge';
+} from '@oss-internal/shared/ui/ActorStatusBadge';
 
 describe('ActorStatusBadge', () => {
 	it('renders the canonical capitalized label for a known status', () => {

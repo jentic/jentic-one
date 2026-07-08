@@ -9,12 +9,12 @@ import {
 	fireEvent,
 	checkA11y,
 	createErrorHandler,
-} from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { setToken, sharedQueryKeys } from '@/shared/api';
-import { Toaster } from '@/shared/ui';
-import { setImportPollIntervalForTests } from '@/modules/discover/api';
-import DiscoverPage from '@/modules/discover/pages/DiscoverPage';
+} from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { setToken, sharedQueryKeys } from '@oss-internal/shared/api';
+import { Toaster } from '@oss-internal/shared/ui';
+import { setImportPollIntervalForTests } from '@oss-internal/modules/discover/api';
+import DiscoverPage from '@oss-internal/modules/discover/pages/DiscoverPage';
 
 describe('DiscoverPage', () => {
 	let restorePollInterval: (() => void) | null = null;

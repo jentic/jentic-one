@@ -1,8 +1,8 @@
-import { OpenAPI } from '@/shared/api/generated/core/OpenAPI';
-import { request as __request } from '@/shared/api/generated/core/request';
-import type { HealthResponse } from '@/shared/api/generated/models/HealthResponse';
-import '@/shared/api/client';
-import { getAppConfig } from '@/shared/config';
+import { OpenAPI } from '@oss-internal/shared/api/generated/core/OpenAPI';
+import { request as __request } from '@oss-internal/shared/api/generated/core/request';
+import type { HealthResponse } from '@oss-internal/shared/api/generated/models/HealthResponse';
+import '@oss-internal/shared/api/client';
+import { getAppConfig } from '@oss-internal/shared/config';
 
 export type Health = HealthResponse;
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildSearchIndex, searchIndex } from '@/modules/docs/lib/search';
-import { modelAnchorId, operationAnchorId } from '@/modules/docs/lib/anchor';
-import type { ReferencePayload } from '@/modules/docs/api/types';
+import { buildSearchIndex, searchIndex } from '@oss-internal/modules/docs/lib/search';
+import { modelAnchorId, operationAnchorId } from '@oss-internal/modules/docs/lib/anchor';
+import type { ReferencePayload } from '@oss-internal/modules/docs/api/types';
 
 const reference: ReferencePayload = {
 	schema: 'jentic.endpoint-scope-tree/v1',

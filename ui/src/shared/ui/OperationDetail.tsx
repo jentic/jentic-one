@@ -13,9 +13,9 @@
  * coupling shared to any one module's models.
  */
 import type React from 'react';
-import { MethodBadge } from '@/shared/ui/Badge';
-import { Markdown } from '@/shared/ui/Markdown';
-import { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
+import { MethodBadge } from '@oss-internal/shared/ui/Badge';
+import { Markdown } from '@oss-internal/shared/ui/Markdown';
+import { TruncateWithTooltip } from '@oss-internal/shared/ui/TruncateWithTooltip';
 
 /** A single request parameter row in the Parameters table. */
 export interface OperationParameter {

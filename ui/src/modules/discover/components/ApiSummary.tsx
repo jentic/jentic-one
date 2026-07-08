@@ -6,7 +6,7 @@
  * spec has no description there's nothing to show.
  */
 import { useState } from 'react';
-import { Markdown } from '@/shared/ui';
+import { Markdown } from '@oss-internal/shared/ui';
 
 const SUMMARY_TRUNCATE = 280;
 

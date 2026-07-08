@@ -62,7 +62,7 @@ from jentic_one.broker.services.credentials.orchestrator import CredentialServic
 from jentic_one.broker.services.discovery import discover, resolve_pin_for_api
 from jentic_one.broker.services.execution.pipeline import ExecutionOutcome
 from jentic_one.broker.services.execution.service import (
-    default_pipeline,
+    default_broker,
     persist_streaming_execution,
     run_execution,
 )
@@ -567,13 +567,18 @@ async def _handle(
     forwarded = forward_headers(request.headers, auth_headers)
 
     async with ctx.admin_db.transaction() as session:
+        # Prefer an injected Broker instance (it owns its own transport);
+        # otherwise build the DefaultBroker per request over the selected runner.
+        injected = getattr(request.app.state, "broker", None)
+        broker_factory = getattr(request.app.state, "broker_factory", default_broker)
+        broker = injected if injected is not None else broker_factory(runner)
         outcome = await run_execution(
             ctx_req,
             body=body,
             headers=forwarded,
             session=session,
             timeout=ctx.config.broker.upstream_timeout_s,
-            pipeline=default_pipeline(runner),
+            broker=broker,
             actor_id=identity.sub,
             actor_type=identity.actor_type.value,
             origin=identity.origin.value,

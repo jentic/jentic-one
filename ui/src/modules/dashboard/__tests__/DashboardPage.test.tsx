@@ -6,11 +6,11 @@ import {
 	waitFor,
 	checkA11y,
 	createErrorHandler,
-} from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { setToken } from '@/shared/api';
-import DashboardPage from '@/modules/dashboard/pages/DashboardPage';
-import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
+} from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { setToken } from '@oss-internal/shared/api';
+import DashboardPage from '@oss-internal/modules/dashboard/pages/DashboardPage';
+import { dashboardHandlers } from '@oss-internal/modules/dashboard/mocks/handlers';
 
 /** An empty `{data:[]}` page for any list endpoint. */
 function emptyList(path: string) {

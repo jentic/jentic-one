@@ -6,8 +6,8 @@
 // result: the managed Pipedream option appears only when the backend reports a
 // `pipedream` provider with `configured === true`. There is no build-time
 // feature flag — runtime config (set via `admin config providers`) decides.
-import type { ProviderDiscoveryEntryResponse } from '@/shared/api';
-import { CredentialType } from '@/modules/credentials/api';
+import type { ProviderDiscoveryEntryResponse } from '@oss-internal/shared/api';
+import { CredentialType } from '@oss-internal/modules/credentials/api';
 
 /** The credential provider the platform uses to gather/refresh an OAuth2 grant. */
 export type CredentialProviderId = 'static' | 'direct_oauth2' | 'pipedream';

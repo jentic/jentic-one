@@ -1,5 +1,11 @@
-import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
-import { CopyButton } from '@/shared/ui/CopyButton';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { CopyButton } from '@oss-internal/shared/ui/CopyButton';
 
 describe('CopyButton', () => {
 	it('copies the value and shows feedback', async () => {

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { Kbd } from '@/shared/ui/Kbd';
-import { cn } from '@/shared/lib/utils';
+import { Kbd } from '@oss-internal/shared/ui/Kbd';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export interface KeyboardShortcut {
 	/**

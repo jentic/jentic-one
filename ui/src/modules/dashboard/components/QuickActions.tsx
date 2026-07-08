@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import { Compass, KeyRound, Boxes, FolderOpen, ArrowUpRight } from 'lucide-react';
-import { Card, AppLink } from '@/shared/ui';
-import { ROUTES } from '@/shared/app/routes';
+import { Card, AppLink } from '@oss-internal/shared/ui';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 
 interface QuickAction {
 	href: string;

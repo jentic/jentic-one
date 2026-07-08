@@ -1,6 +1,9 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { OperationDetail } from '@/shared/ui/OperationDetail';
-import type { OperationDetailData, SecuritySchemeMap } from '@/shared/ui/OperationDetail';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { OperationDetail } from '@oss-internal/shared/ui/OperationDetail';
+import type {
+	OperationDetailData,
+	SecuritySchemeMap,
+} from '@oss-internal/shared/ui/OperationDetail';
 
 function makeOp(overrides: Partial<OperationDetailData> = {}): OperationDetailData {
 	return {

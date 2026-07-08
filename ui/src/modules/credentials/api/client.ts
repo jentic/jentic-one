@@ -5,8 +5,8 @@
 // Each function narrows the generated contract to a typed envelope and forwards
 // the typed request/response shapes from `./types`. Hooks (`./index.ts`) are the
 // only callers.
-import { CredentialsService } from '@/shared/api';
-import type { ProviderDiscoveryResponse } from '@/shared/api';
+import { CredentialsService } from '@oss-internal/shared/api';
+import type { ProviderDiscoveryResponse } from '@oss-internal/shared/api';
 import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,

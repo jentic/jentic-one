@@ -9,13 +9,13 @@ import {
 	userEvent,
 	checkA11y,
 	createErrorHandler,
-} from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { setToken } from '@/shared/api';
-import { AuthProvider } from '@/shared/auth';
-import { Toaster } from '@/shared/ui';
-import MonitorPage from '@/modules/monitor/pages/MonitorPage';
-import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+} from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { setToken } from '@oss-internal/shared/api';
+import { AuthProvider } from '@oss-internal/shared/auth';
+import { Toaster } from '@oss-internal/shared/ui';
+import MonitorPage from '@oss-internal/modules/monitor/pages/MonitorPage';
+import { monitorHandlers } from '@oss-internal/modules/monitor/mocks/handlers';
 
 /** Mirrors the router location search string into the DOM for assertions. */
 function LocationProbe() {

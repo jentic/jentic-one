@@ -1,6 +1,11 @@
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { ScopeGroup } from '@/shared/ui/ScopeGroup';
-import type { ScopeGroup as ScopeGroupType, EnhancedScope } from '@/shared/lib/scopes';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { ScopeGroup } from '@oss-internal/shared/ui/ScopeGroup';
+import type { ScopeGroup as ScopeGroupType, EnhancedScope } from '@oss-internal/shared/lib/scopes';
 
 function scope(name: string, isRecommended = false): EnhancedScope {
 	return { scope: name, description: `${name} description`, origin: 'platform', isRecommended };

@@ -4,8 +4,8 @@ import {
 	type Credential,
 	type CredentialCreateRequest,
 	type CredentialUpdateRequest,
-} from '@/modules/credentials/api';
-import type { ApiResponse, CatalogEntryResponse } from '@/shared/api';
+} from '@oss-internal/modules/credentials/api';
+import type { ApiResponse, CatalogEntryResponse } from '@oss-internal/shared/api';
 
 /**
  * In-memory credentials store for MSW (mocked dev — Mode A — and browser/e2e

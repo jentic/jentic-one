@@ -15,17 +15,23 @@ export {
 	useDeleteApi,
 	useImportSpec,
 	workspaceKeys,
-} from '@/modules/workspace/api/hooks';
-export type { UseImportSpec } from '@/modules/workspace/api/hooks';
-export type { UseApiOperations } from '@/modules/workspace/api/hooks';
+} from '@oss-internal/modules/workspace/api/hooks';
+export type { UseImportSpec } from '@oss-internal/modules/workspace/api/hooks';
+export type { UseApiOperations } from '@oss-internal/modules/workspace/api/hooks';
 
-export { WorkspaceApiError } from '@/modules/workspace/api/client';
+export { WorkspaceApiError } from '@oss-internal/modules/workspace/api/client';
 
-export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
-export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/specOperations';
+export {
+	parseSpecOperations,
+	opDetailKey,
+} from '@oss-internal/modules/workspace/api/specOperations';
+export type {
+	ParsedSpec,
+	SpecOperationDetail,
+} from '@oss-internal/modules/workspace/api/specOperations';
 
-export { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
-export type { ApiKey } from '@/modules/workspace/api/apiId';
+export { encodeApiId, formatApiKey } from '@oss-internal/modules/workspace/api/apiId';
+export type { ApiKey } from '@oss-internal/modules/workspace/api/apiId';
 
 export type {
 	ApiRef,
@@ -37,4 +43,4 @@ export type {
 	ImportJob,
 	JobStatus,
 	ImportSource,
-} from '@/modules/workspace/api/types';
+} from '@oss-internal/modules/workspace/api/types';

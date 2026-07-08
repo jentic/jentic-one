@@ -21,17 +21,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { sharedQueryKeys } from '@/shared/api/queryKeys';
+import { sharedQueryKeys } from '@oss-internal/shared/api/queryKeys';
 import { ChevronLeft } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { toast } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
-import { RailEventRow } from '@/shared/app/rail/RailEventRow';
-import { RailFeed } from '@/shared/app/rail/RailFeed';
-import type { RailFeedFilters } from '@/shared/app/rail/RailFeed';
-import { RailFooter } from '@/shared/app/rail/RailFooter';
-import { RailHeader } from '@/shared/app/rail/RailHeader';
-import { playCriticalCue } from '@/shared/lib/audioCue';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { toast } from '@oss-internal/shared/ui';
+import { AccessRequestDialog } from '@oss-internal/shared/app/rail/AccessRequestDialog';
+import { RailEventRow } from '@oss-internal/shared/app/rail/RailEventRow';
+import { RailFeed } from '@oss-internal/shared/app/rail/RailFeed';
+import type { RailFeedFilters } from '@oss-internal/shared/app/rail/RailFeed';
+import { RailFooter } from '@oss-internal/shared/app/rail/RailFooter';
+import { RailHeader } from '@oss-internal/shared/app/rail/RailHeader';
+import { playCriticalCue } from '@oss-internal/shared/lib/audioCue';
 import {
 	RAIL_AUDIO_STORAGE_KEY,
 	RAIL_COLLAPSE_CHANGE_EVENT,
@@ -40,9 +40,13 @@ import {
 	readToastScope,
 	useAgentStream,
 	writeToastScope,
-} from '@/shared/lib/agentStream';
-import type { InlineActionSpec, StreamEvent, ToastScope } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+} from '@oss-internal/shared/lib/agentStream';
+import type {
+	InlineActionSpec,
+	StreamEvent,
+	ToastScope,
+} from '@oss-internal/shared/lib/agentStream';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 function readBool(key: string, fallback: boolean): boolean {
 	if (typeof window === 'undefined') return fallback;

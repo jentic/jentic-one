@@ -18,24 +18,24 @@ import type {
 	OpenApiDocument,
 	ReferenceEndpoint,
 	ReferencePayload,
-} from '@/modules/docs/api/types';
+} from '@oss-internal/modules/docs/api/types';
 import {
 	parseSpec,
 	type ParsedSpec,
 	type SpecOperation,
 	type SpecBody,
-} from '@/modules/docs/lib/apiSpec';
+} from '@oss-internal/modules/docs/lib/apiSpec';
 import {
 	lookupKey,
 	indexReference,
 	operationAnchorId,
 	scrollToAnchor,
-} from '@/modules/docs/lib/anchor';
-import { ScopePanel } from '@/modules/docs/components/ScopePanel';
-import { SchemaView, modelAnchorId } from '@/modules/docs/components/SchemaView';
-import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
-import { MethodBadge, Markdown, Input, LazyMount } from '@/shared/ui';
-import { cn } from '@/shared/lib/utils';
+} from '@oss-internal/modules/docs/lib/anchor';
+import { ScopePanel } from '@oss-internal/modules/docs/components/ScopePanel';
+import { SchemaView, modelAnchorId } from '@oss-internal/modules/docs/components/SchemaView';
+import { useScrollSpy } from '@oss-internal/modules/docs/lib/useScrollSpy';
+import { MethodBadge, Markdown, Input, LazyMount } from '@oss-internal/shared/ui';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 /* ---- anchors ------------------------------------------------------------- */
 

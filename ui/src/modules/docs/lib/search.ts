@@ -11,9 +11,9 @@
  * the corpus here is small (a few hundred rows) so this stays instant without a
  * fuzzy-search dependency.
  */
-import type { CliBinary, CliCommand, ReferencePayload } from '@/modules/docs/api/types';
-import { DOCS_SECTIONS } from '@/modules/docs/lib/nav';
-import { operationAnchorId, modelAnchorId } from '@/modules/docs/lib/anchor';
+import type { CliBinary, CliCommand, ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import { DOCS_SECTIONS } from '@oss-internal/modules/docs/lib/nav';
+import { operationAnchorId, modelAnchorId } from '@oss-internal/modules/docs/lib/anchor';
 
 export type SearchKind = 'section' | 'cli' | 'scope' | 'endpoint' | 'model';
 

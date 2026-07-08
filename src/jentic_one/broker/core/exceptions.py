@@ -14,21 +14,11 @@ reading docs (02-core-proxy "Agent-centric error recovery").
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
-
-class ErrorOrigin(StrEnum):
-    """Disambiguates *who* failed on an otherwise-identical 5xx/503."""
-
-    BROKER = "broker"
-    """The broker/system failed (overloaded, misconfigured, bad request shape)."""
-
-    UPSTREAM = "upstream"
-    """The external vendor failed (down, rate-limited, returned an error)."""
-
+from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
 
 AgentStrategy = Literal[
     "wait",

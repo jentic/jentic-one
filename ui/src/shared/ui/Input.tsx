@@ -1,6 +1,6 @@
 import React, { useState, useId } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 type InputSize = 'sm' | 'md';
 

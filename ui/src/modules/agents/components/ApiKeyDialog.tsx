@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { Button, CopyButton, Dialog } from '@/shared/ui';
+import { Button, CopyButton, Dialog } from '@oss-internal/shared/ui';
 
 interface ApiKeyDialogProps {
 	open: boolean;

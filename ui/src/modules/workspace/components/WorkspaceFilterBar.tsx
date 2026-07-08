@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { Filter } from 'lucide-react';
-import { SearchInput } from '@/shared/ui';
+import { SearchInput } from '@oss-internal/shared/ui';
 
 export interface WorkspaceFilterBarProps {
 	value: string;

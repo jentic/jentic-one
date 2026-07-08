@@ -4,8 +4,8 @@ import {
 	indexReference,
 	operationAnchorId,
 	modelAnchorId,
-} from '@/modules/docs/lib/anchor';
-import type { ReferenceEndpoint, ReferencePayload } from '@/modules/docs/api/types';
+} from '@oss-internal/modules/docs/lib/anchor';
+import type { ReferenceEndpoint, ReferencePayload } from '@oss-internal/modules/docs/api/types';
 
 function endpoint(method: string, path: string): ReferenceEndpoint {
 	return {

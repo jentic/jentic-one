@@ -17,9 +17,9 @@ import {
 	type ApiImportResponse,
 	type CatalogRefreshResponse,
 	type OperationPreviewListResponse,
-} from '@/shared/api';
-import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
-import type { CatalogFilter, DiscoveryEntity } from '@/modules/discover/api/types';
+} from '@oss-internal/shared/api';
+import { catalogEntryToEntity } from '@oss-internal/modules/discover/api/adapters';
+import type { CatalogFilter, DiscoveryEntity } from '@oss-internal/modules/discover/api/types';
 
 /**
  * Sentinel error for Discover repository calls. Hooks/components branch on

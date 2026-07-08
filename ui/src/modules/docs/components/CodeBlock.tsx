@@ -6,8 +6,8 @@
  * Pure presentational; the value is copied verbatim (so multi-line shell
  * blocks paste cleanly). For inline single tokens use a plain <code> instead.
  */
-import { CopyButton } from '@/shared/ui';
-import { cn } from '@/shared/lib/utils';
+import { CopyButton } from '@oss-internal/shared/ui';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export interface CodeBlockProps {
 	/** The exact text to render and copy. */

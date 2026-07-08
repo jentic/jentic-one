@@ -18,7 +18,7 @@
  * `<ActorLabel>`'s job. Other non-actor ids (`cred_`, `exec_`, `areq_`, `job_`)
  * are resolved separately and are out of scope here.
  */
-import { ActorsService, type ActorSummaryResponse } from '@/shared/api';
+import { ActorsService, type ActorSummaryResponse } from '@oss-internal/shared/api';
 
 /** Max page size the backend accepts (`limit` 1..5000). */
 const PAGE_LIMIT = 5000;

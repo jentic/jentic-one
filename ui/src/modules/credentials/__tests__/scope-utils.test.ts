@@ -9,7 +9,7 @@ import {
 	isRecommendedScope,
 	scopesInGroup,
 	type EnhancedScope,
-} from '@/modules/credentials/lib/scope-utils';
+} from '@oss-internal/modules/credentials/lib/scope-utils';
 
 function scope(name: string, recommended = false, description = ''): EnhancedScope {
 	return { scope: name, description, origin: 'schema', isRecommended: recommended };

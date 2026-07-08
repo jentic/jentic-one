@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { Select } from '@/shared/ui/Select';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { Select } from '@oss-internal/shared/ui/Select';
 
 describe('Select', () => {
 	it('selects an option', async () => {

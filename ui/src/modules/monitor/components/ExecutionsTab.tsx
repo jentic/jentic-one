@@ -17,20 +17,24 @@ import {
 	SegmentedToggle,
 	StatusBadge,
 	ActorLabel,
-} from '@/shared/ui';
-import { useExecutions, toExecutionStatus, type ExecutionStatusUi } from '@/modules/monitor/api';
-import { TraceDetailSheet } from '@/modules/monitor/components/TraceDetailSheet';
-import { CursorPager } from '@/modules/monitor/components/CursorPager';
+} from '@oss-internal/shared/ui';
+import {
+	useExecutions,
+	toExecutionStatus,
+	type ExecutionStatusUi,
+} from '@oss-internal/modules/monitor/api';
+import { TraceDetailSheet } from '@oss-internal/modules/monitor/components/TraceDetailSheet';
+import { CursorPager } from '@oss-internal/modules/monitor/components/CursorPager';
 import {
 	MonitorList,
 	MonitorRow,
 	type MonitorAccent,
-} from '@/modules/monitor/components/MonitorList';
-import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
-import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
-import { hasTrace } from '@/modules/monitor/lib/links';
-import { formatDuration, formatRelative } from '@/modules/monitor/lib/format';
-import { cn } from '@/shared/lib/utils';
+} from '@oss-internal/modules/monitor/components/MonitorList';
+import { useMonitorFilters } from '@oss-internal/modules/monitor/lib/useMonitorFilters';
+import { useCursorStack } from '@oss-internal/modules/monitor/lib/useCursorStack';
+import { hasTrace } from '@oss-internal/modules/monitor/lib/links';
+import { formatDuration, formatRelative } from '@oss-internal/modules/monitor/lib/format';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 type StatusFilter = 'all' | 'completed' | 'failed';
 

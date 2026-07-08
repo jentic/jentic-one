@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, userEvent } from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
+import { renderWithProviders, screen, userEvent } from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { AccessRequestDialog } from '@oss-internal/shared/app/rail/AccessRequestDialog';
 
 // Note on a11y: the terminal screen renders inside a framer-motion entrance
 // animation (initial opacity 0 → 1). In headless tests axe measures the text

@@ -8,8 +8,8 @@
  * the raw list responses. Keeping the math here (not in components or hooks)
  * makes it unit-testable in isolation and keeps the layers thin.
  */
-import type { AgentResponse, EventResponse, ExecutionResponse } from '@/shared/api';
-import type { AccessRequest } from '@/shared/lib';
+import type { AgentResponse, EventResponse, ExecutionResponse } from '@oss-internal/shared/api';
+import type { AccessRequest } from '@oss-internal/shared/lib';
 
 /**
  * A count that may be a floor rather than an exact total. The list endpoints

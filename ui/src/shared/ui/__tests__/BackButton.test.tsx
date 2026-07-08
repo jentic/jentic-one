@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { BackButton } from '@/shared/ui/BackButton';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { BackButton } from '@oss-internal/shared/ui/BackButton';
 
 describe('BackButton', () => {
 	it('renders a history-aware button by default', () => {

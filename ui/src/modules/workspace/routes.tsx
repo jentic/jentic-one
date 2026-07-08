@@ -11,8 +11,8 @@
  * `useParams`.
  */
 import type { RouteObject } from 'react-router-dom';
-import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
-import ApiDetailPage from '@/modules/workspace/pages/ApiDetailPage';
+import WorkspacePage from '@oss-internal/modules/workspace/pages/WorkspacePage';
+import ApiDetailPage from '@oss-internal/modules/workspace/pages/ApiDetailPage';
 
 export const workspaceRoutes: RouteObject[] = [
 	{ path: 'workspace', element: <WorkspacePage /> },

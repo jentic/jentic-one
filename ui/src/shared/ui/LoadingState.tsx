@@ -1,6 +1,6 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type LoadingStateSize = 'sm' | 'md' | 'lg';
 export type LoadingStateVariant = 'default' | 'primary' | 'muted';

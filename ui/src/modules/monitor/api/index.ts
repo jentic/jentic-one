@@ -20,10 +20,10 @@ export {
 	useActorForJob,
 	useActors,
 	monitorKeys,
-} from '@/modules/monitor/api/hooks';
-export type { LiveStreamStatus } from '@/modules/monitor/api/hooks';
+} from '@oss-internal/modules/monitor/api/hooks';
+export type { LiveStreamStatus } from '@oss-internal/modules/monitor/api/hooks';
 
-export { MonitorApiError } from '@/modules/monitor/api/client';
+export { MonitorApiError } from '@oss-internal/modules/monitor/api/client';
 export type {
 	ListExecutionsParams,
 	ListJobsParams,
@@ -31,20 +31,20 @@ export type {
 	ListAuditParams,
 	ListActorsParams,
 	ExecutionStatsParams,
-} from '@/modules/monitor/api/client';
+} from '@oss-internal/modules/monitor/api/client';
 
 export {
 	MONITOR_TABS,
 	toExecutionStatus,
 	toJobStatus,
 	isTerminalJobStatus,
-} from '@/modules/monitor/api/types';
+} from '@oss-internal/modules/monitor/api/types';
 export type {
 	MonitorTab,
 	ExecutionStatusUi,
 	JobStatusUi,
 	AuditActor,
-} from '@/modules/monitor/api/types';
+} from '@oss-internal/modules/monitor/api/types';
 
 // Re-export the generated models the views render, so view components consume
 // them through the module's api barrel rather than reaching into the
@@ -63,5 +63,5 @@ export type {
 	AuditListResponse,
 	ActorSummaryResponse,
 	ActorListResponse,
-} from '@/shared/api';
-export { EventSeverity, AuditTargetType } from '@/shared/api';
+} from '@oss-internal/shared/api';
+export { EventSeverity, AuditTargetType } from '@oss-internal/shared/api';

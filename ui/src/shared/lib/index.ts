@@ -28,7 +28,7 @@ export {
 	type ListAccessRequestsParams,
 	type PermissionRule,
 	type PermissionRuleEffect,
-} from '@/shared/lib/accessRequests';
+} from '@oss-internal/shared/lib/accessRequests';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
 // picker and the actor (agent/service-account) platform-permission picker.
@@ -41,11 +41,11 @@ export {
 	groupScopesByResource,
 	scopesInGroup,
 	filterScopeGroups,
-} from '@/shared/lib/scopes';
+} from '@oss-internal/shared/lib/scopes';
 
-export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
+export { fetchActorDirectory } from '@oss-internal/shared/lib/actorDirectory';
 
 // Canonical per-severity event icon — the single source of truth shared by
 // Monitor's Events tab and the Dashboard's "Needs attention" card so the same
 // event reads identically in both surfaces.
-export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
+export { eventSeverityIcon } from '@oss-internal/shared/lib/eventSeverity';

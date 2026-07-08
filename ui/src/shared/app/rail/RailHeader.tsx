@@ -24,10 +24,10 @@ import {
 	Play,
 	Volume2,
 } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { SearchInput } from '@/shared/ui/SearchInput';
-import type { StreamEvent, StreamStatus } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { SearchInput } from '@oss-internal/shared/ui/SearchInput';
+import type { StreamEvent, StreamStatus } from '@oss-internal/shared/lib/agentStream';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 // Kind + severity chips cover the full taxonomy the rail can render, including
 // types the backend declares but does not yet emit (`credential.*`,

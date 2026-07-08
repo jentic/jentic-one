@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { SchemaView } from '@/modules/docs/components/SchemaView';
-import type { OpenApiDocument } from '@/modules/docs/api/types';
+import { SchemaView } from '@oss-internal/modules/docs/components/SchemaView';
+import type { OpenApiDocument } from '@oss-internal/modules/docs/api/types';
 
 /**
  * Regression coverage for the circular-`$ref`/`allOf` crash: recursive schemas

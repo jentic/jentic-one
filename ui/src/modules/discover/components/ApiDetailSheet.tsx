@@ -17,14 +17,17 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ExternalLink, Plus } from 'lucide-react';
-import { AppLink, Button, CopyButton, SheetPrimitive, VendorIcon } from '@/shared/ui';
-import { ApiSummary } from '@/modules/discover/components/ApiSummary';
-import { CardStatusPill } from '@/modules/discover/components/CardStatusPill';
-import { OperationPreviewList, opKey } from '@/modules/discover/components/OperationPreviewList';
-import { OperationDetail } from '@/modules/discover/components/OperationDetail';
-import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
-import { useOperationPreview } from '@/modules/discover/api';
-import type { DiscoveryEntity } from '@/modules/discover/api';
+import { AppLink, Button, CopyButton, SheetPrimitive, VendorIcon } from '@oss-internal/shared/ui';
+import { ApiSummary } from '@oss-internal/modules/discover/components/ApiSummary';
+import { CardStatusPill } from '@oss-internal/modules/discover/components/CardStatusPill';
+import {
+	OperationPreviewList,
+	opKey,
+} from '@oss-internal/modules/discover/components/OperationPreviewList';
+import { OperationDetail } from '@oss-internal/modules/discover/components/OperationDetail';
+import { useDebouncedValue } from '@oss-internal/modules/discover/lib/useDebouncedValue';
+import { useOperationPreview } from '@oss-internal/modules/discover/api';
+import type { DiscoveryEntity } from '@oss-internal/modules/discover/api';
 
 interface ApiDetailSheetProps {
 	entity: DiscoveryEntity | null;

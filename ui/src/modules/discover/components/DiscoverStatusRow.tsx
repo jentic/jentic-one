@@ -8,7 +8,7 @@
  * been fetched / has no snapshot yet.
  */
 import { Database } from 'lucide-react';
-import { Skeleton } from '@/shared/ui';
+import { Skeleton } from '@oss-internal/shared/ui';
 
 interface DiscoverStatusRowProps {
 	catalogTotal: number;

@@ -6,11 +6,11 @@ import {
 	userEvent,
 	checkA11y,
 	createErrorHandler,
-} from '@/__tests__/test-utils';
-import { worker } from '@/mocks/browser';
-import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
-import { setToken } from '@/shared/api';
-import WorkspacePage from '@/modules/workspace/pages/WorkspacePage';
+} from '@oss-internal/__tests__/test-utils';
+import { worker } from '@oss-internal/mocks/browser';
+import { workspaceHandlers } from '@oss-internal/modules/workspace/mocks/handlers';
+import { setToken } from '@oss-internal/shared/api';
+import WorkspacePage from '@oss-internal/modules/workspace/pages/WorkspacePage';
 
 /**
  * PageHeader animates in from opacity:0 via framer-motion. axe runs

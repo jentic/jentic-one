@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { HelpCircle } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Dialog } from '@/shared/ui/Dialog';
-import { Kbd } from '@/shared/ui/Kbd';
-import type { KeyboardShortcut } from '@/shared/ui/KeyboardShortcutsBar';
-import { isTypingTarget } from '@/shared/lib/keyboard';
-import { cn } from '@/shared/lib/utils';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { Dialog } from '@oss-internal/shared/ui/Dialog';
+import { Kbd } from '@oss-internal/shared/ui/Kbd';
+import type { KeyboardShortcut } from '@oss-internal/shared/ui/KeyboardShortcutsBar';
+import { isTypingTarget } from '@oss-internal/shared/lib/keyboard';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type { KeyboardShortcut };
 

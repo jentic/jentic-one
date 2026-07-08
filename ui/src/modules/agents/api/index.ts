@@ -35,9 +35,9 @@ export {
 	useActorAccessRequests,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
-} from '@/modules/agents/api/hooks';
+} from '@oss-internal/modules/agents/api/hooks';
 
-export { AgentsApiError } from '@/modules/agents/api/client';
+export { AgentsApiError } from '@oss-internal/modules/agents/api/client';
 
 export {
 	ACTOR_STATUSES,
@@ -48,7 +48,7 @@ export {
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	toActorStatus,
-} from '@/modules/agents/api/types';
+} from '@oss-internal/modules/agents/api/types';
 
 export type {
 	ActorStatus,
@@ -62,6 +62,6 @@ export type {
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
 	Attribution,
-} from '@/modules/agents/api/types';
+} from '@oss-internal/modules/agents/api/types';
 
-export type { AccessRequest } from '@/shared/lib';
+export type { AccessRequest } from '@oss-internal/shared/lib';

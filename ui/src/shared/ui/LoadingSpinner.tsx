@@ -1,6 +1,6 @@
 import { type JSX } from 'react';
 import { Loader2 } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type LoadingSpinnerSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type LoadingSpinnerVariant = 'default' | 'primary' | 'muted';

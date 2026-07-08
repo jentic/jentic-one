@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { SearchInput } from '@/shared/ui/SearchInput';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { SearchInput } from '@oss-internal/shared/ui/SearchInput';
 
 describe('SearchInput', () => {
 	it('reports typed value via onValueChange', async () => {

@@ -34,6 +34,7 @@ from jentic_one.shared.telemetry.instance_id import resolve_instance_id
 from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
 from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
     install_openapi_metadata,
@@ -325,6 +326,7 @@ def create_surface_app(
     title: str,
     routers: Sequence[tuple[APIRouter, str, list[str]]],
     extra_lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
+    container: AppContainer | None = None,
 ) -> FastAPI:
     """Create a standalone surface FastAPI app with observability wired.
 
@@ -335,7 +337,12 @@ def create_surface_app(
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
     uses it to open/close its shared outbound ``httpx.AsyncClient`` (§04).
+
+    ``container`` is the DI seam: when omitted the default is used and behavior is
+    unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
+    ``app.state``) and mount extra routers after the surface's own.
     """
+    container = container or AppContainer.default(ctx)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -373,8 +380,14 @@ def create_surface_app(
     meta["title"] = title
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
+    if container.broker is not None:
+        app.state.broker = container.broker
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
+    for extra_router, _extra_prefix, extra_tags in container.extra_routers:
+        app.include_router(extra_router, tags=list(extra_tags), responses=COMMON_ERROR_RESPONSES)
+    for installer in container.extra_installers:
+        installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
@@ -382,8 +395,19 @@ def create_surface_app(
     return app
 
 
-def create_combined_app(ctx: Context, apps: list[str]) -> FastAPI:
-    """Build a root FastAPI that includes routers from all enabled surfaces."""
+def create_combined_app(
+    ctx: Context,
+    apps: list[str],
+    *,
+    container: AppContainer | None = None,
+) -> FastAPI:
+    """Build a root FastAPI that includes routers from all enabled surfaces.
+
+    ``container`` is the DI seam: when omitted, the default is used and behavior is
+    unchanged. A caller passes its own container to inject a ``Broker`` and mount
+    extra routers/installers after all built-in surfaces.
+    """
+    container = container or AppContainer.default(ctx)
     structlog.get_logger(__name__).info("creating combined app", apps=apps)
 
     @asynccontextmanager
@@ -403,6 +427,10 @@ def create_combined_app(ctx: Context, apps: list[str]) -> FastAPI:
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
     root.state.ctx = ctx
+    # Injected Broker (None by default → broker surface builds its default
+    # per request). The broker router reads app.state.broker.
+    if container.broker is not None:
+        root.state.broker = container.broker
     root.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
 
     @root.get(
@@ -434,6 +462,15 @@ def create_combined_app(ctx: Context, apps: list[str]) -> FastAPI:
     # instead of parsing the OpenAPI document). Registered after all surfaces so
     # the reference it builds covers every included route.
     root.include_router(get_reference_router())
+
+    # Extension point: injected routers/installers mount after all built-in
+    # surfaces (append-only; never shadows a built-in route). No-op by default.
+    for router, prefix, tags in container.extra_routers:
+        root.include_router(
+            router, prefix=prefix, tags=list(tags), responses=COMMON_ERROR_RESPONSES
+        )
+    for installer in container.extra_installers:
+        installer(root, ctx)
 
     root.add_middleware(RequestIDMiddleware)
     attach_http_observability(root)

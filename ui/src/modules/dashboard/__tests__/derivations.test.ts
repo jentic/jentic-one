@@ -4,8 +4,8 @@ import {
 	isSuccessfulExecution,
 	approxCountFromPage,
 	formatApproxCount,
-} from '@/modules/dashboard/api/types';
-import type { ExecutionResponse } from '@/shared/api';
+} from '@oss-internal/modules/dashboard/api/types';
+import type { ExecutionResponse } from '@oss-internal/shared/api';
 
 function exec(partial: Partial<ExecutionResponse>): ExecutionResponse {
 	return {

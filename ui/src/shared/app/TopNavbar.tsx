@@ -1,8 +1,8 @@
-import { NavTabs } from '@/shared/app/NavTabs';
-import { ROUTES } from '@/shared/app/routes';
-import { UserMenu } from '@/shared/app/UserMenu';
-import { AppLink } from '@/shared/ui/AppLink';
-import { JenticLogo } from '@/shared/ui/Logo';
+import { NavTabs } from '@oss-internal/shared/app/NavTabs';
+import { ROUTES } from '@oss-internal/shared/app/routes';
+import { UserMenu } from '@oss-internal/shared/app/UserMenu';
+import { AppLink } from '@oss-internal/shared/ui/AppLink';
+import { JenticLogo } from '@oss-internal/shared/ui/Logo';
 
 /**
  * Fixed top navigation bar: logo + desktop nav tabs (left) and the user

@@ -4,8 +4,8 @@ import {
 	serviceAccountToEntity,
 	toActorStatus,
 	ACTIONS_FOR_STATUS,
-} from '@/modules/agents/api/types';
-import type { AgentResponse, ServiceAccountResponse } from '@/shared/api';
+} from '@oss-internal/modules/agents/api/types';
+import type { AgentResponse, ServiceAccountResponse } from '@oss-internal/shared/api';
 
 describe('agents adapters', () => {
 	it('maps an AgentResponse into a UI entity, collapsing attribution', () => {

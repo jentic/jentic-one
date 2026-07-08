@@ -13,7 +13,7 @@
  * Keeping the rules identical means the docs page and the CLI can never tell a
  * different story about who can call what. Pure functions over the payload.
  */
-import type { ReferenceEndpoint, ReferencePayload } from '@/modules/docs/api/types';
+import type { ReferenceEndpoint, ReferencePayload } from '@oss-internal/modules/docs/api/types';
 
 /** The four actor identities the platform issues tokens for. */
 export const ACTOR_TYPES = ['user', 'agent', 'service_account', 'toolkit'] as const;

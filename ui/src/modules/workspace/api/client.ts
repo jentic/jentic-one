@@ -20,14 +20,14 @@ import {
 	ApIsService,
 	ApiSpecService,
 	ApiOperationsService,
-} from '@/shared/api';
+} from '@oss-internal/shared/api';
 import {
 	toApiOperation,
 	toApiRevision,
 	toCursorPage,
 	toWorkspaceApi,
-} from '@/modules/workspace/api/adapters';
-import type { ApiKey } from '@/modules/workspace/api/apiId';
+} from '@oss-internal/modules/workspace/api/adapters';
+import type { ApiKey } from '@oss-internal/modules/workspace/api/apiId';
 import type {
 	ApiOperation,
 	ApiRevision,
@@ -36,7 +36,7 @@ import type {
 	ImportSource,
 	JobStatus,
 	WorkspaceApi,
-} from '@/modules/workspace/api/types';
+} from '@oss-internal/modules/workspace/api/types';
 
 /**
  * Sentinel error for Workspace repository calls. Hooks/components branch on

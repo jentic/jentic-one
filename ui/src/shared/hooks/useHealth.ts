@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getHealth, type Health } from '@/shared/api';
+import { getHealth, type Health } from '@oss-internal/shared/api';
 
 type HealthState =
 	{ status: 'loading' } | { status: 'error'; error: Error } | { status: 'ready'; data: Health };

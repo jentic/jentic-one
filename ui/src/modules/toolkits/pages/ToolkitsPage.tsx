@@ -12,13 +12,16 @@ import {
 	PageHelp,
 	PageShell,
 	Textarea,
-} from '@/shared/ui';
-import { useCreateToolkit, useToolkits } from '@/modules/toolkits/api';
-import { ToolkitCard, ToolkitsListSkeleton } from '@/modules/toolkits/components/ToolkitCard';
+} from '@oss-internal/shared/ui';
+import { useCreateToolkit, useToolkits } from '@oss-internal/modules/toolkits/api';
+import {
+	ToolkitCard,
+	ToolkitsListSkeleton,
+} from '@oss-internal/modules/toolkits/components/ToolkitCard';
 import {
 	ToolkitsToolbar,
 	type ToolkitStatusFilter,
-} from '@/modules/toolkits/components/ToolkitsToolbar';
+} from '@oss-internal/modules/toolkits/components/ToolkitsToolbar';
 
 /**
  * `/app/toolkits` — the toolkit list. Lists first-party toolkits (cursor

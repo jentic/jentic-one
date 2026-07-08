@@ -11,8 +11,8 @@
  *
  * The values mirror the backend's `ActorStatus` enum (`shared/models/actors.py`).
  */
-import { Badge } from '@/shared/ui/Badge';
-import type { Variant as BadgeVariant } from '@/shared/ui/Badge';
+import { Badge } from '@oss-internal/shared/ui/Badge';
+import type { Variant as BadgeVariant } from '@oss-internal/shared/ui/Badge';
 
 /** Mirrors the backend `ActorStatus` (pending|active|rejected|disabled|archived). */
 export type ActorStatus = 'pending' | 'active' | 'rejected' | 'disabled' | 'archived';

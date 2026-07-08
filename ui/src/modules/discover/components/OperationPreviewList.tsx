@@ -9,14 +9,14 @@
  * button that drills into the operation detail via `onSelect`.
  */
 import { useMemo } from 'react';
-import { MethodBadge, Skeleton } from '@/shared/ui';
+import { MethodBadge, Skeleton } from '@oss-internal/shared/ui';
 import {
 	OperationsListFooter,
 	OperationsListToolbar,
 	topTags,
 	type OpRow,
-} from '@/modules/discover/components/OperationsListControls';
-import type { PreviewOperationResponse } from '@/modules/discover/api';
+} from '@oss-internal/modules/discover/components/OperationsListControls';
+import type { PreviewOperationResponse } from '@oss-internal/modules/discover/api';
 
 interface OperationPreviewListProps {
 	operations: PreviewOperationResponse[];

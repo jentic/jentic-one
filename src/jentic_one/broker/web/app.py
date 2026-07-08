@@ -155,7 +155,18 @@ def create_app(ctx: Context) -> FastAPI:
         # resolves credentials with the same CredentialService. Both are stashed
         # on app.state so the shared/ worker factory wires them without importing
         # broker/ (the arch boundary). Built here so they wrap the live runner.
-        app.state.broker_upstream_executor = PipelineExecutor(registry)
+        #
+        # Seam symmetry ("one pipeline, two callers"): if a caller set a
+        # `broker_factory` on app.state (the same factory the sync router honors
+        # in web/routers/execute.py), the worker's executor uses it too — so an
+        # injected Broker reaches BOTH the sync and async paths, not just sync.
+        # Unset by default → PipelineExecutor falls back to `default_broker`.
+        injected_broker_factory = getattr(app.state, "broker_factory", None)
+        app.state.broker_upstream_executor = (
+            PipelineExecutor(registry, broker_factory=injected_broker_factory)
+            if injected_broker_factory is not None
+            else PipelineExecutor(registry)
+        )
         app.state.broker_credential_injector = CredentialService(ctx)
         try:
             yield

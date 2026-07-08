@@ -3,6 +3,6 @@
  * at `/app/discover`. Registered additively into `@/shared/app/routes.ts`.
  */
 import type { RouteObject } from 'react-router-dom';
-import DiscoverPage from '@/modules/discover/pages/DiscoverPage';
+import DiscoverPage from '@oss-internal/modules/discover/pages/DiscoverPage';
 
 export const discoverRoutes: RouteObject[] = [{ path: 'discover', element: <DiscoverPage /> }];

@@ -10,8 +10,11 @@
 // importing scope utilities from one place.
 //
 // Framework-free (no React) so the rules are unit-testable as plain functions.
-import { oauth2ScopesFromSchemes, type RawSchemes } from '@/modules/credentials/lib/schemes';
-import { type EnhancedScope, type ScopeOrigin } from '@/shared/lib';
+import {
+	oauth2ScopesFromSchemes,
+	type RawSchemes,
+} from '@oss-internal/modules/credentials/lib/schemes';
+import { type EnhancedScope, type ScopeOrigin } from '@oss-internal/shared/lib';
 
 export {
 	type ScopeOrigin,
@@ -22,7 +25,7 @@ export {
 	groupScopesByResource,
 	scopesInGroup,
 	filterScopeGroups,
-} from '@/shared/lib';
+} from '@oss-internal/shared/lib';
 
 // =============================================================================
 // EXTRACTION

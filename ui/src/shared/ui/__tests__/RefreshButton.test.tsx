@@ -1,5 +1,10 @@
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { RefreshButton } from '@/shared/ui/RefreshButton';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { RefreshButton } from '@oss-internal/shared/ui/RefreshButton';
 
 describe('RefreshButton', () => {
 	it('calls onRefresh when clicked', async () => {

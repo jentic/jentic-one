@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
-import { AgentBadge, Badge, EmptyState, ErrorAlert, Input, LoadingState } from '@/shared/ui';
-import { useDebouncedValue } from '@/shared/hooks';
+import {
+	AgentBadge,
+	Badge,
+	EmptyState,
+	ErrorAlert,
+	Input,
+	LoadingState,
+} from '@oss-internal/shared/ui';
+import { useDebouncedValue } from '@oss-internal/shared/hooks';
 import {
 	useApis,
 	useCatalog,
 	type ApiResponse,
 	type CatalogEntryResponse,
 	type SelectedApi,
-} from '@/modules/credentials/api';
+} from '@oss-internal/modules/credentials/api';
 
 /**
  * Step 1 of the guided add-credential flow — a debounced search over the

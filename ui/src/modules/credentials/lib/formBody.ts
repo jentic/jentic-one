@@ -10,14 +10,14 @@ import {
 	type RuntimeConfig,
 	type SelectedApi,
 	type ServerVarDef,
-} from '@/modules/credentials/api';
+} from '@oss-internal/modules/credentials/api';
 import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
 	type OAuth2FlowDef,
 	type RawSchemes,
-} from '@/modules/credentials/lib/schemes';
-import type { CredentialFormState } from '@/modules/credentials/components/CredentialTypeFields';
+} from '@oss-internal/modules/credentials/lib/schemes';
+import type { CredentialFormState } from '@oss-internal/modules/credentials/components/CredentialTypeFields';
 
 function apiRef(state: CredentialFormState): APIReferenceRequest {
 	return {

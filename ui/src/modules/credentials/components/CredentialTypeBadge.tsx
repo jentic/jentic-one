@@ -1,5 +1,5 @@
-import { Badge } from '@/shared/ui';
-import { CredentialType, CREDENTIAL_TYPE_LABELS } from '@/modules/credentials/api';
+import { Badge } from '@oss-internal/shared/ui';
+import { CredentialType, CREDENTIAL_TYPE_LABELS } from '@oss-internal/modules/credentials/api';
 
 const VARIANT: Record<CredentialType, 'default' | 'success' | 'warning' | 'pending'> = {
 	[CredentialType.BEARER_TOKEN]: 'default',

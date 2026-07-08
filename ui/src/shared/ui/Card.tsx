@@ -1,5 +1,5 @@
 import React from 'react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 	hoverable?: boolean;

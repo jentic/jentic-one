@@ -13,7 +13,7 @@ import {
 	type ApiImportResponse,
 	type ApiListResponse,
 	type CatalogListResponse,
-} from '@/shared/api';
+} from '@oss-internal/shared/api';
 
 export interface ListApisParams {
 	vendor?: string | null;

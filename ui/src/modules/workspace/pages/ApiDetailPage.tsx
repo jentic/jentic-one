@@ -25,14 +25,14 @@ import {
 	CascadeDeleteDialog,
 	CopyButton,
 	VendorIcon,
-} from '@/shared/ui';
-import { OverviewStrip } from '@/modules/workspace/components/OverviewStrip';
-import { OperationsSection } from '@/modules/workspace/components/OperationsSection';
-import { RevisionsSection } from '@/modules/workspace/components/RevisionsSection';
-import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
-import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@/modules/workspace/api';
-import type { ApiKey } from '@/modules/workspace/api';
-import { ROUTES } from '@/shared/app/routes';
+} from '@oss-internal/shared/ui';
+import { OverviewStrip } from '@oss-internal/modules/workspace/components/OverviewStrip';
+import { OperationsSection } from '@oss-internal/modules/workspace/components/OperationsSection';
+import { RevisionsSection } from '@oss-internal/modules/workspace/components/RevisionsSection';
+import { SpecViewerDialog } from '@oss-internal/modules/workspace/components/SpecViewerDialog';
+import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@oss-internal/modules/workspace/api';
+import type { ApiKey } from '@oss-internal/modules/workspace/api';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 
 /** Build the identity triple from route params, decoding each segment. */
 function keyFromParams(params: {

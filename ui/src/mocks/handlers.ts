@@ -1,12 +1,15 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers } from '@/modules/toolkits/mocks/handlers';
-import { agentsHandlers } from '@/modules/agents/mocks/handlers';
-import { discoverHandlers } from '@/modules/discover/mocks/handlers';
-import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
-import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
-import { credentialsHandlers, credentialsE2eHooks } from '@/modules/credentials/mocks/handlers';
-import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
-import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { toolkitsHandlers } from '@oss-internal/modules/toolkits/mocks/handlers';
+import { agentsHandlers } from '@oss-internal/modules/agents/mocks/handlers';
+import { discoverHandlers } from '@oss-internal/modules/discover/mocks/handlers';
+import { dashboardHandlers } from '@oss-internal/modules/dashboard/mocks/handlers';
+import { workspaceHandlers } from '@oss-internal/modules/workspace/mocks/handlers';
+import {
+	credentialsHandlers,
+	credentialsE2eHooks,
+} from '@oss-internal/modules/credentials/mocks/handlers';
+import { railEventsHandlers } from '@oss-internal/shared/app/rail/mocks/handlers';
+import { monitorHandlers } from '@oss-internal/modules/monitor/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -123,7 +126,7 @@ export const handlers = [
 		}),
 	),
 	// Feature modules append their handlers here, e.g.:
-	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
+	//   import { discoverHandlers } from '@oss-internal/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,
 	...toolkitsHandlers,
 	...agentsHandlers,
@@ -147,6 +150,12 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// Extensibility seam: `handlers` is exported (not module-private) so a
+	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
+	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —
+	// appending after this array lets these fixtures answer first (safest
+	// default); to override a path here, a consumer must register its handler
+	// BEFORE this one in the composed array.
 ];
 
 /**

@@ -7,8 +7,8 @@
  * approved from the table.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
-import { useCreateServiceAccount } from '@/modules/agents/api';
+import { Button, Input, Label, Textarea, SheetPrimitive } from '@oss-internal/shared/ui';
+import { useCreateServiceAccount } from '@oss-internal/modules/agents/api';
 
 interface ServiceAccountCreateSheetProps {
 	open: boolean;

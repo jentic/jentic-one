@@ -1,23 +1,30 @@
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Button, CascadeDeleteDialog, PageHeader, PageHelp, PageShell, toast } from '@/shared/ui';
+import {
+	Button,
+	CascadeDeleteDialog,
+	PageHeader,
+	PageHelp,
+	PageShell,
+	toast,
+} from '@oss-internal/shared/ui';
 import {
 	CredentialType,
 	runConnectFlow,
 	useCredentials,
 	useDeleteCredential,
 	type Credential,
-} from '@/modules/credentials/api';
-import { CredentialsList } from '@/modules/credentials/components/CredentialsList';
+} from '@oss-internal/modules/credentials/api';
+import { CredentialsList } from '@oss-internal/modules/credentials/components/CredentialsList';
 import {
 	CredentialsToolbar,
 	type CredentialTypeFilter,
-} from '@/modules/credentials/components/CredentialsToolbar';
+} from '@oss-internal/modules/credentials/components/CredentialsToolbar';
 import {
 	CreateCredentialDialog,
 	type CreatedCredentialInfo,
-} from '@/modules/credentials/components/CreateCredentialDialog';
-import { EditCredentialSheet } from '@/modules/credentials/components/EditCredentialSheet';
+} from '@oss-internal/modules/credentials/components/CreateCredentialDialog';
+import { EditCredentialSheet } from '@oss-internal/modules/credentials/components/EditCredentialSheet';
 
 /**
  * Credentials module home. Lists stored credentials and hosts the create

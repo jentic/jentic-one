@@ -6,10 +6,10 @@ import {
 	userEvent,
 	waitFor,
 	within,
-} from '@/__tests__/test-utils';
+} from '@oss-internal/__tests__/test-utils';
 import { http, HttpResponse } from 'msw';
-import { worker } from '@/mocks/browser';
-import { ToolkitDetailPage } from '@/modules/toolkits/pages/ToolkitDetailPage';
+import { worker } from '@oss-internal/mocks/browser';
+import { ToolkitDetailPage } from '@oss-internal/modules/toolkits/pages/ToolkitDetailPage';
 
 const ROUTE = '/toolkits/tk_demo_github';
 const PATH = '/toolkits/:toolkitId';

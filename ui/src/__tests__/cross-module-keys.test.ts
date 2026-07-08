@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { sharedQueryKeys } from '@/shared/api';
-import { workspaceKeys } from '@/modules/workspace/api/hooks';
-import { dashboardKeys } from '@/modules/dashboard/api';
-import { pendingAccessRequestCountKey } from '@/shared/hooks/usePendingAccessRequestCount';
-import { pendingAgentsCountKey } from '@/shared/hooks/usePendingAgentsCount';
-import { agentsKeysForTest } from '@/modules/agents/api/hooks';
+import { sharedQueryKeys } from '@oss-internal/shared/api';
+import { workspaceKeys } from '@oss-internal/modules/workspace/api/hooks';
+import { dashboardKeys } from '@oss-internal/modules/dashboard/api';
+import { pendingAccessRequestCountKey } from '@oss-internal/shared/hooks/usePendingAccessRequestCount';
+import { pendingAgentsCountKey } from '@oss-internal/shared/hooks/usePendingAgentsCount';
+import { agentsKeysForTest } from '@oss-internal/modules/agents/api/hooks';
 
 /**
  * Cross-module key-registry guard (#511).

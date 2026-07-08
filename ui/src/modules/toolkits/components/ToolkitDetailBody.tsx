@@ -26,8 +26,8 @@ import {
 	Input,
 	Label,
 	Textarea,
-} from '@/shared/ui';
-import type { CascadeDependentGroup } from '@/shared/ui';
+} from '@oss-internal/shared/ui';
+import type { CascadeDependentGroup } from '@oss-internal/shared/ui';
 import {
 	useBindCredential,
 	useCreateKey,
@@ -41,16 +41,16 @@ import {
 	useUnbindCredential,
 	useUnbindToolkitFromAgent,
 	useUpdateToolkit,
-} from '@/modules/toolkits/api';
-import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
-import { OneTimeKeyDisplay } from '@/modules/toolkits/components/OneTimeKeyDisplay';
-import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
-import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
-import { CredentialPicker } from '@/modules/toolkits/components/CredentialPicker';
-import { AgentPicker } from '@/modules/toolkits/components/AgentPicker';
-import { ToolkitAuditPanel } from '@/modules/toolkits/components/ToolkitAuditPanel';
-import { timeAgo } from '@/modules/toolkits/lib/time';
-import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
+} from '@oss-internal/modules/toolkits/api';
+import { ToolkitKillSwitch } from '@oss-internal/modules/toolkits/components/ToolkitKillSwitch';
+import { OneTimeKeyDisplay } from '@oss-internal/modules/toolkits/components/OneTimeKeyDisplay';
+import { InlineConfirm } from '@oss-internal/modules/toolkits/components/InlineConfirm';
+import { CredentialPermissionEditor } from '@oss-internal/modules/toolkits/components/CredentialPermissionEditor';
+import { CredentialPicker } from '@oss-internal/modules/toolkits/components/CredentialPicker';
+import { AgentPicker } from '@oss-internal/modules/toolkits/components/AgentPicker';
+import { ToolkitAuditPanel } from '@oss-internal/modules/toolkits/components/ToolkitAuditPanel';
+import { timeAgo } from '@oss-internal/modules/toolkits/lib/time';
+import { ROUTE_PATHS, ROUTES } from '@oss-internal/shared/app/routes';
 
 const rowMotion = {
 	initial: { opacity: 0, y: -4, height: 0 },

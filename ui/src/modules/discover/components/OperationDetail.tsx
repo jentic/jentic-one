@@ -10,8 +10,8 @@ import {
 	OperationDetail as SharedOperationDetail,
 	type OperationDetailData,
 	type SecuritySchemeMap,
-} from '@/shared/ui';
-import type { PreviewOperationResponse } from '@/modules/discover/api';
+} from '@oss-internal/shared/ui';
+import type { PreviewOperationResponse } from '@oss-internal/modules/discover/api';
 
 interface OperationDetailProps {
 	operation: PreviewOperationResponse;

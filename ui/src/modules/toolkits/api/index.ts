@@ -7,7 +7,7 @@
  * namespaced under `['toolkits', …]` so callers/tests can target invalidation.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from '@/shared/ui';
+import { toast } from '@oss-internal/shared/ui';
 import type {
 	ToolkitCreateRequest,
 	ToolkitUpdateRequest,
@@ -15,9 +15,9 @@ import type {
 	ToolkitKeyUpdateRequest,
 	ToolkitCredentialBindRequest,
 	PermissionRuleSchema,
-} from '@/shared/api';
-import * as client from '@/modules/toolkits/api/client';
-import type { CreatedToolkit } from '@/modules/toolkits/api/types';
+} from '@oss-internal/shared/api';
+import * as client from '@oss-internal/modules/toolkits/api/client';
+import type { CreatedToolkit } from '@oss-internal/modules/toolkits/api/types';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const toolkitKeys = {
@@ -363,4 +363,4 @@ function useInvalidateToolkitSurfaces(toolkitId: string) {
 	};
 }
 
-export { ToolkitsApiError } from '@/modules/toolkits/api/client';
+export { ToolkitsApiError } from '@oss-internal/modules/toolkits/api/client';

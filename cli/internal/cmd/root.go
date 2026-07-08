@@ -10,6 +10,9 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/pkg/core"
 )
 
 // Build-time version metadata. These are overridden via -ldflags
@@ -141,14 +144,49 @@ func ExecuteAPI() {
 	os.Exit(runRoot(newAPIRootCmd))
 }
 
-// runRoot builds the root command via build, wires a signal-cancelled context,
-// and executes it. The real work lives here (rather than in Execute*) so that
-// deferred cleanup (the signal-context cancel) always runs before the process
-// exits.
-func runRoot(build func(*App) *cobra.Command) int {
-	app, err := newApp()
+// defaultContainer builds the default injection container (no extra commands).
+// A downstream package builds its own core.AppContainer{ExtraCommands: ...} and
+// calls core.NewRootCmd directly from its own main.go.
+func defaultContainer() *core.AppContainer {
+	return &core.AppContainer{Out: os.Stdout, Err: os.Stderr}
+}
+
+// appFromContainer derives the internal App (resolved paths + streams) from the
+// injected container. Paths are resolved here — the exported core package stays
+// free of the internal config package, keeping the dependency edge
+// internal/cmd → pkg/core one-directional.
+func appFromContainer(deps *core.AppContainer) (*App, error) {
+	paths, err := config.NewPaths()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		return nil, err
+	}
+	return &App{Paths: paths, Out: deps.Out, Err: deps.Err}, nil
+}
+
+// runRoot builds the root command via the built-in tree builder, wires a
+// signal-cancelled context, and executes it. It composes the tree through
+// core.NewRootCmd so any injected ExtraCommands are appended after the built-in
+// set. The real work lives here (rather than in Execute*) so that deferred
+// cleanup (the signal-context cancel) always runs before the process exits.
+func runRoot(build func(*App) *cobra.Command) int {
+	deps := defaultContainer()
+
+	// Adapt the internal (*App)-based tree builder to core.TreeBuilder. App
+	// construction (path resolution) can fail; surface it as a build-time panic
+	// captured below rather than threading an error through the cobra tree.
+	var buildErr error
+	tree := func(d *core.AppContainer) *cobra.Command {
+		app, err := appFromContainer(d)
+		if err != nil {
+			buildErr = err
+			return &cobra.Command{RunE: func(*cobra.Command, []string) error { return err }}
+		}
+		return build(app)
+	}
+
+	root := core.NewRootCmd(deps, tree)
+	if buildErr != nil {
+		fmt.Fprintln(os.Stderr, "error:", buildErr)
 		return 1
 	}
 
@@ -157,7 +195,7 @@ func runRoot(build func(*App) *cobra.Command) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	err = build(app).ExecuteContext(ctx)
+	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return 0
 	}

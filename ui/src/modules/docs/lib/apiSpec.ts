@@ -14,8 +14,8 @@
  * Everything narrows defensively — a sparse or non-standard spec just yields a
  * sparser model rather than throwing.
  */
-import type { OpenApiDocument } from '@/modules/docs/api/types';
-import { lookupKey } from '@/modules/docs/lib/anchor';
+import type { OpenApiDocument } from '@oss-internal/modules/docs/api/types';
+import { lookupKey } from '@oss-internal/modules/docs/lib/anchor';
 
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 

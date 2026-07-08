@@ -1,13 +1,13 @@
 import { Link2, RefreshCw, Settings, Trash2 } from 'lucide-react';
-import { AgentBadge, Badge, Button } from '@/shared/ui';
+import { AgentBadge, Badge, Button } from '@oss-internal/shared/ui';
 import { CredentialTypeBadge } from './CredentialTypeBadge';
 import {
 	CredentialType,
 	credentialDetails,
 	formatApiReference,
 	type Credential,
-} from '@/modules/credentials/api';
-import { isManagedProvider } from '@/modules/credentials/config';
+} from '@oss-internal/modules/credentials/api';
+import { isManagedProvider } from '@oss-internal/modules/credentials/config';
 
 interface CredentialCardProps {
 	cred: Credential;

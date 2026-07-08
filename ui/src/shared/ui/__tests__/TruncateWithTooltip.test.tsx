@@ -1,6 +1,6 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
 import userEvent from '@testing-library/user-event';
-import { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
+import { TruncateWithTooltip } from '@oss-internal/shared/ui/TruncateWithTooltip';
 
 const LONG = 'a very long string that will not fit inside a tiny fixed-width container';
 

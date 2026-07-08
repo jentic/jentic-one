@@ -87,7 +87,7 @@ function dropMockServiceWorker(): Plugin {
 export default defineConfig({
 	resolve: {
 		alias: {
-			'@': resolve(__dirname, 'src'),
+			'@oss-internal': resolve(__dirname, 'src'),
 		},
 	},
 	plugins: [react(), tailwindcss(), appBaseRedirect(), dropMockServiceWorker()],
@@ -103,5 +103,12 @@ export default defineConfig({
 	server: {
 		host: '0.0.0.0',
 		proxy: backendProxy,
+		// Extensibility seam: this config intentionally sets NO `server.fs`
+		// restriction. The SPA source root (`ui/src`, the `@oss-internal` alias
+		// target) can be consumed as a shared module graph by a separate host app
+		// (which mounts it from this repo via its own alias plus a matching
+		// `server.fs.allow` entry in that app's own vite config, not here).
+		// Leaving `server.fs` unrestricted here avoids pre-emptively blocking that
+		// cross-package mount; do not hardcode `server.fs` in a way that would.
 	},
 });

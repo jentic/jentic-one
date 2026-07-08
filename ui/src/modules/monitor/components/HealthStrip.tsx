@@ -10,8 +10,8 @@
  */
 import { motion } from 'framer-motion';
 import { Check, AlertTriangle, XOctagon } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
-import type { ExecutionStatsResponse } from '@/modules/monitor/api';
+import { cn } from '@oss-internal/shared/lib/utils';
+import type { ExecutionStatsResponse } from '@oss-internal/modules/monitor/api';
 
 type HealthLevel = 'healthy' | 'degraded' | 'issues';
 

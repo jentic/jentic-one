@@ -1,10 +1,10 @@
 import { useEffect, useId, useState } from 'react';
 import { AlertTriangle, CircleDot, Trash2 } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Dialog } from '@/shared/ui/Dialog';
-import { ErrorAlert } from '@/shared/ui/ErrorAlert';
-import { Input } from '@/shared/ui/Input';
-import { Label } from '@/shared/ui/Label';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { Dialog } from '@oss-internal/shared/ui/Dialog';
+import { ErrorAlert } from '@oss-internal/shared/ui/ErrorAlert';
+import { Input } from '@oss-internal/shared/ui/Input';
+import { Label } from '@oss-internal/shared/ui/Label';
 
 /**
  * The entity kinds that expose a hard delete (or a terminal,

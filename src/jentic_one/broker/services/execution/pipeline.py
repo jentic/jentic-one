@@ -24,41 +24,28 @@ no inline envelope/post-processing logic.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
 from jentic_one.broker.adapters.runners.base import (
     RunnerRequest,
-    RunnerResult,
     UpstreamRunner,
     capabilities_of,
 )
 from jentic_one.broker.adapters.runners.deadline import DeadlineRunner
 from jentic_one.broker.adapters.runners.retry import RetryRunner
-from jentic_one.broker.core.exceptions import ErrorOrigin
+from jentic_one.shared.broker.execution import ErrorOrigin, ExecutionContext, ExecutionOutcome
 from jentic_one.shared.broker.protocols import RunnerCapabilities
 from jentic_one.shared.config import RetryConfig
-from jentic_one.shared.schemas import APIReference
 
-
-@dataclass(frozen=True, slots=True)
-class ExecutionContext:
-    """Identity + discovery metadata threaded through the pipeline for one call."""
-
-    execution_id: str
-    toolkit_id: str | None
-    operation_id: str | None
-    api: APIReference | None
-    trace_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionOutcome:
-    """The immutable result a post-response stage may enrich (never the 2xx body)."""
-
-    result: RunnerResult
-    context: ExecutionContext
-    error_origin: ErrorOrigin | None = None
+__all__ = [
+    "BrokerExecutionPipeline",
+    "ExecutionContext",
+    "ExecutionOutcome",
+    "PostResponseStage",
+    "build_runner",
+    "enrich_error_origin",
+]
 
 
 @runtime_checkable

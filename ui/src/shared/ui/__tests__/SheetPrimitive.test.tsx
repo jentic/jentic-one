@@ -1,6 +1,12 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
-import { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { SheetPrimitive } from '@oss-internal/shared/ui/SheetPrimitive';
 
 function SheetHarness({ initialOpen = true }: { initialOpen?: boolean }) {
 	const [open, setOpen] = useState(initialOpen);

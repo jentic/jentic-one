@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { Badge, MethodBadge, StatusBadge } from '@oss-internal/shared/ui/Badge';
 
 describe('Badge', () => {
 	it('renders its content', () => {

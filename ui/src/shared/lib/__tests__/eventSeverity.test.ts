@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Info, AlertTriangle, OctagonAlert, Flame } from 'lucide-react';
-import { EventSeverity } from '@/shared/api';
+import { EventSeverity } from '@oss-internal/shared/api';
 import { eventSeverityIcon } from '../eventSeverity';
 
 /**

@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 type Resize = 'none' | 'vertical' | 'horizontal' | 'both';
 

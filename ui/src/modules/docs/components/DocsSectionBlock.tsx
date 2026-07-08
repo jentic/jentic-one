@@ -7,7 +7,7 @@
  */
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export function DocsSectionBlock({
 	id,

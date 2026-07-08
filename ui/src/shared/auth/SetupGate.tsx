@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getHealth, HEALTH_QUERY_KEY } from '@/shared/api';
-import { ROUTES } from '@/shared/app/routes';
+import { getHealth, HEALTH_QUERY_KEY } from '@oss-internal/shared/api';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 
 /**
  * Pre-session routing gate for the no-credential first run.

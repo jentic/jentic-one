@@ -4,7 +4,7 @@ import {
 	toApiOperation,
 	toApiRevision,
 	toCursorPage,
-} from '@/modules/workspace/api/adapters';
+} from '@oss-internal/modules/workspace/api/adapters';
 
 describe('workspace adapters', () => {
 	it('maps an API row, tolerating missing catalog fields', () => {

@@ -10,11 +10,11 @@
  */
 import { useId, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
-import type { OpenApiDocument } from '@/modules/docs/api/types';
-import { derefSchema, refName } from '@/modules/docs/lib/apiSpec';
-import { modelAnchorId, scrollToAnchor } from '@/modules/docs/lib/anchor';
-import { cn } from '@/shared/lib/utils';
-import { Markdown } from '@/shared/ui';
+import type { OpenApiDocument } from '@oss-internal/modules/docs/api/types';
+import { derefSchema, refName } from '@oss-internal/modules/docs/lib/apiSpec';
+import { modelAnchorId, scrollToAnchor } from '@oss-internal/modules/docs/lib/anchor';
+import { cn } from '@oss-internal/shared/lib/utils';
+import { Markdown } from '@oss-internal/shared/ui';
 
 export { modelAnchorId };
 

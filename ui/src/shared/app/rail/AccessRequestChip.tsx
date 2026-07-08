@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { CheckCircle2, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
-import { itemTargetLabel, type AccessRequestItem } from '@/shared/lib';
+import { itemTargetLabel, type AccessRequestItem } from '@oss-internal/shared/lib';
 
 /**
  * AccessRequestChip — a drafted item in the dialog's Approved / Denied lanes.

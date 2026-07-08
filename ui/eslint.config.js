@@ -34,7 +34,7 @@ function moduleBoundaryZones() {
 		target: `./src/modules/${name}`,
 		from: './src/modules',
 		except: [`./${name}`],
-		message: 'A module must not import from sibling modules. Use @/shared.',
+		message: 'A module must not import from sibling modules. Use @oss-internal/shared.',
 	}));
 }
 
@@ -51,12 +51,12 @@ const NO_HARDCODED_APP_PATH = [
 	{
 		selector: 'Literal[value=/^\\/app(\\/|$)/]',
 		message:
-			"Don't hardcode '/app' client paths — use ROUTES / ROUTE_PATHS from @/shared/app (the router basename adds /app).",
+			"Don't hardcode '/app' client paths — use ROUTES / ROUTE_PATHS from @oss-internal/shared/app (the router basename adds /app).",
 	},
 	{
 		selector: 'TemplateLiteral[quasis.0.value.raw=/^\\/app(\\/|$)/]',
 		message:
-			"Don't hardcode '/app' client paths (template literal) — use ROUTES / ROUTE_PATHS from @/shared/app (the router basename adds /app).",
+			"Don't hardcode '/app' client paths (template literal) — use ROUTES / ROUTE_PATHS from @oss-internal/shared/app (the router basename adds /app).",
 	},
 ];
 
@@ -66,7 +66,7 @@ const NO_HARDCODED_APP_PATH = [
 // sibling-import boundary means it can't reference another module's key
 // factory — historically it reached in with a raw `['otherModule', …]`
 // literal that silently rotted. Those cross-cutting roots now live once in
-// `@/shared/api` → `sharedQueryKeys`; this map lets us forbid a module from
+// `@oss-internal/shared/api` → `sharedQueryKeys`; this map lets us forbid a module from
 // hand-writing a SIBLING's root as an array literal, steering it to the
 // registry. Keyed by module dir → the query-key root(s) that module owns.
 //
@@ -132,7 +132,7 @@ function crossModuleKeyOverrides() {
 					// is intentionally NOT flagged — that's not a key-ownership claim.
 					...foreign.map((rootKey) => ({
 						selector: `ArrayExpression > Literal.elements:first-child[value="${rootKey}"]`,
-						message: `Don't hand-write the '${rootKey}' query-key root in another module — invalidate a sibling's cache through @/shared 'sharedQueryKeys' (see #511).`,
+						message: `Don't hand-write the '${rootKey}' query-key root in another module — invalidate a sibling's cache through @oss-internal/shared 'sharedQueryKeys' (see #511).`,
 					})),
 				],
 			},
@@ -178,7 +178,7 @@ export default defineConfig(
 
 			// ── Module boundaries (mirror backend test_module_boundaries) ─
 			// Sibling modules may not import each other; everything shared
-			// goes through @/shared.
+			// goes through @oss-internal/shared.
 			'import-x/no-restricted-paths': [
 				'error',
 				{
@@ -192,14 +192,14 @@ export default defineConfig(
 					],
 				},
 			],
-			// Force absolute @/ imports instead of relative parent traversal.
+			// Force absolute @oss-internal/ imports instead of relative parent traversal.
 			'no-restricted-imports': [
 				'error',
 				{
 					patterns: [
 						{
 							group: ['../*'],
-							message: 'Use @/ absolute imports instead of relative parent paths.',
+							message: 'Use @oss-internal/ absolute imports instead of relative parent paths.',
 						},
 					],
 				},
@@ -264,11 +264,11 @@ export default defineConfig(
 	// primitives and would otherwise import its own barrels in a cycle):
 	//
 	//   1. Barrel discipline — consume shared surfaces through their barrels
-	//      (`@/shared`, `@/shared/ui`), never deep paths. Keeps the shared
+	//      (`@oss-internal/shared`, `@oss-internal/shared/ui`), never deep paths. Keeps the shared
 	//      public API explicit and refactorable, mirroring jentic-webapp.
 	//   2. Layering — a module's components/ + pages/ (the "router/view" tier)
 	//      reach the backend only through that module's own `api/hooks`
-	//      (the "service" tier). They must NOT touch the `@/shared/api` facade,
+	//      (the "service" tier). They must NOT touch the `@oss-internal/shared/api` facade,
 	//      generated services, or raw fetch/axios directly. A module's own
 	//      `api/client` is allowed (sentinel error types live there).
 	{
@@ -281,22 +281,22 @@ export default defineConfig(
 					patterns: [
 						{
 							group: ['../*'],
-							message: 'Use @/ absolute imports instead of relative parent paths.',
+							message: 'Use @oss-internal/ absolute imports instead of relative parent paths.',
 						},
 						{
-							group: ['@/shared/ui/*'],
+							group: ['@oss-internal/shared/ui/*'],
 							message:
-								'Import shared UI through the barrel: `@/shared/ui` (not a deep path).',
+								'Import shared UI through the barrel: `@oss-internal/shared/ui` (not a deep path).',
 						},
 						{
 							group: [
-								'@/shared/api/*',
-								'@/shared/hooks/*',
-								'@/shared/lib/*',
-								'@/shared/auth/*',
+								'@oss-internal/shared/api/*',
+								'@oss-internal/shared/hooks/*',
+								'@oss-internal/shared/lib/*',
+								'@oss-internal/shared/auth/*',
 							],
 							message:
-								'Import shared surfaces through their barrel (`@/shared`), not a deep path.',
+								'Import shared surfaces through their barrel (`@oss-internal/shared`), not a deep path.',
 						},
 					],
 				},
@@ -321,17 +321,17 @@ export default defineConfig(
 					patterns: [
 						{
 							group: ['../*'],
-							message: 'Use @/ absolute imports instead of relative parent paths.',
+							message: 'Use @oss-internal/ absolute imports instead of relative parent paths.',
 						},
 						{
-							group: ['@/shared/ui/*'],
+							group: ['@oss-internal/shared/ui/*'],
 							message:
-								'Import shared UI through the barrel: `@/shared/ui` (not a deep path).',
+								'Import shared UI through the barrel: `@oss-internal/shared/ui` (not a deep path).',
 						},
 						{
-							group: ['@/shared/api', '@/shared/api/*'],
+							group: ['@oss-internal/shared/api', '@oss-internal/shared/api/*'],
 							message:
-								'Views must not import the @/shared/api facade or generated services — call this module’s api/hooks instead.',
+								'Views must not import the @oss-internal/shared/api facade or generated services — call this module’s api/hooks instead.',
 						},
 					],
 				},

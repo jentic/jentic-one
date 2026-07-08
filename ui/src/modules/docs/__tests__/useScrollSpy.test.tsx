@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, renderHook, cleanup, act, waitFor } from '@testing-library/react';
-import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
+import { useScrollSpy } from '@oss-internal/modules/docs/lib/useScrollSpy';
 
 const IDS = ['s1', 's2', 's3'];
 

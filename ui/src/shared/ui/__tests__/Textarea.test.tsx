@@ -1,6 +1,11 @@
 import { useState } from 'react';
-import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { Textarea } from '@/shared/ui/Textarea';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { Textarea } from '@oss-internal/shared/ui/Textarea';
 
 describe('Textarea', () => {
 	it('accepts typed text', async () => {

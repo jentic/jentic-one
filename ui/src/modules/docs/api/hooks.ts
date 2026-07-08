@@ -13,8 +13,12 @@ import {
 	fetchCliReference,
 	fetchOpenApiDocument,
 	fetchReferencePayload,
-} from '@/modules/docs/api/client';
-import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
+} from '@oss-internal/modules/docs/api/client';
+import type {
+	CliReference,
+	OpenApiDocument,
+	ReferencePayload,
+} from '@oss-internal/modules/docs/api/types';
 
 export const docsKeys = {
 	all: ['docs'] as const,

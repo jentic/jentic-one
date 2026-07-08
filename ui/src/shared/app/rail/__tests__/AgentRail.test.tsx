@@ -3,9 +3,9 @@ import { page } from '@vitest/browser/context';
 import type { ReactElement } from 'react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, userEvent, checkA11y } from '@/__tests__/test-utils';
-import { AgentRail } from '@/shared/app/rail/AgentRail';
-import { ToastHost } from '@/shared/app/rail/ToastHost';
+import { render, screen, waitFor, userEvent, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { AgentRail } from '@oss-internal/shared/app/rail/AgentRail';
+import { ToastHost } from '@oss-internal/shared/app/rail/ToastHost';
 import {
 	AgentStreamProvider,
 	adaptEvent,
@@ -19,10 +19,10 @@ import {
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	type StreamEvent,
-} from '@/shared/lib/agentStream';
-import type { EventResponse } from '@/shared/api';
-import { decideCalls } from '@/shared/app/rail/mocks/handlers';
-import { listAccessRequests, getAccessRequest } from '@/shared/lib/accessRequests';
+} from '@oss-internal/shared/lib/agentStream';
+import type { EventResponse } from '@oss-internal/shared/api';
+import { decideCalls } from '@oss-internal/shared/app/rail/mocks/handlers';
+import { listAccessRequests, getAccessRequest } from '@oss-internal/shared/lib/accessRequests';
 
 /** A location probe so navigation from the rail can be asserted. */
 function LocationProbe() {

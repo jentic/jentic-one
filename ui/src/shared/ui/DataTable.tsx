@@ -1,7 +1,7 @@
 import React from 'react';
-import { LoadingState } from '@/shared/ui/LoadingState';
-import { useMediaQuery } from '@/shared/hooks/useMediaQuery';
-import { cn } from '@/shared/lib/utils';
+import { LoadingState } from '@oss-internal/shared/ui/LoadingState';
+import { useMediaQuery } from '@oss-internal/shared/hooks/useMediaQuery';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type Column<T> = {
 	key: keyof T | string;

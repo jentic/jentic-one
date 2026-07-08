@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, userEvent, within } from '@/__tests__/test-utils';
-import { AccessRequestItemCard } from '@/shared/app/rail/AccessRequestItemCard';
-import type { AccessRequestItem } from '@/shared/lib';
+import { render, screen, userEvent, within } from '@oss-internal/__tests__/test-utils';
+import { AccessRequestItemCard } from '@oss-internal/shared/app/rail/AccessRequestItemCard';
+import type { AccessRequestItem } from '@oss-internal/shared/lib';
 
 const noop = () => {};
 

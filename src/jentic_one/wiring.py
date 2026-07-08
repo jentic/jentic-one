@@ -23,6 +23,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import ResolveResult, RevisionPinResult
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.web.container import AppContainer
 
 
 class InProcessRegistryResolver:
@@ -66,3 +67,13 @@ class InProcessRegistryResolver:
 def install_broker_registry_resolver(app: FastAPI, ctx: Context) -> None:
     """Inject the in-process registry resolver onto the broker app state."""
     app.state.broker_registry_resolver = InProcessRegistryResolver(ctx.registry_db)
+
+
+def build_default_container(ctx: Context) -> AppContainer:
+    """Assemble the default ``AppContainer`` (no extra injection).
+
+    The composition root's factory for the DI seam. A downstream package can
+    provide its own ``build_container`` that starts here and adds its ``Broker`` /
+    extra routers, then calls the same app factories with the resulting container.
+    """
+    return AppContainer.default(ctx)

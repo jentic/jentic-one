@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { Kbd } from '@/shared/ui/Kbd';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { Kbd } from '@oss-internal/shared/ui/Kbd';
 
 describe('Kbd', () => {
 	it('renders the key text', () => {

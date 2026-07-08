@@ -18,11 +18,14 @@ execution path that drifted from the sync one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from jentic_one.broker.adapters.runners.base import UpstreamRunner
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.execution.service import default_pipeline, run_execution
+from jentic_one.broker.services.execution.service import default_broker, run_execution
+from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.jobs.protocols import (
     UpstreamExecRequest,
     UpstreamExecResult,
@@ -31,19 +34,27 @@ from jentic_one.shared.jobs.protocols import (
 
 
 class PipelineExecutor(UpstreamExecutor):
-    """Adapts the shared ``BrokerExecutionPipeline`` to the worker's protocol.
+    """Adapts the shared ``Broker`` to the worker's protocol.
 
     Selects the runner for each call through the shared :class:`RunnerRegistry`
     (the same seam the sync router uses), so the circuit-breaker latch, per-host
     bulkhead, and connection pool are shared across sync + async — and a non-HTTP
     scheme routes to its runner once one is registered. Each call runs through
-    ``run_execution`` — which dispatches the runner, folds the post-response
-    stages, and persists the ``executions`` row. The worker keeps only its
-    job-result + lifecycle-event writes.
+    ``run_execution`` against a :class:`Broker` built per request by
+    ``broker_factory`` (default: :func:`default_broker`; a caller may inject its
+    own),
+    which dispatches the runner, folds the post-response stages, and persists the
+    ``executions`` row. The worker keeps only its job-result + lifecycle-event writes.
     """
 
-    def __init__(self, registry: RunnerRegistry) -> None:
+    def __init__(
+        self,
+        registry: RunnerRegistry,
+        *,
+        broker_factory: Callable[[UpstreamRunner], Broker] = default_broker,
+    ) -> None:
         self._registry = registry
+        self._broker_factory = broker_factory
 
     async def execute(self, request: UpstreamExecRequest, *, session: Any) -> UpstreamExecResult:
         ctx_req = _ctx_from_metadata(request)
@@ -54,7 +65,7 @@ class PipelineExecutor(UpstreamExecutor):
             headers=request.headers,
             session=session,
             timeout=request.timeout_s,
-            pipeline=default_pipeline(runner),
+            broker=self._broker_factory(runner),
             execution_id=request.metadata.get("execution_id"),
             actor_id=request.metadata["actor_id"],
             actor_type=request.metadata["actor_type"],

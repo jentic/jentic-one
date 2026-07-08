@@ -48,7 +48,7 @@ A CI drift test (`tests/arch/test_openapi_conformance.py`) fails if the
 checked-in spec is out of date, so always run `make openapi` after touching
 routers or response/request models.
 
-Import generated code via the `@/shared/api` facade (never `./generated`
+Import generated code via the `@oss-internal/shared/api` facade (never `./generated`
 directly) so the Bearer-JWT config (`shared/api/client.ts`) is applied first.
 Auth: `POST /auth/login` → token stored in `shared/api/token-store` →
 `Authorization: Bearer` on every request; 401/403 are non-retryable and evict the
@@ -67,7 +67,7 @@ npm run lint         # eslint (incl. module-boundary rules)
 
 Component tests run in **Vitest browser mode** (real Chromium) with **MSW**
 mocking the backend and **axe-core** for a11y. Use `renderWithProviders` and
-`checkA11y` from `@/__tests__/test-utils`; add backend mocks via MSW handlers
+`checkA11y` from `@oss-internal/__tests__/test-utils`; add backend mocks via MSW handlers
 (`src/mocks/handlers.ts` + per-module `mocks/handlers.ts`). Browser-mode ESM
 forbids `vi.spyOn` on module exports — drive behaviour through MSW instead.
 
@@ -109,8 +109,8 @@ See `../../jentic-one-ui-migration/COLLABORATION.md` §3.
 ### Boundary rules (enforced by ESLint)
 
 - `shared/` must **not** import from `modules/`.
-- A module must **not** import from a sibling module — share via `@/shared`.
-- Use `@/` absolute imports, never relative `../` parent traversal.
+- A module must **not** import from a sibling module — share via `@oss-internal/shared`.
+- Use `@oss-internal/` absolute imports, never relative `../` parent traversal.
 
 These echo the backend's `tests/arch/test_module_boundaries.py`. A violating
 import is a lint **error**, so the boundary is checked in CI.

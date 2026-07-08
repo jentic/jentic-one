@@ -1,8 +1,8 @@
 import { RefreshCw } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Button } from '@/shared/ui/Button';
-import { cn } from '@/shared/lib/utils';
+import { Button } from '@oss-internal/shared/ui/Button';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 interface RefreshButtonProps {
 	onRefresh: () => void;

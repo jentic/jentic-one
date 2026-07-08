@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { worker } from '@/mocks/browser';
-import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
-import { AuthProvider } from '@/shared/auth/AuthContext';
-import { clearToken, setToken } from '@/shared/api';
-import { App } from '@/App';
+import { worker } from '@oss-internal/mocks/browser';
+import {
+	renderWithProviders,
+	screen,
+	userEvent,
+	waitFor,
+	checkA11y,
+} from '@oss-internal/__tests__/test-utils';
+import { AuthProvider } from '@oss-internal/shared/auth/AuthContext';
+import { clearToken, setToken } from '@oss-internal/shared/api';
+import { App } from '@oss-internal/App';
 
 function renderApp(route: string) {
 	return renderWithProviders(

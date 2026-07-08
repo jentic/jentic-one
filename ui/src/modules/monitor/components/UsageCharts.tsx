@@ -9,7 +9,10 @@
  * Grouping is tracked in jentic-one#561.
  */
 import { useId } from 'react';
-import type { DailyExecutionBucket, ExecutionStatsResponse } from '@/modules/monitor/api';
+import type {
+	DailyExecutionBucket,
+	ExecutionStatsResponse,
+} from '@oss-internal/modules/monitor/api';
 
 function formatDay(date: string): string {
 	const parsed = new Date(`${date}T00:00:00Z`);

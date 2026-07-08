@@ -6,8 +6,8 @@
  * when a new critical event arrives.
  */
 import { Volume2, VolumeX } from 'lucide-react';
-import type { ToastScope } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+import type { ToastScope } from '@oss-internal/shared/lib/agentStream';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 export type RailFooterProps = {
 	scope: ToastScope;

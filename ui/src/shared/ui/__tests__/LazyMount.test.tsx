@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
-import { LazyMount } from '@/shared/ui/LazyMount';
+import { LazyMount } from '@oss-internal/shared/ui/LazyMount';
 
 afterEach(() => {
 	cleanup();

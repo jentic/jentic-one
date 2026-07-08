@@ -1,8 +1,8 @@
 import type { ReactElement } from 'react';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
-import { AppLink } from '@/shared/ui/AppLink';
+import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
+import { AppLink } from '@oss-internal/shared/ui/AppLink';
 
 describe('AppLink', () => {
 	it('renders an internal router link', () => {

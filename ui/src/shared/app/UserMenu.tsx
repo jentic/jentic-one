@@ -1,11 +1,16 @@
 import { useState, useCallback } from 'react';
 import { BookOpen, ExternalLink, KeyRound, LogOut } from 'lucide-react';
-import { AppLink } from '@/shared/ui/AppLink';
-import { Button } from '@/shared/ui/Button';
-import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
-import { cn } from '@/shared/lib/utils';
-import { useAuth } from '@/shared/auth/AuthContext';
-import { ROUTES } from '@/shared/app/routes';
+import { AppLink } from '@oss-internal/shared/ui/AppLink';
+import { Button } from '@oss-internal/shared/ui/Button';
+import {
+	MenuPanel,
+	MenuSeparator,
+	menuItemClass,
+	useDismissable,
+} from '@oss-internal/shared/ui/Menu';
+import { cn } from '@oss-internal/shared/lib/utils';
+import { useAuth } from '@oss-internal/shared/auth/AuthContext';
+import { ROUTES } from '@oss-internal/shared/app/routes';
 
 /** Avatar initial: first name, then email, then a neutral fallback. */
 function avatarInitial(name: string | null | undefined, email: string | null | undefined): string {

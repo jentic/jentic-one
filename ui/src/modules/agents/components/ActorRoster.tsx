@@ -20,9 +20,9 @@
  */
 import { useNavigate } from 'react-router-dom';
 import { Bot, ChevronRight } from 'lucide-react';
-import { AgentBadge, Badge, Button, Card, ErrorAlert, LoadingState } from '@/shared/ui';
-import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
-import { ROUTE_PATHS } from '@/shared/app/routes';
+import { AgentBadge, Badge, Button, Card, ErrorAlert, LoadingState } from '@oss-internal/shared/ui';
+import { cn, formatTimestamp, timeAgo } from '@oss-internal/shared/lib/utils';
+import { ROUTE_PATHS } from '@oss-internal/shared/app/routes';
 import {
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
@@ -34,7 +34,7 @@ import {
 	type AgentAction,
 	type AgentEntity,
 	type ServiceAccountEntity,
-} from '@/modules/agents/api';
+} from '@oss-internal/modules/agents/api';
 
 /** The minimal shape the roster needs from an actor entity. */
 export interface RosterEntity {

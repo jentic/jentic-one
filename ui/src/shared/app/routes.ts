@@ -71,13 +71,13 @@ export const ROUTE_PATHS = {
  * The matching nav entry in `nav.ts` uses the absolute `/app/discover`.
  */
 // <-- feature route imports go here (one import line per module) -->
-import { dashboardRoutes } from '@/modules/dashboard/routes';
-import { toolkitRoutes } from '@/modules/toolkits/routes';
-import { agentsRoutes } from '@/modules/agents/routes';
-import { discoverRoutes } from '@/modules/discover/routes';
-import { workspaceRoutes } from '@/modules/workspace/routes';
-import { credentialsRoutes } from '@/modules/credentials/routes';
-import { monitorRoutes } from '@/modules/monitor/routes';
+import { dashboardRoutes } from '@oss-internal/modules/dashboard/routes';
+import { toolkitRoutes } from '@oss-internal/modules/toolkits/routes';
+import { agentsRoutes } from '@oss-internal/modules/agents/routes';
+import { discoverRoutes } from '@oss-internal/modules/discover/routes';
+import { workspaceRoutes } from '@oss-internal/modules/workspace/routes';
+import { credentialsRoutes } from '@oss-internal/modules/credentials/routes';
+import { monitorRoutes } from '@oss-internal/modules/monitor/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->

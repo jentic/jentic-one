@@ -19,8 +19,8 @@ import {
 	XCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { StreamEvent, StreamKind } from '@/shared/lib/agentStream';
-import { cn } from '@/shared/lib/utils';
+import type { StreamEvent, StreamKind } from '@oss-internal/shared/lib/agentStream';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 const TYPE_ICON_MAP: Record<string, { Icon: LucideIcon; tone: string }> = {
 	'import.completed': { Icon: PackageCheck, tone: 'text-success' },

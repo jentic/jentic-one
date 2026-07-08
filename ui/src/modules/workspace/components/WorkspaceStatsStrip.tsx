@@ -10,8 +10,8 @@
  * at-a-glance ribbon mini users expect.
  */
 import { Boxes, GitBranch, ShieldCheck, Zap, FileClock } from 'lucide-react';
-import { cn } from '@/shared/lib/utils';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import { cn } from '@oss-internal/shared/lib/utils';
+import type { WorkspaceApi } from '@oss-internal/modules/workspace/api';
 
 export interface WorkspaceStatsStripProps {
 	apis: WorkspaceApi[];

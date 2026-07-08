@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sharedQueryKeys } from '@/shared/api/queryKeys';
+import { sharedQueryKeys } from '@oss-internal/shared/api/queryKeys';
 
 /**
  * Pins the cross-module key registry. These roots are a contract consumed by

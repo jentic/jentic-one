@@ -13,17 +13,17 @@ import {
 	AppLink,
 	ActorLabel,
 	AgentBadge,
-} from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app';
+} from '@oss-internal/shared/ui';
+import { AccessRequestDialog } from '@oss-internal/shared/app';
 import {
 	usePendingAccessRequests,
 	formatApproxCount,
 	dashboardKeys,
 	type AccessRequest,
-} from '@/modules/dashboard/api';
-import { ROUTES } from '@/shared/app/routes';
-import { timeAgo } from '@/shared/lib/utils';
-import { CardRow, CardHeaderIcon } from '@/modules/dashboard/components/CardRow';
+} from '@oss-internal/modules/dashboard/api';
+import { ROUTES } from '@oss-internal/shared/app/routes';
+import { timeAgo } from '@oss-internal/shared/lib/utils';
+import { CardRow, CardHeaderIcon } from '@oss-internal/modules/dashboard/components/CardRow';
 
 /** A decision here must refresh the dashboard surfaces AND the durable
  * access-request queue + nav badge. Both roots come from this module's own

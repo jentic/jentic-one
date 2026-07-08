@@ -6,8 +6,8 @@
  * variant palette. Rendering off the typed union (not the raw wire string)
  * keeps unknown server values from leaking a broken colour.
  */
-import { Badge, type BadgeVariant } from '@/shared/ui';
-import { type ExecutionStatusUi, type JobStatusUi } from '@/modules/monitor/api';
+import { Badge, type BadgeVariant } from '@oss-internal/shared/ui';
+import { type ExecutionStatusUi, type JobStatusUi } from '@oss-internal/modules/monitor/api';
 
 const EXECUTION_VARIANT: Record<ExecutionStatusUi, BadgeVariant> = {
 	running: 'pending',

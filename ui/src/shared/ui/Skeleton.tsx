@@ -1,4 +1,4 @@
-import { cn } from '@/shared/lib/utils';
+import { cn } from '@oss-internal/shared/lib/utils';
 
 /**
  * Placeholder block shown while content loads. Uses a shimmer sweep

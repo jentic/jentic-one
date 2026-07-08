@@ -12,7 +12,7 @@ import {
 	listCredentials,
 	type ListCredentialsParams,
 } from './client';
-import type { ProviderDiscoveryResponse } from '@/shared/api';
+import type { ProviderDiscoveryResponse } from '@oss-internal/shared/api';
 import type {
 	ConnectChallengeResponse,
 	ConnectRequestBody,
@@ -299,4 +299,4 @@ export type {
 	CatalogListResponse,
 	ProviderDiscoveryResponse,
 	ProviderDiscoveryEntryResponse,
-} from '@/shared/api';
+} from '@oss-internal/shared/api';

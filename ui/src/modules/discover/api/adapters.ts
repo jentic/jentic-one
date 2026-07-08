@@ -6,8 +6,8 @@
  * Discover renders, so there is a single adapter: a `GET /catalog` entry →
  * `DiscoveryEntity`.
  */
-import type { CatalogEntryResponse } from '@/shared/api';
-import type { DiscoveryEntity } from '@/modules/discover/api/types';
+import type { CatalogEntryResponse } from '@oss-internal/shared/api';
+import type { DiscoveryEntity } from '@oss-internal/modules/discover/api/types';
 
 /**
  * Title-case a slug-ish segment for display: `article_search` → `Article Search`,

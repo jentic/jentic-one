@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { AgentsService, sharedQueryKeys } from '@/shared/api';
+import { AgentsService, sharedQueryKeys } from '@oss-internal/shared/api';
 
 /** Stable key so the nav badge + any other consumer share one cache slice.
  * Derived from the shared agents root so a prefix invalidation of `agentsRoot`

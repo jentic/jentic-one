@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
-import { render, screen, userEvent } from '@/__tests__/test-utils';
+import { render, screen, userEvent } from '@oss-internal/__tests__/test-utils';
 import {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
-} from '@/modules/toolkits/components/PermissionRuleEditor';
-import type { PermissionRuleInput } from '@/modules/toolkits/api/types';
+} from '@oss-internal/modules/toolkits/components/PermissionRuleEditor';
+import type { PermissionRuleInput } from '@oss-internal/modules/toolkits/api/types';
 
 type Effect = PermissionRuleInput['effect'];
 const ALLOW = 'allow' as Effect;

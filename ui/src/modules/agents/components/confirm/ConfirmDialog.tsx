@@ -1,4 +1,4 @@
-import { Button, Dialog } from '@/shared/ui';
+import { Button, Dialog } from '@oss-internal/shared/ui';
 
 interface ConfirmDialogProps {
 	open: boolean;

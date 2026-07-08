@@ -9,7 +9,7 @@
  * revisions, security schemes, and live-revision state.
  */
 import { Activity, GitBranch, ShieldCheck, Zap } from 'lucide-react';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import type { WorkspaceApi } from '@oss-internal/modules/workspace/api';
 
 function relativeTime(iso: string): string | null {
 	const ts = Date.parse(iso);

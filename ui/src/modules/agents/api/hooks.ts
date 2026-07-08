@@ -11,7 +11,7 @@
  * force a refetch.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from '@/shared/ui';
+import { toast } from '@oss-internal/shared/ui';
 import {
 	approveAgent,
 	approveServiceAccount,
@@ -42,7 +42,7 @@ import {
 	revokeAgentApiKey,
 	fetchActorAccessRequests,
 	type ListResult,
-} from '@/modules/agents/api/client';
+} from '@oss-internal/modules/agents/api/client';
 import type {
 	AgentEntity,
 	ApiKeyHistoryEntry,
@@ -51,9 +51,9 @@ import type {
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
-} from '@/modules/agents/api/types';
-import type { AccessRequest } from '@/shared/lib';
-import { sharedQueryKeys } from '@/shared/api';
+} from '@oss-internal/modules/agents/api/types';
+import type { AccessRequest } from '@oss-internal/shared/lib';
+import { sharedQueryKeys } from '@oss-internal/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so the persistent nav

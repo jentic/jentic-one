@@ -1,113 +1,128 @@
-export { Button } from '@/shared/ui/Button';
-export type { ButtonProps } from '@/shared/ui/Button';
+export { Button } from '@oss-internal/shared/ui/Button';
+export type { ButtonProps } from '@oss-internal/shared/ui/Button';
 
-export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
+export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@oss-internal/shared/ui/Card';
 
-export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
-export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
+export { Badge, MethodBadge, StatusBadge } from '@oss-internal/shared/ui/Badge';
+export type { Variant as BadgeVariant } from '@oss-internal/shared/ui/Badge';
 
-export { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
-export type { AgentBadgeSize } from '@/shared/ui/AgentBadge';
+export { AgentBadge, agentInitials } from '@oss-internal/shared/ui/AgentBadge';
+export type { AgentBadgeSize } from '@oss-internal/shared/ui/AgentBadge';
 
-export { Label } from '@/shared/ui/Label';
+export { Label } from '@oss-internal/shared/ui/Label';
 
-export { Input } from '@/shared/ui/Input';
-export type { InputProps } from '@/shared/ui/Input';
+export { Input } from '@oss-internal/shared/ui/Input';
+export type { InputProps } from '@oss-internal/shared/ui/Input';
 
-export { Textarea } from '@/shared/ui/Textarea';
-export type { TextareaProps } from '@/shared/ui/Textarea';
+export { Textarea } from '@oss-internal/shared/ui/Textarea';
+export type { TextareaProps } from '@oss-internal/shared/ui/Textarea';
 
-export { Select } from '@/shared/ui/Select';
-export type { SelectProps } from '@/shared/ui/Select';
+export { Select } from '@oss-internal/shared/ui/Select';
+export type { SelectProps } from '@oss-internal/shared/ui/Select';
 
-export { Checkbox } from '@/shared/ui/Checkbox';
+export { Checkbox } from '@oss-internal/shared/ui/Checkbox';
 
-export { SearchInput } from '@/shared/ui/SearchInput';
-export type { SearchInputProps } from '@/shared/ui/SearchInput';
+export { SearchInput } from '@oss-internal/shared/ui/SearchInput';
+export type { SearchInputProps } from '@oss-internal/shared/ui/SearchInput';
 
-export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
-export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
+export { SegmentedToggle } from '@oss-internal/shared/ui/SegmentedToggle';
+export type { SegmentedToggleOption } from '@oss-internal/shared/ui/SegmentedToggle';
 
-export { Kbd } from '@/shared/ui/Kbd';
+export { Kbd } from '@oss-internal/shared/ui/Kbd';
 
-export { Skeleton, SkeletonRows } from '@/shared/ui/Skeleton';
+export { Skeleton, SkeletonRows } from '@oss-internal/shared/ui/Skeleton';
 
-export { LoadingState } from '@/shared/ui/LoadingState';
-export type { LoadingStateSize, LoadingStateVariant } from '@/shared/ui/LoadingState';
+export { LoadingState } from '@oss-internal/shared/ui/LoadingState';
+export type { LoadingStateSize, LoadingStateVariant } from '@oss-internal/shared/ui/LoadingState';
 
-export { LoadingSpinner } from '@/shared/ui/LoadingSpinner';
+export { LoadingSpinner } from '@oss-internal/shared/ui/LoadingSpinner';
 export type {
 	LoadingSpinnerProps,
 	LoadingSpinnerSize,
 	LoadingSpinnerVariant,
-} from '@/shared/ui/LoadingSpinner';
+} from '@oss-internal/shared/ui/LoadingSpinner';
 
-export { EmptyState } from '@/shared/ui/EmptyState';
+export { EmptyState } from '@oss-internal/shared/ui/EmptyState';
 
-export { ErrorAlert } from '@/shared/ui/ErrorAlert';
+export { ErrorAlert } from '@oss-internal/shared/ui/ErrorAlert';
 
-export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
+export { ErrorBoundary } from '@oss-internal/shared/ui/ErrorBoundary';
 
-export { DataTable } from '@/shared/ui/DataTable';
-export type { Column } from '@/shared/ui/DataTable';
+export { DataTable } from '@oss-internal/shared/ui/DataTable';
+export type { Column } from '@oss-internal/shared/ui/DataTable';
 
-export { Pagination } from '@/shared/ui/Pagination';
+export { Pagination } from '@oss-internal/shared/ui/Pagination';
 
-export { Dialog } from '@/shared/ui/Dialog';
+export { Dialog } from '@oss-internal/shared/ui/Dialog';
 
-export { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
-export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/CascadeDeleteDialog';
+export { CascadeDeleteDialog } from '@oss-internal/shared/ui/CascadeDeleteDialog';
+export type {
+	CascadeEntityType,
+	CascadeDependentGroup,
+} from '@oss-internal/shared/ui/CascadeDeleteDialog';
 
-export { SheetPrimitive } from '@/shared/ui/SheetPrimitive';
-export type { SheetPrimitiveProps } from '@/shared/ui/SheetPrimitive';
+export { SheetPrimitive } from '@oss-internal/shared/ui/SheetPrimitive';
+export type { SheetPrimitiveProps } from '@oss-internal/shared/ui/SheetPrimitive';
 
-export { Toaster } from '@/shared/ui/Toaster';
-export { toast, dismissToast, clearAllToasts, useToasts } from '@/shared/ui/toastStore';
-export type { ToastEntry, ToastInput, ToastVariant } from '@/shared/ui/toastStore';
+export { Toaster } from '@oss-internal/shared/ui/Toaster';
+export { toast, dismissToast, clearAllToasts, useToasts } from '@oss-internal/shared/ui/toastStore';
+export type { ToastEntry, ToastInput, ToastVariant } from '@oss-internal/shared/ui/toastStore';
 
-export { CopyButton } from '@/shared/ui/CopyButton';
+export { CopyButton } from '@oss-internal/shared/ui/CopyButton';
 
-export { BackButton } from '@/shared/ui/BackButton';
+export { BackButton } from '@oss-internal/shared/ui/BackButton';
 
-export { RefreshButton } from '@/shared/ui/RefreshButton';
+export { RefreshButton } from '@oss-internal/shared/ui/RefreshButton';
 
-export { AppLink } from '@/shared/ui/AppLink';
-export type { AppLinkProps } from '@/shared/ui/AppLink';
+export { AppLink } from '@oss-internal/shared/ui/AppLink';
+export type { AppLinkProps } from '@oss-internal/shared/ui/AppLink';
 
-export { PageShell } from '@/shared/ui/PageShell';
-export type { PageShellProps } from '@/shared/ui/PageShell';
+export { PageShell } from '@oss-internal/shared/ui/PageShell';
+export type { PageShellProps } from '@oss-internal/shared/ui/PageShell';
 
-export { PageHeader } from '@/shared/ui/PageHeader';
+export { PageHeader } from '@oss-internal/shared/ui/PageHeader';
 
-export { PageHelp } from '@/shared/ui/PageHelp';
-export type { PageHelpProps, PageHelpSection, PageHelpLink } from '@/shared/ui/PageHelp';
+export { PageHelp } from '@oss-internal/shared/ui/PageHelp';
+export type {
+	PageHelpProps,
+	PageHelpSection,
+	PageHelpLink,
+} from '@oss-internal/shared/ui/PageHelp';
 
-export { KeyboardShortcutsBar } from '@/shared/ui/KeyboardShortcutsBar';
-export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/KeyboardShortcutsBar';
+export { KeyboardShortcutsBar } from '@oss-internal/shared/ui/KeyboardShortcutsBar';
+export type {
+	KeyboardShortcut,
+	KeyboardShortcutsBarProps,
+} from '@oss-internal/shared/ui/KeyboardShortcutsBar';
 
-export { JenticLogo } from '@/shared/ui/Logo';
-export type { JenticLogoProps } from '@/shared/ui/Logo';
+export { JenticLogo } from '@oss-internal/shared/ui/Logo';
+export type { JenticLogoProps } from '@oss-internal/shared/ui/Logo';
 
-export { useDismissable, MenuPanel, MenuSeparator, menuItemClass } from '@/shared/ui/Menu';
-export type { MenuPanelProps } from '@/shared/ui/Menu';
+export {
+	useDismissable,
+	MenuPanel,
+	MenuSeparator,
+	menuItemClass,
+} from '@oss-internal/shared/ui/Menu';
+export type { MenuPanelProps } from '@oss-internal/shared/ui/Menu';
 
-export { Markdown } from '@/shared/ui/Markdown';
+export { Markdown } from '@oss-internal/shared/ui/Markdown';
 
-export { LazyMount } from '@/shared/ui/LazyMount';
-export type { LazyMountProps } from '@/shared/ui/LazyMount';
+export { LazyMount } from '@oss-internal/shared/ui/LazyMount';
+export type { LazyMountProps } from '@oss-internal/shared/ui/LazyMount';
 
-export { TruncateWithTooltip } from '@/shared/ui/TruncateWithTooltip';
+export { TruncateWithTooltip } from '@oss-internal/shared/ui/TruncateWithTooltip';
 
-export { OperationDetail } from '@/shared/ui/OperationDetail';
+export { OperationDetail } from '@oss-internal/shared/ui/OperationDetail';
 export type {
 	OperationDetailProps,
 	OperationDetailData,
 	OperationParameter,
 	SecuritySchemeMap,
-} from '@/shared/ui/OperationDetail';
+} from '@oss-internal/shared/ui/OperationDetail';
 
-export { VendorIcon } from '@/shared/ui/VendorIcon';
-export type { VendorIconProps } from '@/shared/ui/VendorIcon';
+export { VendorIcon } from '@oss-internal/shared/ui/VendorIcon';
+export type { VendorIconProps } from '@oss-internal/shared/ui/VendorIcon';
 
 export {
 	ActorStatusBadge,
@@ -116,13 +131,13 @@ export {
 	STATUS_BADGE_VARIANT,
 	STATUS_DOT,
 	toActorStatus,
-} from '@/shared/ui/ActorStatusBadge';
-export type { ActorStatus } from '@/shared/ui/ActorStatusBadge';
+} from '@oss-internal/shared/ui/ActorStatusBadge';
+export type { ActorStatus } from '@oss-internal/shared/ui/ActorStatusBadge';
 
-export { ScopePicker } from '@/shared/ui/ScopePicker';
-export type { ScopePickerProps } from '@/shared/ui/ScopePicker';
-export { ScopeGroup } from '@/shared/ui/ScopeGroup';
-export type { ScopeGroupProps } from '@/shared/ui/ScopeGroup';
+export { ScopePicker } from '@oss-internal/shared/ui/ScopePicker';
+export type { ScopePickerProps } from '@oss-internal/shared/ui/ScopePicker';
+export { ScopeGroup } from '@oss-internal/shared/ui/ScopeGroup';
+export type { ScopeGroupProps } from '@oss-internal/shared/ui/ScopeGroup';
 
-export { ActorLabel } from '@/shared/ui/ActorLabel';
-export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
+export { ActorLabel } from '@oss-internal/shared/ui/ActorLabel';
+export type { ActorLabelProps } from '@oss-internal/shared/ui/ActorLabel';
