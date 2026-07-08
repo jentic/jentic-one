@@ -1,28 +1,40 @@
-name: Notify Slack on new feedback
+name: Notify Slack on triaged feedback
 
-# Posts every newly opened issue to Slack via an incoming webhook.
-# Highlights severity:blocker / severity:major so urgent pain points stand out.
+# Posts an issue to Slack once the intake harness has finished enriching it, so
+# the notification carries the real type / area / severity / fit — not the bare
+# needs-triage + ai-intake an issue has at open time.
+#
+# "Enriched" fires on either hand-off signal from the harness
+# (.harness/ISSUE_INTAKE_STANDARDS.md step 6):
+#   - needs-triage removed  → classified & ready for a maintainer, or
+#   - needs-human added     → escalated for a human decision.
+# The severity:blocker / severity:major header highlighting is meaningful here
+# because the severity label now exists by this point.
 #
 # Setup: add a repo secret SLACK_WEBHOOK_URL (a Slack incoming webhook URL).
 # If the secret is absent the job no-ops (so forks / dry runs don't fail).
 #
-# Originally authored by @sophie-jentic (PR #557); carried forward here with the
-# review fixes applied (UTF-8-safe truncation, exact-match label emojis, and a
-# soft-fail so a transient Slack error doesn't mark the run red).
+# Originally authored by @sophie-jentic (PR #557); carried forward with the review
+# fixes applied (UTF-8-safe truncation, exact-match label emojis, soft-fail) and
+# retimed to fire post-triage rather than on open.
 
 on:
   issues:
-    types: [opened]
+    types: [unlabeled, labeled]
 
 permissions:
   contents: none
 
 concurrency:
-  group: notify-new-feedback-${{ github.event.issue.number }}
+  group: notify-feedback-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
   notify:
+    # Only when the harness hands off: needs-triage removed, or needs-human added.
+    if: >-
+      (github.event.action == 'unlabeled' && github.event.label.name == 'needs-triage') ||
+      (github.event.action == 'labeled'   && github.event.label.name == 'needs-human')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -39,6 +51,7 @@ jobs:
           AUTHOR: ${{ github.event.issue.user.login }}
           LABELS: ${{ join(github.event.issue.labels.*.name, ', ') }}
           BODY: ${{ github.event.issue.body }}
+          ESCALATED: ${{ github.event.action == 'labeled' && github.event.label.name == 'needs-human' }}
         run: |
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
             echo "SLACK_WEBHOOK_URL not set — skipping Slack notification."
@@ -75,6 +88,7 @@ jobs:
               needs-info)         le="💬" ;;
               needs-human)        le="🙋" ;;
               confirmed)          le="✅" ;;
+              duplicate-candidate) le="🔎" ;;
               duplicate)          le="🔁" ;;
               agent-filed)        le="🤖" ;;
               ai-intake)          le="📥" ;;
@@ -83,11 +97,14 @@ jobs:
             printf '%s' "$le"
           }
 
-          # Header emoji: highest-precedence exact label wins.
+          # Header emoji: escalation first, then highest-precedence severity/type.
           header_emoji="📝"
-          for lbl in "${labels[@]}"; do
-            case "$lbl" in severity:blocker) header_emoji="🚨" ;; esac
-          done
+          if [ "$ESCALATED" = "true" ]; then
+            header_emoji="🙋"
+          fi
+          if [ "$header_emoji" = "📝" ]; then
+            for lbl in "${labels[@]}"; do case "$lbl" in severity:blocker) header_emoji="🚨" ;; esac; done
+          fi
           if [ "$header_emoji" = "📝" ]; then
             for lbl in "${labels[@]}"; do case "$lbl" in severity:major) header_emoji="⚠️" ;; esac; done
           fi
@@ -98,11 +115,17 @@ jobs:
             for lbl in "${labels[@]}"; do case "$lbl" in bug) header_emoji="🐛" ;; esac; done
           fi
 
+          if [ "$ESCALATED" = "true" ]; then
+            header_text="$header_emoji Needs human: #$NUMBER"
+          else
+            header_text="$header_emoji Triaged feedback: #$NUMBER"
+          fi
+
           labels_fmt=""
           for lbl in "${labels[@]}"; do
             labels_fmt="${labels_fmt}$(emoji_for "$lbl") \`${lbl}\`   "
           done
-          [ -z "$labels_fmt" ] && labels_fmt="_no labels yet_"
+          [ -z "$labels_fmt" ] && labels_fmt="_no labels_"
 
           # Clean the body to a single line, then character-slice to 240.
           cleaned="$(printf '%s' "$BODY" \
@@ -118,7 +141,7 @@ jobs:
 
           # Build the Slack Block Kit payload with jq so all fields are escaped.
           payload=$(jq -n \
-            --arg header "$header_emoji New feedback: #$NUMBER" \
+            --arg header "$header_text" \
             --arg title "$TITLE" \
             --arg url "$URL" \
             --arg author "$AUTHOR" \
