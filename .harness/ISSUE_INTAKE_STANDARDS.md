@@ -30,6 +30,10 @@ author — by name — for the specific missing pieces. Do all of this in one pa
 ### 1. Classify (labels: type + area)
 
 Apply exactly **one type** label and, when determinable, exactly **one area** label.
+The issue forms do **not** pre-apply a type — both `bug.yml` and `request.yml` seed
+only `needs-triage` + `ai-intake`, so **you own every type assignment**. (The title
+prefix `[bug]` / `[request]` is a hint from the author, not authoritative — a
+`[bug]` that is really friction should be `pain-point`.)
 
 - **Type** (pick one): `bug`, `enhancement`, `pain-point`, `idea`, `documentation`,
   `question`.

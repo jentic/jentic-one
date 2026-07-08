@@ -1,0 +1,93 @@
+name: Guard restricted labels
+
+# Enforces that harness-managed labels can only be applied by the harness bot or
+# a member of the authorized Jentic team. GitHub has no native per-label ACL, so
+# this reverts an unauthorized application: on `issues.labeled`, if the actor is
+# not allowed and the label is restricted, the label is removed and a short note
+# is posted. This is reactive (the label briefly appears, then is removed) — the
+# same limitation Kubernetes Prow's restricted-labels feature has.
+#
+# Requires a token that can read org team membership (the default GITHUB_TOKEN
+# cannot). Set repo secret ORG_READ_TOKEN (a PAT or GitHub App token with
+# `read:org`). If it is absent, the guard no-ops with a warning rather than
+# removing labels it cannot authorize — so it never misfires before it's configured.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: label-guard-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  # Team (org members of this team may apply restricted labels).
+  AUTHORIZED_TEAM: staff
+  # Bot identity the harness uses — always allowed.
+  HARNESS_BOT: jentic-harness
+  # Space-separated exact labels + glob prefixes that are restricted.
+  # (Everything the harness manages: type, area:*, severity:*, fit:*,
+  # feasibility:*, and the human-authority status labels.)
+  RESTRICTED: >-
+    bug enhancement pain-point idea documentation question
+    area:* severity:* fit:* feasibility:*
+    confirmed needs-human duplicate wontfix invalid
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revert unauthorized restricted-label application
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          ACTOR: ${{ github.event.sender.login }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+
+          # Is the applied label restricted? (exact match or glob prefix)
+          is_restricted=false
+          for pat in $RESTRICTED; do
+            case "$LABEL" in
+              $pat) is_restricted=true; break ;;
+            esac
+          done
+          if [ "$is_restricted" != true ]; then
+            echo "Label '$LABEL' is not restricted — nothing to do."
+            exit 0
+          fi
+
+          # The harness bot is always allowed.
+          if [ "$ACTOR" = "$HARNESS_BOT" ]; then
+            echo "Applied by harness bot ($ACTOR) — allowed."
+            exit 0
+          fi
+
+          # Need org-read to check team membership. If not configured, do not
+          # misfire — warn and stop.
+          if [ -z "${ORG_READ_TOKEN:-}" ]; then
+            echo "::warning::ORG_READ_TOKEN not set — cannot verify team membership; leaving '$LABEL' by $ACTOR untouched."
+            exit 0
+          fi
+
+          org="${REPO%%/*}"
+          # 200 => active member of the team; 404 => not a member.
+          status=$(GH_TOKEN="$ORG_READ_TOKEN" gh api \
+            "orgs/$org/teams/$AUTHORIZED_TEAM/memberships/$ACTOR" \
+            --jq '.state' 2>/dev/null || echo "none")
+
+          if [ "$status" = "active" ]; then
+            echo "$ACTOR is an active member of @$org/$AUTHORIZED_TEAM — allowed."
+            exit 0
+          fi
+
+          echo "$ACTOR is not authorized for restricted label '$LABEL' — removing."
+          gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+          gh issue comment "$NUMBER" --repo "$REPO" --body \
+            "@$ACTOR the \`$LABEL\` label is maintained by the intake harness and @$org/$AUTHORIZED_TEAM, so I've removed it. If it belongs here, a team member can re-apply it. (Describe the classification in a comment and the harness/maintainer will handle it.)"
