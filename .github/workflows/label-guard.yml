@@ -9,8 +9,11 @@ name: Guard restricted labels
 #
 # Requires a token that can read org team membership (the default GITHUB_TOKEN
 # cannot). Set repo secret ORG_READ_TOKEN (a PAT or GitHub App token with
-# `read:org`). If it is absent, the guard no-ops with a warning rather than
-# removing labels it cannot authorize — so it never misfires before it's configured.
+# `read:org`). If it is absent/expired, the guard FAILS CLOSED: it removes the
+# unverifiable restricted label and fails the run (red CI), so label security can
+# never silently disappear if the token lapses. Trusted automation (the harness
+# bot, github-actions) is exempted before the token check, so a missing token
+# never blocks our own workflows.
 
 on:
   issues:
@@ -92,11 +95,19 @@ jobs:
               ;;
           esac
 
-          # Need org-read to check team membership. If not configured, do not
-          # misfire — warn and stop.
+          # Need org-read to verify team membership (the default GITHUB_TOKEN
+          # cannot). If it's missing/expired/revoked we CANNOT authorize the
+          # actor — so fail CLOSED: remove the (unverifiable) restricted label
+          # and fail the run loudly, rather than silently leaving label security
+          # disabled with a green check. Set the ORG_READ_TOKEN secret to enable
+          # verification. (Trusted automation was already exempted above, so a
+          # missing token never blocks the harness bot or our own workflows.)
           if [ -z "${ORG_READ_TOKEN:-}" ]; then
-            echo "::warning::ORG_READ_TOKEN not set — cannot verify team membership; leaving '$LABEL' by $ACTOR untouched."
-            exit 0
+            echo "::error::ORG_READ_TOKEN not set — cannot verify membership; removing '$LABEL' by $ACTOR and failing closed."
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+            gh issue comment "$NUMBER" --repo "$REPO" --body \
+              "@$ACTOR the \`$LABEL\` label is maintained by @${REPO%%/*}/$AUTHORIZED_TEAM. I couldn't verify authorization (label-guard is missing its \`ORG_READ_TOKEN\`), so I removed it to fail safe. A maintainer can re-apply it and should restore the token." || true
+            exit 1
           fi
 
           org="${REPO%%/*}"
