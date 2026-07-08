@@ -4,12 +4,15 @@ name: Notify Slack on triaged feedback
 # the notification carries the real type / area / severity / fit — not the bare
 # needs-triage + ai-intake an issue has at open time.
 #
-# "Enriched" fires on either hand-off signal from the harness
-# (.harness/ISSUE_INTAKE_STANDARDS.md step 6):
-#   - needs-triage removed  → classified & ready for a maintainer, or
-#   - needs-human added     → escalated for a human decision.
-# The severity:blocker / severity:major header highlighting is meaningful here
-# because the severity label now exists by this point.
+# "Finished" fires on the harness's completion signals
+# (.harness/ISSUE_INTAKE_STANDARDS.md step 6), which hold at EVERY authority tier:
+#   - ai-intake removed  → the harness completed a pass (it always removes its own
+#                          trigger label when done), or
+#   - needs-human added  → escalated for a human decision.
+# Keying on ai-intake removal (rather than needs-triage removal) means the
+# notification also fires at the default `assist` tier, which leaves needs-triage
+# for a human. severity/type/fit labels exist by this point, so the header
+# highlighting is meaningful.
 #
 # Setup: add a repo secret SLACK_WEBHOOK_URL (a Slack incoming webhook URL).
 # If the secret is absent the job no-ops (so forks / dry runs don't fail).
@@ -31,9 +34,10 @@ concurrency:
 
 jobs:
   notify:
-    # Only when the harness hands off: needs-triage removed, or needs-human added.
+    # Only when the harness hands off: it removed its own ai-intake trigger label
+    # (a pass completed, at any tier), or it escalated with needs-human.
     if: >-
-      (github.event.action == 'unlabeled' && github.event.label.name == 'needs-triage') ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'ai-intake') ||
       (github.event.action == 'labeled'   && github.event.label.name == 'needs-human')
     runs-on: ubuntu-latest
     timeout-minutes: 5

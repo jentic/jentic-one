@@ -19,8 +19,11 @@ The fastest way to help is to tell us what broke, confused you, or is missing.
    - 💡 **Request or feedback** — a feature, an improvement, a rough idea, a pain
      point (friction/confusion during real use), or a docs gap. One form covers all
      of these — you don't need to categorize it.
-3. **Fill in the template.** Only the first field is required — but concrete beats
-   vague: exact commands, exact errors, what you expected vs. what happened.
+3. **Fill in the template.** Only the first text field is required — but concrete
+   beats vague: exact commands, exact errors, what you expected vs. what happened.
+   You'll also tick a couple of quick confirmations to submit (you searched for a
+   duplicate, removed any secrets, and accept the
+   [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md)).
 4. **Redact secrets** — never paste API keys, tokens, OAuth secrets, or passwords.
    Replace them with `***`.
 5. **Security vulnerabilities do not go here** — follow
@@ -34,7 +37,7 @@ issue, an **automated intake assistant** reads it and, in one pass:
 
 - **classifies** it (type + which part of the product it touches),
 - **scores** it for product fit and feasibility,
-- **prioritizes** it (severity), and
+- **prioritizes** it (severity, for bugs and pain points), and
 - **checks for duplicates**.
 
 If something important is missing, the assistant will **comment and @-mention you**

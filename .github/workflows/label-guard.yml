@@ -79,16 +79,22 @@ jobs:
           fi
 
           # Bot identities that are always allowed: the harness, and our own
-          # workflows acting as github-actions.
+          # Bot identities that are always allowed: the harness (whether it acts as
+          # a plain login or a GitHub App "<name>[bot]" identity), and our own
+          # workflows acting as github-actions. The [bot] forms are quoted so the
+          # brackets are matched literally, not as a glob character class.
           case "$ACTOR" in
-            "$HARNESS_BOT"|github-actions|github-actions[bot])
+            "$HARNESS_BOT"|"${HARNESS_BOT}[bot]"|"github-actions"|"github-actions[bot]")
               echo "Applied by trusted automation ($ACTOR) — allowed."
               exit 0
               ;;
           esac
 
-          # Guard against a malformed/empty actor before using it in an API path.
-          case "$ACTOR" in
+          # Guard against a malformed actor before using it in an API path. Allow
+          # the GitHub App bot suffix "<name>[bot]" (only the "<name>" part is used
+          # for the org-membership lookup below).
+          member_login="${ACTOR%\[bot\]}"
+          case "$member_login" in
             ""|*[!A-Za-z0-9-]*)
               echo "::warning::Unexpected actor login '$ACTOR' — leaving '$LABEL' untouched."
               exit 0
@@ -111,9 +117,10 @@ jobs:
           fi
 
           org="${REPO%%/*}"
-          # 200 => active member of the team; 404 => not a member.
+          # 200 => active member of the team; 404 => not a member. Use the
+          # [bot]-stripped login for the membership lookup.
           status=$(GH_TOKEN="$ORG_READ_TOKEN" gh api \
-            "orgs/$org/teams/$AUTHORIZED_TEAM/memberships/$ACTOR" \
+            "orgs/$org/teams/$AUTHORIZED_TEAM/memberships/$member_login" \
             --jq '.state' 2>/dev/null || echo "none")
 
           if [ "$status" = "active" ]; then

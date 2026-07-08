@@ -43,8 +43,15 @@ env:
 
 jobs:
   guard:
-    # Only police actions taken BY the harness bot.
-    if: github.event.sender.login == 'jentic-harness'
+    # Only police actions taken BY the harness bot — whether it authenticates as a
+    # plain login or a GitHub App "<name>[bot]" identity.
+    # IMPORTANT: this login must match the harness's real authenticated identity.
+    # If it doesn't, this guard silently never runs and the enforcement it provides
+    # disappears with a green check — keep HARNESS_BOT/this value in sync with the
+    # platform's actual bot identity.
+    if: >-
+      github.event.sender.login == 'jentic-harness' ||
+      github.event.sender.login == 'jentic-harness[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -117,8 +124,10 @@ jobs:
               gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:OFF_TOPIC,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
               violation="posted an unmarked comment"
             else
+              # Count marked intake comments by the marker alone (robust to whether
+              # the harness posts as "<name>" or "<name>[bot]").
               existing=$(gh api "repos/$REPO/issues/$NUMBER/comments" \
-                --jq "[.[] | select(.user.login==\"$HARNESS_BOT\") | select(.body | contains(\"<!-- jentic-intake -->\")) ] | length" 2>/dev/null || echo 0)
+                --jq "[.[] | select(.body | contains(\"<!-- jentic-intake -->\")) ] | length" 2>/dev/null || echo 0)
               if [ "${existing:-0}" -gt 1 ]; then
                 echo "::error::Harness posted a second intake comment — hiding it."
                 gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:DUPLICATE,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
