@@ -26,15 +26,21 @@ concurrency:
 env:
   # Team (org members of this team may apply restricted labels).
   AUTHORIZED_TEAM: staff
-  # Bot identity the harness uses — always allowed.
+  # Bot identities always allowed: the harness itself, and github-actions (the
+  # default token used by our own workflows, e.g. issue-intake-label applying
+  # ai-intake and the followup clearing status labels).
   HARNESS_BOT: jentic-harness
   # Space-separated exact labels + glob prefixes that are restricted.
-  # (Everything the harness manages: type, area:*, severity:*, fit:*,
-  # feasibility:*, and the human-authority status labels.)
+  # Everything the harness manages (type, area:*, severity:*, fit:*, feasibility:*)
+  # + human-authority status labels + the security label (route via needs-human /
+  # SECURITY.md, never hand-applied) + the AI trigger labels that launch the
+  # privileged code-executing agents (ai-implement / ai-review) — those must never
+  # be applied by a non-member, since they can lead to code execution.
   RESTRICTED: >-
     bug enhancement pain-point idea documentation question
     area:* severity:* fit:* feasibility:*
-    confirmed needs-human duplicate wontfix invalid
+    confirmed needs-human duplicate wontfix invalid security
+    ai-implement ai-review ai-review-and-trigger-implement
 
 jobs:
   guard:
@@ -52,22 +58,39 @@ jobs:
           set -euo pipefail
 
           # Is the applied label restricted? (exact match or glob prefix)
+          # Disable filename globbing (set -f) so the unquoted $RESTRICTED words
+          # are NOT expanded against the working directory — otherwise a pattern
+          # like `area:*` could vanish or mutate, silently letting the guard
+          # fail OPEN (leave a restricted label unguarded).
           is_restricted=false
+          set -f
           for pat in $RESTRICTED; do
             case "$LABEL" in
               $pat) is_restricted=true; break ;;
             esac
           done
+          set +f
           if [ "$is_restricted" != true ]; then
             echo "Label '$LABEL' is not restricted — nothing to do."
             exit 0
           fi
 
-          # The harness bot is always allowed.
-          if [ "$ACTOR" = "$HARNESS_BOT" ]; then
-            echo "Applied by harness bot ($ACTOR) — allowed."
-            exit 0
-          fi
+          # Bot identities that are always allowed: the harness, and our own
+          # workflows acting as github-actions.
+          case "$ACTOR" in
+            "$HARNESS_BOT"|github-actions|github-actions[bot])
+              echo "Applied by trusted automation ($ACTOR) — allowed."
+              exit 0
+              ;;
+          esac
+
+          # Guard against a malformed/empty actor before using it in an API path.
+          case "$ACTOR" in
+            ""|*[!A-Za-z0-9-]*)
+              echo "::warning::Unexpected actor login '$ACTOR' — leaving '$LABEL' untouched."
+              exit 0
+              ;;
+          esac
 
           # Need org-read to check team membership. If not configured, do not
           # misfire — warn and stop.

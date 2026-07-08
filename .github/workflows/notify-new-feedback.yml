@@ -140,6 +140,9 @@ jobs:
           fi
 
           # Build the Slack Block Kit payload with jq so all fields are escaped.
+          # Untrusted issue title/body are rendered as PLAIN TEXT (not mrkdwn) so
+          # an attacker can't smuggle a clickable <url|link> or markup into the
+          # channel. Only the trusted issue URL is a link.
           payload=$(jq -n \
             --arg header "$header_text" \
             --arg title "$TITLE" \
@@ -147,14 +150,15 @@ jobs:
             --arg author "$AUTHOR" \
             --arg labels "$labels_fmt" \
             --arg summary "$summary" \
+            --arg number "$NUMBER" \
             '{
               blocks: [
                 { type: "header", text: { type: "plain_text", text: $header, emoji: true } },
-                { type: "section", text: { type: "mrkdwn", text: ("*<" + $url + "|" + $title + ">*") } },
-                { type: "section", text: { type: "mrkdwn", text: $summary } },
+                { type: "section", text: { type: "plain_text", text: $title, emoji: false } },
+                { type: "section", text: { type: "plain_text", text: $summary, emoji: false } },
                 { type: "section", text: { type: "mrkdwn", text: ("*Labels:*\n" + $labels) } },
                 { type: "context", elements: [
-                    { type: "mrkdwn", text: ("Filed by *" + $author + "*") }
+                    { type: "mrkdwn", text: ("Filed by *" + $author + "* · <" + $url + "|View issue #" + $number + ">") }
                 ] }
               ]
             }')
