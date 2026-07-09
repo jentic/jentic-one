@@ -34,7 +34,9 @@ remote server) is detected.
 > trigger → auto execution (what mini did), (3) Release PR → review + optional edit
 > (proposed). Editing the changelog is *optional* in (3) — you can merge as-is. For a
 > self-hosted product with DB migrations, the extra review gate is cheap insurance.
-> **DECISION:** pick (2) mini-style manual-trigger, or (3) release-please Release PR.
+> **DECIDED: (3) release-please Release PR**, operated leniently (merge as-is when no
+> edit is needed — effectively mini's "deliberate human trigger + automatic execution,"
+> plus an optional pre-ship notes edit). See "Cutting a release & editing the changelog".
 
 ## What happens after the GitHub Release
 
@@ -70,6 +72,33 @@ periodically checks the GitHub Releases API and exposes the latest version on `/
 CLI and UI read it and passively nudge "vX.Y.Z available," and the CLI also warns if its
 version differs from the remote server it targets. Pure read, sends no data, default-on with
 one flag off, silenced by `--offline`.
+
+## Cutting a release & editing the changelog
+
+**How a release is cut (the human step):** release-please keeps a standing **Release PR**
+(`chore(main): release X.Y.Z`) that it updates as commits land. **Merging that PR *is* the
+release** — it's the deliberate "release now" gate (the equivalent of clicking mini's
+`workflow_dispatch` button, just expressed as merging a PR). Nothing publishes until you
+merge.
+
+**Editing the changelog before it ships:** the Release PR's diff **is** the `CHANGELOG.md`
+update, so "a place to edit the changelog" = **editing that file in the Release PR** —
+GitHub's web file editor (a real textarea with markdown preview) or a commit to the PR
+branch. Reword, restructure, or leave it as-is, then merge. It's version-controlled and
+reviewable like any PR.
+
+- **Editing is optional** — merge as-is when the generated notes are fine (that's the
+  mini-equivalent zero-edit flow).
+- **The Release PR is public** — normal for OSS and safe: it contains only what's already
+  in public `main` (merged commits + the derived changelog). It doubles as a transparent
+  "what's in the next release" preview. Hold the merge if you want to time an announcement.
+- **Best fit for an engineer/maintainer editor.** If release notes are ever owned by a
+  non-engineer, the GitHub Release page's notes textarea is an editable (post-publish)
+  fallback; a per-PR "news fragment" tool (changesets/towncrier) is the higher-effort
+  option we're **not** adopting at beta since Conventional-Commit titles already feed
+  decent notes.
+- **Operator upgrade notes are separate** — the Release PR edits the *developer* changelog;
+  "what you must DO on upgrade" lives in `UPGRADING.md` (see the changelog detail foldout).
 
 ## Why now (the gap)
 
