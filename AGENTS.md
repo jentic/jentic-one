@@ -1,5 +1,10 @@
 # AGENTS.md
 
+> **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
+> Otherwise use the guidance below.
+
+## In-repo guidance
+
 This repo's agent guidance lives in **[`CLAUDE.md`](CLAUDE.md)**. Read it first.
 
 It covers the quick start, commands, project layout (backend + `ui/` frontend),
@@ -19,17 +24,4 @@ Key conventions, in one breath:
   (`alwaysApply`).
 
 When `CLAUDE.md` and this file disagree, `CLAUDE.md` wins.
-
-## Rules source (read `.rules/` if present)
-
-The full development rules live in the internal `jentic-one-rules` repo. If a
-read-only clone is present at `.rules/` in this repo (or `JENTIC_RULES_DIR` is
-set), **treat that as the authoritative, complete rule set** and follow its
-guidance (`.rules/rules/**/*.md`) in addition to `CLAUDE.md`.
-
-If `.rules/` is absent (the common case for a public clone), fall back to the
-in-repo guidance here + `CLAUDE.md`; the architecture tests still self-enforce
-the machine-checkable subset via the vendored facts in
-[`tests/arch/vendored/`](tests/arch/vendored/). No setup is required either way —
-this is a read-if-present rule, not a step to perform.
 
