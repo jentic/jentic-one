@@ -56,4 +56,4 @@ if [[ -d "${RULES_DIR}" ]]; then
     echo "JENTIC_RULES_DIR=${RULES_DIR}" >>"${HARNESS_ENV_FILE}"
 fi
 
-echo "ready
+echo "ready"
