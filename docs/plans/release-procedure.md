@@ -22,17 +22,19 @@ Release; the tag then publishes the **prebuilt, signed CLI binaries** (the insta
 and UI passively check `/health` to nudge when a newer version (or a version-skewed
 remote server) is detected.
 
-> **Note — this is a deliberate change from jentic-mini.** mini used **semantic-release**,
-> the *fully automatic* model: every qualifying merge to `main` shipped a release
-> immediately (version + notes + tag + GitHub Release), with **no human gate and no
-> changelog editing**. release-please is the **gated** model: a standing Release PR you
-> **approve** (and *may* edit the changelog on) before it ships. It's normal and common
-> (it's release-please's design), and the trade-off is deliberate: for a self-hosted
-> product where a bad release hits operators — and runs DB migrations — a human "bless
-> each release" step is safer than auto-ship, at the cost of one extra click. Editing the
-> changelog is *optional* (you can merge the Release PR as-is). If the team prefers mini's
-> zero-touch flow, release-please can be configured more automatically — but the gate is
-> recommended here. **DECISION:** confirm we want the gated model over auto-ship.
+> **Note — how this compares to jentic-mini.** mini used **semantic-release**, but *not*
+> the usual push-to-main auto-ship: its `release.yml` triggered on **`workflow_dispatch`
+> only** — a human clicked "Run workflow" to release, and semantic-release then did the
+> rest automatically (compute version from commits, generate notes, tag, publish GitHub
+> Release, push image). So mini was **manually triggered, then fully automatic**: a human
+> chose *when*, but there was **no review/edit of the result** — it shipped whatever the
+> commits produced. release-please's **Release PR** model adds one more control: a human
+> chooses when *and* can **review/edit the changelog** before it ships. So the three
+> points on the spectrum are: (1) auto on merge (semantic-release default), (2) manual
+> trigger → auto execution (what mini did), (3) Release PR → review + optional edit
+> (proposed). Editing the changelog is *optional* in (3) — you can merge as-is. For a
+> self-hosted product with DB migrations, the extra review gate is cheap insurance.
+> **DECISION:** pick (2) mini-style manual-trigger, or (3) release-please Release PR.
 
 ## What happens after the GitHub Release
 
@@ -307,11 +309,12 @@ On the release-please tag (via App token — `GITHUB_TOKEN`, and `on: release`, 
 <details>
 <summary><b>Detail: what jentic-mini did (proven prior art)</b></summary>
 
-Node **semantic-release**, push-to-`main`: analyze commits → notes → stamp `pyproject.toml` +
+Node **semantic-release**, triggered **manually via `workflow_dispatch`** (not on push):
+a human ran the Release workflow → analyze commits → notes → stamp `pyproject.toml` +
 `Dockerfile` → commit `chore(release): cut X.Y.Z` + tag → publish GitHub Release → trigger
 `docker-publish.yml` → `ghcr.io/jentic/jentic-mini`, bridged by the `ARAZZO_BUILDER_APP_ID`
-App token. Removed in the OSS scrub. We're re-establishing a proven model, adapted to the
-polyglot-friendly release-please.
+App token. Manual trigger, automatic execution, no changelog review. Removed in the OSS
+scrub. We're re-establishing a proven model, adapted to the polyglot-friendly release-please.
 
 </details>
 
