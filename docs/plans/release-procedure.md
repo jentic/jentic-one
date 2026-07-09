@@ -333,7 +333,39 @@ On the release-please tag (via App token — `GITHUB_TOKEN`, and `on: release`, 
 
 - **Migrations (~65, forward-only, "data unrecoverable"):** upgrade **one minor at a time**; rollback = restore backup + pin previous tag; **backup is a required pre-upgrade step**; define a hotfix flow (`release-0.X` branch → patch tag).
 - **Governance:** protect the Release PR (merging it *is* the ship action); confirm release-please/bot commits satisfy DCO; add a "Releases" section to `CONTRIBUTING.md`; reconcile the git-conventions "auto-generated changelog" wording.
-- **Housekeeping:** fix the 3-way version drift; local-only cleanup of `v0.*` + `backup/*` tags (don't confuse release-please — hygiene only); **decide the fate of the orphaned `ghcr.io/jentic/jentic-mini` GHCR package** (pre-rename, pre-scrub, public — delete vs. deprecate; needs an org owner / `delete:packages` token; note GHCR's 30-day restore window and that already-pulled copies persist, so treat any scrubbed secrets as rotate-not-just-delete — *pending research recommendation*); add `VERSIONING.md`; the stale `broker.jentic.ai` default in `skillgen/content/jentic.md` vs the real `127.0.0.1:8100`.
+- **Housekeeping:** fix the 3-way version drift; local-only cleanup of `v0.*` + `backup/*` tags (don't confuse release-please — hygiene only); **retire the orphaned `ghcr.io/jentic/jentic-mini` GHCR package** (see below); add `VERSIONING.md`; the stale `broker.jentic.ai` default in `skillgen/content/jentic.md` vs the real `127.0.0.1:8100`.
+
+<details>
+<summary><b>Detail: retiring the orphaned `jentic-mini` GHCR package</b></summary>
+
+`ghcr.io/jentic/jentic-mini` is public + anonymously pullable with tags `0.2.0`…`0.9.x`
+(+ `latest`/`unstable`) — a pre-rename, **pre-OSS-scrub** orphan. The normal rename
+playbook is *deprecate, don't delete* (Docker Official Images, Mithril, Bitnami all leave
+old images pullable with a tombstone). **But the pre-scrub content flips that default: when
+published artifacts may contain material we later removed, prompt removal + secret rotation
+is the accepted security posture** — and the image's low-usage/pre-1.0 nature makes the
+deletion blast radius small.
+
+**Plan (order matters):**
+
+1. **Rotate first (non-negotiable).** Audit the layers (`docker history --no-trunc`, `dive`)
+   for any secret/credential/private content ever baked in, and **rotate/revoke each** —
+   deleting the image does **not** un-leak anything already pulled (copies persist in CI
+   caches, laptops, backups); rotation is the only real fix.
+2. **(Optional, short) grace:** flip the package **Private** for a few days to catch
+   surprise consumers reversibly (public→private is UI-only, not API). Skip it to close the
+   exposure immediately.
+3. **Delete the whole package** (not just old versions): UI Danger Zone → Delete, or
+   `DELETE /orgs/jentic/packages/container/jentic-mini` with a `read:packages` +
+   `delete:packages` token. **30-day restore** window is the safety net.
+4. **Rename note** in the `jentic-one` README ("formerly `jentic-mini`; old images removed —
+   use `ghcr.io/jentic/jentic-one`").
+5. **Do not republish under `jentic-mini`** — cut cleanly to the new name.
+
+> Blocked on access: needs an org owner (UI) or a `delete:packages` token — the current
+> working token has only `gist, read:org, repo`.
+
+</details>
 
 </details>
 
@@ -405,4 +437,11 @@ verify before treating any as load-bearing — some are point-in-time blog posts
 **Supply chain (for when images ship)**
 - cosign / keyless signing: <https://docs.sigstore.dev/cosign/signing/signing_with_containers/>
 - SLSA build provenance (`actions/attest-build-provenance`): <https://github.com/actions/attest-build-provenance>
+
+**Retiring an orphaned/renamed package**
+- GHCR delete/restore (30-day window, scopes): <https://docs.github.com/en/packages/learn-github-packages/deleting-and-restoring-a-package>
+- GHCR package visibility (public↔private): <https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility>
+- Deprecate-don't-delete norm — Docker Official Images deprecation: <https://github.com/docker-library/official-images/pull/16999> · Mithril rename (images stay pullable): <https://github.com/input-output-hk/mithril>
+- Secrets baked into image layers → rotate (deleting doesn't un-leak): <https://trufflesecurity.com/blog/how-secrets-leak-out-of-docker-images> · GitHub "remove sensitive data → rotate the secret first": <https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository>
+- OCI has no redirect/tombstone (deleted pulls 404): <https://github.com/opencontainers/distribution-spec>
 
