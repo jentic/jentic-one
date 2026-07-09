@@ -51,7 +51,7 @@ if [[ ! -d "${RULES_DIR}" ]]; then
     fi
 fi
 
-Export the mount so subsequent harness steps inherit it
+# Export the mount so subsequent harness steps inherit it
 if [[ -d "${RULES_DIR}" ]]; then
     echo "JENTIC_RULES_DIR=${RULES_DIR}" >>"${HARNESS_ENV_FILE}"
 fi
