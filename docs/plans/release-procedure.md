@@ -125,6 +125,34 @@ If a genuine "embed the server as a library" use case appears later, a wheel can
 revisited then — but it is **not** the beta install path, and the docs should point
 users at the CLI.
 
+## Installing jentic-one (the two steps)
+
+The user-facing install is two commands, which is **normal and idiomatic** for
+self-hosted infra (Supabase, Temporal, Fly.io, Dagger all work this way):
+
+```bash
+brew install jentic       # 1 · install the CLI (or: curl | sh that downloads the binary)
+jenticctl install         # 2 · the wizard: generate config, migrate the DB, start the server
+```
+
+**Why two steps:** they do different jobs. Step 1 (package manager) puts the *tool* on
+your machine; step 2 (`jenticctl install`, the wizard) uses that tool to set up and run
+the *product*. Step 2 can't exist before step 1 delivers the `jenticctl` command.
+
+Things to get right so this isn't confusing:
+
+- **The Homebrew formula must ship BOTH binaries** — `jentic` (client) *and* `jenticctl`
+  (installer/operator). GoReleaser's Homebrew support handles multi-binary formulas.
+  Otherwise `brew install jentic` wouldn't give you `jenticctl` and step 2 would fail.
+- **`install` still needs a runtime underneath** — the wizard sets things up, but the
+  server runs via the local venv (needs `uv`) or Docker (needs Docker). "Two commands"
+  is the *interface*; the machine still needs the chosen runtime (the dependency-light
+  path is local venv + SQLite).
+- **Naming friction (`jentic` package vs `jenticctl` command):** minor, and a
+  well-trodden split (`kubectl`/`kubeadm`, `docker`/`dockerd`). If we ever want to remove
+  it, the alternative is a single binary with subcommands (`jentic install`) instead of
+  two binaries — noted, not proposed for beta.
+
 ## CLI as a remote client (the VPC / different-host case)
 
 The `jentic` CLI is **already a standalone HTTP client**: a separate Go module, no Python
