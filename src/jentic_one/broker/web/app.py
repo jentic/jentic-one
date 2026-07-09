@@ -33,6 +33,7 @@ from jentic_one.shared.resilience import CircuitBreaker, RateLimiter
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.tracing import instrument_outbound_client
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
 
 
@@ -51,8 +52,17 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
     ]
 
 
-def create_app(ctx: Context) -> FastAPI:
-    """Create the broker FastAPI application for standalone deployment."""
+def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
+    """Create the broker FastAPI application for standalone deployment.
+
+    ``container`` is the DI seam: when omitted the default is used and behavior is
+    unchanged. A caller passes its own container to inject a ``Broker`` — it is
+    threaded to :func:`create_surface_app`, which sets ``app.state.broker`` and
+    ``app.state.broker_factory`` so the injected broker reaches BOTH the sync
+    router and the async worker (the worker's ``PipelineExecutor`` reads
+    ``broker_factory`` in ``broker_lifespan`` below).
+    """
+    container = container or AppContainer.default(ctx)
     resilience = ctx.config.broker.resilience
     upstream_cfg = resilience.upstream
     meter = get_meter("broker")
@@ -186,6 +196,7 @@ def create_app(ctx: Context) -> FastAPI:
         title="jentic-one-broker",
         routers=_routers(readiness_saturation_threshold=resilience.readiness_saturation_threshold),
         extra_lifespan=broker_lifespan,
+        container=container,
     )
     # One admission gate shared by the shedding middleware and the readiness
     # probe (§05 R5.2), so both observe the same in-flight counter.

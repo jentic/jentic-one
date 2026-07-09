@@ -389,8 +389,13 @@ def create_surface_app(
         app.state.broker_factory = lambda _runner: container.broker
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
-    for extra_router, _extra_prefix, extra_tags in container.extra_routers:
-        app.include_router(extra_router, tags=list(extra_tags), responses=COMMON_ERROR_RESPONSES)
+    for extra_router, extra_prefix, extra_tags in container.extra_routers:
+        app.include_router(
+            extra_router,
+            prefix=extra_prefix,
+            tags=list(extra_tags),
+            responses=COMMON_ERROR_RESPONSES,
+        )
     for installer in container.extra_installers:
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
