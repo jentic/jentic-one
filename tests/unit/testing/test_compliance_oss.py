@@ -53,3 +53,4 @@ def test_oss_default_broker_complies() -> None:
     compliance = _DefaultBrokerCompliance()
     compliance.test_is_broker()
     compliance.test_execute_signature()
+    compliance.test_execute_streaming_signature()

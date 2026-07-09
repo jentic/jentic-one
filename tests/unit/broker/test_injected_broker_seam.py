@@ -10,8 +10,8 @@ This exercises the real selection code on both sides with one shared spy broker:
 - **Wiring**: an :class:`AppContainer` with a broker stashes it on
   ``app.state.broker`` for both ``create_surface_app`` and ``create_combined_app``
   (the source the sync router's ``_handle`` reads).
-- **Sync path**: ``_handle``'s inline selection prefers ``app.state.broker`` over
-  the per-request ``broker_factory`` default.
+- **Sync path**: ``_resolve_broker`` (the helper ``_handle`` uses) prefers
+  ``app.state.broker`` over the per-request ``broker_factory`` default.
 - **Async path**: ``PipelineExecutor`` built with an injected ``broker_factory``
   runs the injected broker through ``run_execution`` (verified end-to-end via a
   real in-memory execution against an ``AsyncMock`` session — the session is a
@@ -23,22 +23,31 @@ signature elsewhere); here we only assert *it was the one invoked*.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import Response
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest as BrokerRunnerRequest
-from jentic_one.broker.adapters.runners.base import RunnerResult, UpstreamRunner
+from jentic_one.broker.adapters.runners.base import (
+    RunnerResult,
+    StreamingUpstreamRunner,
+    UpstreamRunner,
+)
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.services.execution.executor import PipelineExecutor
+from jentic_one.broker.web.routers.execute import _resolve_broker
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.execution import (
     ExecutionContext,
     ExecutionOutcome,
     RunnerRequest,
+    StreamingOutcome,
 )
 from jentic_one.shared.broker.execution import RunnerResult as SharedRunnerResult
+from jentic_one.shared.broker.schemas import ExecuteRequestContext
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.protocols import UpstreamExecRequest
@@ -64,6 +73,18 @@ class _SpyBroker:
             ),
             context=context,
         )
+
+    async def execute_streaming(
+        self,
+        runner: StreamingUpstreamRunner,
+        request: RunnerRequest,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Callable[[StreamingOutcome], Awaitable[None]] | None = None,
+    ) -> Response:  # pragma: no cover - selection tests never invoke it
+        return Response(content=b"spy-stream", status_code=200)
 
 
 class _NoopRunner(UpstreamRunner):
@@ -109,10 +130,12 @@ def test_default_container_leaves_broker_unset(ctx: Context) -> None:
 
 
 def test_sync_path_selection_prefers_injected_broker() -> None:
-    """The exact selection ``_handle`` performs: injected instance wins over factory.
+    """The real selection helper ``_handle`` uses: injected instance wins over factory.
 
-    Mirrors ``broker/web/routers/execute.py`` — an injected ``app.state.broker``
-    is used verbatim; only its absence falls back to ``broker_factory(runner)``.
+    Calls ``broker/web/routers/execute.py::_resolve_broker`` directly (not a
+    copy) so this test tracks the production logic — an injected
+    ``app.state.broker`` is used verbatim; only its absence falls back to
+    ``broker_factory(runner)``.
     """
     spy = _SpyBroker()
     default_factory_called = False
@@ -122,16 +145,30 @@ def test_sync_path_selection_prefers_injected_broker() -> None:
         default_factory_called = True
         return _SpyBroker()
 
-    state = MagicMock()
-    state.broker = spy
-    state.broker_factory = _factory
+    request = MagicMock()
+    request.app.state.broker = spy
+    request.app.state.broker_factory = _factory
 
-    injected = getattr(state, "broker", None)
-    broker_factory = getattr(state, "broker_factory", _factory)
-    selected = injected if injected is not None else broker_factory(_NoopRunner())
-
-    assert selected is spy
+    assert _resolve_broker(request, _NoopRunner()) is spy
     assert default_factory_called is False
+
+
+def test_sync_path_selection_falls_back_to_factory_when_unset() -> None:
+    """With ``broker=None`` the per-request factory is used (fallback branch)."""
+    made = _SpyBroker()
+    factory_called = False
+
+    def _factory(_runner: UpstreamRunner) -> Broker:
+        nonlocal factory_called
+        factory_called = True
+        return made
+
+    request = MagicMock()
+    request.app.state.broker = None
+    request.app.state.broker_factory = _factory
+
+    assert _resolve_broker(request, _NoopRunner()) is made
+    assert factory_called is True
 
 
 @pytest.mark.asyncio

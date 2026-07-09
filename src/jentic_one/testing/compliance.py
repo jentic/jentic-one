@@ -86,3 +86,6 @@ class BaseBrokerComplianceTest:
 
     def test_execute_signature(self) -> None:
         assert_signature_matches(type(self.broker_factory()), Broker, "execute")
+
+    def test_execute_streaming_signature(self) -> None:
+        assert_signature_matches(type(self.broker_factory()), Broker, "execute_streaming")

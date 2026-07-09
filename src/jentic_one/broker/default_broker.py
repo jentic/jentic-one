@@ -8,8 +8,20 @@ that delegates to a ``DefaultBroker`` for the standard path).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
+from fastapi import Response
+
 from jentic_one.broker.services.execution.pipeline import BrokerExecutionPipeline
-from jentic_one.shared.broker.execution import ExecutionContext, ExecutionOutcome, RunnerRequest
+from jentic_one.broker.web.streaming import open_streaming_response
+from jentic_one.shared.broker.execution import (
+    ExecutionContext,
+    ExecutionOutcome,
+    RunnerRequest,
+    StreamingOutcome,
+    StreamingUpstreamRunner,
+)
+from jentic_one.shared.broker.schemas import ExecuteRequestContext
 
 
 class DefaultBroker:
@@ -20,3 +32,22 @@ class DefaultBroker:
 
     async def execute(self, request: RunnerRequest, context: ExecutionContext) -> ExecutionOutcome:
         return await self._pipeline.execute(request, context)
+
+    async def execute_streaming(
+        self,
+        runner: StreamingUpstreamRunner,
+        request: RunnerRequest,
+        ctx_req: ExecuteRequestContext,
+        execution_id: str,
+        *,
+        transfer_deadline_s: float,
+        background_callback: Callable[[StreamingOutcome], Awaitable[None]] | None = None,
+    ) -> Response:
+        return await open_streaming_response(
+            runner,
+            request,
+            ctx_req,
+            execution_id,
+            transfer_deadline_s=transfer_deadline_s,
+            background_callback=background_callback,
+        )

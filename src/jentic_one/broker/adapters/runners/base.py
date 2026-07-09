@@ -13,10 +13,15 @@ This module is pure (no transport import) so services can depend on the
 
 from __future__ import annotations
 
-from contextlib import AbstractAsyncContextManager
 from typing import Protocol, runtime_checkable
 
-from jentic_one.shared.broker.execution import RunnerRequest, RunnerResult, StreamingResult
+from jentic_one.shared.broker.execution import (
+    RunnerRequest,
+    RunnerResult,
+    StreamingResult,
+    StreamingUpstreamRunner,
+    UpstreamRunner,
+)
 from jentic_one.shared.broker.protocols import RunnerCapabilities, Verb
 from jentic_one.shared.models.credentials import CredentialType
 
@@ -47,18 +52,6 @@ HTTP_RUNNER_CAPABILITIES = RunnerCapabilities(
     supports_idempotency=True,
     supports_retries=True,
 )
-
-
-@runtime_checkable
-class UpstreamRunner(Protocol):
-    """Executes a single upstream request and returns its verbatim result.
-
-    Decorators (retry/circuit/deadline/idempotency) implement this same protocol
-    and wrap a base runner, so the pipeline composes them without the handler
-    knowing which capabilities are active.
-    """
-
-    async def run(self, request: RunnerRequest) -> RunnerResult: ...
 
 
 @runtime_checkable
@@ -94,19 +87,3 @@ def capabilities_of(runner: UpstreamRunner) -> RunnerCapabilities:
         supports_idempotency=False,
         supports_retries=False,
     )
-
-
-@runtime_checkable
-class StreamingUpstreamRunner(UpstreamRunner, Protocol):
-    """An ``UpstreamRunner`` that can also stream the body without buffering (§08 E2.4).
-
-    ``stream`` is an **async context manager**: it dispatches the request, yields
-    a :class:`StreamingResult` once the status/headers are in, and — critically —
-    holds the upstream ``httpx`` response open only for the duration of the
-    ``async with``. When the context exits (normal completion, size-cap/deadline
-    abort, or a client-disconnect ``CancelledError`` propagating out of the
-    body generator) the upstream stream is ``aclose()``d, releasing the pool slot
-    rather than leaking a zombie background drain.
-    """
-
-    def stream(self, request: RunnerRequest) -> AbstractAsyncContextManager[StreamingResult]: ...

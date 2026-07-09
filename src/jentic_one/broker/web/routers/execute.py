@@ -78,8 +78,9 @@ from jentic_one.broker.web.deps import (
     RuleEvaluatorDep,
     ToolkitDeriver,
 )
-from jentic_one.broker.web.streaming import StreamingOutcome, open_streaming_response
+from jentic_one.broker.web.streaming import StreamingOutcome
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.protocols import (
     RegistryResolverProtocol,
     ResolveResult,
@@ -411,6 +412,20 @@ def _apply_injection(
     return upstream_url, headers
 
 
+def _resolve_broker(request: Request, runner: UpstreamRunner) -> Broker:
+    """Select the broker for this request: an injected instance wins over the default.
+
+    An injected ``app.state.broker`` owns its own transport and is used verbatim;
+    only its absence falls back to the per-request ``broker_factory`` (default:
+    :func:`default_broker`) over the selected runner. Both the buffered and
+    streaming sync paths resolve through here so neither can bypass an injected
+    broker's controls.
+    """
+    injected = getattr(request.app.state, "broker", None)
+    broker_factory = getattr(request.app.state, "broker_factory", default_broker)
+    return injected if injected is not None else broker_factory(runner)
+
+
 async def _handle(
     request: Request,
     method: str,
@@ -567,11 +582,7 @@ async def _handle(
     forwarded = forward_headers(request.headers, auth_headers)
 
     async with ctx.admin_db.transaction() as session:
-        # Prefer an injected Broker instance (it owns its own transport);
-        # otherwise build the DefaultBroker per request over the selected runner.
-        injected = getattr(request.app.state, "broker", None)
-        broker_factory = getattr(request.app.state, "broker_factory", default_broker)
-        broker = injected if injected is not None else broker_factory(runner)
+        broker = _resolve_broker(request, runner)
         outcome = await run_execution(
             ctx_req,
             body=body,
@@ -649,7 +660,8 @@ async def _handle_streaming(
             origin=identity.origin.value,
         )
 
-    return await open_streaming_response(
+    broker = _resolve_broker(request, runner)
+    return await broker.execute_streaming(
         runner,
         runner_request,
         ctx_req,
