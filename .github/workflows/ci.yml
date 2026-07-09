@@ -248,6 +248,9 @@ jobs:
         run: make test-unit
 
       - name: Run architecture tests
+        # CI runs arch tests against the committed VENDORED rules facts
+        # (tests/arch/vendored/*). It never mounts the internal jentic-one-rules
+        # repo — the vendored-facts OSS-safety guard runs here regardless.
         run: make test-arch
 
   test-integration:

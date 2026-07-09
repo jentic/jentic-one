@@ -25,4 +25,16 @@ if [[ "${1:-}" == "--teardown" ]]; then
     exit 0
 fi
 
+# Fetch the internal rules repo (read-only) so harness agents read the full rule
+# guidance while planning/implementing/reviewing, and arch tests run against live
+# facts. Fails soft when the rules repo isn't reachable — the vendored subset
+# under tests/arch still enforces the machine-checkable rules, so the run
+# continues. Export the mount so subsequent harness steps inherit it.
+if bash scripts/rules-clone.sh; then
+    RULES_DIR="$(pwd)/.rules"
+    if [[ -d "${RULES_DIR}" ]]; then
+        echo "JENTIC_RULES_DIR=${RULES_DIR}" >>"${HARNESS_ENV_FILE}"
+    fi
+fi
+
 echo "ready"

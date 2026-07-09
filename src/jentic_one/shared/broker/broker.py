@@ -28,6 +28,12 @@ class Broker(Protocol):
     Neither re-implements the steps. An implementation may wrap or replace the
     default (e.g. a wrapper delegating to a ``DefaultBroker`` for the standard
     path) as long as it honors this contract.
+
+    An injected broker **owns its own transport and resilience** (circuit
+    breaking, connection pooling, retries, bulkheads, timeouts): the built-in
+    resilience stack is applied by the runner that wraps the *default* broker, and
+    both callers use an injected ``Broker`` verbatim. To keep the built-in stack,
+    wrap a ``DefaultBroker`` and delegate to it.
     """
 
     async def execute(

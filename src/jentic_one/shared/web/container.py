@@ -42,6 +42,9 @@ class AppContainer:
     request"). ``extra_routers`` and ``extra_installers`` run against the root app
     *after* the built-in surfaces are wired, so a caller mounts its
     routers/handlers last and never shadows a built-in route.
+
+    An injected ``broker`` owns its own transport + resilience (it opts out of the
+    built-in resilience stack) — see the ``Broker`` protocol docstring.
     """
 
     ctx: Context

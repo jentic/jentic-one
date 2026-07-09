@@ -129,6 +129,21 @@ Tests are split into tiers:
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) with a mandatory scope, enforced repo-wide by a `commit-msg` hook.
 
+### Full development rules (jentic maintainers)
+
+The architecture tests self-enforce against a small vendored subset of facts
+([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone needs nothing
+extra. jentic maintainers with access to the internal `jentic-one-rules` repo can
+pull the **full** rule guidance for local dev / agents:
+
+```bash
+scripts/rules-clone.sh   # read-only clone into .rules/ (gitignored, auto-detected)
+```
+
+Once present, the arch tests and coding agents pick up the live rules
+automatically — no env var needed. If you lack access the script fails soft and
+the vendored subset is used, so external contributors are unaffected.
+
 ## Security & telemetry
 
 - **Credentials stay local.** Stored credentials are encrypted at rest and are only ever decrypted inside the Broker at execution time. They are never returned to callers, logged in cleartext, or exposed to the agent.

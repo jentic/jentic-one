@@ -111,3 +111,9 @@ cli/AGENTS.md
 
 # Local toolchain (Go install for CLI builds)
 .toolchain/
+
+# Private rules clone (jentic-one-rules) fetched by scripts/rules-clone.sh. Read
+# at runtime (auto-detected here, or via JENTIC_RULES_DIR); its full rule prose +
+# facts must NEVER be committed into this public repo. Contributors without access
+# simply fall back to the vendored subset under tests/arch.
+.rules/

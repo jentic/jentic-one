@@ -9,9 +9,14 @@ rules repo mounted) still self-enforces.
 
 Lookup order (first hit wins):
 
-1. ``$JENTIC_RULES_DIR/rules/backend/<name>`` — explicit override (CI).
-2. ``<repo>/../jentic-one-rules/rules/backend/<name>`` — sibling checkout.
-3. ``tests/arch/vendored/<name>`` — committed fallback so a standalone clone
+1. ``$JENTIC_RULES_DIR/rules/backend/<name>`` — explicit override (a mounted or
+   local read-only clone; see ``scripts/rules-clone.sh``).
+2. ``<repo>/.rules/rules/backend/<name>`` — in-repo clone auto-detected with no
+   env var. ``scripts/rules-clone.sh`` clones here by default; ``.rules/`` is
+   gitignored so its private content can never be committed.
+3. ``<repo>/../<sibling>/rules/backend/<name>`` — sibling checkout, where
+   ``<sibling>`` is ``$JENTIC_RULES_SIBLING_NAME`` (default ``jentic-one-rules``).
+4. ``tests/arch/vendored/<name>`` — committed fallback so a standalone clone
    (no rules repo mounted) still self-enforces.
 """
 
@@ -27,6 +32,15 @@ _ARCH_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _ARCH_DIR.parent.parent
 VENDORED_DIR = _ARCH_DIR / "vendored"
 
+#: In-repo (gitignored) mount path that ``scripts/rules-clone.sh`` clones into.
+#: Auto-detected so a dev who runs that script needs no env var at all.
+_IN_REPO_MOUNT = _REPO_ROOT / ".rules"
+
+#: Default name of the sibling rules checkout beside this repo. Overridable via
+#: ``$JENTIC_RULES_SIBLING_NAME`` so the private name isn't the sole load-bearing
+#: reference (forks / mirrors can point elsewhere).
+_DEFAULT_SIBLING_NAME = "jentic-one-rules"
+
 
 def candidate_paths(name: str) -> list[Path]:
     """Return the ordered lookup paths for a rules facts file named *name*."""
@@ -35,7 +49,9 @@ def candidate_paths(name: str) -> list[Path]:
     env = os.environ.get("JENTIC_RULES_DIR")
     if env:
         paths.append(Path(env) / rel)
-    paths.append(_REPO_ROOT.parent / "jentic-one-rules" / rel)
+    paths.append(_IN_REPO_MOUNT / rel)
+    sibling = os.environ.get("JENTIC_RULES_SIBLING_NAME") or _DEFAULT_SIBLING_NAME
+    paths.append(_REPO_ROOT.parent / sibling / rel)
     paths.append(VENDORED_DIR / name)
     return paths
 
