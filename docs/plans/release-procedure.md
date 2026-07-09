@@ -23,6 +23,44 @@ Release; the tag then publishes the **wheel** and **CLI binaries**. Separately, 
 and UI passively check `/health` to nudge when a newer version (or a version-skewed
 remote server) is detected.
 
+## What happens after the GitHub Release
+
+Everything below is triggered *by the tag/Release appearing*. release-please pushes the
+tag using a **GitHub App token** — the default `GITHUB_TOKEN` is deliberately blocked from
+triggering other workflows (loop-prevention), so the App token is what lets the Release
+kick off the publish steps.
+
+```mermaid
+flowchart TD
+    R[release-please: tag vX.Y.Z + GitHub Release<br/>pushed via App token] --> G[1 · CI-on-tag gate<br/>build + migrate on fresh DB + /health]
+    G -->|pass| W[2 · Publish Python wheel → PyPI]
+    G -->|pass| C[3 · GoReleaser → jentic CLI binaries<br/>checksums + cosign + brew, attached to Release]
+    G -->|fail| X[stop — nothing publishes]
+    R -. later, continuous .-> N[server polls GitHub Releases<br/>→ /health exposes latest_version]
+    N --> U[CLI + UI nudge:<br/>update available / version skew]
+```
+
+1. **CI-on-tag gate (safety check before publishing).** Runs on the exact tagged commit:
+   build the app, spin up a **fresh empty DB and run all migrations**, hit `/health`. Today
+   CI only runs on `main`, so the tag itself is untested — and a broken migration is our top
+   risk. If this fails, we stop and **nothing publishes**.
+2. **Publish the Python wheel → PyPI.** Build the wheel and upload via trusted publishing
+   (OIDC, no stored secret). Users can then `pipx`/`uvx install` instead of cloning — this is
+   what makes the no-Docker "venv + SQLite" install easy.
+3. **Publish the `jentic` CLI binaries → GoReleaser.** From the tag, compile the CLI for
+   every OS/arch, produce `checksums.txt` + a **cosign signature**, a **Homebrew** formula,
+   and **attach them to the GitHub Release**. Matters because the CLI is a standalone client
+   an agent runs on a *different host* than the server.
+
+*(The Docker image and Helm chart are deliberately **not** in these steps for beta — deferred
+until their tripwires; see the distribution table.)*
+
+**Separately, a continuous notification loop** (not triggered by the release): the server
+periodically checks the GitHub Releases API and exposes the latest version on `/health`; the
+CLI and UI read it and passively nudge "vX.Y.Z available," and the CLI also warns if its
+version differs from the remote server it targets. Pure read, sends no data, default-on with
+one flag off, silenced by `--offline`.
+
 ## Why now (the gap)
 
 | | |
