@@ -22,6 +22,18 @@ Release; the tag then publishes the **prebuilt, signed CLI binaries** (the insta
 and UI passively check `/health` to nudge when a newer version (or a version-skewed
 remote server) is detected.
 
+> **Note — this is a deliberate change from jentic-mini.** mini used **semantic-release**,
+> the *fully automatic* model: every qualifying merge to `main` shipped a release
+> immediately (version + notes + tag + GitHub Release), with **no human gate and no
+> changelog editing**. release-please is the **gated** model: a standing Release PR you
+> **approve** (and *may* edit the changelog on) before it ships. It's normal and common
+> (it's release-please's design), and the trade-off is deliberate: for a self-hosted
+> product where a bad release hits operators — and runs DB migrations — a human "bless
+> each release" step is safer than auto-ship, at the cost of one extra click. Editing the
+> changelog is *optional* (you can merge the Release PR as-is). If the team prefers mini's
+> zero-touch flow, release-please can be configured more automatically — but the gate is
+> recommended here. **DECISION:** confirm we want the gated model over auto-ship.
+
 ## What happens after the GitHub Release
 
 Everything below is triggered *by the tag/Release appearing*. release-please pushes the
@@ -195,23 +207,38 @@ mechanisms fighting over the same binary is a real footgun — and it exists tod
 a *pre-release artifact* (before brew/releases, rebuild-from-git was the only option, so
 it was simplest to have `update` do both halves).
 
-**The fix (target design):** separate the two concerns.
+**The fix (target design) — validated by how comparable tools resolve this:** the
+binary is owned by whoever installed it, and the CLI respects that. No mature tool
+overwrites a package-manager-managed binary in place. Concretely:
 
-- **The CLI updates itself via its package manager** — `brew upgrade jentic` (or the
-  installer). `jenticctl update` should **stop rebuilding the CLI binary by default**;
-  ideally it **detects the install source** (brew / prebuilt / from-source) and, for a
-  package-managed install, tells the user to use their package manager instead of
-  clobbering it.
+- **The CLI updates itself via its package manager** — `brew upgrade jentic`. `jenticctl
+  update` should **detect the install source** and, when the binary is package-managed,
+  **refuse to swap it** and instead print the exact upgrade command (the `gh` approach —
+  detect + print, don't auto-run `brew`, which dodges the "bottle hasn't landed / brew
+  update skipped" race `flyctl`/`gh` both hit). Detection is ~15 lines: compare
+  `os.Executable()` against `$(brew --prefix)/bin` (copyable from flyctl's
+  `isUnderHomebrew()`), or a build-time `packageManaged` flag stamped by the formula
+  (gh/rustup/deno).
+- **Keep in-place self-update only for the standalone `install.sh` path** — the existing
+  `stageCLIBuild` + `ReplaceBinary` (with `.bak` rollback) is right for curl-installer
+  users; just gate it behind "not package-managed."
 - **`jenticctl update` narrows to the deployed product** — the server/stack + DB
-  migrations, which the package manager genuinely can't manage. That's the thing only
-  the CLI can do.
+  migrations, which the package manager genuinely can't manage. Every stack-managing tool
+  (supabase, fly, gitlab-ctl, sentry) keeps "upgrade the CLI" and "upgrade the managed
+  thing" as separate, differently-owned commands; a single verb that swaps the binary
+  *and* migrates the backend (today's behavior) is the anomaly.
+- **Add a Homebrew `caveats` block** stating that `brew upgrade jentic` updates the CLI
+  and `jenticctl update` upgrades the stack — Homebrew's sanctioned way to set this
+  expectation at install time (there is no `auto_updates` escape hatch for formulae).
 - **Release-aware, not commit-aware:** once tags/releases + prebuilt binaries exist,
   version comparison should use **semver tags** and pull **prebuilt binaries** rather
   than recompiling a branch.
+- **Borrow migration-safety conventions** (gitlab/sentry) for the stack half:
+  one-version-at-a-time / hard-stop enforcement and a `--dry-run` preview, complementing
+  the backup warning `updateStack` already prints.
 
-*(Patterns from comparable tools — how they route "use your package manager" vs.
-self-update, and how they separate updating the CLI from updating the managed
-resource — are summarized under [References](#references--prior-art); pending research.)*
+See [References](#references--prior-art) for the tool-by-tool evidence (gh, gcloud,
+flyctl, rustup, deno, supabase, Homebrew).
 
 ## Decisions needed (sign-off before building)
 
@@ -324,6 +351,16 @@ verify before treating any as load-bearing — some are point-in-time blog posts
 **Update / version notifications**
 - Grafana `check_for_updates` (pull-only, no data sent): <https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#check_for_updates>
 - GitHub Releases API (version source): <https://docs.github.com/en/rest/releases/releases#get-the-latest-release>
+
+**CLI self-update vs. package manager**
+- `gh` — no self-update; prints the package-manager command (design rationale): <https://github.com/cli/cli/issues/166> · build-flag notice: <https://github.com/cli/cli/issues/10242>
+- flyctl `isUnderHomebrew()` (runtime brew-prefix detection, copyable Go): <https://github.com/superfly/flyctl/blob/master/internal/update/update.go>
+- gcloud — component update disabled under a package manager: <https://cloud.google.com/sdk/docs/components>
+- rustup `no-self-update` build: <https://rust-lang.github.io/rustup/basics.html>
+- deno — disable self-upgrade for package-manager installs: <https://github.com/denoland/deno/pull/19910>
+- Homebrew FAQ (evergreen; `auto_updates` is casks-only) + `caveats`: <https://docs.brew.sh/FAQ>
+- Supabase CLI (package-manager-updated; CLI verbs act on the managed stack): <https://supabase.com/docs/guides/local-development/cli/getting-started>
+- Stateful-upgrade safety (one-version-at-a-time / backups): GitLab <https://docs.gitlab.com/update/plan_your_upgrade/> · Sentry <https://develop.sentry.dev/self-hosted/releases/>
 
 **Changelog / release notes**
 - Keep a Changelog: <https://keepachangelog.com/en/1.1.0/>
