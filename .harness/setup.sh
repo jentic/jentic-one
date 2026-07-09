@@ -26,30 +26,34 @@ if [[ "${1:-}" == "--teardown" ]]; then
 fi
 
 # Fetch the internal rules repo (read-only) so harness agents read the full rule
-# guidance. The harness runlet lacks the ssh binary, so we use HTTPS with the
-# injected CI token. Fails soft when the rules repo isn't reachable.
+# guidance. The harness runlet lacks the ssh binary. Instead, the harness
+# injects GITHUB_APP_TOKEN_FILE with a path to a refreshable token we can use.
+# --teardown: harness owns compose lifecycle; nothing to do here.
 echo "[harness] Fetching internal rules repo (jentic-one-rules)..."
 RULES_DIR="$(pwd)/.rules"
 
 if [[ ! -d "${RULES_DIR}" ]]; then
-    # Grab whatever token the harness exposes in the environment
-    TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+    # Grab the token from the harness's secure sidecar file
+    TOKEN=""
+    if [[ -n "${GITHUB_APP_TOKEN_FILE:-}" && -s "${GITHUB_APP_TOKEN_FILE}" ]]; then
+        TOKEN=$(cat "${GITHUB_APP_TOKEN_FILE}")
+    fi
 
     if [[ -n "${TOKEN}" ]]; then
         # Use --quiet so we don't accidentally leak the token URL in trace logs
         if git clone --quiet "https://x-access-token:${TOKEN}@github.com/jentic/jentic-one-rules.git" "${RULES_DIR}"; then
             echo "[harness] rules-clone: Successfully cloned jentic-one-rules."
         else
-            echo "[harness] rules-clone: no access to jentic-one-rules (expected for OSS users)."
+            echo "[harness] rules-clone: failed to clone (expected for OSS users without access)."
         fi
     else
-        echo "[harness] rules-clone: No GITHUB_TOKEN found. Skipping rules repo clone."
+        echo "[harness] rules-clone: No GITHUB_APP_TOKEN_FILE found. Skipping rules repo clone."
     fi
 fi
 
-# Export the mount so subsequent harness steps inherit it
+Export the mount so subsequent harness steps inherit it
 if [[ -d "${RULES_DIR}" ]]; then
     echo "JENTIC_RULES_DIR=${RULES_DIR}" >>"${HARNESS_ENV_FILE}"
 fi
 
-echo "ready"
+echo "ready
