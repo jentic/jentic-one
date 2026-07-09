@@ -11,15 +11,14 @@ flowchart LR
     A[PR merged to main<br/>conventional commit] --> B[release-please<br/>opens/updates Release PR]
     B --> C{maintainer<br/>reviews + edits<br/>CHANGELOG}
     C -->|merge| D[tag vX.Y.Z<br/>+ GitHub Release]
-    D -->|App token| E[Python wheel<br/>PyPI]
-    D --> F[jentic CLI binaries<br/>GoReleaser + brew]
-    D --> G[notes + checksums]
+    D -->|App token| E[GoReleaser: signed jenticctl + jentic<br/>binaries + brew + checksums]
+    D --> G[release notes]
     H[server /health] -. version .-> I[CLI + UI<br/>update / skew nudge]
 ```
 
 **In words:** you already write Conventional Commits and squash-merge. **release-please**
 turns those into a reviewable Release PR; merging it cuts the tag, changelog, and GitHub
-Release; the tag then publishes the **wheel** and **CLI binaries**. Separately, the CLI
+Release; the tag then publishes the **prebuilt, signed CLI binaries** (the install). Separately, the CLI
 and UI passively check `/health` to nudge when a newer version (or a version-skewed
 remote server) is detected.
 
@@ -33,8 +32,7 @@ kick off the publish steps.
 ```mermaid
 flowchart TD
     R[release-please: tag vX.Y.Z + GitHub Release<br/>pushed via App token] --> G[1 · CI-on-tag gate<br/>build + migrate on fresh DB + /health]
-    G -->|pass| W[2 · Publish Python wheel → PyPI]
-    G -->|pass| C[3 · GoReleaser → jentic CLI binaries<br/>checksums + cosign + brew, attached to Release]
+    G -->|pass| C[2 · GoReleaser → signed jenticctl + jentic binaries<br/>checksums + cosign + brew, attached to Release]
     G -->|fail| X[stop — nothing publishes]
     R -. later, continuous .-> N[server polls GitHub Releases<br/>→ /health exposes latest_version]
     N --> U[CLI + UI nudge:<br/>update available / version skew]
@@ -44,13 +42,11 @@ flowchart TD
    build the app, spin up a **fresh empty DB and run all migrations**, hit `/health`. Today
    CI only runs on `main`, so the tag itself is untested — and a broken migration is our top
    risk. If this fails, we stop and **nothing publishes**.
-2. **Publish the Python wheel → PyPI.** Build the wheel and upload via trusted publishing
-   (OIDC, no stored secret). Users can then `pipx`/`uvx install` instead of cloning — this is
-   what makes the no-Docker "venv + SQLite" install easy.
-3. **Publish the `jentic` CLI binaries → GoReleaser.** From the tag, compile the CLI for
-   every OS/arch, produce `checksums.txt` + a **cosign signature**, a **Homebrew** formula,
-   and **attach them to the GitHub Release**. Matters because the CLI is a standalone client
-   an agent runs on a *different host* than the server.
+2. **Publish the CLI binaries → GoReleaser.** From the tag, compile **`jenticctl` + `jentic`**
+   for every OS/arch, produce `checksums.txt` + a **cosign signature**, a **Homebrew** formula,
+   and **attach them to the GitHub Release**. This *is* the install — `jenticctl` holds the
+   setup wizard, and the CLI is also a standalone client an agent runs on a *different host*
+   than the server.
 
 *(The Docker image and Helm chart are deliberately **not** in these steps for beta — deferred
 until their tripwires; see the distribution table.)*
@@ -69,21 +65,65 @@ one flag off, silenced by `--offline`.
 | ❌ We lost | The release automation (jentic-mini's semantic-release pipeline, deleted in the 2026-07-01 OSS scrub) |
 | ⚠️ Result | No versioning/tagging/release/changelog automation; the git-conventions rule still points at an "auto-generated changelog" that no longer exists; **nothing is published anywhere — every install builds from source** |
 
-## Distribution strategy — prebuilt-first, not source-first
+## Distribution strategy — the CLI is the front door
 
-Research across comparable self-hosted OSS (Sentry, PostHog, Supabase, Meilisearch, Plausible)
-is consistent: **nobody's happy path is compile-from-source** — even `git clone` installs
-*pull* prebuilt artifacts; source-build is always the last-resort fallback. So at beta we
-ship the highest-leverage prebuilt artifacts and defer the heavy ones.
+Research across comparable self-hosted OSS (Sentry, PostHog, Supabase, Meilisearch,
+Plausible) and mainstream CLIs (`gh`, `kubectl`, `terraform`, `supabase`, Claude Code)
+is consistent: **the install is a single prebuilt CLI, and nobody's happy path is
+compile-from-source** — source-build is always the last-resort fallback.
+
+For jentic-one that CLI is **`jenticctl`** (with the `install` wizard) — it's already the
+front door today (`curl | sh` → `jenticctl` → wizard sets up config + DB + starts the
+server). The one thing to change is *how the binary is produced*: build **once in CI**
+(prebuilt) instead of **on the user's machine** (from source).
 
 | Artifact | Beta stance | Why |
 | --- | --- | --- |
-| **Python wheel (PyPI)** | **Ship** | Makes the dependency-free "venv + SQLite" install a clean `pipx`/`uvx install`, not a source clone. Highest leverage. |
-| **`jentic` CLI binaries** (GoReleaser + Homebrew) | **Ship** | Table stakes for a Go CLI; agents shouldn't need a Go toolchain. `curl \| sh` should *download*, not compile. |
+| **`jentic` + `jenticctl` binaries** — prebuilt, signed (GoReleaser + Homebrew + `curl \| sh` that *downloads*) | **Ship — headline install** | This *is* the "install jentic-one" story. See rationale below. |
 | **Tag + release notes + checksums** | **Ship** | Always. |
-| **Docker server image (GHCR)** | **Defer — honestly** | Keep "build locally" for beta, **documented as the current state** (not dressed up as the polished path). A hosted image is a standing promise (needs a CVE-rebuild cron). **Tripwire:** the first "how do I run this without building?" from a non-author → add a signed multi-arch GHCR image + rebuild cron + rewire the installer to pull it. |
+| **Source build** (`curl \| sh` that compiles) | **Keep as fallback** | For auditing / unsupported platforms; a liability only if it's the *only* path. |
+| **Python wheel (PyPI)** | **Not an install path** | Dropped. See "Why not a wheel" below. |
+| **Docker server image (GHCR)** | **Defer — honestly** | Keep "build locally" for beta, **documented as the current state** (not dressed up). A hosted image is a standing promise (needs a CVE-rebuild cron). **Tripwire:** the first "how do I run this without building?" from a non-author → add a signed multi-arch GHCR image + rebuild cron + rewire the installer to pull it. |
 | **Helm chart (OCI publish)** | **Defer** | Strongest-supported deferral (PostHog killed theirs, Supabase refused in-repo, Meilisearch isolates it). Keep a repo-referenced `charts/` dir. **Tripwire:** ≥2–3 real k8s users. |
-| **Source build** | **Keep as fallback** | Great for auditing; a liability only if it's the *only* path. |
+
+### Why prebuilt CLI binaries (not build-from-source)
+
+A Go program must be compiled. Today `curl | sh` **compiles on the user's machine** —
+it downloads a Go toolchain and builds, which is slow (minutes), needs a toolchain, can
+fail on version/network/arch quirks, and is only as trustworthy as the build script.
+**Prebuilt** means *we* compile once per release in CI, for every OS/arch, sign
+(cosign) + checksum, and publish the finished executables; the user's `curl | sh` just
+downloads the right one.
+
+- **Fast + zero prerequisites** — seconds, no Go toolchain to install.
+- **Reliable** — no "build failed on your machine."
+- **Verifiable supply chain** — signed, checksummed artifacts prove *we* built them,
+  untampered (stronger than "trust this build script").
+- **Enables `brew install jentic`** and GitHub Release assets — these distribute
+  binaries, not source.
+- **It's the universal norm** — `gh`, `kubectl`, `terraform`, `supabase`, Claude Code
+  all ship prebuilt signed binaries and offer source-build only as a fallback.
+- **Low effort** — one GoReleaser config, fired by the release tag we already create.
+
+### Why *not* a Python wheel as an install path
+
+An earlier draft proposed publishing a `jentic-one` wheel to PyPI as a "no-Docker"
+install. **Dropped**, because:
+
+- **The product is two programs:** the **server** (Python) and the **CLI** (`jenticctl`,
+  Go). `pip install` can only deliver the Python server — **not** the CLI, and the CLI
+  *is* the front door (it holds the setup wizard). So `pip install jentic-one` would
+  give you a bare server with **no** config, no migrations, no wizard — not a usable
+  install.
+- Making it usable would mean building a **second, Python-side onboarding flow**
+  (`jentic-one setup`) that duplicates the Go wizard — real complexity for a near-empty
+  audience (embedding the package / pure-PaaS deploys), which isn't a beta priority.
+- It's not how comparable tools work — you install *the CLI*, and the CLI runs the
+  server. (Claude Code etc. hand you one CLI, not a language package.)
+
+If a genuine "embed the server as a library" use case appears later, a wheel can be
+revisited then — but it is **not** the beta install path, and the docs should point
+users at the CLI.
 
 ## CLI as a remote client (the VPC / different-host case)
 
@@ -115,7 +155,7 @@ Both the CLI and UI must nudge when a newer version exists. Privacy-respecting, 
 ## Decisions needed (sign-off before building)
 
 1. **Version baseline** — clean `v0.1.0` (honest for a new public repo) **or** continue `0.x` → `v0.14.0` (continuity, needs a "continues our internal predecessor" note). **Not `1.0.0`** while the README allows breaking changes without a major bump. *(No tag-collision risk — tags are local-only.)*
-2. **Distribution (settled above):** prebuilt-first (wheel + CLI binaries); Docker image deferred-but-honest; Helm deferred. Confirm.
+2. **Distribution (settled above):** the install is prebuilt signed CLI binaries (GoReleaser + brew); no Python wheel install path; Docker image deferred-but-honest; Helm deferred. Confirm.
 3. **Versioning model (settled above):** lockstep for beta, CLI shipped separately, skew-warning + remote-UX added now, full decouple deferred. Confirm.
 4. **App token** — reuse mini's `ARAZZO_BUILDER_APP_ID`-style app, or provision new.
 5. **Doc home** — this proposal lives in `docs/plans/`; the ratified procedure likely belongs in `docs/` or `deploy/`.
@@ -153,9 +193,8 @@ Both the CLI and UI must nudge when a newer version exists. Privacy-respecting, 
 On the release-please tag (via App token — `GITHUB_TOKEN`, and `on: release`, won't fire downstream):
 
 1. **CI-on-tag gate** — build + run migrations on a fresh DB + `/health` **before** the Release is published (tags get no CI today; scope `cancel-in-progress` to PRs).
-2. **Python wheel** → PyPI (trusted publishing).
-3. **GoReleaser** — `jentic` + `jenticctl` binaries + `checksums.txt`, **cosign-signed**, Homebrew cask, attached to the Release.
-4. **(deferred)** Docker image + Helm OCI — only once their tripwires fire. When added: multi-arch, cosign-signed, SBOM, provenance, image Trivy scan; publish **umbrella + observability only**.
+2. **GoReleaser** — `jentic` + `jenticctl` binaries + `checksums.txt`, **cosign-signed**, Homebrew cask, attached to the Release. *(This is the install.)*
+3. **(deferred)** Docker image + Helm OCI — only once their tripwires fire. When added: multi-arch, cosign-signed, SBOM, provenance, image Trivy scan; publish **umbrella + observability only**.
 
 </details>
 
@@ -193,7 +232,7 @@ polyglot-friendly release-please.
 1. Fix version drift (pyproject + 9 charts) + add `VERSIONING.md`; local tag cleanup.
 2. Add `release-please` (manifest, lockstep, seeded + `bootstrap-sha`, Helm-pin handling, `uv.lock`).
 3. Cut the first Release PR; verify version + changelog (no pre-scrub replay).
-4. Tag-triggered publish behind the App token: **wheel → PyPI** + **GoReleaser CLI binaries** (+ brew) + notes/checksums. (Docker/Helm deferred to their tripwires.)
+4. Tag-triggered publish behind the App token: **GoReleaser CLI binaries** (`jenticctl` + `jentic`, signed, + brew) + notes/checksums — this is the install. (Docker/Helm deferred to their tripwires; no wheel.)
 5. **Version notifications:** `/health` `latest_version` field + CLI passive nudge + CLI↔server skew warning + UI version/banner; add the Go semver lib; wire the `check_for_updates` flag.
 6. **Remote-client UX:** single instance-URL config + `JENTIC_BASE_URL` env var.
 7. Add `CHANGELOG.md` + `UPGRADING.md` + `.github/release.yml`; reconcile git-conventions + CONTRIBUTING; document migration/upgrade/hotfix policy.
