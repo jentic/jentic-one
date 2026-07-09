@@ -180,6 +180,39 @@ Both the CLI and UI must nudge when a newer version exists. Privacy-respecting, 
 - **Privacy:** pure pull, **sends no data**; **default-on but one flag off** (`check_for_updates=false` / `JENTIC_CHECK_FOR_UPDATES=false`); **separate from telemetry** (which stays opt-in); a single `--offline` silences all outbound calls.
 - **Build-on:** add a semver lib to the Go CLI (`golang.org/x/mod/semver` — none today; the current `update` compares git SHAs, not tags).
 
+## `jenticctl update` vs the package manager (a conflict to resolve)
+
+**Today `jenticctl update` updates *everything*:** it rebuilds and swaps **both** CLI
+binaries (`jenticctl` + `jentic`) **and** the server/stack (rebuild + forward-only
+migrations + restart), all from a tracked **git ref**, comparing **commit SHAs** (not
+release tags). `--cli-only` / `--stack-only` / `--check` scope it.
+
+**Why that becomes a problem once we ship brew + prebuilt releases:** if a user
+`brew install`s the CLI and then runs `jenticctl update`, the self-update **overwrites
+the brew-managed binary**, so Homebrew's version tracking is now wrong (it thinks you're
+on the released version, but the file is a from-source build of a branch). Two update
+mechanisms fighting over the same binary is a real footgun — and it exists today only as
+a *pre-release artifact* (before brew/releases, rebuild-from-git was the only option, so
+it was simplest to have `update` do both halves).
+
+**The fix (target design):** separate the two concerns.
+
+- **The CLI updates itself via its package manager** — `brew upgrade jentic` (or the
+  installer). `jenticctl update` should **stop rebuilding the CLI binary by default**;
+  ideally it **detects the install source** (brew / prebuilt / from-source) and, for a
+  package-managed install, tells the user to use their package manager instead of
+  clobbering it.
+- **`jenticctl update` narrows to the deployed product** — the server/stack + DB
+  migrations, which the package manager genuinely can't manage. That's the thing only
+  the CLI can do.
+- **Release-aware, not commit-aware:** once tags/releases + prebuilt binaries exist,
+  version comparison should use **semver tags** and pull **prebuilt binaries** rather
+  than recompiling a branch.
+
+*(Patterns from comparable tools — how they route "use your package manager" vs.
+self-update, and how they separate updating the CLI from updating the managed
+resource — are summarized under [References](#references--prior-art); pending research.)*
+
 ## Decisions needed (sign-off before building)
 
 1. **Version baseline** — clean `v0.1.0` (honest for a new public repo) **or** continue `0.x` → `v0.14.0` (continuity, needs a "continues our internal predecessor" note). **Not `1.0.0`** while the README allows breaking changes without a major bump. *(No tag-collision risk — tags are local-only.)*
@@ -263,7 +296,8 @@ polyglot-friendly release-please.
 4. Tag-triggered publish behind the App token: **GoReleaser CLI binaries** (`jenticctl` + `jentic`, signed, + brew) + notes/checksums — this is the install. (Docker/Helm deferred to their tripwires; no wheel.)
 5. **Version notifications:** `/health` `latest_version` field + CLI passive nudge + CLI↔server skew warning + UI version/banner; add the Go semver lib; wire the `check_for_updates` flag.
 6. **Remote-client UX:** single instance-URL config + `JENTIC_BASE_URL` env var.
-7. Add `CHANGELOG.md` + `UPGRADING.md` + `.github/release.yml`; reconcile git-conventions + CONTRIBUTING; document migration/upgrade/hotfix policy.
+7. **Rework `jenticctl update`:** detect install source, let brew/installer own the CLI binary, narrow `update` to server/stack + migrations, and make version comparison release-tag-aware (not commit-SHA).
+8. Add `CHANGELOG.md` + `UPGRADING.md` + `.github/release.yml`; reconcile git-conventions + CONTRIBUTING; document migration/upgrade/hotfix policy.
 
 ## References / prior art
 
