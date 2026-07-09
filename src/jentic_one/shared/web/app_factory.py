@@ -381,7 +381,12 @@ def create_surface_app(
     app = FastAPI(lifespan=lifespan, **meta)
     app.state.ctx = ctx
     if container.broker is not None:
+        # Wire the injected broker into BOTH data-plane paths: the sync router
+        # reads app.state.broker, while the async worker builds its broker via
+        # app.state.broker_factory(runner). Without the factory the async path
+        # silently falls back to the default broker.
         app.state.broker = container.broker
+        app.state.broker_factory = lambda _runner: container.broker
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
     for extra_router, _extra_prefix, extra_tags in container.extra_routers:
@@ -428,9 +433,13 @@ def create_combined_app(
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
     root.state.ctx = ctx
     # Injected Broker (None by default → broker surface builds its default
-    # per request). The broker router reads app.state.broker.
+    # per request). Wire BOTH data-plane paths: the sync router reads
+    # root.state.broker; the async worker builds its broker via
+    # root.state.broker_factory(runner). Without the factory the async path
+    # silently falls back to the default broker.
     if container.broker is not None:
         root.state.broker = container.broker
+        root.state.broker_factory = lambda _runner: container.broker
     root.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
 
     @root.get(
