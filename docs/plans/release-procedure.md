@@ -70,7 +70,7 @@ one flag off, silenced by `--offline`.
 Research across comparable self-hosted OSS (Sentry, PostHog, Supabase, Meilisearch,
 Plausible) and mainstream CLIs (`gh`, `kubectl`, `terraform`, `supabase`, Claude Code)
 is consistent: **the install is a single prebuilt CLI, and nobody's happy path is
-compile-from-source** — source-build is always the last-resort fallback.
+compile-from-source** — source-build is always the last-resort fallback ([References](#references--prior-art)).
 
 For jentic-one that CLI is **`jenticctl`** (with the `install` wizard) — it's already the
 front door today (`curl | sh` → `jenticctl` → wizard sets up config + DB + starts the
@@ -84,7 +84,7 @@ server). The one thing to change is *how the binary is produced*: build **once i
 | **Source build** (`curl \| sh` that compiles) | **Keep as fallback** | For auditing / unsupported platforms; a liability only if it's the *only* path. |
 | **Python wheel (PyPI)** | **Not an install path** | Dropped. See "Why not a wheel" below. |
 | **Docker server image (GHCR)** | **Defer — honestly** | Keep "build locally" for beta, **documented as the current state** (not dressed up). A hosted image is a standing promise (needs a CVE-rebuild cron). **Tripwire:** the first "how do I run this without building?" from a non-author → add a signed multi-arch GHCR image + rebuild cron + rewire the installer to pull it. |
-| **Helm chart (OCI publish)** | **Defer** | Strongest-supported deferral (PostHog killed theirs, Supabase refused in-repo, Meilisearch isolates it). Keep a repo-referenced `charts/` dir. **Tripwire:** ≥2–3 real k8s users. |
+| **Helm chart (OCI publish)** | **Defer** | Strongest-supported deferral (PostHog killed theirs, Supabase declined it in-repo, Meilisearch isolates it — see [References](#references--prior-art)). Keep a repo-referenced `charts/` dir. **Tripwire:** ≥2–3 real k8s users. |
 
 ### Why prebuilt CLI binaries (not build-from-source)
 
@@ -128,7 +128,7 @@ users at the CLI.
 ## Installing jentic-one (the two steps)
 
 The user-facing install is two commands, which is **normal and idiomatic** for
-self-hosted infra (Supabase, Temporal, Fly.io, Dagger all work this way):
+self-hosted infra (Supabase, Temporal, Fly.io, Dagger all work this way — [References](#references--prior-art)):
 
 ```bash
 brew install jentic       # 1 · install the CLI (or: curl | sh that downloads the binary)
@@ -173,7 +173,7 @@ doesn't control (think `kubectl` ↔ Kubernetes). That affects versioning.
 
 ## Update & version notifications (firm requirement)
 
-Both the CLI and UI must nudge when a newer version exists. Privacy-respecting, Grafana/Gitea model:
+Both the CLI and UI must nudge when a newer version exists. Privacy-respecting, Grafana/Gitea model ([References](#references--prior-art)):
 
 - **Mechanism:** a one-way GET to the GitHub Releases API (or a static `versions.json`), compared to the running version. **Two skews to surface:** CLI/server **vs latest release**, and CLI **vs the remote server it's talking to** (from `/health`).
 - **Surfaces:** server `/health` gains an optional `latest_version`/`update_available` field (server does the check; CLI + UI already read `/health`); CLI shows a dim "vX.Y.Z available" line (reuse `VersionPanel` + the existing `update` "Update available: X → Y" phrasing); UI shows a dismissible banner (the UI shows **no** version today — needs the admin `/health` schema to include `version` + a banner in the app shell).
@@ -264,3 +264,40 @@ polyglot-friendly release-please.
 5. **Version notifications:** `/health` `latest_version` field + CLI passive nudge + CLI↔server skew warning + UI version/banner; add the Go semver lib; wire the `check_for_updates` flag.
 6. **Remote-client UX:** single instance-URL config + `JENTIC_BASE_URL` env var.
 7. Add `CHANGELOG.md` + `UPGRADING.md` + `.github/release.yml`; reconcile git-conventions + CONTRIBUTING; document migration/upgrade/hotfix policy.
+
+## References / prior art
+
+Sources behind the "other projects do this" claims in this doc (gathered during research;
+verify before treating any as load-bearing — some are point-in-time blog posts).
+
+**Distribution & CLI packaging**
+- Sentry self-hosted — `git clone` + install script that *pulls* images: <https://develop.sentry.dev/self-hosted/>
+- Meilisearch install (binary / docker / brew / apt; source-build last): <https://www.meilisearch.com/docs/learn/getting_started/installation>
+- GoReleaser (cross-compile, sign, checksums, Homebrew, attach to Release): <https://goreleaser.com/>
+- GitHub CLI (`gh`) install (prebuilt binaries + brew, not source): <https://github.com/cli/cli#installation>
+- Homebrew formula shipping multiple binaries via GoReleaser: <https://goreleaser.com/customization/homebrew/>
+
+**Helm deferral**
+- PostHog sunsetting Helm support: <https://posthog.com/blog/sunsetting-helm-support-posthog>
+- Supabase declining an in-repo Helm chart (support-load rationale): <https://github.com/supabase/supabase/discussions/6603>
+- Meilisearch Kubernetes chart kept in a separate repo: <https://github.com/meilisearch/meilisearch-kubernetes>
+
+**Two-step install (CLI then setup)**
+- Supabase CLI: <https://supabase.com/docs/guides/local-development/cli/getting-started>
+- Temporal CLI: <https://docs.temporal.io/cli>
+- Fly.io `flyctl`: <https://fly.io/docs/flyctl/install/>
+
+**Update / version notifications**
+- Grafana `check_for_updates` (pull-only, no data sent): <https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#check_for_updates>
+- GitHub Releases API (version source): <https://docs.github.com/en/rest/releases/releases#get-the-latest-release>
+
+**Changelog / release notes**
+- Keep a Changelog: <https://keepachangelog.com/en/1.1.0/>
+- release-please (Release PR + CHANGELOG + GitHub Release): <https://github.com/googleapis/release-please>
+- GitHub auto-generated release notes + `.github/release.yml`: <https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes>
+- Vector upgrade guides ("Action needed" blocks) + VERSIONING: <https://vector.dev/highlights/> · <https://github.com/vectordotdev/vector/blob/master/VERSIONING.md>
+
+**Supply chain (for when images ship)**
+- cosign / keyless signing: <https://docs.sigstore.dev/cosign/signing/signing_with_containers/>
+- SLSA build provenance (`actions/attest-build-provenance`): <https://github.com/actions/attest-build-provenance>
+
