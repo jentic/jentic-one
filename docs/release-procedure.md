@@ -8,7 +8,7 @@
 
 | # | Decision | Status |
 | --- | --- | --- |
-| 1 | **Version baseline** | **DECIDED: clean `v0.1.0`.** A new public repo with **0 releases/0 remote tags** and rewritten history; `v0.14.0` implies 13 public releases that don't exist. `0.1.0` is honest ("early, breaking allowed") and there's no collision (tags are local-only). A `VERSIONING.md` line notes it continues an internal predecessor. Not `1.0.0` while the README allows breaking changes without a major bump. |
+| 1 | **Version baseline** | **DECIDED: continue `0.x` → next release `v0.14.0`.** The `v0.1.0`…`v0.13.2` tags **and** GitHub Releases (notes recovered from the `chore(release)` commit bodies) have been **restored natively on `jentic-one`** — the mini history is genuinely ancestral to `main` (verified: `v0.13.2` is an ancestor of `origin/main`), so the version line is real and publicly visible. Continuing at `v0.14.0` is therefore honest. Not `1.0.0` while the README allows breaking changes without a major bump. |
 | 2 | **Release model** | **DECIDED: release-please Release PR** (merge = release; edit the changelog in the PR, optional). Operated leniently ≈ mini's deliberate trigger + auto execution, plus an optional pre-ship notes edit. |
 | 3 | **Distribution** | **DECIDED: prebuilt signed CLI binaries are the install** (GoReleaser + Homebrew + `curl \| sh` that *downloads*). Docker image + Helm OCI **deferred** (build-locally for beta, honestly documented, with tripwires). No Python wheel install path. |
 | 4 | **Release-trigger token** | **DECIDED: provision a NEW GitHub App** scoped to exactly `contents: write` + `pull-requests: write` on this one repo (don't inherit mini's broader `ARAZZO_BUILDER_APP_ID` install). Needed because `GITHUB_TOKEN` can't trigger downstream workflows. |
@@ -42,7 +42,7 @@ signed CLI binaries — that *is* the install. Docker/Helm are deferred (see the
 | Thing | Reality today |
 | --- | --- |
 | **Version** | **four-way drift:** `pyproject.toml` = `0.1.1`, **`src/jentic_one/__init__.py` = `0.1.0` (this is what `/health` serves)**, 9 Helm `Chart.yaml` = `0.1.0`, tags reach `v0.13.2` |
-| **Tags / Releases** | `v0.1.0`…`v0.13.2` + 19 `backup/*` exist **only locally**; **0 tags and 0 GitHub Releases on every remote** |
+| **Tags / Releases** | **RESTORED on `jentic-one`:** `v0.1.0`…`v0.13.2` tags + 36 GitHub Releases (notes recovered from `chore(release)` commit bodies), pointing at real ancestral commits. `v0.13.2` is currently "Latest"; next release is `v0.14.0`. (19 local `backup/*` tags remain unpushed — hygiene.) |
 | **Helm** | 9 `Chart.yaml`: umbrella + `observability` (both have `appVersion`) + **7 version-only subcharts** (`admin app broker control gateway registry` + the `common` **library** chart). Umbrella pins each subchart version in `dependencies:`; subcharts pin `common` via `file://` |
 | **Automation** | None. 3 workflows (ci, dependabot, smoke-helm); no tag/release triggers; CI doesn't run on tags |
 | **Changelog** | No `CHANGELOG.md`, no GitHub Releases, no `.github/release.yml` |
@@ -101,7 +101,7 @@ supported" policy.
 - **Root:** `release-type: python` bumps `pyproject.toml`. **Also add `src/jentic_one/__init__.py`** as an `extra-files` updater — it's the version `/health` serves and release-please won't touch it otherwise (this is the four-way-drift trap). *Better:* make `__version__` read package metadata (`importlib.metadata.version`) — one source of truth, kills the drift class.
 - Add a **`uv.lock`** step — `uv sync --frozen` in CI fails on a bumped version with a stale lock.
 - **Helm:** manage the **umbrella** `Chart.yaml` + `observability` via `release-type: helm`. The umbrella's `dependencies:` subchart pins and each subchart's `file://` `common` pin are **not** rewritten by release-please → `helm dependency build` breaks. **Fix: loosen the `file://` pins to `>=0.0.0`** (constraint is ceremony for a local path). *(Moot for beta since Helm publish is deferred — but the pins still matter for local `helm dependency build`.)*
-- **Seed `.release-please-manifest.json`** to `0.1.0` and set `bootstrap-sha` to a current-`main` commit so the first changelog doesn't replay pre-scrub history.
+- **Seed `.release-please-manifest.json`** to `0.13.2` (the restored latest release) so the next Release PR computes `v0.14.0`. Set `bootstrap-sha` to a current-`main` commit so the first changelog covers only commits since the OSS cutover (not the whole restored history, which already has its own releases/notes).
 
 </details>
 
@@ -144,8 +144,8 @@ execution, no changelog review. Removed in the scrub. We're re-establishing a pr
 ## Implementation order
 
 **Beta-blocking (the minimal value slice):**
-1. **Fix version drift** — `__version__` → package metadata (or `extra-files`), align pyproject + 9 charts; add `VERSIONING.md`; local tag cleanup. *(Prereq: none — decision #1 is made.)*
-2. **release-please** — manifest seeded to `0.1.0` + `bootstrap-sha`, `python`/`helm` types, `__init__.py` + `uv.lock` updaters, loosen Helm `file://` pins. *(Prereq: #1 + provision the App token.)*
+1. **Fix version drift** — `__version__` → package metadata (or `extra-files`), align pyproject + 9 charts to `0.13.2` baseline; add `VERSIONING.md`. *(Prereq: none — decision #1 is made; tags/releases already restored.)*
+2. **release-please** — manifest seeded to `0.13.2` + `bootstrap-sha`, `python`/`helm` types, `__init__.py` + `uv.lock` updaters, loosen Helm `file://` pins → first Release PR proposes `v0.14.0`. *(Prereq: #1 + provision the App token.)*
 3. **CI-on-tag gate + GoReleaser signed binaries** — scope `cancel-in-progress` to PRs; tag CI (fresh-DB migrate + `/health`); GoReleaser (2 binaries, cosign + verify identity + SBOM + brew). *(Prereq: #2 + App token.)* → **this is the install.**
 
 **Deferred (own docs / post-beta), roughly in order:**
