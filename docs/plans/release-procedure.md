@@ -287,7 +287,9 @@ flyctl, rustup, deno, supabase, Homebrew).
 | Thing | Reality today |
 | --- | --- |
 | **Version** | `pyproject.toml` = **`0.1.1`**, Helm charts = **`0.1.0`**, tags reach **`v0.13.2`** → three-way drift |
-| **Tags** | `v0.1.0`…`v0.13.2` + 19 `backup/*` exist **only locally** — **0 tags on every remote** |
+| **Tags** | `v0.1.0`…`v0.13.2` + 19 `backup/*` exist **only locally** — **0 tags on every remote** (origin/internal/opensource) |
+| **Releases** | **0 GitHub Releases on every repo** (jentic-one, jentic-mini, -internal, -opensourceable). mini's old releases were deleted/rewritten away — clean slate |
+| **Orphaned package** | **`ghcr.io/jentic/jentic-mini` still exists — public, anonymously pullable, full tag history `0.2.0`…`0.9.x` + `latest`/`unstable`.** A pre-rename, pre-OSS-scrub orphan (packages are org-level, so deleting releases/tags/repo doesn't remove it). No `jentic-one` image exists. Needs cleanup (see housekeeping) |
 | **Automation** | None. 3 workflows (ci, dependabot, smoke-helm); no tag/release triggers; CI doesn't run on tags |
 | **Changelog** | No `CHANGELOG.md`, no GitHub Releases, no `.github/release.yml` |
 | **Install path** | `install.sh` / `jenticctl` **build from source** at a git ref — they never pull a registry artifact |
@@ -331,7 +333,7 @@ On the release-please tag (via App token — `GITHUB_TOKEN`, and `on: release`, 
 
 - **Migrations (~65, forward-only, "data unrecoverable"):** upgrade **one minor at a time**; rollback = restore backup + pin previous tag; **backup is a required pre-upgrade step**; define a hotfix flow (`release-0.X` branch → patch tag).
 - **Governance:** protect the Release PR (merging it *is* the ship action); confirm release-please/bot commits satisfy DCO; add a "Releases" section to `CONTRIBUTING.md`; reconcile the git-conventions "auto-generated changelog" wording.
-- **Housekeeping:** fix the 3-way version drift; local-only cleanup of `v0.*` + `backup/*` tags (don't confuse release-please — hygiene only); add `VERSIONING.md`; the stale `broker.jentic.ai` default in `skillgen/content/jentic.md` vs the real `127.0.0.1:8100`.
+- **Housekeeping:** fix the 3-way version drift; local-only cleanup of `v0.*` + `backup/*` tags (don't confuse release-please — hygiene only); **decide the fate of the orphaned `ghcr.io/jentic/jentic-mini` GHCR package** (pre-rename, pre-scrub, public — delete vs. deprecate; needs an org owner / `delete:packages` token; note GHCR's 30-day restore window and that already-pulled copies persist, so treat any scrubbed secrets as rotate-not-just-delete — *pending research recommendation*); add `VERSIONING.md`; the stale `broker.jentic.ai` default in `skillgen/content/jentic.md` vs the real `127.0.0.1:8100`.
 
 </details>
 
