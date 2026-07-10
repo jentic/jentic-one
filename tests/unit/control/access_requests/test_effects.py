@@ -17,6 +17,7 @@ from jentic_one.control.services.access_requests.effects import (
 )
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
     ToolkitReferenceAmbiguousError,
@@ -614,28 +615,31 @@ async def test_validate_credential_bind_missing_resource_id_raises(
     item = _make_item(resource_type="credential", action="bind", resource_id=None)
     applicator = EffectApplicator(ctx)
 
-    with pytest.raises(CredentialNotFoundForBindError):
+    with pytest.raises(RequiredFieldMissingError) as exc_info:
         await applicator.validate(item, identity=_make_identity(), control_session=session)
+    assert exc_info.value.field == "resource_id"
+    assert "<missing>" not in str(exc_info.value)
     mock_credential_repo.get_by_id.assert_not_called()
 
 
 @patch(f"{_MODULE}.CredentialRepository")
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_credential_bind_missing_to_id_raises_toolkit_error(
+async def test_validate_credential_bind_missing_to_id_raises(
     mock_effects_repo: MagicMock,
     mock_credential_repo: MagicMock,
 ) -> None:
     """A credential:bind missing its to_id (the toolkit target) fails validate()
-    as a toolkit error, not a misleading 'credential not found' — to_id names the
-    toolkit, resource_id names the credential."""
+    with a clear missing-field error, not a misleading 'toolkit not visible'."""
     ctx = _make_ctx()
     session = _make_session()
     mock_credential_repo.get_by_id = AsyncMock(return_value=None)
     item = _make_item(resource_type="credential", action="bind", to_id=None, resource_id="cred_001")
     applicator = EffectApplicator(ctx)
 
-    with pytest.raises(ToolkitNotVisibleError):
+    with pytest.raises(RequiredFieldMissingError) as exc_info:
         await applicator.validate(item, identity=_make_identity(), control_session=session)
+    assert exc_info.value.field == "to_id"
+    assert "<missing>" not in str(exc_info.value)
     mock_credential_repo.get_by_id.assert_not_called()
 
 
@@ -684,14 +688,16 @@ async def test_validate_scope_grant_missing_resource_id_raises(
     mock_effects_repo: MagicMock,
 ) -> None:
     """A scope-grant item with no resource_id must fail validate() as a 422
-    UnsupportedScopeGrantError, not slip through to a 500 mid-apply."""
+    RequiredFieldMissingError, not slip through to a 500 mid-apply."""
     ctx = _make_ctx()
     session = _make_session()
     item = _make_item(resource_type="scope", action="grant", resource_id=None)
     applicator = EffectApplicator(ctx)
 
-    with pytest.raises(UnsupportedScopeGrantError):
+    with pytest.raises(RequiredFieldMissingError) as exc_info:
         await applicator.validate(item, identity=_make_identity(), control_session=session)
+    assert exc_info.value.field == "resource_id"
+    assert "<missing>" not in str(exc_info.value)
 
 
 # --- unsupported combination ---
