@@ -59,7 +59,7 @@
 		"eslint-plugin-react-hooks": "^7.1.1",
 		"eslint-plugin-unused-imports": "^4.4.1",
 		"globals": "^17.7.0",
-		"msw": "^2.14.6",
+		"msw": "^2.15.0",
 		"openapi-typescript-codegen": "^0.31.0",
 		"pg": "^8.22.0",
 		"png-to-ico": "^3.0.1",
