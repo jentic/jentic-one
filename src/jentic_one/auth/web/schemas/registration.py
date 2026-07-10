@@ -14,7 +14,10 @@ class RegisterRequest(BaseModel):
     """POST /register request body."""
 
     client_name: str
-    jwks: dict[str, Any]
+    jwks: dict[str, Any] = Field(
+        description="A JSON Web Key Set containing at least one Ed25519 public key"
+        " (kty=OKP, crv=Ed25519). RSA and other key types are not accepted."
+    )
     grant_types: list[str] | None = None
     token_endpoint_auth_method: str | None = None
     scope: str | None = Field(default=None, max_length=6500)
