@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Revocation endpoint request (form body).
+ * Revocation endpoint request (form-encoded or JSON body).
  */
 export type RevokeRequest = {
     token: string;

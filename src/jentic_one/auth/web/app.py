@@ -11,6 +11,7 @@ from jentic.problem_details import Unauthorized
 from jentic_one.auth.services.errors import AuthServiceError
 from jentic_one.auth.services.token_service import ACCESS_TOKEN_PREFIX, TokenService
 from jentic_one.auth.web.errors import database_error_handler, service_error_handler
+from jentic_one.auth.web.middleware import FormToJsonMiddleware
 from jentic_one.auth.web.routers import (
     agents,
     authorize,
@@ -61,7 +62,8 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
 
 
 def install_on_app(app: FastAPI, ctx: Context) -> None:
-    """Install the auth token verifier on the app for shared identity resolution."""
+    """Install the auth token verifier and OAuth form-encoding middleware."""
+    app.add_middleware(FormToJsonMiddleware)
     app.state.verify_token = _make_auth_verifier(ctx)
 
 

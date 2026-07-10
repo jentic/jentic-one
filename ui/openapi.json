@@ -3502,7 +3502,7 @@
         "type": "object"
       },
       "IntrospectRequest": {
-        "description": "Introspection endpoint request (form body).",
+        "description": "Introspection endpoint request (form-encoded or JSON body).",
         "properties": {
           "token": {
             "title": "Token",
@@ -5663,7 +5663,7 @@
         "type": "object"
       },
       "RevokeRequest": {
-        "description": "Revocation endpoint request (form body).",
+        "description": "Revocation endpoint request (form-encoded or JSON body).",
         "properties": {
           "token": {
             "title": "Token",
@@ -6233,7 +6233,7 @@
         "type": "object"
       },
       "TokenRequest": {
-        "description": "Token endpoint request (form body).",
+        "description": "Token endpoint request (form-encoded or JSON body).",
         "properties": {
           "assertion": {
             "anyOf": [

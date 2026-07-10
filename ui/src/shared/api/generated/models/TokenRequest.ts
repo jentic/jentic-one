@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Token endpoint request (form body).
+ * Token endpoint request (form-encoded or JSON body).
  */
 export type TokenRequest = {
     assertion?: (string | null);

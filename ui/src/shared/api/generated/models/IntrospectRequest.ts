@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Introspection endpoint request (form body).
+ * Introspection endpoint request (form-encoded or JSON body).
  */
 export type IntrospectRequest = {
     token: string;
