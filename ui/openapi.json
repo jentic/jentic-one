@@ -98,6 +98,7 @@
                 "type": "null"
               }
             ],
+            "description": "Explicit ID of the resource (e.g. a toolkit tk_… or credential cred_… ID). For toolkit:bind, you can omit this and use resource_reference instead.",
             "title": "Resource Id"
           },
           "resource_reference": {
@@ -110,6 +111,7 @@
                 "type": "null"
               }
             ],
+            "description": "Look up the resource by API identity instead of by ID. For toolkit:bind, provide {vendor, name, version} to resolve the toolkit that serves the given API. Use this when you don't know the toolkit ID.",
             "title": "Resource Reference"
           },
           "resource_type": {
