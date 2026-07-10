@@ -62,7 +62,7 @@
 		"msw": "^2.14.6",
 		"openapi-typescript-codegen": "^0.31.0",
 		"pg": "^8.22.0",
-		"png-to-ico": "^3.0.1",
+		"png-to-ico": "^3.0.2",
 		"prettier": "^3.9.4",
 		"prettier-plugin-tailwindcss": "^0.8.0",
 		"sharp": "^0.35.3",
