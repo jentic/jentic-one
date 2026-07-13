@@ -194,8 +194,11 @@ class RulesNotSupportedForBindError(AccessRequestServiceError):
 
     def __init__(self, resource_type: str, action: str) -> None:
         super().__init__(
-            f"rules are not supported on {resource_type}:{action}; "
-            "attach rules to a credential:bind instead"
+            f"Permission rules are not supported on {resource_type}:{action} items. "
+            "Rules are enforced per (toolkit_id, credential_id) binding, so they "
+            "can only be attached to credential:bind items. To set rules, file an "
+            "access request with resource_type='credential', action='bind' and "
+            "include your rules there (toolkits:write scope is not needed)."
         )
         self.resource_type = resource_type
         self.action = action
