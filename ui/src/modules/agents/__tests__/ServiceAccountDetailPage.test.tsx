@@ -1,16 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Routes, Route } from 'react-router-dom';
-import {
-	renderWithProviders,
-	screen,
-	within,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { setToken } from '@oss-internal/shared/api';
-import { Toaster } from '@oss-internal/shared/ui';
-import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
-import ServiceAccountDetailPage from '@oss-internal/modules/agents/pages/ServiceAccountDetailPage';
+import { renderWithProviders, screen, within, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { setToken } from '@/shared/api';
+import { Toaster } from '@/shared/ui';
+import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import ServiceAccountDetailPage from '@/modules/agents/pages/ServiceAccountDetailPage';
 
 function renderDetail(serviceAccountId: string) {
 	return renderWithProviders(

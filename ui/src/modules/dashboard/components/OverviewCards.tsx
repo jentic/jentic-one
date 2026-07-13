@@ -5,10 +5,10 @@ import {
 	useRecentExecutions,
 	useCatalogSize,
 	formatApproxCount,
-} from '@oss-internal/modules/dashboard/api';
-import { StatCard } from '@oss-internal/modules/dashboard/components/StatCard';
-import { formatPercent } from '@oss-internal/modules/dashboard/components/format';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+} from '@/modules/dashboard/api';
+import { StatCard } from '@/modules/dashboard/components/StatCard';
+import { formatPercent } from '@/modules/dashboard/components/format';
+import { ROUTES } from '@/shared/app/routes';
 
 /**
  * The four headline tiles, each composed from its own list endpoint. Every

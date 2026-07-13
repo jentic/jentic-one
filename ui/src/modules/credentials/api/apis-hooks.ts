@@ -7,17 +7,13 @@
 // and don't collide with any future apis/catalog modules.
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import type {
-	ApiImportResponse,
-	ApiListResponse,
-	CatalogListResponse,
-} from '@oss-internal/shared/api';
+import type { ApiImportResponse, ApiListResponse, CatalogListResponse } from '@/shared/api';
 import { fetchPublicSpec, getApiSpec, importCatalogEntry, listApis, listCatalog } from './apis';
 import {
 	parseSchemeOptions,
 	type RawSchemes,
 	type SchemeOption,
-} from '@oss-internal/modules/credentials/lib/schemes';
+} from '@/modules/credentials/lib/schemes';
 
 /** Namespaced query keys for the credentials/apis cache slice. */
 export const apiPickerKeys = {

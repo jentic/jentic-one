@@ -8,8 +8,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { StreamEventIcon } from '@oss-internal/shared/app/rail/StreamEventIcon';
+import { Button } from '@/shared/ui/Button';
+import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	formatStreamTime,
 	inlineActionsFor,
@@ -23,13 +23,9 @@ import {
 	TOAST_SCOPE_CHANGE_EVENT,
 	TOAST_SCOPE_STORAGE_KEY,
 	useAgentStream,
-} from '@oss-internal/shared/lib/agentStream';
-import type {
-	InlineActionSpec,
-	StreamEvent,
-	ToastScope,
-} from '@oss-internal/shared/lib/agentStream';
-import { cn } from '@oss-internal/shared/lib/utils';
+} from '@/shared/lib/agentStream';
+import type { InlineActionSpec, StreamEvent, ToastScope } from '@/shared/lib/agentStream';
+import { cn } from '@/shared/lib/utils';
 
 function readRailCollapsed(): boolean {
 	if (typeof window === 'undefined') return false;

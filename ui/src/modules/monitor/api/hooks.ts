@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from '@oss-internal/shared/ui';
+import { toast } from '@/shared/ui';
 import {
 	acknowledgeEvent,
 	cancelJob,
@@ -28,8 +28,8 @@ import {
 	type ListEventsParams,
 	type ListExecutionsParams,
 	type ListJobsParams,
-} from '@oss-internal/modules/monitor/api/client';
-import { AuditTargetType } from '@oss-internal/shared/api';
+} from '@/modules/monitor/api/client';
+import { AuditTargetType } from '@/shared/api';
 import type {
 	ActorListResponse,
 	AuditListResponse,
@@ -40,7 +40,7 @@ import type {
 	ExecutionStatsResponse,
 	JobListResponse,
 	JobResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const monitorKeys = {

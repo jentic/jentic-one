@@ -9,8 +9,8 @@
  */
 import { useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { cn } from '@oss-internal/shared/lib/utils';
-import type { TopOperation } from '@oss-internal/modules/monitor/api';
+import { cn } from '@/shared/lib/utils';
+import type { TopOperation } from '@/modules/monitor/api';
 
 const PALETTE = ['#6366f1', '#8b5cf6', '#0ea5e9', '#14b8a6', '#f59e0b', '#ec4899', '#10b981'];
 

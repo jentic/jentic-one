@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { AgentBadge, agentInitials } from '@oss-internal/shared/ui/AgentBadge';
+import { AgentBadge, agentInitials } from '@/shared/ui/AgentBadge';
 
 describe('agentInitials', () => {
 	it('takes first+last word initials for multi-word names', () => {

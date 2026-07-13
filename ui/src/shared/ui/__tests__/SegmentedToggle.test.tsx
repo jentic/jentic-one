@@ -1,11 +1,6 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { SegmentedToggle } from '@oss-internal/shared/ui/SegmentedToggle';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 
 const options = [
 	{ value: 'list', label: 'List' },

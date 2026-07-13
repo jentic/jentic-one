@@ -11,8 +11,8 @@
  */
 import { Globe, Lock, ArrowRight } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { ReferenceEndpoint } from '@oss-internal/modules/docs/api/types';
-import { cn } from '@oss-internal/shared/lib/utils';
+import type { ReferenceEndpoint } from '@/modules/docs/api/types';
+import { cn } from '@/shared/lib/utils';
 
 /** "agent" | "operator" | "any" → human label. Advisory only. */
 const TYPICAL_CALLER_LABEL: Record<string, string> = {

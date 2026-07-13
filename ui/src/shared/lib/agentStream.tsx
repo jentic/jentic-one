@@ -9,10 +9,10 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { EventSeverity, type EventResponse } from '@oss-internal/shared/api';
-import { sharedQueryKeys } from '@oss-internal/shared/api/queryKeys';
-import { acknowledgeEvent, listEvents, streamEvents } from '@oss-internal/shared/lib/railEvents';
-import { decideAllPending } from '@oss-internal/shared/lib/accessRequests';
+import { EventSeverity, type EventResponse } from '@/shared/api';
+import { sharedQueryKeys } from '@/shared/api/queryKeys';
+import { acknowledgeEvent, listEvents, streamEvents } from '@/shared/lib/railEvents';
+import { decideAllPending } from '@/shared/lib/accessRequests';
 
 /*
   SSE → QUERY-CACHE BRIDGE.

@@ -37,7 +37,7 @@ import {
 	type ExecutionStatsResponse,
 	type JobListResponse,
 	type JobResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 
 /**
  * Sentinel error for Monitor repository calls. Hooks/components branch on

@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach, vi } from 'vitest';
-import { getAppConfig, loadAppConfig } from '@oss-internal/shared/config';
+import { getAppConfig, loadAppConfig } from '@/shared/config';
 
 afterEach(() => {
 	delete window.__APP_CONFIG__;

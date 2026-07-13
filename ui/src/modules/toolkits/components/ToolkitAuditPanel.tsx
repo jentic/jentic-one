@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { History, ScrollText } from 'lucide-react';
-import { Badge, ErrorAlert, ActorLabel } from '@oss-internal/shared/ui';
-import { useToolkitAudit } from '@oss-internal/modules/toolkits/api';
-import { timeAgo } from '@oss-internal/modules/toolkits/lib/time';
-import type { ToolkitAuditEntry } from '@oss-internal/modules/toolkits/api/types';
+import { Badge, ErrorAlert, ActorLabel } from '@/shared/ui';
+import { useToolkitAudit } from '@/modules/toolkits/api';
+import { timeAgo } from '@/modules/toolkits/lib/time';
+import type { ToolkitAuditEntry } from '@/modules/toolkits/api/types';
 
 /**
  * Read-only, toolkit-scoped slice of the org-wide audit log. Surfaces the

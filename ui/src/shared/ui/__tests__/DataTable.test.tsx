@@ -1,10 +1,5 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { DataTable, type Column } from '@oss-internal/shared/ui/DataTable';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { DataTable, type Column } from '@/shared/ui/DataTable';
 
 interface Row {
 	id: string;

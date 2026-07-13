@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 type SelectProps = React.ComponentProps<'select'> & {
 	error?: string;

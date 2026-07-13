@@ -1,6 +1,6 @@
 import type { AnchorHTMLAttributes } from 'react';
 import { Link, type LinkProps } from 'react-router-dom';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 type AppLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> &
 	Omit<LinkProps, 'to'> & {

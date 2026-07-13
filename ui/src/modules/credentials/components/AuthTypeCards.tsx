@@ -1,11 +1,11 @@
 import { motion, type Variants } from 'framer-motion';
 import { Check, Key, KeyRound, Shield, Ticket, User } from 'lucide-react';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 import {
 	CREDENTIAL_TYPE_DESCRIPTIONS,
 	CREDENTIAL_TYPE_LABELS,
 	CredentialType,
-} from '@oss-internal/modules/credentials/api';
+} from '@/modules/credentials/api';
 
 /**
  * Radio-card picker for the credential type, modelled on jentic-webapp's

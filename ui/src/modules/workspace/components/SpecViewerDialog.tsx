@@ -9,9 +9,9 @@
  */
 import { useMemo } from 'react';
 import { Download } from 'lucide-react';
-import { Dialog, Button, Skeleton, ErrorAlert, CopyButton } from '@oss-internal/shared/ui';
-import { useApiSpec, formatApiKey } from '@oss-internal/modules/workspace/api';
-import type { ApiKey } from '@oss-internal/modules/workspace/api';
+import { Dialog, Button, Skeleton, ErrorAlert, CopyButton } from '@/shared/ui';
+import { useApiSpec, formatApiKey } from '@/modules/workspace/api';
+import type { ApiKey } from '@/modules/workspace/api';
 
 export interface SpecViewerDialogProps {
 	apiKey: ApiKey;

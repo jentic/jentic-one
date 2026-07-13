@@ -1,12 +1,6 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	waitFor,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { Toaster } from '@oss-internal/shared/ui/Toaster';
-import { toast, dismissToast, clearAllToasts } from '@oss-internal/shared/ui/toastStore';
+import { renderWithProviders, screen, userEvent, waitFor, checkA11y } from '@/__tests__/test-utils';
+import { Toaster } from '@/shared/ui/Toaster';
+import { toast, dismissToast, clearAllToasts } from '@/shared/ui/toastStore';
 
 describe('Toaster + toastStore', () => {
 	afterEach(() => {

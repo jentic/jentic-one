@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { worker } from '@oss-internal/mocks/browser';
+import { worker } from '@/mocks/browser';
 import {
 	checkA11y,
 	createErrorHandler,
@@ -7,20 +7,20 @@ import {
 	screen,
 	userEvent,
 	waitFor,
-} from '@oss-internal/__tests__/test-utils';
-import { clearToken, setToken } from '@oss-internal/shared/api';
-import { AuthProvider } from '@oss-internal/shared/auth/AuthContext';
-import { App } from '@oss-internal/App';
-import { clearAllToasts, Toaster } from '@oss-internal/shared/ui';
-import { CredentialType } from '@oss-internal/modules/credentials/api';
-import { CredentialsPage } from '@oss-internal/modules/credentials/pages/CredentialsPage';
+} from '@/__tests__/test-utils';
+import { clearToken, setToken } from '@/shared/api';
+import { AuthProvider } from '@/shared/auth/AuthContext';
+import { App } from '@/App';
+import { clearAllToasts, Toaster } from '@/shared/ui';
+import { CredentialType } from '@/modules/credentials/api';
+import { CredentialsPage } from '@/modules/credentials/pages/CredentialsPage';
 import {
 	makeMockApi,
 	makeMockCatalogEntry,
 	makeMockCredential,
 	resetApisStore,
 	resetCredentialsStore,
-} from '@oss-internal/modules/credentials/mocks/handlers';
+} from '@/modules/credentials/mocks/handlers';
 
 /**
  * The success toast that previously lived as a one-time-secret dialog is now

@@ -10,10 +10,10 @@
  * freshly imported API.
  */
 import { ChevronRight, GitBranch, ShieldCheck, Zap } from 'lucide-react';
-import { AppLink, Badge, VendorIcon } from '@oss-internal/shared/ui';
-import { encodeApiId } from '@oss-internal/modules/workspace/api';
-import type { WorkspaceApi } from '@oss-internal/modules/workspace/api';
-import { ROUTE_PATHS } from '@oss-internal/shared/app/routes';
+import { AppLink, Badge, VendorIcon } from '@/shared/ui';
+import { encodeApiId } from '@/modules/workspace/api';
+import type { WorkspaceApi } from '@/modules/workspace/api';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 function titleFor(api: WorkspaceApi): string {
 	return api.displayName ?? `${api.api.vendor}/${api.api.name}`;

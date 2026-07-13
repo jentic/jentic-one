@@ -10,8 +10,8 @@
  * STATUS.md (coord-with-shell note) + COLLABORATION.md §3.
  */
 import type { RouteObject } from 'react-router-dom';
-import DashboardPage from '@oss-internal/modules/dashboard/pages/DashboardPage';
-import AccessRequestsPage from '@oss-internal/modules/dashboard/pages/AccessRequestsPage';
+import DashboardPage from '@/modules/dashboard/pages/DashboardPage';
+import AccessRequestsPage from '@/modules/dashboard/pages/AccessRequestsPage';
 
 export const dashboardIndexRoute: RouteObject = { index: true, element: <DashboardPage /> };
 

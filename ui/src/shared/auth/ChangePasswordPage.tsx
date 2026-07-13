@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@oss-internal/shared/auth/AuthContext';
-import { ApiError } from '@oss-internal/shared/api';
-import { ROUTES } from '@oss-internal/shared/app/routes';
-import { Input } from '@oss-internal/shared/ui/Input';
-import { Label } from '@oss-internal/shared/ui/Label';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { ErrorAlert } from '@oss-internal/shared/ui/ErrorAlert';
-import { MIN_PASSWORD_LENGTH } from '@oss-internal/shared/auth/password';
+import { useAuth } from '@/shared/auth/AuthContext';
+import { ApiError } from '@/shared/api';
+import { ROUTES } from '@/shared/app/routes';
+import { Input } from '@/shared/ui/Input';
+import { Label } from '@/shared/ui/Label';
+import { Button } from '@/shared/ui/Button';
+import { ErrorAlert } from '@/shared/ui/ErrorAlert';
+import { MIN_PASSWORD_LENGTH } from '@/shared/auth/password';
 
 /**
  * Password change page — serves two entry paths:

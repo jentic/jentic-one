@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { dismissToast, useToasts, type ToastEntry } from '@oss-internal/shared/ui/toastStore';
+import { Button } from '@/shared/ui/Button';
+import { dismissToast, useToasts, type ToastEntry } from '@/shared/ui/toastStore';
 
 /**
  * Mounted once at the root layout. Subscribes to the toast store and

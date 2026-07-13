@@ -1,10 +1,5 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { ErrorBoundary } from '@oss-internal/shared/ui/ErrorBoundary';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 function Boom(): never {
 	throw new Error('kaboom');

@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Save } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui';
-import { useReplacePermissions } from '@oss-internal/modules/toolkits/api';
+import { Button } from '@/shared/ui';
+import { useReplacePermissions } from '@/modules/toolkits/api';
 import {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
-} from '@oss-internal/modules/toolkits/components/PermissionRuleEditor';
-import type { PermissionRule, PermissionRuleInput } from '@oss-internal/modules/toolkits/api/types';
+} from '@/modules/toolkits/components/PermissionRuleEditor';
+import type { PermissionRule, PermissionRuleInput } from '@/modules/toolkits/api/types';
 
 /**
  * Inline editor for the agent permission rules on one toolkit↔credential

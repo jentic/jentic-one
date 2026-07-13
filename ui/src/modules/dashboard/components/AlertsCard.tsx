@@ -10,17 +10,17 @@ import {
 	ErrorAlert,
 	SkeletonRows,
 	ActorLabel,
-} from '@oss-internal/shared/ui';
+} from '@/shared/ui';
 import {
 	useActionableEvents,
 	formatApproxCount,
 	EventSeverity,
 	type EventResponse,
-} from '@oss-internal/modules/dashboard/api';
-import { ROUTES } from '@oss-internal/shared/app/routes';
-import { eventSeverityIcon } from '@oss-internal/shared/lib';
-import { timeAgo, cn } from '@oss-internal/shared/lib/utils';
-import { CardRow, CardHeaderIcon } from '@oss-internal/modules/dashboard/components/CardRow';
+} from '@/modules/dashboard/api';
+import { ROUTES } from '@/shared/app/routes';
+import { eventSeverityIcon } from '@/shared/lib';
+import { timeAgo, cn } from '@/shared/lib/utils';
+import { CardRow, CardHeaderIcon } from '@/modules/dashboard/components/CardRow';
 
 /** The leading medallion tint per severity — the one place colour is allowed to
  * carry meaning in this card (info = muted, warning = amber, error/critical =

@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { CheckCircle2, Info, Key, KeyRound, MessageSquare, X, Zap } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { Textarea } from '@oss-internal/shared/ui/Textarea';
+import { Button } from '@/shared/ui/Button';
+import { Textarea } from '@/shared/ui/Textarea';
 import {
 	itemTargetLabel,
 	isSpecificResource,
@@ -11,8 +11,8 @@ import {
 	rulesAreEnforceable,
 	parseItemRules,
 	type AccessRequestItem,
-} from '@oss-internal/shared/lib';
-import { OperationsSummary } from '@oss-internal/shared/app/rail/OperationsSummary';
+} from '@/shared/lib';
+import { OperationsSummary } from '@/shared/app/rail/OperationsSummary';
 
 /**
  * AccessRequestItemCard — one pending item in the dialog's "Awaiting Decision"

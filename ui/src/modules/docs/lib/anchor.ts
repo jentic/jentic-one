@@ -8,7 +8,7 @@
  * `(method, path)` → `ReferenceEndpoint` lookup the renderer uses to enrich
  * each operation with its scope/actor data.
  */
-import type { ReferenceEndpoint, ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import type { ReferenceEndpoint, ReferencePayload } from '@/modules/docs/api/types';
 
 /** Canonical join key shared by anchors and reference rows: `"GET /path"`. */
 export function lookupKey(method: string, path: string): string {

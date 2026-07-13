@@ -19,7 +19,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { Filter } from 'lucide-react';
-import { RefreshButton, SearchInput, SegmentedToggle } from '@oss-internal/shared/ui';
+import { RefreshButton, SearchInput, SegmentedToggle } from '@/shared/ui';
 
 /** `all` plus the two derived states of a toolkit's `active` flag. */
 export type ToolkitStatusFilter = 'all' | 'active' | 'suspended';

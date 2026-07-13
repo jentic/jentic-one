@@ -1,11 +1,6 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { Checkbox } from '@oss-internal/shared/ui/Checkbox';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { Checkbox } from '@/shared/ui/Checkbox';
 
 describe('Checkbox', () => {
 	it('toggles when clicked', async () => {

@@ -1,15 +1,7 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { CascadeDeleteDialog } from '@oss-internal/shared/ui/CascadeDeleteDialog';
-import type {
-	CascadeDependentGroup,
-	CascadeEntityType,
-} from '@oss-internal/shared/ui/CascadeDeleteDialog';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
+import type { CascadeDependentGroup, CascadeEntityType } from '@/shared/ui/CascadeDeleteDialog';
 
 function Harness({
 	entityType = 'credential',

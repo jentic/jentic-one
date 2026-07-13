@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { AppLink } from '@oss-internal/shared/ui/AppLink';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+import { Button } from '@/shared/ui/Button';
+import { AppLink } from '@/shared/ui/AppLink';
+import { ROUTES } from '@/shared/app/routes';
 
 /**
  * Wire contract for the advisory popup→opener connect signal (#598).

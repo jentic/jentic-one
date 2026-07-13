@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
-import { worker } from '@oss-internal/mocks/browser';
-import { setToken, clearToken, ActorType } from '@oss-internal/shared/api';
-import { ActorLabel } from '@oss-internal/shared/ui/ActorLabel';
+import { worker } from '@/mocks/browser';
+import { setToken, clearToken, ActorType } from '@/shared/api';
+import { ActorLabel } from '@/shared/ui/ActorLabel';
 
 function wrapper({ children }: { children: ReactNode }) {
 	const queryClient = new QueryClient({

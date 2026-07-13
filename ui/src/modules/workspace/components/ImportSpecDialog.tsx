@@ -27,11 +27,11 @@ import {
 	Trash2,
 	Upload,
 } from 'lucide-react';
-import { Button, Dialog, Input, Textarea } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
-import { OptionCardSelector } from '@oss-internal/modules/workspace/components/OptionCardSelector';
-import { useImportSpec } from '@oss-internal/modules/workspace/api';
-import type { ImportSource } from '@oss-internal/modules/workspace/api';
+import { Button, Dialog, Input, Textarea } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
+import { OptionCardSelector } from '@/modules/workspace/components/OptionCardSelector';
+import { useImportSpec } from '@/modules/workspace/api';
+import type { ImportSource } from '@/modules/workspace/api';
 
 type InputMode = 'url' | 'paste' | 'file';
 

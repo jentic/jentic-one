@@ -12,14 +12,14 @@
  * server-side search yet (tracked in jentic-one#624). The bar leaves room for
  * it once the backend lands.
  */
-import { Select, type SegmentedToggleOption } from '@oss-internal/shared/ui';
-import { SegmentedToggle } from '@oss-internal/shared/ui';
-import { useActors, type MonitorTab } from '@oss-internal/modules/monitor/api';
+import { Select, type SegmentedToggleOption } from '@/shared/ui';
+import { SegmentedToggle } from '@/shared/ui';
+import { useActors, type MonitorTab } from '@/modules/monitor/api';
 import {
 	useMonitorFilters,
 	WINDOW_OPTIONS,
 	type WindowValue,
-} from '@oss-internal/modules/monitor/lib/useMonitorFilters';
+} from '@/modules/monitor/lib/useMonitorFilters';
 
 interface MonitorFilterBarProps {
 	tab: MonitorTab;

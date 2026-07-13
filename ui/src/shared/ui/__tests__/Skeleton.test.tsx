@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { Skeleton, SkeletonRows } from '@oss-internal/shared/ui/Skeleton';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { Skeleton, SkeletonRows } from '@/shared/ui/Skeleton';
 
 describe('Skeleton', () => {
 	it('renders a placeholder element', () => {

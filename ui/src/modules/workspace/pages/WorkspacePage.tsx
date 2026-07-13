@@ -10,13 +10,13 @@
  */
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { PageShell, PageHeader, PageHelp, Button } from '@oss-internal/shared/ui';
-import { ApiGrid } from '@oss-internal/modules/workspace/components/ApiGrid';
-import { ImportSpecDialog } from '@oss-internal/modules/workspace/components/ImportSpecDialog';
-import { WorkspaceStatsStrip } from '@oss-internal/modules/workspace/components/WorkspaceStatsStrip';
-import { WorkspaceFilterBar } from '@oss-internal/modules/workspace/components/WorkspaceFilterBar';
-import { WorkspaceCatalogFooter } from '@oss-internal/modules/workspace/components/WorkspaceCatalogFooter';
-import { useWorkspaceApis } from '@oss-internal/modules/workspace/api';
+import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
+import { ApiGrid } from '@/modules/workspace/components/ApiGrid';
+import { ImportSpecDialog } from '@/modules/workspace/components/ImportSpecDialog';
+import { WorkspaceStatsStrip } from '@/modules/workspace/components/WorkspaceStatsStrip';
+import { WorkspaceFilterBar } from '@/modules/workspace/components/WorkspaceFilterBar';
+import { WorkspaceCatalogFooter } from '@/modules/workspace/components/WorkspaceCatalogFooter';
+import { useWorkspaceApis } from '@/modules/workspace/api';
 
 export default function WorkspacePage() {
 	const [importOpen, setImportOpen] = useState(false);

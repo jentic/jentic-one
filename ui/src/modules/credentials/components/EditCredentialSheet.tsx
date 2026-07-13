@@ -1,14 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Loader2, X } from 'lucide-react';
-import {
-	Button,
-	ErrorAlert,
-	Input,
-	Label,
-	LoadingState,
-	SheetPrimitive,
-	toast,
-} from '@oss-internal/shared/ui';
+import { Button, ErrorAlert, Input, Label, LoadingState, SheetPrimitive, toast } from '@/shared/ui';
 import {
 	CredentialType,
 	credentialDetails,
@@ -18,14 +10,14 @@ import {
 	useProviders,
 	useUpdateCredential,
 	type CredentialKeyLocation,
-} from '@oss-internal/modules/credentials/api';
-import { CredentialTypeBadge } from '@oss-internal/modules/credentials/components/CredentialTypeBadge';
+} from '@/modules/credentials/api';
+import { CredentialTypeBadge } from '@/modules/credentials/components/CredentialTypeBadge';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
 	type CredentialFormState,
-} from '@oss-internal/modules/credentials/components/CredentialTypeFields';
-import { buildUpdateBody } from '@oss-internal/modules/credentials/lib/formBody';
+} from '@/modules/credentials/components/CredentialTypeFields';
+import { buildUpdateBody } from '@/modules/credentials/lib/formBody';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;

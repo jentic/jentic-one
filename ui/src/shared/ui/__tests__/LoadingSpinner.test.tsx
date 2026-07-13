@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { LoadingSpinner } from '@oss-internal/shared/ui/LoadingSpinner';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { LoadingSpinner } from '@/shared/ui/LoadingSpinner';
 
 describe('LoadingSpinner', () => {
 	it('renders text when provided', () => {

@@ -11,7 +11,7 @@ import type {
 	ReferencePayload,
 	ScopeEntry,
 	ScopeFamily,
-} from '@oss-internal/modules/docs/api/types';
+} from '@/modules/docs/api/types';
 
 /** Visual tier of a scope, derived from its action — drives colour + ordering. */
 export type ScopeTier = 'admin' | 'write' | 'execute' | 'read';

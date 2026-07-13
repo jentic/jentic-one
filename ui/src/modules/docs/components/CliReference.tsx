@@ -15,10 +15,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Terminal, CornerDownRight, Filter } from 'lucide-react';
-import type { CliBinary, CliCommand, CliFlag } from '@oss-internal/modules/docs/api/types';
-import { CopyButton, Input, LazyMount } from '@oss-internal/shared/ui';
-import { useScrollSpy } from '@oss-internal/modules/docs/lib/useScrollSpy';
-import { cn } from '@oss-internal/shared/lib/utils';
+import type { CliBinary, CliCommand, CliFlag } from '@/modules/docs/api/types';
+import { CopyButton, Input, LazyMount } from '@/shared/ui';
+import { useScrollSpy } from '@/modules/docs/lib/useScrollSpy';
+import { cn } from '@/shared/lib/utils';
 
 /** A command flattened out of the tree, carrying its nesting depth. */
 interface FlatCommand {

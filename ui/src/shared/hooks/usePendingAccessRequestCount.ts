@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { listAccessRequests } from '@oss-internal/shared/lib';
-import { sharedQueryKeys } from '@oss-internal/shared/api/queryKeys';
+import { listAccessRequests } from '@/shared/lib';
+import { sharedQueryKeys } from '@/shared/api/queryKeys';
 
 /** Stable key so the nav badge + any other consumer share one cache slice.
  * Derived from the shared access-request root so a prefix invalidation of

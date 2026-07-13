@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, userEvent, within } from '@oss-internal/__tests__/test-utils';
-import { OperationsDialog } from '@oss-internal/shared/app/rail/OperationsDialog';
-import type { PermissionRule } from '@oss-internal/shared/lib';
+import { render, screen, userEvent, within } from '@/__tests__/test-utils';
+import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
+import type { PermissionRule } from '@/shared/lib';
 
 const noop = () => {};
 

@@ -1,6 +1,6 @@
 import { ChevronLeft } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 interface BackButtonProps {
 	/** Static fallback destination when there's no browser history to pop. */

@@ -1,11 +1,6 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { PageHeader } from '@oss-internal/shared/ui/PageHeader';
-import { Button } from '@oss-internal/shared/ui/Button';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { Button } from '@/shared/ui/Button';
 
 describe('PageHeader', () => {
 	it('renders the title as a level-1 heading', () => {

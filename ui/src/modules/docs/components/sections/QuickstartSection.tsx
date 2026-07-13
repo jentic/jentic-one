@@ -6,8 +6,8 @@
  * bind credential → execute).
  */
 import type { ReactNode } from 'react';
-import { DocsSectionBlock } from '@oss-internal/modules/docs/components/DocsSectionBlock';
-import { CodeBlock } from '@oss-internal/modules/docs/components/CodeBlock';
+import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
+import { CodeBlock } from '@/modules/docs/components/CodeBlock';
 
 interface Step {
 	title: string;

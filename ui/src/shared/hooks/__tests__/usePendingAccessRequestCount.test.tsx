@@ -2,9 +2,9 @@ import type { ReactNode } from 'react';
 import { describe, it, expect } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { worker } from '@oss-internal/mocks/browser';
-import { createErrorHandler } from '@oss-internal/__tests__/test-utils';
-import { usePendingAccessRequestCount } from '@oss-internal/shared/hooks/usePendingAccessRequestCount';
+import { worker } from '@/mocks/browser';
+import { createErrorHandler } from '@/__tests__/test-utils';
+import { usePendingAccessRequestCount } from '@/shared/hooks/usePendingAccessRequestCount';
 
 function wrapper({ children }: { children: ReactNode }) {
 	const queryClient = new QueryClient({

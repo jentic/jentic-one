@@ -11,7 +11,7 @@
  * AND no more results).
  */
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui';
+import { Button } from '@/shared/ui';
 
 interface CursorPagerProps {
 	/** The current response says there's another page after this one. */

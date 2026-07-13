@@ -1,6 +1,6 @@
 import type { RouteObject } from 'react-router-dom';
-import { ToolkitsPage } from '@oss-internal/modules/toolkits/pages/ToolkitsPage';
-import { ToolkitDetailPage } from '@oss-internal/modules/toolkits/pages/ToolkitDetailPage';
+import { ToolkitsPage } from '@/modules/toolkits/pages/ToolkitsPage';
+import { ToolkitDetailPage } from '@/modules/toolkits/pages/ToolkitDetailPage';
 
 /**
  * Toolkits module routes, RELATIVE to the `/app` shell (no leading slash) — see

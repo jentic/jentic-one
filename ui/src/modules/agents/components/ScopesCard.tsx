@@ -25,9 +25,9 @@ import {
 	ErrorAlert,
 	LoadingState,
 	ScopePicker,
-} from '@oss-internal/shared/ui';
-import type { EnhancedScope } from '@oss-internal/shared/lib';
-import { extractResourceFromScope } from '@oss-internal/shared/lib';
+} from '@/shared/ui';
+import type { EnhancedScope } from '@/shared/lib';
+import { extractResourceFromScope } from '@/shared/lib';
 import {
 	AgentsApiError,
 	usePermissionCatalogue,
@@ -36,8 +36,8 @@ import {
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
 	type PermissionCatalogEntry,
-} from '@oss-internal/modules/agents/api';
-import { ConfirmDialog } from '@oss-internal/modules/agents/components/confirm/ConfirmDialog';
+} from '@/modules/agents/api';
+import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 export interface ScopesCardProps {
 	actorKind: 'agent' | 'service-account';

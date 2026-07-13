@@ -10,7 +10,7 @@
  * `actor_id`/`actor_type`, only these adapters change — hooks/views are
  * unaffected.
  */
-import type { AgentResponse, ServiceAccountResponse } from '@oss-internal/shared/api';
+import type { AgentResponse, ServiceAccountResponse } from '@/shared/api';
 import {
 	ACTOR_STATUSES,
 	STATUS_BADGE_VARIANT,
@@ -18,7 +18,7 @@ import {
 	STATUS_LABELS,
 	toActorStatus,
 	type ActorStatus,
-} from '@oss-internal/shared/ui';
+} from '@/shared/ui';
 
 // The actor status vocabulary (union + label/variant/dot maps + `toActorStatus`)
 // now lives in `shared/ui` so every module renders an actor status identically

@@ -1,5 +1,5 @@
 import { Info, AlertTriangle, OctagonAlert, Flame, type LucideIcon } from 'lucide-react';
-import { EventSeverity } from '@oss-internal/shared/api';
+import { EventSeverity } from '@/shared/api';
 
 /**
  * The canonical icon for each platform-event severity — the SINGLE source of

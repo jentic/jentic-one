@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronRight, Minus } from 'lucide-react';
-import { cn } from '@oss-internal/shared/lib/utils';
-import type { EnhancedScope, ScopeGroup as ScopeGroupType } from '@oss-internal/shared/lib/scopes';
+import { cn } from '@/shared/lib/utils';
+import type { EnhancedScope, ScopeGroup as ScopeGroupType } from '@/shared/lib/scopes';
 
 /**
  * Collapsible group of scopes for one resource (ported from jentic-webapp's

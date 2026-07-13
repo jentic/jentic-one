@@ -32,15 +32,15 @@ import {
 	SegmentedToggle,
 	type BadgeVariant,
 	type SegmentedToggleOption,
-} from '@oss-internal/shared/ui';
-import { AccessRequestDialog } from '@oss-internal/shared/app';
+} from '@/shared/ui';
+import { AccessRequestDialog } from '@/shared/app';
 import {
 	useActorAccessRequests,
 	actorAccessRequestsRootKey,
 	type AccessRequest,
-} from '@oss-internal/modules/agents/api';
-import { pendingAccessRequestCountKey } from '@oss-internal/shared/hooks';
-import { timeAgo } from '@oss-internal/shared/lib/utils';
+} from '@/modules/agents/api';
+import { pendingAccessRequestCountKey } from '@/shared/hooks';
+import { timeAgo } from '@/shared/lib/utils';
 
 type StatusFilter = 'pending' | 'approved' | 'denied' | 'all';
 

@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
-import { isClientError } from '@oss-internal/shared/api';
+import { isClientError } from '@/shared/api';
 
 /**
  * Shared QueryClient.

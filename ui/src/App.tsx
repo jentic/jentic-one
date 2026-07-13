@@ -1,17 +1,17 @@
 import { Navigate, useRoutes, type RouteObject } from 'react-router-dom';
-import { AuthGuard } from '@oss-internal/shared/auth/AuthGuard';
-import { SetupGate } from '@oss-internal/shared/auth/SetupGate';
-import { LoginPage } from '@oss-internal/shared/auth/LoginPage';
-import { SetupPage } from '@oss-internal/shared/auth/SetupPage';
-import { ChangePasswordPage } from '@oss-internal/shared/auth/ChangePasswordPage';
-import { OAuthPopupReturn } from '@oss-internal/shared/auth/OAuthPopupReturn';
-import { Layout } from '@oss-internal/shared/app/Layout';
-import { moduleRoutes, ROUTES } from '@oss-internal/shared/app/routes';
-import { PlaceholderPage } from '@oss-internal/shared/app/placeholders';
-import { sortedNavItems } from '@oss-internal/shared/app/nav';
+import { AuthGuard } from '@/shared/auth/AuthGuard';
+import { SetupGate } from '@/shared/auth/SetupGate';
+import { LoginPage } from '@/shared/auth/LoginPage';
+import { SetupPage } from '@/shared/auth/SetupPage';
+import { ChangePasswordPage } from '@/shared/auth/ChangePasswordPage';
+import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
+import { Layout } from '@/shared/app/Layout';
+import { moduleRoutes, ROUTES } from '@/shared/app/routes';
+import { PlaceholderPage } from '@/shared/app/placeholders';
+import { sortedNavItems } from '@/shared/app/nav';
 // [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
-import { dashboardIndexRoute } from '@oss-internal/modules/dashboard/routes';
-import { publicDocsRoutes } from '@oss-internal/modules/docs/routes';
+import { dashboardIndexRoute } from '@/modules/dashboard/routes';
+import { publicDocsRoutes } from '@/modules/docs/routes';
 
 /**
  * Route tree. All paths are relative to the router `basename` (`/app`, set in

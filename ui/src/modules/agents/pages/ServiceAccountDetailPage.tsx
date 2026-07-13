@@ -30,8 +30,8 @@ import {
 	PageHeader,
 	PageShell,
 	ActorLabel,
-} from '@oss-internal/shared/ui';
-import { cn, formatTimestamp } from '@oss-internal/shared/lib/utils';
+} from '@/shared/ui';
+import { cn, formatTimestamp } from '@/shared/lib/utils';
 import {
 	useServiceAccount,
 	useApproveServiceAccount,
@@ -45,14 +45,14 @@ import {
 	ACTION_LABEL,
 	ACTION_VARIANT,
 	type AgentAction,
-} from '@oss-internal/modules/agents/api';
-import { ActorStatusBadge } from '@oss-internal/modules/agents/components/ActorStatusBadge';
-import { ApiKeyDialog } from '@oss-internal/modules/agents/components/ApiKeyDialog';
-import { ScopesCard } from '@oss-internal/modules/agents/components/ScopesCard';
-import { ActorAccessRequestsCard } from '@oss-internal/modules/agents/components/ActorAccessRequestsCard';
-import { DenyDialog } from '@oss-internal/modules/agents/components/confirm/DenyDialog';
-import { ConfirmDialog } from '@oss-internal/modules/agents/components/confirm/ConfirmDialog';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+} from '@/modules/agents/api';
+import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
+import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
+import { ScopesCard } from '@/modules/agents/components/ScopesCard';
+import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
+import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
+import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import { ROUTES } from '@/shared/app/routes';
 
 /** A pending lifecycle action awaiting confirmation in a dialog. */
 type PendingConfirm = { kind: 'deny' } | { kind: 'disable' } | { kind: 'archive' } | null;

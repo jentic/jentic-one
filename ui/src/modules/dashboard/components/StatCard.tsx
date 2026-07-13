@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Card, Skeleton, AppLink } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { Card, Skeleton, AppLink } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 
 /** Accent tone for a tile — drives the icon medallion + hairline glow. */
 export type StatAccent = 'neutral' | 'primary' | 'orange' | 'green' | 'blue' | 'pink';

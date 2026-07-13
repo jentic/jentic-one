@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { Button } from '@/shared/ui/Button';
+import { cn } from '@/shared/lib/utils';
 
 interface PaginationProps {
 	page: number;

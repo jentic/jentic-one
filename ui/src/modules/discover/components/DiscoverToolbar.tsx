@@ -12,8 +12,8 @@
  * drop a hairline shadow only once the bar has actually stuck.
  */
 import { useEffect, useRef } from 'react';
-import { SearchInput, SegmentedToggle, RefreshButton } from '@oss-internal/shared/ui';
-import type { CatalogFilter } from '@oss-internal/modules/discover/api';
+import { SearchInput, SegmentedToggle, RefreshButton } from '@/shared/ui';
+import type { CatalogFilter } from '@/modules/discover/api';
 
 interface DiscoverToolbarProps {
 	query: string;

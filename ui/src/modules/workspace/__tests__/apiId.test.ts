@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { encodeApiId, formatApiKey } from '@oss-internal/modules/workspace/api/apiId';
+import { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
 
 describe('apiId', () => {
 	it('encodes a simple triple as slash-joined path segments', () => {

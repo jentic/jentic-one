@@ -38,12 +38,12 @@ import {
 	type PermissionRuleSchema,
 	type ToolkitBindingResponse,
 	type AuditResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 import type {
 	BindableCredential,
 	CreatedToolkit,
 	ToolkitAgent,
-} from '@oss-internal/modules/toolkits/api/types';
+} from '@/modules/toolkits/api/types';
 
 /**
  * Sentinel error for Toolkits repository calls. Hooks/components branch on

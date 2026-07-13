@@ -17,7 +17,7 @@ import {
 	ServiceAccountsService,
 	type AgentResponse,
 	type ServiceAccountResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 import {
 	agentToEntity,
 	serviceAccountToEntity,
@@ -28,8 +28,8 @@ import {
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
 	type ToolkitBindingEntity,
-} from '@oss-internal/modules/agents/api/types';
-import { listAccessRequests, type AccessRequest } from '@oss-internal/shared/lib';
+} from '@/modules/agents/api/types';
+import { listAccessRequests, type AccessRequest } from '@/shared/lib';
 
 /**
  * Sentinel error for Agents repository calls. Hooks/components branch on

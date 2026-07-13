@@ -26,11 +26,11 @@ import {
 	within,
 	checkA11y,
 	createErrorHandler,
-} from '@oss-internal/__tests__/test-utils';
-import { worker } from '@oss-internal/mocks/browser';
-import DocsPage from '@oss-internal/modules/docs/pages/DocsPage';
-import { operationAnchorId } from '@oss-internal/modules/docs/lib/anchor';
-import type { CliReference, ReferencePayload } from '@oss-internal/modules/docs/api/types';
+} from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
+import DocsPage from '@/modules/docs/pages/DocsPage';
+import { operationAnchorId } from '@/modules/docs/lib/anchor';
+import type { CliReference, ReferencePayload } from '@/modules/docs/api/types';
 
 const SPEC = {
 	openapi: '3.1.0',

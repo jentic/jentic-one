@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { Search, X } from 'lucide-react';
-import { Input } from '@oss-internal/shared/ui/Input';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { Input } from '@/shared/ui/Input';
+import { cn } from '@/shared/lib/utils';
 
 type SearchInputSize = 'sm' | 'md';
 

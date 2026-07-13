@@ -7,13 +7,13 @@ import {
 	indexScopes,
 	ownershipEndpoints,
 	tierOf,
-} from '@oss-internal/modules/docs/lib/scopeTree';
+} from '@/modules/docs/lib/scopeTree';
 import type {
 	ReferenceEndpoint,
 	ReferencePayload,
 	ScopeCatalog,
 	ScopeEntry,
-} from '@oss-internal/modules/docs/api/types';
+} from '@/modules/docs/api/types';
 
 function ep(overrides: Partial<ReferenceEndpoint>): ReferenceEndpoint {
 	return {

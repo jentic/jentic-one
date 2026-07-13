@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Filter, ListChecks, ShieldAlert, ShieldBan, ShieldCheck } from 'lucide-react';
-import { Dialog } from '@oss-internal/shared/ui/Dialog';
-import { SearchInput } from '@oss-internal/shared/ui/SearchInput';
-import { ruleSummary, type PermissionRule } from '@oss-internal/shared/lib';
+import { Dialog } from '@/shared/ui/Dialog';
+import { SearchInput } from '@/shared/ui/SearchInput';
+import { ruleSummary, type PermissionRule } from '@/shared/lib';
 
 /**
  * OperationsDialog — the full, scannable view of every operation a

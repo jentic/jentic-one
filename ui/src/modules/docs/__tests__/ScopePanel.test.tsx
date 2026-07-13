@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ScopePanel } from '@oss-internal/modules/docs/components/ScopePanel';
-import type { ReferenceEndpoint } from '@oss-internal/modules/docs/api/types';
+import { ScopePanel } from '@/modules/docs/components/ScopePanel';
+import type { ReferenceEndpoint } from '@/modules/docs/api/types';
 
 function endpoint(overrides: Partial<ReferenceEndpoint> = {}): ReferenceEndpoint {
 	return {

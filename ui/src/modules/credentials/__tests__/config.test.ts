@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ProviderDiscoveryEntryResponse } from '@oss-internal/shared/api';
-import { CredentialType } from '@oss-internal/modules/credentials/api';
+import type { ProviderDiscoveryEntryResponse } from '@/shared/api';
+import { CredentialType } from '@/modules/credentials/api';
 import {
 	isManagedProvider,
 	managedProviderUnavailableMessage,
 	providerOptions,
-} from '@oss-internal/modules/credentials/config';
+} from '@/modules/credentials/config';
 
 /** Build a minimal discovery entry for the given id + configured state. */
 function entry(id: string, configured: boolean, managed = true): ProviderDiscoveryEntryResponse {

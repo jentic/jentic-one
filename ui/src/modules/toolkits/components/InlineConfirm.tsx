@@ -9,7 +9,7 @@ import {
 	type ReactElement,
 	type ReactNode,
 } from 'react';
-import { Button } from '@oss-internal/shared/ui';
+import { Button } from '@/shared/ui';
 
 /**
  * Inline two-step confirm for destructive row actions (revoke key, unbind

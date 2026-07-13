@@ -17,8 +17,8 @@
  */
 import { useMemo, useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getToken, subscribeToken, type ActorSummaryResponse } from '@oss-internal/shared/api';
-import { fetchActorDirectory } from '@oss-internal/shared/lib/actorDirectory';
+import { getToken, subscribeToken, type ActorSummaryResponse } from '@/shared/api';
+import { fetchActorDirectory } from '@/shared/lib/actorDirectory';
 
 /** Stable key so every consumer shares one cached directory slice. */
 export const actorDirectoryKey = ['actor-directory'] as const;

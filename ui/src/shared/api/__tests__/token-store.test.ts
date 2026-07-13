@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-	clearToken,
-	getToken,
-	setToken,
-	subscribeToken,
-} from '@oss-internal/shared/api/token-store';
+import { clearToken, getToken, setToken, subscribeToken } from '@/shared/api/token-store';
 
 const STORAGE_KEY = 'jentic-one.access_token';
 

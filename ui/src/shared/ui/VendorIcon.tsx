@@ -11,7 +11,7 @@
  * Shared by Discover and Workspace (both render vendor avatars in their grids
  * and detail headers).
  */
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 const GRADIENTS = [
 	'from-blue-500 to-blue-600',

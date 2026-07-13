@@ -1,6 +1,6 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { EmptyState } from '@oss-internal/shared/ui/EmptyState';
-import { Button } from '@oss-internal/shared/ui/Button';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { EmptyState } from '@/shared/ui/EmptyState';
+import { Button } from '@/shared/ui/Button';
 
 describe('EmptyState', () => {
 	it('renders the title, description and action', () => {

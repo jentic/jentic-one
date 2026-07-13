@@ -23,8 +23,8 @@
  * low-level `request(OpenAPI, …)` primitive the generated services use, imported
  * from the `@/shared/api` facade so the Bearer-JWT config is always applied.
  */
-import { OpenAPI, apiRequest } from '@oss-internal/shared/api';
-import { toRailError } from '@oss-internal/shared/lib/railEvents';
+import { OpenAPI, apiRequest } from '@/shared/api';
+import { toRailError } from '@/shared/lib/railEvents';
 
 /**
  * A single line item on an access request.

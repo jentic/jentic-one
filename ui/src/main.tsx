@@ -3,11 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MotionConfig } from 'framer-motion';
-import { App } from '@oss-internal/App';
-import { createQueryClient } from '@oss-internal/shared/app/query-client';
-import { AuthProvider } from '@oss-internal/shared/auth/AuthContext';
-import { loadAppConfig } from '@oss-internal/shared/config';
-import '@oss-internal/index.css';
+import { App } from '@/App';
+import { createQueryClient } from '@/shared/app/query-client';
+import { AuthProvider } from '@/shared/auth/AuthContext';
+import { loadAppConfig } from '@/shared/config';
+import '@/index.css';
 
 // React Router basename, derived from Vite's `base` (`/app/`) so the SPA's URL
 // namespace is single-sourced: change `base` in vite.config.ts and the router
@@ -22,12 +22,12 @@ async function enableMocking() {
 	// MSW worker so the SPA runs against mock data with no backend on :8000.
 	// Tree-shaken out of production builds — import.meta.env.DEV is false there.
 	if (!import.meta.env.DEV || import.meta.env.VITE_ENABLE_MSW !== '1') return;
-	const { worker } = await import('@oss-internal/mocks/browser');
+	const { worker } = await import('@/mocks/browser');
 	// Expose module-contributed e2e test hooks (seed/reset deterministic
 	// fixtures) on `window` so mocked e2e specs can drive them via
 	// page.evaluate. Aggregated by the shared MSW root so this app root stays
 	// module-agnostic — DEV + MSW only, tree-shaken from production builds.
-	const { installE2eTestHooks } = await import('@oss-internal/mocks/handlers');
+	const { installE2eTestHooks } = await import('@/mocks/handlers');
 	installE2eTestHooks(window as unknown as Record<string, unknown>);
 	await worker.start({
 		onUnhandledRequest: 'bypass',

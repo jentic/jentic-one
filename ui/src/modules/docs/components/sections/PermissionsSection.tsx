@@ -12,13 +12,13 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ShieldCheck, KeySquare, UserCircle, ChevronRight } from 'lucide-react';
-import type { ReferencePayload } from '@oss-internal/modules/docs/api/types';
-import { authModelCounts, ownershipEndpoints } from '@oss-internal/modules/docs/lib/scopeTree';
-import { DocsSectionBlock } from '@oss-internal/modules/docs/components/DocsSectionBlock';
-import { ScopeTree } from '@oss-internal/modules/docs/components/ScopeTree';
-import { TierLadder } from '@oss-internal/modules/docs/components/TierLadder';
-import { ActorExplorer } from '@oss-internal/modules/docs/components/ActorsTree';
-import { MethodBadge } from '@oss-internal/shared/ui';
+import type { ReferencePayload } from '@/modules/docs/api/types';
+import { authModelCounts, ownershipEndpoints } from '@/modules/docs/lib/scopeTree';
+import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
+import { ScopeTree } from '@/modules/docs/components/ScopeTree';
+import { TierLadder } from '@/modules/docs/components/TierLadder';
+import { ActorExplorer } from '@/modules/docs/components/ActorsTree';
+import { MethodBadge } from '@/shared/ui';
 
 function ModelCard({
 	icon: Icon,

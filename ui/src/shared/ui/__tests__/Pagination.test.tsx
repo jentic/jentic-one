@@ -1,10 +1,5 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { Pagination } from '@oss-internal/shared/ui/Pagination';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { Pagination } from '@/shared/ui/Pagination';
 
 describe('Pagination', () => {
 	it('renders the page indicator', () => {

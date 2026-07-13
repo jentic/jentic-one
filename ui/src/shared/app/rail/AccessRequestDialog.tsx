@@ -36,18 +36,18 @@ import {
 	ShieldCheck,
 	XCircle,
 } from 'lucide-react';
-import { Dialog } from '@oss-internal/shared/ui/Dialog';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { Badge } from '@oss-internal/shared/ui/Badge';
-import { Textarea } from '@oss-internal/shared/ui/Textarea';
-import { LoadingState } from '@oss-internal/shared/ui/LoadingState';
-import { ErrorAlert } from '@oss-internal/shared/ui/ErrorAlert';
-import { ActorLabel } from '@oss-internal/shared/ui/ActorLabel';
-import { AgentBadge } from '@oss-internal/shared/ui/AgentBadge';
-import { AccessRequestItemCard } from '@oss-internal/shared/app/rail/AccessRequestItemCard';
-import { AccessRequestChip } from '@oss-internal/shared/app/rail/AccessRequestChip';
-import { OperationsSummary } from '@oss-internal/shared/app/rail/OperationsSummary';
-import { useActorDirectory } from '@oss-internal/shared/hooks';
+import { Dialog } from '@/shared/ui/Dialog';
+import { Button } from '@/shared/ui/Button';
+import { Badge } from '@/shared/ui/Badge';
+import { Textarea } from '@/shared/ui/Textarea';
+import { LoadingState } from '@/shared/ui/LoadingState';
+import { ErrorAlert } from '@/shared/ui/ErrorAlert';
+import { ActorLabel } from '@/shared/ui/ActorLabel';
+import { AgentBadge } from '@/shared/ui/AgentBadge';
+import { AccessRequestItemCard } from '@/shared/app/rail/AccessRequestItemCard';
+import { AccessRequestChip } from '@/shared/app/rail/AccessRequestChip';
+import { OperationsSummary } from '@/shared/app/rail/OperationsSummary';
+import { useActorDirectory } from '@/shared/hooks';
 import {
 	decideAccessRequest,
 	getAccessRequest,
@@ -58,7 +58,7 @@ import {
 	type AccessRequest,
 	type AccessRequestItem,
 	type ItemDecision,
-} from '@oss-internal/shared/lib/accessRequests';
+} from '@/shared/lib/accessRequests';
 
 type DraftStatus = 'pending' | 'denying' | 'approved' | 'denied';
 type Step = 'review' | 'confirm';

@@ -7,9 +7,9 @@
  */
 import { useState } from 'react';
 import { ChevronDown, Menu } from 'lucide-react';
-import { DOCS_NAV, DOCS_SECTIONS } from '@oss-internal/modules/docs/lib/nav';
-import { useDismissable } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { DOCS_NAV, DOCS_SECTIONS } from '@/modules/docs/lib/nav';
+import { useDismissable } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 
 export interface DocsMobileNavProps {
 	activeId: string | null;

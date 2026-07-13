@@ -5,8 +5,8 @@
  * away in Discover — but we deliberately don't shove a second feed at them.
  */
 import { Compass } from 'lucide-react';
-import { AppLink } from '@oss-internal/shared/ui';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+import { AppLink } from '@/shared/ui';
+import { ROUTES } from '@/shared/app/routes';
 
 export function WorkspaceCatalogFooter() {
 	return (

@@ -19,17 +19,17 @@ import {
 	fetchPendingAccessRequests,
 	fetchPendingAgents,
 	fetchRecentExecutions,
-} from '@oss-internal/modules/dashboard/api/client';
-import type { DashboardApiError } from '@oss-internal/modules/dashboard/api/client';
+} from '@/modules/dashboard/api/client';
+import type { DashboardApiError } from '@/modules/dashboard/api/client';
 import type {
 	AlertsOverview,
 	CatalogOverview,
 	PendingAccessRequestsOverview,
 	PendingAgentsOverview,
 	RecentExecutionsOverview,
-} from '@oss-internal/modules/dashboard/api/types';
-import type { AccessRequestPage } from '@oss-internal/shared/lib';
-import { sharedQueryKeys } from '@oss-internal/shared/api';
+} from '@/modules/dashboard/api/types';
+import type { AccessRequestPage } from '@/shared/lib';
+import { sharedQueryKeys } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely.
  * `all` derives from the shared cross-module registry so sibling modules (e.g.

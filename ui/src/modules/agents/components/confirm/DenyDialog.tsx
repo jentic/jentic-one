@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Button, Dialog, Label, Textarea } from '@oss-internal/shared/ui';
+import { Button, Dialog, Label, Textarea } from '@/shared/ui';
 
 interface DenyDialogProps {
 	open: boolean;

@@ -6,7 +6,7 @@
  * are org:admin-only on the backend; the UI hides/disables those affordances
  * for non-admins rather than letting the call 403.
  */
-import { useAuth } from '@oss-internal/shared/auth';
+import { useAuth } from '@/shared/auth';
 
 export function usePermission(required: string): boolean {
 	const { user } = useAuth();

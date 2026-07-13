@@ -25,18 +25,18 @@
 import type React from 'react';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { StreamEventIcon } from '@oss-internal/shared/app/rail/StreamEventIcon';
-import { DenyReasonField } from '@oss-internal/shared/app/rail/DenyReasonField';
+import { Button } from '@/shared/ui/Button';
+import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
+import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {
 	formatStreamTime,
 	inlineActionsFor,
 	primaryDestinationFor,
 	severityStripeClass,
 	STREAM_KIND_LABEL,
-} from '@oss-internal/shared/lib/agentStream';
-import type { InlineActionSpec, StreamEvent } from '@oss-internal/shared/lib/agentStream';
-import { cn } from '@oss-internal/shared/lib/utils';
+} from '@/shared/lib/agentStream';
+import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
+import { cn } from '@/shared/lib/utils';
 
 export type RailEventRowProps = {
 	ev: StreamEvent;

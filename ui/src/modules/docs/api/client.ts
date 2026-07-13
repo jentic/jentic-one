@@ -24,11 +24,7 @@
  * verbatim, and the scope/actor reference enriches each operation. They are
  * never merged.
  */
-import type {
-	CliReference,
-	OpenApiDocument,
-	ReferencePayload,
-} from '@oss-internal/modules/docs/api/types';
+import type { CliReference, OpenApiDocument, ReferencePayload } from '@/modules/docs/api/types';
 
 const SPEC_URL = '/openapi.json';
 const REFERENCE_URL = '/reference/endpoints.json';

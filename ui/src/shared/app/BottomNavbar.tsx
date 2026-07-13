@@ -2,12 +2,12 @@ import { useCallback, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MoreHorizontal, X } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { sortedNavItems, isNavItemActive, type NavItem } from '@oss-internal/shared/app/nav';
-import { AppLink } from '@oss-internal/shared/ui/AppLink';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { useDismissable } from '@oss-internal/shared/ui/Menu';
-import { usePendingAccessRequestCount, usePendingAgentsCount } from '@oss-internal/shared/hooks';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { sortedNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
+import { AppLink } from '@/shared/ui/AppLink';
+import { Button } from '@/shared/ui/Button';
+import { useDismissable } from '@/shared/ui/Menu';
+import { usePendingAccessRequestCount, usePendingAgentsCount } from '@/shared/hooks';
+import { cn } from '@/shared/lib/utils';
 
 const BOTTOM_NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
 

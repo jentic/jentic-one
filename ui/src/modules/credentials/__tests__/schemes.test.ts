@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CredentialType } from '@oss-internal/modules/credentials/api';
+import { CredentialType } from '@/modules/credentials/api';
 import {
 	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
@@ -7,7 +7,7 @@ import {
 	parseSchemeOptions,
 	schemeTypeFromRaw,
 	schemeTypeToCredentialType,
-} from '@oss-internal/modules/credentials/lib/schemes';
+} from '@/modules/credentials/lib/schemes';
 
 describe('credentials/lib/schemes', () => {
 	describe('schemeTypeFromRaw', () => {

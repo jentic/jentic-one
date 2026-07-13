@@ -1,5 +1,5 @@
 import { Bot } from 'lucide-react';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 /**
  * AgentBadge — a deterministic identity chip for an actor (agent / service

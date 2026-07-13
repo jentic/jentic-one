@@ -8,7 +8,7 @@
  * viewer. Everything here is defensive: the spec is typed `unknown` on this
  * branch and may be partial, so missing fields collapse to empty arrays.
  */
-import type { OperationParameter, SecuritySchemeMap } from '@oss-internal/shared/ui';
+import type { OperationParameter, SecuritySchemeMap } from '@/shared/ui';
 
 /** Detail for one operation, keyed by `METHOD path` (see {@link opDetailKey}). */
 export interface SpecOperationDetail {

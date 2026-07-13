@@ -1,17 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	waitFor,
-} from '@oss-internal/__tests__/test-utils';
-import { ApiPicker } from '@oss-internal/modules/credentials/components/ApiPicker';
+import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
+import { ApiPicker } from '@/modules/credentials/components/ApiPicker';
 import {
 	makeMockApi,
 	makeMockCatalogEntry,
 	resetApisStore,
-} from '@oss-internal/modules/credentials/mocks/handlers';
-import type { SelectedApi } from '@oss-internal/modules/credentials/api';
+} from '@/modules/credentials/mocks/handlers';
+import type { SelectedApi } from '@/modules/credentials/api';
 
 describe('ApiPicker', () => {
 	beforeEach(() => resetApisStore());

@@ -5,8 +5,8 @@
  * roadmap's three-pillar framing.
  */
 import { UserCheck, ShieldCheck, ScrollText, ArrowDown } from 'lucide-react';
-import { JenticLogo } from '@oss-internal/shared/ui';
-import { DocsSectionBlock } from '@oss-internal/modules/docs/components/DocsSectionBlock';
+import { JenticLogo } from '@/shared/ui';
+import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
 
 const PILLARS = [
 	{

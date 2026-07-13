@@ -17,18 +17,18 @@ import {
 	StatusBadge,
 	AppLink,
 	ActorLabel,
-} from '@oss-internal/shared/ui';
+} from '@/shared/ui';
 import {
 	useExecutions,
 	useExecution,
 	useActorForTrace,
 	toExecutionStatus,
 	type ExecutionResponse,
-} from '@oss-internal/modules/monitor/api';
-import { ExecutionStatusPill } from '@oss-internal/modules/monitor/components/StatusPill';
-import { DetailRow, DetailSection } from '@oss-internal/modules/monitor/components/Detail';
-import { formatDuration, formatTimestamp } from '@oss-internal/modules/monitor/lib/format';
-import { monitorHref, hasTrace } from '@oss-internal/modules/monitor/lib/links';
+} from '@/modules/monitor/api';
+import { ExecutionStatusPill } from '@/modules/monitor/components/StatusPill';
+import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
+import { formatDuration, formatTimestamp } from '@/modules/monitor/lib/format';
+import { monitorHref, hasTrace } from '@/modules/monitor/lib/links';
 
 interface TraceDetailSheetProps {
 	traceId: string | null;

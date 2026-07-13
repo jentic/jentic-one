@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
-import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@oss-internal/shared/ui';
+import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -10,12 +10,12 @@ import {
 	useImportCatalogEntry,
 	useProviders,
 	type SelectedApi,
-} from '@oss-internal/modules/credentials/api';
+} from '@/modules/credentials/api';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
 	type CredentialFormState,
-} from '@oss-internal/modules/credentials/components/CredentialTypeFields';
+} from '@/modules/credentials/components/CredentialTypeFields';
 import {
 	buildCreateBody,
 	seedApiKeyFromScheme,
@@ -24,25 +24,22 @@ import {
 	seedServerVars,
 	validateCreate,
 	validateServerVars,
-} from '@oss-internal/modules/credentials/lib/formBody';
-import {
-	managedProviderUnavailableMessage,
-	providerOptions,
-} from '@oss-internal/modules/credentials/config';
-import { ApiPicker } from '@oss-internal/modules/credentials/components/ApiPicker';
-import { AuthTypeCards } from '@oss-internal/modules/credentials/components/AuthTypeCards';
-import { ServerVariablesSection } from '@oss-internal/modules/credentials/components/ServerVariablesSection';
+} from '@/modules/credentials/lib/formBody';
+import { managedProviderUnavailableMessage, providerOptions } from '@/modules/credentials/config';
+import { ApiPicker } from '@/modules/credentials/components/ApiPicker';
+import { AuthTypeCards } from '@/modules/credentials/components/AuthTypeCards';
+import { ServerVariablesSection } from '@/modules/credentials/components/ServerVariablesSection';
 import {
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
 	type OAuth2FlowDef,
 	type SchemeOption,
-} from '@oss-internal/modules/credentials/lib/schemes';
+} from '@/modules/credentials/lib/schemes';
 import {
 	enhancedScopesFromSchemes,
 	getRecommendedScopes,
 	scopesInGroup,
-} from '@oss-internal/modules/credentials/lib/scope-utils';
+} from '@/modules/credentials/lib/scope-utils';
 
 export interface CreatedCredentialInfo {
 	credentialId: string;

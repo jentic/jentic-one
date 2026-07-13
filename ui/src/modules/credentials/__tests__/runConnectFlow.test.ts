@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { worker } from '@oss-internal/mocks/browser';
+import { worker } from '@/mocks/browser';
 import {
 	CredentialType,
 	OAUTH_CONNECT_MESSAGE_TYPE,
 	runConnectFlow,
 	type CredentialRedactedResponse,
-} from '@oss-internal/modules/credentials/api';
+} from '@/modules/credentials/api';
 import {
 	makeMockCredential,
 	resetCredentialsStore,
 	setConnectAutoCompletes,
-} from '@oss-internal/modules/credentials/mocks/handlers';
+} from '@/modules/credentials/mocks/handlers';
 
 /**
  * `runConnectFlow` is the single opener-side chokepoint for the OAuth connect

@@ -18,12 +18,12 @@ import {
 	Skeleton,
 	EmptyState,
 	ErrorAlert,
-} from '@oss-internal/shared/ui';
+} from '@/shared/ui';
 import { FileJson, GitBranch } from 'lucide-react';
-import type { BadgeVariant } from '@oss-internal/shared/ui';
-import { SpecViewerDialog } from '@oss-internal/modules/workspace/components/SpecViewerDialog';
-import { useApiRevisions, useRevisionActions } from '@oss-internal/modules/workspace/api';
-import type { ApiKey, ApiRevision, RevisionState } from '@oss-internal/modules/workspace/api';
+import type { BadgeVariant } from '@/shared/ui';
+import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
+import { useApiRevisions, useRevisionActions } from '@/modules/workspace/api';
+import type { ApiKey, ApiRevision, RevisionState } from '@/modules/workspace/api';
 
 /** Badge colour per known lifecycle state; unknown wire values fall back to `default`. */
 const STATE_VARIANT: Partial<Record<RevisionState, BadgeVariant>> = {

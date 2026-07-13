@@ -28,7 +28,7 @@ import {
 	type OAuth2CreateRequest,
 	type OAuth2UpdateRequest,
 	type RuntimeConfig,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 
 export { CredentialType };
 

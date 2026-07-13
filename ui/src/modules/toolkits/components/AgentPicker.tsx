@@ -19,10 +19,10 @@ import {
 	ErrorAlert,
 	LoadingState,
 	SearchInput,
-} from '@oss-internal/shared/ui';
-import { useLinkableAgents } from '@oss-internal/modules/toolkits/api';
-import type { ToolkitAgent } from '@oss-internal/modules/toolkits/api/types';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+} from '@/shared/ui';
+import { useLinkableAgents } from '@/modules/toolkits/api';
+import type { ToolkitAgent } from '@/modules/toolkits/api/types';
+import { ROUTES } from '@/shared/app/routes';
 
 interface AgentPickerProps {
 	/** Agent ids already linked to this toolkit — hidden from the list. */

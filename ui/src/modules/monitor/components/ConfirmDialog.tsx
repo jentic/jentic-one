@@ -4,7 +4,7 @@
  * the module rather than importing another module's confirm dialog, per the
  * module-isolation convention.
  */
-import { Button, Dialog } from '@oss-internal/shared/ui';
+import { Button, Dialog } from '@/shared/ui';
 import type { ReactNode } from 'react';
 
 interface ConfirmDialogProps {

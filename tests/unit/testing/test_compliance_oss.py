@@ -46,6 +46,7 @@ class _DefaultBrokerCompliance(BaseBrokerComplianceTest):
 def test_oss_search_strategies_comply(compliance: BaseSearchStrategyComplianceTest) -> None:
     compliance.test_is_search_strategy()
     compliance.test_has_required_attrs()
+    compliance.test_dialect_is_resolvable()
     compliance.test_search_operations_signature()
 
 

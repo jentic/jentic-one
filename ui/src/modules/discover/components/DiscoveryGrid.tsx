@@ -10,9 +10,9 @@
  */
 import { useEffect, useRef } from 'react';
 import { Compass } from 'lucide-react';
-import { Button, EmptyState, ErrorAlert, Skeleton } from '@oss-internal/shared/ui';
-import { DiscoveryCard } from '@oss-internal/modules/discover/components/DiscoveryCard';
-import type { DiscoveryEntity } from '@oss-internal/modules/discover/api';
+import { Button, EmptyState, ErrorAlert, Skeleton } from '@/shared/ui';
+import { DiscoveryCard } from '@/modules/discover/components/DiscoveryCard';
+import type { DiscoveryEntity } from '@/modules/discover/api';
 
 interface DiscoveryGridProps {
 	entities: DiscoveryEntity[];

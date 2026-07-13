@@ -1,10 +1,10 @@
 import { AlertTriangle, Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import { Button, Input, Select } from '@oss-internal/shared/ui';
+import { Button, Input, Select } from '@/shared/ui';
 import {
 	PERMISSION_EFFECTS,
 	type PermissionEffect,
 	type PermissionRuleInput,
-} from '@oss-internal/modules/toolkits/api/types';
+} from '@/modules/toolkits/api/types';
 
 /**
  * Editor for the agent-defined permission rules on a toolkit↔credential

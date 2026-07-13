@@ -1,12 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Search, X } from 'lucide-react';
-import { Input, Label } from '@oss-internal/shared/ui';
-import { ScopeGroup } from '@oss-internal/shared/ui/ScopeGroup';
-import {
-	filterScopeGroups,
-	groupScopesByResource,
-	type EnhancedScope,
-} from '@oss-internal/shared/lib/scopes';
+import { Input, Label } from '@/shared/ui';
+import { ScopeGroup } from '@/shared/ui/ScopeGroup';
+import { filterScopeGroups, groupScopesByResource, type EnhancedScope } from '@/shared/lib/scopes';
 
 /**
  * Grouped, searchable scope picker — a faithful port of jentic-webapp's

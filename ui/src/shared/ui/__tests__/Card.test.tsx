@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@oss-internal/shared/ui/Card';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
 
 describe('Card', () => {
 	it('renders its sub-sections', () => {

@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { PageShell } from '@oss-internal/shared/ui/PageShell';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { PageShell } from '@/shared/ui/PageShell';
 
 describe('PageShell', () => {
 	it('renders its children', () => {

@@ -12,7 +12,7 @@ import type {
 	ApiRevision,
 	CursorPage,
 	WorkspaceApi,
-} from '@oss-internal/modules/workspace/api/types';
+} from '@/modules/workspace/api/types';
 
 type Raw = Record<string, unknown>;
 

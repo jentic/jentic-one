@@ -6,9 +6,9 @@ import {
 	userEvent,
 	waitFor,
 	createErrorHandler,
-} from '@oss-internal/__tests__/test-utils';
-import { worker } from '@oss-internal/mocks/browser';
-import { ToolkitsPage } from '@oss-internal/modules/toolkits/pages/ToolkitsPage';
+} from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
+import { ToolkitsPage } from '@/modules/toolkits/pages/ToolkitsPage';
 
 describe('ToolkitsPage', () => {
 	it('renders the seeded toolkits from the mocked list endpoint', async () => {

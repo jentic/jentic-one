@@ -17,6 +17,14 @@ import inspect
 from jentic_one.registry.repos.search.protocol import SearchStrategy
 from jentic_one.shared.broker.broker import Broker
 
+#: Dialect names a backend can report from ``DatabaseBackend.dialect_name``.
+#: Keep in sync with the backends in ``jentic_one.shared.db.backends`` — a
+#: strategy whose ``dialect`` is not one of these can never be resolved by
+#: ``resolve_strategy`` (it keys on ``backend.dialect_name``), so a plausible but
+#: wrong value like ``"postgresql"`` would pass a bare ``isinstance(dialect, str)``
+#: check yet fail at runtime. This constant makes that class of drift a test failure.
+KNOWN_BACKEND_DIALECTS: frozenset[str] = frozenset({"postgres", "sqlite"})
+
 
 def assert_signature_matches(impl: type, protocol: type, method: str) -> None:
     """Assert ``impl.method`` has the same signature as ``protocol.method``.
@@ -63,6 +71,18 @@ class BaseSearchStrategyComplianceTest:
         instance = self.strategy_cls()
         assert isinstance(instance.name, str)
         assert isinstance(instance.dialect, str)
+
+    def test_dialect_is_resolvable(self) -> None:
+        # A string `dialect` is not enough: it must match a real backend's
+        # `dialect_name` or `resolve_strategy((dialect, mode))` never finds this
+        # strategy and raises SearchUnsupportedError at runtime. Catch the
+        # plausible-but-wrong value (e.g. "postgresql" vs "postgres") here.
+        instance = self.strategy_cls()
+        assert instance.dialect in KNOWN_BACKEND_DIALECTS, (
+            f"{self.strategy_cls.__name__}.dialect={instance.dialect!r} is not a known "
+            f"backend dialect {sorted(KNOWN_BACKEND_DIALECTS)}; resolve_strategy would "
+            "never find this strategy."
+        )
 
     def test_search_operations_signature(self) -> None:
         assert_signature_matches(self.strategy_cls, SearchStrategy, "search_operations")

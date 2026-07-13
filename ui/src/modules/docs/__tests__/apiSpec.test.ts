@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseSpec, refName, derefSchema } from '@oss-internal/modules/docs/lib/apiSpec';
-import { operationAnchorId } from '@oss-internal/modules/docs/lib/anchor';
-import type { OpenApiDocument } from '@oss-internal/modules/docs/api/types';
+import { parseSpec, refName, derefSchema } from '@/modules/docs/lib/apiSpec';
+import { operationAnchorId } from '@/modules/docs/lib/anchor';
+import type { OpenApiDocument } from '@/modules/docs/api/types';
 
 const SPEC = {
 	openapi: '3.1.0',

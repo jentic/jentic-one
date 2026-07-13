@@ -13,20 +13,17 @@ import {
 	useMutation,
 	useQueryClient,
 } from '@tanstack/react-query';
-import { toast } from '@oss-internal/shared/ui';
+import { toast } from '@/shared/ui';
 import {
 	importCatalogEntry,
 	listCatalog,
 	previewOperations,
 	refreshCatalog,
 	type CatalogPage,
-} from '@oss-internal/modules/discover/api/client';
-import type { CatalogFilter, DiscoveryEntity } from '@oss-internal/modules/discover/api/types';
-import type {
-	OperationPreviewListResponse,
-	PreviewOperationResponse,
-} from '@oss-internal/shared/api';
-import { sharedQueryKeys } from '@oss-internal/shared/api';
+} from '@/modules/discover/api/client';
+import type { CatalogFilter, DiscoveryEntity } from '@/modules/discover/api/types';
+import type { OperationPreviewListResponse, PreviewOperationResponse } from '@/shared/api';
+import { sharedQueryKeys } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
 export const discoverKeys = {

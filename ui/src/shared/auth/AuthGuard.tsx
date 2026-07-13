@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth } from '@oss-internal/shared/auth/AuthContext';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+import { useAuth } from '@/shared/auth/AuthContext';
+import { ROUTES } from '@/shared/app/routes';
 
 /**
  * Gates authenticated routes:

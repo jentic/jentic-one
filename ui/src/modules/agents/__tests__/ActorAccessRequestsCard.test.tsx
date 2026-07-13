@@ -6,12 +6,12 @@ import {
 	userEvent,
 	checkA11y,
 	createErrorHandler,
-} from '@oss-internal/__tests__/test-utils';
-import { setToken } from '@oss-internal/shared/api';
-import { Toaster } from '@oss-internal/shared/ui';
-import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
-import { resetRailEventsStore } from '@oss-internal/shared/app/rail/mocks/handlers';
-import { ActorAccessRequestsCard } from '@oss-internal/modules/agents/components/ActorAccessRequestsCard';
+} from '@/__tests__/test-utils';
+import { setToken } from '@/shared/api';
+import { Toaster } from '@/shared/ui';
+import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
+import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 
 function renderCard(props: { actorId: string; actorName: string }) {
 	return renderWithProviders(
@@ -112,7 +112,7 @@ describe('ActorAccessRequestsCard', () => {
 	});
 
 	it('surfaces an error when the list fails to load', async () => {
-		const { worker } = await import('@oss-internal/mocks/browser');
+		const { worker } = await import('@/mocks/browser');
 		worker.use(createErrorHandler('get', '/access-requests', { status: 500 }));
 
 		renderCard({ actorId: 'agnt_active_1', actorName: 'support-agent' });

@@ -13,19 +13,19 @@
  * It never touches `@/shared/api` directly (ESLint-enforced).
  */
 import { useEffect, useState } from 'react';
-import { PageShell, PageHeader, PageHelp } from '@oss-internal/shared/ui';
-import { DiscoverToolbar } from '@oss-internal/modules/discover/components/DiscoverToolbar';
-import { DiscoveryGrid } from '@oss-internal/modules/discover/components/DiscoveryGrid';
-import { ApiDetailSheet } from '@oss-internal/modules/discover/components/ApiDetailSheet';
-import { DiscoverStatusRow } from '@oss-internal/modules/discover/components/DiscoverStatusRow';
-import { useDebouncedValue } from '@oss-internal/modules/discover/lib/useDebouncedValue';
+import { PageShell, PageHeader, PageHelp } from '@/shared/ui';
+import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
+import { DiscoveryGrid } from '@/modules/discover/components/DiscoveryGrid';
+import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
+import { DiscoverStatusRow } from '@/modules/discover/components/DiscoverStatusRow';
+import { useDebouncedValue } from '@/modules/discover/lib/useDebouncedValue';
 import {
 	useDiscoverCatalog,
 	useImportCatalogApi,
 	useRefreshCatalog,
 	type CatalogFilter,
 	type DiscoveryEntity,
-} from '@oss-internal/modules/discover/api';
+} from '@/modules/discover/api';
 
 export default function DiscoverPage() {
 	const [query, setQuery] = useState('');

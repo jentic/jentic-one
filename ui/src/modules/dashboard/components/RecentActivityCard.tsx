@@ -11,11 +11,11 @@ import {
 	SkeletonRows,
 	AppLink,
 	type Column,
-} from '@oss-internal/shared/ui';
-import { useRecentExecutions, type ExecutionResponse } from '@oss-internal/modules/dashboard/api';
-import { ROUTES } from '@oss-internal/shared/app/routes';
-import { timeAgo } from '@oss-internal/shared/lib/utils';
-import { CardHeaderIcon } from '@oss-internal/modules/dashboard/components/CardRow';
+} from '@/shared/ui';
+import { useRecentExecutions, type ExecutionResponse } from '@/modules/dashboard/api';
+import { ROUTES } from '@/shared/app/routes';
+import { timeAgo } from '@/shared/lib/utils';
+import { CardHeaderIcon } from '@/modules/dashboard/components/CardRow';
 
 const columns: Column<ExecutionResponse>[] = [
 	{

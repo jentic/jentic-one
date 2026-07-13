@@ -1,11 +1,6 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { Input } from '@oss-internal/shared/ui/Input';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { Input } from '@/shared/ui/Input';
 
 describe('Input', () => {
 	it('accepts typed text', async () => {

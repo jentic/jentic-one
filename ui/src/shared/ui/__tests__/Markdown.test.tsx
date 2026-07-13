@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { Markdown } from '@oss-internal/shared/ui/Markdown';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { Markdown } from '@/shared/ui/Markdown';
 
 describe('Markdown', () => {
 	it('renders GitHub-flavoured markdown (headings, lists, emphasis)', () => {

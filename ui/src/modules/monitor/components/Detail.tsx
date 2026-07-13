@@ -3,7 +3,7 @@
  * label/value row. Kept module-local so the detail sheets share one look.
  */
 import type { ReactNode } from 'react';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 export function DetailSection({
 	title,

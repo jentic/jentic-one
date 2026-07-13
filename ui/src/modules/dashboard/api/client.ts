@@ -22,7 +22,7 @@ import {
 	type AgentListResponse,
 	type EventListResponse,
 	type ExecutionListResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 import {
 	approxCountFromPage,
 	deriveSuccessRate,
@@ -31,8 +31,8 @@ import {
 	type PendingAccessRequestsOverview,
 	type PendingAgentsOverview,
 	type RecentExecutionsOverview,
-} from '@oss-internal/modules/dashboard/api/types';
-import { listAccessRequests, type AccessRequestPage } from '@oss-internal/shared/lib';
+} from '@/modules/dashboard/api/types';
+import { listAccessRequests, type AccessRequestPage } from '@/shared/lib';
 
 /**
  * Sentinel error for Dashboard repository calls. Hooks/components branch on

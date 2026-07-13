@@ -1,8 +1,8 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { BackButton, PageHeader, PageShell } from '@oss-internal/shared/ui';
-import { useToolkit } from '@oss-internal/modules/toolkits/api';
-import { ToolkitDetailBody } from '@oss-internal/modules/toolkits/components/ToolkitDetailBody';
-import { ROUTES } from '@oss-internal/shared/app/routes';
+import { BackButton, PageHeader, PageShell } from '@/shared/ui';
+import { useToolkit } from '@/modules/toolkits/api';
+import { ToolkitDetailBody } from '@/modules/toolkits/components/ToolkitDetailBody';
+import { ROUTES } from '@/shared/app/routes';
 
 /**
  * `/toolkits/:toolkitId` (→ `/app/toolkits/:toolkitId`) — full-page host for the

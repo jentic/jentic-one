@@ -5,8 +5,8 @@
  * because every later step uses one or the other.
  */
 import { Wrench, Compass } from 'lucide-react';
-import { DocsSectionBlock, Prose } from '@oss-internal/modules/docs/components/DocsSectionBlock';
-import { CodeBlock } from '@oss-internal/modules/docs/components/CodeBlock';
+import { DocsSectionBlock, Prose } from '@/modules/docs/components/DocsSectionBlock';
+import { CodeBlock } from '@/modules/docs/components/CodeBlock';
 
 const INSTALL_SH = `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`;
 

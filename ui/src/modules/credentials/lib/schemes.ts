@@ -11,7 +11,7 @@
 //   - `oauth2` is `type: 'oauth2'`.
 //   - Anything else — including malformed entries — collapses into `unknown`,
 //     which signals the UI to fall back to the manual type toggle.
-import { CredentialType } from '@oss-internal/modules/credentials/api';
+import { CredentialType } from '@/modules/credentials/api';
 
 export type SchemeType = 'bearer' | 'basic' | 'apiKey' | 'oauth2' | 'unknown';
 

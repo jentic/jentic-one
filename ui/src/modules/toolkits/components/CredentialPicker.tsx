@@ -13,20 +13,10 @@
 import { useMemo, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, KeyRound, Link as LinkIcon, SearchX } from 'lucide-react';
-import {
-	AppLink,
-	Badge,
-	EmptyState,
-	ErrorAlert,
-	LoadingState,
-	SearchInput,
-} from '@oss-internal/shared/ui';
-import { ROUTES } from '@oss-internal/shared/app/routes';
-import { useBindableCredentials } from '@oss-internal/modules/toolkits/api';
-import {
-	CREDENTIAL_TYPE_LABELS,
-	type BindableCredential,
-} from '@oss-internal/modules/toolkits/api/types';
+import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
+import { ROUTES } from '@/shared/app/routes';
+import { useBindableCredentials } from '@/modules/toolkits/api';
+import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolkits/api/types';
 
 interface CredentialPickerProps {
 	/** Credential ids already bound to this toolkit — hidden from the list. */

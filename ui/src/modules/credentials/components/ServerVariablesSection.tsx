@@ -1,6 +1,6 @@
 import { useId } from 'react';
-import { Input, Label, Select } from '@oss-internal/shared/ui';
-import type { ServerVarDef } from '@oss-internal/modules/credentials/api';
+import { Input, Label, Select } from '@/shared/ui';
+import type { ServerVarDef } from '@/modules/credentials/api';
 
 /**
  * Renders an input per OpenAPI **server variable** (e.g. Atlassian's

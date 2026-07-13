@@ -1,11 +1,11 @@
 import { useLocation, Outlet } from 'react-router-dom';
-import { BottomNavbar } from '@oss-internal/shared/app/BottomNavbar';
-import { TopNavbar } from '@oss-internal/shared/app/TopNavbar';
-import { AgentRail } from '@oss-internal/shared/app/rail/AgentRail';
-import { ToastHost } from '@oss-internal/shared/app/rail/ToastHost';
-import { ErrorBoundary } from '@oss-internal/shared/ui/ErrorBoundary';
-import { Toaster } from '@oss-internal/shared/ui/Toaster';
-import { AgentStreamProvider } from '@oss-internal/shared/lib/agentStream';
+import { BottomNavbar } from '@/shared/app/BottomNavbar';
+import { TopNavbar } from '@/shared/app/TopNavbar';
+import { AgentRail } from '@/shared/app/rail/AgentRail';
+import { ToastHost } from '@/shared/app/rail/ToastHost';
+import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
+import { Toaster } from '@/shared/ui/Toaster';
+import { AgentStreamProvider } from '@/shared/lib/agentStream';
 
 /**
  * Authenticated app shell. Ported from jentic-mini's `Layout`:

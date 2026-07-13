@@ -74,7 +74,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         default=None,
-        help="Target revision. Default: 'head' (up) / '-1' (down).",
+        help="Target revision. Default: 'head' (up) / '-1' (down). "
+        "The down default of '-1' is applied per --db, so a bare "
+        "'--db a --db b down' steps each database back one revision.",
     )
     args = parser.parse_args(argv)
 

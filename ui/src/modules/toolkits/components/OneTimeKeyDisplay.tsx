@@ -1,5 +1,5 @@
 import { Check, KeyRound } from 'lucide-react';
-import { Button, CopyButton } from '@oss-internal/shared/ui';
+import { Button, CopyButton } from '@/shared/ui';
 
 /**
  * One-time secret reveal for a freshly created toolkit API key. The plaintext

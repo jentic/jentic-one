@@ -11,8 +11,8 @@
  * tree and for tests — and the four tabs share one consistent, scannable look.
  */
 import React from 'react';
-import { LoadingState } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { LoadingState } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 
 export type MonitorAccent = 'green' | 'orange' | 'pink' | 'blue' | 'neutral';
 

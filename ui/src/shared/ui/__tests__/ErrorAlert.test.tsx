@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { ErrorAlert } from '@oss-internal/shared/ui/ErrorAlert';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
 describe('ErrorAlert', () => {
 	it('renders a string message in an alert region', () => {

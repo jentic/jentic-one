@@ -7,8 +7,8 @@ import {
 	ShieldBan,
 	ShieldCheck,
 } from 'lucide-react';
-import { isUnrestrictedAllow, ruleSummary, type PermissionRule } from '@oss-internal/shared/lib';
-import { OperationsDialog } from '@oss-internal/shared/app/rail/OperationsDialog';
+import { isUnrestrictedAllow, ruleSummary, type PermissionRule } from '@/shared/lib';
+import { OperationsDialog } from '@/shared/app/rail/OperationsDialog';
 
 /**
  * OperationsSummary — read-only, BOUNDED preview of the allow/block operations a

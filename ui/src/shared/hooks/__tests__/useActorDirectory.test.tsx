@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
-import { worker } from '@oss-internal/mocks/browser';
-import { createErrorHandler } from '@oss-internal/__tests__/test-utils';
-import { setToken, clearToken } from '@oss-internal/shared/api';
-import { useActorDirectory } from '@oss-internal/shared/hooks/useActorDirectory';
+import { worker } from '@/mocks/browser';
+import { createErrorHandler } from '@/__tests__/test-utils';
+import { setToken, clearToken } from '@/shared/api';
+import { useActorDirectory } from '@/shared/hooks/useActorDirectory';
 
 function wrapper({ children }: { children: ReactNode }) {
 	const queryClient = new QueryClient({

@@ -18,15 +18,15 @@
  */
 import { useMemo, useState } from 'react';
 import { ChevronRight, Crown, Pencil, Eye, Zap, ShieldCheck } from 'lucide-react';
-import type { ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import type { ReferencePayload } from '@/modules/docs/api/types';
 import {
 	buildScopeFamilies,
 	endpointsForScope,
 	type ScopeNode,
 	type ScopeTier,
-} from '@oss-internal/modules/docs/lib/scopeTree';
-import { MethodBadge } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
+} from '@/modules/docs/lib/scopeTree';
+import { MethodBadge } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 
 const TIER_STYLE: Record<
 	ScopeTier,

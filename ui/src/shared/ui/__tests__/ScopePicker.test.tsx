@@ -1,12 +1,7 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { ScopePicker } from '@oss-internal/shared/ui/ScopePicker';
-import type { EnhancedScope } from '@oss-internal/shared/lib/scopes';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { ScopePicker } from '@/shared/ui/ScopePicker';
+import type { EnhancedScope } from '@/shared/lib/scopes';
 
 function scope(name: string, isRecommended = false): EnhancedScope {
 	return { scope: name, description: `${name} description`, origin: 'platform', isRecommended };

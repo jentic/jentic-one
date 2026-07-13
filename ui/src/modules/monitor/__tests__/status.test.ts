@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-	toExecutionStatus,
-	toJobStatus,
-	isTerminalJobStatus,
-} from '@oss-internal/modules/monitor/api/types';
+import { toExecutionStatus, toJobStatus, isTerminalJobStatus } from '@/modules/monitor/api/types';
 
 describe('monitor status mappers', () => {
 	describe('toExecutionStatus', () => {

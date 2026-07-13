@@ -13,14 +13,14 @@
  */
 import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { PageShell, PageHeader, PageHelp, SegmentedToggle } from '@oss-internal/shared/ui';
-import { MONITOR_TABS, type MonitorTab } from '@oss-internal/modules/monitor/api';
-import { OverviewTab } from '@oss-internal/modules/monitor/components/OverviewTab';
-import { ExecutionsTab } from '@oss-internal/modules/monitor/components/ExecutionsTab';
-import { JobsTab } from '@oss-internal/modules/monitor/components/JobsTab';
-import { EventsTab } from '@oss-internal/modules/monitor/components/EventsTab';
-import { AuditTab } from '@oss-internal/modules/monitor/components/AuditTab';
-import { MonitorFilterBar } from '@oss-internal/modules/monitor/components/MonitorFilterBar';
+import { PageShell, PageHeader, PageHelp, SegmentedToggle } from '@/shared/ui';
+import { MONITOR_TABS, type MonitorTab } from '@/modules/monitor/api';
+import { OverviewTab } from '@/modules/monitor/components/OverviewTab';
+import { ExecutionsTab } from '@/modules/monitor/components/ExecutionsTab';
+import { JobsTab } from '@/modules/monitor/components/JobsTab';
+import { EventsTab } from '@/modules/monitor/components/EventsTab';
+import { AuditTab } from '@/modules/monitor/components/AuditTab';
+import { MonitorFilterBar } from '@/modules/monitor/components/MonitorFilterBar';
 
 const TAB_LABELS: Record<MonitorTab, string> = {
 	overview: 'Overview',

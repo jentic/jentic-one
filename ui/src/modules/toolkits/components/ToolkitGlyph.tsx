@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 /**
  * Deterministic identity tile for a toolkit. A toolkit isn't a vendor, so

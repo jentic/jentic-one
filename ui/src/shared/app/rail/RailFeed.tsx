@@ -9,8 +9,8 @@
  *   4. Defer to RailEventRow for actual rendering, so density is decided per-row.
  */
 import { useMemo, useState } from 'react';
-import { RailEventRow } from '@oss-internal/shared/app/rail/RailEventRow';
-import type { InlineActionSpec, StreamEvent } from '@oss-internal/shared/lib/agentStream';
+import { RailEventRow } from '@/shared/app/rail/RailEventRow';
+import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 const GROUP_WINDOW_MS = 10_000;
 

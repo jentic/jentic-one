@@ -9,9 +9,9 @@
  */
 import { Suspense, lazy } from 'react';
 import type { RouteObject } from 'react-router-dom';
-import { LoadingState, ErrorBoundary } from '@oss-internal/shared/ui';
+import { LoadingState, ErrorBoundary } from '@/shared/ui';
 
-const DocsPage = lazy(() => import('@oss-internal/modules/docs/pages/DocsPage'));
+const DocsPage = lazy(() => import('@/modules/docs/pages/DocsPage'));
 
 /**
  * The page is wrapped in an ErrorBoundary as a final safety net: the reference

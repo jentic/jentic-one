@@ -1,10 +1,10 @@
 import { motion } from 'framer-motion';
 import { Ban, Calendar, ChevronRight, Key, KeyRound } from 'lucide-react';
-import { AppLink } from '@oss-internal/shared/ui';
-import { timeAgo } from '@oss-internal/modules/toolkits/lib/time';
-import { ToolkitGlyph } from '@oss-internal/modules/toolkits/components/ToolkitGlyph';
-import type { Toolkit } from '@oss-internal/modules/toolkits/api/types';
-import { ROUTE_PATHS } from '@oss-internal/shared/app/routes';
+import { AppLink } from '@/shared/ui';
+import { timeAgo } from '@/modules/toolkits/lib/time';
+import { ToolkitGlyph } from '@/modules/toolkits/components/ToolkitGlyph';
+import type { Toolkit } from '@/modules/toolkits/api/types';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * Toolkit list-card on `ToolkitsPage`. The whole card is an `AppLink` to the

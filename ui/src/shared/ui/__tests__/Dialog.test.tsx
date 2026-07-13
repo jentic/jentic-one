@@ -1,12 +1,7 @@
 import { useState } from 'react';
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { Dialog } from '@oss-internal/shared/ui/Dialog';
-import { Button } from '@oss-internal/shared/ui/Button';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { Dialog } from '@/shared/ui/Dialog';
+import { Button } from '@/shared/ui/Button';
 
 function DialogHarness({ initialOpen = true }: { initialOpen?: boolean }) {
 	const [open, setOpen] = useState(initialOpen);

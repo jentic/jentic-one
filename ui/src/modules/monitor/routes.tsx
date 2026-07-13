@@ -9,6 +9,6 @@
  * `/app/monitor?tab=jobs&job_id=…` opens the job detail sheet.
  */
 import type { RouteObject } from 'react-router-dom';
-import MonitorPage from '@oss-internal/modules/monitor/pages/MonitorPage';
+import MonitorPage from '@/modules/monitor/pages/MonitorPage';
 
 export const monitorRoutes: RouteObject[] = [{ path: 'monitor', element: <MonitorPage /> }];

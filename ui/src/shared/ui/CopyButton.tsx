@@ -1,8 +1,8 @@
 import { Copy, Check } from 'lucide-react';
-import { Button } from '@oss-internal/shared/ui/Button';
-import { toast } from '@oss-internal/shared/ui/toastStore';
-import { useCopyToClipboard } from '@oss-internal/shared/lib/useCopyToClipboard';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { Button } from '@/shared/ui/Button';
+import { toast } from '@/shared/ui/toastStore';
+import { useCopyToClipboard } from '@/shared/lib/useCopyToClipboard';
+import { cn } from '@/shared/lib/utils';
 
 interface CopyButtonProps {
 	value: string;

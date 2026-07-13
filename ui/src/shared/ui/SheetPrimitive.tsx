@@ -23,7 +23,7 @@ import {
 	type JSX,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { cn } from '@/shared/lib/utils';
 
 export interface SheetPrimitiveProps {
 	/** Whether the sheet is open. */

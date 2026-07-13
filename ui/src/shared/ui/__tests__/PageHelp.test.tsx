@@ -1,10 +1,5 @@
-import {
-	renderWithProviders,
-	screen,
-	userEvent,
-	checkA11y,
-} from '@oss-internal/__tests__/test-utils';
-import { PageHelp } from '@oss-internal/shared/ui/PageHelp';
+import { renderWithProviders, screen, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { PageHelp } from '@/shared/ui/PageHelp';
 
 describe('PageHelp', () => {
 	it('renders a trigger button that opens the dialog', async () => {

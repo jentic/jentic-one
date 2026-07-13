@@ -24,8 +24,8 @@
  * plain word ("Self") instead of a mono id-token, so they never masquerade as an
  * unresolved opaque id.
  */
-import { ActorType } from '@oss-internal/shared/api';
-import { useActorDirectory } from '@oss-internal/shared/hooks';
+import { ActorType } from '@/shared/api';
+import { useActorDirectory } from '@/shared/hooks';
 
 /** Subtle, human-friendly noun for each actor type. */
 const ACTOR_TYPE_LABEL: Partial<Record<ActorType, string>> = {

@@ -1,5 +1,5 @@
-import { renderWithProviders, screen, checkA11y } from '@oss-internal/__tests__/test-utils';
-import { Label } from '@oss-internal/shared/ui/Label';
+import { renderWithProviders, screen, checkA11y } from '@/__tests__/test-utils';
+import { Label } from '@/shared/ui/Label';
 
 describe('Label', () => {
 	it('renders associated to a control', () => {

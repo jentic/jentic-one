@@ -8,27 +8,20 @@
  */
 import { useId, useState } from 'react';
 import { ArrowUpRight, User } from 'lucide-react';
-import {
-	SheetPrimitive,
-	Button,
-	ErrorAlert,
-	LoadingState,
-	AppLink,
-	ActorLabel,
-} from '@oss-internal/shared/ui';
+import { SheetPrimitive, Button, ErrorAlert, LoadingState, AppLink, ActorLabel } from '@/shared/ui';
 import {
 	useJob,
 	useCancelJob,
 	useActorForJob,
 	toJobStatus,
 	isTerminalJobStatus,
-} from '@oss-internal/modules/monitor/api';
-import { JobStatusPill } from '@oss-internal/modules/monitor/components/StatusPill';
-import { ConfirmDialog } from '@oss-internal/modules/monitor/components/ConfirmDialog';
-import { DetailRow, DetailSection } from '@oss-internal/modules/monitor/components/Detail';
-import { formatTimestamp } from '@oss-internal/modules/monitor/lib/format';
-import { monitorHref } from '@oss-internal/modules/monitor/lib/links';
-import { usePermission, ORG_ADMIN } from '@oss-internal/modules/monitor/lib/usePermission';
+} from '@/modules/monitor/api';
+import { JobStatusPill } from '@/modules/monitor/components/StatusPill';
+import { ConfirmDialog } from '@/modules/monitor/components/ConfirmDialog';
+import { DetailRow, DetailSection } from '@/modules/monitor/components/Detail';
+import { formatTimestamp } from '@/modules/monitor/lib/format';
+import { monitorHref } from '@/modules/monitor/lib/links';
+import { usePermission, ORG_ADMIN } from '@/modules/monitor/lib/usePermission';
 
 interface JobDetailSheetProps {
 	jobId: string | null;

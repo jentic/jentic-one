@@ -4,9 +4,9 @@
  * components table and the actor vocabulary (ActorType).
  */
 import { Boxes, Database, Cpu, KeyRound, ClipboardList, Layers } from 'lucide-react';
-import { DocsSectionBlock } from '@oss-internal/modules/docs/components/DocsSectionBlock';
-import { FlowDiagram } from '@oss-internal/modules/docs/components/FlowDiagram';
-import { ActorsDiagram } from '@oss-internal/modules/docs/components/ActorsDiagram';
+import { DocsSectionBlock } from '@/modules/docs/components/DocsSectionBlock';
+import { FlowDiagram } from '@/modules/docs/components/FlowDiagram';
+import { ActorsDiagram } from '@/modules/docs/components/ActorsDiagram';
 
 const COMPONENTS = [
 	{

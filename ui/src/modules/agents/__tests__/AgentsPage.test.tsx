@@ -8,12 +8,12 @@ import {
 	userEvent,
 	checkA11y,
 	createErrorHandler,
-} from '@oss-internal/__tests__/test-utils';
-import { worker } from '@oss-internal/mocks/browser';
-import { setToken } from '@oss-internal/shared/api';
-import { Toaster } from '@oss-internal/shared/ui';
-import { resetAgentsStore } from '@oss-internal/modules/agents/mocks/handlers';
-import AgentsPage from '@oss-internal/modules/agents/pages/AgentsPage';
+} from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
+import { setToken } from '@/shared/api';
+import { Toaster } from '@/shared/ui';
+import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
+import AgentsPage from '@/modules/agents/pages/AgentsPage';
 
 function renderPage() {
 	return renderWithProviders(

@@ -7,9 +7,9 @@
  * horizontal scroller above the content (handled by the parent's layout).
  */
 import { useEffect, useRef } from 'react';
-import { DOCS_NAV } from '@oss-internal/modules/docs/lib/nav';
-import type { DocsSubSection } from '@oss-internal/modules/docs/lib/nav';
-import { cn } from '@oss-internal/shared/lib/utils';
+import { DOCS_NAV } from '@/modules/docs/lib/nav';
+import type { DocsSubSection } from '@/modules/docs/lib/nav';
+import { cn } from '@/shared/lib/utils';
 
 export interface DocsSidebarProps {
 	activeId: string | null;

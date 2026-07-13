@@ -1,6 +1,6 @@
-import { PageShell } from '@oss-internal/shared/ui/PageShell';
-import { PageHeader } from '@oss-internal/shared/ui/PageHeader';
-import { useHealth } from '@oss-internal/shared';
+import { PageShell } from '@/shared/ui/PageShell';
+import { PageHeader } from '@/shared/ui/PageHeader';
+import { useHealth } from '@/shared';
 
 /**
  * Placeholder for nav slots whose feature PR hasn't landed yet. Feature PRs

@@ -15,7 +15,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  */
 export default defineConfig({
 	resolve: {
-		alias: { '@oss-internal': resolve(__dirname, 'src') },
+		alias: { '@': resolve(__dirname, 'src') },
 	},
 	test: {
 		environment: 'node',

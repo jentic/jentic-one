@@ -16,7 +16,7 @@ import type {
 	PermissionRuleSchema,
 	ToolkitBindingResponse,
 	AuditResponse,
-} from '@oss-internal/shared/api';
+} from '@/shared/api';
 
 /** A toolkit as rendered by the list/detail UI. */
 export type Toolkit = ToolkitResponse;

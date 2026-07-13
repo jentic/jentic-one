@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { catalogEntryToEntity } from '@oss-internal/modules/discover/api/adapters';
-import type { CatalogEntryResponse } from '@oss-internal/shared/api';
+import { catalogEntryToEntity } from '@/modules/discover/api/adapters';
+import type { CatalogEntryResponse } from '@/shared/api';
 
 const registeredEntry = {
 	api_id: 'stripe.com',

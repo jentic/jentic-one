@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react';
 import { UserRound, Bot, Server, Boxes, ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { ReferencePayload } from '@oss-internal/modules/docs/api/types';
+import type { ReferencePayload } from '@/modules/docs/api/types';
 import {
 	ACTOR_TYPES,
 	actorCounts,
@@ -24,9 +24,9 @@ import {
 	CALLER_GROUP_LABEL,
 	CALLER_GROUP_BLURB,
 	type ActorType,
-} from '@oss-internal/modules/docs/lib/actors';
-import { MethodBadge } from '@oss-internal/shared/ui';
-import { cn } from '@oss-internal/shared/lib/utils';
+} from '@/modules/docs/lib/actors';
+import { MethodBadge } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 
 const ACTOR_META: Record<
 	ActorType,
