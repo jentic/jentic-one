@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 
 class TokenRequest(BaseModel):
-    """Token endpoint request (form body)."""
+    """Token endpoint request (JSON body).
+
+    Note: this endpoint accepts application/json, not the
+    application/x-www-form-urlencoded encoding that RFC 6749 specifies.
+    """
 
     grant_type: str
     refresh_token: str | None = None
@@ -45,14 +49,14 @@ class MintResponse(BaseModel):
 
 
 class RevokeRequest(BaseModel):
-    """Revocation endpoint request (form body)."""
+    """Revocation endpoint request (JSON body)."""
 
     token: str
     token_type_hint: str | None = None
 
 
 class IntrospectRequest(BaseModel):
-    """Introspection endpoint request (form body)."""
+    """Introspection endpoint request (JSON body)."""
 
     token: str
     token_type_hint: str | None = None
