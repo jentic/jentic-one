@@ -163,8 +163,8 @@ class DatabaseSession:
         self,
         fn: Callable[[AsyncSession], Awaitable[T]],
         *,
-        retries: int = 2,
-        backoff_s: float = 0.05,
+        retries: int = 4,
+        backoff_s: float = 0.25,
     ) -> T:
         """Run ``fn(session)`` inside a transaction, retrying transient failures.
 
