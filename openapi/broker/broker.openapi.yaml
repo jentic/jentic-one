@@ -33,6 +33,24 @@ info:
     Toolkit, credential, and API-revision management live on the
     [control plane](https://control-plane.example.com), not here.
 
+    ## Path format
+
+    The request path **is** the upstream URL. The broker reconstructs the
+    full target from your path, adding `https://` when no scheme is present:
+
+    | You send | Broker proxies to |
+    |----------|-------------------|
+    | `GET /api.example.com/v1/users` | `https://api.example.com/v1/users` |
+    | `POST /petstore.swagger.io/v2/pet` | `https://petstore.swagger.io/v2/pet` |
+    | `GET /http://127.0.0.1:8080/get` | `http://127.0.0.1:8080/get` |
+    | `GET /https://api.example.com/v1/users` | `https://api.example.com/v1/users` |
+
+    For HTTPS upstream targets (the common case), omit the scheme — just use
+    `/{host}/{path}`. For plain HTTP targets (e.g. local development), include
+    the full `http://` scheme in the path so the broker doesn't upgrade to HTTPS.
+
+    Query strings pass through as-is: `/api.example.com/search?q=foo` works.
+
     ## Tracing and audit
 
     Every brokered response carries W3C trace context (`traceparent`,
