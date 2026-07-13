@@ -82,11 +82,34 @@ jobs:
           # in quick succession, so that snapshot can arrive empty/stale (observed
           # on #581: Slack showed "no labels" while the issue really had
           # documentation/area:docs/fit:high/feasibility:high). Fetching live is the
-          # source of truth. Soft-fail to an empty list if the API is unreachable.
+          # source of truth. Assign-then-read so a fetch FAILURE (warn, card may be
+          # incomplete) is distinguishable from an issue that genuinely has no
+          # labels — a swallowed failure would silently reproduce the "no labels"
+          # bug we're fixing.
+          if ! raw_labels="$(gh api "repos/$REPO/issues/$NUMBER" --jq '.labels[].name' 2>/tmp/gherr)"; then
+            echo "::warning::Could not fetch live labels for #$NUMBER ($(head -c 200 /tmp/gherr 2>/dev/null)); the Slack card may be incomplete."
+            raw_labels=""
+          fi
           labels=()
           while IFS= read -r lbl; do
             [ -n "$lbl" ] && labels+=("$lbl")
-          done < <(gh api "repos/$REPO/issues/$NUMBER" --jq '.labels[].name' 2>/dev/null || true)
+          done <<< "$raw_labels"
+
+          # Re-check needs-info against the LIVE labels, not just the payload
+          # snapshot the `if:` gate used. The gate reads
+          # github.event.issue.labels (point-in-time); in the same race that
+          # motivates the live fetch, the snapshot could miss a needs-info that is
+          # actually present. Skip the "triaged" ping in that case so the
+          # author-loop never notifies prematurely. (The needs-human escalation
+          # path sets ESCALATED and is exempt.)
+          if [ "$ESCALATED" != "true" ]; then
+            for lbl in "${labels[@]}"; do
+              if [ "$lbl" = "needs-info" ]; then
+                echo "Issue #$NUMBER still has needs-info (live) — skipping triaged notification."
+                exit 0
+              fi
+            done
+          fi
 
           # Per-label emoji (exact match — no substring collisions).
           emoji_for() {
@@ -142,7 +165,7 @@ jobs:
           # Sort labels into the triage dimensions so the card reads as a scannable
           # summary (Type · Area · Fit · Severity) instead of a flat label soup.
           # Remaining labels (status flags etc.) fall through to an "Also" line.
-          type_v=""; area_v=""; fit_v=""; sev_v=""; feas_v=""; extra=""
+          type_v=""; area_v=""; fit_v=""; sev_v=""; feas_v=""; feas_full=""; extra=""
           add_type() { [ -z "$type_v" ] && type_v="$1" || type_v="$type_v, $1"; }
           for lbl in "${labels[@]}"; do
             e="$(emoji_for "$lbl")"
@@ -152,7 +175,7 @@ jobs:
               area:*)             area_v="$e \`${lbl#area:}\`" ;;
               fit:*)              fit_v="$e \`${lbl#fit:}\`" ;;
               severity:*)         sev_v="$e \`${lbl#severity:}\`" ;;
-              feasibility:*)      feas_v="$e \`${lbl#feasibility:}\`" ;;
+              feasibility:*)      feas_v="$e \`${lbl#feasibility:}\`"; feas_full="$e \`$lbl\`" ;;
               *)                  extra="${extra}$e \`$lbl\`  " ;;
             esac
           done
@@ -162,6 +185,8 @@ jobs:
           # Severity is optional (e.g. docs); show feasibility there if no severity.
           if [ -n "$sev_v" ]; then
             sig_label="Severity"; sig_val="$sev_v"
+            # Severity won the signal slot; keep feasibility visible on "Also".
+            [ -n "$feas_full" ] && extra="${extra}${feas_full}  "
           elif [ -n "$feas_v" ]; then
             sig_label="Feasibility"; sig_val="$feas_v"
           else
