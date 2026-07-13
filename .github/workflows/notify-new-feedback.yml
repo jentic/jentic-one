@@ -6,8 +6,10 @@ name: Notify Slack on triaged feedback
 #
 # "Finished" fires on the harness's completion signals
 # (.harness/ISSUE_INTAKE_STANDARDS.md step 6), which hold at EVERY authority tier:
-#   - ai-intake removed  → the harness completed a pass (it always removes its own
-#                          trigger label when done), or
+#   - ai-intake removed, and NOT still needs-info → the harness completed a real
+#                          triage pass (it always removes its own trigger label when
+#                          done; the needs-info guard skips passes still waiting on
+#                          the author, which would otherwise ping prematurely), or
 #   - needs-human added  → escalated for a human decision.
 # Keying on ai-intake removal (rather than needs-triage removal) means the
 # notification also fires at the default `assist` tier, which leaves needs-triage
@@ -36,8 +38,15 @@ jobs:
   notify:
     # Only when the harness hands off: it removed its own ai-intake trigger label
     # (a pass completed, at any tier), or it escalated with needs-human.
+    #
+    # Guard: the harness strips ai-intake on EVERY completion — including a
+    # needs_info pass that's now waiting on the author (not actually triaged). Skip
+    # the "triaged" ping while needs-info is still on the issue, so the author-loop
+    # doesn't notify prematurely (and again after the author replies + re-run). The
+    # needs-human escalation branch is unconditional.
     if: >-
-      (github.event.action == 'unlabeled' && github.event.label.name == 'ai-intake') ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'ai-intake' &&
+        !contains(github.event.issue.labels.*.name, 'needs-info')) ||
       (github.event.action == 'labeled'   && github.event.label.name == 'needs-human')
     runs-on: ubuntu-latest
     timeout-minutes: 5
