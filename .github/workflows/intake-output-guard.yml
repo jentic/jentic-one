@@ -9,6 +9,10 @@ name: Intake output guard
 #   - a label the harness is forbidden to apply (security / human-authority verdicts)
 #   - closing or locking an issue (harness must NEVER close — "triage, don't close")
 #   - an unmarked comment, or a second intake comment (one <!-- jentic-intake --> only)
+# The orchestrator's own "[Orchestrator] …" lifecycle notices (e.g. "Session
+# started") carry no intake marker by design; the guard silently minimizes them
+# (collapsed, tidy) WITHOUT posting a "reverted" notice or failing — they are
+# harness-controlled, not a violation.
 #
 # This is reactive (the bad action exists for the seconds until this runs, then is
 # reverted) — the same limitation as label-guard.yml / Kubernetes Prow. It only
@@ -120,7 +124,17 @@ jobs:
 
           # ---- Comment discipline: marked, and only one --------------------
           if [ "$ACTION" = "created" ] && [ -n "${COMMENT_NODE_ID:-}" ]; then
-            if ! printf '%s' "$COMMENT_BODY" | grep -Fq '<!-- jentic-intake -->'; then
+            if printf '%s' "$COMMENT_BODY" | grep -Eq '^\[Orchestrator\]'; then
+              # The orchestrator's own lifecycle notice (e.g. "[Orchestrator]
+              # Session started …"). Harness-controlled, NOT model output (the
+              # intake agent is tokenless and posts nothing itself), and the prefix
+              # is applied mechanically by the harness runtime (github_messages.py),
+              # so it can't be forged via a prompt-injected issue body. Minimize it
+              # silently for a tidy thread — but it is NOT a violation, so post no
+              # "reverted" notice and do not fail the job.
+              echo "Minimizing orchestrator lifecycle notice (not a violation)."
+              gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:OUTDATED,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
+            elif ! printf '%s' "$COMMENT_BODY" | grep -Fq '<!-- jentic-intake -->'; then
               echo "::error::Harness posted an unmarked comment — hiding it."
               gh api graphql -f query='mutation($id:ID!){minimizeComment(input:{classifier:OFF_TOPIC,subjectId:$id}){clientMutationId}}' -f id="$COMMENT_NODE_ID" || true
               violation="posted an unmarked comment"
