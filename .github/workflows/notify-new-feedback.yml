@@ -1,0 +1,186 @@
+name: Notify Slack on triaged feedback
+
+# Posts an issue to Slack once the intake harness has finished enriching it, so
+# the notification carries the real type / area / severity / fit — not the bare
+# needs-triage + ai-intake an issue has at open time.
+#
+# "Finished" fires on the harness's completion signals
+# (.harness/ISSUE_INTAKE_STANDARDS.md step 6), which hold at EVERY authority tier:
+#   - ai-intake removed, and NOT still needs-info → the harness completed a real
+#                          triage pass (it always removes its own trigger label when
+#                          done; the needs-info guard skips passes still waiting on
+#                          the author, which would otherwise ping prematurely), or
+#   - needs-human added  → escalated for a human decision.
+# Keying on ai-intake removal (rather than needs-triage removal) means the
+# notification also fires at the default `assist` tier, which leaves needs-triage
+# for a human. severity/type/fit labels exist by this point, so the header
+# highlighting is meaningful.
+#
+# Setup: add a repo secret SLACK_WEBHOOK_URL (a Slack incoming webhook URL).
+# If the secret is absent the job no-ops (so forks / dry runs don't fail).
+#
+# Originally authored by @sophie-jentic (PR #557); carried forward with the review
+# fixes applied (UTF-8-safe truncation, exact-match label emojis, soft-fail) and
+# retimed to fire post-triage rather than on open.
+
+on:
+  issues:
+    types: [unlabeled, labeled]
+
+permissions:
+  contents: none
+
+concurrency:
+  group: notify-feedback-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    # Only when the harness hands off: it removed its own ai-intake trigger label
+    # (a pass completed, at any tier), or it escalated with needs-human.
+    #
+    # Guard: the harness strips ai-intake on EVERY completion — including a
+    # needs_info pass that's now waiting on the author (not actually triaged). Skip
+    # the "triaged" ping while needs-info is still on the issue, so the author-loop
+    # doesn't notify prematurely (and again after the author replies + re-run). The
+    # needs-human escalation branch is unconditional.
+    if: >-
+      (github.event.action == 'unlabeled' && github.event.label.name == 'ai-intake' &&
+        !contains(github.event.issue.labels.*.name, 'needs-info')) ||
+      (github.event.action == 'labeled'   && github.event.label.name == 'needs-human')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Post to Slack
+        shell: bash
+        env:
+          # A UTF-8 locale so bash ${var:0:N} slices by character, not byte.
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TITLE: ${{ github.event.issue.title }}
+          URL: ${{ github.event.issue.html_url }}
+          NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ', ') }}
+          BODY: ${{ github.event.issue.body }}
+          ESCALATED: ${{ github.event.action == 'labeled' && github.event.label.name == 'needs-human' }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL not set — skipping Slack notification."
+            exit 0
+          fi
+
+          # Split labels into an array on the ", " join separator.
+          labels=()
+          if [ -n "$LABELS" ]; then
+            IFS=',' read -ra raw_labels <<< "$LABELS"
+            for raw in "${raw_labels[@]}"; do
+              lbl="${raw#"${raw%%[![:space:]]*}"}"   # ltrim
+              lbl="${lbl%"${lbl##*[![:space:]]}"}"   # rtrim
+              [ -n "$lbl" ] && labels+=("$lbl")
+            done
+          fi
+
+          # Per-label emoji (exact match — no substring collisions).
+          emoji_for() {
+            case "$1" in
+              bug)                le="🐛" ;;
+              pain-point)         le="🤕" ;;
+              enhancement)        le="✨" ;;
+              idea)               le="💡" ;;
+              documentation)      le="📖" ;;
+              question)           le="❓" ;;
+              severity:blocker)   le="🚨" ;;
+              severity:major)     le="⚠️" ;;
+              severity:minor)     le="🔹" ;;
+              fit:*)              le="🎯" ;;
+              feasibility:*)      le="🛠️" ;;
+              area:*)             le="🧭" ;;
+              needs-triage)       le="🕵️" ;;
+              needs-info)         le="💬" ;;
+              needs-human)        le="🙋" ;;
+              confirmed)          le="✅" ;;
+              duplicate-candidate) le="🔎" ;;
+              duplicate)          le="🔁" ;;
+              ai-intake)          le="📥" ;;
+              *)                  le="🏷️" ;;
+            esac
+            printf '%s' "$le"
+          }
+
+          # Header emoji: escalation first, then highest-precedence severity/type.
+          header_emoji="📝"
+          if [ "$ESCALATED" = "true" ]; then
+            header_emoji="🙋"
+          fi
+          if [ "$header_emoji" = "📝" ]; then
+            for lbl in "${labels[@]}"; do case "$lbl" in severity:blocker) header_emoji="🚨" ;; esac; done
+          fi
+          if [ "$header_emoji" = "📝" ]; then
+            for lbl in "${labels[@]}"; do case "$lbl" in severity:major) header_emoji="⚠️" ;; esac; done
+          fi
+          if [ "$header_emoji" = "📝" ]; then
+            for lbl in "${labels[@]}"; do case "$lbl" in pain-point) header_emoji="🤕" ;; esac; done
+          fi
+          if [ "$header_emoji" = "📝" ]; then
+            for lbl in "${labels[@]}"; do case "$lbl" in bug) header_emoji="🐛" ;; esac; done
+          fi
+
+          if [ "$ESCALATED" = "true" ]; then
+            header_text="$header_emoji Needs human: #$NUMBER"
+          else
+            header_text="$header_emoji Triaged feedback: #$NUMBER"
+          fi
+
+          labels_fmt=""
+          for lbl in "${labels[@]}"; do
+            labels_fmt="${labels_fmt}$(emoji_for "$lbl") \`${lbl}\`   "
+          done
+          [ -z "$labels_fmt" ] && labels_fmt="_no labels_"
+
+          # Clean the body to a single line, then character-slice to 240.
+          cleaned="$(printf '%s' "$BODY" \
+            | sed 's/^#\{1,\}[[:space:]]*//; s/\r//g' \
+            | tr '\n' ' ' \
+            | sed 's/  */ /g; s/^ *//; s/ *$//')"
+          summary="${cleaned:0:240}"
+          if [ -z "$summary" ]; then
+            summary="_No description provided._"
+          elif [ "${#cleaned}" -gt 240 ]; then
+            summary="${summary}…"
+          fi
+
+          # Build the Slack Block Kit payload with jq so all fields are escaped.
+          # Untrusted issue title/body are rendered as PLAIN TEXT (not mrkdwn) so
+          # an attacker can't smuggle a clickable <url|link> or markup into the
+          # channel. Only the trusted issue URL is a link.
+          payload=$(jq -n \
+            --arg header "$header_text" \
+            --arg title "$TITLE" \
+            --arg url "$URL" \
+            --arg author "$AUTHOR" \
+            --arg labels "$labels_fmt" \
+            --arg summary "$summary" \
+            --arg number "$NUMBER" \
+            '{
+              blocks: [
+                { type: "header", text: { type: "plain_text", text: $header, emoji: true } },
+                { type: "section", text: { type: "plain_text", text: $title, emoji: false } },
+                { type: "section", text: { type: "plain_text", text: $summary, emoji: false } },
+                { type: "section", text: { type: "mrkdwn", text: ("*Labels:*\n" + $labels) } },
+                { type: "context", elements: [
+                    { type: "mrkdwn", text: ("Filed by *" + $author + "* · <" + $url + "|View issue #" + $number + ">") }
+                ] }
+              ]
+            }')
+
+          code=$(curl -sS -o /tmp/resp -w "%{http_code}" \
+            -X POST -H 'Content-type: application/json' \
+            --data "$payload" "$SLACK_WEBHOOK_URL" || echo "000")
+          if [ "$code" != "200" ]; then
+            # Soft-fail: a Slack hiccup should not mark the issue's CI red.
+            echo "::warning::Slack notification failed (HTTP $code): $(head -c 500 /tmp/resp 2>/dev/null)"
+            exit 0
+          fi
+          echo "Slack notification sent (HTTP 200)."

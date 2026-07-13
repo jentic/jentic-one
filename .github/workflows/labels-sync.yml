@@ -1,0 +1,48 @@
+name: Sync labels
+
+# Applies .github/labels.yml to the repo's label set. Runs on push to main when
+# the manifest changes, and on demand. Pruning is OFF by default so labels not
+# listed in the manifest (e.g. dependency-bot labels) are left untouched — flip
+# the workflow_dispatch `prune` input to true for a one-off cleanup.
+#
+# First-time setup: the issue templates + intake workflows reference labels defined
+# here (needs-triage, ai-intake, fit:*, …). On the very first merge there is a brief
+# window before this sync runs where those labels may not exist yet (GitHub silently
+# drops labels that don't exist). Run this once via "Run workflow" (workflow_dispatch)
+# right after the first merge to provision the taxonomy immediately.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/labels.yml
+      - .github/workflows/labels-sync.yml
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Preview changes without applying them
+        type: boolean
+        default: false
+      prune:
+        description: Delete labels not present in labels.yml
+        type: boolean
+        default: false
+
+permissions:
+  issues: write
+
+concurrency:
+  group: labels-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync labels from manifest
+        uses: crazy-max/ghaction-github-labeler@v5
+        with:
+          yaml-file: .github/labels.yml
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || false }}
+          skip-delete: ${{ !(github.event_name == 'workflow_dispatch' && inputs.prune) }}

@@ -1,0 +1,135 @@
+name: Guard restricted labels
+
+# Enforces that harness-managed labels can only be applied by the harness bot or
+# a member of the authorized Jentic team. GitHub has no native per-label ACL, so
+# this reverts an unauthorized application: on `issues.labeled`, if the actor is
+# not allowed and the label is restricted, the label is removed and a short note
+# is posted. This is reactive (the label briefly appears, then is removed) — the
+# same limitation Kubernetes Prow's restricted-labels feature has.
+#
+# Requires a token that can read org team membership (the default GITHUB_TOKEN
+# cannot). Set repo secret ORG_READ_TOKEN (a PAT or GitHub App token with
+# `read:org`). If it is absent/expired, the guard FAILS CLOSED: it removes the
+# unverifiable restricted label and fails the run (red CI), so label security can
+# never silently disappear if the token lapses. Trusted automation (the harness
+# bot, github-actions) is exempted before the token check, so a missing token
+# never blocks our own workflows.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: label-guard-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  # Team (org members of this team may apply restricted labels).
+  AUTHORIZED_TEAM: staff
+  # Bot identities always allowed: the harness itself, and github-actions (the
+  # default token used by our own workflows, e.g. issue-intake-label applying
+  # ai-intake and the followup clearing status labels).
+  HARNESS_BOT: jentic-harness
+  # Space-separated exact labels + glob prefixes that are restricted.
+  # Everything the harness manages (type, area:*, severity:*, fit:*, feasibility:*)
+  # + human-authority status labels + the security label (route via needs-human /
+  # SECURITY.md, never hand-applied) + the AI trigger labels that launch the
+  # privileged code-executing agents (ai-implement / ai-review) — those must never
+  # be applied by a non-member, since they can lead to code execution.
+  RESTRICTED: >-
+    bug enhancement pain-point idea documentation question
+    area:* severity:* fit:* feasibility:*
+    confirmed needs-human duplicate wontfix invalid security
+    ai-implement ai-review ai-review-and-trigger-implement
+    Agent-Harness
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revert unauthorized restricted-label application
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          ACTOR: ${{ github.event.sender.login }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+
+          # Is the applied label restricted? (exact match or glob prefix)
+          # Disable filename globbing (set -f) so the unquoted $RESTRICTED words
+          # are NOT expanded against the working directory — otherwise a pattern
+          # like `area:*` could vanish or mutate, silently letting the guard
+          # fail OPEN (leave a restricted label unguarded).
+          is_restricted=false
+          set -f
+          for pat in $RESTRICTED; do
+            case "$LABEL" in
+              $pat) is_restricted=true; break ;;
+            esac
+          done
+          set +f
+          if [ "$is_restricted" != true ]; then
+            echo "Label '$LABEL' is not restricted — nothing to do."
+            exit 0
+          fi
+
+          # Bot identities that are always allowed: the harness, and our own
+          # Bot identities that are always allowed: the harness (whether it acts as
+          # a plain login or a GitHub App "<name>[bot]" identity), and our own
+          # workflows acting as github-actions. The [bot] forms are quoted so the
+          # brackets are matched literally, not as a glob character class.
+          case "$ACTOR" in
+            "$HARNESS_BOT"|"${HARNESS_BOT}[bot]"|"github-actions"|"github-actions[bot]")
+              echo "Applied by trusted automation ($ACTOR) — allowed."
+              exit 0
+              ;;
+          esac
+
+          # Guard against a malformed actor before using it in an API path. Allow
+          # the GitHub App bot suffix "<name>[bot]" (only the "<name>" part is used
+          # for the org-membership lookup below).
+          member_login="${ACTOR%\[bot\]}"
+          case "$member_login" in
+            ""|*[!A-Za-z0-9-]*)
+              echo "::warning::Unexpected actor login '$ACTOR' — leaving '$LABEL' untouched."
+              exit 0
+              ;;
+          esac
+
+          # Need org-read to verify team membership (the default GITHUB_TOKEN
+          # cannot). If it's missing/expired/revoked we CANNOT authorize the
+          # actor — so fail CLOSED: remove the (unverifiable) restricted label
+          # and fail the run loudly, rather than silently leaving label security
+          # disabled with a green check. Set the ORG_READ_TOKEN secret to enable
+          # verification. (Trusted automation was already exempted above, so a
+          # missing token never blocks the harness bot or our own workflows.)
+          if [ -z "${ORG_READ_TOKEN:-}" ]; then
+            echo "::error::ORG_READ_TOKEN not set — cannot verify membership; removing '$LABEL' by $ACTOR and failing closed."
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+            gh issue comment "$NUMBER" --repo "$REPO" --body \
+              "@$ACTOR the \`$LABEL\` label is maintained by @${REPO%%/*}/$AUTHORIZED_TEAM. I couldn't verify authorization (label-guard is missing its \`ORG_READ_TOKEN\`), so I removed it to fail safe. A maintainer can re-apply it and should restore the token." || true
+            exit 1
+          fi
+
+          org="${REPO%%/*}"
+          # 200 => active member of the team; 404 => not a member. Use the
+          # [bot]-stripped login for the membership lookup.
+          status=$(GH_TOKEN="$ORG_READ_TOKEN" gh api \
+            "orgs/$org/teams/$AUTHORIZED_TEAM/memberships/$member_login" \
+            --jq '.state' 2>/dev/null || echo "none")
+
+          if [ "$status" = "active" ]; then
+            echo "$ACTOR is an active member of @$org/$AUTHORIZED_TEAM — allowed."
+            exit 0
+          fi
+
+          echo "$ACTOR is not authorized for restricted label '$LABEL' — removing."
+          gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" || true
+          gh issue comment "$NUMBER" --repo "$REPO" --body \
+            "@$ACTOR the \`$LABEL\` label is maintained by the intake harness and @$org/$AUTHORIZED_TEAM, so I've removed it. If it belongs here, a team member can re-apply it. (Describe the classification in a comment and the harness/maintainer will handle it.)"
