@@ -82,6 +82,10 @@ class AssertionService:
         if not issuer or not isinstance(issuer, str):
             raise InvalidGrantError(_INVALID)
 
+        # Phase 1: verify assertion + record audit in a single transaction.
+        # This transaction is committed BEFORE issuing tokens so that
+        # issue_pair's own run_in_transaction doesn't deadlock waiting for
+        # this connection's write lock to release (SQLite single-writer).
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.get_by_id_for_update(session, issuer)
 
@@ -125,10 +129,10 @@ class AssertionService:
                 origin=None,
             )
 
-            token_svc = TokenService(self._ctx)
-            access_token, refresh_token = await token_svc.issue_pair(
-                agent.id, ActorType.AGENT, scopes
-            )
+        # Phase 2: issue tokens (outside the transaction above).
+        # issue_pair uses its own run_in_transaction internally.
+        token_svc = TokenService(self._ctx)
+        access_token, refresh_token = await token_svc.issue_pair(agent.id, ActorType.AGENT, scopes)
 
         return access_token, refresh_token
 
