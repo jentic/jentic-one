@@ -1,4 +1,4 @@
-# Vendored fallback of jentic-one-rules/rules/backend/orm.facts.yaml — do not hand-edit except to track upstream (test_rules_facts_vendored.py guards it when the rules repo is mounted).
+# Vendored fallback of the ORM enforcement facts — do not hand-edit except to track upstream (test_rules_facts_vendored.py guards it when a fuller rules source is mounted).
 schema_version: jentic.orm-facts/v1
 primary_key: ksuid
 valid_bases: [RegistryBase, ControlBase, AdminBase]

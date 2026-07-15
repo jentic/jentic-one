@@ -1,7 +1,7 @@
 # Vendored rules facts
 
 This directory holds a **committed subset** of the machine-readable enforcement
-facts published by the `jentic-one-rules` repo. Today that is a single file:
+facts. Today that is a single file:
 
 - `orm.facts.yaml` — the ORM conventions (`valid_bases`, required columns,
   tablename rules, KSUID-exempt tables) that `tests/arch/test_orm_conventions.py`
@@ -11,12 +11,11 @@ facts published by the `jentic-one-rules` repo. Today that is a single file:
 
 The arch tests resolve facts in priority order (see `tests/arch/_rules_facts.py`):
 
-1. `$JENTIC_RULES_DIR` — an explicitly-pointed mounted/cloned rules repo.
-2. `.rules/` — an in-repo clone auto-detected with no env var (what
-   `scripts/rules-clone.sh` creates; gitignored).
-3. a sibling `../jentic-one-rules` checkout.
-4. **this vendored copy** — the fallback so a standalone clone with no access to
-   the rules repo still self-enforces its architecture.
+1. `$JENTIC_RULES_DIR` — an explicitly-pointed rules directory.
+2. `.rules/` — an optional in-repo mount, auto-detected with no env var (gitignored).
+3. a sibling rules checkout (`$JENTIC_RULES_SIBLING_NAME`).
+4. **this vendored copy** — the fallback so a standalone clone with no external
+   rules source still self-enforces its architecture.
 
 ## The no-leak contract
 
@@ -33,8 +32,8 @@ meaningful in this repo. Concretely:
 
 ## Re-vendoring (when upstream facts change)
 
-1. Get the upstream rules repo locally: run `scripts/rules-clone.sh` (clones into
-   the auto-detected `.rules/`), or set `JENTIC_RULES_DIR=/path/to/jentic-one-rules`.
+1. Make the fuller rules facts available locally: set
+   `JENTIC_RULES_DIR=/path/to/rules` (or mount them under a gitignored `.rules/`).
 2. Run the guards:
    `uv run pytest tests/arch/test_rules_facts_vendored.py tests/arch/test_orm_conventions.py`.
    The drift guard (`test_vendored_orm_facts_matches_mounted_source`) will fail

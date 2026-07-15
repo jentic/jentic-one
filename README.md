@@ -129,20 +129,14 @@ Tests are split into tiers:
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) with a mandatory scope, enforced repo-wide by a `commit-msg` hook.
 
-### Full development rules (jentic maintainers)
+### Architecture rule facts
 
 The architecture tests self-enforce against a small vendored subset of facts
 ([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone needs nothing
-extra. jentic maintainers with access to the internal `jentic-one-rules` repo can
-pull the **full** rule guidance for local dev / agents:
-
-```bash
-scripts/rules-clone.sh   # read-only clone into .rules/ (gitignored, auto-detected)
-```
-
-Once present, the arch tests and coding agents pick up the live rules
-automatically — no env var needed. If you lack access the script fails soft and
-the vendored subset is used, so external contributors are unaffected.
+extra. If a fuller set of rule facts is available locally, point the tests at it
+with `JENTIC_RULES_DIR=/path/to/rules` (or place them under a gitignored
+`.rules/` directory); the arch tests pick them up automatically and fall back to
+the vendored subset otherwise, so external contributors are unaffected.
 
 ## Security & telemetry
 

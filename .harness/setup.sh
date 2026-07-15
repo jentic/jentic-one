@@ -25,14 +25,15 @@ if [[ "${1:-}" == "--teardown" ]]; then
     exit 0
 fi
 
-# Fetch the internal rules repo (read-only) so harness agents read the full rule
-# guidance. The harness runlet lacks the ssh binary. Instead, the harness
-# injects GITHUB_APP_TOKEN_FILE with a path to a refreshable token we can use.
-# --teardown: harness owns compose lifecycle; nothing to do here.
-echo "[harness] Fetching internal rules repo (jentic-one-rules)..."
+# Optionally fetch a rules source (read-only) so harness agents can read the full
+# rule guidance. The harness runlet lacks the ssh binary; when a rules source is
+# configured, the harness injects GITHUB_APP_TOKEN_FILE (a refreshable token) and
+# JENTIC_RULES_REPO (the org/name to clone). Absent either, this is skipped and
+# the vendored subset is used — so a plain/public run needs nothing.
 RULES_DIR="$(pwd)/.rules"
+RULES_REPO="${JENTIC_RULES_REPO:-}"
 
-if [[ ! -d "${RULES_DIR}" ]]; then
+if [[ ! -d "${RULES_DIR}" && -n "${RULES_REPO}" ]]; then
     # Grab the token from the harness's secure sidecar file
     TOKEN=""
     if [[ -n "${GITHUB_APP_TOKEN_FILE:-}" && -s "${GITHUB_APP_TOKEN_FILE}" ]]; then
@@ -41,13 +42,13 @@ if [[ ! -d "${RULES_DIR}" ]]; then
 
     if [[ -n "${TOKEN}" ]]; then
         # Use --quiet so we don't accidentally leak the token URL in trace logs
-        if git clone --quiet "https://x-access-token:${TOKEN}@github.com/jentic/jentic-one-rules.git" "${RULES_DIR}"; then
-            echo "[harness] rules-clone: Successfully cloned jentic-one-rules."
+        if git clone --quiet "https://x-access-token:${TOKEN}@github.com/${RULES_REPO}.git" "${RULES_DIR}"; then
+            echo "[harness] rules: fetched rules source."
         else
-            echo "[harness] rules-clone: failed to clone (expected for OSS users without access)."
+            echo "[harness] rules: fetch failed (expected without access)."
         fi
     else
-        echo "[harness] rules-clone: No GITHUB_APP_TOKEN_FILE found. Skipping rules repo clone."
+        echo "[harness] rules: no token available; skipping rules fetch."
     fi
 fi
 

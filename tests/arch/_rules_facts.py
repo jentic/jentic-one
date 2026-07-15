@@ -1,23 +1,23 @@
-"""Resolve and load machine-readable rules facts published by the rules repo.
+"""Resolve and load machine-readable rules facts.
 
-The ``jentic-one-rules`` repo is the source of truth for the parameterizable
-enforcement facts (e.g. the ORM conventions in ``orm.facts.yaml``). This module
+The parameterizable enforcement facts (e.g. the ORM conventions in
+``orm.facts.yaml``) may be provided by an external rules source. This module
 resolves that file with a robust lookup order and validates its
 ``schema_version`` so the arch tests can read the facts instead of hard-coding
 them. A vendored copy is committed here so a standalone clone (with no external
-rules repo mounted) still self-enforces.
+rules source mounted) still self-enforces.
 
 Lookup order (first hit wins):
 
 1. ``$JENTIC_RULES_DIR/rules/backend/<name>`` — explicit override (a mounted or
-   local read-only clone; see ``scripts/rules-clone.sh``).
-2. ``<repo>/.rules/rules/backend/<name>`` — in-repo clone auto-detected with no
-   env var. ``scripts/rules-clone.sh`` clones here by default; ``.rules/`` is
-   gitignored so its private content can never be committed.
-3. ``<repo>/../<sibling>/rules/backend/<name>`` — sibling checkout, where
-   ``<sibling>`` is ``$JENTIC_RULES_SIBLING_NAME`` (default ``jentic-one-rules``).
+   local read-only rules directory).
+2. ``<repo>/.rules/rules/backend/<name>`` — an optional in-repo mount,
+   auto-detected with no env var. ``.rules/`` is gitignored so any content
+   placed there can never be committed.
+3. ``<repo>/../<sibling>/rules/backend/<name>`` — a sibling checkout, where
+   ``<sibling>`` is ``$JENTIC_RULES_SIBLING_NAME``.
 4. ``tests/arch/vendored/<name>`` — committed fallback so a standalone clone
-   (no rules repo mounted) still self-enforces.
+   (no external rules mounted) still self-enforces.
 """
 
 from __future__ import annotations
@@ -32,13 +32,13 @@ _ARCH_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _ARCH_DIR.parent.parent
 VENDORED_DIR = _ARCH_DIR / "vendored"
 
-#: In-repo (gitignored) mount path that ``scripts/rules-clone.sh`` clones into.
-#: Auto-detected so a dev who runs that script needs no env var at all.
+#: Optional in-repo (gitignored) mount path. Auto-detected so a dev who mounts
+#: rules there needs no env var at all.
 _IN_REPO_MOUNT = _REPO_ROOT / ".rules"
 
-#: Default name of the sibling rules checkout beside this repo. Overridable via
-#: ``$JENTIC_RULES_SIBLING_NAME`` so the private name isn't the sole load-bearing
-#: reference (forks / mirrors can point elsewhere).
+#: Default name of an optional sibling rules checkout beside this repo. Overridable
+#: via ``$JENTIC_RULES_SIBLING_NAME`` (handled in ``candidate_paths``) so no single
+#: name is load-bearing (forks / mirrors can point elsewhere).
 _DEFAULT_SIBLING_NAME = "jentic-one-rules"
 
 
