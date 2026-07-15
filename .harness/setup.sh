@@ -26,12 +26,13 @@ if [[ "${1:-}" == "--teardown" ]]; then
 fi
 
 # Optionally fetch a rules source (read-only) so harness agents can read the full
-# rule guidance. The harness runlet lacks the ssh binary; when a rules source is
-# configured, the harness injects GITHUB_APP_TOKEN_FILE (a refreshable token) and
-# JENTIC_RULES_REPO (the org/name to clone). Absent either, this is skipped and
-# the vendored subset is used — so a plain/public run needs nothing.
+# rule guidance. The harness runlet lacks the ssh binary, so it injects
+# GITHUB_APP_TOKEN_FILE (a refreshable token); the clone only happens when that
+# token is present. The source repo defaults to jentic/jentic-one-rules but is
+# overridable via JENTIC_RULES_REPO (forks/mirrors). With no token (e.g. a public
+# run) this is skipped and the vendored subset under tests/arch is used.
 RULES_DIR="$(pwd)/.rules"
-RULES_REPO="${JENTIC_RULES_REPO:-}"
+RULES_REPO="${JENTIC_RULES_REPO:-jentic/jentic-one-rules}"
 
 if [[ ! -d "${RULES_DIR}" && -n "${RULES_REPO}" ]]; then
     # Grab the token from the harness's secure sidecar file
