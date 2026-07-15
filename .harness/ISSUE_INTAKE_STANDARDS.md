@@ -59,6 +59,15 @@ prefix `[bug]` / `[request]` is a hint from the author, not authoritative — a
   `area:ui`, …). If genuinely ambiguous, do **not** guess — leave area unset and
   rely on the author-loop / `needs-human` (see below).
 
+### 1b. Experience tags (optional, additive)
+
+Apply at most one of `ux` / `ax` when the issue is *specifically about experience quality* — not merely incidentally involving a UI or an API:
+
+- **`ux`** — the complaint or request is centrally about the experience of a human using the UI or CLI (navigation, wording, layout, discoverability, visual polish). Do **not** apply to a straightforward bug that happens to be in the UI.
+- **`ax`** — the complaint or request is centrally about the experience of an AI agent consuming Jentic APIs, SDKs, or agent-facing CLI surfaces (ergonomics, predictability, error clarity, schema design). Do **not** apply to a generic API or CLI bug.
+
+These are additive: a `pain-point` about confusing UI copy is both `pain-point` and `ux`; a `bug` where a button is broken is just `bug`. When in doubt, omit.
+
 ### 2. Score (labels + comment): product-fit and feasibility
 
 Judge two **independent** axes and apply the matching labels:
