@@ -143,6 +143,14 @@
   color: 5319e7
   description: Trigger AI review that cascades to implement
 
+# --- Experience ---
+- name: ux
+  color: f9d0c4
+  description: User experience — friction, clarity, or polish in the human-facing UI or CLI
+- name: ax
+  color: c5def5
+  description: Agent experience — friction, clarity, or reliability for AI agents using Jentic APIs, SDKs, or the agent-facing CLI
+
 # --- Community / housekeeping ---
 - name: good first issue
   color: 7057ff
