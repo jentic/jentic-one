@@ -77,6 +77,11 @@ function buildRoutes(): RouteObject[] {
 					// Basename index: the authenticated app shell home (`/app`).
 					path: '/',
 					element: <Layout />,
+					// `moduleRoutes` is the append-only route registry; it is
+					// spread here (not inlined) so a consumer can compose
+					// `[...moduleRoutes, ...extraRoutes]` at this single point
+					// without editing the registry. Order is load-bearing —
+					// placeholders stay last so a real module route wins.
 					children: [dashboardIndexRoute, ...moduleRoutes, ...placeholderRoutes],
 				},
 			],

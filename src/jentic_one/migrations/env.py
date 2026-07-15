@@ -16,7 +16,7 @@ from sqlalchemy import MetaData, pool
 from sqlalchemy.engine import URL, Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from jentic_one.migrations.targets import DB_METADATA
+from jentic_one.migrations.targets import DB_TARGETS
 from jentic_one.shared.config import DatabaseConfig, load_config
 from jentic_one.shared.db.backends import get_backend
 from jentic_one.shared.db.session import get_database_url
@@ -53,7 +53,7 @@ def _on_version_apply(
 def _resolve_db_name() -> str:
     """Determine the target database from the Alembic config section name."""
     section = config.config_ini_section
-    if section in DB_METADATA:
+    if section in DB_TARGETS:
         return section
     return "registry"
 
@@ -111,7 +111,17 @@ def is_postgres() -> bool:
 
 def get_target_metadata() -> MetaData:
     """Return the metadata for the active migration target."""
-    return DB_METADATA[_resolve_db_name()]
+    return DB_TARGETS[_resolve_db_name()].metadata
+
+
+def get_version_table() -> str:
+    """Return the ``alembic_version`` table name for the active migration target.
+
+    The built-in targets share the default ``alembic_version`` (scoped per-schema
+    by ``version_table_schema``); a target may use a distinct name to avoid a
+    version-tracking collision when it shares a schema with another target.
+    """
+    return DB_TARGETS[_resolve_db_name()].version_table
 
 
 def _include_name(
@@ -130,6 +140,19 @@ def _include_name(
     return True
 
 
+def _include_object(
+    obj: Any, name: str | None, type_: str, reflected: bool, compare_to: Any
+) -> bool:
+    """Default: include everything (each built-in target is single-schema).
+
+    Overridable seam: a downstream ``env.py`` can replace this to treat certain
+    schemas as strictly read-only — returning ``False`` for objects whose schema
+    it does not own — so autogenerate never emits DROP/ALTER against tables it can
+    legitimately see (for cross-schema FK validation) but does not own.
+    """
+    return True
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = get_url()
@@ -139,9 +162,11 @@ def run_migrations_offline() -> None:
         target_metadata=get_target_metadata(),
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table=get_version_table(),
         version_table_schema=get_schema() if postgres else None,
         include_schemas=postgres,
         include_name=_include_name if postgres else None,
+        include_object=_include_object,
         render_as_batch=not postgres,
         on_version_apply=_on_version_apply,
         # Each migration owns its own transaction so that migrations using
@@ -158,9 +183,11 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=get_target_metadata(),
+        version_table=get_version_table(),
         version_table_schema=get_schema() if postgres else None,
         include_schemas=postgres,
         include_name=_include_name if postgres else None,
+        include_object=_include_object,
         render_as_batch=not postgres,
         on_version_apply=_on_version_apply,
         # Each migration owns its own transaction so that migrations using

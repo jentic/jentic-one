@@ -147,6 +147,12 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// Extensibility seam: `handlers` is exported (not module-private) so a
+	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
+	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —
+	// appending after this array lets these fixtures answer first (safest
+	// default); to override a path here, a consumer must register its handler
+	// BEFORE this one in the composed array.
 ];
 
 /**

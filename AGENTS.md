@@ -1,5 +1,10 @@
 # AGENTS.md
 
+> **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
+> Otherwise use the guidance below.
+
+## In-repo guidance
+
 This repo's agent guidance lives in **[`CLAUDE.md`](CLAUDE.md)**. Read it first.
 
 It covers the quick start, commands, project layout (backend + `ui/` frontend),

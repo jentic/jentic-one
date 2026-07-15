@@ -13,7 +13,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult, UpstreamRunner
 from jentic_one.broker.core.schemas import ExecuteRequestContext
-from jentic_one.broker.services.execution.service import default_pipeline, run_execution
+from jentic_one.broker.services.execution.service import default_broker, run_execution
 
 
 class _StubRunner(UpstreamRunner):
@@ -56,7 +56,7 @@ def span_exporter() -> Iterator[InMemorySpanExporter]:
 async def test_broker_execute_span_created(span_exporter: InMemorySpanExporter) -> None:
     """The broker.execute span is created with expected attributes."""
     session = AsyncMock()
-    pipeline = default_pipeline(_StubRunner())
+    broker = default_broker(_StubRunner())
 
     with patch(
         "jentic_one.broker.services.execution.service.record_execution", new_callable=AsyncMock
@@ -66,7 +66,7 @@ async def test_broker_execute_span_created(span_exporter: InMemorySpanExporter) 
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
         )
@@ -86,7 +86,7 @@ async def test_broker_execute_span_created(span_exporter: InMemorySpanExporter) 
 async def test_execution_started_and_finished_log_events() -> None:
     """Structured log events execution_started and execution_finished fire."""
     session = AsyncMock()
-    pipeline = default_pipeline(_StubRunner())
+    broker = default_broker(_StubRunner())
 
     factory = structlog.testing.CapturingLoggerFactory()
 
@@ -105,7 +105,7 @@ async def test_execution_started_and_finished_log_events() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc123",
             actor_type="agent",
         )

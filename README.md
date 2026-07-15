@@ -129,6 +129,15 @@ Tests are split into tiers:
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) with a mandatory scope, enforced repo-wide by a `commit-msg` hook.
 
+### Architecture rule facts
+
+The architecture tests self-enforce against a small vendored subset of facts
+([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone needs nothing
+extra. If a fuller set of rule facts is available locally, point the tests at it
+with `JENTIC_RULES_DIR=/path/to/rules` (or place them under a gitignored
+`.rules/` directory); the arch tests pick them up automatically and fall back to
+the vendored subset otherwise, so external contributors are unaffected.
+
 ## Security & telemetry
 
 - **Credentials stay local.** Stored credentials are encrypted at rest and are only ever decrypted inside the Broker at execution time. They are never returned to callers, logged in cleartext, or exposed to the agent.

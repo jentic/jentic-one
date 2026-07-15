@@ -12,6 +12,7 @@ An ``EventType`` absent from this map is internal-only and never forwarded —
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -89,6 +90,51 @@ TELEMETRY_EVENTS: dict[str, TelemetryEventName] = {
 }
 
 
+# --- Runtime-registered events -----------------------------------------------
+# Built-in events stay in the closed TelemetryEventName enum + TELEMETRY_EVENTS
+# map above. A downstream package can register extra (internal EventType value ->
+# wire name) pairs here at import time. Wire names are validated plain strings;
+# they never enter the closed enum, so strict typing of the built-in set is
+# unaffected. The emit path resolves via resolve_wire_name(), which consults the
+# built-in map first, then this registry.
+_RUNTIME_TELEMETRY_EVENTS: dict[str, str] = {}
+
+# Wire-name syntax the ingest side accepts: lower_snake_case, matching the enum.
+_WIRE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def register_telemetry_event(event_type_key: str, wire_name: str) -> None:
+    """Register an extra event: internal EventType value -> wire name.
+
+    Rejects collisions with the built-in enum/map and malformed wire names so a
+    typo can't silently disable forwarding. Idempotent for the same pair. Call at
+    import time (e.g. in a registering package's __init__).
+    """
+    if not _WIRE_NAME_RE.match(wire_name):
+        raise ValueError(f"Invalid telemetry wire name {wire_name!r}")
+    if event_type_key in TELEMETRY_EVENTS:
+        raise ValueError(f"{event_type_key!r} is already a built-in telemetry event")
+    if wire_name in {e.value for e in TelemetryEventName}:
+        raise ValueError(f"Wire name {wire_name!r} collides with a built-in event")
+    existing = _RUNTIME_TELEMETRY_EVENTS.get(event_type_key)
+    if existing is not None and existing != wire_name:
+        raise ValueError(f"{event_type_key!r} already registered to {existing!r}")
+    _RUNTIME_TELEMETRY_EVENTS[event_type_key] = wire_name
+
+
+def resolve_wire_name(event_type_key: str) -> str | None:
+    """Resolve an internal EventType value to a wire name, built-ins first.
+
+    Returns None when the event is internal-only (not forwarded). This is the
+    single lookup the emit path uses instead of indexing TELEMETRY_EVENTS
+    directly, so built-in and registered events flow through one chokepoint.
+    """
+    builtin = TELEMETRY_EVENTS.get(event_type_key)
+    if builtin is not None:
+        return builtin.value
+    return _RUNTIME_TELEMETRY_EVENTS.get(event_type_key)
+
+
 @dataclass(frozen=True, slots=True)
 class TelemetryEvent:
     """A single queued telemetry event.
@@ -106,7 +152,7 @@ class TelemetryEvent:
     ``actor_type`` rather than by-convention.
     """
 
-    name: TelemetryEventName
+    name: TelemetryEventName | str
     tags: tuple[EventTag, ...]
     ts: datetime
     actor_type: ActorType | None = None

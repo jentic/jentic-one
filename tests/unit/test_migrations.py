@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import MetaData
 
-from jentic_one.migrations.targets import DB_METADATA
+from jentic_one.migrations.targets import (
+    DB_METADATA,
+    DB_TARGETS,
+    MigrationTarget,
+    register_target,
+)
 from jentic_one.shared.db.base import AdminBase, ControlBase, RegistryBase
 
 
@@ -50,6 +55,36 @@ def test_resolve_admin() -> None:
 
 def test_all_databases_covered() -> None:
     assert set(DB_METADATA.keys()) == {"registry", "control", "admin"}
+
+
+def test_db_targets_cover_oss_surfaces() -> None:
+    assert set(DB_TARGETS.keys()) == {"registry", "control", "admin"}
+
+
+def test_db_targets_carry_metadata_and_default_version_table() -> None:
+    for name, base in (
+        ("registry", RegistryBase),
+        ("control", ControlBase),
+        ("admin", AdminBase),
+    ):
+        target = DB_TARGETS[name]
+        assert target.metadata is base.metadata
+        assert target.version_table == "alembic_version"
+
+
+def test_db_metadata_shim_matches_targets() -> None:
+    assert {name: t.metadata for name, t in DB_TARGETS.items()} == DB_METADATA
+
+
+def test_register_target_is_idempotent_for_same_target() -> None:
+    # Re-registering an identical target is a no-op (safe for repeat imports).
+    register_target(DB_TARGETS["registry"])
+    assert set(DB_TARGETS.keys()) == {"registry", "control", "admin"}
+
+
+def test_register_target_rejects_conflicting_redefinition() -> None:
+    with pytest.raises(ValueError, match="already registered"):
+        register_target(MigrationTarget("registry", ControlBase.metadata))
 
 
 @pytest.mark.parametrize("db_name", ["registry", "control", "admin"])
