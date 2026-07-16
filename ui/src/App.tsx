@@ -35,12 +35,18 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  * Because the bundle is served under `/app`, bare API prefixes (`/credentials`,
  * `/agents`, …) can never collide with an SPA route on hard refresh — they live
  * in a different namespace from the SPA entirely.
+ *
+ * `extraRoutes` is the SPA extension seam (parallel to the CLI's
+ * `AppContainer.ExtraCommands`): a downstream build passes additional
+ * `RouteObject`s that are appended into the authenticated shell, so it can ship
+ * its own SPA (OSS shell + built-in routes + its extras) without editing this
+ * repo. Omitted (the default) for the OSS binary.
  */
-export function App() {
-	return useRoutes(buildRoutes());
+export function App({ extraRoutes = [] }: { extraRoutes?: RouteObject[] } = {}) {
+	return useRoutes(buildRoutes(extraRoutes));
 }
 
-function buildRoutes(): RouteObject[] {
+function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 	// A nav slot gets a placeholder until a real module route claims its path.
 	const claimed = new Set(moduleRoutes.map((r) => r.path).filter(Boolean));
 	const placeholderRoutes: RouteObject[] = sortedNavItems()
@@ -82,7 +88,12 @@ function buildRoutes(): RouteObject[] {
 					// `[...moduleRoutes, ...extraRoutes]` at this single point
 					// without editing the registry. Order is load-bearing —
 					// placeholders stay last so a real module route wins.
-					children: [dashboardIndexRoute, ...moduleRoutes, ...placeholderRoutes],
+					children: [
+						dashboardIndexRoute,
+						...moduleRoutes,
+						...extraRoutes,
+						...placeholderRoutes,
+					],
 				},
 			],
 		},
