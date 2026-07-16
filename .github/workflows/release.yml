@@ -1,0 +1,93 @@
+# Release pipeline — runs on a vX.Y.Z tag (created by merging the release-please
+# Release PR). Two gated stages:
+#
+#   1. gate   — build the app + run every migration on a FRESH ephemeral SQLite
+#               DB (no Postgres, no real secrets — the bundled local-dev key) and
+#               assert /health serves the tag version. Nothing publishes if this
+#               fails.
+#   2. release — GoReleaser builds the signed, checksummed jenticctl + jentic
+#               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
+#               Homebrew cask. This is the install (docs/release-procedure.md #3).
+#
+# Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
+# release assets here because we're already ON the tag (no downstream trigger
+# needed — release-please used the App token to make the tag that started us).
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Build + migrate + /health gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync (locked)
+        run: uv sync --locked
+      - name: Migrate a fresh ephemeral SQLite DB
+        # Uses config/local-sqlite.yaml — bundled LOCAL-DEV-ONLY encryption key,
+        # a throwaway .data/ SQLite file. No production keyset, no publish token.
+        # mkdir mirrors the Makefile's migrate-sqlite target (SQLite won't create
+        # the parent dir).
+        run: |
+          mkdir -p .data
+          JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one.migrations.run
+      - name: Boot the app and assert /health serves the tag version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one &
+          APP_PID=$!
+          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          BODY="$(curl -fsS http://127.0.0.1:8000/health)"
+          echo "health: $BODY"
+          echo "$BODY" | grep -q "\"version\":\"${TAG}\"" || {
+            echo "::error::/health version does not match tag ${TAG}: $BODY" >&2
+            exit 1
+          }
+
+  release:
+    name: GoReleaser (signed CLI binaries)
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach artifacts to the GitHub Release
+      id-token: write # cosign keyless (fulcio/OIDC)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser needs full history/tags
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Install syft (SBOMs)
+        uses: anchore/sbom-action/download-syft@v0
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+          workdir: cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT/App token with contents:write on jentic/homebrew-tap so the cask
+          # can be pushed cross-repo (GITHUB_TOKEN is scoped to THIS repo only).
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          COSIGN_YES: "true"

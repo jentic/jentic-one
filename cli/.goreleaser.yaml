@@ -1,0 +1,106 @@
+# GoReleaser config for the jentic-one CLIs (jenticctl + jentic).
+#
+# The CLI is the install (docs/release-procedure.md, decision #3): on a vX.Y.Z
+# tag the release pipeline runs GoReleaser to build signed, checksummed binaries
+# with SBOMs and a Homebrew formula. Run against the repo's cli/ module.
+#
+# Local sanity check (no publish, no signing):
+#   cd cli && goreleaser release --snapshot --clean --skip=sign,sbom,publish
+#
+# NOTE: cosign keyless signing needs the release job's OIDC token + COSIGN_YES.
+version: 2
+
+project_name: jentic-one
+
+builds:
+  - id: jenticctl
+    main: ./cmd/jenticctl
+    binary: jenticctl
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+  - id: jentic
+    main: ./cmd/jentic
+    binary: jentic
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+
+archives:
+  - id: default
+    # Both binaries in one archive so the Homebrew cask ships both.
+    ids: [jenticctl, jentic]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# SBOM per archive (syft). Runs in the release job (needs syft on PATH).
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Cosign keyless signing of the checksums file (sigstore/fulcio via the job's
+# OIDC token). The installer/Homebrew formula verify against the published
+# identity; see docs/release-procedure.md.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+
+homebrew_casks:
+  - name: jentic
+    ids: [default]
+    repository:
+      owner: jentic
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://jentic.com
+    description: "Jentic One CLIs — jenticctl (installer/lifecycle) + jentic (API client)"
+    # Both binaries are auto-installed from the archive (the two-step install:
+    # brew install, then jenticctl install).
+    # Remove the macOS quarantine attribute so the freshly-downloaded binaries run.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jenticctl"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/jentic"]
+          end
+
+release:
+  github:
+    owner: jentic
+    name: jentic-one
+  # release-please already created the GitHub Release + notes; attach artifacts
+  # to it rather than letting GoReleaser generate its own notes.
+  mode: append
+
+changelog:
+  disable: true

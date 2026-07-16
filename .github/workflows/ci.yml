@@ -8,7 +8,9 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only auto-cancel superseded runs on PRs. On main/tags every run should finish
+  # (a cancelled push-to-main or tag run could skip the release gate).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
