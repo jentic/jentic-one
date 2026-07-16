@@ -38,17 +38,20 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  *
  * `extraRoutes` is the SPA extension seam (parallel to the CLI's
  * `AppContainer.ExtraCommands`): a downstream build passes additional
- * `RouteObject`s that are appended into the authenticated shell, so it can ship
- * its own SPA (OSS shell + built-in routes + its extras) without editing this
- * repo. Omitted (the default) for the OSS binary.
+ * `RouteObject`s that are appended into the authenticated shell (and claim their
+ * nav-slot path, suppressing that slot's placeholder), so it can ship its own
+ * SPA (OSS shell + built-in routes + its extras) without editing this repo.
+ * Omitted (the default) for the OSS binary.
  */
 export function App({ extraRoutes = [] }: { extraRoutes?: RouteObject[] } = {}) {
 	return useRoutes(buildRoutes(extraRoutes));
 }
 
 function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
-	// A nav slot gets a placeholder until a real module route claims its path.
-	const claimed = new Set(moduleRoutes.map((r) => r.path).filter(Boolean));
+	// A nav slot gets a placeholder until a real route claims its path. Both
+	// moduleRoutes AND extraRoutes count as "claimed" so a downstream route at a
+	// nav-slot path suppresses that slot's placeholder (no duplicate entry).
+	const claimed = new Set([...moduleRoutes, ...extraRoutes].map((r) => r.path).filter(Boolean));
 	const placeholderRoutes: RouteObject[] = sortedNavItems()
 		.filter((item) => item.to !== ROUTES.app && !claimed.has(relativeToApp(item.to)))
 		.map((item) => ({
