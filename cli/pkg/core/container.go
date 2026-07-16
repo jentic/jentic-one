@@ -9,7 +9,13 @@
 package core
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -49,4 +55,36 @@ func NewRootCmd(deps *AppContainer, build TreeBuilder) *cobra.Command {
 		root.AddCommand(f(deps))
 	}
 	return root
+}
+
+// ExitCoder is an error that carries a process exit code. A wrapped child
+// command's non-zero exit is surfaced as one of these so Run can mirror it
+// verbatim (rather than reporting it as a generic CLI error). internal/cmd's
+// exit-code error implements this; downstream errors may too.
+type ExitCoder interface {
+	error
+	ExitCode() int
+}
+
+// Run executes a root command with a signal-cancelled context and returns the
+// process exit code. It is the shared entry point for the built-in binaries and
+// any downstream binary composed via NewRootCmd, so exit-code / signal semantics
+// stay identical. Callers typically do: os.Exit(core.Run(root)).
+func Run(root *cobra.Command) int {
+	// Cancel the command context on the first SIGINT/SIGTERM so long-running
+	// commands can unwind gracefully.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err := root.ExecuteContext(ctx)
+	if err == nil {
+		return 0
+	}
+	// A wrapped child's non-zero exit is mirrored verbatim.
+	var ec ExitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	fmt.Fprintln(os.Stderr, "error:", err)
+	return 1
 }
