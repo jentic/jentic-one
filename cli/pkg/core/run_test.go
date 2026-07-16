@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -10,11 +11,11 @@ import (
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
 
-// codedErr implements core.ExitCoder.
-type codedErr struct{ code int }
+// codedError implements core.ExitCoder.
+type codedError struct{ code int }
 
-func (e *codedErr) Error() string { return fmt.Sprintf("boom %d", e.code) }
-func (e *codedErr) ExitCode() int { return e.code }
+func (e *codedError) Error() string { return fmt.Sprintf("boom %d", e.code) }
+func (e *codedError) ExitCode() int { return e.code }
 
 func TestRunMirrorsExitCoder(t *testing.T) {
 	for _, code := range []int{2, 3, 42} {
@@ -22,7 +23,7 @@ func TestRunMirrorsExitCoder(t *testing.T) {
 			Use:           "x",
 			SilenceUsage:  true,
 			SilenceErrors: true,
-			RunE:          func(*cobra.Command, []string) error { return &codedErr{code: code} },
+			RunE:          func(*cobra.Command, []string) error { return &codedError{code: code} },
 		}
 		if got := core.Run(root); got != code {
 			t.Fatalf("Run mirrored exit code = %d, want %d", got, code)
@@ -35,7 +36,7 @@ func TestRunMirrorsWrappedExitCoder(t *testing.T) {
 		Use:           "x",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE:          func(*cobra.Command, []string) error { return fmt.Errorf("wrap: %w", &codedErr{code: 7}) },
+		RunE:          func(*cobra.Command, []string) error { return fmt.Errorf("wrap: %w", &codedError{code: 7}) },
 	}
 	if got := core.Run(root); got != 7 {
 		t.Fatalf("Run through wrapped ExitCoder = %d, want 7", got)
@@ -47,8 +48,12 @@ func TestRunReturns0OnSuccessAnd1OnPlainError(t *testing.T) {
 	if got := core.Run(ok); got != 0 {
 		t.Fatalf("Run(success) = %d, want 0", got)
 	}
-	bad := &cobra.Command{Use: "x", SilenceUsage: true, SilenceErrors: true,
-		RunE: func(*cobra.Command, []string) error { return fmt.Errorf("plain") }}
+	bad := &cobra.Command{
+		Use:           "x",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          func(*cobra.Command, []string) error { return errors.New("plain") },
+	}
 	if got := core.Run(bad); got != 1 {
 		t.Fatalf("Run(plain error) = %d, want 1", got)
 	}
@@ -64,7 +69,7 @@ func TestNewRootCmdWiresErrStreamForRun(t *testing.T) {
 			Use:           "x",
 			SilenceUsage:  true,
 			SilenceErrors: true,
-			RunE:          func(*cobra.Command, []string) error { return fmt.Errorf("kaboom") },
+			RunE:          func(*cobra.Command, []string) error { return errors.New("kaboom") },
 		}
 	}
 	root := core.NewRootCmd(deps, build)

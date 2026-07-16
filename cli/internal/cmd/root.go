@@ -185,12 +185,15 @@ func treeBuilder(build func(*App) *cobra.Command) core.TreeBuilder {
 	}
 }
 
-// APITreeBuilder / CtlTreeBuilder expose the built-in command trees as
-// core.TreeBuilders so a downstream module can compose them via
-// core.NewRootCmd(deps, APITreeBuilder()). They live in internal/cmd (which may
-// see *App); a thin exported wrapper is re-exported from cli/pkg/clitree so
-// other modules can import them (internal/ is not importable cross-module).
+// APITreeBuilder exposes the built-in `jentic` (API) command tree as a
+// core.TreeBuilder so a downstream module can compose it via
+// core.NewRootCmd(deps, APITreeBuilder()). It lives in internal/cmd (which may
+// see *App); cli/pkg/clitree re-exports it so other modules can import it
+// (internal/ is not importable cross-module).
 func APITreeBuilder() core.TreeBuilder { return treeBuilder(newAPIRootCmd) }
+
+// CtlTreeBuilder exposes the built-in `jenticctl` (installer/lifecycle) command
+// tree as a core.TreeBuilder. See APITreeBuilder.
 func CtlTreeBuilder() core.TreeBuilder { return treeBuilder(newCtlRootCmd) }
 
 // runRoot builds the root command via the built-in tree builder and runs it
