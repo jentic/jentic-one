@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/signal"
 	"syscall"
 
@@ -37,7 +36,10 @@ type TreeBuilder func(deps *AppContainer) *cobra.Command
 //
 // It deliberately carries NO migration-target list (see the package doc).
 type AppContainer struct {
-	// Out and Err are the standard output streams (overridable in tests).
+	// In, Out, and Err are the standard streams (overridable in tests / by a
+	// downstream). NewRootCmd wires them onto the root command, so command
+	// bodies should read cmd.InOrStdin() / cmd.OutOrStdout() / cmd.ErrOrStderr().
+	In  io.Reader
 	Out io.Writer
 	Err io.Writer
 
@@ -48,9 +50,20 @@ type AppContainer struct {
 
 // NewRootCmd builds a root command tree using the injected container. `build`
 // assembles the built-in command set (supplied by internal/cmd); any
-// ExtraCommands are appended last so they never shadow built-in commands.
+// ExtraCommands are appended last so they never shadow built-in commands. The
+// container's streams are wired onto the root so both cobra's own output and
+// core.Run's error output honor the injected Out/Err/In.
 func NewRootCmd(deps *AppContainer, build TreeBuilder) *cobra.Command {
 	root := build(deps)
+	if deps.In != nil {
+		root.SetIn(deps.In)
+	}
+	if deps.Out != nil {
+		root.SetOut(deps.Out)
+	}
+	if deps.Err != nil {
+		root.SetErr(deps.Err)
+	}
 	for _, f := range deps.ExtraCommands {
 		root.AddCommand(f(deps))
 	}
@@ -85,6 +98,8 @@ func Run(root *cobra.Command) int {
 	if errors.As(err, &ec) {
 		return ec.ExitCode()
 	}
-	fmt.Fprintln(os.Stderr, "error:", err)
+	// Write to the root's error stream so an injected AppContainer.Err is honored
+	// (NewRootCmd wired it via root.SetErr); falls back to os.Stderr otherwise.
+	fmt.Fprintln(root.ErrOrStderr(), "error:", err)
 	return 1
 }
