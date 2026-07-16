@@ -9,7 +9,12 @@
 package core
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -31,7 +36,10 @@ type TreeBuilder func(deps *AppContainer) *cobra.Command
 //
 // It deliberately carries NO migration-target list (see the package doc).
 type AppContainer struct {
-	// Out and Err are the standard output streams (overridable in tests).
+	// In, Out, and Err are the standard streams (overridable in tests / by a
+	// downstream). NewRootCmd wires them onto the root command, so command
+	// bodies should read cmd.InOrStdin() / cmd.OutOrStdout() / cmd.ErrOrStderr().
+	In  io.Reader
 	Out io.Writer
 	Err io.Writer
 
@@ -42,11 +50,56 @@ type AppContainer struct {
 
 // NewRootCmd builds a root command tree using the injected container. `build`
 // assembles the built-in command set (supplied by internal/cmd); any
-// ExtraCommands are appended last so they never shadow built-in commands.
+// ExtraCommands are appended last so they never shadow built-in commands. The
+// container's streams are wired onto the root so both cobra's own output and
+// core.Run's error output honor the injected Out/Err/In.
 func NewRootCmd(deps *AppContainer, build TreeBuilder) *cobra.Command {
 	root := build(deps)
+	if deps.In != nil {
+		root.SetIn(deps.In)
+	}
+	if deps.Out != nil {
+		root.SetOut(deps.Out)
+	}
+	if deps.Err != nil {
+		root.SetErr(deps.Err)
+	}
 	for _, f := range deps.ExtraCommands {
 		root.AddCommand(f(deps))
 	}
 	return root
+}
+
+// ExitCoder is an error that carries a process exit code. A wrapped child
+// command's non-zero exit is surfaced as one of these so Run can mirror it
+// verbatim (rather than reporting it as a generic CLI error). internal/cmd's
+// exit-code error implements this; downstream errors may too.
+type ExitCoder interface {
+	error
+	ExitCode() int
+}
+
+// Run executes a root command with a signal-cancelled context and returns the
+// process exit code. It is the shared entry point for the built-in binaries and
+// any downstream binary composed via NewRootCmd, so exit-code / signal semantics
+// stay identical. Callers typically do: os.Exit(core.Run(root)).
+func Run(root *cobra.Command) int {
+	// Cancel the command context on the first SIGINT/SIGTERM so long-running
+	// commands can unwind gracefully.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	err := root.ExecuteContext(ctx)
+	if err == nil {
+		return 0
+	}
+	// A wrapped child's non-zero exit is mirrored verbatim.
+	var ec ExitCoder
+	if errors.As(err, &ec) {
+		return ec.ExitCode()
+	}
+	// Write to the root's error stream so an injected AppContainer.Err is honored
+	// (NewRootCmd wired it via root.SetErr); falls back to os.Stderr otherwise.
+	fmt.Fprintln(root.ErrOrStderr(), "error:", err)
+	return 1
 }

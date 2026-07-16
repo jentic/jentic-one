@@ -2,12 +2,8 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -148,7 +144,7 @@ func ExecuteAPI() {
 // A downstream package builds its own core.AppContainer{ExtraCommands: ...} and
 // calls core.NewRootCmd directly from its own main.go.
 func defaultContainer() *core.AppContainer {
-	return &core.AppContainer{Out: os.Stdout, Err: os.Stderr}
+	return &core.AppContainer{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}
 }
 
 // appFromContainer derives the internal App (resolved paths + streams) from the
@@ -163,48 +159,47 @@ func appFromContainer(deps *core.AppContainer) (*App, error) {
 	return &App{Paths: paths, Out: deps.Out, Err: deps.Err}, nil
 }
 
-// runRoot builds the root command via the built-in tree builder, wires a
-// signal-cancelled context, and executes it. It composes the tree through
-// core.NewRootCmd so any injected ExtraCommands are appended after the built-in
-// set. The real work lives here (rather than in Execute*) so that deferred
-// cleanup (the signal-context cancel) always runs before the process exits.
-func runRoot(build func(*App) *cobra.Command) int {
-	deps := defaultContainer()
-
-	// Adapt the internal (*App)-based tree builder to core.TreeBuilder. App
-	// construction (path resolution) can fail; surface it as a build-time panic
-	// captured below rather than threading an error through the cobra tree.
-	var buildErr error
-	tree := func(d *core.AppContainer) *cobra.Command {
+// treeBuilder adapts an internal (*App)-based command-tree builder to a
+// core.TreeBuilder (which operates on the exported *core.AppContainer). Path
+// resolution can fail; surface it as a command that FAILS CLOSED rather than
+// threading an error out-of-band. This is the single definition shared by the
+// built-in binaries (runRoot) and the exported downstream builders (pkg/clitree).
+//
+// The failure root uses PersistentPreRunE so the error also fires for any
+// commands appended via AppContainer.ExtraCommands (which are attached to this
+// root by core.NewRootCmd) — otherwise a downstream's extra command would run
+// against an unresolved container and could silently succeed. SilenceUsage/
+// SilenceErrors mirror the real roots so the error prints once, without usage.
+func treeBuilder(build func(*App) *cobra.Command) core.TreeBuilder {
+	return func(d *core.AppContainer) *cobra.Command {
 		app, err := appFromContainer(d)
 		if err != nil {
-			buildErr = err
-			return &cobra.Command{RunE: func(*cobra.Command, []string) error { return err }}
+			return &cobra.Command{
+				SilenceUsage:      true,
+				SilenceErrors:     true,
+				RunE:              func(*cobra.Command, []string) error { return err },
+				PersistentPreRunE: func(*cobra.Command, []string) error { return err },
+			}
 		}
 		return build(app)
 	}
+}
 
-	root := core.NewRootCmd(deps, tree)
-	if buildErr != nil {
-		fmt.Fprintln(os.Stderr, "error:", buildErr)
-		return 1
-	}
+// APITreeBuilder exposes the built-in `jentic` (API) command tree as a
+// core.TreeBuilder so a downstream module can compose it via
+// core.NewRootCmd(deps, APITreeBuilder()). It lives in internal/cmd (which may
+// see *App); cli/pkg/clitree re-exports it so other modules can import it
+// (internal/ is not importable cross-module).
+func APITreeBuilder() core.TreeBuilder { return treeBuilder(newAPIRootCmd) }
 
-	// Cancel the command context on the first SIGINT/SIGTERM so long-running
-	// commands (e.g. register) can unwind gracefully.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+// CtlTreeBuilder exposes the built-in `jenticctl` (installer/lifecycle) command
+// tree as a core.TreeBuilder. See APITreeBuilder.
+func CtlTreeBuilder() core.TreeBuilder { return treeBuilder(newCtlRootCmd) }
 
-	err := root.ExecuteContext(ctx)
-	if err == nil {
-		return 0
-	}
-	// A wrapped child's non-zero exit is mirrored verbatim, not reported as a
-	// CLI error.
-	var ec *exitCodeError
-	if errors.As(err, &ec) {
-		return ec.code
-	}
-	fmt.Fprintln(os.Stderr, "error:", err)
-	return 1
+// runRoot builds the root command via the built-in tree builder and runs it
+// through core.Run (shared signal-context + exit-code semantics).
+func runRoot(build func(*App) *cobra.Command) int {
+	deps := defaultContainer()
+	root := core.NewRootCmd(deps, treeBuilder(build))
+	return core.Run(root)
 }
