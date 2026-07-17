@@ -61,7 +61,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out labels manifest
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           sparse-checkout: .github/labels.yml
           sparse-checkout-cone-mode: false
