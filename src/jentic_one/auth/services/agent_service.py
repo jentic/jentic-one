@@ -184,6 +184,7 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                after={"owner_id": agent.owner_id},
                 origin=identity.origin.value,
             )
             await emit_event_best_effort(

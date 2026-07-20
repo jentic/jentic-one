@@ -118,6 +118,8 @@ class AgentRepository:
         agent.status = ActorStatus.ACTIVE
         agent.approved_by = approved_by
         agent.approved_at = datetime.now(UTC)
+        if agent.owner_id is None:
+            agent.owner_id = approved_by
         # Invalidate RAT in the same flush — approval and RAT clearing are one
         # logical operation per RFC 7592 (single-use credential).
         agent.registration_access_token_hash = None
