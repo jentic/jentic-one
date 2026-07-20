@@ -45,7 +45,69 @@ jobs:
           app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # When release-please opens/updates its "chore(main): release X.Y.Z" PR,
+      # the version bump can invalidate generated artifacts (the control-plane
+      # OpenAPI spec + the UI client derived from it). Regenerate them on the PR
+      # branch and push back so the Release PR is self-consistent and does not
+      # trip the openapi-client-drift / conformance gates when merged.
+      - name: Set up toolchain
+        if: ${{ steps.release.outputs.pr }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        if: ${{ steps.release.outputs.pr }}
+        run: uv python install 3.12
+
+      - name: Set up Node.js
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Regenerate OpenAPI specs
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}
+          # The App slug from the token step; used to derive the committer
+          # identity so this commit is attributed to the same bot that authors
+          # the rest of the Release PR (we push with the App token, not
+          # GITHUB_TOKEN — see the header comment).
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          # Check out the release-please PR branch so regenerated files are
+          # committed onto the Release PR, not a detached HEAD.
+          gh pr checkout "$PR_NUMBER"
+
+          # Install backend deps, then regenerate the control spec + ui/openapi.json.
+          make sync
+          make openapi
+
+          # Refresh the generated UI client from the (possibly updated) spec.
+          cd ui && npm ci && npm run codegen
+          cd ..
+
+          # Attribute the commit to the release-please App's bot user (the token
+          # actually pushing this), matching GitHub's <slug>[bot] convention:
+          #   name  = <slug>[bot]
+          #   email = <bot-user-id>+<slug>[bot]@users.noreply.github.com
+          BOT_NAME="${APP_SLUG}[bot]"
+          BOT_USER_ID="$(gh api "/users/${BOT_NAME}" --jq .id)"
+          git config user.name "$BOT_NAME"
+          git config user.email "${BOT_USER_ID}+${BOT_NAME}@users.noreply.github.com"
+          git add openapi/ ui/
+
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: regenerate openapi specs for version bump"
+            git push
+          fi
