@@ -112,6 +112,6 @@ jobs:
           git add openapi/ ui/
 
           if ! git diff --staged --quiet; then
-            git commit -m "chore: regenerate openapi specs for version bump"
+            git commit -m "chore(release-please): regenerate openapi specs for version bump"
             git push
           fi
