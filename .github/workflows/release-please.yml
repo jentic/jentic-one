@@ -78,7 +78,11 @@ jobs:
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}
+          # A step's env: is interpolated even when its if: will skip it, so
+          # fromJson runs regardless. When release-please decides no release is
+          # needed, outputs.pr is empty/undefined and fromJson('') throws before
+          # the if can skip the step. Fall back to '{}' so it parses to null.
+          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr || '{}').number }}
           # The App slug from the token step; used to derive the committer
           # identity so this commit is attributed to the same bot that authors
           # the rest of the Release PR (we push with the App token, not
