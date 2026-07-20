@@ -26,6 +26,27 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
 The pre-1.0 baseline is the restored `v0.1.0`…`v0.13.2` tag line; the next
 release is `v0.14.0` (we continue the `0.x` line — see `VERSIONING.md`).
 
+### Forcing or recovering a release
+
+release-please only opens a Release PR when there are user-facing commits since
+the last release (`ci`, `chore`, `test` and other hidden types don't trigger a
+bump). To force a release anyway — e.g. to recover a release whose `release.yml`
+run failed before GoReleaser published its assets — land a commit on `main`
+whose footer sets the version explicitly:
+
+```
+ci(release): force patch release to republish artifacts
+
+Release-As: 0.14.3
+```
+
+release-please then opens a `chore(main): release 0.14.3` PR; merging it cuts the
+tag and re-runs `release.yml` (now from the fixed workflow on `main`), producing
+a complete set of signed binaries + the Homebrew cask. A failed release version
+is simply superseded by the next one — every release rebuilds all artifacts from
+scratch, so nothing is lost by skipping it.
+
+
 ## One-time setup (repo/org admin)
 
 The automation is inert until these are provisioned:
