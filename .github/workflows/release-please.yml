@@ -1,0 +1,51 @@
+# release-please keeps a standing Release PR ("chore(main): release X.Y.Z").
+# Merging that PR is the release: it bumps the version across pyproject.toml,
+# uv.lock, and every Helm Chart.yaml (see release-please-config.json), writes
+# CHANGELOG.md, tags vX.Y.Z, and creates the GitHub Release. The tag then fires
+# the release pipeline (see release.yml) which builds + gates + publishes the
+# signed CLI binaries.
+#
+# Token: we mint a short-lived GitHub App token instead of GITHUB_TOKEN because
+# a tag/release created with GITHUB_TOKEN does NOT trigger downstream workflows
+# (release.yml's `on: push: tags`). The App is scoped to contents:write +
+# issues:write + pull-requests:write on this repo only (issues:write is required
+# because release-please creates its `autorelease:*` bookkeeping labels via the
+# Issues API on the first run). See docs/releasing.md.
+#
+# SETUP REQUIRED (repo/org admin): create the App, install it on this repo, and
+# add these secrets:
+#   RELEASE_PLEASE_APP_ID          - the GitHub App's App ID
+#   RELEASE_PLEASE_APP_PRIVATE_KEY - the App's private key (PEM)
+# The App's repository permissions MUST include Contents: RW, Issues: RW, and
+# Pull requests: RW (the workflow `permissions:` below cannot exceed the App's).
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write # release-please creates its autorelease:* labels via the Issues API
+      pull-requests: write
+    steps:
+      - name: Mint a scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
