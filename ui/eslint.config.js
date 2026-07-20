@@ -83,6 +83,7 @@ const MODULE_QUERY_KEY_ROOTS = {
 	dashboard: ['dashboard'],
 	agents: ['agents', 'service-accounts'],
 	monitor: ['monitor'],
+	'llm-proxy': ['llm-proxy'],
 	docs: ['docs'],
 };
 

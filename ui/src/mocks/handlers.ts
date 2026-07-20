@@ -7,6 +7,7 @@ import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/modules/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { llmProxyHandlers } from '@/modules/llm-proxy/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -147,6 +148,9 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// LLM Proxy owns the Sessions surface (/proxy/sessions[/:id]). Its paths are
+	// unique to this module, so ordering is not load-bearing.
+	...llmProxyHandlers,
 ];
 
 /**

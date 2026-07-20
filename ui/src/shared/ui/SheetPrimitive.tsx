@@ -48,6 +48,13 @@ export interface SheetPrimitiveProps {
 	ariaLabel?: string;
 	/** ID of the element that labels the sheet (preferred over ariaLabel). */
 	ariaLabelledBy?: string;
+	/**
+	 * DOM node the sheet portals into. Defaults to `document.body`. Pass a
+	 * different element (e.g. the current `document.fullscreenElement`) so the
+	 * sheet lands inside the browser's top layer when a descendant is
+	 * fullscreened — otherwise a body-portaled sheet renders behind it.
+	 */
+	container?: HTMLElement | null;
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -94,6 +101,7 @@ export function SheetPrimitive({
 	onAfterClose,
 	ariaLabel,
 	ariaLabelledBy,
+	container,
 }: SheetPrimitiveProps): JSX.Element | null {
 	const sheetRef = useRef<HTMLDivElement>(null);
 	const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -288,6 +296,6 @@ export function SheetPrimitive({
 				</div>
 			</div>
 		</div>,
-		document.body,
+		container ?? document.body,
 	);
 }

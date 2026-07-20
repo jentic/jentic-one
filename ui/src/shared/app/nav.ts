@@ -7,6 +7,7 @@ import {
 	LayoutGrid,
 	KeyRound,
 	Activity,
+	Gauge,
 	BookText,
 } from 'lucide-react';
 
@@ -46,6 +47,7 @@ export const navItems: NavItem[] = [
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 60, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
+	{ id: 'llm-proxy', label: 'LLM Proxy', to: '/llm-proxy', order: 75, icon: Gauge },
 	{ id: 'docs', label: 'API Reference', to: '/docs', order: 80, icon: BookText },
 ];
 

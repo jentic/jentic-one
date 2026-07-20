@@ -108,6 +108,9 @@ info = "Commits must be conventional with a mandatory scope: type(scope): subjec
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# UI prototype/scratch area (ui/prototypes/) holds throwaway data-shaping
+# scripts, not product code — keep them out of the linted tree.
+extend-exclude = ["ui/prototypes"]
 
 [tool.ruff.lint]
 select = [
