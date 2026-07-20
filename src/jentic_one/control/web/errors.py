@@ -16,6 +16,7 @@ from jentic_one.control.services.access_requests.errors import (
     NotAReviewerError,
     PrerequisiteNotMetError,
     RequestNotPendingError,
+    RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
     ToolkitReferenceAmbiguousError,
@@ -70,6 +71,7 @@ _ACCESS_REQUEST_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     CredentialNotFoundForBindError: (422, "access_request_credential_not_found"),
     UnsupportedScopeGrantError: (422, "access_request_unsupported_scope"),
     RulesNotSupportedForBindError: (422, "access_request_rules_not_supported_for_bind"),
+    RequiredFieldMissingError: (422, "access_request_required_field_missing"),
 }
 
 

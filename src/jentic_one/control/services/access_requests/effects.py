@@ -15,6 +15,7 @@ from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRe
 from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
     ToolkitReferenceAmbiguousError,
@@ -182,9 +183,13 @@ class EffectApplicator:
         # credential. Attribute a missing id to the right side so the 422 names
         # the actual problem instead of always blaming the credential.
         if not item.to_id:
-            raise ToolkitNotVisibleError("<missing>")
+            raise RequiredFieldMissingError(
+                "to_id", context="credential:bind requires a target toolkit"
+            )
         if not item.resource_id:
-            raise CredentialNotFoundForBindError("<missing>")
+            raise RequiredFieldMissingError(
+                "resource_id", context="credential:bind requires a credential"
+            )
         filters = build_access_filters(identity, Credential)
         credential = await CredentialRepository.get_by_id(
             session, item.resource_id, filters=filters

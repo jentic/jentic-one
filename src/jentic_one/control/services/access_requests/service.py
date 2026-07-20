@@ -32,6 +32,7 @@ from jentic_one.control.services.access_requests.errors import (
     NotAReviewerError,
     PrerequisiteNotMetError,
     RequestNotPendingError,
+    RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
     ToolkitReferenceUnresolvedError,
@@ -74,6 +75,7 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
     ToolkitReferenceUnresolvedError,
     ToolkitNotVisibleError,
     CredentialNotFoundForBindError,
+    RequiredFieldMissingError,
 )
 
 

@@ -201,15 +201,26 @@ class RulesNotSupportedForBindError(AccessRequestServiceError):
         self.action = action
 
 
+class RequiredFieldMissingError(AccessRequestServiceError):
+    """Raised when a required field is absent on an access request item."""
+
+    def __init__(self, field: str, *, context: str) -> None:
+        super().__init__(
+            f"Required field '{field}' is missing on the access request item; {context}"
+        )
+        self.field = field
+        self.context = context
+
+
 def assert_grantable_scope(scope: str | None) -> None:
     """Raise UnsupportedScopeGrantError unless ``scope`` is self-service grantable.
 
     Single source of truth for the scope:grant allow-list check, shared by the
     file-time guard (AccessRequestService) and the decide-time guard
-    (EffectApplicator) so the two can never drift. A falsy scope (missing, None,
-    or empty string) is reported as ``"<missing>"``. See issue #672.
+    (EffectApplicator) so the two can never drift. A falsy scope is reported as
+    a missing-field error. See issue #672.
     """
     if not scope:
-        raise UnsupportedScopeGrantError("<missing>")
+        raise RequiredFieldMissingError("resource_id", context="scope:grant requires a scope value")
     if scope not in GRANTABLE_SCOPES:
         raise UnsupportedScopeGrantError(scope)
