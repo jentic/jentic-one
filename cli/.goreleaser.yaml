@@ -1,6 +1,6 @@
 # GoReleaser config for the jentic-one CLIs (jenticctl + jentic).
 #
-# The CLI is the install (docs/release-procedure.md, decision #3): on a vX.Y.Z
+# The CLI is the install (see docs/releasing.md): on a vX.Y.Z
 # tag the release pipeline runs GoReleaser to build signed, checksummed binaries
 # with SBOMs and a Homebrew formula. Run against the repo's cli/ module.
 #
@@ -59,7 +59,7 @@ sboms:
 
 # Cosign keyless signing of the checksums file (sigstore/fulcio via the job's
 # OIDC token). The installer/Homebrew formula verify against the published
-# identity; see docs/release-procedure.md.
+# identity; see docs/releasing.md.
 signs:
   - id: checksums
     cmd: cosign

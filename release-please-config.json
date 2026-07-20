@@ -19,83 +19,40 @@
           "jsonpath": "$.package[?(@.name.value=='jentic-one')].version"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.appVersion"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='broker')].version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='app')].version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='registry')].version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='admin')].version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='control')].version"
-        },
-        {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/Chart.yaml",
-          "jsonpath": "$.dependencies[?(@.name=='gateway')].version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/Chart.yaml"
         },
         {
           "type": "generic",
           "path": "deploy/helm/observability/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/broker/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/broker/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/app/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/app/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/registry/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/registry/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/admin/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/admin/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/control/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/control/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/gateway/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/gateway/Chart.yaml"
         },
         {
-          "type": "yaml",
-          "path": "deploy/helm/jentic-one/charts/common/Chart.yaml",
-          "jsonpath": "$.version"
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/common/Chart.yaml"
         }
       ]
     }
@@ -105,7 +62,7 @@
     { "type": "fix", "section": "Bug Fixes" },
     { "type": "perf", "section": "Performance" },
     { "type": "refactor", "section": "Refactors" },
-    { "type": "deps", "section": "Dependencies" },
+    { "type": "revert", "section": "Reverts" },
     { "type": "docs", "section": "Documentation", "hidden": false },
     { "type": "build", "section": "Build System", "hidden": false },
     { "type": "ci", "section": "CI/CD", "hidden": true },

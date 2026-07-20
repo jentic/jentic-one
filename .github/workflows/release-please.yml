@@ -7,13 +7,17 @@
 #
 # Token: we mint a short-lived GitHub App token instead of GITHUB_TOKEN because
 # a tag/release created with GITHUB_TOKEN does NOT trigger downstream workflows
-# (release.yml's `on: push: tags`). The App is scoped to exactly contents:write +
-# pull-requests:write on this repo only (decision #4 in docs/release-procedure.md).
+# (release.yml's `on: push: tags`). The App is scoped to contents:write +
+# issues:write + pull-requests:write on this repo only (issues:write is required
+# because release-please creates its `autorelease:*` bookkeeping labels via the
+# Issues API on the first run). See docs/releasing.md.
 #
 # SETUP REQUIRED (repo/org admin): create the App, install it on this repo, and
 # add these secrets:
 #   RELEASE_PLEASE_APP_ID          - the GitHub App's App ID
 #   RELEASE_PLEASE_APP_PRIVATE_KEY - the App's private key (PEM)
+# The App's repository permissions MUST include Contents: RW, Issues: RW, and
+# Pull requests: RW (the workflow `permissions:` below cannot exceed the App's).
 name: release-please
 
 on:
@@ -31,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write # release-please creates its autorelease:* labels via the Issues API
       pull-requests: write
     steps:
       - name: Mint a scoped GitHub App token

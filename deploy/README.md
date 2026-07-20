@@ -173,14 +173,14 @@ docker images jentic-one/*
 To turn an image into a transferable file, use the save targets:
 
 ```bash
-make save-app           # writes build/jentic-app-0.1.0.tar
+make save-app           # writes build/jentic-app-0.13.2.tar
 make save-all           # writes one tarball per service
 ```
 
 To load a tarball back on another machine:
 
 ```bash
-docker load -i build/jentic-app-0.1.0.tar
+docker load -i build/jentic-app-0.13.2.tar
 ```
 
 `build/` is gitignored and dockerignored, so tarballs never end up in git or

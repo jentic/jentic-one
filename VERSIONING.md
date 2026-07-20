@@ -17,8 +17,8 @@ While Jentic One is in the `0.x` line it is in **public beta**, as stated in the
 Concretely, on the `0.MINOR.PATCH` line:
 
 - **MINOR** (`0.13 → 0.14`) — may include breaking changes (API, DB schema, CLI
-  flags, config) as well as features. Read the release notes and
-  [`UPGRADING.md`](UPGRADING.md) before upgrading.
+  flags, config) as well as features. Read the release notes before upgrading
+  (an `UPGRADING.md` with rollback recipes is a planned follow-up).
 - **PATCH** (`0.13.2 → 0.13.3`) — bug fixes and non-breaking changes only.
 
 We will not cut `1.0.0` until the public API, database schema, and CLI surface
@@ -48,8 +48,8 @@ a standing **Release PR** (`chore(main): release X.Y.Z`) accumulates
 Conventional-Commit changes into a proposed version bump + `CHANGELOG.md`.
 **Merging that PR is the release** — it tags `vX.Y.Z`, creates the GitHub
 Release, and triggers the tag pipeline (build/migrate/`/health` gate →
-signed CLI binaries). See [`docs/release-procedure.md`](docs/release-procedure.md)
-for the full procedure and [`CHANGELOG.md`](CHANGELOG.md) for the history.
+signed CLI binaries). See [`docs/releasing.md`](docs/releasing.md) for the full
+procedure; release-please generates `CHANGELOG.md` on the first release.
 
 The baseline is the restored `v0.1.0`…`v0.13.2` tag line; the next release is
 `v0.14.0`. We continue the `0.x` line rather than reset — the tags and GitHub

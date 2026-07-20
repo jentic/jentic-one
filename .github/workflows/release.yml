@@ -7,7 +7,7 @@
 #               fails.
 #   2. release — GoReleaser builds the signed, checksummed jenticctl + jentic
 #               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
-#               Homebrew cask. This is the install (docs/release-procedure.md #3).
+#               Homebrew cask. This is the install (see docs/releasing.md).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
@@ -31,8 +31,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Sync (locked)
         run: uv sync --locked
       - name: Migrate a fresh ephemeral SQLite DB
@@ -43,23 +43,73 @@ jobs:
         run: |
           mkdir -p .data
           JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one.migrations.run
+      - name: Assert every DB actually reached an Alembic head
+        # /health is dependency-free by design, so it can't attest DB state on its
+        # own. This step makes the gate real: it fails if a target didn't migrate
+        # (empty/absent alembic_version) or if the runner no-op'd (fewer migrated
+        # DBs than configured targets) — i.e. a broken or silently-skipped
+        # migration blocks the release.
+        run: |
+          JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python - <<'PY'
+          import sqlite3, sys
+          from pathlib import Path
+          from jentic_one.migrations.targets import DB_TARGETS
+
+          targets = list(DB_TARGETS)
+          if not targets:
+              sys.exit("::error::no migration targets configured (DB_TARGETS is empty)")
+
+          missing = []
+          for name in targets:
+              db = Path(".data") / f"{name}.db"
+              if not db.exists():
+                  missing.append(f"{name}: db file missing ({db})")
+                  continue
+              con = sqlite3.connect(db)
+              try:
+                  row = con.execute("SELECT version_num FROM alembic_version").fetchone()
+              except sqlite3.OperationalError:
+                  missing.append(f"{name}: no alembic_version table")
+                  continue
+              finally:
+                  con.close()
+              if not row or not row[0]:
+                  missing.append(f"{name}: alembic_version empty")
+              else:
+                  print(f"  {name} at head {row[0]}")
+
+          if missing:
+              sys.exit("::error::migration gate failed:\n" + "\n".join(missing))
+          print(f"OK: all {len(targets)} target DB(s) migrated to a head")
+          PY
       - name: Boot the app and assert /health serves the tag version
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
-          JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one &
-          APP_PID=$!
-          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+          # reload:false + run in its own process group so the trap reliably reaps
+          # the uvicorn server (not just the `uv run` wrapper).
+          JENTIC_CONFIG_FILE=config/local-sqlite.yaml JENTIC__SERVER__RELOAD=false \
+            setsid uv run python -m jentic_one >app.log 2>&1 &
+          APP_PGID=$!
+          trap 'kill -- -"$APP_PGID" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
+            # Fail fast with logs if the app died instead of spinning the full 30s.
+            if ! kill -0 "$APP_PGID" 2>/dev/null; then
+              echo "::error::app process exited before serving /health"; cat app.log; exit 1
+            fi
             sleep 1
           done
-          BODY="$(curl -fsS http://127.0.0.1:8000/health)"
+          BODY="$(curl -fsS http://127.0.0.1:8000/health)" || { cat app.log; exit 1; }
           echo "health: $BODY"
-          echo "$BODY" | grep -q "\"version\":\"${TAG}\"" || {
-            echo "::error::/health version does not match tag ${TAG}: $BODY" >&2
+          # jq (preinstalled on ubuntu runners) is robust to JSON formatting,
+          # unlike a literal substring grep.
+          GOT="$(printf '%s' "$BODY" | jq -r '.version')"
+          if [ "$GOT" != "$TAG" ]; then
+            echo "::error::/health version ($GOT) does not match tag ($TAG)" >&2
+            cat app.log
             exit 1
-          }
+          fi
 
   release:
     name: GoReleaser (signed CLI binaries)
@@ -69,10 +119,10 @@ jobs:
       contents: write # attach artifacts to the GitHub Release
       id-token: write # cosign keyless (fulcio/OIDC)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # GoReleaser needs full history/tags
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: cli/go.mod
       - name: Install cosign
