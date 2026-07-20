@@ -51,6 +51,19 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # release-please-action does not check out the repo, so nothing is on disk
+      # for the toolchain caches or `gh pr checkout` below. Check out here, gated
+      # on a Release PR existing so we skip the clone on no-release pushes.
+      # fetch-depth: 0 gives gh pr checkout the full history + remote refs it
+      # needs to switch to the PR branch. Use the App token so the later push
+      # back to the Release PR is authorised.
+      - name: Checkout repository
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
       # When release-please opens/updates its "chore(main): release X.Y.Z" PR,
       # the version bump can invalidate generated artifacts (the control-plane
       # OpenAPI spec + the UI client derived from it). Regenerate them on the PR
