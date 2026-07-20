@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.3](https://github.com/jentic/jentic-one/compare/v0.14.2...v0.14.3) (2026-07-20)
+
+
+### CI/CD
+
+* **release:** force patch release to republish v0.14.2 artifacts ([#710](https://github.com/jentic/jentic-one/issues/710)) ([af65126](https://github.com/jentic/jentic-one/commit/af6512617e9e5000e6921b0b4c38c10f546f43ad))
+
 ## [0.14.2](https://github.com/jentic/jentic-one/compare/v0.14.1...v0.14.2) (2026-07-20)
 
 
