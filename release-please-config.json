@@ -56,23 +56,8 @@
           "path": "deploy/helm/jentic-one/charts/common/Chart.yaml"
         }
       ]
-    },
-    "cli": {
-      "release-type": "go",
-      "package-name": "cli",
-      "component": "cli",
-      "include-component-in-tag": true,
-      "include-v-in-tag": true,
-      "changelog-path": "CHANGELOG.md"
     }
   },
-  "plugins": [
-    {
-      "type": "linked-versions",
-      "groupName": "jentic-one",
-      "components": ["jentic-one", "cli"]
-    }
-  ],
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },

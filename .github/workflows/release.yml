@@ -122,6 +122,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # GoReleaser needs full history/tags
+      # Mirror the app release tag onto the CLI's Go module path. The CLI lives in
+      # a subdirectory (module github.com/jentic/jentic-one/cli), so `go get
+      # .../cli@vX.Y.Z` only resolves if a `cli/vX.Y.Z` git tag exists. We point it
+      # at the SAME commit as the app's vX.Y.Z tag, so the module version and the
+      # app release are always lockstep-identical. Uses GITHUB_TOKEN's checkout
+      # creds; the `cli/v*` tag can't match this workflow's `v*.*.*` trigger, so
+      # there's no recursive release run.
+      - name: Tag the CLI Go module at the release version
+        run: |
+          set -euo pipefail
+          CLI_TAG="cli/${GITHUB_REF_NAME}"
+          if git rev-parse -q --verify "refs/tags/${CLI_TAG}" >/dev/null; then
+            echo "${CLI_TAG} already exists — nothing to do"
+          else
+            git tag -a "${CLI_TAG}" -m "${CLI_TAG}" "${GITHUB_SHA}"
+            git push origin "${CLI_TAG}"
+          fi
       - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
