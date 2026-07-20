@@ -122,7 +122,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # GoReleaser needs full history/tags
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
       - name: Install cosign
@@ -130,7 +130,7 @@ jobs:
       - name: Install syft (SBOMs)
         uses: anchore/sbom-action/download-syft@v0
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
