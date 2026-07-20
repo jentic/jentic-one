@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/jentic/jentic-one/compare/v0.14.1...v0.14.2) (2026-07-20)
+
+
+### Bug Fixes
+
+* **access-requests:** replace leaked &lt;missing&gt; placeholder with actionable field error ([#565](https://github.com/jentic/jentic-one/issues/565)) ([674ce8a](https://github.com/jentic/jentic-one/commit/674ce8af7b81bbd7726ba44f166e3db97cafa28e))
+
 ## [0.14.1](https://github.com/jentic/jentic-one/compare/v0.14.0...v0.14.1) (2026-07-20)
 
 
