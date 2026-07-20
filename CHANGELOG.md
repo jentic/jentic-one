@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/jentic/jentic-one/compare/v0.14.0...v0.14.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **auth:** prevent SQLite deadlock in JWT assertion token exchange ([#580](https://github.com/jentic/jentic-one/issues/580)) ([44a577d](https://github.com/jentic/jentic-one/commit/44a577d44044a94f77aca4f0692c0aabba864ffd))
+* **auth:** set owner_id on DCR agent approval for toolkit visibility ([#563](https://github.com/jentic/jentic-one/issues/563)) ([b6f0025](https://github.com/jentic/jentic-one/commit/b6f0025a581eccb5f087282adc529d9cfca99853))
+
 ## [0.14.0](https://github.com/jentic/jentic-one/compare/v0.13.2...v0.14.0) (2026-07-20)
 
 
