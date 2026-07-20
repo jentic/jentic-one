@@ -63,7 +63,7 @@
       "component": "cli",
       "include-component-in-tag": true,
       "include-v-in-tag": true,
-      "changelog-path": "../CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md"
     }
   },
   "plugins": [
