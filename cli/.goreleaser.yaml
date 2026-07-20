@@ -83,6 +83,11 @@ homebrew_casks:
     directory: Casks
     homepage: https://jentic.com
     description: "Jentic One CLIs — jenticctl (installer/lifecycle) + jentic (API client)"
+    # GoReleaser links only the binary matching the cask name (jentic) when this
+    # is omitted, so jenticctl never lands on PATH. List both explicitly.
+    binaries:
+      - jenticctl
+      - jentic
     # Both binaries are auto-installed from the archive (the two-step install:
     # brew install, then jenticctl install).
     # Remove the macOS quarantine attribute so the freshly-downloaded binaries run.
