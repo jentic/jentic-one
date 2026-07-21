@@ -10,8 +10,11 @@ import (
 const (
 	// DefaultBrokerScheme is the scheme of the broker target used by execute.
 	DefaultBrokerScheme = "https"
-	// DefaultBrokerHost is the host of the broker target used by execute.
-	DefaultBrokerHost = "https://127.0.0.1:8100"
+	// DefaultBrokerHost is the host of the broker target used by execute. It is a
+	// bare host[:port] with no scheme — the scheme lives in DefaultBrokerScheme
+	// (and broker.scheme in config.yaml). Callers assemble the URL as
+	// scheme + "://" + host, so embedding a scheme here would double it.
+	DefaultBrokerHost = "127.0.0.1:8100"
 
 	// DefaultBaseURL is the Jentic control-plane (auth surface) base URL used for
 	// agent registration and token minting.
