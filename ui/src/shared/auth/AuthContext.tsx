@@ -36,6 +36,13 @@ export interface AuthContextValue {
 	 * re-login. Returns nothing — the new session is live on resolve.
 	 */
 	changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+	/**
+	 * Redeem a user invite: set the initial password for an invited account and
+	 * adopt the returned session (auto-login), so the invitee lands in the app
+	 * without a second round-trip. Unauthenticated entry point (the invitee has
+	 * no session yet) — mirrors `createAdmin`/`login`'s token adoption.
+	 */
+	redeemInvite: (inviteToken: string, password: string) => Promise<void>;
 	/** Client-side sign-out — jentic-one JWTs are stateless (no revoke endpoint). */
 	logout: () => void;
 }
@@ -115,6 +122,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		[queryClient],
 	);
 
+	const redeemInvite = useCallback(
+		async (inviteToken: string, password: string) => {
+			// Redemption returns a ready-to-use token (auto-login), same shape as
+			// login/createAdmin — adopt it and refresh /users/me.
+			const result = await UsersService.redeemInvite({
+				requestBody: { invite_token: inviteToken, password },
+			});
+			setToken(result.access_token);
+			await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
+		},
+		[queryClient],
+	);
+
 	const logout = useCallback(() => {
 		clearToken();
 		queryClient.removeQueries({ queryKey: ME_QUERY_KEY });
@@ -140,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			login,
 			createAdmin,
 			changePassword,
+			redeemInvite,
 			logout,
 		};
 	}, [
@@ -150,6 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		login,
 		createAdmin,
 		changePassword,
+		redeemInvite,
 		logout,
 	]);
 

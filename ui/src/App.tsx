@@ -4,6 +4,7 @@ import { SetupGate } from '@/shared/auth/SetupGate';
 import { LoginPage } from '@/shared/auth/LoginPage';
 import { SetupPage } from '@/shared/auth/SetupPage';
 import { ChangePasswordPage } from '@/shared/auth/ChangePasswordPage';
+import { RedeemInvitePage } from '@/shared/auth/RedeemInvitePage';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
@@ -23,6 +24,9 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  *                                      (→ /app/login, /app/setup)
  *   /change-password                 → outside the Layout, reachable pre-session
  *                                      (→ /app/change-password)
+ *   /redeem-invite                    → public invite-redemption landing
+ *                                      (→ /app/redeem-invite?token=…); outside
+ *                                      the AuthGuard, auto-logs in on success
  *   /oauth/connected                  → public OAuth popup landing (self-closes)
  *                                      (→ /app/oauth/connected; the backend
  *                                      callback redirects the popup here)
@@ -70,6 +74,11 @@ function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
 			],
 		},
 		{ path: '/change-password', element: <ChangePasswordPage /> },
+		// Public invite-redemption landing. An admin invites a user (POST /users
+		// → invite_token) and sends them here (→ /app/redeem-invite?token=…) to set
+		// a password and finish account creation. Outside the AuthGuard — the
+		// invitee has no session yet (redeem returns a JWT and auto-logs them in).
+		{ path: '/redeem-invite', element: <RedeemInvitePage /> },
 		// Public landing for the OAuth connect popup. The backend callback
 		// redirects the popup here (→ /app/oauth/connected?status=ok|error); it
 		// self-closes. Outside the AuthGuard (the popup has no guaranteed
