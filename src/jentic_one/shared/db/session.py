@@ -9,7 +9,13 @@ from typing import TypeVar
 
 import structlog
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import DisconnectionError, IntegrityError, OperationalError
+from sqlalchemy.exc import (
+    DataError,
+    DBAPIError,
+    DisconnectionError,
+    IntegrityError,
+    OperationalError,
+)
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,11 +30,32 @@ from jentic_one.shared.db.backends import (
     get_backend,
 )
 from jentic_one.shared.db.backends.base import DatabaseBackend
-from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
+from jentic_one.shared.db.errors import (
+    DatabaseDataError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
 
 T = TypeVar("T")
 
 logger = structlog.get_logger(__name__)
+
+
+def _is_data_error(exc: DBAPIError) -> bool:
+    """True when a DBAPI error is a SQLSTATE class-22 data exception.
+
+    A value too long for a column raises ``StringDataRightTruncationError``.
+    SQLAlchemy's asyncpg dialect maps every ``PostgresError`` that is not an
+    integrity violation to the base ``DBAPIError`` (not ``DataError``), so we
+    fall back to the SQLSTATE: class ``22`` is *data exception* (truncation,
+    numeric out of range, invalid text representation, …). ``psycopg`` exposes
+    it via ``pgcode``; asyncpg via ``sqlstate``.
+    """
+    if isinstance(exc, DataError):
+        return True
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    return bool(sqlstate) and str(sqlstate).startswith("22")
 
 
 def get_database_url(config: DatabaseConfig) -> URL:
@@ -101,6 +128,8 @@ class DatabaseSession:
 
         On IntegrityError (in the body or at commit): rolls back and raises
         DatabaseIntegrityError.
+        On DataError (e.g. a value too long for its column): rolls back and
+        raises DatabaseDataError.
         On OperationalError/DisconnectionError: raises DatabaseUnavailableError.
         On any other exception: rolls back and re-raises unchanged.
 
@@ -131,6 +160,16 @@ class DatabaseSession:
             except (OperationalError, DisconnectionError) as exc:
                 await sess.rollback()
                 raise DatabaseUnavailableError(str(exc)) from exc
+            except DBAPIError as exc:
+                # A value that does not fit its column (e.g. a string longer
+                # than the VARCHAR length) is a client-fixable input problem,
+                # not a server fault. asyncpg surfaces truncation as a bare
+                # DBAPIError, so match on the SQLSTATE too (#690). Anything that
+                # is not a data exception propagates unchanged.
+                await sess.rollback()
+                if _is_data_error(exc):
+                    raise DatabaseDataError(str(exc)) from exc
+                raise
             except BaseException:
                 await sess.rollback()
                 raise
@@ -158,6 +197,14 @@ class DatabaseSession:
                             attempt=commit_attempts,
                             max_retries=retries,
                         )
+                    except DBAPIError as exc:
+                        # A too-long value can also surface at commit (deferred
+                        # flush). Map data exceptions to the same clean error as
+                        # the in-body path; re-raise anything else (#690).
+                        await sess.rollback()
+                        if _is_data_error(exc):
+                            raise DatabaseDataError(str(exc)) from exc
+                        raise
 
     async def run_in_transaction(
         self,

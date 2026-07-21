@@ -36,6 +36,11 @@ from jentic_one.control.services.toolkits.errors import (
     ToolkitKeyNotFoundError,
     ToolkitNotFoundError,
 )
+from jentic_one.shared.db.errors import (
+    DatabaseDataError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
 from jentic_one.shared.web.errors import make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -93,3 +98,26 @@ def _access_request_response_hook(
 access_request_service_error_handler = make_service_error_handler(
     _ACCESS_REQUEST_ERROR_MAP, response_hook=_access_request_response_hook
 )
+
+
+# A DB write failure that escapes a service unmapped is not a server fault: a
+# constraint collision is a 409, a value too long for its column is a
+# client-fixable 400 (#690), and a transient outage is a retryable 503. Map them
+# to structured Problem Details instead of leaking a bare 500.
+_DB_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
+    DatabaseIntegrityError: (409, "conflict"),
+    DatabaseDataError: (400, "invalid_input"),
+    DatabaseUnavailableError: (503, "database_unavailable"),
+}
+
+# The wrapped errors carry the raw SQLAlchemy message — full SQL statement,
+# bound parameters, and connection URL. Echoing that leaks internals (CWE-209),
+# so the client gets a static, generic detail while the raw message is logged
+# server-side (handled by the factory).
+_DB_SAFE_DETAILS: dict[type[Exception], str] = {
+    DatabaseIntegrityError: "The request conflicts with the current state of the resource.",
+    DatabaseDataError: "A field value exceeds the maximum length allowed.",
+    DatabaseUnavailableError: "The database is temporarily unavailable; please retry.",
+}
+
+database_error_handler = make_service_error_handler(_DB_ERROR_MAP, safe_details=_DB_SAFE_DETAILS)
