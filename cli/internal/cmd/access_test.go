@@ -133,6 +133,41 @@ func TestAccessWhoami(t *testing.T) {
 	}
 }
 
+func TestAccessWhoamiRendersToolkitName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/me" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"id":"agnt_test","name":"demo","status":"active",
+			"scopes":["capabilities:execute"],"toolkit_bindings":[
+			{"toolkit_id":"tk_named","name":"Design news radar","bound_at":"2026-01-01T00:00:00Z"},
+			{"toolkit_id":"tk_bare","bound_at":"2026-01-01T00:00:00Z"}]}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedAccessProfile(t, app, "demo", srv.URL)
+
+	// No --json: exercise the human-readable rendering that shows name (tk_…).
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app)
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{"access", "whoami", "--profile", "demo", "--base-url", srv.URL})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("whoami: %v\n%s", err, out.String())
+	}
+	rendered := out.String()
+	if !strings.Contains(rendered, "Design news radar") {
+		t.Errorf("expected toolkit name in output, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "tk_named") || !strings.Contains(rendered, "tk_bare") {
+		t.Errorf("expected both toolkit ids in output, got:\n%s", rendered)
+	}
+}
+
 func TestAccessRequestFiles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var gotBody map[string]any
