@@ -20,8 +20,21 @@ class JenticHeader(StrEnum):
     API_VENDOR = "Jentic-Api-Vendor"
     UPSTREAM_STATUS = "Jentic-Upstream-Status"
     ERROR_ORIGIN = "Jentic-Error-Origin"
+    HINT = "Jentic-Hint"
     IDEMPOTENT_REPLAYED = "Idempotent-Replayed"
     IDEMPOTENCY_BODY_OMITTED = "Jentic-Idempotency-Body-Omitted"
+
+
+# Diagnostic hint appended (via the ``Jentic-Hint`` header, never by rewriting
+# the mirrored upstream body — §6b B-002 passthrough invariant) when an upstream
+# 401/403 lands on an API whose spec uses a templated host / server variable
+# (e.g. ``https://{region}.posthog.com``). A valid key that still 401s here is
+# very often a region/server-variable mismatch (#638), so we surface the likely
+# cause without pretending to know the key is valid.
+REGION_MISMATCH_HINT = (
+    "This API requires a specific region or server variable. If your API key is "
+    "valid, ensure your credential is configured for the correct region."
+)
 
 
 # The W3C ``tracestate`` response header — not a ``Jentic-*`` header but a
