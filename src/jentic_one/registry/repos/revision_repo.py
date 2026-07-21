@@ -114,6 +114,9 @@ class ApiRevisionRepository:
                 ApiRevision.state == ApiRevisionState.IMPORTED,
             )
             .values(state=ApiRevisionState.ARCHIVED, archived_at=now)
+            # Keep in-session ApiRevision instances consistent with the bulk
+            # UPDATE so callers that later read them don't see stale state. See #642.
+            .execution_options(synchronize_session="fetch")
         )
         await session.flush()
 
@@ -205,7 +208,12 @@ class ApiRevisionRepository:
         result = cast(
             "CursorResult[Any]",
             await session.execute(
-                update(ApiRevision).where(ApiRevision.id == revision_id).values(**values)
+                update(ApiRevision)
+                .where(ApiRevision.id == revision_id)
+                .values(**values)
+                # Keep the in-session instance consistent with the bulk UPDATE so
+                # callers that later read it don't see stale state. See #642.
+                .execution_options(synchronize_session="fetch")
             ),
         )
         await session.flush()
