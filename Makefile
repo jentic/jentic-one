@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -204,3 +204,30 @@ save-all: $(addprefix save-,$(SERVICES)) ## Save all built images as tarballs un
 
 images: ## List locally built jentic-one images
 	@docker images "$(IMG_PREFIX)/*"
+
+# ─── Release (publish the app image to a real registry) ───────────────────
+# One `app` image serves every surface — the surface set is chosen at runtime
+# via JENTIC__APPS (see deploy/README.md "Self-hosted"). So publishing the
+# single `app` image is enough for a self-hosted app + broker deployment.
+#
+#   make release-image REGISTRY=ghcr.io/jentic
+#
+# builds deploy/docker/app.Dockerfile and pushes it to
+# $(REGISTRY)/jentic-one-app tagged with the pyproject version, the short git
+# SHA, and `latest`. Requires `docker login <registry>` first. CI does this
+# automatically on a vX.Y.Z tag (see .github/workflows/release.yml).
+REGISTRY ?=
+RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
+
+release-image: build-base ## Build + push the app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "ERROR: set REGISTRY, e.g. make release-image REGISTRY=ghcr.io/jentic"; exit 1; \
+	fi
+	docker build -f deploy/docker/app.Dockerfile \
+		-t $(RELEASE_IMAGE):$(VERSION) \
+		-t $(RELEASE_IMAGE):$(GIT_SHA) \
+		-t $(RELEASE_IMAGE):latest .
+	docker push $(RELEASE_IMAGE):$(VERSION)
+	docker push $(RELEASE_IMAGE):$(GIT_SHA)
+	docker push $(RELEASE_IMAGE):latest
+	@echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"
