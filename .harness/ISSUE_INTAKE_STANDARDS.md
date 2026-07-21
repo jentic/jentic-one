@@ -112,10 +112,11 @@ Apply one `severity:*` label. **Severity is the priority signal** for this repo.
 
 ### 4. De-duplicate (suggest — never auto-close)
 
-Search existing issues (open **and** closed) for the same symptom. Duplicate
-detection is **advisory**: you suggest, a human decides. This avoids the
-well-documented failure mode where a bot builds false-duplicate chains that bury
-real reports and seal off the appeals process.
+Compare against the **`candidate_issues`** list in `.harness/intake-input.json` (recent
+issues as `{number, title}`, supplied to you because you cannot search issues yourself)
+for the same symptom. Duplicate detection is **advisory**: you suggest, a human decides.
+This avoids the well-documented failure mode where a bot builds false-duplicate chains
+that bury real reports and seal off the appeals process.
 
 If you find a likely duplicate:
 
