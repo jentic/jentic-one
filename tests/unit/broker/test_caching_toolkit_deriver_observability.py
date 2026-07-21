@@ -25,6 +25,9 @@ class _CountingDeriver:
         self.calls += 1
         return list(self.result)
 
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        return bool(self.result)
+
 
 def _get_counter_value(reader: InMemoryMetricReader, name: str) -> int:
     """Extract the cumulative value for a counter from the in-memory reader."""

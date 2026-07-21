@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.scopes import GRANTABLE_SCOPES
 
 
@@ -115,10 +116,7 @@ class ToolkitReferenceUnresolvedError(AccessRequestServiceError):
     """
 
     def __init__(self, reference: dict[str, object]) -> None:
-        super().__init__(
-            f"No toolkit serves API {_format_api_reference(reference)}; "
-            "provision and bind a credential for it first"
-        )
+        super().__init__(no_toolkit_serves_api_reason(_format_api_reference(reference)))
         self.reference = reference
 
 
