@@ -869,14 +869,14 @@
             {
               "name": "broker-host",
               "type": "string",
-              "default": "https://127.0.0.1:8100",
-              "usage": "broker target host"
+              "default": "127.0.0.1:8100",
+              "usage": "broker target host as host[:port] (no scheme; use --broker-scheme)"
             },
             {
               "name": "broker-scheme",
               "type": "string",
               "default": "https",
-              "usage": "broker target scheme"
+              "usage": "broker target scheme (http or https)"
             },
             {
               "name": "data",
