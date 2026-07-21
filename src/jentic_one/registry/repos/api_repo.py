@@ -50,6 +50,10 @@ class ApiRepository:
                 joinedload(Api.current_revision).selectinload(ApiRevision.security_schemes),
                 joinedload(Api.current_revision).selectinload(ApiRevision.servers),
             )
+            # Force eager-loaded relationships to overwrite any stale identity-map
+            # state so a caller that mutated rows via bulk UPDATEs (e.g. promote)
+            # never triggers an async lazy load on a cached instance. See #642.
+            .execution_options(populate_existing=True)
         )
         return result.unique().scalar_one_or_none()
 

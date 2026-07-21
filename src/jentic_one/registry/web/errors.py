@@ -26,6 +26,7 @@ from jentic_one.registry.services.errors import (
     SpecFileMissingError,
     TooManyCandidatesError,
 )
+from jentic_one.shared.db.errors import DatabaseConsistencyError
 from jentic_one.shared.web.errors import make_service_error_handler
 
 _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
@@ -48,6 +49,19 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     SearchUnavailableError: (501, "search_unsupported"),
     SpecFileMissingError: (500, "spec_file_missing"),
     CatalogUnavailableError: (502, "catalog_unavailable"),
+    # Belt-and-braces: an accidental async lazy load (e.g. on a stale, bulk-updated
+    # ORM instance) raises sqlalchemy MissingGreenlet, which the DB transaction
+    # wrapper maps to DatabaseConsistencyError. Map it to a known 500 with a
+    # generic client detail so it is logged as a recognised class instead of
+    # escaping as an opaque traceback. See #642.
+    DatabaseConsistencyError: (500, "internal_error"),
+}
+
+# Never surface raw SQLAlchemy internals (SQL, state, connection details) to the
+# client for the defensively-mapped DatabaseConsistencyError; the raw message is
+# still logged server-side (see make_service_error_handler).
+_SAFE_DETAILS: dict[type[Exception], str] = {
+    DatabaseConsistencyError: "An unexpected error occurred",
 }
 
 
@@ -60,4 +74,6 @@ def _add_allow_header(
     return response
 
 
-service_error_handler = make_service_error_handler(_ERROR_MAP, response_hook=_add_allow_header)
+service_error_handler = make_service_error_handler(
+    _ERROR_MAP, response_hook=_add_allow_header, safe_details=_SAFE_DETAILS
+)
