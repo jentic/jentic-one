@@ -81,9 +81,13 @@ Or work from source:
 
 ```bash
 make install   # install dependencies and git hooks
-make check     # lint + typecheck + tests
-make start-app # run the application locally
+make dev        # idempotent local bring-up: fixtures + migrations + UI, then run the app
 ```
+
+`make dev` is the one-command local flow (including after a reboot) — it starts
+Docker fixtures if needed, applies migrations, builds the UI, and runs the app,
+and is safe to re-run. See the [Local development setup](docs/development/local-setup.md)
+guide for details and the individual targets it wraps.
 
 See the [Build & Deploy Guide](deploy/README.md) for full setup instructions.
 See the [Security Hardening Guide](docs/security/hardening.md) for information on securing your deployment.
@@ -115,6 +119,7 @@ Common `make` targets (run `make help` for the full list):
 | Target | Description |
 | ------ | ----------- |
 | `make install` | Full dev setup: sync deps + install git hooks |
+| `make dev` | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
 | `make check` | Lint, score, secrets audit, unit + arch tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
