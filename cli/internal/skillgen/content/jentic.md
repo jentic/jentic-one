@@ -281,6 +281,23 @@ need no request — an approved agent already holds `apis:read` and
 `catalog:import` by default, so just import and search again. Don't file an
 access request for a made-up "catalog read" scope.
 
+**Before concluding "the data is gone", confirm which backend you're on.** If
+APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
+unfamiliar — you may be talking to a **different** backend than you expect. The
+hosted Jentic Cloud (`app.jentic.com`) and a local self-hosted install have
+independent registries and credentials, and the CLI, an agent, or an MCP server
+can each be bound to a different one. Check the backend your base URL serves
+before diagnosing data loss:
+
+```
+curl -s "$(jentic config get base-url 2>/dev/null || echo http://127.0.0.1:8000)/instance"
+```
+
+The unauthenticated `/instance` response reports `backend` (`cloud` / `local` /
+`self-hosted`), `canonical_base_url`, and `host`. If it's not the backend you
+meant to use (e.g. an MCP server still on cloud while you imported locally),
+repoint that client at the right base URL rather than importing/searching again.
+
 ### 4. Inspect the operation's contract
 
 Resolve an operation to its method, path, parameters, and schemas before
@@ -391,9 +408,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
   missing or broken, check where each surface points — `jentic profile list`
-  shows this CLI's `base_url`; ask your operator which backend the MCP
-  server was configured against — and stick to one surface for the whole
-  task.
+  shows this CLI's `base_url`, and `curl -s <base-url>/instance` reports
+  which backend serves it (see "confirm which backend you're on" in step 3);
+  ask your operator which backend the MCP server was configured against —
+  and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
   means the **broker target** is misconfigured (see step 5); connection
   refused on a **local** target usually means the instance is **stopped** —
