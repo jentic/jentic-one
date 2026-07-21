@@ -99,6 +99,33 @@ async def test_create_bearer_token(svc: CredentialService, clean_credentials: No
     assert redacted.type == CredentialType.BEARER_TOKEN
 
 
+async def test_create_normalizes_api_vendor_and_name(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """api_vendor/api_name are slugified on create to match the registry form.
+
+    Regression for #656: the registry slugifies vendor/name on import, so a
+    credential stored with raw client casing/format would never match on the
+    resolver's exact string comparison and would silently default-deny.
+    """
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="Mixed Case Cred",
+            api=APIReference(vendor="Vendor.Com", name="Some_Name", version="v1"),
+            token="sk-secret-token-value123",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert result.api.vendor == "vendor-com"
+    assert result.api.name == "some-name"
+    assert result.api.version == "v1"
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert redacted.api.vendor == "vendor-com"
+    assert redacted.api.name == "some-name"
+
+
 async def test_create_with_unknown_provider_raises_invalid_input(
     svc: CredentialService, clean_credentials: None
 ) -> None:

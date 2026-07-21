@@ -210,3 +210,39 @@ async def test_derive_toolkits_excludes_unbound_wildcard_toolkit(
 
     assert result == [bound]
     assert unbound_wildcard not in result
+
+
+async def test_any_toolkit_serves_api_true_when_a_toolkit_serves(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A toolkit with a bound credential for the API → serves the API (issue #683).
+
+    Independent of any agent binding: this drives the ``no_toolkit_binding``
+    recovery directive, not authorization.
+    """
+    await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-acme", vendor="acme.com", name="pets-api", version="v1"
+    )
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    serves = await resolver.any_toolkit_serves_api(vendor="acme.com", name="pets-api", version="v1")
+
+    assert serves is True
+
+
+async def test_any_toolkit_serves_api_false_when_no_toolkit_serves(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """No toolkit bound a credential for the API → does not serve it (issue #683).
+
+    This is the state whose directive must recommend provisioning a credential
+    first rather than an unapprovable toolkit-binding request.
+    """
+    await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-other", vendor="other.com", name="x", version="v1"
+    )
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    serves = await resolver.any_toolkit_serves_api(vendor="acme.com", name="pets-api", version="v1")
+
+    assert serves is False
