@@ -4102,6 +4102,11 @@ components:
           format: date-time
           title: Bound At
           type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
         toolkit_id:
           title: Toolkit Id
           type: string
