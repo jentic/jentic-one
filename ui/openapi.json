@@ -3502,6 +3502,51 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "InstanceIdentityResponse": {
+        "description": "Self-describing identity of the backend serving this request.\n\nA client can compare ``canonical_base_url``/``host`` against where it *thinks*\nit is pointed to confirm it is talking to the intended backend (e.g. a local\ninstall vs. Jentic Cloud) before diagnosing \"missing\" data.",
+        "properties": {
+          "backend": {
+            "description": "Coarse backend label derived from the canonical host: 'cloud' for a jentic.com host, 'local' for a loopback/private host, else 'self-hosted'.",
+            "title": "Backend",
+            "type": "string"
+          },
+          "canonical_base_url": {
+            "description": "The instance's own canonical base URL (auth.canonical_base_url); '' if unset.",
+            "title": "Canonical Base Url",
+            "type": "string"
+          },
+          "host": {
+            "description": "Host (with port) parsed from canonical_base_url; '' if unset.",
+            "title": "Host",
+            "type": "string"
+          },
+          "instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque telemetry instance id if telemetry has resolved one, else null.",
+            "title": "Instance Id"
+          },
+          "version": {
+            "description": "Running jentic-one version.",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend",
+          "canonical_base_url",
+          "host",
+          "version"
+        ],
+        "title": "InstanceIdentityResponse",
+        "type": "object"
+      },
       "IntrospectRequest": {
         "description": "Introspection endpoint request (form body).",
         "properties": {
@@ -20735,6 +20780,103 @@
         "summary": "Inspect operation",
         "tags": [
           "Inspect"
+        ]
+      }
+    },
+    "/instance": {
+      "get": {
+        "description": "Return this backend's self-describing identity.\n\nUnauthenticated and dependency-free so any client (an MCP server, the\nCLI, an agent) can read which backend it is bound to — cloud vs. a local\nself-hosted install — and label its responses accordingly.",
+        "operationId": "getInstance",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Backend identity",
+        "tags": [
+          "System"
         ]
       }
     },

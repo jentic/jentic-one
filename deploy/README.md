@@ -342,6 +342,17 @@ uv run python -m tools.deploy down                      # Remove the release
 uv run python -m tools.deploy cluster down              # Destroy the cluster
 ```
 
+> **Cloud / local coexistence.** If you self-host alongside the hosted Jentic
+> Cloud (`app.jentic.com`), a client (the `jentic` CLI, an agent, or an MCP
+> server) is bound to exactly one backend via its own config — the two have
+> independent registries and credentials, so a client pointed at the wrong one
+> looks like data loss. Confirm which backend a base URL serves with the
+> unauthenticated identity probe `curl http://localhost:8000/instance` (returns
+> `backend` = `cloud` / `local` / `self-hosted`, plus `canonical_base_url`,
+> `host`, and `instance_id`). To migrate a client to this install, point *its*
+> backend base URL at your local `canonical_base_url` and re-check `/instance`.
+> See [`docs/context-and-config.md`](../docs/context-and-config.md#cloud--local-coexistence-which-backend-am-i-talking-to).
+
 Add `--otel` to `up` to wire app OTel sidecars to the observability stack
 (requires `obs up` first):
 

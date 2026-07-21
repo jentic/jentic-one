@@ -35,6 +35,7 @@ from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
 from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
     install_openapi_metadata,
@@ -327,6 +328,7 @@ def create_surface_app(
     routers: Sequence[tuple[APIRouter, str, list[str]]],
     extra_lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     container: AppContainer | None = None,
+    include_instance_router: bool = True,
 ) -> FastAPI:
     """Create a standalone surface FastAPI app with observability wired.
 
@@ -341,6 +343,12 @@ def create_surface_app(
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
     ``app.state``) and mount extra routers after the surface's own.
+
+    ``include_instance_router`` mounts the public backend-identity endpoint
+    (``GET /instance``). It defaults to ``True`` for control-plane surfaces; the
+    broker (a data-plane forward proxy whose only public routes are its
+    liveness/readiness probes) passes ``False`` so it never advertises a
+    control-plane identity surface.
     """
     container = container or AppContainer.default(ctx)
 
@@ -389,6 +397,11 @@ def create_surface_app(
         app.state.broker_factory = lambda _runner: container.broker
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
+    # Public, schema-visible backend-identity endpoint so a client (MCP server,
+    # CLI, agent) can tell which backend it is bound to — cloud vs. local. Off
+    # for the broker data plane (its only public routes are its probes).
+    if include_instance_router:
+        app.include_router(get_instance_router(), responses=COMMON_ERROR_RESPONSES)
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
             extra_router,
@@ -476,6 +489,10 @@ def create_combined_app(
     # instead of parsing the OpenAPI document). Registered after all surfaces so
     # the reference it builds covers every included route.
     root.include_router(get_reference_router())
+
+    # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
+    # tell which backend it is bound to — cloud vs. a local self-hosted install.
+    root.include_router(get_instance_router(), responses=COMMON_ERROR_RESPONSES)
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.
