@@ -294,26 +294,10 @@ jobs:
         if: always() && matrix.backend == 'postgres'
         run: make destroy-fixtures
 
-  # Disabled: building locally/manually for now.
-  # build-images:
-  #   name: Build Docker images
-  #   if: startsWith(github.ref, 'refs/tags/v')
-  #   runs-on: ubuntu-latest
-  #   strategy:
-  #     matrix:
-  #       service: [app, registry, admin, control, broker]
-  #   steps:
-  #     - uses: actions/checkout@v7
-  #
-  #     - name: Set up Docker Buildx
-  #       uses: docker/setup-buildx-action@v3
-  #
-  #     - name: Build ${{ matrix.service }} image
-  #       run: make build-${{ matrix.service }}
-  #
-  #     # TODO: configure registry credentials and push
-  #     # - name: Push ${{ matrix.service }} image
-  #     #   run: make push-${{ matrix.service }}
+  # Container images are built + published on release, not on branch CI. The
+  # `publish-image` job in .github/workflows/release.yml builds the `app` image
+  # and pushes it to GHCR on a vX.Y.Z tag. To build locally: `make build-app`
+  # (or `make release-image REGISTRY=…` to push). See deploy/README.md.
 
   ui:
     name: UI build, lint & test

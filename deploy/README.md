@@ -81,6 +81,299 @@ flowchart LR
    subchart. Per-env roots under `envs/<env>/main.tf` decide which services
    are turned on for that environment.
 
+## Self-hosted: containers + external Postgres
+
+This is the "no Kubernetes" topology: run the published container image on a
+VM (or any container host) against a **managed/external PostgreSQL**, injecting
+secrets from your own secrets manager. It's the smallest real deployment that
+is still production-shaped.
+
+### The one-image, two-surfaces model
+
+There is a single application image — the published `app` image (or a locally
+built `jentic-one/app`). **The surface set is chosen at runtime**, not at build
+time, via the `JENTIC__APPS` environment variable:
+
+| Role         | `JENTIC__APPS`                     | Notes                                   |
+| ------------ | ---------------------------------- | --------------------------------------- |
+| **app**      | `registry,admin,control,auth`      | The UI + control/admin/registry/auth APIs. This is the image default. |
+| **broker**   | `broker`                           | The runtime execution edge. **Must run as the sole surface.** |
+
+The broker **must be the only surface in its process** — the entry point
+(`src/jentic_one/__main__.py`) raises `broker must run as the sole surface; do
+not bundle it with others` if `broker` is listed alongside anything else. So a
+self-hosted deployment is **two containers from the same image**: one `app`
+(default `JENTIC__APPS`) and one `broker` (`JENTIC__APPS=broker`).
+
+`JENTIC__APPS` accepts a comma-separated string; each surface only opens the
+database connections it needs (`auth` also reads the `admin` DB; `broker` reads
+`admin`, `control`, and `registry`). The surface/DB dependency map lives in
+`SURFACE_DB_DEPS` in `src/jentic_one/__main__.py`.
+
+### Pull the image
+
+Once a release is cut, the `app` image is published to GHCR by the
+`publish-image` job in [`release.yml`](../.github/workflows/release.yml):
+
+```bash
+docker pull ghcr.io/jentic/jentic-one-app:latest      # or a pinned :vX.Y.Z
+```
+
+To publish from your own fork/registry instead:
+
+```bash
+docker login ghcr.io                                   # or your registry
+make release-image REGISTRY=ghcr.io/<your-org>         # builds + pushes app image
+```
+
+`make release-image` builds `deploy/docker/app.Dockerfile` and pushes
+`<REGISTRY>/jentic-one-app` tagged with the pyproject version, the short git
+SHA, and `latest`.
+
+### The three databases (one instance, three schemas)
+
+The app uses **three logical databases** — `registry`, `control`, and `admin`.
+In every shipped config they are three **schemas inside a single PostgreSQL
+database** (isolated by `schema_name`), each with its own connection settings.
+You can equally point each at a different host/database if you prefer stronger
+isolation; the config shape is identical.
+
+Environment variables follow the `JENTIC__<SECTION>__<KEY>` convention (double
+underscore for nesting):
+
+| Setting                     | Env var                                        | Default     |
+| --------------------------- | ---------------------------------------------- | ----------- |
+| Registry DB host            | `JENTIC__DATABASES__REGISTRY__HOST`            | `localhost` |
+| Registry DB name            | `JENTIC__DATABASES__REGISTRY__NAME`            | (required)  |
+| Registry DB user            | `JENTIC__DATABASES__REGISTRY__USER`            | `postgres`  |
+| Registry DB password        | `JENTIC__DATABASES__REGISTRY__PASSWORD`        | `""`        |
+| Registry DB schema          | `JENTIC__DATABASES__REGISTRY__SCHEMA_NAME`     | `public`    |
+| …same for `CONTROL` / `ADMIN` | `JENTIC__DATABASES__CONTROL__…` / `…ADMIN__…` |             |
+
+`PORT`, `POOL_MAX`, and `BACKEND` (defaults `5432` / `10` / `postgres`) are
+available on each DB the same way.
+
+### Mandatory vs optional secrets
+
+When `JENTIC_ENV=production`, the config loader **refuses to boot** with the
+shipped placeholder (or empty) values for these — they must be set explicitly:
+
+| Secret                          | Env var                                             | Why it's mandatory |
+| ------------------------------- | --------------------------------------------------- | ------------------ |
+| Admin JWT signing secret        | `JENTIC__ADMIN__AUTH__JWT_SECRET`                   | Signs admin/session JWTs. Boot fails on the placeholder in prod. |
+| Admin invite pepper             | `JENTIC__ADMIN__INVITE__PEPPER`                     | Peppers invite-token hashes. Boot fails on the placeholder in prod. |
+| Connect-flow state secret       | `JENTIC__CREDENTIALS__CONNECT__STATE_SECRET`        | Signs the OAuth connect `state`. Boot fails on the placeholder in prod. |
+
+**Effectively mandatory** (not enforced at boot, but the feature 500s without it):
+
+| Secret                          | Where                                               | Why |
+| ------------------------------- | --------------------------------------------------- | --- |
+| Credential encryption keyset    | `credentials.encryption` (`active_id` + `entries`)  | AES-256-GCM envelope key for credential-at-rest. Credential **writes** fail without a non-empty keyset. Set via YAML (a list of `{id, material}`), not a single env var. |
+| Database passwords              | `JENTIC__DATABASES__<DB>__PASSWORD`                 | Needed to connect to a real Postgres. |
+
+Generate a fresh secret / encryption key material with:
+
+```bash
+python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
+```
+
+**Optional** (sensible defaults, override only if needed): everything else —
+`JENTIC__SERVER__PORT`, observability exporters, rate-limit/circuit-breaker
+knobs, `auth.canonical_base_url` (set this to your public URL so issued
+OAuth/OIDC token `iss`/`aud` are correct), OTel endpoints, telemetry (off by
+default).
+
+### A worked production `config.yaml`
+
+Non-secret shape lives in the file; **secrets come from the environment**
+(never commit them). This is the minimal file to boot `app` + `broker` against
+an external Postgres:
+
+```yaml
+# config/production.yaml — non-secret shape; secrets via env (JENTIC__…).
+# Point all three DBs at your managed Postgres (host/name/user set here or via
+# env). Passwords MUST come from the environment, not this file.
+databases:
+  registry:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: registry_user
+    schema_name: registry
+    pool_max: 20
+  control:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: control_user
+    schema_name: control
+    pool_max: 15
+  admin:
+    host: db.prod.internal
+    port: 5432
+    name: jentic
+    user: admin_user
+    schema_name: admin
+    pool_max: 10
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# Set this to the app's public base URL so issued OAuth/OIDC token iss/aud and
+# connect redirect URIs are correct.
+auth:
+  canonical_base_url: "https://jentic.example.com"
+
+# Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
+# WRITES. Generate material with the python one-liner above. The keyset is a
+# LIST, so it can't come from a single JENTIC__… env var — keep it in this file
+# and mount the file itself as a secret (this file then holds real key material,
+# so treat the whole file as sensitive and never commit it).
+credentials:
+  encryption:
+    active_id: v1
+    entries:
+      - id: v1
+        material: "REPLACE-WITH-BASE64-32-BYTES"   # pragma: allowlist secret
+
+observability:
+  metrics:
+    exporter: otlp     # or "prometheus" / "none"
+  tracing:
+    exporter: otlp     # or "none"
+```
+
+The mandatory secrets are supplied out-of-band, e.g. from a `.env` / secrets
+manager:
+
+```bash
+JENTIC_ENV=production
+JENTIC_CONFIG_FILE=/etc/jentic/production.yaml
+
+JENTIC__DATABASES__REGISTRY__PASSWORD=…
+JENTIC__DATABASES__CONTROL__PASSWORD=…
+JENTIC__DATABASES__ADMIN__PASSWORD=…
+
+JENTIC__ADMIN__AUTH__JWT_SECRET=…
+JENTIC__ADMIN__INVITE__PEPPER=…
+JENTIC__CREDENTIALS__CONNECT__STATE_SECRET=…
+```
+
+### Bootstrap sequence (schemas → migrations → admin)
+
+The container runs migrations and creates the first admin via the same packaged
+code that serves requests — no extra tooling.
+
+**1. Create the three schemas** (once, on your Postgres). The migration runner
+applies tables *into* these schemas but does not create the schemas themselves:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS registry;
+CREATE SCHEMA IF NOT EXISTS control;
+CREATE SCHEMA IF NOT EXISTS admin;
+```
+
+**2. Run migrations** — the entrypoint is `python -m jentic_one.migrations.run`
+(migrates all three DBs in dependency order; reads the same `JENTIC__…` config):
+
+```bash
+docker run --rm --env-file prod.env \
+  -v /etc/jentic:/etc/jentic:ro \
+  ghcr.io/jentic/jentic-one-app:latest \
+  python -m jentic_one.migrations.run
+```
+
+**3. Create the first admin** (one-time first-run setup). The `create-admin`
+subcommand prompts for the password, or reads it from stdin when non-interactive:
+
+```bash
+docker run --rm -i --env-file prod.env \
+  -v /etc/jentic:/etc/jentic:ro \
+  ghcr.io/jentic/jentic-one-app:latest \
+  python -m jentic_one create-admin --email admin@example.com <<<"$ADMIN_PASSWORD"
+```
+
+It exits non-zero and prints `setup already complete` if an admin already
+exists, so re-running is safe.
+
+### Running app + broker
+
+Both are the same image; only `JENTIC__APPS` and the exposed port differ. The
+container listens on `8000` (`server.port`).
+
+```bash
+# app: default surfaces (registry,admin,control,auth) — serves the UI + APIs.
+docker run -d --name jentic-app --env-file prod.env \
+  -v /etc/jentic:/etc/jentic:ro -p 8000:8000 \
+  ghcr.io/jentic/jentic-one-app:latest
+
+# broker: sole surface (the runtime execution edge).
+docker run -d --name jentic-broker --env-file prod.env \
+  -e JENTIC__APPS=broker \
+  -v /etc/jentic:/etc/jentic:ro -p 8080:8000 \
+  ghcr.io/jentic/jentic-one-app:latest
+```
+
+Each surface exposes `GET /health`. Behind a reverse proxy / load balancer,
+route the public UI + control/admin/registry/auth traffic to the `app`
+container and the execution traffic to the `broker` container.
+
+### docker-compose example
+
+A single file to bring up migrations, the first-admin bootstrap, and the two
+long-running services against an **external** Postgres (no bundled DB — point
+`JENTIC__DATABASES__*__HOST` at your managed instance). Secrets come from a
+`.env` file next to the compose file:
+
+```yaml
+# docker-compose.yaml — app + broker against an EXTERNAL Postgres.
+# `migrate` and `create-admin` are one-shot init containers; `app` and `broker`
+# wait for `migrate` to complete before starting.
+x-image: &image ghcr.io/jentic/jentic-one-app:latest
+x-common: &common
+  image: *image
+  env_file: [.env]                 # JENTIC_ENV, DB passwords, the three secrets
+  volumes:
+    - ./production.yaml:/etc/jentic/production.yaml:ro
+  environment:
+    JENTIC_CONFIG_FILE: /etc/jentic/production.yaml
+
+services:
+  migrate:
+    <<: *common
+    command: ["python", "-m", "jentic_one.migrations.run"]
+    restart: "no"
+
+  app:
+    <<: *common
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports: ["8000:8000"]
+    restart: unless-stopped
+
+  broker:
+    <<: *common
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    environment:
+      JENTIC_CONFIG_FILE: /etc/jentic/production.yaml
+      JENTIC__APPS: broker
+    ports: ["8080:8000"]
+    restart: unless-stopped
+```
+
+Create the schemas on your Postgres first (see above), then:
+
+```bash
+docker compose up -d migrate                 # runs migrations, then exits 0
+docker compose run --rm -i app python -m jentic_one create-admin \
+  --email admin@example.com <<<"$ADMIN_PASSWORD"
+docker compose up -d app broker              # start the long-running services
+curl -fsS http://localhost:8000/health       # app
+curl -fsS http://localhost:8080/health       # broker
+```
+
 ## Version source of truth
 
 ```
@@ -538,10 +831,19 @@ into a prod values file.
 The build system was scaffolded with explicit gaps; these are intentional
 and will be filled when the answers exist:
 
-- **Image registry** — `IMG_PREFIX` defaults to the bare string
-  `jentic-one`. Set it to `ghcr.io/jentic` (or wherever) to push real images.
-  CI's `build-images` job is stubbed but not yet pushing.
-- **Multi-arch builds** — single-arch (host) only today; switch to
+- **Image registry** — the `app` image is published to GHCR on release
+  (`ghcr.io/jentic/jentic-one-app`, via the `publish-image` job in
+  [`release.yml`](../.github/workflows/release.yml)); see
+  [Self-hosted](#self-hosted-containers--external-postgres) to pull it, or
+  `make release-image REGISTRY=…` to push from a fork. The `registry`/`admin`/
+  `control`/`broker` surface images still build locally only (`make build-<svc>`)
+  — the `app` image serves every surface via `JENTIC__APPS`, so it's the one
+  self-hosters need. For Helm/kind, the subchart `image.repository` values still
+  default to the locally built `jentic-one/<svc>` tags; point them at a real
+  registry with `--set global.image.registry=ghcr.io/jentic` (or per-service
+  `image.repository`) when pulling published images.
+- **Multi-arch builds** — the published `app` image is single-arch (amd64)
+  today; switch the `publish-image` job / `make release-image` to
   `docker buildx build --platform linux/amd64,linux/arm64` when needed.
 - **Helm chart publishing** — chart is built locally; no OCI-registry push
   yet.
