@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialCandidate,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
 )
@@ -84,19 +85,19 @@ class CredentialResolver:
             if not matches:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
-            candidate_names = [c.name for c in matches]
+            candidate_objs = [self._to_candidate(c) for c in matches]
 
             if credential_name is not None:
                 filtered = [c for c in matches if c.name == credential_name]
                 if not filtered:
                     raise CredentialNameNotFoundError(
-                        api.vendor, api.name, api.version, credential_name, candidate_names
+                        api.vendor, api.name, api.version, credential_name, candidate_objs
                     )
                 matches = filtered
 
             if len(matches) > 1:
                 raise AmbiguousCredentialError(
-                    api.vendor, api.name, api.version, len(matches), candidates=candidate_names
+                    api.vendor, api.name, api.version, len(matches), candidates=candidate_objs
                 )
 
             credential = matches[0]
@@ -104,6 +105,20 @@ class CredentialResolver:
             wire_type = to_wire(stored_type)
 
             return self._build_resolved(credential, wire_type, stored_type)
+
+    @staticmethod
+    def _to_candidate(credential: Credential) -> CredentialCandidate:
+        """Build a distinguishable ambiguity candidate (issue #643).
+
+        ``last4`` is the tail of the non-secret credential id — never the secret
+        — so two same-named credentials render distinctly in the 409 body.
+        """
+        return CredentialCandidate(
+            id=credential.id,
+            name=credential.name,
+            last4=credential.id[-4:],
+            created_at=credential.created_at,
+        )
 
     def _build_resolved(
         self,

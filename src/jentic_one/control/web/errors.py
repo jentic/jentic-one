@@ -31,6 +31,7 @@ from jentic_one.control.services.credentials.errors import (
 )
 from jentic_one.control.services.toolkits.errors import (
     BindingNotFoundError,
+    ConflictingApiBindingError,
     DuplicateBindingError,
     KeyAlreadyRevokedError,
     ToolkitKeyNotFoundError,
@@ -52,6 +53,7 @@ _TOOLKIT_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ToolkitKeyNotFoundError: (404, "toolkit_key_not_found"),
     BindingNotFoundError: (404, "binding_not_found"),
     DuplicateBindingError: (409, "duplicate_binding"),
+    ConflictingApiBindingError: (409, "conflicting_api_binding"),
     KeyAlreadyRevokedError: (409, "key_already_revoked"),
 }
 

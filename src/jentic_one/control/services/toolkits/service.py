@@ -9,6 +9,7 @@ from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
 from jentic_one.control.repos import (
+    CredentialRepository,
     ToolkitBindingRepository,
     ToolkitKeyRepository,
     ToolkitPermissionRepository,
@@ -18,6 +19,7 @@ from jentic_one.control.repos.prerequisite_repo import BoundAgentRow, Prerequisi
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.toolkits.errors import (
     BindingNotFoundError,
+    ConflictingApiBindingError,
     DuplicateBindingError,
     ToolkitKeyNotFoundError,
     ToolkitNotFoundError,
@@ -436,6 +438,25 @@ class ToolkitService:
             existing = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
             if existing is not None:
                 raise DuplicateBindingError(toolkit_id, credential_id)
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            if credential is not None:
+                conflicts = await ToolkitBindingRepository.list_active_bound_credentials_for_api(
+                    session,
+                    toolkit_id=toolkit_id,
+                    api_vendor=credential.api_vendor,
+                    api_name=credential.api_name,
+                    api_version=credential.api_version,
+                    exclude_credential_id=credential_id,
+                )
+                if conflicts:
+                    raise ConflictingApiBindingError(
+                        toolkit_id,
+                        credential_id,
+                        conflicts[0].id,
+                        credential.api_vendor,
+                        credential.api_name,
+                        credential.api_version,
+                    )
             binding = await ToolkitBindingRepository.bind(
                 session, toolkit_id=toolkit_id, credential_id=credential_id, created_by=identity.sub
             )
