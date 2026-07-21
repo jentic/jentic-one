@@ -160,6 +160,29 @@ async def clean_access_requests(web_context: Context) -> AsyncGenerator[None, No
         await session.commit()
 
 
+# A bound but orphaned agent (issues #665/#682): it owns nothing (parent_actor_id
+# None, like the jentic-cli-default bootstrap agent) but is bound to tk_target via
+# the seed_binding fixture. It carries the default agent owner-read scopes so it
+# passes the route gate; visibility must then come purely from the binding.
+BOUND_ORPHAN_IDENTITY = Identity(
+    sub=FILER_SUB,
+    email="orphan@test.local",
+    permissions=["owner:toolkits:read", "owner:credentials:read"],
+    actor_type=ActorType.AGENT,
+    parent_actor_id=None,
+)
+
+
+@pytest.fixture()
+def bound_orphan_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as a bound-but-orphaned agent (owns nothing, bound to tk_target)."""
+    app = _build_app(web_context, BOUND_ORPHAN_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
 @pytest.fixture()
 def filer_client(
     web_context: Context, seed_binding: None, clean_access_requests: None

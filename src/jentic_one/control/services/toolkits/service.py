@@ -30,6 +30,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.scopes import ORG_ADMIN
 
 logger = structlog.get_logger()
 
@@ -39,6 +40,22 @@ class ToolkitService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    async def _bound_toolkit_ids(self, identity: Identity) -> list[str]:
+        """Toolkit ids the caller is bound to, widening owner-scoped visibility.
+
+        A caller must always be able to read a toolkit it is actively bound to,
+        even one it doesn't own — including an orphaned agent that owns nothing
+        (issues #665/#682). Bindings live in the admin DB, so resolve the ids
+        there and feed them into the control-DB ``build_access_filters``. An
+        ``org:admin`` caller is unrestricted already, so skip the lookup.
+        """
+        if ORG_ADMIN in identity.permissions or not identity.sub:
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_toolkit_ids_for_agent(
+                session, agent_id=identity.sub
+            )
 
     async def _emit_telemetry(self, *, type: str, summary: str, identity: Identity) -> None:
         """Emit a telemetry event on the admin DB (best-effort).
@@ -123,7 +140,8 @@ class ToolkitService:
         return toolkit, plaintext
 
     async def get(self, toolkit_id: str, *, identity: Identity) -> Toolkit:
-        access_filters = build_access_filters(identity, Toolkit)
+        bound_ids = await self._bound_toolkit_ids(identity)
+        access_filters = build_access_filters(identity, Toolkit, bound_toolkit_ids=bound_ids)
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_with_relations(
                 session, toolkit_id, filters=access_filters
@@ -141,7 +159,9 @@ class ToolkitService:
             ts, cid = decode_cursor_str(cursor)
             decoded_cursor = (ts, cid)
 
-        access_filters = build_access_filters(identity, Toolkit)
+        access_filters = build_access_filters(
+            identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+        )
         async with self._ctx.control_db.session() as session:
             rows = await ToolkitRepository.list_all(
                 session, cursor=decoded_cursor, limit=limit, filters=access_filters
@@ -167,7 +187,9 @@ class ToolkitService:
         identity: Identity,
     ) -> tuple[list[BoundAgentRow], bool, str | None]:
         """List agents bound to a toolkit. Returns (data, has_more, next_cursor)."""
-        access_filters = build_access_filters(identity, Toolkit)
+        access_filters = build_access_filters(
+            identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+        )
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_by_id(session, toolkit_id, filters=access_filters)
             if toolkit is None:
@@ -313,7 +335,11 @@ class ToolkitService:
 
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_by_id(
-                session, toolkit_id, filters=build_access_filters(identity, Toolkit)
+                session,
+                toolkit_id,
+                filters=build_access_filters(
+                    identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+                ),
             )
             if toolkit is None:
                 raise ToolkitNotFoundError(toolkit_id)
@@ -446,7 +472,11 @@ class ToolkitService:
 
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_by_id(
-                session, toolkit_id, filters=build_access_filters(identity, Toolkit)
+                session,
+                toolkit_id,
+                filters=build_access_filters(
+                    identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+                ),
             )
             if toolkit is None:
                 raise ToolkitNotFoundError(toolkit_id)
@@ -508,7 +538,11 @@ class ToolkitService:
     ) -> list[ToolkitPermissionRule]:
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_by_id(
-                session, toolkit_id, filters=build_access_filters(identity, Toolkit)
+                session,
+                toolkit_id,
+                filters=build_access_filters(
+                    identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+                ),
             )
             if toolkit is None:
                 raise ToolkitNotFoundError(toolkit_id)
