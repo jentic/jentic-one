@@ -33,6 +33,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.skill_router import get_skill_router
 from jentic_one.shared.web.static import mount_spa
 
 
@@ -60,6 +61,10 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (audit.router, "", []),
         (monitoring.router, "", []),
         (config.router, "", []),
+        # Public, schema-hidden onboarding skill (`GET /skills/jentic.md` +
+        # `/SKILL.md`). Mounted at the root so an agent reaches it at a stable
+        # URL in both standalone and combined deploy modes (issue #651).
+        (get_skill_router(), "", []),
     ]
 
 
