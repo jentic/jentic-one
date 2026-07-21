@@ -151,6 +151,7 @@ type ListResult struct {
 // ToolkitBinding is a single agent→toolkit binding from GET /me.
 type ToolkitBinding struct {
 	ToolkitID string    `json:"toolkit_id"`
+	Name      string    `json:"name"`
 	BoundAt   time.Time `json:"bound_at"`
 }
 

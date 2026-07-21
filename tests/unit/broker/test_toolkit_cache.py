@@ -26,6 +26,9 @@ class _CountingDeriver:
             await self.gate.wait()
         return list(self.result)
 
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        return bool(self.result)
+
 
 def test_wrapper_satisfies_protocol() -> None:
     wrapper = CachingToolkitDeriver(_CountingDeriver())

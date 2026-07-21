@@ -28,6 +28,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
+    AgentDirective,
     AmbiguousMatchError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -253,6 +254,26 @@ def _context_from_discovery(
     )
 
 
+async def _no_toolkit_binding_directive(
+    deriver: ToolkitDeriverProtocol, api: APIReference
+) -> AgentDirective:
+    """Build the ``no_toolkit_binding`` directive with the right recovery step.
+
+    The caller is bound to no toolkit serving ``api``. Whether the right recovery
+    is "provision a credential first" or "file a toolkit binding" depends on
+    whether a toolkit serves the API *at all* — a state the broker can read
+    (independent of the caller's bindings). Consulted only on this denial path,
+    never on the success path, so the extra read costs nothing in the common
+    case. See issue #683.
+    """
+    serves = await deriver.any_toolkit_serves_api(
+        vendor=api.vendor, name=api.name, version=api.version
+    )
+    return no_toolkit_binding_directive(
+        vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
+    )
+
+
 async def select_toolkit(
     *,
     deriver: ToolkitDeriverProtocol,
@@ -301,8 +322,8 @@ async def select_toolkit(
             # Recoverable: the agent named a toolkit it isn't bound to. Carry the
             # agent-recovery contract like every other broker denial — point it at
             # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
-            # at filing an access request (prompt_human). A bare Forbidden here
-            # would be a dead-end 403 with no directive (§03 invariant).
+            # at the correct provisioning/binding step (prompt_human). A bare
+            # Forbidden here would be a dead-end 403 with no directive (§03 invariant).
             if candidates:
                 raise ActionDeniedError(
                     f"Not bound to toolkit '{header_toolkit}' for this API",
@@ -314,9 +335,7 @@ async def select_toolkit(
                 f"Not bound to toolkit '{header_toolkit}' for this API",
                 type="no_toolkit_binding",
                 instance=instance,
-                directive=no_toolkit_binding_directive(
-                    vendor=api.vendor, name=api.name, version=api.version
-                ),
+                directive=await _no_toolkit_binding_directive(deriver, api),
             )
         return header_toolkit
 
@@ -325,9 +344,7 @@ async def select_toolkit(
             "No toolkit binding for this API",
             type="no_toolkit_binding",
             instance=instance,
-            directive=no_toolkit_binding_directive(
-                vendor=api.vendor, name=api.name, version=api.version
-            ),
+            directive=await _no_toolkit_binding_directive(deriver, api),
         )
     if len(candidates) > 1:
         raise AmbiguousMatchError(

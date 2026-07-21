@@ -13,6 +13,7 @@ from jentic_one.admin.repos import (
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     InvalidOwnerError,
@@ -277,7 +278,19 @@ class AgentService:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
-        return [ToolkitBindingView.model_validate(b) for b in bindings]
+        views = [ToolkitBindingView.model_validate(b) for b in bindings]
+        # Resolve human-readable toolkit names so an agent can map an opaque
+        # `tk_…` id to a name it can show its operator (issue #686). Names live in
+        # the control DB; the bindings above are already scoped to this agent, so
+        # we only ever resolve names for toolkits the caller is bound to. Failure
+        # to reach the control DB is non-fatal — the name is simply left None.
+        toolkit_ids = [v.toolkit_id for v in views]
+        if toolkit_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
+            for view in views:
+                view.name = names.get(view.toolkit_id)
+        return views
 
     async def bind_toolkit(
         self, agent_id: str, *, toolkit_id: str, identity: Identity

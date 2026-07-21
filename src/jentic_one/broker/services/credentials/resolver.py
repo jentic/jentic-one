@@ -16,6 +16,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
     CredentialType,
@@ -74,11 +75,17 @@ class CredentialResolver:
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
+            # Normalize both sides before comparing: stored values are slugified
+            # at create time, but historical rows and the incoming registry
+            # identity may differ only by casing/format. Comparing on the shared
+            # slug form prevents a silent default-deny on such mismatches.
+            want_name = slugify_api_field(api.name) if api.name else ""
+
             matches = [
                 c
                 for c in candidates
                 if c.active
-                and (not api.name or c.api_name == api.name)
+                and (not api.name or slugify_api_field(c.api_name or "") == want_name)
                 and (not api.version or c.api_version == api.version)
             ]
 
