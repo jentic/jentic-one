@@ -22,7 +22,7 @@ func newApisCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "apis",
 		Aliases: []string{"api"},
-		Short: "Browse and manage APIs in the local registry",
+		Short:   "Browse and manage APIs in the local registry",
 		Long: "apis inspects and manages the APIs imported into this deployment's local\n" +
 			"registry — the other half of `jentic catalog import`. Run bare on a\n" +
 			"terminal to open an interactive browser (list, preview operations, manage\n" +
