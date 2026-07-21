@@ -15,6 +15,7 @@ from jentic_one.control.repos import (
     OAuthClientCredentialRepository,
     TokenValueCredentialRepository,
 )
+from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
@@ -49,6 +50,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.scopes import ORG_ADMIN
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -59,6 +61,22 @@ class CredentialService:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
+
+    async def _bound_toolkit_ids(self, identity: Identity) -> list[str]:
+        """Toolkit ids the caller is bound to, widening owner-scoped visibility.
+
+        A credential bound to a toolkit the caller can see must itself be visible
+        to that caller — including an orphaned agent that owns nothing (issues
+        #665/#682). Bindings live in the admin DB, so resolve the ids there and
+        feed them into the control-DB ``build_access_filters``. An ``org:admin``
+        caller is unrestricted already, so skip the lookup.
+        """
+        if ORG_ADMIN in identity.permissions or not identity.sub:
+            return []
+        async with self._ctx.admin_db.session() as session:
+            return await PrerequisiteRepository.list_toolkit_ids_for_agent(
+                session, agent_id=identity.sub
+            )
 
     def list_providers(self) -> list[ProviderDiscoveryEntry]:
         """Return discovery metadata for all configured providers."""
@@ -250,7 +268,9 @@ class CredentialService:
 
     async def get(self, credential_id: str, *, identity: Identity) -> CredentialRedactedView:
         """Get a credential by ID with redacted secrets."""
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(
+            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+        )
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(
                 session, credential_id, filters=access_filters
@@ -273,7 +293,9 @@ class CredentialService:
             ts, cid = decode_cursor_str(cursor)
             decoded_cursor = (ts, cid)
 
-        access_filters = build_access_filters(identity, Credential)
+        access_filters = build_access_filters(
+            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+        )
 
         async with self._ctx.control_db.session() as session:
             rows = await CredentialRepository.list_all(

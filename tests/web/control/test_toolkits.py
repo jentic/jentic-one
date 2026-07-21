@@ -124,6 +124,34 @@ def test_delete_toolkit(tk_admin_client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+# --- Bound-but-orphaned agent visibility (issues #665 / #682) ---
+
+
+def test_orphaned_agent_reads_bound_toolkit(bound_orphan_client: TestClient) -> None:
+    """A bound agent that owns nothing gets 200 (not 404) on its bound toolkit.
+
+    Reproduces #665/#682: previously owner-only scoping returned 404 for an
+    orphaned agent even though it is actively bound to the toolkit.
+    """
+    resp = bound_orphan_client.get("/toolkits/tk_target")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["toolkit_id"] == "tk_target"
+
+
+def test_orphaned_agent_lists_bound_toolkit(bound_orphan_client: TestClient) -> None:
+    """The bound toolkit appears in the orphaned agent's list, not an empty page."""
+    resp = bound_orphan_client.get("/toolkits")
+    assert resp.status_code == 200, resp.text
+    ids = [t["toolkit_id"] for t in resp.json()["data"]]
+    assert "tk_target" in ids
+
+
+def test_orphaned_agent_denied_unbound_toolkit(bound_orphan_client: TestClient) -> None:
+    """Visibility is scoped to bindings — an unbound/unknown toolkit is still 404."""
+    resp = bound_orphan_client.get("/toolkits/tk_not_bound")
+    assert resp.status_code == 404
+
+
 # --- Keys ---
 
 

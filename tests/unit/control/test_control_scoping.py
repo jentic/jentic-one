@@ -152,6 +152,55 @@ def test_child_model_with_delegation_returns_or_in_exists() -> None:
     assert "user_delegator" in sql
 
 
+# --- Bound-toolkit visibility (issues #665 / #682) ---
+
+
+def test_orphaned_agent_sees_bound_toolkit_by_id() -> None:
+    """An orphaned agent (owner_id=None, no org:admin) can read a bound toolkit.
+
+    The owner check still holds (created_by == sub), but the returned filter must
+    additionally OR in an ``id IN (...)`` clause for the toolkits the agent is
+    bound to, so a toolkit it doesn't own is still visible.
+    """
+    identity = _identity(sub="agent_123", permissions=[], actor_type=ActorType.AGENT)
+    filters = build_access_filters(identity, Toolkit, bound_toolkit_ids=["tk_bound_1"])
+    assert len(filters) == 1
+    compiled = filters[0].compile(compile_kwargs={"literal_binds": True})
+    sql = str(compiled)
+    assert "created_by" in sql
+    assert "agent_123" in sql
+    assert "toolkits.id IN" in sql
+    assert "tk_bound_1" in sql
+
+
+def test_bound_toolkit_ids_none_leaves_owner_only_filter() -> None:
+    """Without bound ids the filter is unchanged (plain owner scoping)."""
+    identity = _identity(sub="agent_123", permissions=[], actor_type=ActorType.AGENT)
+    filters = build_access_filters(identity, Toolkit, bound_toolkit_ids=None)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "created_by" in sql
+    assert " IN " not in sql
+
+
+def test_admin_ignores_bound_toolkit_ids() -> None:
+    """org:admin is unrestricted regardless of bound ids."""
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, Toolkit, bound_toolkit_ids=["tk_1"]) == []
+
+
+def test_orphaned_agent_sees_credential_bound_to_bound_toolkit() -> None:
+    """A credential bound to a bound toolkit is visible via an EXISTS subquery."""
+    identity = _identity(sub="agent_123", permissions=[], actor_type=ActorType.AGENT)
+    filters = build_access_filters(identity, Credential, bound_toolkit_ids=["tk_bound_1"])
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "created_by" in sql
+    assert "EXISTS" in sql
+    assert "toolkit_credential_bindings" in sql
+    assert "tk_bound_1" in sql
+
+
 # --- AccessRequest model tests ---
 
 

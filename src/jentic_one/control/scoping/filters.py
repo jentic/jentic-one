@@ -52,13 +52,52 @@ _DELEGATION_SCOPES: dict[type[Any], str] = {
 }
 
 
-def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
+def _binding_visibility_clause(
+    model: type[Any], bound_toolkit_ids: list[str] | None
+) -> ColumnElement[bool] | None:
+    """Extra visibility a bound-toolkit set grants for ``Toolkit``/``Credential``.
+
+    Returns ``None`` when there is nothing to add (no ids, or a model whose
+    visibility is not widened by bindings). A toolkit is visible directly by id;
+    a credential is visible when it is bound (via ``ToolkitCredentialBinding``) to
+    one of those toolkits. Both stay within the control DB — the ids are supplied
+    by the caller, so no admin table is referenced here.
+    """
+    if not bound_toolkit_ids:
+        return None
+    if model is Toolkit:
+        return Toolkit.id.in_(bound_toolkit_ids)
+    if model is Credential:
+        subq = select(ToolkitCredentialBinding.credential_id).where(
+            ToolkitCredentialBinding.toolkit_id.in_(bound_toolkit_ids),
+            ToolkitCredentialBinding.credential_id == Credential.id,
+        )
+        return exists(subq)
+    return None
+
+
+def build_access_filters(
+    identity: Identity,
+    model: type[Any],
+    *,
+    bound_toolkit_ids: list[str] | None = None,
+) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
 
     Rules (evaluated in order):
     1. org:admin -> no restriction (empty list).
     2. Agent with delegation scope + parent_actor_id -> OR filter.
     3. Otherwise -> owner == self.
+
+    ``bound_toolkit_ids`` widens visibility for the ``Toolkit`` and ``Credential``
+    models: a caller may always read a toolkit it is actively bound to — and the
+    credentials attached to that toolkit — regardless of owner scoping (issues
+    #665/#682). This matters for an orphaned agent (``created_by``/owner ``None``)
+    that owns nothing yet is legitimately bound to a toolkit. Binding lives in the
+    admin DB, so the service resolves the ids there (via
+    :meth:`PrerequisiteRepository.list_toolkit_ids_for_agent`) and passes them in;
+    this module stays single-DB and free of admin imports. ``None``/empty leaves
+    the owner-only behaviour unchanged.
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -76,8 +115,15 @@ def build_access_filters(identity: Identity, model: type[Any]) -> list[ColumnEle
             and delegation_scope in identity.permissions
             and identity.parent_actor_id is not None
         ):
-            return [or_(col == identity.sub, col == identity.parent_actor_id)]
-        return [col == identity.sub]
+            owner_clause: ColumnElement[bool] = or_(
+                col == identity.sub, col == identity.parent_actor_id
+            )
+        else:
+            owner_clause = col == identity.sub
+        binding_clause = _binding_visibility_clause(model, bound_toolkit_ids)
+        if binding_clause is not None:
+            return [or_(owner_clause, binding_clause)]
+        return [owner_clause]
 
     if model in _CHILD_MODELS:
         child_fk, _parent_model, parent_pk, parent_owner = _CHILD_MODELS[model]
