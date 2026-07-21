@@ -67,6 +67,13 @@ CURSOR_HIDDEN=0
 STEP_NUM=0
 TOTAL_STEPS=6
 
+# PATH-wiring outcome flags, set by install_binary/ensure_path_in_rc and read by
+# the final banner so it can tell the user exactly what (if anything) they need
+# to do to get the binaries on PATH.
+PATH_LINKED=0
+RC_UPDATED=0
+RC_ALREADY_HAD_PATH=0
+
 # cmd_pkg_path <binary> maps a binary name to its main package within cli/.
 cmd_pkg_path() {
   case "$1" in
@@ -400,10 +407,18 @@ install_binary() {
   done
   INSTALLED_PATH="$(installed_binary_path "$CTL_BINARY")"
 
-  # If the install dir isn't on PATH, try to symlink both binaries into a
-  # conventional PATH directory; otherwise print guidance.
+  # If the install dir isn't already on PATH, make it reachable. First try
+  # symlinking both binaries into a conventional dir that's already on PATH
+  # (no rc edits, effective in the current shell). If that isn't possible,
+  # persist the dir onto PATH by appending an idempotent export block to the
+  # user's shell rc file, then print the manual fallback either way.
   if ! path_contains "$JENTIC_INSTALL_DIR"; then
-    link_into_path || print_path_hint
+    if link_into_path; then
+      PATH_LINKED=1
+    else
+      ensure_path_in_rc
+      print_path_hint
+    fi
   fi
 }
 
@@ -435,10 +450,76 @@ link_into_path() {
   return 1
 }
 
+# Sentinel that guards the PATH block we manage in the user's rc file, so a
+# re-install updates in place instead of appending a duplicate export.
+JENTIC_RC_MARKER="# added by jentic installer (https://github.com/jentic/jentic-one)"
+
+# rc_files_for_shell prints the rc file(s) we should edit for the user's login
+# shell, most-preferred first. zsh reads ~/.zshrc for interactive shells; bash
+# reads ~/.bashrc (Linux interactive) and, on login shells (notably macOS
+# Terminal), ~/.bash_profile — we touch both so the change takes regardless of
+# how bash is launched.
+rc_files_for_shell() {
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh)  printf '%s\n' "$HOME/.zshrc" ;;
+    bash) printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" ;;
+    *)
+      # Unknown/other shell: fall back to whichever common rc already exists,
+      # else ~/.profile which POSIX login shells source.
+      if [ -f "$HOME/.zshrc" ]; then printf '%s\n' "$HOME/.zshrc"
+      elif [ -f "$HOME/.bashrc" ]; then printf '%s\n' "$HOME/.bashrc"
+      else printf '%s\n' "$HOME/.profile"; fi
+      ;;
+  esac
+}
+
+# ensure_path_in_rc appends an idempotent block that puts JENTIC_INSTALL_DIR on
+# PATH to the appropriate shell rc file(s). It never duplicates: a file already
+# containing our marker is left untouched. Best-effort — a failure to write is
+# non-fatal (the printed hint still tells the user exactly what to add).
+ensure_path_in_rc() {
+  local rc export_line appended=0 already=0
+  export_line="export PATH=\"${JENTIC_INSTALL_DIR}:\$PATH\""
+
+  while IFS= read -r rc; do
+    [ -n "$rc" ] || continue
+    if [ -f "$rc" ] && grep -qF "$JENTIC_RC_MARKER" "$rc" 2>/dev/null; then
+      # Already managed by a previous install — don't append again.
+      already=1
+      continue
+    fi
+    if {
+      printf '\n%s\n' "$JENTIC_RC_MARKER"
+      printf '%s\n' "$export_line"
+    } >> "$rc" 2>/dev/null; then
+      ok "Added ${JENTIC_INSTALL_DIR} to PATH in ${C_BOLD}${rc}${C_RESET}"
+      appended=1
+    fi
+  done < <(rc_files_for_shell)
+
+  # A fresh append means the user must restart/source; only report the
+  # "already present" state when nothing new was written.
+  if [ "$appended" = 1 ]; then
+    RC_UPDATED=1
+  elif [ "$already" = 1 ]; then
+    RC_ALREADY_HAD_PATH=1
+  fi
+}
+
 print_path_hint() {
   warn "${JENTIC_INSTALL_DIR} is not on your PATH."
-  printf '\n  Add it by appending this to your shell profile (~/.bashrc, ~/.zshrc):\n\n' >&2
-  printf '    %sexport PATH="%s:$PATH"%s\n\n' "$C_BOLD" "$JENTIC_INSTALL_DIR" "$C_RESET" >&2
+  if [ "${RC_UPDATED:-0}" = 1 ]; then
+    printf '\n  It has been added to your shell profile. To use %sjenticctl%s / %sjentic%s now,\n' \
+      "$C_BOLD" "$C_RESET" "$C_BOLD" "$C_RESET" >&2
+    printf '  restart your terminal or run:\n\n' >&2
+    printf '    %sexport PATH="%s:$PATH"%s\n\n' "$C_BOLD" "$JENTIC_INSTALL_DIR" "$C_RESET" >&2
+  else
+    printf '\n  Add it by appending this to your shell profile (~/.bashrc, ~/.zshrc)\n' >&2
+    printf '  and restarting your terminal:\n\n' >&2
+    printf '    %sexport PATH="%s:$PATH"%s\n\n' "$C_BOLD" "$JENTIC_INSTALL_DIR" "$C_RESET" >&2
+  fi
 }
 
 # --- manifest ---------------------------------------------------------------
@@ -496,7 +577,28 @@ banner() {
     "$C_BOLD" "$C_GREEN" "$CTL_BINARY" "$API_BINARY" "$C_RESET" >&2
   printf '  %sjenticctl%s  %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$CTL_BINARY")" >&2
   printf '  %sjentic%s     %s\n' "$C_DIM" "$C_RESET" "$(installed_binary_path "$API_BINARY")" >&2
-  printf '  %snext%s       %sjenticctl install%s %s# configure & onboard the stack%s\n' \
+
+  # If the install dir is on PATH now (either it always was, or we symlinked
+  # into an on-PATH dir), the binaries are reachable by name — say so quietly.
+  # Otherwise surface an unmissable block telling the user exactly how to make
+  # them reachable, distinguishing the "we edited your rc" case from the pure
+  # manual one so the instruction matches reality.
+  if path_contains "$JENTIC_INSTALL_DIR" || [ "${PATH_LINKED:-0}" = 1 ]; then
+    printf '  %snext%s       %sjenticctl install%s %s# configure & onboard the stack%s\n' \
+      "$C_DIM" "$C_RESET" "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET" >&2
+    return
+  fi
+
+  printf '\n  %s%s! %sjenticctl%s / %sjentic%s are not on your PATH yet.%s\n' \
+    "$C_BOLD" "$C_YELLOW" "$C_RESET$C_BOLD" "$C_YELLOW$C_BOLD" "$C_RESET$C_BOLD" "$C_YELLOW$C_BOLD" "$C_RESET" >&2
+  if [ "${RC_UPDATED:-0}" = 1 ] || [ "${RC_ALREADY_HAD_PATH:-0}" = 1 ]; then
+    printf '  Your shell profile has been updated. Restart your terminal, or run:\n\n' >&2
+  else
+    printf '  Add the install dir to your shell profile (~/.bashrc, ~/.zshrc), then\n' >&2
+    printf '  restart your terminal. For this shell right now, run:\n\n' >&2
+  fi
+  printf '    %sexport PATH="%s:$PATH"%s\n\n' "$C_BOLD" "$JENTIC_INSTALL_DIR" "$C_RESET" >&2
+  printf '  %sthen%s       %sjenticctl install%s %s# configure & onboard the stack%s\n' \
     "$C_DIM" "$C_RESET" "$C_BRAND" "$C_RESET" "$C_DIM" "$C_RESET" >&2
 }
 
@@ -554,4 +656,9 @@ main() {
   banner
 }
 
-main "$@"
+# Run the installer unless the script is being sourced (e.g. by a test harness
+# that exercises individual functions like ensure_path_in_rc). When sourced,
+# BASH_SOURCE[0] differs from $0, so we define the functions and stop.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
