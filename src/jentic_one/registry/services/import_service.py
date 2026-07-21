@@ -12,17 +12,33 @@ import structlog
 from pydantic import TypeAdapter
 from structlog.contextvars import bind_contextvars, unbind_contextvars
 
-from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestJobError
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import ActorType
 
 logger = structlog.get_logger(__name__)
 
 _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
+
+# The unique constraint that guards one revision per (api_id, spec_digest).
+_DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
+
+
+def _readable_source_error(exc: Exception) -> str:
+    """Map a source-level ingest failure to a message safe to show a user.
+
+    Raw ``IntegrityError`` strings leak SQL and get truncated mid-word in the
+    job record; translate the duplicate-digest collision to a clear message and
+    keep other failures as their (domain) exception text.
+    """
+    if isinstance(exc, DatabaseIntegrityError) and _DIGEST_CONSTRAINT in exc.detail:
+        return DuplicateRevisionError().message
+    return str(exc)
 
 
 class ImportHandler:
@@ -87,7 +103,7 @@ class ImportHandler:
                     )
                 except Exception as exc:
                     logger.exception("import_source_failed", source_index=idx, job_id=job_id)
-                    failures.append(f"source[{idx}]: {exc}")
+                    failures.append(f"source[{idx}]: {_readable_source_error(exc)}")
 
             logger.info(
                 "import_handler_complete",
@@ -99,8 +115,9 @@ class ImportHandler:
 
             # If every source failed, surface it as a failed job rather than
             # masking it behind a "completed" status with an empty result.
-            # (The handler runs in a single transaction, so when nothing
-            # succeeded there is no partial work to preserve by returning.)
+            # Each source runs in its own transaction (see Ingestor.ingest), so
+            # when nothing succeeded there is no committed work to preserve by
+            # returning a "completed" result.
             if failures and not revisions:
                 raise IngestJobError(
                     f"all {len(sources)} import source(s) failed: " + "; ".join(failures)
