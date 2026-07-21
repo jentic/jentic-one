@@ -18,6 +18,7 @@ HTML-accepting browser included. These tests pin:
 
 from __future__ import annotations
 
+import importlib.resources
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,12 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 import jentic_one.shared.web.static as static_mod
-from jentic_one.shared.web.static import APP_CONFIG_PATH, SPA_MOUNT_PATH, mount_spa
+from jentic_one.shared.web.static import (
+    APP_CONFIG_PATH,
+    SPA_MOUNT_PATH,
+    _resolve_dev_static_dir,
+    mount_spa,
+)
 
 # A browser navigating to a deep link sends an HTML-accepting request; that is
 # what triggers the index.html fallback within /app. API clients send JSON.
@@ -42,7 +48,9 @@ def _make_static_bundle(tmp_path: Path) -> Path:
     return static_dir
 
 
-def test_mount_spa_no_op_without_bundle() -> None:
+def test_mount_spa_no_op_without_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Force "no bundle" regardless of whether a source ui/dist exists locally.
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: None)
     app = FastAPI()
     assert mount_spa(app) is False
     client = TestClient(app, raise_server_exceptions=False)
@@ -238,3 +246,75 @@ def test_app_config_endpoint_is_not_shadowed_by_frontend(
     resp = client.get(APP_CONFIG_PATH, headers=_HTML_HEADERS)
     assert resp.status_code == 200
     assert resp.json() == {"healthPath": "/health"}
+
+
+def _make_source_checkout(tmp_path: Path, *, with_bundle: bool) -> Path:
+    """Simulate a source checkout: a repo root with pyproject.toml and ui/dist."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    dist = tmp_path / "ui" / "dist"
+    dist.mkdir(parents=True)
+    if with_bundle:
+        (dist / "index.html").write_text("<!doctype html><title>dev</title>", encoding="utf-8")
+    return dist
+
+
+def test_dev_fallback_resolves_built_ui_dist(tmp_path: Path) -> None:
+    """Running from a source checkout resolves ui/dist when it holds a build."""
+    dist = _make_source_checkout(tmp_path, with_bundle=True)
+    assert _resolve_dev_static_dir(repo_root=tmp_path) == dist
+
+
+def test_dev_fallback_none_when_ui_dist_unbuilt(tmp_path: Path) -> None:
+    """A source checkout with an empty ui/dist (placeholder) resolves to None."""
+    _make_source_checkout(tmp_path, with_bundle=False)
+    assert _resolve_dev_static_dir(repo_root=tmp_path) is None
+
+
+def test_dev_fallback_none_when_not_a_source_checkout(tmp_path: Path) -> None:
+    """No pyproject.toml at the root (e.g. a wheel install) resolves to None."""
+    dist = tmp_path / "ui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    # No pyproject.toml written: guard must refuse to resolve an unrelated dir.
+    assert _resolve_dev_static_dir(repo_root=tmp_path) is None
+
+
+def test_packaged_static_takes_precedence_over_dev_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the wheel-packaged static/ is present it wins over ui/dist."""
+    packaged = _make_static_bundle(tmp_path / "packaged")
+    dev = _make_source_checkout(tmp_path / "src", with_bundle=True)
+
+    class _FakePackageRoot:
+        """Stands in for ``importlib.resources.files("jentic_one")``.
+
+        ``/ "static"`` yields the real packaged static dir as a filesystem Path,
+        matching what a wheel install returns.
+        """
+
+        def __truediv__(self, other: str) -> Path:
+            assert other == "static"
+            return packaged
+
+    monkeypatch.setattr(importlib.resources, "files", lambda _pkg: _FakePackageRoot())
+    monkeypatch.setattr(static_mod, "_resolve_dev_static_dir", lambda: dev)
+
+    assert static_mod._resolve_static_dir() == packaged
+
+
+def test_dev_fallback_used_when_no_packaged_static(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no packaged static/, the source ui/dist fallback is used."""
+    dev = _make_source_checkout(tmp_path, with_bundle=True)
+
+    class _EmptyTraversable:
+        def __truediv__(self, other: str) -> Path:
+            return tmp_path / "does-not-exist" / other
+
+    monkeypatch.setattr(importlib.resources, "files", lambda _pkg: _EmptyTraversable())
+    monkeypatch.setattr(static_mod, "_resolve_dev_static_dir", lambda: dev)
+
+    assert static_mod._resolve_static_dir() == dev
