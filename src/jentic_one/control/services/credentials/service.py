@@ -47,6 +47,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -121,8 +122,8 @@ class CredentialService:
                 session,
                 type=stored_type.value,
                 name=payload.name,
-                api_vendor=payload.api.vendor,
-                api_name=payload.api.name,
+                api_vendor=slugify_api_field(payload.api.vendor),
+                api_name=slugify_api_field(payload.api.name),
                 api_version=payload.api.version,
                 provider=payload.provider,
                 created_by=identity.sub,
