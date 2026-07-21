@@ -42,7 +42,9 @@ def test_directive_factories_emit_known_strategies() -> None:
     in lock-step until the contract is a shared OpenAPI schema (review P1-1)."""
     directives = [
         switch_toolkit_directive(503),
-        no_toolkit_binding_directive(vendor="acme", name="widgets", version="1.0.0"),
+        no_toolkit_binding_directive(
+            vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=True
+        ),
         ambiguous_toolkit_directive(["tk_a", "tk_b"]),
         action_denied_directive(),
     ]
