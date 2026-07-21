@@ -9,7 +9,12 @@ from typing import TypeVar
 
 import structlog
 from sqlalchemy.engine import URL
-from sqlalchemy.exc import DisconnectionError, IntegrityError, OperationalError
+from sqlalchemy.exc import (
+    DisconnectionError,
+    IntegrityError,
+    InvalidRequestError,
+    OperationalError,
+)
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,7 +29,11 @@ from jentic_one.shared.db.backends import (
     get_backend,
 )
 from jentic_one.shared.db.backends.base import DatabaseBackend
-from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
+from jentic_one.shared.db.errors import (
+    DatabaseConsistencyError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
 
 T = TypeVar("T")
 
@@ -131,6 +140,13 @@ class DatabaseSession:
             except (OperationalError, DisconnectionError) as exc:
                 await sess.rollback()
                 raise DatabaseUnavailableError(str(exc)) from exc
+            except InvalidRequestError as exc:
+                # Belt-and-braces for an accidental async lazy load (MissingGreenlet
+                # is an InvalidRequestError) on a stale/detached ORM instance: map it
+                # to a known domain error so it surfaces as a logged 500 with a
+                # generic client message instead of an opaque traceback. See #642.
+                await sess.rollback()
+                raise DatabaseConsistencyError(str(exc)) from exc
             except BaseException:
                 await sess.rollback()
                 raise

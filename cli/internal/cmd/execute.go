@@ -90,8 +90,8 @@ func newExecuteCmd(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.dataFile, "data-file", "", "read request body from this file")
 	cmd.Flags().BoolVar(&opts.raw, "raw", false, "stream response body directly to stdout")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON envelope output")
-	cmd.Flags().StringVar(&opts.brokerScheme, "broker-scheme", config.DefaultBrokerScheme, "broker target scheme")
-	cmd.Flags().StringVar(&opts.brokerHost, "broker-host", config.DefaultBrokerHost, "broker target host")
+	cmd.Flags().StringVar(&opts.brokerScheme, "broker-scheme", config.DefaultBrokerScheme, "broker target scheme (http or https)")
+	cmd.Flags().StringVar(&opts.brokerHost, "broker-host", config.DefaultBrokerHost, "broker target host as host[:port] (no scheme; use --broker-scheme)")
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID for inspect")
 	ident.bind(cmd)
 

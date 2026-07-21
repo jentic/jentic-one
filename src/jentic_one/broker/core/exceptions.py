@@ -233,26 +233,60 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
     )
 
 
-def no_toolkit_binding_directive(*, vendor: str, name: str, version: str) -> AgentDirective:
-    """Directive for a ``no_toolkit_binding`` 403 — ask a human to grant access.
+def no_toolkit_binding_directive(
+    *, vendor: str, name: str, version: str, toolkit_serves_api: bool
+) -> AgentDirective:
+    """Directive for a ``no_toolkit_binding`` 403 — recover the missing binding.
 
-    The caller is authenticated but bound to no toolkit that serves this API, a
-    gap only a human can close (approve a toolkit binding). The directive names
-    the exact CLI command so an autonomous agent can hand it to its operator
-    verbatim instead of reading docs.
+    The caller is authenticated but bound to no toolkit that serves this API. The
+    right recovery depends on whether a toolkit serves the API *at all*:
+
+    - ``toolkit_serves_api=True`` — a toolkit already serves it, the caller just
+      isn't bound to it. Filing a ``toolkit:bind`` access request is the correct,
+      approvable next step.
+    - ``toolkit_serves_api=False`` — **no** toolkit serves it yet (no credential
+      has been provisioned/bound). A ``toolkit:bind`` request here would be a
+      guaranteed dead-end: the approval denies with "no toolkit serves API …"
+      because a toolkit only serves an API once a credential for it is bound
+      (issue #683). So point the caller at credential provisioning first — the
+      step that actually creates a serving toolkit — before the binding request.
+
+    Both variants name the exact next step so an autonomous agent can hand it to
+    its operator verbatim instead of reading docs.
     """
     api = "/".join(part for part in (vendor, name) if part)
-    return AgentDirective(
-        strategy="prompt_human",
-        parameters={
-            "api": {"vendor": vendor, "name": name, "version": version},
-            "suggested_command": f"jentic access request --toolkit {api} --wait",
-        },
-        human_readable_instruction=(
+    parameters: dict[str, Any] = {
+        "api": {"vendor": vendor, "name": name, "version": version},
+        "toolkit_serves_api": toolkit_serves_api,
+    }
+
+    if toolkit_serves_api:
+        parameters["suggested_command"] = f"jentic access request --toolkit {api} --wait"
+        instruction = (
             f"You are not bound to a toolkit for '{api}'. File an access request yourself with "
             f"`jentic access request --toolkit {api} --wait`, then ask your operator to approve "
             f"it — only a human can grant the binding. Once approved, retry this call."
-        ),
+        )
+        return AgentDirective(
+            strategy="prompt_human",
+            parameters=parameters,
+            human_readable_instruction=instruction,
+        )
+
+    # No toolkit serves this API yet: a credential must be provisioned and bound
+    # first (which creates the serving toolkit), then the toolkit binding can be
+    # requested. A bare `toolkit:bind` request now can never be approved.
+    parameters["suggested_command"] = f"jentic access request --toolkit {api} --wait"
+    instruction = (
+        f"No toolkit serves '{api}' yet, so a toolkit-binding request cannot be approved. "
+        f"Ask your operator to connect (provision) a credential for '{api}' and bind it to a "
+        f"toolkit first — that is what makes a toolkit serve the API. Once a toolkit serves it, "
+        f"file `jentic access request --toolkit {api} --wait` to bind yourself, then retry."
+    )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters=parameters,
+        human_readable_instruction=instruction,
     )
 
 

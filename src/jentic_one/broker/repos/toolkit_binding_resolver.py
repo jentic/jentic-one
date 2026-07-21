@@ -68,3 +68,21 @@ class ToolkitBindingResolver:
         api_toolkits = {row[0] for row in api_rows}
 
         return sorted(agent_toolkits & api_toolkits)
+
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        """Return whether any toolkit serves the given API (independent of the agent).
+
+        Runs the same control-DB toolkit↔API predicate as :meth:`derive_toolkits`
+        but without intersecting the agent's bindings, so a ``no_toolkit_binding``
+        denial can tell apart "no toolkit exists yet" (provision a credential
+        first) from "a toolkit serves it but this agent isn't bound" (file a
+        toolkit binding). See issue #683.
+        """
+        async with self._control_db.session() as session:
+            api_rows = (
+                await session.execute(
+                    _TOOLKITS_FOR_API,
+                    {"vendor": vendor, "name": name, "version": version},
+                )
+            ).all()
+        return bool(api_rows)

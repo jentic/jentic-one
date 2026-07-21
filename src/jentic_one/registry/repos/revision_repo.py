@@ -114,6 +114,9 @@ class ApiRevisionRepository:
                 ApiRevision.state == ApiRevisionState.IMPORTED,
             )
             .values(state=ApiRevisionState.ARCHIVED, archived_at=now)
+            # Keep in-session ApiRevision instances consistent with the bulk
+            # UPDATE so callers that later read them don't see stale state. See #642.
+            .execution_options(synchronize_session="fetch")
         )
         await session.flush()
 
@@ -127,6 +130,32 @@ class ApiRevisionRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def delete_replaceable_by_digest(
+        session: AsyncSession, api_id: uuid.UUID, spec_digest: str
+    ) -> int:
+        """Delete any leftover, non-active revision with this (api_id, spec_digest).
+
+        Makes re-import idempotent: an abandoned ``draft`` (or an ``archived``
+        revision) sharing the target digest would otherwise collide with
+        ``uq_api_revisions_api_id_spec_digest``. Active ``published``/``imported``
+        revisions are never touched — a live revision with the same content is a
+        genuine conflict that must surface, not be silently overwritten. Child
+        rows cascade via the ``ondelete="CASCADE"`` foreign keys.
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                delete(ApiRevision).where(
+                    ApiRevision.api_id == api_id,
+                    ApiRevision.spec_digest == spec_digest,
+                    ApiRevision.state.in_([ApiRevisionState.DRAFT, ApiRevisionState.ARCHIVED]),
+                )
+            ),
+        )
+        await session.flush()
+        return result.rowcount
 
     @staticmethod
     async def set_operation_count(
@@ -205,7 +234,12 @@ class ApiRevisionRepository:
         result = cast(
             "CursorResult[Any]",
             await session.execute(
-                update(ApiRevision).where(ApiRevision.id == revision_id).values(**values)
+                update(ApiRevision)
+                .where(ApiRevision.id == revision_id)
+                .values(**values)
+                # Keep the in-session instance consistent with the bulk UPDATE so
+                # callers that later read it don't see stale state. See #642.
+                .execution_options(synchronize_session="fetch")
             ),
         )
         await session.flush()
