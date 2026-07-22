@@ -26,9 +26,5 @@ export type InstanceIdentityResponse = {
      * Opaque telemetry instance id if telemetry has resolved one, else null.
      */
     instance_id?: (string | null);
-    /**
-     * Running jentic-one version.
-     */
-    version: string;
 };
 

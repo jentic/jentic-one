@@ -24,7 +24,6 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
-from jentic_one import __version__
 from jentic_one.shared.context import Context
 
 INSTANCE_PATH = "/instance"
@@ -54,7 +53,6 @@ class InstanceIdentityResponse(BaseModel):
         default=None,
         description="Opaque telemetry instance id if telemetry has resolved one, else null.",
     )
-    version: str = Field(description="Running jentic-one version.")
 
 
 def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
@@ -66,7 +64,6 @@ def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
         canonical_base_url=canonical_base_url,
         host=host,
         instance_id=ctx.instance_id,
-        version=__version__,
     )
 
 

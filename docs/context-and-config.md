@@ -151,8 +151,7 @@ curl -s http://127.0.0.1:8000/instance
   "backend": "local",
   "canonical_base_url": "http://127.0.0.1:8000",
   "host": "127.0.0.1:8000",
-  "instance_id": "…",
-  "version": "…"
+  "instance_id": "…"
 }
 ```
 

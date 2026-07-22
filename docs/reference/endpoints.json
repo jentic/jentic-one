@@ -1921,6 +1921,21 @@
       "typical_caller": "agent"
     },
     {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getInstance",
+      "path": "/instance",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Backend identity",
+      "surface": "instance",
+      "typical_caller": null
+    },
+    {
       "actor_types": [
         "user",
         "agent",
@@ -4496,5 +4511,5 @@
     ],
     "total": 30
   },
-  "total": 152
+  "total": 153
 }
