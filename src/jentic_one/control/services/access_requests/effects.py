@@ -32,6 +32,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_from_id
+from jentic_one.shared.slug import slugify_identifier
 
 logger = structlog.get_logger(__name__)
 
@@ -390,10 +391,17 @@ class EffectApplicator:
                 f"resource_reference with a vendor, item={item.id}"
             )
 
+        # Normalize vendor/name to the registry's slug form (dots -> dashes) so
+        # the reference matches the credential's stored, normalized api_vendor.
+        # Agents file references from discovered vendor/name that may be raw
+        # domains (e.g. httpbin.org); credentials store the slug (httpbin-org),
+        # so an un-normalized join would find no toolkit and deny a satisfiable
+        # bind. See issue #656 (same mismatch the credential store fixes).
+        raw_name = reference.get("name")
         candidates = await EffectsRepository.resolve_toolkits_for_api(
             session,
-            vendor=vendor,
-            name=reference.get("name"),
+            vendor=slugify_identifier(str(vendor)),
+            name=slugify_identifier(str(raw_name)) if raw_name else raw_name,
             version=reference.get("version"),
             owner_ids=owner_ids,
         )

@@ -75,6 +75,7 @@ export function ProvisioningRequestDialog({
 	const noAuth = useMemo(() => planIsNoAuth(request), [request]);
 	const detectedAuth = useMemo(() => planAuthType(request), [request]);
 	const bindItem = useMemo(() => findItem(request, 'credential', 'bind'), [request]);
+	const agentBindItem = useMemo(() => findItem(request, 'toolkit', 'bind'), [request]);
 
 	// Seed the rule editor from the agent's proposed rules on the bind item.
 	const proposedRules = useMemo<PermissionRuleInput[]>(() => {
@@ -163,7 +164,12 @@ export function ProvisioningRequestDialog({
 			// 1. Amend the resolved toolkit/credential ids + confirmed rules onto
 			//    the credential:bind item (credential is null for a no-auth plan —
 			//    the bind then carries no credential and the toolkit:bind still
-			//    grants the agent access to the no-auth toolkit).
+			//    grants the agent access to the no-auth toolkit). Also stamp the
+			//    concrete toolkit id onto the toolkit:bind item so it resolves by
+			//    id — the credential->toolkit binding isn't visible to the
+			//    reference join until the credential:bind effect applies later in
+			//    the same decision, so resolving the agent binding by API
+			//    reference would deny (see provisioning-plan e2e / #656 ordering).
 			await amendAccessRequest(request.id, [
 				{
 					item_id: bindItem.id,
@@ -171,6 +177,7 @@ export function ProvisioningRequestDialog({
 					...(credentialId ? { resource_id: credentialId } : {}),
 					rules,
 				},
+				...(agentBindItem ? [{ item_id: agentBindItem.id, resource_id: toolkitId }] : []),
 			]);
 			// 2. Approve every pending item — the bind effects wire everything.
 			const fresh = await getAccessRequest(request.id);
@@ -193,7 +200,7 @@ export function ProvisioningRequestDialog({
 		} finally {
 			setBusy(false);
 		}
-	}, [bindItem, toolkitId, credentialId, rules, request.id, onFulfilled]);
+	}, [bindItem, agentBindItem, toolkitId, credentialId, rules, request.id, onFulfilled]);
 
 	if (!apiRef || !bindItem) {
 		// Not a well-formed provisioning plan — the caller should have routed this

@@ -322,10 +322,12 @@ async def test_toolkit_bind_resolves_reference_single_candidate(
     assert isinstance(effects, ToolkitBindEffect)
     assert effects.binding_id == "atb_new_002"
     # Resolution runs on the shared decision session (not a fresh control_db session),
-    # and org:admin gets owner_ids=None (resolve across all owners).
+    # and org:admin gets owner_ids=None (resolve across all owners). The vendor is
+    # normalized to the registry slug form (httpbin.org -> httpbin-org) so it
+    # matches the credential's stored api_vendor (#656).
     mock_effects_repo.resolve_toolkits_for_api.assert_awaited_once_with(
         session,
-        vendor="httpbin.org",
+        vendor="httpbin-org",
         name="httpbin",
         version=None,
         owner_ids=None,
@@ -361,7 +363,7 @@ async def test_toolkit_bind_reference_owner_scoped_for_non_admin(
 
     mock_effects_repo.resolve_toolkits_for_api.assert_awaited_once_with(
         session,
-        vendor="httpbin.org",
+        vendor="httpbin-org",
         name="httpbin",
         version=None,
         owner_ids=["usr_op"],
