@@ -44,13 +44,19 @@ class ControlCredentialBoundaryRepository:
         ``toolkit_credential_bindings`` rows survive (they cascade only on
         credential *deletion*); the deactivated credential simply stops resolving.
         """
+        # CAST the nullable parameters to VARCHAR so Postgres (asyncpg) can
+        # determine their type: a bare bind parameter used only in an
+        # ``:param IS NULL`` test has no inferrable type and asyncpg raises
+        # "could not determine data type of parameter". Standard
+        # ``CAST(x AS VARCHAR)`` (not Postgres-specific ``::text``) keeps the
+        # same statement working on both Postgres and SQLite.
         result = await session.execute(
             text(
                 "UPDATE credentials SET active = false "
                 "WHERE active = true "
                 "AND api_vendor = :api_vendor "
-                "AND (:api_name IS NULL OR api_name = :api_name) "
-                "AND (:api_version IS NULL OR api_version = :api_version)"
+                "AND (CAST(:api_name AS VARCHAR) IS NULL OR api_name = :api_name) "
+                "AND (CAST(:api_version AS VARCHAR) IS NULL OR api_version = :api_version)"
             ),
             {
                 "api_vendor": api_vendor,
