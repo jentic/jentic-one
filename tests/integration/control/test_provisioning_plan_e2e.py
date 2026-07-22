@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select, text
 
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
@@ -197,3 +197,60 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
             {"a": AGENT_SUB, "t": created_toolkit.id},
         )
         assert bound.scalar_one_or_none() is not None, "toolkit:bind did not bind the agent"
+
+
+async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
+    integration_context: Context, clean: None
+) -> None:
+    """A plan approved WITHOUT the wizard's fulfilment must deny the binds with a
+    plan-aware reason — not the cryptic 'to_id missing' / 'no toolkit serves API'.
+
+    Reproduces the real dogfooding failure: the operator approved the plan through
+    the plain path, the inert toolkit:create/credential:provision items were
+    skipped, and the two bind items failed with confusing errors. The guard now
+    denies them pointing at the setup wizard.
+    """
+    ctx = integration_context
+    access_svc = AccessRequestService(ctx)
+    api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
+
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Make httpbin executable",
+        items=[
+            {"resource_type": "toolkit", "action": "create", "resource_reference": api},
+            {
+                "resource_type": "credential",
+                "action": "provision",
+                "resource_reference": {**api, "security_scheme": "bearer"},
+            },
+            {
+                "resource_type": "credential",
+                "action": "bind",
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+            {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
+        ],
+        identity=_agent_identity(),
+    )
+
+    # Approve every item WITHOUT fulfilling (no wizard, no amend) — the plain path.
+    decided = await access_svc.decide(
+        view.id,
+        identity=_owner_identity(),
+        item_decisions=[{"item_id": i.id, "decision": "approved"} for i in view.items],
+    )
+
+    # The plan cannot complete: the two intents approve (inert no-ops) but the
+    # binds are denied with the plan-aware reason pointing at the wizard.
+    by_key = {(i.resource_type, i.action): i for i in decided.items}
+    cred_bind = by_key[("credential", "bind")]
+    tk_bind = by_key[("toolkit", "bind")]
+    assert cred_bind.status == "denied"
+    assert tk_bind.status == "denied"
+    assert "provisioning plan" in (cred_bind.decision_reason or "")
+    assert "provisioning plan" in (tk_bind.decision_reason or "")
+    # And no half-provisioned state leaked (no binding created).
+    async with ctx.control_db.session() as session:
+        rows = (await session.execute(select(ToolkitCredentialBinding))).scalars().all()
+        assert rows == [], "a denied plan must not create any credential binding"

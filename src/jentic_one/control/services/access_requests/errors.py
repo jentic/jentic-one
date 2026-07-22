@@ -212,6 +212,31 @@ class RequiredFieldMissingError(AccessRequestServiceError):
         self.context = context
 
 
+class ProvisioningPlanNotFulfilledError(AccessRequestServiceError):
+    """Raised when a provisioning plan's bind item is approved before fulfilment.
+
+    A provisioning plan carries inert ``toolkit:create`` / ``credential:provision``
+    intents that a human fulfils in the setup wizard — which creates the real
+    toolkit + credential and stamps their ids onto the ``credential:bind`` /
+    ``toolkit:bind`` items. Approving the plan through any other path (the plain
+    approve/deny surface, a raw ``:decide``) leaves those binds with no target,
+    so they can never succeed. We deny them with an actionable reason instead of
+    the cryptic "to_id missing" / "no toolkit serves API" a plain approval would
+    otherwise produce. This error is in ``_UNFULFILLABLE_BIND_TARGET`` so the
+    ``--wait`` loop closes with a legible message.
+    """
+
+    def __init__(self, resource_type: str, action: str) -> None:
+        super().__init__(
+            f"{resource_type}:{action} is part of a provisioning plan that has not been "
+            "fulfilled yet. Approve this request from the setup wizard, which creates the "
+            "toolkit and credential and wires them before granting — a plain approval cannot "
+            "complete a plan."
+        )
+        self.resource_type = resource_type
+        self.action = action
+
+
 def assert_grantable_scope(scope: str | None) -> None:
     """Raise UnsupportedScopeGrantError unless ``scope`` is self-service grantable.
 

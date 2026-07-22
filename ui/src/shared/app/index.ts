@@ -11,3 +11,5 @@ export { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
 export type { AccessRequestDialogProps } from '@/shared/app/rail/AccessRequestDialog';
 export { ProvisioningRequestDialog } from '@/shared/app/rail/ProvisioningRequestDialog';
 export type { ProvisioningRequestDialogProps } from '@/shared/app/rail/ProvisioningRequestDialog';
+export { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
+export type { AccessRequestDecisionDialogProps } from '@/shared/app/rail/AccessRequestDecisionDialog';

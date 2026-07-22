@@ -31,6 +31,7 @@ from jentic_one.control.services.access_requests.errors import (
     ItemNotPendingError,
     NotAReviewerError,
     PrerequisiteNotMetError,
+    ProvisioningPlanNotFulfilledError,
     RequestNotPendingError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
@@ -76,6 +77,16 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
     ToolkitNotVisibleError,
     CredentialNotFoundForBindError,
     RequiredFieldMissingError,
+    ProvisioningPlanNotFulfilledError,
+)
+
+# The fulfilment-only intent item types that mark a request as a provisioning
+# plan. Their presence means the bind items are fulfilled out-of-band by the
+# setup wizard (create toolkit + credential, then amend their ids), so a plain
+# approval of an unfulfilled bind must be denied with a plan-aware reason rather
+# than half-approving into a guaranteed-broken state.
+_PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
+    {("toolkit", "create"), ("credential", "provision")}
 )
 
 
@@ -352,6 +363,13 @@ class AccessRequestService:
                 raise NotAReviewerError(request_id)
 
             items_by_id = {item.id: item for item in request.items}
+            # A request is a provisioning plan when it carries fulfilment intents;
+            # its bind items are only satisfiable after the wizard fulfils them, so
+            # validate() denies an unfulfilled bind with a plan-aware reason.
+            is_plan = any(
+                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS
+                for it in request.items
+            )
             control_effect_items: list[tuple[str, Any]] = []
 
             for decision in item_decisions:
@@ -383,7 +401,10 @@ class AccessRequestService:
                         # See _UNFULFILLABLE_BIND_TARGET / #696.
                         try:
                             await self._effects.validate(
-                                existing, identity=identity, control_session=session
+                                existing,
+                                identity=identity,
+                                control_session=session,
+                                is_provisioning_plan=is_plan,
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -416,7 +437,12 @@ class AccessRequestService:
                 # was already validated above (and an unfulfillable one was flipped
                 # to DENY and skipped via the `continue`).
                 if result is None:
-                    await self._effects.validate(target, identity=identity, control_session=session)
+                    await self._effects.validate(
+                        target,
+                        identity=identity,
+                        control_session=session,
+                        is_provisioning_plan=is_plan,
+                    )
 
                 phase = classify_effect(target.resource_type, target.action)
                 if phase is EffectPhase.ADMIN:

@@ -19,9 +19,8 @@ import {
 	type BadgeVariant,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
-import { AccessRequestDialog, ProvisioningRequestDialog } from '@/shared/app';
+import { AccessRequestDecisionDialog } from '@/shared/app';
 import { useAccessRequestsQueue, dashboardKeys, type AccessRequest } from '@/modules/dashboard/api';
-import { isProvisioningPlan } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
 import { timeAgo } from '@/shared/lib/utils';
 
@@ -199,21 +198,11 @@ export default function AccessRequestsPage() {
 				</div>
 			)}
 
-			{active && isProvisioningPlan(active) ? (
-				<ProvisioningRequestDialog
-					open
-					request={active}
-					onClose={() => setActive(null)}
-					onFulfilled={onDecided}
-				/>
-			) : (
-				<AccessRequestDialog
-					open={active !== null}
-					requestId={active?.id ?? null}
-					onClose={() => setActive(null)}
-					onDecided={onDecided}
-				/>
-			)}
+			<AccessRequestDecisionDialog
+				request={active}
+				onClose={() => setActive(null)}
+				onDecided={onDecided}
+			/>
 		</PageShell>
 	);
 }

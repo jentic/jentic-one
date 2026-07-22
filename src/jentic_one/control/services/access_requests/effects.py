@@ -15,6 +15,7 @@ from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRe
 from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    ProvisioningPlanNotFulfilledError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
@@ -155,6 +156,7 @@ class EffectApplicator:
         *,
         identity: Identity,
         control_session: Any,
+        is_provisioning_plan: bool = False,
     ) -> None:
         """Validate an approved item's effect can be applied — without writing.
 
@@ -164,9 +166,18 @@ class EffectApplicator:
         commits: admin-DB effects (toolkit bind, scope grant) commit in their own
         transactions and cannot be rolled back by the control-DB transaction, so
         the only safe place to fail is up front.
+
+        ``is_provisioning_plan`` is set by ``decide()`` when the item's request
+        also carries fulfilment intents (``toolkit:create`` / ``credential:provision``).
+        A bind item in such a plan that hasn't been fulfilled (no ``to_id`` /
+        ``resource_id`` stamped by the wizard) is denied with a plan-aware,
+        actionable reason rather than the cryptic "to_id missing" / "no toolkit
+        serves API" a plain approval would otherwise surface.
         """
         key = (item.resource_type, item.action)
         if key == ("credential", "bind"):
+            if is_provisioning_plan and not (item.to_id and item.resource_id):
+                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
             # credential:bind writes only to the shared control-session and so
             # rolls back cleanly with the decision. We still pre-validate that the
             # named credential exists and is visible to the decider, so a bad
@@ -182,6 +193,13 @@ class EffectApplicator:
             # _apply_toolkit_bind for the full rationale.
             if item.rules:
                 raise RulesNotSupportedForBindError(item.resource_type, item.action)
+            if is_provisioning_plan and not (item.resource_id or item.to_id):
+                # In a plan the agent binding must resolve by the concrete toolkit
+                # id the wizard creates (the credential→toolkit binding it depends
+                # on isn't visible to the reference join until the credential:bind
+                # applies later in the same decision). An unfulfilled reference-only
+                # toolkit:bind can't be satisfied by a plain approval.
+                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
             await self._resolve_toolkit_bind_target(
                 item, identity=identity, session=control_session
             )

@@ -33,7 +33,7 @@ import {
 	type BadgeVariant,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app';
+import { AccessRequestDecisionDialog } from '@/shared/app';
 import {
 	useActorAccessRequests,
 	actorAccessRequestsRootKey,
@@ -172,9 +172,8 @@ export function ActorAccessRequestsCard({
 				</CardBody>
 			</Card>
 
-			<AccessRequestDialog
-				open={active !== null}
-				requestId={active?.id ?? null}
+			<AccessRequestDecisionDialog
+				request={active}
 				onClose={() => setActive(null)}
 				onDecided={() => {
 					// A decision moves a request between the pending / approved /
