@@ -61,6 +61,21 @@ describe('CascadeDeleteDialog', () => {
 		).toBeInTheDocument();
 	});
 
+	it('arms archive-style entities on the word "archive", not "delete"', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<Harness entityType="agent" entityName="Build Bot" />);
+
+		const confirm = screen.getByRole('button', { name: /Archive agent/i });
+		const field = screen.getByLabelText(/Type archive to confirm/i);
+
+		await user.type(field, 'delete');
+		expect(confirm).toBeDisabled();
+
+		await user.clear(field);
+		await user.type(field, 'archive');
+		expect(confirm).toBeEnabled();
+	});
+
 	it('keeps the confirm button disabled until the fixed word is typed (case-insensitive)', async () => {
 		const user = userEvent.setup();
 		const onConfirm = vi.fn();

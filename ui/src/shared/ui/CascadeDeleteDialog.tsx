@@ -44,13 +44,28 @@ interface CascadeDeleteDialogProps {
 	loading?: boolean;
 	error?: Error | string | null;
 	/**
-	 * The word the user must type to arm the destructive action. Defaults to
-	 * "delete". Kept short and fixed (not the entity name) so confirming a
-	 * slash/hyphen-heavy name (e.g. an API vendor/name tuple) isn't error-prone.
-	 * Matched case-insensitively.
+	 * The word the user must type to arm the destructive action. Defaults per
+	 * entity type — "archive" for the archive-style kinds (agent,
+	 * service-account) and "delete" for everything else — so the typed word
+	 * matches the button verb. Kept short and fixed (not the entity name) so
+	 * confirming a slash/hyphen-heavy name (e.g. an API vendor/name tuple) isn't
+	 * error-prone. Matched case-insensitively.
 	 */
 	confirmWord?: string;
 }
+
+/**
+ * The default confirm word per entity type. Archive-style kinds arm on
+ * "archive" so the typed word lines up with their "Archive …" button verb;
+ * everything else arms on "delete".
+ */
+const DEFAULT_CONFIRM_WORD: Record<CascadeEntityType, string> = {
+	credential: 'delete',
+	api: 'delete',
+	toolkit: 'delete',
+	agent: 'archive',
+	'service-account': 'archive',
+};
 
 /** Per-type copy: title, the destructive verb, and what a delete typically takes down. */
 const TYPE_COPY: Record<
@@ -131,9 +146,10 @@ export function CascadeDeleteDialog({
 	dependents,
 	loading = false,
 	error,
-	confirmWord = 'delete',
+	confirmWord,
 }: CascadeDeleteDialogProps) {
 	const copy = TYPE_COPY[entityType];
+	const requiredWord = confirmWord ?? DEFAULT_CONFIRM_WORD[entityType];
 	const [typed, setTyped] = useState('');
 	// Whether the user has attempted a confirm in *this* dialog session. The
 	// mutation `error` lives on the caller's hook and survives close/reopen, so
@@ -157,7 +173,7 @@ export function CascadeDeleteDialog({
 		}
 	}, [open]);
 
-	const confirmed = typed.trim().toLowerCase() === confirmWord.trim().toLowerCase();
+	const confirmed = typed.trim().toLowerCase() === requiredWord.trim().toLowerCase();
 	const hasDependents = Array.isArray(dependents) && dependents.length > 0;
 	// Only surface the error once the user has actually tried this session;
 	// hold the narrowed value (not just a boolean) so the JSX renders cleanly.
@@ -217,7 +233,7 @@ export function CascadeDeleteDialog({
 					<div className="space-y-1.5">
 						<Label htmlFor={confirmInputId}>
 							Type{' '}
-							<span className="text-foreground font-semibold">{confirmWord}</span> to
+							<span className="text-foreground font-semibold">{requiredWord}</span> to
 							confirm
 						</Label>
 						<Input
@@ -226,7 +242,7 @@ export function CascadeDeleteDialog({
 							onChange={(e): void => setTyped(e.target.value)}
 							disabled={loading}
 							autoComplete="off"
-							placeholder={confirmWord}
+							placeholder={requiredWord}
 						/>
 					</div>
 
