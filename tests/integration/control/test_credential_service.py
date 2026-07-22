@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -34,6 +35,7 @@ from jentic_one.control.services.credentials.schemas.provision import APIReferen
 from jentic_one.control.services.credentials.service import CredentialService
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import DatabaseDataError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models.credentials import CredentialType
 
@@ -188,6 +190,61 @@ async def test_create_basic_auth(svc: CredentialService, clean_credentials: None
     redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
     assert isinstance(redacted.details, BasicAuthRedacted)
     assert redacted.details.username == "admin"
+
+
+async def test_create_basic_auth_long_snapshot_version(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A SNAPSHOT version longer than 50 chars is stored, not a 500 (#690).
+
+    The registry does not length-cap versions; a SNAPSHOT build carries a
+    commit-hash suffix that overflowed the old VARCHAR(50) and raised a
+    StringDataRightTruncationError on insert. api_version is now VARCHAR(100).
+    """
+    long_version = "1001.0.0-SNAPSHOT-636312f2dc6e26921216979d4ae12655beeff255"
+    assert len(long_version) > 50
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.BASIC,
+            name="Jira Basic Cred",
+            api=APIReference(
+                vendor="atlassian-com", name="atlassian-com-jira", version=long_version
+            ),
+            username="admin",
+            password="super-secret-pw",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert result.api.version == long_version
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert redacted.api.version == long_version
+
+
+@pytest.mark.skipif(
+    os.environ.get("JENTIC_TEST_BACKEND", "postgres").lower() == "sqlite",
+    reason="VARCHAR length is only enforced on Postgres",
+)
+async def test_create_oversized_api_version_is_clean_client_error(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A value beyond the column width surfaces as DatabaseDataError, not a 500.
+
+    DatabaseDataError is mapped to a 400 by the control web layer (safe detail,
+    no raw SQL leaked), so an over-limit field is reported to the caller as a
+    client error rather than an unhandled server fault (#690).
+    """
+    with pytest.raises(DatabaseDataError):
+        await svc.create(
+            CredentialCreate(
+                type=CredentialType.BASIC,
+                name="Oversized Version",
+                api=APIReference(vendor="acme", name="acme-api", version="v" * 200),
+                username="admin",
+                password="pw",  # pragma: allowlist secret
+            ),
+            identity=_ADMIN_IDENTITY,
+        )
 
 
 async def test_create_oauth2(svc: CredentialService, clean_credentials: None) -> None:
