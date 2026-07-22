@@ -179,6 +179,10 @@ async def test_ambiguous_credential_maps_to_409(
             api_vendor=_VENDOR, api_name=_API_NAME, api_version=_API_VERSION, identity=_IDENTITY
         )
     assert exc.value.type == "ambiguous_credential"
+    candidates = exc.value.extra["candidates"]
+    assert {c["id"] for c in candidates} == {"cred_a", "cred_b"}
+    assert {c["last4"] for c in candidates} == {"ed_a", "ed_b"}
+    assert all("name" in c and "created_at" in c for c in candidates)
 
 
 async def test_resolve_oauth2_credential_eager_loads_token(

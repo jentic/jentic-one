@@ -20,6 +20,7 @@ from jentic_one.shared.schemas import APIReference
 def _make_credential(
     *,
     cred_id: str = "cred_abc",
+    name: str = "default",
     type: str = "STATIC_BEARER_TOKEN",
     api_vendor: str = "stripe",
     api_name: str | None = "payments",
@@ -30,6 +31,7 @@ def _make_credential(
 ) -> MagicMock:
     cred = MagicMock()
     cred.id = cred_id
+    cred.name = name
     cred.type = type
     cred.api_vendor = api_vendor
     cred.api_name = api_name
@@ -37,6 +39,7 @@ def _make_credential(
     cred.active = active
     cred.provider = provider
     cred.server_variables = server_variables
+    cred.created_at = None
     cred.token_value_credential = None
     cred.customer_api_key = None
     cred.basic_credential = None

@@ -61,6 +61,38 @@ class DuplicateBindingError(ToolkitServiceError):
         self.credential_id = credential_id
 
 
+class ConflictingApiBindingError(ToolkitServiceError):
+    """Raised when a toolkit already has an active credential for the same API.
+
+    Binding a second active credential for one API into one toolkit produces a
+    guaranteed-ambiguous state that the broker later refuses with ``409``
+    (issue #643). Refuse at bind time instead; the caller can unbind the existing
+    credential (``existing_credential_id``) to replace it.
+    """
+
+    def __init__(
+        self,
+        toolkit_id: str,
+        credential_id: str,
+        existing_credential_id: str,
+        api_vendor: str,
+        api_name: str | None,
+        api_version: str | None,
+    ) -> None:
+        api = f"({api_vendor}, {api_name or ''}, {api_version or ''})"
+        super().__init__(
+            f"Toolkit '{toolkit_id}' already has active credential "
+            f"'{existing_credential_id}' for api {api}; unbind it before binding "
+            f"'{credential_id}'"
+        )
+        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
+        self.existing_credential_id = existing_credential_id
+        self.api_vendor = api_vendor
+        self.api_name = api_name
+        self.api_version = api_version
+
+
 class KeyAlreadyRevokedError(ToolkitServiceError):
     """Raised when trying to revoke a key that is already revoked."""
 
