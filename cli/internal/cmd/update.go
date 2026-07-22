@@ -32,11 +32,12 @@ func newUpdateCmd(app *App) *cobra.Command {
 	opts := &updateOptions{}
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update the jentic CLIs (and check the stack) to the latest build",
-		Long: "update reports the installed CLI and server versions, compares the tracked\n" +
-			"git ref against its latest commit on GitHub, and (unless --check) rebuilds\n" +
-			"and replaces the jenticctl and jentic binaries in place, then rebuilds the\n" +
-			"installed stack. Use --cli-only or --stack-only to update just one half.",
+		Short: "Update the jentic CLIs (and check the stack) to the latest release",
+		Long: "update reports the installed CLI and server versions, compares the\n" +
+			"installed version against the latest release tag on GitHub, and (unless\n" +
+			"--check) rebuilds and replaces the jenticctl and jentic binaries in place,\n" +
+			"then rebuilds the installed stack. Use --cli-only or --stack-only to update\n" +
+			"just one half.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.updateE(cmd.Context(), opts)
@@ -46,7 +47,7 @@ func newUpdateCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.cliOnly, "cli-only", false, "update only the CLI binary")
 	cmd.Flags().BoolVar(&opts.stackOnly, "stack-only", false, "update only the stack (not the CLI binary)")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the confirmation prompt")
-	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to (default: the installed ref)")
+	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
 	return cmd
 }
@@ -58,26 +59,37 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 
 	repo := manifest.ResolvedRepo()
-	ref := firstNonEmpty(opts.ref, manifest.Ref, defaultRef(version))
 	installed := firstNonEmpty(manifest.Commit, commit)
 	cliVersion := firstNonEmpty(manifest.CLIVersion, version)
 
 	fmt.Fprint(a.Out, a.brandHeader(opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
-	fmt.Fprintln(a.Out, theme.Field("tracking", repo+"@"+ref))
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
 	}
 
-	remote, remoteErr := update.RemoteCommit(ctx, repo, ref, os.Getenv("GITHUB_TOKEN"))
-	remoteKnown := remoteErr == nil
-	if remoteKnown {
-		fmt.Fprintln(a.Out, theme.Field("latest", remote))
-		a.printVerdict(installed, remote)
+	// Resolve the update target. By default we track the latest release tag; an
+	// explicit --ref pins a specific tag/branch/commit instead.
+	latest, latestErr := update.LatestReleaseTag(ctx, repo, os.Getenv("GITHUB_TOKEN"))
+	latestKnown := latestErr == nil
+
+	ref := opts.ref
+	pinned := ref != ""
+	if !pinned && latestKnown {
+		ref = latest
+	}
+	if ref == "" {
+		ref = firstNonEmpty(manifest.Ref, defaultRef(version))
+	}
+	fmt.Fprintln(a.Out, theme.Field("tracking", repo+"@"+ref))
+
+	if latestKnown {
+		fmt.Fprintln(a.Out, theme.Field("latest", latest))
+		a.printVerdict(cliVersion, latest)
 	} else {
 		fmt.Fprintln(a.Out, theme.Field("latest", "unknown"))
-		fmt.Fprintln(a.Out, theme.Warnf("  %v", remoteErr))
+		fmt.Fprintln(a.Out, theme.Warnf("  %v", latestErr))
 	}
 
 	if opts.check {
@@ -87,11 +99,12 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	doCLI := !opts.stackOnly
 	doStack := !opts.cliOnly
 
-	// When the tracked ref is already at the installed commit there's nothing to
-	// rebuild for either half. Re-run the installer / `jenticctl install` to force.
-	if remoteKnown && update.SameCommit(installed, remote) {
+	// When the latest release is not newer than what's installed there's nothing
+	// to rebuild. A --ref override always proceeds (the user asked for a specific
+	// build); re-run with --ref to force a rebuild at a pinned version.
+	if !pinned && latestKnown && !update.NewerAvailable(cliVersion, latest) {
 		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", remote))
+		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
 		return nil
 	}
 
@@ -366,10 +379,13 @@ func confirmApply(doCLI, doStack bool, repo, ref string) (bool, error) {
 	default:
 		what = "the stack"
 	}
-	confirm := false
+	// This prompt is only reached when an update is available, so default the
+	// focused selection to "Yes, update": the user already invoked `update`, so
+	// a reflexive Enter should proceed rather than cancel (#765).
+	confirm := true
 	if err := install.RunConfirm(
 		huh.NewConfirm().
-			Title(fmt.Sprintf("Rebuild %s from %s@%s?", what, repo, ref)).
+			Title(fmt.Sprintf("Update %s to %s@%s?", what, repo, ref)).
 			Affirmative("Yes, update").
 			Negative("Cancel").
 			Value(&confirm),
@@ -382,16 +398,16 @@ func confirmApply(doCLI, doStack bool, repo, ref string) (bool, error) {
 	return confirm, nil
 }
 
-// printVerdict reports up-to-date / update-available based on the installed and
-// latest commits.
-func (a *App) printVerdict(installed, remote string) {
+// printVerdict reports up-to-date / update-available based on the installed CLI
+// version and the latest release tag, compared as semver.
+func (a *App) printVerdict(installed, latest string) {
 	switch {
 	case installed == "" || installed == "none":
-		fmt.Fprintln(a.Out, theme.Warn.Render("Installed commit is unknown; cannot compare. Latest is "+remote+"."))
-	case update.SameCommit(installed, remote):
-		fmt.Fprintln(a.Out, theme.Successf("Up to date (%s).", remote))
+		fmt.Fprintln(a.Out, theme.Warn.Render("Installed version is unknown; cannot compare. Latest is "+latest+"."))
+	case update.NewerAvailable(installed, latest):
+		fmt.Fprintln(a.Out, theme.Accent.Render(fmt.Sprintf("Update available: %s → %s", installed, latest)))
 	default:
-		fmt.Fprintln(a.Out, theme.Accent.Render(fmt.Sprintf("Update available: %s → %s", installed, remote)))
+		fmt.Fprintln(a.Out, theme.Successf("Up to date (%s).", latest))
 	}
 }
 
