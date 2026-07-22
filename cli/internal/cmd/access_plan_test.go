@@ -3,6 +3,8 @@ package cmd
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/accessclient"
 )
 
 func TestPlanBuildsFullProvisioningChain(t *testing.T) {
@@ -74,6 +76,35 @@ func TestPlanRejectsBadRulesJSON(t *testing.T) {
 	opts := &accessRequestOptions{provision: "x.com/api", rulesJSON: "not json"}
 	if _, err := opts.plan(); err == nil {
 		t.Fatal("expected error for malformed --rules-json")
+	}
+}
+
+func TestRequestGrantedScope(t *testing.T) {
+	// A scope:grant that was approved → needs a token re-mint.
+	scopePlan := &accessclient.Request{Items: []accessclient.ItemResponse{
+		{ResourceType: "scope", Action: "grant", Status: "approved"},
+	}}
+	if !requestGrantedScope(scopePlan) {
+		t.Error("an approved scope:grant should require a re-mint")
+	}
+
+	// A binding-only provisioning plan (no scope) → no re-mint; bindings are live.
+	bindingPlan := &accessclient.Request{Items: []accessclient.ItemResponse{
+		{ResourceType: "toolkit", Action: "create", Status: "approved"},
+		{ResourceType: "credential", Action: "provision", Status: "approved"},
+		{ResourceType: "credential", Action: "bind", Status: "approved"},
+		{ResourceType: "toolkit", Action: "bind", Status: "approved"},
+	}}
+	if requestGrantedScope(bindingPlan) {
+		t.Error("a binding-only plan must not trigger a re-mint")
+	}
+
+	// A scope:grant that was NOT approved (denied) → no re-mint.
+	deniedScope := &accessclient.Request{Items: []accessclient.ItemResponse{
+		{ResourceType: "scope", Action: "grant", Status: "denied"},
+	}}
+	if requestGrantedScope(deniedScope) {
+		t.Error("a denied scope:grant must not trigger a re-mint")
 	}
 }
 

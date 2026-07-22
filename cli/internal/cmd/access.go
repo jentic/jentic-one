@@ -426,6 +426,9 @@ func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 		fmt.Fprintln(a.Err, theme.Warnf("Request %s is %s, not approved; nothing was granted.", req.ID, req.Status))
 		return &exitCodeError{code: 2}
 	case req.Status == accessclient.StatusPartiallyApproved:
+		// A newly-granted scope only takes effect once re-minted into the token;
+		// do it for the agent so it needn't run a separate `access refresh`.
+		a.refreshIfScopeGranted(cmd, ident, req)
 		// Some items were approved but at least one was not, so the capability
 		// the agent asked for is not fully granted. Signal a distinct non-zero
 		// code (not success) so a scripted agent doesn't proceed as if it can
@@ -433,7 +436,46 @@ func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 		fmt.Fprintln(a.Err, theme.Warnf("Partially approved — not all requested items were granted; see `jentic access status %s`.", req.ID))
 		return &exitCodeError{code: 4}
 	}
+	// Fully approved. A newly-granted scope bakes into the token at mint time, so
+	// re-mint now if the request granted one — the agent can then execute
+	// immediately without a separate `access refresh`. A binding-only plan
+	// (toolkit/credential binds, no scope) needs no re-mint: bindings are live
+	// server-side, so this is a no-op in that case.
+	a.refreshIfScopeGranted(cmd, ident, req)
 	return nil
+}
+
+// refreshIfScopeGranted re-mints the agent's token when (and only when) the
+// decided request granted a new scope — the one thing that is baked into the
+// token at mint time and so needs a refresh to become usable. Toolkit/credential
+// bindings are resolved live by the broker, so a `--provision`/`--toolkit` plan
+// needs no re-mint; re-minting anyway would be a wasted round-trip. Best-effort:
+// a mint failure is non-fatal (the agent can still run `jentic access refresh`),
+// and API-key profiles (no mintable token) are skipped.
+func (a *App) refreshIfScopeGranted(cmd *cobra.Command, ident *identityOptions, req *accessclient.Request) {
+	if !requestGrantedScope(req) {
+		return
+	}
+	sess, _, err := a.agentSessionOpen(ident)
+	if err != nil || sess.Meta.IsAPIKey() {
+		return
+	}
+	if _, err := sess.MintFresh(cmd.Context()); err != nil {
+		fmt.Fprintln(a.Err, theme.Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
+	}
+}
+
+// requestGrantedScope reports whether a decided request approved a scope:grant
+// item — the only grant that bakes into the token and so needs a re-mint.
+// Toolkit/credential binds are resolved live by the broker, so a binding-only
+// plan returns false (no re-mint needed).
+func requestGrantedScope(req *accessclient.Request) bool {
+	for _, it := range req.Items {
+		if it.ResourceType == "scope" && it.Action == "grant" && it.Status == "approved" {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) accessListE(cmd *cobra.Command, ident *identityOptions, opts *accessListOptions) error {
