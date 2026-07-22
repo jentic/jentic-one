@@ -36,6 +36,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialPage,
     CredentialRedactedView,
     CredentialUpdate,
+    NoAuthFull,
+    NoAuthRedacted,
     OAuth2Full,
     OAuth2Redacted,
     ProviderDiscoveryEntry,
@@ -49,6 +51,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.slug import slugify_identifier
 from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger()
@@ -98,13 +101,19 @@ class CredentialService:
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
 
+        # Normalize the vendor/name to the same slug form the registry stores at
+        # import time (dots -> dashes) so the broker's vendor join matches instead
+        # of silently default-denying. See issue #656.
+        api_vendor = slugify_identifier(payload.api.vendor)
+        api_name = slugify_identifier(payload.api.name) if payload.api.name else payload.api.name
+
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
                 session,
                 type=stored_type.value,
                 name=payload.name,
-                api_vendor=payload.api.vendor,
-                api_name=payload.api.name,
+                api_vendor=api_vendor,
+                api_name=api_name,
                 api_version=payload.api.version,
                 provider=payload.provider,
                 created_by=identity.sub,
@@ -197,6 +206,12 @@ class CredentialService:
                     grant_type=grant,
                     scopes=payload.scopes,
                 )
+            elif payload.type == CredentialType.NO_AUTH:
+                # A no-auth credential is a marker that the API needs no secret
+                # (e.g. open-meteo). No sub-table row and no secret are stored;
+                # the broker injects nothing for it. This lets a provisioning
+                # plan reach first execution without a credential secret (#603).
+                secret = NoAuthFull()
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
 
@@ -426,7 +441,13 @@ class CredentialService:
         stored_type = StoredCredentialType(credential.type)
         wire_type = to_wire(stored_type)
 
-        details: BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted
+        details: (
+            BearerTokenRedacted
+            | ApiKeyRedacted
+            | BasicAuthRedacted
+            | OAuth2Redacted
+            | NoAuthRedacted
+        )
 
         if wire_type == CredentialType.BEARER_TOKEN:
             tvc = credential.token_value_credential
@@ -455,6 +476,8 @@ class CredentialService:
                 grant_type="client_credentials",
                 scopes=occ.scope.split() if occ and occ.scope else None,
             )
+        elif wire_type == CredentialType.NO_AUTH:
+            details = NoAuthRedacted()
         else:
             details = BearerTokenRedacted(token_preview=None)
 

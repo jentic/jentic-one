@@ -44,12 +44,17 @@ class EffectPhase(enum.Enum):
     ``CONTROL_SESSION`` effects are written in the caller's control-DB
     transaction and are therefore atomic with the decision. ``ADMIN`` effects
     write to the admin DB in their own independent transaction and are applied
-    after the control commit (reconcilable on retry). ``UNSUPPORTED`` is a
-    no-op (skipped) effect for an unknown ``(resource_type, action)`` pair.
+    after the control commit (reconcilable on retry). ``FULFILMENT_ONLY`` items
+    (``toolkit:create``, ``credential:provision``) are provisioning-plan
+    placeholders: the applicator never mutates state for them — a human fulfils
+    them out-of-band via the existing create endpoints — so approving one is a
+    recorded no-op. ``UNSUPPORTED`` is a no-op (skipped) effect for an unknown
+    ``(resource_type, action)`` pair.
     """
 
     CONTROL_SESSION = "control_session"
     ADMIN = "admin"
+    FULFILMENT_ONLY = "fulfilment_only"
     UNSUPPORTED = "unsupported"
 
 
@@ -60,6 +65,8 @@ _EFFECT_PHASES: dict[tuple[str, str], EffectPhase] = {
     ("credential", "bind"): EffectPhase.CONTROL_SESSION,
     ("toolkit", "bind"): EffectPhase.ADMIN,
     ("scope", "grant"): EffectPhase.ADMIN,
+    ("toolkit", "create"): EffectPhase.FULFILMENT_ONLY,
+    ("credential", "provision"): EffectPhase.FULFILMENT_ONLY,
 }
 
 
@@ -117,6 +124,20 @@ class EffectApplicator:
                 )
             return await self._apply_scope_grant(item, decided_by=decided_by)
 
+        if phase is EffectPhase.FULFILMENT_ONLY:
+            # A provisioning-plan placeholder (toolkit:create / credential:provision).
+            # The applicator never mutates state for these — a human fulfils them
+            # via the existing create endpoints and writes the resulting ids onto
+            # the downstream bind items (amend). Record an explicit, non-null
+            # skipped effect so an approved intent is an audited no-op rather than
+            # a silent one.
+            return SkippedEffect(
+                reason=(
+                    f"fulfilment-only intent {item.resource_type}:{item.action} "
+                    "is provisioned out-of-band; no effect applied"
+                ),
+            )
+
         logger.warning(
             "unsupported_effect_combination",
             resource_type=item.resource_type,
@@ -167,6 +188,16 @@ class EffectApplicator:
             # Mirror _apply_scope_grant's guard so a bad scope-grant item fails
             # here (422) rather than mid-apply with a bare ValueError (500).
             assert_grantable_scope(item.resource_id)
+        elif (
+            classify_effect(item.resource_type, item.action) is EffectPhase.FULFILMENT_ONLY
+            and item.rules
+        ):
+            # Fulfilment-only intents (toolkit:create, credential:provision) are
+            # inert placeholders — the applicator never mutates state for them.
+            # They still cannot carry enforceable rules (there is no binding key
+            # to attach them to), so reject rules up front, consistent with the
+            # file/amend-time guard. Everything else validates cleanly.
+            raise RulesNotSupportedForBindError(item.resource_type, item.action)
 
     async def _validate_credential_bind_target(
         self, item: AccessRequestItem, *, identity: Identity, session: Any

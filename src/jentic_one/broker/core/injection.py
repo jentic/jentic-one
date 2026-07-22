@@ -34,6 +34,9 @@ def inject_auth(
         return _inject_basic(resolved, ctx)
     if resolved.wire_type == CredentialType.OAUTH2:
         return _inject_oauth2(access_token)
+    if resolved.wire_type == CredentialType.NO_AUTH:
+        # A no-auth credential injects nothing — the API needs no secret (#603).
+        return InjectionResult(headers={}, query_params={}, cookies={})
     return InjectionResult(headers={}, query_params={}, cookies={})
 
 

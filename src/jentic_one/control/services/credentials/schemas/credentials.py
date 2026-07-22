@@ -108,6 +108,10 @@ class OAuth2Full(BaseModel):
     scopes: list[str] | None = None
 
 
+class NoAuthFull(BaseModel):
+    """Placeholder detail block for a no-auth credential (no secret)."""
+
+
 class BearerTokenRedacted(BaseModel):
     """Redacted bearer token details."""
 
@@ -137,6 +141,10 @@ class OAuth2Redacted(BaseModel):
     scopes: list[str] | None = None
 
 
+class NoAuthRedacted(BaseModel):
+    """Redacted detail block for a no-auth credential (no secret)."""
+
+
 class CredentialFullView(BaseModel):
     """Create response — echoes the secret block once."""
 
@@ -148,7 +156,7 @@ class CredentialFullView(BaseModel):
     active: bool
     created_at: datetime
     server_variables: dict[str, str] | None = None
-    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full
+    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull
 
 
 class CredentialRedactedView(BaseModel):
@@ -163,7 +171,13 @@ class CredentialRedactedView(BaseModel):
     active: bool
     created_at: datetime
     updated_at: datetime | None = None
-    details: BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted
+    details: (
+        BearerTokenRedacted
+        | ApiKeyRedacted
+        | BasicAuthRedacted
+        | OAuth2Redacted
+        | NoAuthRedacted
+    )
     server_variables: dict[str, str] | None = None
 
     model_config = {"from_attributes": True}

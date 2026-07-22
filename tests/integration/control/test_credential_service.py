@@ -74,6 +74,33 @@ def _api() -> APIReference:
     return APIReference(vendor="test-vendor", name="test-api", version="v1")
 
 
+async def test_create_normalizes_dotted_vendor_and_name(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A dotted vendor/name is stored in the registry's slug form (issue #656).
+
+    The registry normalizes vendor/name on import (``httpbin.org`` ->
+    ``httpbin-org``); the broker joins the credential's stored ``api_vendor``
+    against that discovered, normalized vendor. If ``POST /credentials`` stored
+    the raw domain the join would silently return zero rows and default-deny, so
+    the service must store the same slug form.
+    """
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="Dotted Vendor",
+            api=APIReference(vendor="httpbin.org", name="httpbin.org", version="1.0.0"),
+            token="sk-secret-token-value123",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+
+    stored = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert stored.api.vendor == "httpbin-org"
+    assert stored.api.name == "httpbin-org"
+    assert stored.api.version == "1.0.0"
+
+
 async def test_create_bearer_token(svc: CredentialService, clean_credentials: None) -> None:
     """Create bearer_token: echoes secret once, stores encrypted with preview."""
     result = await svc.create(

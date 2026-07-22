@@ -64,6 +64,8 @@ components:
           enum:
           - bind
           - grant
+          - create
+          - provision
           title: Action
           type: string
         resource_id:
@@ -514,6 +516,11 @@ components:
             type: array
           - type: 'null'
           title: Rules
+        to_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To Id
       required:
       - item_id
       title: AmendItemSchema
@@ -1681,6 +1688,7 @@ components:
       - api_key
       - basic
       - oauth2
+      - no_auth
       title: CredentialType
       type: string
     CurrentUserResponse:

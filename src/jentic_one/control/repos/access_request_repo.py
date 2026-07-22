@@ -19,6 +19,7 @@ from jentic_one.control.core.schema.access_request_items import (
 )
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
+from jentic_one.shared.slug import slugify_identifier
 
 
 def compute_aggregate_status(item_statuses: list[str]) -> AccessRequestStatus:
@@ -38,13 +39,16 @@ def _normalize_reference(reference: dict[str, Any] | None) -> tuple[str, str, st
     Only the vendor/name/version triple is meaningful for resolution, so two
     references that differ only in inert extra keys are considered the same,
     and a missing reference normalizes to ``None`` (so two no-reference items
-    still compare equal). Values are stringified and lowercased to match the
-    case-insensitive vendor/name handling at resolve time.
+    still compare equal). Vendor/name are slugified to match the registry's
+    normalized identity (issue #656) so a plan filed with a raw domain
+    (``httpbin.org``) dedups against one filed with the slug (``httpbin-org``);
+    version is lowercased/stripped to match the case-insensitive handling at
+    resolve time.
     """
     if not reference:
         return None
-    vendor = str(reference.get("vendor", "")).strip().lower()
-    name = str(reference.get("name", "")).strip().lower()
+    vendor = slugify_identifier(str(reference.get("vendor", "")))
+    name = slugify_identifier(str(reference.get("name", "")))
     version = str(reference.get("version", "")).strip().lower()
     return (vendor, name, version)
 
@@ -241,6 +245,7 @@ class AccessRequestRepository:
         *,
         rules: list[dict[str, Any]] | None = None,
         resource_id: str | None = None,
+        to_id: str | None = None,
         filters: Sequence[ColumnElement[bool]] | None = None,
     ) -> AccessRequestItem | None:
         stmt = select(AccessRequestItem).where(AccessRequestItem.id == item_id)
@@ -254,6 +259,12 @@ class AccessRequestRepository:
             item.rules = rules
         if resource_id is not None:
             item.resource_id = resource_id
+        if to_id is not None:
+            # The provisioning-plan wizard writes the freshly-created toolkit id
+            # onto a credential:bind item's bind target after Step 1. to_type is
+            # always "toolkit" for a credential:bind, so set it in lock-step.
+            item.to_id = to_id
+            item.to_type = "toolkit"
         await session.flush()
         return item
 

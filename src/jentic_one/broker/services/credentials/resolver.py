@@ -162,6 +162,18 @@ class CredentialResolver:
                 provider_account_ref=credential.provider_account_ref,
             )
 
+        if wire_type == CredentialType.NO_AUTH:
+            # No secret to resolve — the API needs no auth. inject_auth returns an
+            # empty InjectionResult for this wire type. Server variables still
+            # apply so region/host templating works for no-auth APIs (#603).
+            return ResolvedCredential(
+                credential_id=credential.id,
+                wire_type=wire_type,
+                stored_type=stored_type,
+                provider=credential.provider,
+                server_variables=credential.server_variables,
+            )
+
         raise CredentialNotProvisionedError(
             credential.api_vendor,
             credential.api_name or "",

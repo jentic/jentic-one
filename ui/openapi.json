@@ -84,7 +84,9 @@
           "action": {
             "enum": [
               "bind",
-              "grant"
+              "grant",
+              "create",
+              "provision"
             ],
             "title": "Action",
             "type": "string"
@@ -835,6 +837,17 @@
               }
             ],
             "title": "Rules"
+          },
+          "to_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Id"
           }
         },
         "required": [
@@ -2683,7 +2696,8 @@
           "bearer_token",
           "api_key",
           "basic",
-          "oauth2"
+          "oauth2",
+          "no_auth"
         ],
         "title": "CredentialType",
         "type": "string"

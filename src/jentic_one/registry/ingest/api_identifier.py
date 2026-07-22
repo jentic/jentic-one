@@ -1,19 +1,10 @@
 """API identifier resolution — extracts ApiIdentifier from spec content and overrides."""
 
-import re
 from typing import Any
 
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.models import ApiIdentifier
-
-_MAX_FIELD_LENGTH = 100
-_SLUG_RE = re.compile(r"[^a-z0-9-]+")
-
-
-def _slugify(value: str) -> str:
-    """Lowercase, strip, replace non-alphanumeric with hyphens, truncate."""
-    slug = _SLUG_RE.sub("-", value.strip().lower()).strip("-")
-    return slug[:_MAX_FIELD_LENGTH]
+from jentic_one.shared.slug import slugify_identifier as _slugify
 
 
 def resolve_api_identifier(

@@ -23,6 +23,7 @@ class CredentialType(StrEnum):
     API_KEY = "api_key"
     BASIC = "basic"
     OAUTH2 = "oauth2"
+    NO_AUTH = "no_auth"
 
 
 class CredentialLocation(StrEnum):

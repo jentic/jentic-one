@@ -603,6 +603,7 @@ class AccessRequestService:
                     item_id,
                     rules=amendment.get("rules"),
                     resource_id=amendment.get("resource_id"),
+                    to_id=amendment.get("to_id"),
                 )
                 if result is None:
                     raise ItemNotPendingError(item_id, "unknown")
