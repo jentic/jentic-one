@@ -470,6 +470,7 @@ class CredentialService:
             provider=credential.provider,
             provider_account_ref=credential.provider_account_ref,
             active=credential.active,
+            created_by=credential.created_by,
             created_at=credential.created_at,
             updated_at=credential.updated_at,
             details=details,
