@@ -95,7 +95,7 @@ async def test_zero_candidates_no_header_raises_403() -> None:
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --provision acme/widgets --wait"
     )
 
 
@@ -142,7 +142,7 @@ async def test_header_present_not_bound_and_no_candidates_prompts_human() -> Non
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
     assert exc.value.directive.parameters["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --provision acme/widgets --wait"
     )
 
 
@@ -212,5 +212,5 @@ def test_no_toolkit_binding_body_carries_prompt_human_directive() -> None:
     assert body["type"] == "no_toolkit_binding"
     assert body["agent_directive"]["strategy"] == "prompt_human"
     assert body["agent_directive"]["parameters"]["suggested_command"] == (
-        "jentic access request --toolkit acme/widgets --wait"
+        "jentic access request --provision acme/widgets --wait"
     )

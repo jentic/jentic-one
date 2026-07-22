@@ -234,24 +234,32 @@ def switch_toolkit_directive(status: int) -> AgentDirective:
 
 
 def no_toolkit_binding_directive(*, vendor: str, name: str, version: str) -> AgentDirective:
-    """Directive for a ``no_toolkit_binding`` 403 — ask a human to grant access.
+    """Directive for a ``no_toolkit_binding`` 403 — file a provisioning plan.
 
-    The caller is authenticated but bound to no toolkit that serves this API, a
-    gap only a human can close (approve a toolkit binding). The directive names
-    the exact CLI command so an autonomous agent can hand it to its operator
-    verbatim instead of reading docs.
+    The caller is authenticated but bound to no toolkit that serves this API.
+    Previously this steered the agent to file a bare ``toolkit:bind`` request —
+    but binding is the *last mile*, and it auto-denies when no toolkit/credential
+    exists yet (the common case on a fresh import). Instead, steer to the
+    provisioning *plan* (``--provision``): one request that describes the whole
+    path to first execution (create toolkit, provision a credential, bind it with
+    proposed rules, bind the agent), which a human fulfils and approves in the
+    dashboard. Only a human can close the gap (they enter the secret and grant
+    the binding), so the strategy stays ``prompt_human``. See issues #619, #662,
+    #683, #684.
     """
     api = "/".join(part for part in (vendor, name) if part)
     return AgentDirective(
         strategy="prompt_human",
         parameters={
             "api": {"vendor": vendor, "name": name, "version": version},
-            "suggested_command": f"jentic access request --toolkit {api} --wait",
+            "suggested_command": f"jentic access request --provision {api} --wait",
         },
         human_readable_instruction=(
-            f"You are not bound to a toolkit for '{api}'. File an access request yourself with "
-            f"`jentic access request --toolkit {api} --wait`, then ask your operator to approve "
-            f"it — only a human can grant the binding. Once approved, retry this call."
+            f"Nothing serves '{api}' yet. File a provisioning plan with "
+            f"`jentic access request --provision {api} --wait` — propose the auth type "
+            "(`--auth`) and permission rules (`--rules-json`) you read from the API spec, "
+            "then ask your operator to fulfil it in the dashboard (they enter the credential "
+            "secret and approve). Only a human can grant this. Once approved, retry this call."
         ),
     )
 

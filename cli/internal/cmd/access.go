@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -75,6 +76,13 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 			"approve_url for your human operator. Name the toolkit by the API you found in\n" +
 			"search (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n" +
 			"(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\n" +
+			"When nothing serves the API yet (a fresh import with no toolkit/credential),\n" +
+			"use --provision vendor/name to file the whole path to first execution as one\n" +
+			"plan: create a toolkit, provision a credential, bind it (with your proposed\n" +
+			"--rules-json), and bind yourself. A human fulfils the create/provision steps\n" +
+			"in the dashboard (they enter the secret — it never rides in your request) and\n" +
+			"approves. Use --auth to declare the credential type you detected from the spec\n" +
+			"(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\n" +
 			"An existing pending request for the same resource is reused, not duplicated.\n\n" +
 			"Exit codes:\n" +
 			"  0 — request filed (or, with --wait, fully approved)\n" +
@@ -83,7 +91,9 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 			"  4 — partially approved; not all items granted (only with --wait)",
 		Example: "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n" +
 			"  jentic access request --toolkit-id tk_123 --wait\n" +
-			"  jentic access request --scope owner:toolkits:read --json",
+			"  jentic access request --scope owner:toolkits:read --json\n" +
+			"  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n" +
+			"    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.accessRequestE(cmd, ident, opts)
@@ -92,6 +102,9 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.toolkit, "toolkit", "", "request a binding to the toolkit serving this API (vendor/name[/version])")
 	cmd.Flags().StringVar(&opts.toolkitID, "toolkit-id", "", "request a binding to this toolkit id (tk_…)")
 	cmd.Flags().StringVar(&opts.scope, "scope", "", "request this scope be granted")
+	cmd.Flags().StringVar(&opts.provision, "provision", "", "file a full provisioning plan to make this API executable (vendor/name[/version])")
+	cmd.Flags().StringVar(&opts.auth, "auth", "", "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer)")
+	cmd.Flags().StringVar(&opts.rulesJSON, "rules-json", "", "proposed permission rules for --provision, as a JSON array")
 	cmd.Flags().StringVar(&opts.reason, "reason", "", "human-readable justification shown to the approver")
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "block until the request is decided")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 10*time.Minute, "max time to wait with --wait")
@@ -177,6 +190,9 @@ type accessRequestOptions struct {
 	toolkit   string
 	toolkitID string
 	scope     string
+	provision string
+	auth      string
+	rulesJSON string
 	reason    string
 	wait      bool
 	timeout   time.Duration
@@ -211,6 +227,83 @@ func (o *accessRequestOptions) item() (accessclient.Item, error) {
 		}
 		return accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceReference: ref}, nil
 	}
+}
+
+// validAuthTypes are the credential auth types --auth accepts. "none" marks a
+// no-auth API: the plan omits the credential:provision item entirely.
+var validAuthTypes = map[string]bool{
+	"bearer": true, "api_key": true, "basic": true, "oauth2": true, "none": true,
+}
+
+// plan builds a full provisioning plan for --provision: the ordered set of
+// items describing the whole path to first execution. The agent files intent
+// (create toolkit, provision a credential, bind it with proposed rules, bind the
+// agent); a human fulfils the create/provision steps via the dashboard, which
+// writes the resulting ids back onto the bind items before approving. Returns
+// the items in fulfilment order.
+func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
+	ref, err := parseToolkitRef(o.provision)
+	if err != nil {
+		return nil, err
+	}
+
+	auth := strings.TrimSpace(o.auth)
+	if auth == "" {
+		auth = "bearer"
+	}
+	if !validAuthTypes[auth] {
+		return nil, fmt.Errorf("--auth must be one of bearer, api_key, basic, oauth2, none; got %q", auth)
+	}
+
+	rules, err := parseProposedRules(o.rulesJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	items := []accessclient.Item{
+		// Step 1: create a toolkit that will serve this API.
+		{ResourceType: "toolkit", Action: "create", ResourceReference: ref},
+	}
+	if auth != "none" {
+		// Step 2: provision a credential for this API. security_scheme carries
+		// the agent-detected auth type so the operator's credential form can
+		// pre-select it; the operator enters the secret — it never rides in the
+		// agent-filed plan.
+		provRef := map[string]any{}
+		for k, v := range ref {
+			provRef[k] = v
+		}
+		provRef["security_scheme"] = auth
+		items = append(items, accessclient.Item{
+			ResourceType: "credential", Action: "provision", ResourceReference: provRef,
+		})
+	}
+	// Step 3+4: bind the (to-be-created) credential to the (to-be-created)
+	// toolkit, carrying the agent's proposed first-pass rules. The operator
+	// amends the concrete credential/toolkit ids onto this item before approval.
+	items = append(items, accessclient.Item{
+		ResourceType: "credential", Action: "bind", Rules: rules,
+	})
+	// Step 5: bind the agent to the toolkit, named by the same API reference.
+	items = append(items, accessclient.Item{
+		ResourceType: "toolkit", Action: "bind", ResourceReference: ref,
+	})
+	return items, nil
+}
+
+// parseProposedRules decodes the agent's proposed permission rules from a JSON
+// array (--rules-json). Empty input yields no rules (the server substitutes a
+// read-only default on the credential:bind item).
+func parseProposedRules(raw string) ([]accessclient.Rule, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var rules []accessclient.Rule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		return nil, fmt.Errorf("--rules-json must be a JSON array of rules: %w", err)
+	}
+	return rules, nil
 }
 
 // parseToolkitRef splits "vendor/name[/version]" into a resource_reference. The
@@ -253,9 +346,26 @@ func (a *App) accessWhoamiE(cmd *cobra.Command, ident *identityOptions, jsonFlag
 }
 
 func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *accessRequestOptions) error {
-	item, err := opts.item()
-	if err != nil {
-		return err
+	var items []accessclient.Item
+	if strings.TrimSpace(opts.provision) != "" {
+		// --provision is mutually exclusive with the single-item target flags.
+		if opts.toolkit != "" || opts.toolkitID != "" || opts.scope != "" {
+			return errors.New("--provision cannot be combined with --toolkit, --toolkit-id, or --scope")
+		}
+		planItems, err := opts.plan()
+		if err != nil {
+			return err
+		}
+		items = planItems
+	} else {
+		if opts.auth != "" || opts.rulesJSON != "" {
+			return errors.New("--auth and --rules-json only apply with --provision")
+		}
+		item, err := opts.item()
+		if err != nil {
+			return err
+		}
+		items = []accessclient.Item{item}
 	}
 
 	baseURL, token, err := a.agentSession(cmd.Context(), ident)
@@ -266,7 +376,7 @@ func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 
 	req, err := client.File(cmd.Context(), token, accessclient.FileRequest{
 		Reason: opts.reason,
-		Items:  []accessclient.Item{item},
+		Items:  items,
 	})
 	if err != nil {
 		var dup *accessclient.DuplicatePendingError

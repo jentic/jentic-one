@@ -65,11 +65,16 @@ recovery line on stderr (the `agent_directive`) and **exits 2**, so you can
 branch on the exit code instead of mistaking the 4xx body for success. The
 directive tells you exactly how to recover — which differs by denial:
 
-- **`no_toolkit_binding` (403)** — you're not bound to a toolkit for this API.
-  File an access request and wait for a human to approve it:
+- **`no_toolkit_binding` (403)** — nothing serves this API yet (no toolkit, and
+  usually no credential). File a **provisioning plan** describing the whole path
+  to first execution, and propose the auth type and permission rules you read
+  from the API spec:
 
 ```
-jentic access request --toolkit stripe.com/api --wait
+jentic access request --provision stripe.com/api \
+  --auth bearer \
+  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
+  --wait
 ```
 
 - **`credential_not_provisioned` (424)** — you're bound to a toolkit, but no
@@ -85,9 +90,34 @@ Always follow the `agent_directive`'s `suggested_command` / `provisioning_url`
 rather than assuming which recovery applies. You can also request access
 proactively before you're denied.
 
-`--toolkit` takes a `vendor/name[/version]` reference (the broker also
-suggests the exact command in its `agent_directive`). `--wait` blocks until a
-human decides and sets the exit code: **0** = approved, **2** = denied —
+### Proposing permission rules from the spec
+
+`--provision` is your chance to propose the credential's auth type and its
+permission rules as a **first pass** — a human reviews and edits them before
+approving. Do the work up front:
+
+1. Read the operation surface and security schemes:
+   `jentic apis operations <vendor/name/version>` and
+   `jentic inspect <operation_id>` show methods, paths, and the declared auth.
+2. Pick `--auth` from what the spec declares (`bearer`, `api_key`, `basic`,
+   `oauth2`), or `none` if the API needs no credential.
+3. Translate the user's plain-English intent into rules. "Read everything, write
+   only to the prod board" becomes concrete `allow`/`deny` rules with
+   `methods`/`path`, e.g.
+   `[{"effect":"allow","methods":["GET"],"path":".*"},
+     {"effect":"allow","methods":["POST","PUT"],"path":"/boards/prod/.*"}]`.
+   An `allow` rule must constrain at least one of `methods`/`path`/`operations`.
+4. You never enter the credential secret and you never approve — the human fills
+   the secret in the dashboard and grants the plan. You propose; they decide.
+
+A plain `toolkit:bind` (`--toolkit`) is only the **last mile** — use it when a
+toolkit for the API already exists (e.g. an operator created one) and you just
+need to be bound to it. When nothing serves the API yet, `--provision` is the
+right first move; a bare `--toolkit` would auto-deny.
+
+`--toolkit`/`--provision` take a `vendor/name[/version]` reference (the broker
+also suggests the exact command in its `agent_directive`). `--wait` blocks until
+a human decides and sets the exit code: **0** = approved, **2** = denied —
 read the item's `decision_reason` (in the JSON, or shown under the item on a
 TTY) to learn *why* before giving up, **3** = still pending when `--timeout`
 elapsed (poll later with `jentic access status <id>`), **4** = partially
@@ -95,15 +125,12 @@ approved. Without `--wait` you get a request id and an `approve_url` to hand to
 your operator. Granting is always a human action — you file and wait, you never
 approve yourself.
 
-A `toolkit:bind` is the **last mile** (agent → an existing toolkit), not the
-first. It only succeeds if a toolkit **already exists** for that API with a
-credential bound to it. If none does yet, approval comes back **denied** with
-`decision_reason: "No toolkit serves API <vendor/name>; provision and bind a
-credential for it first"` — the request is resolved (no longer pending), but
-nothing was granted. You **cannot** fix this yourself: tell your operator to
-create a toolkit and connect (bind) a credential for that API in the dashboard,
-then re-file the request once they confirm. The same denial applies if you
-named a `--toolkit-id` / credential that isn't visible to your approver.
+If you file a bare `toolkit:bind` (`--toolkit`) for an API that nothing serves
+yet, approval comes back **denied** with `decision_reason: "No toolkit serves
+API <vendor/name>; provision and bind a credential for it first"`. That is the
+signal to file a `--provision` plan instead: it describes the missing toolkit,
+credential, rules, and binding as one request the operator can fulfil and
+approve in the dashboard.
 
 Track and manage your requests:
 
@@ -215,8 +242,12 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jentic profile list` — see profiles and which is active (start here).
 - `jentic access whoami` — your identity, status, scopes, toolkit bindings.
 - `jentic access request --toolkit <vendor/name> [--wait --timeout 120s]` —
-  ask a human to grant access; prints an `approve_url`. (Scopes for an approved
-  agent are granted automatically; you do not request catalog/registry scopes.)
+  ask a human to bind you to an **existing** toolkit; prints an `approve_url`.
+- `jentic access request --provision <vendor/name> [--auth <type>] [--rules-json <json>] [--wait]` —
+  file the whole path to first execution as one plan (create toolkit, provision
+  credential, bind + rules, bind agent) when nothing serves the API yet. Scopes
+  for an approved agent are granted automatically; you do not request
+  catalog/registry scopes.
 - `jentic access list | status <id> | withdraw <id>` — track your requests.
 - `jentic access refresh` — re-mint your token so a newly granted scope takes
   effect. After an approved `scope:grant`, `whoami` shows it under granted
@@ -257,9 +288,11 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   broker. Only a broker **denial** (exit **2**, with an `agent_directive` on
   stderr) is an access/credential issue:
   - **403 `no_toolkit_binding`** → run the `jentic access request …` it suggests
-    and wait for approval. If it comes back **denied** with "No toolkit serves
-    API …", a toolkit for that API doesn't exist yet — ask your operator to
-    create one and bind a credential, then re-file (you can't self-serve this).
+    and wait for approval. When nothing serves the API yet the directive
+    suggests `--provision` — file that plan (propose `--auth` and `--rules-json`
+    from the spec) and your operator fulfils it in the dashboard. A bare
+    `--toolkit` for an unserved API comes back **denied** with "No toolkit serves
+    API …"; switch to `--provision` rather than re-filing the bind.
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).

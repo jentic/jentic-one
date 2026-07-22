@@ -969,9 +969,14 @@
               "path": "jentic access request",
               "use": "request",
               "short": "File a request for a toolkit binding or a scope grant",
-              "long": "request files an access request for the access you are missing and prints an\napprove_url for your human operator. Name the toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nAn existing pending request for the same resource is reused, not duplicated.\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
-              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json",
+              "long": "request files an access request for the access you are missing and prints an\napprove_url for your human operator. Name the toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves the API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAn existing pending request for the same resource is reused, not duplicated.\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
+              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait",
               "flags": [
+                {
+                  "name": "auth",
+                  "type": "string",
+                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer)"
+                },
                 {
                   "name": "base-url",
                   "type": "string",
@@ -989,9 +994,19 @@
                   "usage": "profile name (default: config default_profile)"
                 },
                 {
+                  "name": "provision",
+                  "type": "string",
+                  "usage": "file a full provisioning plan to make this API executable (vendor/name[/version])"
+                },
+                {
                   "name": "reason",
                   "type": "string",
                   "usage": "human-readable justification shown to the approver"
+                },
+                {
+                  "name": "rules-json",
+                  "type": "string",
+                  "usage": "proposed permission rules for --provision, as a JSON array"
                 },
                 {
                   "name": "scope",
