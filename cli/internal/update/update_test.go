@@ -95,3 +95,36 @@ func TestAuthArgs(t *testing.T) {
 		t.Errorf("authArgs(token) = %v, want -c http.extraheader basic auth", got)
 	}
 }
+
+func TestCandidateRefs(t *testing.T) {
+	cases := []struct {
+		ref  string
+		want []string
+	}{
+		// Bare semver also tries the fully-qualified release tag.
+		{"0.15.0", []string{"0.15.0", "refs/tags/v0.15.0"}},
+		{"1.0", []string{"1.0", "refs/tags/v1.0"}},
+		// Branches, already-`v`-prefixed tags, and SHA-like refs are used as-is.
+		{"main", []string{"main"}},
+		{"v0.15.0", []string{"v0.15.0"}},
+		{"abc1234", []string{"abc1234"}},
+	}
+	for _, tc := range cases {
+		got := candidateRefs(tc.ref)
+		if !equalStrings(got, tc.want) {
+			t.Errorf("candidateRefs(%q) = %v, want %v", tc.ref, got, tc.want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
