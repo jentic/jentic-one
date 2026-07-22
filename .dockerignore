@@ -61,6 +61,12 @@ node_modules/
 **/node_modules/
 ui/dist/
 
+# Generated UI bundle — gitignored build output, never a build input. The wheel
+# force-includes `ui/dist` -> `jentic_one/static` (pyproject.toml), so a stale
+# local `src/jentic_one/static/` copied via `COPY src/ src/` would collide with
+# that force-include and fail the wheel build (issue #654).
+src/jentic_one/static/
+
 # Editors / OS
 .idea/
 .vscode/

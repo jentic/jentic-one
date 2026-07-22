@@ -19,6 +19,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /usr/local/bin/uv
 
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
+# `src/jentic_one/static/` (generated UI bundle) is excluded from the build
+# context via `.dockerignore` — the wheel gets it solely from the force-include
+# of `ui/dist` below, so a stale local copy can't collide with it (issue #654).
 COPY src/ src/
 COPY openapi/ openapi/
 # Built SPA must be present before `uv build` so force-include packages it.
