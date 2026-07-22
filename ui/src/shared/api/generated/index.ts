@@ -35,6 +35,7 @@ export type { ApiKeyResponse } from './models/ApiKeyResponse';
 export type { ApiKeyUpdateRequest } from './models/ApiKeyUpdateRequest';
 export type { ApiLinksResponse } from './models/ApiLinksResponse';
 export type { ApiListResponse } from './models/ApiListResponse';
+export type { ApiRef } from './models/ApiRef';
 export type { APIReference } from './models/APIReference';
 export type { APIReferenceRequest } from './models/APIReferenceRequest';
 export type { ApiReferenceResponse } from './models/ApiReferenceResponse';

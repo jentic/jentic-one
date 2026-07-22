@@ -16,6 +16,7 @@ from jentic_one.auth.web.deps import (
     get_user_service,
 )
 from jentic_one.auth.web.schemas.identity import (
+    ApiRef,
     MeAgent,
     MeResponse,
     MeServiceAccount,
@@ -98,7 +99,19 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         parent_agent_id=agent.parent_agent_id,
         approved_by=agent.approved_by,
         toolkit_bindings=[
-            ToolkitBindingEntry(toolkit_id=tb.toolkit_id, bound_at=tb.bound_at) for tb in toolkits
+            ToolkitBindingEntry(
+                toolkit_id=tb.toolkit_id,
+                bound_at=tb.bound_at,
+                serves=[
+                    ApiRef(
+                        api_vendor=s.api_vendor,
+                        api_name=s.api_name,
+                        api_version=s.api_version,
+                    )
+                    for s in tb.serves
+                ],
+            )
+            for tb in toolkits
         ],
     )
 

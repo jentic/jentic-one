@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import delete, select, text
 
+from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
@@ -197,6 +198,17 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
             {"a": AGENT_SUB, "t": created_toolkit.id},
         )
         assert bound.scalar_one_or_none() is not None, "toolkit:bind did not bind the agent"
+
+    # whoami / list_toolkits now reports which APIs the binding serves, so an
+    # agent can tell it already has access without a throwaway denied execute.
+    # (Exercise the served-APIs resolver directly — the get_agent visibility gate
+    # in list_toolkits is covered by the auth /me web tests.)
+    agent_svc = AgentService(ctx)
+    served = await agent_svc._served_apis_by_toolkit([created_toolkit.id])
+    apis = served.get(created_toolkit.id, [])
+    assert any(
+        s.api_vendor == "httpbin-org" for s in apis
+    ), f"binding should report the served API, got {apis}"
 
 
 async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
