@@ -164,7 +164,7 @@
 	--foreground: 0 0% 100%; /* #FFFFFF */
 	--foreground-lighter: var(--primary-100); /* #E4EAEB */
 	--muted: var(--primary-850); /* #193238 */
-	--muted-foreground: var(--primary-100); /* #E4EAEB */
+	--muted-foreground: var(--primary-500); /* #689296 — muted grey, distinct from #FFFFFF foreground */
 
 	/* Brand */
 	--primary: var(--primary-300); /* #A3CACC */
