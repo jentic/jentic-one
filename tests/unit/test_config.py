@@ -360,6 +360,34 @@ def test_broker_jobs_api_base_url_env_override(config_file: Path):
     assert config.broker.jobs_api_base_url == "https://env.example.com"
 
 
+def test_server_backend_defaults_to_local(config_file: Path):
+    config = load_config(config_file)
+    assert config.server.backend == "local"
+
+
+def test_server_backend_from_yaml(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["server"] = {"backend": "remote"}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    config = load_config(path)
+    assert config.server.backend == "remote"
+
+
+def test_server_backend_env_override(config_file: Path):
+    env = {"JENTIC__SERVER__BACKEND": "remote"}
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.server.backend == "remote"
+
+
+def test_server_backend_rejects_invalid_value(tmp_path: Path, sample_config_dict: dict[str, Any]):
+    sample_config_dict["server"] = {"backend": "cloud"}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.dump(sample_config_dict))
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
 def test_local_yaml_has_valid_encryption_config():
     """config/local.yaml must ship a usable encryption keyset for local dev."""
     local_path = Path(__file__).resolve().parents[2] / "config" / "local.yaml"

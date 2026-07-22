@@ -3503,10 +3503,10 @@
         "type": "object"
       },
       "InstanceIdentityResponse": {
-        "description": "Self-describing identity of the backend serving this request.\n\nA client can compare ``canonical_base_url``/``host`` against where it *thinks*\nit is pointed to confirm it is talking to the intended backend (e.g. a local\ninstall vs. Jentic Cloud) before diagnosing \"missing\" data.",
+        "description": "Self-describing identity of the backend serving this request.\n\nA client can compare ``backend``/``canonical_base_url``/``host`` against where\nit *thinks* it is pointed to confirm it is talking to the intended backend\n(e.g. a local install vs. a remote one) before diagnosing \"missing\" data.",
         "properties": {
           "backend": {
-            "description": "Coarse backend label derived from the canonical host: 'cloud' for a jentic.com host, 'local' for a loopback/private host, else 'self-hosted'.",
+            "description": "Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.",
             "title": "Backend",
             "type": "string"
           },
@@ -20785,7 +20785,7 @@
     },
     "/instance": {
       "get": {
-        "description": "Return this backend's self-describing identity.\n\nUnauthenticated and dependency-free so any client (an MCP server, the\nCLI, an agent) can read which backend it is bound to — cloud vs. a local\nself-hosted install — and label its responses accordingly.",
+        "description": "Return this backend's self-describing identity.\n\nUnauthenticated and dependency-free so any client (an MCP server, the\nCLI, an agent) can read which backend it is bound to — local vs. a\nremote install — and label its responses accordingly.",
         "operationId": "getInstance",
         "responses": {
           "200": {
