@@ -40,7 +40,7 @@ export interface NavItem {
  */
 export const navItems: NavItem[] = [
 	{ id: 'dashboard', label: 'Dashboard', to: '/', order: 10, icon: LayoutDashboard },
-	{ id: 'discover', label: 'Discover', to: '/discover', order: 20, icon: Compass },
+	{ id: 'discover', label: 'Discover APIs', to: '/discover', order: 20, icon: Compass },
 	{ id: 'workspace', label: 'Workspace', to: '/workspace', order: 30, icon: LayoutGrid },
 	{ id: 'toolkits', label: 'Toolkits', to: '/toolkits', order: 40, icon: Boxes },
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
