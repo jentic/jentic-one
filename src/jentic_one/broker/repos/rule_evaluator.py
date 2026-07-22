@@ -11,6 +11,7 @@ Performance: the rule list per (toolkit, credential) pair is short-TTL cached
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections import OrderedDict
@@ -61,6 +62,30 @@ def _compile_path(raw: str | None) -> re.Pattern[str] | None:
         return re.compile(raw)
     except re.error:
         return None
+
+
+def _coerce_json_list(value: object) -> list[str] | None:
+    """Coerce a JSON column value into a list of strings (or None).
+
+    The evaluator reads rules via raw ``text()`` SQL, which bypasses the ORM's
+    ``json_variant()`` deserialization. On PostgreSQL the JSONB driver still
+    decodes the column into native lists, but on SQLite (JSON stored as TEXT)
+    the raw string comes straight through — e.g. ``'["GET", "POST"]'`` or the
+    literal ``'null'``. Parse the string form here so both backends yield the
+    same list; a non-string list (already decoded) passes through unchanged.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return None
 
 
 def _normalize_methods(raw: list[str] | None) -> frozenset[str] | None:
@@ -197,9 +222,11 @@ class RuleEvaluator:
         return [
             PermissionRule(
                 effect=row[0],
-                methods=_normalize_methods(row[1]),
+                methods=_normalize_methods(_coerce_json_list(row[1])),
                 path=_compile_path(row[2]),
-                operations=tuple(row[3]) if row[3] is not None else None,
+                operations=(
+                    tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None
+                ),
             )
             for row in rows
         ]
