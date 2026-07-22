@@ -20,6 +20,11 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    - **gate** — builds the app, runs every migration on a fresh ephemeral
      SQLite DB, asserts each DB reached an Alembic head, and checks `/health`
      serves the tag version. Nothing publishes if this fails.
+   - **publish-image** — builds the `app` container image and pushes it to GHCR
+     as `ghcr.io/<owner>/jentic-one-app` (tagged `vX.Y.Z`, the short SHA, and
+     `latest`). One image serves every surface via `JENTIC__APPS`; this is the
+     image self-hosters pull — see
+     [`deploy/README.md`](../deploy/README.md#self-hosted-containers--external-postgres).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
 
@@ -62,6 +67,12 @@ The automation is inert until these are provisioned:
 
 cosign signing needs no secret — it uses the release job's OIDC token (keyless,
 via Sigstore/Fulcio).
+
+The **`publish-image`** stage needs no extra secret either — it pushes to GHCR
+with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`). The
+first push creates the `jentic-one-app` package under the repo owner; a
+maintainer may want to set its visibility to **public** in the package settings
+so self-hosters can `docker pull` without authenticating.
 
 ## Verifying a release (supply chain)
 

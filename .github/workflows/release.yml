@@ -1,17 +1,23 @@
 # Release pipeline — runs on a vX.Y.Z tag (created by merging the release-please
-# Release PR). Two gated stages:
+# Release PR). Gated stages:
 #
-#   1. gate   — build the app + run every migration on a FRESH ephemeral SQLite
-#               DB (no Postgres, no real secrets — the bundled local-dev key) and
-#               assert /health serves the tag version. Nothing publishes if this
-#               fails.
-#   2. release — GoReleaser builds the signed, checksummed jenticctl + jentic
-#               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
-#               Homebrew cask. This is the install (see docs/releasing.md).
+#   1. gate          — build the app + run every migration on a FRESH ephemeral
+#                      SQLite DB (no Postgres, no real secrets — the bundled
+#                      local-dev key) and assert /health serves the tag version.
+#                      Nothing publishes if this fails.
+#   2. publish-image — build the `app` container image and push it to GHCR
+#                      (ghcr.io/<owner>/jentic-one-app). One image serves every
+#                      surface via JENTIC__APPS; this is the image self-hosters
+#                      pull (see deploy/README.md "Self-hosted"). needs: gate.
+#   3. release       — GoReleaser builds the signed, checksummed jenticctl +
+#                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
+#                      pushes the Homebrew cask. This is the install (see
+#                      docs/releasing.md). needs: gate.
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
 # needed — release-please used the App token to make the tag that started us).
+# GITHUB_TOKEN also has packages:write for the GHCR push (scoped per-job).
 name: release
 
 on:
@@ -110,6 +116,51 @@ jobs:
             cat app.log
             exit 1
           fi
+
+  publish-image:
+    name: Publish app image to GHCR
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push the app image to GHCR (ghcr.io/<owner>/jentic-one-app)
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One `app` image serves every surface — the surface set is chosen at
+      # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
+      # see deploy/README.md "Self-hosted"). A single published `app` image
+      # therefore covers the whole self-hosted app + broker topology.
+      #
+      # We build the same way `make build-app` does (build-base first, then the
+      # app image that FROMs the python-base:runtime / :builder stages by tag),
+      # then push to GHCR. github.repository_owner preserves case but GHCR repos
+      # must be lower-case, so lower-case the owner for the image name.
+      # Single-arch (amd64) for now; multi-arch is a documented follow-up
+      # (deploy/README.md "What's deferred").
+      - name: Build and push the app image
+        run: |
+          set -euo pipefail
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER}/jentic-one-app"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(git rev-parse --short HEAD)"
+          make build-base
+          docker build -f deploy/docker/app.Dockerfile \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${SHA}" \
+            -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${SHA}"
+          docker push "${IMAGE}:latest"
+          echo "Pushed ${IMAGE} (${VERSION}, ${SHA}, latest)"
 
   release:
     name: GoReleaser (signed CLI binaries)
