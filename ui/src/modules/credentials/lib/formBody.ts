@@ -120,6 +120,9 @@ export function buildCreateBody(
 				grant_type: state.grantType.trim() || undefined,
 				scopes: parseScopes(state.scopes) ?? undefined,
 			};
+		case CredentialType.NO_AUTH:
+			// No secret to carry — the API is called without authentication.
+			return { ...base, type };
 	}
 }
 
@@ -168,6 +171,9 @@ export function buildUpdateBody(
 				token_url: state.tokenUrl.trim() || undefined,
 				scopes: parseScopes(state.scopes),
 			};
+		case CredentialType.NO_AUTH:
+			// Nothing to rotate — only name/server-variable edits apply.
+			return { type, ...namePatch, ...svPatch };
 	}
 }
 

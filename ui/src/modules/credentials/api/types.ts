@@ -88,6 +88,7 @@ export const CREDENTIAL_TYPE_LABELS: Record<CredentialType, string> = {
 	[CredentialType.API_KEY]: 'API key',
 	[CredentialType.BASIC]: 'Basic auth',
 	[CredentialType.OAUTH2]: 'OAuth 2.0',
+	[CredentialType.NO_AUTH]: 'No authentication',
 };
 
 /** One-line description for each credential type, shown on the type cards. */
@@ -96,6 +97,7 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS: Record<CredentialType, string> = {
 	[CredentialType.API_KEY]: 'A key passed in a request header or query parameter.',
 	[CredentialType.BASIC]: 'A username and password pair.',
 	[CredentialType.OAUTH2]: 'Client credentials exchanged for access tokens.',
+	[CredentialType.NO_AUTH]: 'No credential — the API is called without authentication.',
 };
 
 /**

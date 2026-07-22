@@ -12,6 +12,9 @@
 export {
 	listAccessRequests,
 	getAccessRequest,
+	decideAccessRequest,
+	decideAllPending,
+	amendAccessRequest,
 	itemTargetLabel,
 	isSpecificResource,
 	isScopeGrant,
@@ -26,9 +29,26 @@ export {
 	type AccessRequestEvaluationCheck,
 	type AccessRequestPage,
 	type ListAccessRequestsParams,
+	type ItemDecision,
+	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
 } from '@/shared/lib/accessRequests';
+
+// Provisioning-plan classification/shape helpers — used by the fulfilment
+// wizard that decides `--provision` requests (create → amend → approve).
+export {
+	isProvisioningPlan,
+	planApiReference,
+	planAuthType,
+	planIsNoAuth,
+	planSteps,
+	findItem,
+	itemKey,
+	FULFILMENT_ITEM_TYPES,
+	type PlanApiReference,
+	type PlanStep,
+} from '@/shared/lib/provisioningPlan';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
 // picker and the actor (agent/service-account) platform-permission picker.

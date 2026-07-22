@@ -1,5 +1,5 @@
 import { motion, type Variants } from 'framer-motion';
-import { Check, Key, KeyRound, Shield, Ticket, User } from 'lucide-react';
+import { Ban, Check, Key, KeyRound, Shield, Ticket, User } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import {
 	CREDENTIAL_TYPE_DESCRIPTIONS,
@@ -28,6 +28,7 @@ const ICONS: Record<CredentialType, React.ReactNode> = {
 	[CredentialType.API_KEY]: <Key className="h-5 w-5" />,
 	[CredentialType.BASIC]: <User className="h-5 w-5" />,
 	[CredentialType.OAUTH2]: <Shield className="h-5 w-5" />,
+	[CredentialType.NO_AUTH]: <Ban className="h-5 w-5" />,
 };
 
 const GRID_VARIANTS: Variants = {
