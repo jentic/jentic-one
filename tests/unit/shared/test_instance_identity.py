@@ -13,7 +13,6 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from jentic_one import __version__
 from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.shared.config import AppConfig
@@ -50,7 +49,6 @@ def test_instance_endpoint_defaults_to_local_backend(sample_config_dict: dict[st
     assert data["backend"] == "local"
     assert data["canonical_base_url"] == "http://127.0.0.1:8000"
     assert data["host"] == "127.0.0.1:8000"
-    assert data["version"] == __version__
     # Telemetry has not resolved an id in this bare app, so it is null.
     assert data["instance_id"] is None
 

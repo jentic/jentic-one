@@ -2239,15 +2239,10 @@ components:
           - type: 'null'
           description: Opaque telemetry instance id if telemetry has resolved one, else null.
           title: Instance Id
-        version:
-          description: Running jentic-one version.
-          title: Version
-          type: string
       required:
       - backend
       - canonical_base_url
       - host
-      - version
       title: InstanceIdentityResponse
       type: object
     IntrospectRequest:
