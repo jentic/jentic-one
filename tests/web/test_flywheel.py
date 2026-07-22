@@ -166,107 +166,109 @@ def _list_names(client: TestClient, path: str, actor: _Actor) -> list[str]:
     return [row["name"] for row in resp.json().get("data", [])]
 
 
-class TestFlywheel:
-    """The admin-console flywheel, role-enforced against the real backend."""
+def test_admin_can_create_users_via_api(
+    client: TestClient, actors: dict[str, _Actor]
+) -> None:
+    """Admin invites a user through the real API and gets an invite token."""
+    admin = actors["admin"]
+    email = f"fw-invitee-{_suffix()}@test.local"
+    resp = client.post(
+        "/users",
+        headers=admin.headers,
+        json={"email": email, "first_name": "New", "last_name": "User", "permissions": []},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["invite_token"]
+    assert body["user"]["email"] == email
+    # The invitee can complete setup by redeeming (proves the link works).
+    redeem = client.post(
+        "/users:redeem-invite",
+        json={"invite_token": body["invite_token"], "password": "S3curePassw0rd!"},
+    )
+    assert redeem.status_code == 200, redeem.text
+    assert redeem.json()["access_token"]
+    # Cleanup the invitee.
+    client.delete(f"/users/{body['user']['id']}", headers=admin.headers)
 
-    def test_admin_can_create_users_via_api(
-        self, client: TestClient, actors: dict[str, _Actor]
-    ) -> None:
-        """Admin invites a user through the real API and gets an invite token."""
-        admin = actors["admin"]
-        email = f"fw-invitee-{_suffix()}@test.local"
-        resp = client.post(
-            "/users",
-            headers=admin.headers,
-            json={"email": email, "first_name": "New", "last_name": "User", "permissions": []},
-        )
-        assert resp.status_code == 201, resp.text
-        body = resp.json()
-        assert body["invite_token"]
-        assert body["user"]["email"] == email
-        # The invitee can complete setup by redeeming (proves the link works).
-        redeem = client.post(
-            "/users:redeem-invite",
-            json={"invite_token": body["invite_token"], "password": "S3curePassw0rd!"},
-        )
-        assert redeem.status_code == 200, redeem.text
-        assert redeem.json()["access_token"]
-        # Cleanup the invitee.
-        client.delete(f"/users/{body['user']['id']}", headers=admin.headers)
 
-    def test_non_admin_cannot_create_users(
-        self, client: TestClient, actors: dict[str, _Actor]
-    ) -> None:
-        resp = client.post(
-            "/users",
-            headers=actors["manager"].headers,
-            json={"email": f"x-{_suffix()}@test.local", "first_name": "X", "last_name": "Y"},
-        )
-        assert resp.status_code == 403, resp.text
+def test_non_admin_cannot_create_users(
+    client: TestClient, actors: dict[str, _Actor]
+) -> None:
+    resp = client.post(
+        "/users",
+        headers=actors["manager"].headers,
+        json={"email": f"x-{_suffix()}@test.local", "first_name": "X", "last_name": "Y"},
+    )
+    assert resp.status_code == 403, resp.text
 
-    def test_write_capable_actors_create_agents_reader_denied(
-        self, client: TestClient, actors: dict[str, _Actor]
-    ) -> None:
-        admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
-        admin_agent = f"fw-admin-agent-{_suffix()}"
-        mgr_agent = f"fw-mgr-agent-{_suffix()}"
 
-        r = client.post("/agents", headers=admin.headers, json={"name": admin_agent})
-        assert r.status_code == 201, r.text
-        r = client.post("/agents", headers=manager.headers, json={"name": mgr_agent})
-        assert r.status_code == 201, r.text
-        # Reader lacks agents:write.
-        r = client.post(
-            "/agents", headers=reader.headers, json={"name": f"fw-rdr-agent-{_suffix()}"}
-        )
-        assert r.status_code == 403, r.text
+def test_write_capable_actors_create_agents_reader_denied(
+    client: TestClient, actors: dict[str, _Actor]
+) -> None:
+    admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
+    admin_agent = f"fw-admin-agent-{_suffix()}"
+    mgr_agent = f"fw-mgr-agent-{_suffix()}"
 
-    def test_write_capable_actors_create_toolkits_reader_denied(
-        self, client: TestClient, actors: dict[str, _Actor]
-    ) -> None:
-        admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
-        r = client.post(
-            "/toolkits", headers=admin.headers, json={"name": f"fw-admin-tk-{_suffix()}"}
-        )
-        assert r.status_code == 201, r.text
-        r = client.post(
-            "/toolkits", headers=manager.headers, json={"name": f"fw-mgr-tk-{_suffix()}"}
-        )
-        assert r.status_code == 201, r.text
-        r = client.post(
-            "/toolkits", headers=reader.headers, json={"name": f"fw-rdr-tk-{_suffix()}"}
-        )
-        assert r.status_code == 403, r.text
+    r = client.post("/agents", headers=admin.headers, json={"name": admin_agent})
+    assert r.status_code == 201, r.text
+    r = client.post("/agents", headers=manager.headers, json={"name": mgr_agent})
+    assert r.status_code == 201, r.text
+    # Reader lacks agents:write.
+    r = client.post(
+        "/agents", headers=reader.headers, json={"name": f"fw-rdr-agent-{_suffix()}"}
+    )
+    assert r.status_code == 403, r.text
 
-    def test_reads_by_role_and_owner_scoping(
-        self, client: TestClient, actors: dict[str, _Actor]
-    ) -> None:
-        """Everyone with a read scope can list; owner-scoping means the admin
-        sees agents others created but a non-admin sees only their own."""
-        admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
-        admin_agent = f"fw-admin-agent-{_suffix()}"
-        mgr_agent = f"fw-mgr-agent-{_suffix()}"
-        assert (
-            client.post("/agents", headers=admin.headers, json={"name": admin_agent}).status_code
-            == 201
-        )
-        assert (
-            client.post("/agents", headers=manager.headers, json={"name": mgr_agent}).status_code
-            == 201
-        )
 
-        admin_view = _list_names(client, "/agents", admin)
-        manager_view = _list_names(client, "/agents", manager)
-        _list_names(client, "/agents", reader)  # reader can read (200), sees none of these
+def test_write_capable_actors_create_toolkits_reader_denied(
+    client: TestClient, actors: dict[str, _Actor]
+) -> None:
+    admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
+    r = client.post(
+        "/toolkits", headers=admin.headers, json={"name": f"fw-admin-tk-{_suffix()}"}
+    )
+    assert r.status_code == 201, r.text
+    r = client.post(
+        "/toolkits", headers=manager.headers, json={"name": f"fw-mgr-tk-{_suffix()}"}
+    )
+    assert r.status_code == 201, r.text
+    r = client.post(
+        "/toolkits", headers=reader.headers, json={"name": f"fw-rdr-tk-{_suffix()}"}
+    )
+    assert r.status_code == 403, r.text
 
-        # Admin sees both agents; manager sees its own but NOT the admin's.
-        assert admin_agent in admin_view
-        assert mgr_agent in admin_view
-        assert mgr_agent in manager_view
-        assert admin_agent not in manager_view
 
-    def test_admin_only_user_listing(self, client: TestClient, actors: dict[str, _Actor]) -> None:
-        admin, reader = actors["admin"], actors["reader"]
-        assert client.get("/users", headers=admin.headers).status_code == 200
-        # Reader has no users:read scope.
-        assert client.get("/users", headers=reader.headers).status_code == 403
+def test_reads_by_role_and_owner_scoping(
+    client: TestClient, actors: dict[str, _Actor]
+) -> None:
+    """Everyone with a read scope can list; owner-scoping means the admin
+    sees agents others created but a non-admin sees only their own."""
+    admin, manager, reader = actors["admin"], actors["manager"], actors["reader"]
+    admin_agent = f"fw-admin-agent-{_suffix()}"
+    mgr_agent = f"fw-mgr-agent-{_suffix()}"
+    assert (
+        client.post("/agents", headers=admin.headers, json={"name": admin_agent}).status_code
+        == 201
+    )
+    assert (
+        client.post("/agents", headers=manager.headers, json={"name": mgr_agent}).status_code
+        == 201
+    )
+
+    admin_view = _list_names(client, "/agents", admin)
+    manager_view = _list_names(client, "/agents", manager)
+    _list_names(client, "/agents", reader)  # reader can read (200), sees none of these
+
+    # Admin sees both agents; manager sees its own but NOT the admin's.
+    assert admin_agent in admin_view
+    assert mgr_agent in admin_view
+    assert mgr_agent in manager_view
+    assert admin_agent not in manager_view
+
+
+def test_admin_only_user_listing(client: TestClient, actors: dict[str, _Actor]) -> None:
+    admin, reader = actors["admin"], actors["reader"]
+    assert client.get("/users", headers=admin.headers).status_code == 200
+    # Reader has no users:read scope.
+    assert client.get("/users", headers=reader.headers).status_code == 403
