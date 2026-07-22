@@ -17,6 +17,13 @@ PATH_PARAM_RE = re.compile(r"\{([^}]+)\}")
 PERCENT_ENCODED_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 UNRESERVED_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
+# RFC 6570 expression operators. These are single-character prefixes on the
+# expression (e.g. ``{+var}``, ``{#var}``), never part of the variable name, so
+# they must be stripped before a templated token is reconciled against a declared
+# ``in: path`` parameter name. ``+`` (reserved expansion) additionally signals a
+# catch-all that matches across path separators.
+RFC6570_OPERATORS = frozenset("+#./;?&")
+
 
 @dataclass
 class ParsedServerURL:
@@ -222,13 +229,36 @@ def _safe_param_name(name: str) -> str:
 def _split_param_token(token: str) -> tuple[str, bool]:
     """Split a path-param token into ``(name, is_catch_all)``.
 
-    OpenAPI / RFC 6570 catch-all params use a ``{+param}`` prefix, which matches
-    across path separators (``.+``). A plain ``{param}`` matches a single segment
-    (``[^/]+``). The leading ``+`` is stripped from the returned name.
+    OpenAPI / RFC 6570 expressions may carry a single-character operator prefix
+    (``+#./;?&``) that is *not* part of the variable name — Google discovery-derived
+    specs template reserved-expansion params as ``{+property}`` while declaring the
+    parameter plainly as ``property``. Any such operator is stripped from the
+    returned name so the token reconciles with its declared ``in: path`` parameter.
+
+    The reserved-expansion operator (``+``) additionally marks a catch-all that
+    matches across path separators (``.+``); a plain ``{param}`` matches a single
+    segment (``[^/]+``).
     """
-    if token.startswith("+"):
-        return token[1:], True
-    return token, False
+    is_catch_all = token.startswith("+")
+    if token and token[0] in RFC6570_OPERATORS:
+        return token[1:], is_catch_all
+    return token, is_catch_all
+
+
+def reconcile_declared_path_params(path_template: str, declared_names: list[str]) -> list[str]:
+    """Return declared path-parameter names that map to a token in the template.
+
+    Reconciles OpenAPI ``in: path`` parameter *names* against the ``{...}`` tokens
+    in a path template, stripping RFC 6570 operators from the tokens first. This is
+    what keeps a declared ``property`` parameter from being silently dropped when
+    the path templates it as ``{+property}`` (RFC 6570 reserved expansion) — the
+    class of bug that made the GA4 Data API and other Google APIs uncallable (#759).
+
+    Order follows ``declared_names``; a declared name with no matching token is
+    omitted.
+    """
+    token_names = set(extract_param_names(path_template))
+    return [name for name in declared_names if name in token_names]
 
 
 def build_path_regex(path_template: str) -> re.Pattern[str]:
