@@ -12,10 +12,16 @@ from jentic_one.control.services.toolkits.errors import ToolkitServiceError
 from jentic_one.control.web.errors import (
     access_request_service_error_handler,
     credential_service_error_handler,
+    database_error_handler,
     toolkit_service_error_handler,
 )
 from jentic_one.control.web.routers import access_requests, credentials, toolkits
 from jentic_one.shared.context import Context
+from jentic_one.shared.db.errors import (
+    DatabaseDataError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
 from jentic_one.shared.web.app_factory import create_surface_app
 from jentic_one.shared.web.health import make_health_router
 
@@ -38,6 +44,9 @@ def get_exception_handlers() -> list[tuple[type[Exception], Any]]:
         (CredentialServiceError, credential_service_error_handler),
         (ToolkitServiceError, toolkit_service_error_handler),
         (AccessRequestServiceError, access_request_service_error_handler),
+        (DatabaseIntegrityError, database_error_handler),
+        (DatabaseDataError, database_error_handler),
+        (DatabaseUnavailableError, database_error_handler),
     ]
 
 

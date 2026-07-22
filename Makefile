@@ -5,7 +5,7 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -111,6 +111,13 @@ clean: ## Remove caches and build artifacts
 	find deploy/helm -name "*.tgz" -delete 2>/dev/null || true
 	find deploy/helm -name "Chart.lock" -delete 2>/dev/null || true
 
+JENTIC_CONFIG_FILE ?= config/local.yaml
+export JENTIC_CONFIG_FILE
+
+dev: ## One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app
+	@./scripts/dev-up.sh
+	@$(MAKE) --no-print-directory start-app
+
 start-fixtures: ## Start Docker database fixtures and apply migrations
 	@./scripts/setup.sh
 
@@ -119,9 +126,6 @@ stop-fixtures: ## Stop Docker database fixtures
 
 destroy-fixtures: ## Remove Docker database fixtures and volumes
 	docker compose -f docker/local-setup/docker-compose.yaml down -v
-
-JENTIC_CONFIG_FILE ?= config/local.yaml
-export JENTIC_CONFIG_FILE
 
 start-app: ## Start combined app (all surfaces)
 	uv run python -m jentic_one

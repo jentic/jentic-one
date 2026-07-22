@@ -152,6 +152,68 @@ def test_orphaned_agent_denied_unbound_toolkit(bound_orphan_client: TestClient) 
     assert resp.status_code == 404
 
 
+# --- Bound-agent WRITE access (issue #682) ---
+
+
+def test_bound_orphan_writer_can_bind_credential(bound_orphan_writer_client: TestClient) -> None:
+    """A bound agent with toolkits:write can write to its bound toolkit.
+
+    Reproduces #682: before the fix the write path scoped to owner-only, so a
+    bound-but-orphaned agent got 404 on a toolkit it is actively bound to.
+    """
+    resp = bound_orphan_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["toolkit_id"] == "tk_target"
+    assert body["credential_id"] == "cred_001"
+
+
+def test_bound_orphan_writer_can_create_key(bound_orphan_writer_client: TestClient) -> None:
+    """The same bound agent can issue a key on its bound toolkit."""
+    resp = bound_orphan_writer_client.post(
+        "/toolkits/tk_target/keys",
+        json={"label": "bound-orphan-key"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["api_key"].startswith("jntc_live_")
+
+
+def test_unbound_writer_denied_with_403_not_404(unbound_writer_client: TestClient) -> None:
+    """A writer that is neither owner, bound, nor admin gets 403 (not a misleading 404).
+
+    The toolkit exists (owned by another operator); reporting it as
+    ``404 toolkit_not_found`` hid an authorization outcome. Issue #682.
+    """
+    resp = unbound_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["type"] == "toolkit_access_denied"
+
+
+def test_unbound_writer_genuine_missing_toolkit_is_404(unbound_writer_client: TestClient) -> None:
+    """A truly non-existent toolkit id still returns 404, not 403."""
+    resp = unbound_writer_client.post(
+        "/toolkits/tk_does_not_exist/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_admin_writer_bypasses_scoping(admin_writer_client: TestClient) -> None:
+    """org:admin can still write to any toolkit regardless of ownership/binding."""
+    resp = admin_writer_client.post(
+        "/toolkits/tk_target/credentials",
+        json={"credential_id": "cred_001"},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["toolkit_id"] == "tk_target"
+
+
 # --- Keys ---
 
 

@@ -241,3 +241,54 @@ async def test_resolve_filters_by_name_and_version() -> None:
         result = await resolver.resolve(api=api, caller="caller_1")
 
     assert result.credential_id == "cred_match"
+
+
+@pytest.mark.asyncio
+async def test_resolve_matches_non_slug_stored_name() -> None:
+    """A credential stored with un-slugged name still matches the registry slug.
+
+    Regression for #656: casing/format differences between the stored identity
+    and the registry's normalized slug must not silently default-deny.
+    """
+    cred = _make_credential(api_vendor="stripe", api_name="Some_Name", api_version="v1")
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:token"
+    cred.token_value_credential = tvc
+
+    session = AsyncMock()
+    ctx = _make_ctx_with_control_session(session)
+    api = APIReference(vendor="stripe", name="some-name", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        resolver = CredentialResolver(ctx)
+        result = await resolver.resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_abc"
+    assert result.encrypted_secret == "enc:token"
+
+
+@pytest.mark.asyncio
+async def test_resolve_matches_when_only_casing_differs() -> None:
+    """A registry identity that differs only by casing resolves the credential."""
+    cred = _make_credential(api_vendor="stripe", api_name="Payments", api_version="v1")
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:token"
+    cred.token_value_credential = tvc
+
+    session = AsyncMock()
+    ctx = _make_ctx_with_control_session(session)
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        resolver = CredentialResolver(ctx)
+        result = await resolver.resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_abc"

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,7 +13,9 @@ import (
 // ConfigName is the CLI's own settings file under ~/.jentic.
 const ConfigName = "config.yaml"
 
-// BrokerConfig is the broker target section of config.yaml.
+// BrokerConfig is the broker target section of config.yaml. Scheme and Host are
+// kept separate: Scheme is "http" or "https"; Host is a bare host[:port] with no
+// scheme (the URL is assembled as scheme + "://" + host).
 type BrokerConfig struct {
 	Scheme string `yaml:"scheme"`
 	Host   string `yaml:"host"`
@@ -81,15 +84,31 @@ func (c *FileConfig) ResolvedBrokerScheme(flag string, flagChanged bool) string 
 	return DefaultBrokerScheme
 }
 
-// ResolvedBrokerHost resolves the (logged) broker target host.
+// ResolvedBrokerHost resolves the (logged) broker target host. The returned
+// value is always a bare host[:port] with no scheme: callers assemble the URL
+// as scheme + "://" + host (see ResolvedBrokerScheme). For tolerance, a leading
+// scheme in a hand-written config (or flag) is stripped so a value like
+// "https://127.0.0.1:8100" still yields a single well-formed URL rather than a
+// doubled scheme.
 func (c *FileConfig) ResolvedBrokerHost(flag string, flagChanged bool) string {
 	if flagChanged {
-		return flag
+		return stripScheme(flag)
 	}
 	if c.Broker.Host != "" {
-		return c.Broker.Host
+		return stripScheme(c.Broker.Host)
 	}
 	return DefaultBrokerHost
+}
+
+// stripScheme removes a leading "scheme://" prefix from a host value so the
+// broker.host field is tolerant of an accidentally-included scheme. The scheme
+// is carried separately in broker.scheme; keeping host bare avoids emitting a
+// doubled scheme (e.g. https://https://…) when the URL is assembled.
+func stripScheme(host string) string {
+	if i := strings.Index(host, "://"); i != -1 {
+		return host[i+len("://"):]
+	}
+	return host
 }
 
 // ResolvedProfileName resolves the profile to act on, in precedence order: the

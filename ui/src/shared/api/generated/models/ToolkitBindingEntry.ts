@@ -7,6 +7,7 @@
  */
 export type ToolkitBindingEntry = {
     bound_at: string;
+    name?: (string | null);
     toolkit_id: string;
 };
 
