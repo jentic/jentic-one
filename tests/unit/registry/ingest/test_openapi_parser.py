@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from jentic_one.registry.core.url_index import reconcile_declared_path_params
 from jentic_one.registry.ingest.parsers.openapi import OpenAPIOperationParser
 
 
@@ -131,6 +132,41 @@ def test_method_is_uppercased() -> None:
     }
     ops = parser.extract_operations(spec)
     assert ops[0]["method"] == "POST"
+
+
+def test_openapi_parser_preserves_rfc6570_reserved_expansion_params() -> None:
+    # Regression for #759: Google APIs (e.g. GA4 Data API) template path params
+    # with the RFC 6570 reserved-expansion operator, `/v1beta/{+property}:runReport`,
+    # while declaring the parameter plainly as `property`. The parser/reconciler must
+    # match the declared `in: path` parameter to the `{+property}` token so the param
+    # is retained rather than silently dropped (which makes the operation uncallable).
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/v1beta/{+property}:runReport": {
+                "post": {
+                    "operationId": "runReport",
+                    "summary": "Run a GA4 report",
+                    "parameters": [
+                        {"in": "path", "name": "property", "required": True},
+                    ],
+                },
+            },
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert len(ops) == 1
+    op = ops[0]
+
+    declared_path_params = [
+        p["name"]
+        for p in spec["paths"][op["path"]][op["method"].lower()]["parameters"]
+        if p.get("in") == "path"
+    ]
+    reconciled = reconcile_declared_path_params(op["path"], declared_path_params)
+    # The declared `property` parameter must be retained (matched to `{+property}`).
+    assert "property" in reconciled
 
 
 def test_empty_servers_when_none_defined() -> None:

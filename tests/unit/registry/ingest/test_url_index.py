@@ -7,6 +7,7 @@ from jentic_one.registry.core.url_index import (
     build_path_regex,
     count_segments,
     expand_server_variables,
+    extract_param_names,
     normalise_host,
     normalize_path,
     structural_regex,
@@ -133,3 +134,25 @@ def test_structural_regex_catch_all_differs_from_normal() -> None:
     catch_all = structural_regex("/x/{+y}")
     normal = structural_regex("/x/{y}")
     assert catch_all != normal
+
+
+def test_extract_param_names_strips_reserved_expansion_operator() -> None:
+    # RFC 6570 reserved-expansion path templates (Google APIs) declare a `property`
+    # parameter but template the token as `{+property}`. The extracted name must be
+    # the bare declared name so it reconciles with the OpenAPI `in: path` parameter.
+    assert extract_param_names("/v1beta/{+property}:runReport") == ["property"]
+
+
+def test_extract_param_names_strips_all_rfc6570_operators() -> None:
+    # RFC 6570 level-2/3 operators (`+#./;?&`) are all prefixes on the expression,
+    # never part of the variable name. Stripping them keeps the declared name intact.
+    template = "/{+reserved}/{#frag}/{.label}/{/seg}/{;matrix}/{?form}/{&cont}"
+    assert extract_param_names(template) == [
+        "reserved",
+        "frag",
+        "label",
+        "seg",
+        "matrix",
+        "form",
+        "cont",
+    ]
