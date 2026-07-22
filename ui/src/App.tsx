@@ -9,7 +9,7 @@ import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
 import { PlaceholderPage } from '@/shared/app/placeholders';
-import { sortedNavItems } from '@/shared/app/nav';
+import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
 // [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
 import { dashboardIndexRoute } from '@/modules/dashboard/routes';
 import { publicDocsRoutes } from '@/modules/docs/routes';
@@ -46,8 +46,21 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  * nav-slot path, suppressing that slot's placeholder), so it can ship its own
  * SPA (OSS shell + built-in routes + its extras) without editing this repo.
  * Omitted (the default) for the OSS binary.
+ *
+ * `extraNavItems` is the matching seam for NAVIGATION: a downstream build passes
+ * additional `NavItem`s (e.g. a permission-gated, `secondary` operator entry)
+ * that the navbars render alongside the built-in registry. They're stashed in
+ * the nav module's static registry (see `registerExtraNavItems`) so the
+ * deep-in-the-tree navbars can read them without prop-drilling. Omitted (the
+ * default) for the OSS binary.
  */
-export function App({ extraRoutes = [] }: { extraRoutes?: RouteObject[] } = {}) {
+export function App({
+	extraRoutes = [],
+	extraNavItems = [],
+}: { extraRoutes?: RouteObject[]; extraNavItems?: NavItem[] } = {}) {
+	// Register downstream nav entries once, before the navbars first read the
+	// registry. Idempotent on re-render (replaces with the same list).
+	registerExtraNavItems(extraNavItems);
 	return useRoutes(buildRoutes(extraRoutes));
 }
 
