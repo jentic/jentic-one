@@ -224,9 +224,7 @@ class RuleEvaluator:
                 effect=row[0],
                 methods=_normalize_methods(_coerce_json_list(row[1])),
                 path=_compile_path(row[2]),
-                operations=(
-                    tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None
-                ),
+                operations=(tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None),
             )
             for row in rows
         ]
