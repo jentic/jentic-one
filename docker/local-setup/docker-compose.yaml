@@ -6,7 +6,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      # Host-published port is overridable (e.g. to avoid a native Postgres on
+      # 5432); the in-container port stays 5432. Set JENTIC_PG_PORT to change it.
+      - "${JENTIC_PG_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./init-schemas.sql:/docker-entrypoint-initdb.d/init-schemas.sql:ro
