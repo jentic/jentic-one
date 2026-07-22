@@ -24,22 +24,61 @@
 #   JENTIC_NO_INSTALL   set to 1 to stop after installing the binaries, skipping
 #                       the automatic hand-off into `jenticctl install`
 #
-# This script is invoked via `curl ... | sh`, so it re-execs itself under bash
-# (below) to get predictable behavior across shells.
+# This script is invoked via `curl ... | sh`, so it re-execs itself under a
+# full (non-POSIX) bash (below) to get predictable behavior across shells.
+# Note: on macOS `/bin/sh` is bash in POSIX mode — BASH_VERSION is set but
+# bash-only syntax (process substitution, etc.) is disabled — so we detect that
+# via SHELLOPTS and re-exec too. When piped (`curl | sh`) there is no script
+# file at $0, so we spool the source to a temp file before re-execing.
 
 # --- bash re-exec guard -----------------------------------------------------
-# If we're not already running under bash (e.g. piped to `sh`/`dash`), re-exec
-# with bash so the rest of the script can rely on bash features.
-if [ -z "${BASH_VERSION:-}" ]; then
-  if command -v bash >/dev/null 2>&1; then
-    exec bash "$0" "$@"
-  else
+# _need_bash_reexec reports whether we must re-exec under a full bash: true when
+# we're not running bash at all, or when we're bash in POSIX mode (macOS
+# /bin/sh), where the bash features this script relies on are disabled.
+_need_bash_reexec() {
+  [ -z "${BASH_VERSION:-}" ] && return 0
+  case ":${SHELLOPTS:-}:" in
+    *:posix:*) return 0 ;;
+  esac
+  return 1
+}
+
+if _need_bash_reexec; then
+  if ! command -v bash >/dev/null 2>&1; then
     echo "error: bash is required to run this installer" >&2
     exit 1
   fi
+  # Guard against an accidental exec loop if detection ever misfires.
+  if [ -n "${JENTIC_INSTALL_REEXEC:-}" ]; then
+    echo "error: failed to re-exec the installer under a non-POSIX bash" >&2
+    exit 1
+  fi
+  export JENTIC_INSTALL_REEXEC=1
+  # Re-exec the on-disk script only when $0 is a regular file that is actually
+  # this installer. We identify it by a stable marker string (below). This
+  # avoids the trap where a piped `sh` sets $0 to the shell binary itself (a
+  # regular file), which would otherwise make us exec `bash <shell>`.
+  if [ -f "$0" ] && grep -q "JENTIC_INSTALLER_SELF_ID" "$0" 2>/dev/null; then
+    exec bash "$0" "$@"
+  fi
+  # Piped invocation (curl ... | sh): the body arrived on stdin and $0 is the
+  # shell, not this script — spool stdin to a temp file and run bash on it. Run
+  # (not exec) so we can clean up the temp file; propagate bash's exit code.
+  _reexec_tmp="$(mktemp "${TMPDIR:-/tmp}/jentic-install.XXXXXX")" || {
+    echo "error: could not create a temp file to re-exec the installer" >&2
+    exit 1
+  }
+  cat > "$_reexec_tmp"
+  bash "$_reexec_tmp" "$@"
+  _reexec_rc=$?
+  rm -f "$_reexec_tmp"
+  exit "$_reexec_rc"
 fi
 
 set -euo pipefail
+
+# JENTIC_INSTALLER_SELF_ID: stable marker used by the re-exec guard above to
+# recognize this script on disk. Do not remove.
 
 # --- configuration ----------------------------------------------------------
 JENTIC_REPO="${JENTIC_REPO:-jentic/jentic-one}"
@@ -658,7 +697,9 @@ main() {
 
 # Run the installer unless the script is being sourced (e.g. by a test harness
 # that exercises individual functions like ensure_path_in_rc). When sourced,
-# BASH_SOURCE[0] differs from $0, so we define the functions and stop.
-if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+# BASH_SOURCE[0] differs from $0, so we define the functions and stop. The
+# `:-` default keeps this safe under `set -u` when run via stdin (no
+# BASH_SOURCE), in which case we treat it as a direct run.
+if [ "${BASH_SOURCE[0]:-$0}" = "${0}" ]; then
   main "$@"
 fi
