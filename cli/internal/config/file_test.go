@@ -68,6 +68,44 @@ func TestResolvedDefaults(t *testing.T) {
 	}
 }
 
+// TestResolvedBrokerURL guards against issue #657: broker.host is a bare
+// host[:port] and the scheme is carried separately, so assembling
+// scheme + "://" + host must yield a single well-formed URL — never a doubled
+// scheme.
+func TestResolvedBrokerURL(t *testing.T) {
+	brokerURL := func(c *FileConfig) string {
+		return c.ResolvedBrokerScheme("", false) + "://" + c.ResolvedBrokerHost("", false)
+	}
+
+	t.Run("defaults resolve to a single scheme", func(t *testing.T) {
+		cfg := &FileConfig{}
+		if got, want := brokerURL(cfg), "https://127.0.0.1:8100"; got != want {
+			t.Errorf("default broker URL = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("bare host with scheme:http", func(t *testing.T) {
+		cfg := &FileConfig{Broker: BrokerConfig{Scheme: "http", Host: "127.0.0.1:8100"}}
+		if got, want := brokerURL(cfg), "http://127.0.0.1:8100"; got != want {
+			t.Errorf("broker URL = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("host with accidental scheme is stripped", func(t *testing.T) {
+		cfg := &FileConfig{Broker: BrokerConfig{Scheme: "https", Host: "https://127.0.0.1:8100"}}
+		if got, want := brokerURL(cfg), "https://127.0.0.1:8100"; got != want {
+			t.Errorf("broker URL = %q, want single scheme %q", got, want)
+		}
+	})
+
+	t.Run("flag host with accidental scheme is stripped", func(t *testing.T) {
+		cfg := &FileConfig{}
+		if got := cfg.ResolvedBrokerHost("http://example:9000", true); got != "example:9000" {
+			t.Errorf("ResolvedBrokerHost = %q, want scheme stripped", got)
+		}
+	})
+}
+
 func TestResolvedPrecedence(t *testing.T) {
 	cfg := &FileConfig{
 		Broker: BrokerConfig{Scheme: "http", Host: "cfg-host"},

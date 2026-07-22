@@ -30,7 +30,10 @@ from jentic_one.shared.web.app_factory import SURFACE_MODULES, create_combined_a
 from jentic_one.wiring import install_broker_registry_resolver as _install_broker_registry_resolver
 
 SURFACE_DB_DEPS: dict[str, set[str]] = {
-    "auth": {"admin"},
+    # Auth reaches the control DB read-only to resolve toolkit-binding names for
+    # the /me whoami response (issue #686): the binding row lives in the admin DB
+    # but the toolkit name lives in the control DB.
+    "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
 }
 

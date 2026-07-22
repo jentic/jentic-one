@@ -274,9 +274,14 @@ organized into sections so other settings can be added over time.
 base_url: http://127.0.0.1:8000   # control plane (auth surface) for register/tokens
 default_profile: default          # profile used when --profile is omitted
 broker:
-  scheme: http
-  host: localhost:4000
+  scheme: http                    # http or https
+  host: localhost:4000            # bare host[:port], no scheme (scheme lives above)
 ```
+
+The broker target is split into `broker.scheme` and `broker.host`: `host` is a
+bare `host[:port]` with no scheme, and the URL is assembled as
+`scheme://host`. A leading scheme in `host` is stripped for tolerance, but the
+canonical form keeps it bare.
 
 Precedence (lowest to highest): built-in defaults -> `config.yaml` -> explicit
 command-line flags.

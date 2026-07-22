@@ -14,6 +14,7 @@ from sqlalchemy.exc import (
     DBAPIError,
     DisconnectionError,
     IntegrityError,
+    InvalidRequestError,
     OperationalError,
 )
 from sqlalchemy.ext.asyncio import (
@@ -31,6 +32,7 @@ from jentic_one.shared.db.backends import (
 )
 from jentic_one.shared.db.backends.base import DatabaseBackend
 from jentic_one.shared.db.errors import (
+    DatabaseConsistencyError,
     DatabaseDataError,
     DatabaseIntegrityError,
     DatabaseUnavailableError,
@@ -160,6 +162,13 @@ class DatabaseSession:
             except (OperationalError, DisconnectionError) as exc:
                 await sess.rollback()
                 raise DatabaseUnavailableError(str(exc)) from exc
+            except InvalidRequestError as exc:
+                # Belt-and-braces for an accidental async lazy load (MissingGreenlet
+                # is an InvalidRequestError) on a stale/detached ORM instance: map it
+                # to a known domain error so it surfaces as a logged 500 with a
+                # generic client message instead of an opaque traceback. See #642.
+                await sess.rollback()
+                raise DatabaseConsistencyError(str(exc)) from exc
             except DBAPIError as exc:
                 # A value that does not fit its column (e.g. a string longer
                 # than the VARCHAR length) is a client-fixable input problem,

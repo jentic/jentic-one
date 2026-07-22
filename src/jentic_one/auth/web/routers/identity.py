@@ -98,7 +98,8 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         parent_agent_id=agent.parent_agent_id,
         approved_by=agent.approved_by,
         toolkit_bindings=[
-            ToolkitBindingEntry(toolkit_id=tb.toolkit_id, bound_at=tb.bound_at) for tb in toolkits
+            ToolkitBindingEntry(toolkit_id=tb.toolkit_id, name=tb.name, bound_at=tb.bound_at)
+            for tb in toolkits
         ],
     )
 

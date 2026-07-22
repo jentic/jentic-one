@@ -28,3 +28,18 @@ class DatabaseDataError(Exception):
     def __init__(self, detail: str = "") -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class DatabaseConsistencyError(Exception):
+    """Raised when an ORM operation hits an invalid-state/consistency failure.
+
+    Wraps ``sqlalchemy.exc.InvalidRequestError`` (the parent of
+    ``MissingGreenlet``) so that an accidental async lazy load on a stale or
+    detached instance surfaces as a known, mappable domain error with a generic
+    client message rather than an opaque unhandled traceback. The raw SQLAlchemy
+    message is preserved in ``detail`` for server-side diagnosis. See #642.
+    """
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__(detail)
+        self.detail = detail

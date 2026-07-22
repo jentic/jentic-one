@@ -22,6 +22,9 @@ _IDENTITY = Identity(sub="usr_test", email="test@example.com")
 def _make_ctx() -> MagicMock:
     ctx = MagicMock()
     mock_session = AsyncMock()
+    # expire_all is a synchronous AsyncSession method; keep it sync so the mock
+    # doesn't emit "coroutine never awaited" warnings when promote calls it.
+    mock_session.expire_all = MagicMock()
     ctx.registry_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)
     ctx.registry_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
     ctx.registry_db.session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -109,6 +112,11 @@ async def test_promote_draft_succeeds() -> None:
         # Second call promotes the draft
         assert calls[1].args[1] == revision.id
         assert calls[1].args[2] == "published"
+
+        # The stale, bulk-updated identity map is expired before the view is
+        # re-read so _fetch_api_view can't trigger a lazy load. See #642.
+        session = ctx.registry_db.transaction.return_value.__aenter__.return_value
+        session.expire_all.assert_called_once()
 
 
 @pytest.mark.asyncio

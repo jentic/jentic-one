@@ -183,6 +183,57 @@ def bound_orphan_client(
         yield tc
 
 
+# A bound orphan that ALSO holds toolkits:write (issue #682, write path): it owns
+# nothing but is bound to tk_target, so a write to that toolkit must succeed —
+# not 404 as owner-only scoping produced before the fix.
+BOUND_ORPHAN_WRITER_IDENTITY = Identity(
+    sub=FILER_SUB,
+    email="orphan-writer@test.local",
+    permissions=["toolkits:write", "owner:toolkits:read", "owner:credentials:read"],
+    actor_type=ActorType.AGENT,
+    parent_actor_id=None,
+)
+
+# A writer that neither owns nor is bound to tk_target and is not org:admin. A
+# write to tk_target (which exists, owned by OWNER_SUB) must be 403 — naming the
+# real requirement — not a misleading 404 (issue #682).
+UNBOUND_WRITER_IDENTITY = Identity(
+    sub="usr_webtest_unbound_writer",
+    email="unbound-writer@test.local",
+    permissions=["toolkits:write"],
+)
+
+
+@pytest.fixture()
+def bound_orphan_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as a bound-but-orphaned agent that holds toolkits:write."""
+    app = _build_app(web_context, BOUND_ORPHAN_WRITER_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture()
+def unbound_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient holding toolkits:write but neither owning nor bound to tk_target."""
+    app = _build_app(web_context, UNBOUND_WRITER_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture()
+def admin_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as org:admin against the seed_binding toolkit (tk_target)."""
+    app = _build_app(web_context, ADMIN_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
 @pytest.fixture()
 def filer_client(
     web_context: Context, seed_binding: None, clean_access_requests: None

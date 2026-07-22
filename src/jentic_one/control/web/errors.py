@@ -33,6 +33,7 @@ from jentic_one.control.services.toolkits.errors import (
     BindingNotFoundError,
     DuplicateBindingError,
     KeyAlreadyRevokedError,
+    ToolkitAccessDeniedError,
     ToolkitKeyNotFoundError,
     ToolkitNotFoundError,
 )
@@ -54,6 +55,7 @@ credential_service_error_handler = make_service_error_handler(_ERROR_MAP)
 
 _TOOLKIT_ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     ToolkitNotFoundError: (404, "toolkit_not_found"),
+    ToolkitAccessDeniedError: (403, "toolkit_access_denied"),
     ToolkitKeyNotFoundError: (404, "toolkit_key_not_found"),
     BindingNotFoundError: (404, "binding_not_found"),
     DuplicateBindingError: (409, "duplicate_binding"),
