@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -24,6 +25,11 @@ const shortLen = 7
 // returning the short SHA. A token (GitHub PAT) is sent as an HTTP Basic auth
 // header so private or access-restricted repositories resolve; it mirrors
 // the auth scheme used by tools/install.sh. An empty token queries anonymously.
+//
+// Releases are tagged with a `v` prefix (refs/tags/vX.Y.Z), but the installed
+// build tracks a bare-semver ref (e.g. "0.15.0") stamped from the version. So
+// for a bare-semver ref we also try the fully-qualified release tag; the first
+// candidate that resolves wins. See candidateRefs.
 func RemoteCommit(ctx context.Context, repo, ref, token string) (string, error) {
 	if repo == "" {
 		return "", errors.New("no repository to check")
@@ -35,8 +41,45 @@ func RemoteCommit(ctx context.Context, repo, ref, token string) (string, error) 
 		return "", errors.New("`git` is required to check for updates but was not found on PATH")
 	}
 
+	var lastErr error
+	for _, cand := range candidateRefs(ref) {
+		sha, err := lsRemote(ctx, repo, cand, token)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if sha != "" {
+			return short(sha), nil
+		}
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("ref %q not found in %s", ref, repo)
+}
+
+// candidateRefs returns the refs to try, in order, when resolving ref. It always
+// starts with ref as-given (covering branches like "main", full SHAs, and
+// already-`v`-prefixed tags). When ref is a bare semver (starts with a digit and
+// contains a dot), it also appends the fully-qualified release tag
+// "refs/tags/v<ref>" — fully-qualified so `git ls-remote` matches only the
+// canonical release tag and not a similarly-suffixed one (e.g. cli/v0.15.0).
+func candidateRefs(ref string) []string {
+	cands := []string{ref}
+	if bareSemver.MatchString(ref) {
+		cands = append(cands, "refs/tags/v"+ref)
+	}
+	return cands
+}
+
+// bareSemver matches a version without the `v` prefix, e.g. "0.15.0".
+var bareSemver = regexp.MustCompile(`^\d+\.\d+`)
+
+// lsRemote runs `git ls-remote <url> <ref>` and returns the first matching SHA
+// (empty if the ref does not resolve). credential.helper= disables any inherited
+// helper so git can't prompt.
+func lsRemote(ctx context.Context, repo, ref, token string) (string, error) {
 	url := "https://github.com/" + repo + ".git"
-	// credential.helper= disables any inherited helper so git can't prompt.
 	args := append([]string{"-c", "credential.helper="}, authArgs(token)...)
 	args = append(args, "ls-remote", url, ref)
 
@@ -48,12 +91,7 @@ func RemoteCommit(ctx context.Context, repo, ref, token string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("git ls-remote failed (check the ref %q and, for a private repo, GITHUB_TOKEN): %w", ref, err)
 	}
-
-	sha := firstSHA(string(out))
-	if sha == "" {
-		return "", fmt.Errorf("ref %q not found in %s", ref, repo)
-	}
-	return short(sha), nil
+	return firstSHA(string(out)), nil
 }
 
 // authArgs returns the `git -c http.extraheader=...` prefix carrying a Basic
