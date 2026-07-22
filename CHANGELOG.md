@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.15.1](https://github.com/jentic/jentic-one/compare/v0.15.0...v0.15.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **broker:** parse permission-rule JSON columns on the SQLite read path ([#756](https://github.com/jentic/jentic-one/issues/756)) ([74f1a5e](https://github.com/jentic/jentic-one/commit/74f1a5e4c6fab5fa7e4bfd3614776892634d18c0))
+* **build:** exclude generated src/jentic_one/static from Docker context ([#729](https://github.com/jentic/jentic-one/issues/729)) ([83403a1](https://github.com/jentic/jentic-one/commit/83403a17f4d50dc15f093a9aea7b3f4545b53494)), closes [#654](https://github.com/jentic/jentic-one/issues/654)
+* **control:** widen credentials.api_version and map DB data errors to 4xx ([#722](https://github.com/jentic/jentic-one/issues/722)) ([b0da8d0](https://github.com/jentic/jentic-one/commit/b0da8d0dea0be6a5388a293bf3171aea1ec92fa8)), closes [#690](https://github.com/jentic/jentic-one/issues/690)
+* **install:** reliably add ~/.jentic/bin to PATH ([#730](https://github.com/jentic/jentic-one/issues/730)) ([97e0b8f](https://github.com/jentic/jentic-one/commit/97e0b8ff14cf71b0a1741cc4fc8e49bb49e5725b))
+* **registry,control,broker:** stop stranded credentials colliding on API re-import ([#643](https://github.com/jentic/jentic-one/issues/643)) ([#728](https://github.com/jentic/jentic-one/issues/728)) ([16287d5](https://github.com/jentic/jentic-one/commit/16287d51b3ba00537c2e78cbd815b54ac5f3cba0))
+* **ui:** use a dedicated muted token for input placeholder text ([#736](https://github.com/jentic/jentic-one/issues/736)) ([4d79812](https://github.com/jentic/jentic-one/commit/4d7981288c63826de2fdd6847e62ab1ff1335d8b)), closes [#673](https://github.com/jentic/jentic-one/issues/673)
+
 ## [0.15.0](https://github.com/jentic/jentic-one/compare/v0.14.3...v0.15.0) (2026-07-21)
 
 
