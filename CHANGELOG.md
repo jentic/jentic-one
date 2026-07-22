@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.3](https://github.com/jentic/jentic-one/compare/v0.15.2...v0.15.3) (2026-07-22)
+
+
+### Bug Fixes
+
+* **install.sh:** re-exec under full bash from POSIX-mode /bin/sh ([#764](https://github.com/jentic/jentic-one/issues/764)) ([b98f205](https://github.com/jentic/jentic-one/commit/b98f20532b5488dabaefd9227d13fef8bf4e4d03))
+* **registry:** preserve path params for RFC 6570 reserved-expansion paths (e.g. {+property}) ([#759](https://github.com/jentic/jentic-one/issues/759)) ([#762](https://github.com/jentic/jentic-one/issues/762)) ([fb03462](https://github.com/jentic/jentic-one/commit/fb034626bbade95b96a18fa7b0db255bfe83be98))
+
 ## [0.15.2](https://github.com/jentic/jentic-one/compare/v0.15.1...v0.15.2) (2026-07-22)
 
 
