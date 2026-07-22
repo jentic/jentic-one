@@ -585,17 +585,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Run the harness under bash (direct, no re-exec) and under dash + sh
-      # (Ubuntu's /bin/sh is dash), which exercises the POSIX re-exec path that
-      # the macOS `curl ... | sh` failure was about.
-      - name: Run installer tests (bash)
+      # The harness itself is a bash script; it internally drives the installer
+      # through sh/dash/bash (via run_installer_via) to exercise the POSIX
+      # re-exec path that the macOS `curl ... | sh` failure was about. Ubuntu's
+      # /bin/sh is dash, so the sh-invocation cases run for real here.
+      - name: Run installer tests
         run: bash tests/tools/install_test.sh
-
-      - name: Run installer tests (dash)
-        run: dash tests/tools/install_test.sh
-
-      - name: Run installer tests (sh)
-        run: sh tests/tools/install_test.sh
 
   ci-status:
     name: CI status

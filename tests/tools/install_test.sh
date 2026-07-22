@@ -16,7 +16,10 @@
 #
 # Usage:
 #   bash tests/tools/install_test.sh
-#   sh   tests/tools/install_test.sh     # exercises the re-exec path itself
+#
+# Run it with bash (its shebang). It internally drives the installer through
+# sh/dash/bash to exercise every re-exec path, so there's no need to invoke the
+# harness itself under other shells (it uses bash-only features like pipefail).
 
 set -euo pipefail
 
@@ -195,10 +198,14 @@ run_installer_via() { # <shell> -> captures combined output; expects non-zero (p
   local shell_bin="$1" out rc bindir
   bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-bin.XXXXXX")"
   make_min_path "$bindir"
-  # Pipe the script into the shell (mirrors `curl ... | sh`). JENTIC_NO_INSTALL
-  # is irrelevant here (we never get that far) but set for belt-and-braces.
+  # Pipe the script into the shell (mirrors `curl ... | sh`). The piped re-exec
+  # can't re-read stdin, so point JENTIC_INSTALL_SELF at the local installer so
+  # the guard re-runs THIS copy under bash (no network fetch) — exactly the
+  # code path we want to test. JENTIC_NO_INSTALL is belt-and-braces (we never
+  # get that far; the run stops at `need git`).
   set +e
-  out="$(PATH="$bindir" JENTIC_NO_INSTALL=1 "$shell_bin" < "$INSTALL_SH" 2>&1)"
+  out="$(PATH="$bindir" JENTIC_NO_INSTALL=1 JENTIC_INSTALL_SELF="$INSTALL_SH" \
+    "$shell_bin" < "$INSTALL_SH" 2>&1)"
   rc=$?
   set -e
   rm -rf "$bindir"
@@ -226,6 +233,23 @@ if command -v bash >/dev/null 2>&1; then
   out="$(run_installer_via "$(command -v bash)" || true)"
   assert_not_contains "curl|sh via bash: no bash syntax error" "$out" "syntax error"
   assert_contains "curl|sh via bash: reaches prereq check" "$out" "required command not found: git"
+fi
+
+# --- re-fetch fallback: no JENTIC_INSTALL_SELF and no curl -> clean error ---
+# The piped re-exec can't re-read stdin, so without a local self-copy it must
+# re-fetch via curl. Prove the failure is a clear, actionable message (not a
+# hang or a bash syntax error) when curl is absent. Use the same minimal PATH
+# (which has no curl) and DON'T set JENTIC_INSTALL_SELF.
+if [ -x /bin/sh ]; then
+  bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-bin.XXXXXX")"
+  make_min_path "$bindir"
+  set +e
+  out="$(PATH="$bindir" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  rm -rf "$bindir"
+  assert_contains "piped re-exec without curl: clear error, no hang" \
+    "$out" "curl is required to bootstrap"
+  assert_not_contains "piped re-exec without curl: no bash syntax error" "$out" "syntax error"
 fi
 
 # ---------------------------------------------------------------------------

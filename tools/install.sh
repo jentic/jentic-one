@@ -29,7 +29,8 @@
 # Note: on macOS `/bin/sh` is bash in POSIX mode — BASH_VERSION is set but
 # bash-only syntax (process substitution, etc.) is disabled — so we detect that
 # via SHELLOPTS and re-exec too. When piped (`curl | sh`) there is no script
-# file at $0, so we spool the source to a temp file before re-execing.
+# file at $0 and stdin can't be re-read (a POSIX sh consumes it up front), so we
+# re-fetch this script from its canonical raw URL and run that under bash.
 
 # --- bash re-exec guard -----------------------------------------------------
 # _need_bash_reexec reports whether we must re-exec under a full bash: true when
@@ -62,13 +63,42 @@ if _need_bash_reexec; then
     exec bash "$0" "$@"
   fi
   # Piped invocation (curl ... | sh): the body arrived on stdin and $0 is the
-  # shell, not this script — spool stdin to a temp file and run bash on it. Run
-  # (not exec) so we can clean up the temp file; propagate bash's exit code.
+  # shell, not this script. We cannot re-read stdin — a POSIX sh (dash) consumes
+  # the whole script up front, so `cat` would capture nothing. Instead we obtain
+  # a full copy under bash and run that:
+  #   * JENTIC_INSTALL_SELF=/path  -> use that local file (used by tests, and to
+  #     re-run a local copy without a network round-trip);
+  #   * otherwise re-fetch tools/install.sh from the canonical raw URL for the
+  #     configured repo/ref (the same source curl fetched it from), honouring
+  #     GITHUB_TOKEN for private forks (mirrors `jenticctl update`).
+  _reexec_repo="${JENTIC_REPO:-jentic/jentic-one}"
+  _reexec_ref="${JENTIC_REF:-main}"
   _reexec_tmp="$(mktemp "${TMPDIR:-/tmp}/jentic-install.XXXXXX")" || {
     echo "error: could not create a temp file to re-exec the installer" >&2
     exit 1
   }
-  cat > "$_reexec_tmp"
+  if [ -n "${JENTIC_INSTALL_SELF:-}" ] && [ -r "${JENTIC_INSTALL_SELF}" ]; then
+    cat "${JENTIC_INSTALL_SELF}" > "$_reexec_tmp"
+  else
+    if ! command -v curl >/dev/null 2>&1; then
+      rm -f "$_reexec_tmp"
+      echo "error: curl is required to bootstrap the installer under bash" >&2
+      exit 1
+    fi
+    _reexec_url="https://raw.githubusercontent.com/${_reexec_repo}/${_reexec_ref}/tools/install.sh"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      _reexec_auth="Authorization: Bearer ${GITHUB_TOKEN}"
+    else
+      _reexec_auth=""
+    fi
+    if ! curl -fsSL ${_reexec_auth:+-H "$_reexec_auth"} "$_reexec_url" -o "$_reexec_tmp"; then
+      rm -f "$_reexec_tmp"
+      echo "error: failed to fetch the installer from ${_reexec_url} to re-exec under bash" >&2
+      echo "       (for a private fork set GITHUB_TOKEN, or run the script from a checkout)" >&2
+      exit 1
+    fi
+  fi
+  # Run (not exec) so we can clean up the temp file; propagate bash's exit code.
   bash "$_reexec_tmp" "$@"
   _reexec_rc=$?
   rm -f "$_reexec_tmp"
