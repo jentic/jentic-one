@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.2](https://github.com/jentic/jentic-one/compare/v0.15.1...v0.15.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **update:** resolve v-prefixed release tags for bare-semver refs ([#760](https://github.com/jentic/jentic-one/issues/760)) ([107d530](https://github.com/jentic/jentic-one/commit/107d530614be07dfc22e5c5a537b83cdeb4d1e35))
+
 ## [0.15.1](https://github.com/jentic/jentic-one/compare/v0.15.0...v0.15.1) (2026-07-22)
 
 
