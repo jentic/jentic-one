@@ -1,11 +1,7 @@
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, userEvent } from '@/__tests__/test-utils';
-import {
-	PermissionRuleEditor,
-	isEmptyAllowRule,
-} from '@/modules/toolkits/components/PermissionRuleEditor';
-import type { PermissionRuleInput } from '@/modules/toolkits/api/types';
+import { PermissionRuleEditor, isEmptyAllowRule, type PermissionRuleInput } from '@/shared/ui';
 
 type Effect = PermissionRuleInput['effect'];
 const ALLOW = 'allow' as Effect;

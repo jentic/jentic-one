@@ -4,7 +4,7 @@ import {
 	type Credential,
 	type CredentialCreateRequest,
 	type CredentialUpdateRequest,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 import type { ApiResponse, CatalogEntryResponse } from '@/shared/api';
 
 /**

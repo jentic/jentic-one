@@ -7,7 +7,7 @@
 // `pipedream` provider with `configured === true`. There is no build-time
 // feature flag — runtime config (set via `admin config providers`) decides.
 import type { ProviderDiscoveryEntryResponse } from '@/shared/api';
-import { CredentialType } from '@/modules/credentials/api';
+import { CredentialType } from '@/shared/credentials/api';
 
 /** The credential provider the platform uses to gather/refresh an OAuth2 grant. */
 export type CredentialProviderId = 'static' | 'direct_oauth2' | 'pipedream';

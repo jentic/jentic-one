@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ProviderDiscoveryEntryResponse } from '@/shared/api';
-import { CredentialType } from '@/modules/credentials/api';
+import { CredentialType } from '@/shared/credentials/api';
 import {
 	isManagedProvider,
 	managedProviderUnavailableMessage,
 	providerOptions,
-} from '@/modules/credentials/config';
+} from '@/shared/credentials/config';
 
 /** Build a minimal discovery entry for the given id + configured state. */
 function entry(id: string, configured: boolean, managed = true): ProviderDiscoveryEntryResponse {

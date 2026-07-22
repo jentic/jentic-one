@@ -1,10 +1,8 @@
 import { AlertTriangle, Plus, ShieldCheck, Trash2 } from 'lucide-react';
-import { Button, Input, Select } from '@/shared/ui';
-import {
-	PERMISSION_EFFECTS,
-	type PermissionEffect,
-	type PermissionRuleInput,
-} from '@/modules/toolkits/api/types';
+import { Button } from '@/shared/ui/Button';
+import { Input } from '@/shared/ui/Input';
+import { Select } from '@/shared/ui/Select';
+import type { PermissionRuleSchema } from '@/shared/api';
 
 /**
  * Editor for the agent-defined permission rules on a toolkit↔credential
@@ -13,9 +11,22 @@ import {
  * backend and are NOT edited here (the caller filters `_system` rules out
  * before passing them in).
  *
- * In-module replacement for mini's shared `PermissionRuleEditor`, retyped
- * against the real `PermissionRuleSchema` contract.
+ * Lives in `shared/ui` (not a feature module) so every surface that authors
+ * binding rules can reuse it — the toolkit detail page and the provisioning-plan
+ * fulfilment wizard both compose it.
  */
+
+/** Write shape for a permission rule (allow/deny + methods/path/operations). */
+export type PermissionRuleInput = PermissionRuleSchema;
+
+/**
+ * Rule effect values, as plain string literals matching the backend enum
+ * (`allow` / `deny`). Defined here so views/editors don't import the generated
+ * enum *value* (which the layering ESLint rule forbids outside `api/client.ts`).
+ */
+export const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
+export type PermissionEffect = (typeof PERMISSION_EFFECTS)[number];
+
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
 /**

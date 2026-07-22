@@ -5,7 +5,7 @@ import {
 	CREDENTIAL_TYPE_DESCRIPTIONS,
 	CREDENTIAL_TYPE_LABELS,
 	CredentialType,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 
 /**
  * Radio-card picker for the credential type, modelled on jentic-webapp's

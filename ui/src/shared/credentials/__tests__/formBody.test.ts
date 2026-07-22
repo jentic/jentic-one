@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CredentialType } from '@/modules/credentials/api';
-import { EMPTY_FORM } from '@/modules/credentials/components/CredentialTypeFields';
+import { CredentialType } from '@/shared/credentials/api';
+import { EMPTY_FORM } from '@/shared/credentials/components/CredentialTypeFields';
 import {
 	buildCreateBody,
 	buildRuntimeConfig,
@@ -12,7 +12,7 @@ import {
 	seedServerVars,
 	validateCreate,
 	validateServerVars,
-} from '@/modules/credentials/lib/formBody';
+} from '@/shared/credentials/lib/formBody';
 
 describe('buildCreateBody', () => {
 	it('builds a bearer_token body', () => {

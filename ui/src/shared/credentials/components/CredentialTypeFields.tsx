@@ -4,10 +4,10 @@ import {
 	CredentialType,
 	KEY_LOCATIONS,
 	type ProviderDiscoveryEntryResponse,
-} from '@/modules/credentials/api';
-import { isManagedProvider, providerOptions } from '@/modules/credentials/config';
+} from '@/shared/credentials/api';
+import { isManagedProvider, providerOptions } from '@/shared/credentials/config';
 import type { EnhancedScope } from '@/shared/lib';
-import type { OAuth2FlowDef } from '@/modules/credentials/lib/schemes';
+import type { OAuth2FlowDef } from '@/shared/credentials/lib/schemes';
 
 /**
  * The full create form state — a superset of every per-type field. Only the

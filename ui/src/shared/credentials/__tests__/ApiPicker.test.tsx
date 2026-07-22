@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders, screen, userEvent, waitFor } from '@/__tests__/test-utils';
-import { ApiPicker } from '@/modules/credentials/components/ApiPicker';
+import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import {
 	makeMockApi,
 	makeMockCatalogEntry,
 	resetApisStore,
-} from '@/modules/credentials/mocks/handlers';
-import type { SelectedApi } from '@/modules/credentials/api';
+} from '@/shared/credentials/mocks/handlers';
+import type { SelectedApi } from '@/shared/credentials/api';
 
 describe('ApiPicker', () => {
 	beforeEach(() => resetApisStore());

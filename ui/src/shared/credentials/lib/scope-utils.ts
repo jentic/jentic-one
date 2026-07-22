@@ -10,7 +10,7 @@
 // importing scope utilities from one place.
 //
 // Framework-free (no React) so the rules are unit-testable as plain functions.
-import { oauth2ScopesFromSchemes, type RawSchemes } from '@/modules/credentials/lib/schemes';
+import { oauth2ScopesFromSchemes, type RawSchemes } from '@/shared/credentials/lib/schemes';
 import { type EnhancedScope, type ScopeOrigin } from '@/shared/lib';
 
 export {

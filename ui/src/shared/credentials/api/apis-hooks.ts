@@ -13,7 +13,7 @@ import {
 	parseSchemeOptions,
 	type RawSchemes,
 	type SchemeOption,
-} from '@/modules/credentials/lib/schemes';
+} from '@/shared/credentials/lib/schemes';
 
 /** Namespaced query keys for the credentials/apis cache slice. */
 export const apiPickerKeys = {

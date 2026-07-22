@@ -10,12 +10,12 @@ import {
 	useImportCatalogEntry,
 	useProviders,
 	type SelectedApi,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
 	type CredentialFormState,
-} from '@/modules/credentials/components/CredentialTypeFields';
+} from '@/shared/credentials/components/CredentialTypeFields';
 import {
 	buildCreateBody,
 	seedApiKeyFromScheme,
@@ -24,22 +24,22 @@ import {
 	seedServerVars,
 	validateCreate,
 	validateServerVars,
-} from '@/modules/credentials/lib/formBody';
-import { managedProviderUnavailableMessage, providerOptions } from '@/modules/credentials/config';
-import { ApiPicker } from '@/modules/credentials/components/ApiPicker';
-import { AuthTypeCards } from '@/modules/credentials/components/AuthTypeCards';
-import { ServerVariablesSection } from '@/modules/credentials/components/ServerVariablesSection';
+} from '@/shared/credentials/lib/formBody';
+import { managedProviderUnavailableMessage, providerOptions } from '@/shared/credentials/config';
+import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
+import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
+import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
 	type OAuth2FlowDef,
 	type SchemeOption,
-} from '@/modules/credentials/lib/schemes';
+} from '@/shared/credentials/lib/schemes';
 import {
 	enhancedScopesFromSchemes,
 	getRecommendedScopes,
 	scopesInGroup,
-} from '@/modules/credentials/lib/scope-utils';
+} from '@/shared/credentials/lib/scope-utils';
 
 export interface CreatedCredentialInfo {
 	credentialId: string;

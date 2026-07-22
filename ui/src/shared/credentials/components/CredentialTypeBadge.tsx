@@ -1,5 +1,5 @@
 import { Badge } from '@/shared/ui';
-import { CredentialType, CREDENTIAL_TYPE_LABELS } from '@/modules/credentials/api';
+import { CredentialType, CREDENTIAL_TYPE_LABELS } from '@/shared/credentials/api';
 
 const VARIANT: Record<CredentialType, 'default' | 'success' | 'warning' | 'pending'> = {
 	[CredentialType.BEARER_TOKEN]: 'default',

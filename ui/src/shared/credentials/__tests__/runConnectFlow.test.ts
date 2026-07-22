@@ -6,12 +6,12 @@ import {
 	OAUTH_CONNECT_MESSAGE_TYPE,
 	runConnectFlow,
 	type CredentialRedactedResponse,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 import {
 	makeMockCredential,
 	resetCredentialsStore,
 	setConnectAutoCompletes,
-} from '@/modules/credentials/mocks/handlers';
+} from '@/shared/credentials/mocks/handlers';
 
 /**
  * `runConnectFlow` is the single opener-side chokepoint for the OAuth connect

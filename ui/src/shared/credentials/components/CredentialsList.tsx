@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { Key } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert } from '@/shared/ui';
 import { CredentialCard, CredentialCardSkeleton } from './CredentialCard';
-import type { Credential } from '@/modules/credentials/api';
+import type { Credential } from '@/shared/credentials/api';
 
 const gridVariants = {
 	hidden: { opacity: 1 },

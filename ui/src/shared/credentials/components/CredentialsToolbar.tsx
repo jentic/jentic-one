@@ -23,7 +23,7 @@ import {
 	CREDENTIAL_TYPE_LABELS,
 	CREDENTIAL_TYPE_ORDER,
 	type CredentialType,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 
 /** `all` plus each credential type — the segmented filter's value space. */
 export type CredentialTypeFilter = 'all' | CredentialType;

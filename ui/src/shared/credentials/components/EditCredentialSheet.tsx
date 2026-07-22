@@ -10,14 +10,14 @@ import {
 	useProviders,
 	useUpdateCredential,
 	type CredentialKeyLocation,
-} from '@/modules/credentials/api';
-import { CredentialTypeBadge } from '@/modules/credentials/components/CredentialTypeBadge';
+} from '@/shared/credentials/api';
+import { CredentialTypeBadge } from '@/shared/credentials/components/CredentialTypeBadge';
 import {
 	CredentialTypeFields,
 	EMPTY_FORM,
 	type CredentialFormState,
-} from '@/modules/credentials/components/CredentialTypeFields';
-import { buildUpdateBody } from '@/modules/credentials/lib/formBody';
+} from '@/shared/credentials/components/CredentialTypeFields';
+import { buildUpdateBody } from '@/shared/credentials/lib/formBody';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;

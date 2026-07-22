@@ -6,8 +6,8 @@ import {
 	credentialDetails,
 	formatApiReference,
 	type Credential,
-} from '@/modules/credentials/api';
-import { isManagedProvider } from '@/modules/credentials/config';
+} from '@/shared/credentials/api';
+import { isManagedProvider } from '@/shared/credentials/config';
 
 interface CredentialCardProps {
 	cred: Credential;

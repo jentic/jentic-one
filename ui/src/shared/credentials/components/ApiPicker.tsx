@@ -9,7 +9,7 @@ import {
 	type ApiResponse,
 	type CatalogEntryResponse,
 	type SelectedApi,
-} from '@/modules/credentials/api';
+} from '@/shared/credentials/api';
 
 /**
  * Step 1 of the guided add-credential flow — a debounced search over the

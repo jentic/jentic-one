@@ -1,11 +1,7 @@
 import { useState } from 'react';
 import { Save } from 'lucide-react';
-import { Button } from '@/shared/ui';
+import { Button, PermissionRuleEditor, isEmptyAllowRule } from '@/shared/ui';
 import { useReplacePermissions } from '@/modules/toolkits/api';
-import {
-	PermissionRuleEditor,
-	isEmptyAllowRule,
-} from '@/modules/toolkits/components/PermissionRuleEditor';
 import type { PermissionRule, PermissionRuleInput } from '@/modules/toolkits/api/types';
 
 /**
