@@ -134,8 +134,10 @@ function describeGroup(group: CascadeDependentGroup): string {
  *    what the cascade removes, with counts and (optionally) names.
  *
  * Both modes gate the destructive action behind a type-to-confirm field: the
- * user must type the entity name before the delete button enables. This is a
- * deliberate friction step for irreversible actions.
+ * user must type a short fixed word (the per-type `confirmWord` default —
+ * "delete", or "archive" for archive-style entities — matched
+ * case-insensitively) before the confirm button enables. This is a deliberate
+ * friction step for irreversible actions.
  */
 export function CascadeDeleteDialog({
 	open,
