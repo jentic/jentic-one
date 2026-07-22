@@ -2,12 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { LayoutGroup, motion } from 'framer-motion';
-import {
-	sortedNavItems,
-	visibleNavItems,
-	isNavItemActive,
-	type NavItem,
-} from '@/shared/app/nav';
+import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
@@ -223,10 +218,7 @@ export function NavTabs() {
 				    signalling a distinct area from the primary product nav. */}
 				{secondary.length > 0 && (
 					<>
-						<div
-							className="bg-border mx-1.5 h-4 w-px shrink-0"
-							aria-hidden="true"
-						/>
+						<div className="bg-border mx-1.5 h-4 w-px shrink-0" aria-hidden="true" />
 						{secondary.map((item) => (
 							<NavTab
 								key={item.id}

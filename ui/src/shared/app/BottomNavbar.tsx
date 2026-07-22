@@ -2,12 +2,7 @@ import { useCallback, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MoreHorizontal, X } from 'lucide-react';
 import { motion } from 'framer-motion';
-import {
-	sortedNavItems,
-	visibleNavItems,
-	isNavItemActive,
-	type NavItem,
-} from '@/shared/app/nav';
+import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
