@@ -60,10 +60,32 @@ See your own identity, status, scopes, and which toolkits you're bound to:
 jentic access whoami
 ```
 
-The broker enforces per-operation access. When `execute` is denied it prints a
-recovery line on stderr (the `agent_directive`) and **exits 2**, so you can
-branch on the exit code instead of mistaking the 4xx body for success. The
-directive tells you exactly how to recover — which differs by denial:
+Each toolkit binding lists the APIs it **serves** (`serves: [{vendor, name,
+version}]`). Use this to decide up front, **without** a throwaway execute:
+
+- If a binding already serves the API you need → you have access; go straight to
+  `execute` (no request needed).
+- If **nothing** you're bound to serves it → provision it proactively **before**
+  your first execute (don't execute just to get denied):
+
+```
+jentic access request --provision <vendor/name> \
+  --auth <bearer|api_key|basic|oauth2|none> \
+  --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
+  --wait
+```
+
+`--wait` blocks until a human fulfils and approves the plan in the dashboard;
+once approved, the toolkit binding is live immediately — just retry `execute`.
+You normally do **not** need `jentic access refresh` after a `--provision` plan:
+bindings take effect live, and a plan grants no new token scope. Only refresh
+after an approved `scope:grant` **and** only if `whoami` flags the scope as not
+yet on your token (see the stale-scope note it prints).
+
+If you'd rather be reactive, the broker also guides you: when `execute` is denied
+it prints a recovery line on stderr (the `agent_directive`) and **exits 2**, so
+you can branch on the exit code instead of mistaking the 4xx body for success.
+The directive tells you exactly how to recover — which differs by denial:
 
 - **`no_toolkit_binding` (403)** — nothing serves this API yet (no toolkit, and
   usually no credential). File a **provisioning plan** describing the whole path
@@ -148,7 +170,10 @@ retry the `execute` that was denied.
 
 `search` only sees operations that have been **imported into this deployment's
 local registry**. On a fresh install the registry is empty, so `search` returns
-`{"data": []}` until you import something. The discovery order is:
+`{"data": []}` until you import something. **Import before you search** — if the
+user already named the API/vendor (e.g. "Google Sheets"), go straight to
+`catalog search`/`import`; don't `search` an empty registry first and waste a
+call. The discovery order is:
 
 1. Browse the public catalog for an importable API:
 
@@ -240,7 +265,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ## Quick Reference
 
 - `jentic profile list` — see profiles and which is active (start here).
-- `jentic access whoami` — your identity, status, scopes, toolkit bindings.
+- `jentic access whoami` — your identity, status, scopes, and toolkit bindings
+  with the APIs each one **serves** (check this before executing or provisioning).
 - `jentic access request --toolkit <vendor/name> [--wait --timeout 120s]` —
   ask a human to bind you to an **existing** toolkit; prints an `approve_url`.
 - `jentic access request --provision <vendor/name> [--auth <type>] [--rules-json <json>] [--wait]` —
@@ -249,9 +275,11 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   for an approved agent are granted automatically; you do not request
   catalog/registry scopes.
 - `jentic access list | status <id> | withdraw <id>` — track your requests.
-- `jentic access refresh` — re-mint your token so a newly granted scope takes
-  effect. After an approved `scope:grant`, `whoami` shows it under granted
-  scopes but your current token can't use it until you refresh.
+- `jentic access refresh` — re-mint your token so a newly granted **scope**
+  takes effect. Only needed after an approved `scope:grant` that `whoami` shows
+  as not yet on your token; `--provision --wait` already re-mints for you when a
+  scope was granted. A binding-only plan (toolkit/credential binds) needs no
+  refresh — bindings are live.
 - `jentic catalog search "<query>"` — find importable APIs in the public catalog.
 - `jentic catalog import <vendor/name>` — import an API into the local registry
   (required before `search` can find its operations). Gated on `catalog:import`,
