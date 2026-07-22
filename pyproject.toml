@@ -54,14 +54,22 @@ exclude = ["**/.gitkeep"]
 
 # Bundle OpenAPI specs and the built UI inside the package so they're reachable
 # via importlib.resources.files("jentic_one") / "openapi" and / "static".
+#
+# The onboarding skill is force-included from the *same* physical file the Go
+# CLI embeds (`cli/internal/skillgen/content/jentic.md`), so the served copy and
+# the CLI-embedded copy are byte-for-byte identical and cannot drift. It lands
+# at `jentic_one/skills/jentic.md`, read at runtime via importlib.resources by
+# `shared/web/skill_router.py`.
 [tool.hatch.build.targets.wheel.force-include]
 "openapi" = "jentic_one/openapi"
 "ui/dist" = "jentic_one/static"
+"cli/internal/skillgen/content/jentic.md" = "jentic_one/skills/jentic.md"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/jentic_one",
     "openapi",
+    "cli/internal/skillgen/content/jentic.md",
     "README.md",
     "pyproject.toml",
 ]
