@@ -43,6 +43,13 @@ interface CascadeDeleteDialogProps {
 	dependents?: CascadeDependentGroup[];
 	loading?: boolean;
 	error?: Error | string | null;
+	/**
+	 * The word the user must type to arm the destructive action. Defaults to
+	 * "delete". Kept short and fixed (not the entity name) so confirming a
+	 * slash/hyphen-heavy name (e.g. an API vendor/name tuple) isn't error-prone.
+	 * Matched case-insensitively.
+	 */
+	confirmWord?: string;
 }
 
 /** Per-type copy: title, the destructive verb, and what a delete typically takes down. */
@@ -124,6 +131,7 @@ export function CascadeDeleteDialog({
 	dependents,
 	loading = false,
 	error,
+	confirmWord = 'delete',
 }: CascadeDeleteDialogProps) {
 	const copy = TYPE_COPY[entityType];
 	const [typed, setTyped] = useState('');
@@ -149,7 +157,7 @@ export function CascadeDeleteDialog({
 		}
 	}, [open]);
 
-	const confirmed = typed.trim() === entityName.trim();
+	const confirmed = typed.trim().toLowerCase() === confirmWord.trim().toLowerCase();
 	const hasDependents = Array.isArray(dependents) && dependents.length > 0;
 	// Only surface the error once the user has actually tried this session;
 	// hold the narrowed value (not just a boolean) so the JSX renders cleanly.
@@ -208,8 +216,9 @@ export function CascadeDeleteDialog({
 
 					<div className="space-y-1.5">
 						<Label htmlFor={confirmInputId}>
-							Type <span className="text-foreground font-semibold">{entityName}</span>{' '}
-							to confirm
+							Type{' '}
+							<span className="text-foreground font-semibold">{confirmWord}</span> to
+							confirm
 						</Label>
 						<Input
 							id={confirmInputId}
@@ -217,7 +226,7 @@ export function CascadeDeleteDialog({
 							onChange={(e): void => setTyped(e.target.value)}
 							disabled={loading}
 							autoComplete="off"
-							placeholder={entityName}
+							placeholder={confirmWord}
 						/>
 					</div>
 

@@ -185,10 +185,11 @@ describe('ApiDetailPage', () => {
 		).toBeInTheDocument();
 		expect(within(dialog).queryByText(/will also remove/i)).not.toBeInTheDocument();
 
-		// Type-to-confirm — the page header displays the API's display name.
+		// Type-to-confirm — the delete gate now requires a fixed word, not the
+		// API's (tuple) name. The name still shows in the dialog body for context.
 		const confirm = within(dialog).getByRole('button', { name: /^remove api$/i });
 		expect(confirm).toBeDisabled();
-		await user.type(within(dialog).getByLabelText(/type stripe to confirm/i), 'Stripe');
+		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		await waitFor(() => expect(confirm).toBeEnabled());
 
 		await user.click(confirm);

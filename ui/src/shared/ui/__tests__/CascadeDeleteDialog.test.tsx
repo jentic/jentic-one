@@ -61,7 +61,7 @@ describe('CascadeDeleteDialog', () => {
 		).toBeInTheDocument();
 	});
 
-	it('keeps the confirm button disabled until the entity name is typed exactly', async () => {
+	it('keeps the confirm button disabled until the fixed word is typed (case-insensitive)', async () => {
 		const user = userEvent.setup();
 		const onConfirm = vi.fn();
 		renderWithProviders(<Harness entityName="Stripe (prod)" onConfirm={onConfirm} />);
@@ -69,12 +69,22 @@ describe('CascadeDeleteDialog', () => {
 		const confirm = screen.getByRole('button', { name: /Delete credential/i });
 		expect(confirm).toBeDisabled();
 
-		const field = screen.getByLabelText(/Type Stripe \(prod\) to confirm/i);
+		const field = screen.getByLabelText(/Type delete to confirm/i);
 		await user.type(field, 'wrong');
 		expect(confirm).toBeDisabled();
 
+		// The full entity name (the old confirm string) must NOT arm the button.
 		await user.clear(field);
 		await user.type(field, 'Stripe (prod)');
+		expect(confirm).toBeDisabled();
+
+		// A different-case spelling of the fixed word still confirms.
+		await user.clear(field);
+		await user.type(field, 'DELETE');
+		expect(confirm).toBeEnabled();
+
+		await user.clear(field);
+		await user.type(field, 'delete');
 		expect(confirm).toBeEnabled();
 
 		await user.click(confirm);
@@ -123,8 +133,8 @@ describe('CascadeDeleteDialog', () => {
 		// Error from a prior session must NOT show before the user acts here.
 		expect(screen.queryByText(/cascade failed mid-flight/i)).not.toBeInTheDocument();
 
-		// Type the name and confirm → the in-session attempt surfaces the error.
-		await user.type(screen.getByLabelText(/Type Stripe \(prod\) to confirm/i), 'Stripe (prod)');
+		// Type the word and confirm → the in-session attempt surfaces the error.
+		await user.type(screen.getByLabelText(/Type delete to confirm/i), 'delete');
 		await user.click(screen.getByRole('button', { name: /Delete credential/i }));
 		expect(screen.getByText(/cascade failed mid-flight/i)).toBeInTheDocument();
 
