@@ -10,6 +10,7 @@ import pytest
 from jentic_one.broker.repos.rule_evaluator import (
     PermissionRule,
     RuleEvaluator,
+    _coerce_json_list,
     _compile_path,
     _normalize_methods,
     _rule_matches,
@@ -108,6 +109,34 @@ def test_normalize_methods_none() -> None:
 def test_normalize_methods_uppercases() -> None:
     result = _normalize_methods(["get", "Post", "DELETE"])
     assert result == frozenset({"GET", "POST", "DELETE"})
+
+
+# ---------------------------------------------------------------------------
+# JSON-column coercion (raw-SQL read path — SQLite returns JSON as TEXT)
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_json_list_none() -> None:
+    assert _coerce_json_list(None) is None
+
+
+def test_coerce_json_list_passes_through_decoded_list() -> None:
+    """Postgres JSONB is already decoded to a list — returned unchanged."""
+    assert _coerce_json_list(["GET", "POST"]) == ["GET", "POST"]
+
+
+def test_coerce_json_list_parses_sqlite_json_string() -> None:
+    """SQLite returns the column as a raw JSON string via ``text()`` SQL."""
+    assert _coerce_json_list('["GET", "POST", "PUT"]') == ["GET", "POST", "PUT"]
+
+
+def test_coerce_json_list_json_null_string_is_none() -> None:
+    """A SQLite ``operations='null'`` column must decode to None, not ['n','u','l','l']."""
+    assert _coerce_json_list("null") is None
+
+
+def test_coerce_json_list_invalid_json_is_none() -> None:
+    assert _coerce_json_list("not-json") is None
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +283,38 @@ async def test_evaluator_empty_rules_denies() -> None:
         toolkit_id="tk_1", method="GET", path="/x", operation_id=None, api_vendor="acme"
     )
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_evaluator_coerces_sqlite_json_string_methods() -> None:
+    """Regression: SQLite returns ``methods``/``operations`` as raw JSON strings.
+
+    The evaluator reads rules via raw ``text()`` SQL, bypassing the ORM's JSON
+    deserialization. On SQLite ``methods`` arrives as ``'["GET", ...]'`` and
+    ``operations`` as ``'null'``; without coercion these get iterated
+    character-by-character, so a legitimate ``allow`` rule silently fails to
+    match. Feed the SQLite wire form and assert the method still matches.
+    """
+    mock_db = MagicMock()
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = [
+        ("allow", '["GET", "POST", "PUT", "PATCH", "DELETE"]', ".*", "null")
+    ]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
+
+    evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
+    allowed = await evaluator.evaluate(
+        toolkit_id="tk_1", method="POST", path="/v1/things", operation_id=None, api_vendor="acme"
+    )
+    assert allowed is True
+
+    # A method outside the (correctly parsed) set must NOT match.
+    denied = await evaluator.evaluate(
+        toolkit_id="tk_1", method="OPTIONS", path="/v1/things", operation_id=None, api_vendor="acme"
+    )
+    assert denied is False
 
 
 @pytest.mark.asyncio
