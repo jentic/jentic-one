@@ -27,6 +27,9 @@ import { Input } from '@/shared/ui/Input';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/PermissionRuleEditor';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
+import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
+import { runConnectFlow } from '@/shared/credentials/api';
+import { CredentialType } from '@/shared/api';
 import {
 	amendAccessRequest,
 	decideAccessRequest,
@@ -134,10 +137,46 @@ export function ProvisioningRequestDialog({
 		}
 	}, [toolkitName, noAuth]);
 
-	const handleCredentialCreated = useCallback((info: { credentialId: string }) => {
-		setCredentialId(info.credentialId);
+	const handleCredentialCreated = useCallback(async (info: CreatedCredentialInfo) => {
 		setCredentialDialogOpen(false);
-		setStep('rules');
+		setCredentialId(info.credentialId);
+		// An OAuth2 credential that needs a browser sign-in (authorization-code
+		// with an authorize URL) has NO token until the connect flow completes —
+		// binding it as-is makes the broker fail at execute with "No refresh
+		// token available". So drive the connect flow now and only advance once
+		// it's connected; on cancel/timeout/error, discard the dangling credential
+		// and stay on this step so the operator can retry. Non-redirect grants
+		// (client_credentials, static/manual tokens) are usable immediately.
+		const needsConnect =
+			info.type === CredentialType.OAUTH2 && info.provider !== 'static' && info.needsConnect;
+		if (!needsConnect) {
+			setStep('rules');
+			return;
+		}
+		setBusy(true);
+		setError(null);
+		try {
+			const outcome = await runConnectFlow(info.credentialId);
+			if (outcome.status === 'connected' || outcome.status === 'redirected') {
+				// 'redirected' = popup blocked, same-tab navigation in progress; the
+				// callback will land on return. Treat both as "proceeding".
+				setStep('rules');
+			} else {
+				await discardPlanCredential(info.credentialId);
+				setCredentialId(null);
+				setError(
+					outcome.status === 'timeout'
+						? 'Sign-in timed out — the unconnected credential was discarded. Try connecting again.'
+						: 'Sign-in was cancelled — the unconnected credential was discarded. Try again.',
+				);
+			}
+		} catch (e) {
+			await discardPlanCredential(info.credentialId);
+			setCredentialId(null);
+			setError(e instanceof Error ? e.message : 'Could not complete sign-in.');
+		} finally {
+			setBusy(false);
+		}
 	}, []);
 
 	const handleCancel = useCallback(async () => {
