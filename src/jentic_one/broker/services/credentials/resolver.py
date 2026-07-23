@@ -73,12 +73,19 @@ class CredentialResolver:
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
+            # A NULL/empty stored api_name/api_version is a WILDCARD — the
+            # credential covers all names/versions for the vendor (a credential,
+            # esp. a no-auth one, isn't tied to a spec version; it serves whatever
+            # version the operation resolves to). This mirrors the NULL="covers
+            # all" semantics of the toolkit-binding + bind-time resolvers; without
+            # it a versionless credential (api_version NULL) never matches a
+            # concrete resolved version like "4.2.3" and execute 424s (#775).
             matches = [
                 c
                 for c in candidates
                 if c.active
-                and (not api.name or c.api_name == api.name)
-                and (not api.version or c.api_version == api.version)
+                and (not api.name or not c.api_name or c.api_name == api.name)
+                and (not api.version or not c.api_version or c.api_version == api.version)
             ]
 
             if not matches:

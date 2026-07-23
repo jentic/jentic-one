@@ -241,3 +241,39 @@ async def test_resolve_filters_by_name_and_version() -> None:
         result = await resolver.resolve(api=api, caller="caller_1")
 
     assert result.credential_id == "cred_match"
+
+
+@pytest.mark.asyncio
+async def test_resolve_null_version_credential_matches_concrete_version() -> None:
+    """A credential with NULL api_version is a wildcard and matches a concrete
+    resolved version (regression for #775).
+
+    A credential — especially a no-auth one — isn't tied to a spec version, so
+    api_version is NULL ("covers all versions"). The broker resolves the
+    operation to a concrete version (e.g. "4.2.3"); the credential must still
+    match. Before the fix the Python filter did `c.api_version == api.version`,
+    so NULL never matched a concrete version and execute 424'd
+    (credential_not_provisioned) despite a valid, bound no-auth credential.
+    """
+    cred = _make_credential(
+        cred_id="cred_noauth",
+        type="NO_AUTH",
+        api_vendor="country-is",
+        api_name="country-is",
+        api_version=None,
+    )
+
+    session = AsyncMock()
+    ctx = _make_ctx_with_control_session(session)
+    api = APIReference(vendor="country-is", name="country-is", version="4.2.3")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        resolver = CredentialResolver(ctx)
+        result = await resolver.resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_noauth"
+    assert result.wire_type == CredentialType.NO_AUTH
