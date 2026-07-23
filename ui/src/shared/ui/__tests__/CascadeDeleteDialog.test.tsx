@@ -9,6 +9,7 @@ function Harness({
 	dependents,
 	loading = false,
 	error,
+	confirmWord,
 	onConfirm = () => {},
 }: {
 	entityType?: CascadeEntityType;
@@ -16,6 +17,7 @@ function Harness({
 	dependents?: CascadeDependentGroup[];
 	loading?: boolean;
 	error?: Error | string | null;
+	confirmWord?: string;
 	onConfirm?: () => void;
 }) {
 	const [open, setOpen] = useState(true);
@@ -33,6 +35,7 @@ function Harness({
 				dependents={dependents}
 				loading={loading}
 				error={error}
+				confirmWord={confirmWord}
 			/>
 		</>
 	);
@@ -73,6 +76,19 @@ describe('CascadeDeleteDialog', () => {
 
 		await user.clear(field);
 		await user.type(field, 'archive');
+		expect(confirm).toBeEnabled();
+	});
+
+	it('ignores an empty confirmWord and falls back to the per-type default', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<Harness entityType="credential" confirmWord="" />);
+
+		const confirm = screen.getByRole('button', { name: /Delete credential/i });
+		// An empty confirmWord must NOT arm the button with no typing.
+		expect(confirm).toBeDisabled();
+
+		// The default ("delete") still gates it.
+		await user.type(screen.getByLabelText(/Type delete to confirm/i), 'delete');
 		expect(confirm).toBeEnabled();
 	});
 

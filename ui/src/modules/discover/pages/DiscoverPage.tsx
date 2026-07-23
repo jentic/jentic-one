@@ -71,7 +71,8 @@ export default function DiscoverPage() {
 					<>
 						<AppLink
 							href={`${ROUTES.workspace}?import=1`}
-							className="bg-primary/10 border-primary/30 text-primary hover:bg-primary/20 hover:border-primary/50 focus-visible:ring-ring focus-visible:ring-offset-background inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none"
+							variant="outline"
+							size="sm"
 							data-testid="discover-upload-own"
 						>
 							<Upload size={14} aria-hidden="true" />

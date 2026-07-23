@@ -25,6 +25,11 @@ export default function WorkspacePage() {
 	// import dialog on arrival (the import UI is a Workspace-module concern, so
 	// Discover navigates rather than embedding the dialog). Strip the param once
 	// consumed so a refresh or back-nav doesn't re-trigger it.
+	//
+	// Seed the open state from the URL in the initializer AND re-sync in the
+	// effect below on purpose: the initializer opens the dialog on the very
+	// first paint (no closed-then-open flash), while the effect handles later
+	// param changes and strips it. Don't collapse the two into one.
 	const [importOpen, setImportOpen] = useState(() => searchParams.get('import') === '1');
 	const [filter, setFilter] = useState('');
 	const query = useWorkspaceApis();
