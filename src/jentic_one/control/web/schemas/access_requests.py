@@ -53,8 +53,18 @@ class AccessRequestItemRequest(BaseModel):
 
     resource_type: Literal["credential", "toolkit", "scope"]
     action: Literal["bind", "grant"]
-    resource_id: str | None = None
-    resource_reference: dict[str, Any] | None = None
+    resource_id: str | None = Field(
+        default=None,
+        description="Explicit ID of the resource (e.g. a toolkit tk_… or credential cred_… ID)."
+        " For toolkit:bind, you can omit this and use resource_reference instead.",
+    )
+    resource_reference: dict[str, Any] | None = Field(
+        default=None,
+        description="Look up the resource by API identity instead of by ID."
+        " For toolkit:bind, provide {vendor, name, version} to resolve the toolkit"
+        " that serves the given API. Use this when you don't know the toolkit ID.",
+        json_schema_extra={"example": {"vendor": "github", "name": "issues", "version": "v3"}},
+    )
     to_type: str | None = None
     to_id: str | None = None
     rules: list[PermissionRuleSchema] | None = Field(
