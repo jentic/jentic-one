@@ -121,8 +121,7 @@ export async function provisionAdminOwnedAgent(
 		exp: now + 120,
 	});
 	const tokenRes = await request.post('/oauth/token', {
-		headers: { 'content-type': 'application/json' },
-		data: { grant_type: JWT_BEARER_GRANT, assertion },
+		form: { grant_type: JWT_BEARER_GRANT, assertion },
 	});
 	expect(tokenRes.status(), `jwt-bearer mint failed: ${await tokenRes.text()}`).toBe(200);
 	const accessToken = (await tokenRes.json()).access_token as string;

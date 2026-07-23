@@ -76,7 +76,7 @@ def test_client_credentials_success(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "client_credentials",
             "client_id": "sva_test123",
             "client_secret": "jcs_secret_value",
@@ -102,7 +102,7 @@ def test_client_credentials_missing_client_id(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "client_credentials",
             "client_secret": "jcs_secret_value",
         },
@@ -129,7 +129,7 @@ def test_client_credentials_invalid_secret(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "client_credentials",
             "client_id": "sva_test123",
             "client_secret": "jcs_wrong_secret",

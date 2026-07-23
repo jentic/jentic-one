@@ -2171,6 +2171,144 @@
         "title": "BearerTokenUpdateRequest",
         "type": "object"
       },
+      "Body_introspectEndpoint": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Type Hint"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "Body_introspectEndpoint",
+        "type": "object"
+      },
+      "Body_revokeEndpoint": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Type Hint"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "Body_revokeEndpoint",
+        "type": "object"
+      },
+      "Body_tokenEndpoint": {
+        "properties": {
+          "assertion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assertion"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Secret"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Verifier"
+          },
+          "grant_type": {
+            "title": "Grant Type",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Uri"
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
+          }
+        },
+        "required": [
+          "grant_type"
+        ],
+        "title": "Body_tokenEndpoint",
+        "type": "object"
+      },
       "CatalogEntryLinksResponse": {
         "description": "Hypermedia links for a catalog entry.",
         "examples": [
@@ -3512,31 +3650,6 @@
           "setup_required"
         ],
         "title": "HealthResponse",
-        "type": "object"
-      },
-      "IntrospectRequest": {
-        "description": "Introspection endpoint request (form body).",
-        "properties": {
-          "token": {
-            "title": "Token",
-            "type": "string"
-          },
-          "token_type_hint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Token Type Hint"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "IntrospectRequest",
         "type": "object"
       },
       "IntrospectResponse": {
@@ -5675,31 +5788,6 @@
         "title": "RegistrationStatusResponse",
         "type": "object"
       },
-      "RevokeRequest": {
-        "description": "Revocation endpoint request (form body).",
-        "properties": {
-          "token": {
-            "title": "Token",
-            "type": "string"
-          },
-          "token_type_hint": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Token Type Hint"
-          }
-        },
-        "required": [
-          "token"
-        ],
-        "title": "RevokeRequest",
-        "type": "object"
-      },
       "RuntimeConfig": {
         "description": "Optional per-upstream-call overrides.",
         "properties": {
@@ -6243,97 +6331,6 @@
           "permissions"
         ],
         "title": "SetPermissionsRequest",
-        "type": "object"
-      },
-      "TokenRequest": {
-        "description": "Token endpoint request (form body).",
-        "properties": {
-          "assertion": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Assertion"
-          },
-          "client_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Id"
-          },
-          "client_secret": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Client Secret"
-          },
-          "code": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code"
-          },
-          "code_verifier": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Code Verifier"
-          },
-          "grant_type": {
-            "title": "Grant Type",
-            "type": "string"
-          },
-          "redirect_uri": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Redirect Uri"
-          },
-          "refresh_token": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Refresh Token"
-          }
-        },
-        "required": [
-          "grant_type"
-        ],
-        "title": "TokenRequest",
         "type": "object"
       },
       "TokenResponse": {
@@ -22981,9 +22978,9 @@
         "operationId": "introspectEndpoint",
         "requestBody": {
           "content": {
-            "application/json": {
+            "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/IntrospectRequest"
+                "$ref": "#/components/schemas/Body_introspectEndpoint"
               }
             }
           },
@@ -23271,9 +23268,9 @@
         "operationId": "revokeEndpoint",
         "requestBody": {
           "content": {
-            "application/json": {
+            "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/RevokeRequest"
+                "$ref": "#/components/schemas/Body_revokeEndpoint"
               }
             }
           },
@@ -23414,9 +23411,9 @@
         "operationId": "tokenEndpoint",
         "requestBody": {
           "content": {
-            "application/json": {
+            "application/x-www-form-urlencoded": {
               "schema": {
-                "$ref": "#/components/schemas/TokenRequest"
+                "$ref": "#/components/schemas/Body_tokenEndpoint"
               }
             }
           },

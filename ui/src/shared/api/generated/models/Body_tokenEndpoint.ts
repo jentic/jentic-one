@@ -2,10 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Token endpoint request (form body).
- */
-export type TokenRequest = {
+export type Body_tokenEndpoint = {
     assertion?: (string | null);
     client_id?: (string | null);
     client_secret?: (string | null);

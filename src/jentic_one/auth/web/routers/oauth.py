@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, Response
 
 from jentic_one.auth.services.assertion_service import AssertionService
@@ -9,6 +11,11 @@ from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.services.service_account_auth_service import ServiceAccountAuthService
 from jentic_one.auth.services.token_service import TokenService
+from jentic_one.auth.web.deps import (
+    form_introspect_request,
+    form_revoke_request,
+    form_token_request,
+)
 from jentic_one.auth.web.schemas.oauth import (
     IntrospectRequest,
     IntrospectResponse,
@@ -49,7 +56,7 @@ def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
 
 @router.post("/oauth/token")
 async def token_endpoint(
-    body: TokenRequest,
+    body: Annotated[TokenRequest, Depends(form_token_request)],
     token_svc: TokenService = Depends(get_token_service),
     assertion_svc: AssertionService = Depends(get_assertion_service),
     sa_auth_svc: ServiceAccountAuthService = Depends(get_sa_auth_service),
@@ -143,7 +150,7 @@ async def mint_endpoint(
 
 @router.post("/oauth/revoke", status_code=200)
 async def revoke_endpoint(
-    body: RevokeRequest,
+    body: Annotated[RevokeRequest, Depends(form_revoke_request)],
     identity: Identity = get_current_identity(allow_expired_password=True),
     token_svc: TokenService = Depends(get_token_service),
 ) -> Response:
@@ -154,7 +161,7 @@ async def revoke_endpoint(
 
 @router.post("/oauth/introspect")
 async def introspect_endpoint(
-    body: IntrospectRequest,
+    body: Annotated[IntrospectRequest, Depends(form_introspect_request)],
     identity: Identity = get_current_identity(allow_expired_password=True),
     token_svc: TokenService = Depends(get_token_service),
 ) -> IntrospectResponse:
