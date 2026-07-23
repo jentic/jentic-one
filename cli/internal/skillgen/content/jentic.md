@@ -61,12 +61,18 @@ jentic access whoami
 ```
 
 Each toolkit binding lists the APIs it **serves** (`serves: [{vendor, name,
-version}]`). Use this to decide up front, **without** a throwaway execute:
+version}]`). This tells you exactly what you can already call. Combined with the
+catalog (what's available to add — see step 3), it's your map of the workspace.
 
-- If a binding already serves the API you need → you have access; go straight to
-  `execute` (no request needed).
-- If **nothing** you're bound to serves it → provision it proactively **before**
-  your first execute (don't execute just to get denied):
+**Decide access from `whoami` first — do NOT execute an operation just to see
+whether you have access.** A denied execute is a wasted round-trip; you can tell
+in advance:
+
+- If a binding already **serves** the API you need → you have access. Skip
+  straight to `inspect`/`execute`; file no request.
+- If **nothing** you're bound to serves it → you do **not** have access yet.
+  Provision it **before** your first execute — do not "try execute and branch on
+  the denial":
 
 ```
 jentic access request --provision <vendor/name> \
@@ -326,6 +332,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
     request won't help).
   Follow the directive; don't keep re-sending the same `execute`.
 - You file and wait for access; you can't approve your own requests.
+- **Don't execute to test access.** `whoami` already tells you what your bindings
+  **serve**; if the API you need isn't there, `--provision` it and wait — don't
+  fire a `execute` you expect to be denied just to read the recovery directive.
+  The directive is a fallback for surprises, not a discovery step.
 - The `operation_id` from `search`/`apis operations` resolves directly; the id
   from `catalog show` is the spec `operationId` (`inspect` resolves it via a
   fallback). If one doesn't resolve, try the `METHOD URL` pair from the hit's
