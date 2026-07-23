@@ -15,10 +15,10 @@ test('discover renders its catalog shell and toolbar, console clean', async ({ p
 	await page.goto('/app');
 	await page
 		.getByRole('navigation', { name: 'Primary' })
-		.getByRole('link', { name: 'Discover' })
+		.getByRole('link', { name: 'Discover APIs' })
 		.click();
 
-	await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Discover APIs' })).toBeVisible();
 
 	// The toolbar (search + Imported/Available filter + refresh) is the surface's
 	// own chrome and renders regardless of catalog availability.
@@ -33,7 +33,7 @@ test('discover renders its catalog shell and toolbar, console clean', async ({ p
 
 test('discover filter and search controls are interactive', async ({ page }) => {
 	await page.goto('/app/discover');
-	await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Discover APIs' })).toBeVisible();
 
 	// The registration filter is a segmented control of buttons (All / Imported
 	// / Available). Clicking one drives the catalog query param. There's no
@@ -41,7 +41,7 @@ test('discover filter and search controls are interactive', async ({ page }) => 
 	// surface stays healthy (no results assertion — the catalog is external).
 	const toolbar = page.getByTestId('discover-toolbar');
 	await toolbar.getByRole('button', { name: 'Available' }).click();
-	await expect(page.getByRole('heading', { name: 'Discover' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Discover APIs' })).toBeVisible();
 
 	// Type into the search box; the field owns its own value.
 	const search = page.getByRole('searchbox', { name: 'Search APIs' });

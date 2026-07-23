@@ -1,11 +1,26 @@
 import type { AnchorHTMLAttributes } from 'react';
 import { Link, type LinkProps } from 'react-router-dom';
 import { cn } from '@/shared/lib/utils';
+import {
+	buttonBase,
+	buttonVariantClasses,
+	buttonSizeClasses,
+	type ButtonVariant,
+	type ButtonSize,
+} from '@/shared/ui/Button';
 
 type AppLinkProps = Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href'> &
 	Omit<LinkProps, 'to'> & {
 		href: string;
 		external?: boolean;
+		/**
+		 * Render the link with `Button`'s look (a link that acts like a button —
+		 * e.g. an "Import API" CTA). Reuses `Button`'s exported variant/size
+		 * tokens so the two never drift. `AppLink`'s own `FOCUS_RING` supplies the
+		 * focus affordance, so the button focus ring is intentionally not applied.
+		 */
+		variant?: ButtonVariant;
+		size?: ButtonSize;
 	};
 
 const EXTERNAL_RE = /^([a-z][a-z0-9+.-]*:|\/\/)/i;
@@ -38,11 +53,25 @@ export function AppLink({
 	rel,
 	children,
 	className,
+	variant,
+	size,
 	...props
 }: AppLinkProps) {
+	// When a button look is requested, compose Button's shared tokens (base +
+	// variant + size). Skip Button's focus ring — FOCUS_RING below owns it.
+	const buttonLook =
+		variant != null || size != null
+			? cn(
+					buttonBase,
+					variant != null && buttonVariantClasses[variant],
+					size != null && buttonSizeClasses[size],
+				)
+			: undefined;
+	const mergedClassName = cn(buttonLook, className);
+
 	if (UNSAFE_RE.test(href)) {
 		return (
-			<span {...props} className={className} role="link" aria-disabled="true">
+			<span {...props} className={mergedClassName} role="link" aria-disabled="true">
 				{children}
 			</span>
 		);
@@ -54,7 +83,7 @@ export function AppLink({
 				href={href}
 				target={target ?? '_blank'}
 				rel={rel ?? 'noopener noreferrer'}
-				className={cn(FOCUS_RING, className)}
+				className={cn(FOCUS_RING, mergedClassName)}
 				{...props}
 			>
 				{children}
@@ -63,7 +92,7 @@ export function AppLink({
 	}
 
 	return (
-		<Link to={href} className={cn(FOCUS_RING, className)} {...props}>
+		<Link to={href} className={cn(FOCUS_RING, mergedClassName)} {...props}>
 			{children}
 		</Link>
 	);

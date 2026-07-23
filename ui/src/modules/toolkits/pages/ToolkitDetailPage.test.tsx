@@ -421,13 +421,10 @@ describe('ToolkitDetailPage', () => {
 		expect(within(dialog).getByText('CI runner')).toBeInTheDocument();
 		expect(within(dialog).getByText('GitHub PAT')).toBeInTheDocument();
 
-		// Type-to-confirm gate: button stays disabled until the name matches.
+		// Type-to-confirm gate: button stays disabled until the fixed word is typed.
 		const confirm = within(dialog).getByRole('button', { name: /^delete toolkit$/i });
 		expect(confirm).toBeDisabled();
-		await user.type(
-			within(dialog).getByLabelText(/type github tools to confirm/i),
-			'GitHub Tools',
-		);
+		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		await waitFor(() => expect(confirm).toBeEnabled());
 
 		await user.click(confirm);
@@ -476,10 +473,7 @@ describe('ToolkitDetailPage', () => {
 
 		await user.click(screen.getByRole('button', { name: 'Delete GitHub Tools' }));
 		const dialog = await screen.findByRole('dialog', { name: /delete toolkit/i });
-		await user.type(
-			within(dialog).getByLabelText(/type github tools to confirm/i),
-			'GitHub Tools',
-		);
+		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		const confirm = within(dialog).getByRole('button', { name: /^delete toolkit$/i });
 		await waitFor(() => expect(confirm).toBeEnabled());
 		await user.click(confirm);
