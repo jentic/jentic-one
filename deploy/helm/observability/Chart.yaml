@@ -8,8 +8,8 @@ description: |
   Deployed as a separate release into its own namespace so app and
   platform concerns stay decoupled.
 type: application
-version: 0.15.3 # x-release-please-version
-appVersion: "0.15.3" # x-release-please-version
+version: 0.16.0 # x-release-please-version
+appVersion: "0.16.0" # x-release-please-version
 
 dependencies:
   - name: grafana

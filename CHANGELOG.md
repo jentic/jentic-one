@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/jentic/jentic-one/compare/v0.15.3...v0.16.0) (2026-07-23)
+
+
+### Features
+
+* **auth:** invite-redemption page for finishing account creation ([#734](https://github.com/jentic/jentic-one/issues/734)) ([d758df4](https://github.com/jentic/jentic-one/commit/d758df4981baa4badd56426d49a30333dc71cffd))
+* **cli:** make jenticctl update version/tag-driven and default confirm to Yes ([#766](https://github.com/jentic/jentic-one/issues/766)) ([591a327](https://github.com/jentic/jentic-one/commit/591a32716f8659505b31eda9b5d91628e923a462))
+
 ## [0.15.3](https://github.com/jentic/jentic-one/compare/v0.15.2...v0.15.3) (2026-07-22)
 
 
