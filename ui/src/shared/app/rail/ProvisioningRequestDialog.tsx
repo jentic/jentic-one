@@ -291,37 +291,95 @@ export function ProvisioningRequestDialog({
 		: null;
 	const rulesGist = summarizeRules(rules);
 
+	const stepFooter: Record<Step, React.ReactNode> = {
+		toolkit: (
+			<Button
+				variant="primary"
+				onClick={handleCreateToolkit}
+				loading={busy}
+				disabled={busy || !toolkitName.trim()}
+			>
+				Create toolkit
+				<ArrowRight className="h-4 w-4" />
+			</Button>
+		),
+		credential: (
+			<>
+				<Button variant="ghost" onClick={() => setStep('toolkit')}>
+					<ArrowLeft className="h-4 w-4" /> Back
+				</Button>
+				<Button variant="primary" onClick={() => setStep('rules')} disabled={!credentialId}>
+					Continue <ArrowRight className="h-4 w-4" />
+				</Button>
+			</>
+		),
+		rules: (
+			<>
+				<Button variant="ghost" onClick={() => setStep(noAuth ? 'toolkit' : 'credential')}>
+					<ArrowLeft className="h-4 w-4" /> Back
+				</Button>
+				<Button variant="primary" onClick={() => setStep('review')}>
+					Review <ArrowRight className="h-4 w-4" />
+				</Button>
+			</>
+		),
+		review: (
+			<>
+				<Button variant="ghost" onClick={() => setStep('rules')}>
+					<ArrowLeft className="h-4 w-4" /> Back
+				</Button>
+				<Button variant="primary" onClick={handleSubmit} loading={busy} disabled={busy}>
+					<ShieldCheck className="h-4 w-4" /> Approve &amp; grant access
+				</Button>
+			</>
+		),
+		done: (
+			<Button variant="primary" onClick={onClose}>
+				Done
+			</Button>
+		),
+	};
+
 	return (
 		<>
 			<Dialog
 				open={open && !credentialDialogOpen}
 				onClose={handleCancel}
 				title="Set up access"
+				size="xl"
+				className="sm:max-w-4xl"
 				subtitle={
-					<span className="flex items-center gap-1.5">
-						Grant this agent access to
-						<Badge variant="default">{apiLabel(apiRef)}</Badge>
-					</span>
+					<div className="space-y-2">
+						<span className="flex items-center gap-1.5">
+							Grant this agent access to
+							<Badge variant="default">{apiLabel(apiRef)}</Badge>
+						</span>
+						{request.reason && (
+							<span className="text-muted-foreground flex items-baseline gap-1.5">
+								<MessageSquare
+									className="relative top-0.5 h-3 w-3 shrink-0"
+									aria-hidden="true"
+								/>
+								<span className="text-foreground italic">
+									&ldquo;{request.reason}&rdquo;
+								</span>
+							</span>
+						)}
+					</div>
+				}
+				footer={
+					<div className="flex w-full items-center justify-between">
+						{stepFooter[step]}
+					</div>
 				}
 			>
-				<div className="flex flex-col gap-6 sm:flex-row">
-					<div className="border-border shrink-0 sm:w-56 sm:border-r sm:pr-6">
+				<div className="flex flex-col gap-8 sm:flex-row">
+					<aside className="bg-muted/40 border-border shrink-0 rounded-lg border p-5 sm:w-60">
 						<Stepper step={step} noAuth={noAuth} />
-					</div>
-					<div className="min-w-0 flex-1">
-						{request.reason && (
-							<div className="bg-muted/50 mb-4 flex items-baseline gap-2 rounded-md px-2.5 py-1.5">
-								<span className="text-muted-foreground flex shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide uppercase">
-									<MessageSquare className="h-3 w-3" aria-hidden="true" />
-									Reason
-								</span>
-								<p className="text-foreground text-xs">
-									&ldquo;{request.reason}&rdquo;
-								</p>
-							</div>
-						)}
+					</aside>
+					<div className="flex min-h-[22rem] min-w-0 flex-1 flex-col">
 						{error && (
-							<div className="mb-4">
+							<div className="mb-5">
 								<ErrorAlert message={error} />
 							</div>
 						)}
@@ -331,7 +389,7 @@ export function ProvisioningRequestDialog({
 								title="Create a toolkit"
 								blurb={`A toolkit is the container that will serve ${apiLabel(apiRef)} to this agent. Give it a name — the default is fine.`}
 							>
-								<div className="space-y-1.5">
+								<div className="max-w-md space-y-1.5">
 									<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
 									<Input
 										id="pw-toolkit-name"
@@ -340,17 +398,6 @@ export function ProvisioningRequestDialog({
 										placeholder="e.g. googleapis-com/sheets"
 									/>
 								</div>
-								<StepActions>
-									<Button
-										variant="primary"
-										onClick={handleCreateToolkit}
-										loading={busy}
-										disabled={busy || !toolkitName.trim()}
-									>
-										Create toolkit
-										<ArrowRight className="h-4 w-4" />
-									</Button>
-								</StepActions>
 							</StepBody>
 						)}
 
@@ -373,8 +420,8 @@ export function ProvisioningRequestDialog({
 								}
 							>
 								{credentialId ? (
-									<div className="border-success/30 bg-success/5 flex items-center gap-2 rounded-lg border p-3 text-sm">
-										<CheckCircle2 className="text-success h-4 w-4 shrink-0" />
+									<div className="border-success/30 bg-success/5 flex max-w-md items-center gap-2.5 rounded-lg border p-4 text-sm">
+										<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
 										<span>
 											{credentialLabel ?? 'Credential'} connected and ready.
 										</span>
@@ -382,23 +429,12 @@ export function ProvisioningRequestDialog({
 								) : (
 									<Button
 										variant="primary"
+										size="lg"
 										onClick={() => setCredentialDialogOpen(true)}
 									>
 										<KeyRound className="h-4 w-4" /> Connect credential
 									</Button>
 								)}
-								<StepActions>
-									<Button variant="ghost" onClick={() => setStep('toolkit')}>
-										<ArrowLeft className="h-4 w-4" /> Back
-									</Button>
-									<Button
-										variant="primary"
-										onClick={() => setStep('rules')}
-										disabled={!credentialId}
-									>
-										Continue <ArrowRight className="h-4 w-4" />
-									</Button>
-								</StepActions>
 							</StepBody>
 						)}
 
@@ -408,17 +444,6 @@ export function ProvisioningRequestDialog({
 								blurb="The agent proposed these permission rules from the API spec. Edit them if you like — with no rules, every call is blocked."
 							>
 								<PermissionRuleEditor rules={rules} onChange={setRules} />
-								<StepActions>
-									<Button
-										variant="ghost"
-										onClick={() => setStep(noAuth ? 'toolkit' : 'credential')}
-									>
-										<ArrowLeft className="h-4 w-4" /> Back
-									</Button>
-									<Button variant="primary" onClick={() => setStep('review')}>
-										Review <ArrowRight className="h-4 w-4" />
-									</Button>
-								</StepActions>
 							</StepBody>
 						)}
 
@@ -427,7 +452,7 @@ export function ProvisioningRequestDialog({
 								title="Review & grant"
 								blurb="Approving wires this up and lets the agent call the API. Here's exactly what will happen:"
 							>
-								<dl className="border-border divide-border divide-y rounded-lg border text-sm">
+								<dl className="border-border divide-border max-w-xl divide-y rounded-lg border text-sm">
 									<SummaryRow label="API">{apiLabel(apiRef)}</SummaryRow>
 									<SummaryRow label="Toolkit">{toolkitName}</SummaryRow>
 									<SummaryRow label="Credential">
@@ -441,32 +466,18 @@ export function ProvisioningRequestDialog({
 									</SummaryRow>
 									<SummaryRow label="Agent can">{rulesGist}</SummaryRow>
 								</dl>
-								<StepActions>
-									<Button variant="ghost" onClick={() => setStep('rules')}>
-										<ArrowLeft className="h-4 w-4" /> Back
-									</Button>
-									<Button
-										variant="primary"
-										onClick={handleSubmit}
-										loading={busy}
-										disabled={busy}
-									>
-										<ShieldCheck className="h-4 w-4" /> Approve &amp; grant
-										access
-									</Button>
-								</StepActions>
 							</StepBody>
 						)}
 
 						{step === 'done' && (
-							<div className="flex flex-col items-center gap-4 py-4 text-center">
+							<div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
 								{outcome === 'granted' ? (
 									<>
-										<div className="bg-success/10 flex h-12 w-12 items-center justify-center rounded-full">
-											<CheckCircle2 className="text-success h-7 w-7" />
+										<div className="bg-success/10 flex h-14 w-14 items-center justify-center rounded-full">
+											<CheckCircle2 className="text-success h-8 w-8" />
 										</div>
 										<div className="space-y-1">
-											<p className="text-foreground font-medium">
+											<p className="text-foreground text-base font-medium">
 												Access granted
 											</p>
 											<p className="text-muted-foreground text-sm">
@@ -476,17 +487,14 @@ export function ProvisioningRequestDialog({
 									</>
 								) : (
 									<>
-										<div className="bg-danger/10 flex h-12 w-12 items-center justify-center rounded-full">
-											<XCircle className="text-danger h-7 w-7" />
+										<div className="bg-danger/10 flex h-14 w-14 items-center justify-center rounded-full">
+											<XCircle className="text-danger h-8 w-8" />
 										</div>
 										<p className="text-danger max-w-sm text-sm">
 											{error ?? 'The request could not be fully approved.'}
 										</p>
 									</>
 								)}
-								<Button variant="primary" onClick={onClose}>
-									Done
-								</Button>
 							</div>
 						)}
 					</div>
@@ -514,25 +522,20 @@ function StepBody({
 	children: React.ReactNode;
 }) {
 	return (
-		<section className="space-y-4">
-			<div className="space-y-1">
-				<h3 className="text-foreground text-sm font-semibold">{title}</h3>
-				<p className="text-muted-foreground text-sm">{blurb}</p>
+		<section className="space-y-5">
+			<div className="space-y-1.5">
+				<h3 className="text-foreground text-base font-semibold">{title}</h3>
+				<p className="text-muted-foreground max-w-xl text-sm leading-relaxed">{blurb}</p>
 			</div>
 			{children}
 		</section>
 	);
 }
 
-/** The footer action row for a step (Back left, primary right). */
-function StepActions({ children }: { children: React.ReactNode }) {
-	return <div className="flex items-center justify-between pt-1">{children}</div>;
-}
-
 /** One label/value row in the review summary. */
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
-		<div className="flex items-start gap-4 px-3 py-2">
+		<div className="flex items-start gap-4 px-4 py-3">
 			<dt className="text-muted-foreground w-24 shrink-0 text-xs font-medium tracking-wide uppercase">
 				{label}
 			</dt>
@@ -575,44 +578,49 @@ function Stepper({ step, noAuth }: { step: Step; noAuth: boolean }) {
 	const activeIndex = order.indexOf(step);
 
 	return (
-		<ol className="space-y-1">
+		<ol className="space-y-0">
 			{steps.map((s, i) => {
 				const done = step === 'done' || i < activeIndex;
 				const active = i === activeIndex && step !== 'done';
+				const last = i === steps.length - 1;
 				return (
 					<li key={s.key} className="flex items-start gap-3">
-						<div className="flex flex-col items-center">
+						<div className="flex flex-col items-center self-stretch">
 							<span
 								className={
 									done
-										? 'bg-primary text-background flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold'
+										? 'bg-primary text-background flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold'
 										: active
-											? 'border-primary text-primary flex h-6 w-6 items-center justify-center rounded-full border-2 text-xs font-semibold'
-											: 'border-border text-muted-foreground flex h-6 w-6 items-center justify-center rounded-full border text-xs'
+											? 'border-primary text-primary bg-card flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold'
+											: 'border-border text-muted-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs'
 								}
 							>
 								{done ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
 							</span>
-							{i < steps.length - 1 && (
+							{!last && (
 								<span
-									className={done ? 'bg-primary h-5 w-px' : 'bg-border h-5 w-px'}
+									className={
+										done ? 'bg-primary w-px flex-1' : 'bg-border w-px flex-1'
+									}
 									aria-hidden="true"
 								/>
 							)}
 						</div>
-						<div className="pb-1">
+						<div className={last ? 'pb-0' : 'pb-6'}>
 							<p
 								className={
 									active
-										? 'text-foreground text-sm font-medium'
+										? 'text-foreground text-sm font-semibold'
 										: done
-											? 'text-foreground text-sm'
+											? 'text-foreground text-sm font-medium'
 											: 'text-muted-foreground text-sm'
 								}
 							>
 								{s.label}
 							</p>
-							<p className="text-muted-foreground text-xs">{s.hint}</p>
+							<p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
+								{s.hint}
+							</p>
 						</div>
 					</li>
 				);
