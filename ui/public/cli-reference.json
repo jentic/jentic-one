@@ -418,6 +418,9 @@
           "use": "apis",
           "short": "Browse and manage APIs in the local registry",
           "long": "apis inspects and manages the APIs imported into this deployment's local\nregistry — the other half of `jentic catalog import`. Run bare on a\nterminal to open an interactive browser (list, preview operations, manage\nrevisions); the subcommands (list/show/revisions/operations/inspect/\npromote/archive/rm/spec) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
+          "aliases": [
+            "api"
+          ],
           "group_title": "APIs",
           "flags": [
             {
