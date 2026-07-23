@@ -84,8 +84,6 @@ const MODULE_QUERY_KEY_ROOTS = {
 	agents: ['agents', 'service-accounts'],
 	monitor: ['monitor'],
 	docs: ['docs'],
-	// Dev-only internal tools (showcase). No query keys of its own.
-	dev: [],
 };
 
 // Guard: every module dir under src/modules MUST appear in the map above, so a

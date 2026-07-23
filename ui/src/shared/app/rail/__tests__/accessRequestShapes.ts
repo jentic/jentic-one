@@ -1,16 +1,17 @@
 /**
- * Access-request possibility fixtures — the full space of shapes the system can
- * produce, for the dev-only showcase at `/app/dev/access-requests`. Each entry
- * is a real `AccessRequest` (the shared lib type) plus a note on how the UI
- * routes and handles it, so the gallery can render every case against MSW
- * without a live backend.
+ * Access-request shape catalog — the full space of request shapes the system
+ * can produce, used to test that every shape routes to (and renders in) the
+ * right decision surface. Each entry pairs a real `AccessRequest` with the
+ * surface it should open, so `accessRequestShapes.test.tsx` can assert routing
+ * exhaustively.
  *
- * DEV-ONLY: imported only by the dev showcase route, which is guarded by
- * `import.meta.env.DEV` and tree-shaken out of production builds.
+ * Kept as a shared fixture (not a shipped feature): it documents the shapes as
+ * data and backs the routing tests. If you add a new access-request shape,
+ * add it here so the routing assertions cover it.
  */
 import type { AccessRequest, AccessRequestItem } from '@/shared/lib';
 
-const AGENT = 'agnt_showcase_0001';
+const AGENT = 'agnt_shape_0001';
 const OWNER = 'usr_owner_0001';
 
 function item(
@@ -53,25 +54,21 @@ function req(
 const API = { vendor: 'posthog-com', name: 'posthog-api', version: '1.0.0' };
 const RULES = [{ effect: 'allow', methods: ['GET'], path: '.*' }];
 
-/** How the UI routes/handles a given request — surfaced as a note in the gallery. */
-export type RoutedTo = 'wizard' | 'plain' | 'rail-handoff';
+/** Which decision surface a request should open (see AccessRequestDecisionDialog). */
+export type RoutedTo = 'wizard' | 'plain';
 
-export interface ShowcaseCase {
+export interface AccessRequestShape {
 	key: string;
 	title: string;
-	summary: string;
-	/** Which decision surface this opens (see AccessRequestDecisionDialog). */
 	routedTo: RoutedTo;
 	request: AccessRequest;
 }
 
-export const SHOWCASE_CASES: ShowcaseCase[] = [
+export const ACCESS_REQUEST_SHAPES: AccessRequestShape[] = [
 	// ── Provisioning plans (open the wizard) ──────────────────────────────────
 	{
 		key: 'plan-oauth-pending',
 		title: 'Provisioning plan · OAuth2 · pending',
-		summary:
-			'The full path to first execution: create toolkit, provision an OAuth2 credential, bind it with proposed rules, bind the agent. Opens the setup wizard.',
 		routedTo: 'wizard',
 		request: req(
 			'areq_plan_oauth',
@@ -92,8 +89,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'plan-noauth-pending',
 		title: 'Provisioning plan · no-auth · pending',
-		summary:
-			'A no-auth API (e.g. open-meteo): the provision item carries security_scheme=no_auth, so the wizard skips the manual credential step and auto-creates a NO_AUTH credential on approval.',
 		routedTo: 'wizard',
 		request: req('areq_plan_noauth', 'pending', [
 			item({
@@ -130,8 +125,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'plan-partially-denied',
 		title: 'Provisioning plan · plain-approved (guard denied the binds)',
-		summary:
-			'A plan approved WITHOUT the wizard: the inert intents approve as no-ops but the binds are denied with a plan-aware reason pointing back to the wizard.',
 		routedTo: 'wizard',
 		request: req('areq_plan_denied', 'partially_approved', [
 			item({
@@ -171,8 +164,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'plan-approved',
 		title: 'Provisioning plan · approved (fulfilled)',
-		summary:
-			'A plan fulfilled through the wizard and approved: the read-only summary reconstructs what was wired — toolkit, credential, the rules the agent got, and when.',
 		routedTo: 'wizard',
 		request: req('areq_plan_approved', 'approved', [
 			item({
@@ -218,8 +209,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'toolkit-bind-pending',
 		title: 'toolkit:bind · pending',
-		summary:
-			'Last-mile: bind the agent to an EXISTING toolkit that already serves the API. Plain approve/deny.',
 		routedTo: 'plain',
 		request: req('areq_tk_bind', 'pending', [
 			item({ resource_type: 'toolkit', action: 'bind', resource_reference: API }),
@@ -228,7 +217,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'scope-grant-pending',
 		title: 'scope:grant · pending',
-		summary: 'Grant the agent a platform scope (e.g. apis:write). Plain approve/deny.',
 		routedTo: 'plain',
 		request: req('areq_scope', 'pending', [
 			item({ resource_type: 'scope', action: 'grant', resource_id: 'apis:write' }),
@@ -237,8 +225,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'credential-bind-pending',
 		title: 'credential:bind · pending (with rules)',
-		summary:
-			'Bind an existing credential to a toolkit with permission rules. Plain approve/deny; rules are enforceable here.',
 		routedTo: 'plain',
 		request: req('areq_cred_bind', 'pending', [
 			item({
@@ -256,7 +242,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'approved',
 		title: 'scope:grant · approved',
-		summary: 'A decided request in its terminal approved state (read-only).',
 		routedTo: 'plain',
 		request: req('areq_approved', 'approved', [
 			item({
@@ -271,7 +256,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'denied',
 		title: 'toolkit:bind · denied',
-		summary: 'A denied request with a reason the agent reads back.',
 		routedTo: 'plain',
 		request: req('areq_denied', 'denied', [
 			item({
@@ -288,7 +272,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'withdrawn',
 		title: 'scope:grant · withdrawn',
-		summary: 'The agent withdrew the request before a decision.',
 		routedTo: 'plain',
 		request: req('areq_withdrawn', 'withdrawn', [
 			item({
@@ -302,7 +285,6 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 	{
 		key: 'expired',
 		title: 'toolkit:bind · expired',
-		summary: 'The request TTL elapsed with no decision.',
 		routedTo: 'plain',
 		request: req('areq_expired', 'expired', [
 			item({
@@ -314,8 +296,3 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 		]),
 	},
 ];
-
-/** Index by request id — the MSW handlers resolve GET/decide/amend against this. */
-export const SHOWCASE_BY_ID: Record<string, AccessRequest> = Object.fromEntries(
-	SHOWCASE_CASES.map((c) => [c.request.id, c.request]),
-);
