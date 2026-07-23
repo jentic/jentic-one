@@ -46,7 +46,7 @@ def test_jwt_bearer_grant_success(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "eyJ.test.assertion",
         },
@@ -70,7 +70,7 @@ def test_jwt_bearer_grant_missing_assertion(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         },
     )
@@ -96,7 +96,7 @@ def test_jwt_bearer_grant_invalid_assertion(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "eyJ.invalid.token",
         },
@@ -117,7 +117,7 @@ def test_unsupported_grant_type_returns_400(
 
     resp = client.post(
         "/oauth/token",
-        json={"grant_type": "client_credentials"},
+        data={"grant_type": "client_credentials"},
     )
     assert resp.status_code == 400
     data = resp.json()

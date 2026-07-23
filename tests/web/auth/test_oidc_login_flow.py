@@ -189,7 +189,7 @@ def _exchange(client: TestClient, *, code: str, code_verifier: str) -> Response:
     """Exchange the platform code + PKCE verifier at /oauth/token."""
     resp: Response = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "authorization_code",
             "code": code,
             "code_verifier": code_verifier,

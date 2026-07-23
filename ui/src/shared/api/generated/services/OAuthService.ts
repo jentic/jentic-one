@@ -2,12 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { IntrospectRequest } from '../models/IntrospectRequest';
+import type { Body_introspectEndpoint } from '../models/Body_introspectEndpoint';
+import type { Body_revokeEndpoint } from '../models/Body_revokeEndpoint';
+import type { Body_tokenEndpoint } from '../models/Body_tokenEndpoint';
 import type { IntrospectResponse } from '../models/IntrospectResponse';
 import type { MintRequest } from '../models/MintRequest';
 import type { MintResponse } from '../models/MintResponse';
-import type { RevokeRequest } from '../models/RevokeRequest';
-import type { TokenRequest } from '../models/TokenRequest';
 import type { TokenResponse } from '../models/TokenResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -122,15 +122,15 @@ export class OAuthService {
      * @throws ApiError
      */
     public static introspectEndpoint({
-        requestBody,
+        formData,
     }: {
-        requestBody: IntrospectRequest,
+        formData: Body_introspectEndpoint,
     }): CancelablePromise<IntrospectResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/introspect',
-            body: requestBody,
-            mediaType: 'application/json',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
@@ -177,15 +177,15 @@ export class OAuthService {
      * @throws ApiError
      */
     public static revokeEndpoint({
-        requestBody,
+        formData,
     }: {
-        requestBody: RevokeRequest,
+        formData: Body_revokeEndpoint,
     }): CancelablePromise<any> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/revoke',
-            body: requestBody,
-            mediaType: 'application/json',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
@@ -203,15 +203,15 @@ export class OAuthService {
      * @throws ApiError
      */
     public static tokenEndpoint({
-        requestBody,
+        formData,
     }: {
-        requestBody: TokenRequest,
+        formData: Body_tokenEndpoint,
     }): CancelablePromise<TokenResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/oauth/token',
-            body: requestBody,
-            mediaType: 'application/json',
+            formData: formData,
+            mediaType: 'application/x-www-form-urlencoded',
             errors: {
                 400: `Bad Request`,
                 422: `Unprocessable Entity`,

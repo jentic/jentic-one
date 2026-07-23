@@ -65,7 +65,7 @@ def test_jwt_bearer_mint_db_unavailable_returns_503(
 
     resp = client.post(
         "/oauth/token",
-        json={
+        data={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "eyJ.test.assertion",
         },

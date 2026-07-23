@@ -2,10 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-/**
- * Introspection endpoint request (form-encoded or JSON body).
- */
-export type IntrospectRequest = {
+export type Body_revokeEndpoint = {
     token: string;
     token_type_hint?: (string | null);
 };
