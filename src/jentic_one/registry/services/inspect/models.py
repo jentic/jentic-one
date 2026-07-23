@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,42 @@ class InspectLinks(BaseModel):
     self_link: str
 
 
+class OperationParameter(BaseModel):
+    """A single declared parameter (query / header / path)."""
+
+    name: str
+    required: bool = False
+    description: str | None = None
+    schema_: dict[str, object] | None = Field(default=None, serialization_alias="schema")
+
+
+class RequestBodySchema(BaseModel):
+    """The request body an operation accepts, projected to a single schema.
+
+    ``content_type`` records which media type the ``schema`` was taken from
+    (JSON is preferred when the spec offers several).
+    """
+
+    required: bool = False
+    description: str | None = None
+    content_type: str | None = None
+    schema_: dict[str, object] | None = Field(default=None, serialization_alias="schema")
+
+
+class OperationInputs(BaseModel):
+    """Declared inputs for an operation, grouped by where they belong.
+
+    Restores the query / header / path parameters and request body that spec
+    import used to drop, so a client can construct a complete request rather
+    than only supplying path parameters (issue #768).
+    """
+
+    path: list[OperationParameter] = []
+    query: list[OperationParameter] = []
+    header: list[OperationParameter] = []
+    body: RequestBodySchema | None = None
+
+
 class OperationInspectResult(BaseModel):
     """Full structural detail for a resolved operation."""
 
@@ -65,7 +101,7 @@ class OperationInspectResult(BaseModel):
     name: str | None = None
     description: str | None = None
     api: ApiContext
-    parameters: dict[str, object] | None = None
+    inputs: OperationInputs | None = None
     response_schema: dict[str, object] | None = None
     auth: list[AuthInstruction] | None = None
     server: str | None = None
