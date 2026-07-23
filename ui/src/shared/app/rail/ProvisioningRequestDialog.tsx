@@ -45,6 +45,7 @@ import {
 	decideAccessRequest,
 	getAccessRequest,
 	parseItemRules,
+	ruleSummary,
 	type AccessRequest,
 } from '@/shared/lib/accessRequests';
 import {
@@ -562,9 +563,10 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
 
 /**
  * Read-only summary shown when a provisioning plan is opened after it's already
- * been decided (or otherwise left `pending`). No create/approve controls — just
- * the outcome and, for a denial, the reason the agent reads back. Prevents
- * re-fulfilling a settled request.
+ * been decided (or otherwise left `pending`). No create/approve controls. For an
+ * approved plan it reconstructs WHAT was set up from the decided items (toolkit,
+ * credential, the rules the agent got, when); for a denial it shows the reason
+ * the agent reads back. Prevents re-fulfilling a settled request.
  */
 function TerminalSummaryDialog({
 	open,
@@ -579,19 +581,29 @@ function TerminalSummaryDialog({
 }) {
 	const approved = request.status === 'approved' || request.status === 'partially_approved';
 	const deniedItem = request.items.find((it) => it.status === 'denied');
+
+	// Reconstruct what the approval actually wired, from the decided items.
+	const bindItem = findItem(request, 'credential', 'bind');
+	const agentBindItem = findItem(request, 'toolkit', 'bind');
+	const toolkitId = agentBindItem?.resource_id ?? bindItem?.to_id ?? null;
+	const credentialId = bindItem?.resource_id ?? null;
+	const grantedRules = bindItem ? ruleSummary(parseItemRules(bindItem)) : null;
+	const decidedAt = request.items.find((it) => it.decided_at)?.decided_at ?? null;
+
 	const STATUS_COPY: Record<string, string> = {
-		approved: 'This request was approved — access is set up.',
-		partially_approved: 'This request was partially approved.',
-		denied: 'This request was denied.',
+		approved: 'The agent can now call this API.',
+		partially_approved: 'Some items were approved; others were denied (see below).',
+		denied: 'The agent was not granted access.',
 		expired: 'This request expired before it was decided.',
-		withdrawn: 'The agent withdrew this request.',
+		withdrawn: 'The agent withdrew this request before a decision.',
 	};
+
 	return (
 		<Dialog
 			open={open}
 			onClose={onClose}
 			title="Access request"
-			size="md"
+			size="lg"
 			subtitle={
 				<span className="flex items-center gap-1.5">
 					For
@@ -604,30 +616,52 @@ function TerminalSummaryDialog({
 				</Button>
 			}
 		>
-			<div className="flex flex-col items-center gap-4 py-4 text-center">
-				<div
-					className={
-						approved
-							? 'bg-success/10 flex h-14 w-14 items-center justify-center rounded-full'
-							: 'bg-danger/10 flex h-14 w-14 items-center justify-center rounded-full'
-					}
-				>
-					{approved ? (
-						<CheckCircle2 className="text-success h-8 w-8" />
-					) : (
-						<XCircle className="text-danger h-8 w-8" />
-					)}
+			<div className="space-y-5">
+				<div className="flex items-center gap-3">
+					<div
+						className={
+							approved
+								? 'bg-success/10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full'
+								: 'bg-danger/10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full'
+						}
+					>
+						{approved ? (
+							<CheckCircle2 className="text-success h-7 w-7" />
+						) : (
+							<XCircle className="text-danger h-7 w-7" />
+						)}
+					</div>
+					<div>
+						<p className="text-foreground text-base font-medium capitalize">
+							{request.status.replace('_', ' ')}
+						</p>
+						<p className="text-muted-foreground text-sm">
+							{STATUS_COPY[request.status] ?? 'This request is no longer pending.'}
+						</p>
+					</div>
 				</div>
-				<div className="space-y-1">
-					<p className="text-foreground text-base font-medium capitalize">
-						{request.status.replace('_', ' ')}
-					</p>
-					<p className="text-muted-foreground text-sm">
-						{STATUS_COPY[request.status] ?? 'This request is no longer pending.'}
-					</p>
-				</div>
+
+				{/* What the approval actually wired — concrete, not filler. */}
+				{approved && (toolkitId || credentialId || grantedRules) && (
+					<dl className="border-border divide-border divide-y rounded-lg border text-sm">
+						<SummaryRow label="API">{apiLabel}</SummaryRow>
+						{toolkitId && <SummaryRow label="Toolkit">{toolkitId}</SummaryRow>}
+						<SummaryRow label="Credential">
+							{credentialId ?? (
+								<span className="text-muted-foreground">none — no-auth API</span>
+							)}
+						</SummaryRow>
+						{grantedRules && <SummaryRow label="Agent can">{grantedRules}</SummaryRow>}
+						{decidedAt && (
+							<SummaryRow label="Decided">
+								{new Date(decidedAt).toLocaleString()}
+							</SummaryRow>
+						)}
+					</dl>
+				)}
+
 				{deniedItem?.decision_reason && (
-					<div className="border-border bg-muted/40 w-full max-w-md rounded-lg border p-3 text-left">
+					<div className="border-border bg-muted/40 rounded-lg border p-3">
 						<p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
 							Reason
 						</p>

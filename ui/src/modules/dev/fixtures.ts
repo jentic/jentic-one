@@ -158,6 +158,51 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 			}),
 		]),
 	},
+	{
+		key: 'plan-approved',
+		title: 'Provisioning plan · approved (fulfilled)',
+		summary:
+			'A plan fulfilled through the wizard and approved: the read-only summary reconstructs what was wired — toolkit, credential, the rules the agent got, and when.',
+		routedTo: 'wizard',
+		request: req('areq_plan_approved', 'approved', [
+			item({
+				resource_type: 'toolkit',
+				action: 'create',
+				status: 'approved',
+				resource_reference: API,
+				decided_by: OWNER,
+				decided_at: '2026-07-23T09:05:00Z',
+			}),
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				status: 'approved',
+				resource_reference: { ...API, security_scheme: 'oauth2' },
+				decided_by: OWNER,
+				decided_at: '2026-07-23T09:05:00Z',
+			}),
+			item({
+				resource_type: 'credential',
+				action: 'bind',
+				status: 'approved',
+				resource_id: 'cred_posthog_9f2',
+				to_type: 'toolkit',
+				to_id: 'tk_posthog_a17',
+				rules: RULES,
+				decided_by: OWNER,
+				decided_at: '2026-07-23T09:05:00Z',
+			}),
+			item({
+				resource_type: 'toolkit',
+				action: 'bind',
+				status: 'approved',
+				resource_id: 'tk_posthog_a17',
+				resource_reference: API,
+				decided_by: OWNER,
+				decided_at: '2026-07-23T09:05:00Z',
+			}),
+		]),
+	},
 
 	// ── Single-item requests (open the plain approve/deny dialog) ─────────────
 	{
