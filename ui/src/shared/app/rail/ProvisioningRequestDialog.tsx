@@ -20,15 +20,17 @@
  * session and offers to discard them on cancel (client-side, best-effort).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, ShieldCheck, XCircle } from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
+import { Label } from '@/shared/ui/Label';
+import { Badge } from '@/shared/ui/Badge';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/PermissionRuleEditor';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
-import { runConnectFlow } from '@/shared/credentials/api';
+import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
 import { CredentialType } from '@/shared/api';
 import {
 	amendAccessRequest,
@@ -98,6 +100,7 @@ export function ProvisioningRequestDialog({
 	const [toolkitId, setToolkitId] = useState<string | null>(null);
 	const [toolkitName, setToolkitName] = useState('');
 	const [credentialId, setCredentialId] = useState<string | null>(null);
+	const [credentialType, setCredentialType] = useState<string | null>(null);
 	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
 	const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -117,6 +120,7 @@ export function ProvisioningRequestDialog({
 		setStep('toolkit');
 		setToolkitId(null);
 		setCredentialId(null);
+		setCredentialType(null);
 		setToolkitName(suggestToolkitName(apiRef?.vendor ?? '', apiRef?.name));
 		setRules(proposedRules);
 		setOutcome(null);
@@ -140,6 +144,7 @@ export function ProvisioningRequestDialog({
 	const handleCredentialCreated = useCallback(async (info: CreatedCredentialInfo) => {
 		setCredentialDialogOpen(false);
 		setCredentialId(info.credentialId);
+		setCredentialType(info.type);
 		// An OAuth2 credential that needs a browser sign-in (authorization-code
 		// with an authorize URL) has NO token until the connect flow completes —
 		// binding it as-is makes the broker fail at execute with "No refresh
@@ -247,87 +252,118 @@ export function ProvisioningRequestDialog({
 		return null;
 	}
 
+	const credentialLabel = credentialType
+		? (CREDENTIAL_TYPE_LABELS[credentialType as CredentialType] ?? credentialType)
+		: null;
+	const rulesGist = summarizeRules(rules);
+
 	return (
 		<>
 			<Dialog
 				open={open && !credentialDialogOpen}
 				onClose={handleCancel}
 				title="Set up access"
-				subtitle={`Make ${apiLabel(apiRef)} executable for this agent`}
+				subtitle={
+					<span className="flex items-center gap-1.5">
+						Grant this agent access to
+						<Badge variant="default">{apiLabel(apiRef)}</Badge>
+					</span>
+				}
 			>
 				<div className="flex flex-col gap-6 sm:flex-row">
-					<div className="border-border shrink-0 sm:w-52 sm:border-r sm:pr-6">
+					<div className="border-border shrink-0 sm:w-56 sm:border-r sm:pr-6">
 						<Stepper step={step} noAuth={noAuth} />
 					</div>
-					<div className="min-w-0 flex-1 space-y-5">
-						{error && <ErrorAlert message={error} />}
+					<div className="min-w-0 flex-1">
+						{error && (
+							<div className="mb-4">
+								<ErrorAlert message={error} />
+							</div>
+						)}
 
 						{step === 'toolkit' && (
-							<section className="space-y-3">
-								<p className="text-muted-foreground text-sm">
-									Step 1 — create a toolkit to serve {apiLabel(apiRef)}.
-								</p>
-								<Input
-									aria-label="Toolkit name"
-									value={toolkitName}
-									onChange={(e) => setToolkitName(e.target.value)}
-									placeholder="Toolkit name"
-								/>
-								<div className="flex justify-end">
+							<StepBody
+								title="Create a toolkit"
+								blurb={`A toolkit is the container that will serve ${apiLabel(apiRef)} to this agent. Give it a name — the default is fine.`}
+							>
+								<div className="space-y-1.5">
+									<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
+									<Input
+										id="pw-toolkit-name"
+										value={toolkitName}
+										onChange={(e) => setToolkitName(e.target.value)}
+										placeholder="e.g. googleapis-com/sheets"
+									/>
+								</div>
+								<StepActions>
 									<Button
 										variant="primary"
 										onClick={handleCreateToolkit}
+										loading={busy}
 										disabled={busy || !toolkitName.trim()}
 									>
-										{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
 										Create toolkit
+										<ArrowRight className="h-4 w-4" />
 									</Button>
-								</div>
-							</section>
+								</StepActions>
+							</StepBody>
 						)}
 
 						{step === 'credential' && (
-							<section className="space-y-3">
-								<p className="text-muted-foreground text-sm">
-									Step 2 — connect a credential for {apiLabel(apiRef)}
-									{detectedAuth ? ` (detected: ${detectedAuth})` : ''}. You enter
-									the secret; the agent never sees it.
-								</p>
-								<div className="flex justify-between">
+							<StepBody
+								title="Connect a credential"
+								blurb={
+									<>
+										{apiLabel(apiRef)} needs an account to call it
+										{detectedAuth ? (
+											<>
+												{' '}
+												(detected auth:{' '}
+												<Badge variant="default">{detectedAuth}</Badge>)
+											</>
+										) : null}
+										. <span className="text-foreground font-medium">You</span>{' '}
+										enter the secret — the agent never sees it.
+									</>
+								}
+							>
+								{credentialId ? (
+									<div className="border-success/30 bg-success/5 flex items-center gap-2 rounded-lg border p-3 text-sm">
+										<CheckCircle2 className="text-success h-4 w-4 shrink-0" />
+										<span>
+											{credentialLabel ?? 'Credential'} connected and ready.
+										</span>
+									</div>
+								) : (
+									<Button
+										variant="primary"
+										onClick={() => setCredentialDialogOpen(true)}
+									>
+										<KeyRound className="h-4 w-4" /> Connect credential
+									</Button>
+								)}
+								<StepActions>
 									<Button variant="ghost" onClick={() => setStep('toolkit')}>
 										<ArrowLeft className="h-4 w-4" /> Back
 									</Button>
 									<Button
 										variant="primary"
-										onClick={() => setCredentialDialogOpen(true)}
+										onClick={() => setStep('rules')}
+										disabled={!credentialId}
 									>
-										{credentialId
-											? 'Credential connected ✓'
-											: 'Connect credential'}
-										<ArrowRight className="h-4 w-4" />
+										Continue <ArrowRight className="h-4 w-4" />
 									</Button>
-								</div>
-								{credentialId && (
-									<div className="flex justify-end">
-										<Button
-											variant="secondary"
-											onClick={() => setStep('rules')}
-										>
-											Continue <ArrowRight className="h-4 w-4" />
-										</Button>
-									</div>
-								)}
-							</section>
+								</StepActions>
+							</StepBody>
 						)}
 
 						{step === 'rules' && (
-							<section className="space-y-3">
-								<p className="text-muted-foreground text-sm">
-									Confirm the permission rules — the agent proposed these from the
-									spec. Edit as needed; with no rules every call is denied.
-								</p>
+							<StepBody
+								title="Confirm what the agent can do"
+								blurb="The agent proposed these permission rules from the API spec. Edit them if you like — with no rules, every call is blocked."
+							>
 								<PermissionRuleEditor rules={rules} onChange={setRules} />
-								<div className="flex justify-between">
+								<StepActions>
 									<Button
 										variant="ghost"
 										onClick={() => setStep(noAuth ? 'toolkit' : 'credential')}
@@ -337,63 +373,76 @@ export function ProvisioningRequestDialog({
 									<Button variant="primary" onClick={() => setStep('review')}>
 										Review <ArrowRight className="h-4 w-4" />
 									</Button>
-								</div>
-							</section>
+								</StepActions>
+							</StepBody>
 						)}
 
 						{step === 'review' && (
-							<section className="space-y-3">
-								<p className="text-muted-foreground text-sm">
-									Approving will bind the credential to the toolkit with these
-									rules and bind the agent to the toolkit.
-								</p>
-								<ul className="text-foreground space-y-1 text-sm">
-									<li>Toolkit: {toolkitName}</li>
-									<li>
-										Credential:{' '}
-										{noAuth ? 'none (no-auth API)' : (credentialId ?? '—')}
-									</li>
-									<li>Rules: {rules.length} defined</li>
-								</ul>
-								<div className="flex justify-between">
+							<StepBody
+								title="Review & grant"
+								blurb="Approving wires this up and lets the agent call the API. Here's exactly what will happen:"
+							>
+								<dl className="border-border divide-border divide-y rounded-lg border text-sm">
+									<SummaryRow label="API">{apiLabel(apiRef)}</SummaryRow>
+									<SummaryRow label="Toolkit">{toolkitName}</SummaryRow>
+									<SummaryRow label="Credential">
+										{noAuth ? (
+											<span className="text-muted-foreground">
+												none — this API needs no auth
+											</span>
+										) : (
+											(credentialLabel ?? 'connected')
+										)}
+									</SummaryRow>
+									<SummaryRow label="Agent can">{rulesGist}</SummaryRow>
+								</dl>
+								<StepActions>
 									<Button variant="ghost" onClick={() => setStep('rules')}>
 										<ArrowLeft className="h-4 w-4" /> Back
 									</Button>
 									<Button
 										variant="primary"
 										onClick={handleSubmit}
+										loading={busy}
 										disabled={busy}
 									>
-										{busy ? (
-											<Loader2 className="h-4 w-4 animate-spin" />
-										) : (
-											<ShieldCheck className="h-4 w-4" />
-										)}
-										Approve &amp; grant access
+										<ShieldCheck className="h-4 w-4" /> Approve &amp; grant
+										access
 									</Button>
-								</div>
-							</section>
+								</StepActions>
+							</StepBody>
 						)}
 
 						{step === 'done' && (
-							<section className="space-y-4 text-center">
+							<div className="flex flex-col items-center gap-4 py-4 text-center">
 								{outcome === 'granted' ? (
 									<>
-										<CheckCircle2 className="text-success mx-auto h-10 w-10" />
-										<p className="text-foreground text-sm">
-											Access granted. {apiLabel(apiRef)} is now executable for
-											this agent.
-										</p>
+										<div className="bg-success/10 flex h-12 w-12 items-center justify-center rounded-full">
+											<CheckCircle2 className="text-success h-7 w-7" />
+										</div>
+										<div className="space-y-1">
+											<p className="text-foreground font-medium">
+												Access granted
+											</p>
+											<p className="text-muted-foreground text-sm">
+												{apiLabel(apiRef)} is now callable by this agent.
+											</p>
+										</div>
 									</>
 								) : (
-									<p className="text-danger text-sm">
-										{error ?? 'The request could not be fully approved.'}
-									</p>
+									<>
+										<div className="bg-danger/10 flex h-12 w-12 items-center justify-center rounded-full">
+											<XCircle className="text-danger h-7 w-7" />
+										</div>
+										<p className="text-danger max-w-sm text-sm">
+											{error ?? 'The request could not be fully approved.'}
+										</p>
+									</>
 								)}
 								<Button variant="primary" onClick={onClose}>
 									Done
 								</Button>
-							</section>
+							</div>
 						)}
 					</div>
 				</div>
@@ -406,6 +455,59 @@ export function ProvisioningRequestDialog({
 			/>
 		</>
 	);
+}
+
+/** Consistent step frame: a title, a one-line explanation, then the content. */
+function StepBody({
+	title,
+	blurb,
+	children,
+}: {
+	title: string;
+	blurb: React.ReactNode;
+	children: React.ReactNode;
+}) {
+	return (
+		<section className="space-y-4">
+			<div className="space-y-1">
+				<h3 className="text-foreground text-sm font-semibold">{title}</h3>
+				<p className="text-muted-foreground text-sm">{blurb}</p>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+/** The footer action row for a step (Back left, primary right). */
+function StepActions({ children }: { children: React.ReactNode }) {
+	return <div className="flex items-center justify-between pt-1">{children}</div>;
+}
+
+/** One label/value row in the review summary. */
+function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<div className="flex items-start gap-4 px-3 py-2">
+			<dt className="text-muted-foreground w-24 shrink-0 text-xs font-medium tracking-wide uppercase">
+				{label}
+			</dt>
+			<dd className="text-foreground min-w-0 flex-1 break-words">{children}</dd>
+		</div>
+	);
+}
+
+/**
+ * Plain-English gist of the rule set for the review summary — so the operator
+ * reads "GET any path" rather than counting raw rule objects.
+ */
+function summarizeRules(rules: PermissionRuleInput[]): string {
+	if (rules.length === 0) return 'nothing yet — add a rule or every call is blocked';
+	const parts = rules.map((r) => {
+		const verb = r.effect === 'allow' ? 'Allow' : 'Block';
+		const methods = r.methods?.length ? r.methods.join(', ') : 'any method';
+		const path = r.path?.trim() ? r.path : 'any path';
+		return `${verb} ${methods} on ${path}`;
+	});
+	return parts.join('; ');
 }
 
 function Stepper({ step, noAuth }: { step: Step; noAuth: boolean }) {

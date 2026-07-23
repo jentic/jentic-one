@@ -78,6 +78,7 @@ import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 import { credentialsRoutes } from '@/modules/credentials/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
+import { devRoutes } from '@/modules/dev/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
@@ -88,4 +89,6 @@ export const moduleRoutes: RouteObject[] = [
 	...workspaceRoutes,
 	...credentialsRoutes,
 	...monitorRoutes,
+	// Dev-only internal tools (empty array in production builds).
+	...devRoutes,
 ];
