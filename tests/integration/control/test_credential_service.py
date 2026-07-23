@@ -101,6 +101,34 @@ async def test_create_normalizes_dotted_vendor_and_name(
     assert stored.api.version == "1.0.0"
 
 
+async def test_create_stores_empty_name_and_version_as_null(
+    svc: CredentialService, clean_credentials: None, control_db: DatabaseSession
+) -> None:
+    """A missing api name/version is stored as NULL, not "".
+
+    APIReferenceRequest defaults name/version to "" (not None). NULL is the
+    "covers all names/versions" wildcard both the bind-time resolver and the
+    broker's toolkit_binding_resolver rely on; an empty string matches NEITHER
+    NULL nor a concrete value, so a versionless credential would make its toolkit
+    serve nothing at execute time (issue #775). The service must coerce "" -> NULL.
+    """
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.NO_AUTH,
+            name="No-auth country",
+            api=APIReference(vendor="country-is", name="", version=""),
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+
+    async with control_db.session() as session:
+        row = await session.get(Credential, result.credential_id)
+        assert row is not None
+        assert row.api_vendor == "country-is"
+        assert row.api_name is None
+        assert row.api_version is None
+
+
 async def test_create_bearer_token(svc: CredentialService, clean_credentials: None) -> None:
     """Create bearer_token: echoes secret once, stores encrypted with preview."""
     result = await svc.create(

@@ -20,7 +20,10 @@ _AGENT_TOOLKITS = text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agen
 
 # control DB — toolkits whose bound credential matches the API identity. Empty
 # string for :name / :version means "any" (the credential may not pin name/version).
-# NULL api_name/api_version on the credential means "covers all names/versions for this vendor".
+# A NULL or empty-string api_name/api_version on the credential means "covers all
+# names/versions for this vendor" — APIReferenceRequest defaults name/version to
+# "" (not None), so a versionless credential persists "" rather than NULL; both
+# are treated as the wildcard here so it still matches a concrete version (#775).
 #
 # NB: this run-time resolver intentionally treats a NULL-wildcard credential
 # binding as a valid match and applies *no* exact-name preference — at execution
@@ -36,8 +39,8 @@ _TOOLKITS_FOR_API = text(
     "FROM toolkit_credential_bindings tcb "
     "JOIN credentials c ON c.id = tcb.credential_id "
     "WHERE c.api_vendor = :vendor "
-    "  AND (:name = '' OR c.api_name IS NULL OR c.api_name = :name) "
-    "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = :version)"
+    "  AND (:name = '' OR c.api_name IS NULL OR c.api_name = '' OR c.api_name = :name) "
+    "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = '' OR c.api_version = :version)"
 )
 
 

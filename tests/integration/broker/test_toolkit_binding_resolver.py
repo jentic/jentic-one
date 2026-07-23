@@ -167,6 +167,31 @@ async def test_derive_toolkits_wildcard_name_version(
     assert result == [tk_id]
 
 
+async def test_derive_toolkits_empty_string_version_matches_concrete(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A credential stored with an EMPTY-STRING name/version (not NULL) is still a
+    wildcard and matches a concrete API identity (regression for issue #775).
+
+    APIReferenceRequest defaults name/version to "" (not None), so a versionless
+    credential — e.g. the NO_AUTH credential a provisioning plan auto-creates —
+    lands with api_version="". Before the fix the resolver treated only NULL as
+    the wildcard, so "" matched neither NULL nor a concrete version and the
+    toolkit served nothing at execute time despite valid bindings.
+    """
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-empty", vendor="country-is", name="country-is", version=""
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="country-is", name="country-is", version="4.2.3"
+    )
+
+    assert result == [tk_id]
+
+
 async def test_derive_toolkits_no_agent_bindings_returns_empty(
     admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
 ) -> None:

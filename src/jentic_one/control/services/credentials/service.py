@@ -105,7 +105,15 @@ class CredentialService:
         # import time (dots -> dashes) so the broker's vendor join matches instead
         # of silently default-denying. See issue #656.
         api_vendor = slugify_identifier(payload.api.vendor)
-        api_name = slugify_identifier(payload.api.name) if payload.api.name else payload.api.name
+        # `api_name`/`api_version` use NULL as the "covers all names/versions"
+        # wildcard (see effects_repo.resolve_toolkits_for_api and the broker's
+        # toolkit_binding_resolver). But APIReferenceRequest defaults these to
+        # "" (not None), so a versionless/nameless credential would persist an
+        # empty string that matches NEITHER NULL nor a concrete value — the
+        # toolkit then serves nothing at execute time (issue #775). Coerce empty
+        # to NULL so the wildcard convention holds.
+        api_name = slugify_identifier(payload.api.name) if payload.api.name else None
+        api_version = payload.api.version or None
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
@@ -114,7 +122,7 @@ class CredentialService:
                 name=payload.name,
                 api_vendor=api_vendor,
                 api_name=api_name,
-                api_version=payload.api.version,
+                api_version=api_version,
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
