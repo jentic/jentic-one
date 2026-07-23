@@ -275,7 +275,7 @@ func (a *App) refreshManifestBinaryPath(target string) {
 
 // binaryVersion runs `<path> --version` and returns its first output line.
 func binaryVersion(path string) (string, error) {
-	out, err := exec.Command(path, "--version").Output()
+	out, err := exec.Command(path, "--version").Output() //nolint:gosec // path is a CLI-internal staged build artifact we just wrote to a temp dir, not user input.
 	if err != nil {
 		return "", err
 	}
