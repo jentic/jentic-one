@@ -93,7 +93,7 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 		key: 'plan-noauth-pending',
 		title: 'Provisioning plan · no-auth · pending',
 		summary:
-			'A no-auth API (e.g. open-meteo): the plan omits the credential:provision item, so the wizard skips the credential step entirely.',
+			'A no-auth API (e.g. open-meteo): the provision item carries security_scheme=no_auth, so the wizard skips the manual credential step and auto-creates a NO_AUTH credential on approval.',
 		routedTo: 'wizard',
 		request: req('areq_plan_noauth', 'pending', [
 			item({
@@ -103,6 +103,16 @@ export const SHOWCASE_CASES: ShowcaseCase[] = [
 					vendor: 'open-meteo-com',
 					name: 'forecast',
 					version: '1.0.0',
+				},
+			}),
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: {
+					vendor: 'open-meteo-com',
+					name: 'forecast',
+					version: '1.0.0',
+					security_scheme: 'no_auth',
 				},
 			}),
 			item({ resource_type: 'credential', action: 'bind', rules: RULES }),

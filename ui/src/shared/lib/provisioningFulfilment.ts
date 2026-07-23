@@ -11,13 +11,57 @@
  *   bindToolkitToAgentIfNeeded — POST /agents/{id}/toolkits (Step 5 pre-wire)
  *   decideAccessRequest  — POST .../:decide         (final approve-all)
  */
-import { OpenAPI, apiRequest, ToolkitsService } from '@/shared/api';
+import {
+	OpenAPI,
+	apiRequest,
+	ToolkitsService,
+	CredentialsService,
+	CredentialType,
+} from '@/shared/api';
 import { toRailError } from '@/shared/lib/railEvents';
 
 /** A toolkit created to serve a provisioning plan's API. */
 export interface CreatedPlanToolkit {
 	toolkitId: string;
 	name: string;
+}
+
+/** The API reference a plan credential/toolkit is scoped to. */
+export interface PlanApiRef {
+	vendor: string;
+	name?: string;
+	version?: string;
+}
+
+/**
+ * Create a NO_AUTH credential for a no-auth plan. A no-auth API still needs a
+ * credential row for the `credential:bind` effect to attach the toolkit binding
+ * + permission rules to (the broker keys rules on `(toolkit, credential)` and
+ * resolves a `no_auth` credential as a no-op auth). So even though there's no
+ * secret, the wizard auto-creates this behind the scenes — the operator never
+ * sees a credential form for a no-auth plan.
+ */
+export async function createNoAuthCredential(
+	api: PlanApiRef,
+	name: string,
+): Promise<{ credentialId: string }> {
+	try {
+		const res = await CredentialsService.createCredential({
+			requestBody: {
+				type: CredentialType.NO_AUTH,
+				provider: 'static',
+				name,
+				api: {
+					vendor: api.vendor,
+					name: api.name || undefined,
+					version: api.version || undefined,
+				},
+			},
+		});
+		return { credentialId: res.credential.credential_id };
+	} catch (error) {
+		throw toRailError(error, 'Failed to create the no-auth credential.');
+	}
 }
 
 /**

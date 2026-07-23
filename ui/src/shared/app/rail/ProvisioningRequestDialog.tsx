@@ -58,6 +58,7 @@ import {
 	type PlanApiReference,
 } from '@/shared/lib/provisioningPlan';
 import {
+	createNoAuthCredential,
 	createPlanToolkit,
 	discardPlanCredential,
 	discardPlanToolkit,
@@ -238,24 +239,37 @@ export function ProvisioningRequestDialog({
 	}, [toolkitId, credentialId, outcome, onClose]);
 
 	const handleSubmit = useCallback(async () => {
-		if (!bindItem || !toolkitId) return;
+		if (!bindItem || !toolkitId || !apiRef) return;
 		setBusy(true);
 		setError(null);
 		try {
-			// 1. Amend the resolved toolkit/credential ids + confirmed rules onto
-			//    the credential:bind item (credential is null for a no-auth plan —
-			//    the bind then carries no credential and the toolkit:bind still
-			//    grants the agent access to the no-auth toolkit). Also stamp the
-			//    concrete toolkit id onto the toolkit:bind item so it resolves by
-			//    id — the credential->toolkit binding isn't visible to the
-			//    reference join until the credential:bind effect applies later in
-			//    the same decision, so resolving the agent binding by API
-			//    reference would deny (see provisioning-plan e2e / #656 ordering).
+			// A no-auth plan still needs a credential for the credential:bind
+			// effect to attach the toolkit binding + rules to (the broker keys
+			// rules on `(toolkit, credential)` and resolves a no_auth credential as
+			// a no-op auth). We didn't ask the operator for one — auto-create a
+			// NO_AUTH credential now and bind THAT. For an auth plan the operator
+			// already connected a real credential (`credentialId`).
+			let bindCredentialId = credentialId;
+			if (noAuth && !bindCredentialId) {
+				const created = await createNoAuthCredential(
+					{ vendor: apiRef.vendor, name: apiRef.name, version: apiRef.version },
+					`${toolkitName} (no-auth)`,
+				);
+				bindCredentialId = created.credentialId;
+				setCredentialId(created.credentialId);
+			}
+			// 1. Amend the resolved toolkit + credential ids + confirmed rules onto
+			//    the credential:bind item. Also stamp the concrete toolkit id onto
+			//    the toolkit:bind item so it resolves by id — the credential->
+			//    toolkit binding isn't visible to the reference join until the
+			//    credential:bind effect applies later in the same decision, so
+			//    resolving the agent binding by API reference would deny (see
+			//    provisioning-plan e2e / #656 ordering).
 			await amendAccessRequest(request.id, [
 				{
 					item_id: bindItem.id,
 					to_id: toolkitId,
-					...(credentialId ? { resource_id: credentialId } : {}),
+					...(bindCredentialId ? { resource_id: bindCredentialId } : {}),
 					rules,
 				},
 				...(agentBindItem ? [{ item_id: agentBindItem.id, resource_id: toolkitId }] : []),
@@ -281,7 +295,18 @@ export function ProvisioningRequestDialog({
 		} finally {
 			setBusy(false);
 		}
-	}, [bindItem, agentBindItem, toolkitId, credentialId, rules, request.id, onFulfilled]);
+	}, [
+		bindItem,
+		agentBindItem,
+		toolkitId,
+		credentialId,
+		rules,
+		request.id,
+		onFulfilled,
+		noAuth,
+		apiRef,
+		toolkitName,
+	]);
 
 	if (!apiRef || !bindItem) {
 		// Not a well-formed provisioning plan — the caller should have routed this

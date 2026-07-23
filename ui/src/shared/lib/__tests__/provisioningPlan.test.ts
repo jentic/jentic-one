@@ -84,6 +84,21 @@ describe('provisioningPlan', () => {
 		expect(planAuthType(noAuth)).toBeNull();
 	});
 
+	it('detects a no-auth plan by security_scheme=no_auth on the provision item', () => {
+		const noAuth = plan([
+			item({ resource_type: 'toolkit', action: 'create', resource_reference: REF }),
+			item({
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...REF, security_scheme: 'no_auth' },
+			}),
+			item({ resource_type: 'credential', action: 'bind' }),
+			item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF }),
+		]);
+		expect(planIsNoAuth(noAuth)).toBe(true);
+		expect(planAuthType(noAuth)).toBe('no_auth');
+	});
+
 	it('orders steps, omitting credentialProvision for a no-auth plan', () => {
 		expect(planSteps(fullPlan())).toEqual([
 			'toolkitCreate',

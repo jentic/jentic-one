@@ -77,8 +77,8 @@ export function planApiReference(request: AccessRequest): PlanApiReference | nul
 
 /**
  * The agent-declared credential auth type on the `credential:provision` item
- * (`security_scheme`), used to pre-select the credential form. Absent when the
- * plan is for a no-auth API (no `credential:provision` item at all).
+ * (`security_scheme`), used to pre-select the credential form. Returns
+ * `no_auth` for a no-auth plan (or null if there's no provision item at all).
  */
 export function planAuthType(request: AccessRequest): string | null {
 	const prov = findItem(request, 'credential', 'provision');
@@ -87,9 +87,19 @@ export function planAuthType(request: AccessRequest): string | null {
 	return typeof scheme === 'string' ? scheme : null;
 }
 
-/** True when the plan needs no credential (no `credential:provision` item). */
+/**
+ * True when the plan needs no *operator-entered* credential — either there's no
+ * `credential:provision` item at all, or it declares `security_scheme=no_auth`
+ * (the API is called without authentication). In both cases the wizard skips
+ * the manual credential step; for a no-auth plan it auto-creates a NO_AUTH
+ * credential at approval so the `credential:bind` effect still has a credential
+ * to attach the toolkit binding + rules to.
+ */
 export function planIsNoAuth(request: AccessRequest): boolean {
-	return findItem(request, 'credential', 'provision') === undefined;
+	const prov = findItem(request, 'credential', 'provision');
+	if (prov === undefined) return true;
+	const scheme = prov.resource_reference?.security_scheme;
+	return scheme === 'no_auth';
 }
 
 /**

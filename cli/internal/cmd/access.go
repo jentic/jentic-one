@@ -230,7 +230,8 @@ func (o *accessRequestOptions) item() (accessclient.Item, error) {
 }
 
 // validAuthTypes are the credential auth types --auth accepts. "none" marks a
-// no-auth API: the plan omits the credential:provision item entirely.
+// no-auth API: the plan's credential:provision item carries security_scheme=
+// no_auth and the wizard auto-creates a NO_AUTH credential (no secret prompt).
 var validAuthTypes = map[string]bool{
 	"bearer": true, "api_key": true, "basic": true, "oauth2": true, "none": true,
 }
@@ -254,6 +255,13 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 	if !validAuthTypes[auth] {
 		return nil, fmt.Errorf("--auth must be one of bearer, api_key, basic, oauth2, none; got %q", auth)
 	}
+	// The credential:provision item carries the credential's security_scheme,
+	// which the UI maps to a CredentialType. "none" maps to the NO_AUTH type
+	// (`no_auth`); the other flag values already match the scheme names.
+	authScheme := auth
+	if auth == "none" {
+		authScheme = "no_auth"
+	}
 
 	rules, err := parseProposedRules(o.rulesJSON)
 	if err != nil {
@@ -264,20 +272,23 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 		// Step 1: create a toolkit that will serve this API.
 		{ResourceType: "toolkit", Action: "create", ResourceReference: ref},
 	}
-	if auth != "none" {
-		// Step 2: provision a credential for this API. security_scheme carries
-		// the agent-detected auth type so the operator's credential form can
-		// pre-select it; the operator enters the secret — it never rides in the
-		// agent-filed plan.
-		provRef := map[string]any{}
-		for k, v := range ref {
-			provRef[k] = v
-		}
-		provRef["security_scheme"] = auth
-		items = append(items, accessclient.Item{
-			ResourceType: "credential", Action: "provision", ResourceReference: provRef,
-		})
+	// Step 2: provision a credential for this API. security_scheme carries the
+	// agent-detected auth type so the operator's credential form can pre-select
+	// it; the operator enters the secret — it never rides in the agent-filed
+	// plan. For a no-auth API (`--auth none`) we still emit this item with
+	// security_scheme=no_auth: a credential row is required for the
+	// credential:bind effect to attach the toolkit binding + rules to (the
+	// broker keys rules on `(toolkit, credential)` and resolves a no_auth
+	// credential as a no-op auth). The wizard auto-creates the NO_AUTH
+	// credential — the operator is not prompted for a secret.
+	provRef := map[string]any{}
+	for k, v := range ref {
+		provRef[k] = v
 	}
+	provRef["security_scheme"] = authScheme
+	items = append(items, accessclient.Item{
+		ResourceType: "credential", Action: "provision", ResourceReference: provRef,
+	})
 	// Step 3+4: bind the (to-be-created) credential to the (to-be-created)
 	// toolkit, carrying the agent's proposed first-pass rules. The operator
 	// amends the concrete credential/toolkit ids onto this item before approval.

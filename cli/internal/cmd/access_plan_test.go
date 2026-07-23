@@ -47,21 +47,28 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 	}
 }
 
-func TestPlanNoAuthOmitsCredentialProvision(t *testing.T) {
+func TestPlanNoAuthProvisionsNoAuthCredential(t *testing.T) {
 	opts := &accessRequestOptions{provision: "open-meteo.com/forecast", auth: "none"}
 	items, err := opts.plan()
 	if err != nil {
 		t.Fatalf("plan() error: %v", err)
 	}
-	// No credential:provision item for a no-auth API.
-	for _, it := range items {
-		if it.ResourceType == "credential" && it.Action == "provision" {
-			t.Fatalf("no-auth plan should not include credential:provision; items=%+v", items)
-		}
+	// A no-auth plan is the SAME four-item shape as an auth plan — a credential
+	// row is still required for the credential:bind effect to attach the toolkit
+	// binding + rules to. The provision item carries security_scheme=no_auth so
+	// the wizard auto-creates a NO_AUTH credential (no operator secret prompt).
+	if len(items) != 4 {
+		t.Fatalf("expected 4 items for no-auth plan, got %d: %+v", len(items), items)
 	}
-	// Still has toolkit:create, credential:bind, toolkit:bind.
-	if len(items) != 3 {
-		t.Fatalf("expected 3 items for no-auth plan, got %d", len(items))
+	prov := items[1]
+	if prov.ResourceType != "credential" || prov.Action != "provision" {
+		t.Fatalf("item[1] should be credential:provision, got %s:%s", prov.ResourceType, prov.Action)
+	}
+	if prov.ResourceReference["security_scheme"] != "no_auth" {
+		t.Errorf(
+			"no-auth provision should carry security_scheme=no_auth, got %v",
+			prov.ResourceReference["security_scheme"],
+		)
 	}
 }
 
