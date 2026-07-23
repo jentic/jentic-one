@@ -8,6 +8,7 @@
 export type ToolkitResponse = {
     active: boolean;
     created_at: string;
+    created_by?: (string | null);
     credential_count: number;
     description?: (string | null);
     key_count: number;

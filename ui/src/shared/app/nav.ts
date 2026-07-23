@@ -16,6 +16,13 @@ import {
  *
  * `icon` is an optional component (e.g. a lucide-react icon) the feature PR can
  * supply; the layout renders a fallback glyph when it's absent.
+ *
+ * `requiredPermission` (optional) hides the item unless the current user holds
+ * that permission (checked client-side via the auth context; the backend still
+ * enforces access). `secondary` (optional) renders the item in a visually
+ * separated slot after a divider — for operator/admin areas distinct from the
+ * primary product features. Both exist so downstream builds can inject a gated,
+ * separated entry through the `extraNavItems` seam without special-casing here.
  */
 export interface NavItem {
 	id: string;
@@ -24,6 +31,8 @@ export interface NavItem {
 	to: string;
 	order: number;
 	icon?: ComponentType<{ className?: string }>;
+	requiredPermission?: string;
+	secondary?: boolean;
 }
 
 /**
@@ -49,9 +58,37 @@ export const navItems: NavItem[] = [
 	{ id: 'docs', label: 'API Reference', to: '/docs', order: 80, icon: BookText },
 ];
 
-/** Nav items sorted for rendering. */
+/**
+ * Extra nav entries injected by a downstream build (parallel to `App`'s
+ * `extraRoutes` seam). Stored in a module-level registry — same "static
+ * registry" model as `navItems` — so the deep-in-the-tree navbar renderers
+ * (`NavTabs`/`BottomNavbar`, rendered under `<Outlet>`) can read them without
+ * prop-drilling through `Layout`. Registered from `App`'s mount effect via
+ * `registerExtraNavItems` (and cleared on unmount); the OSS binary never calls
+ * it (stays empty).
+ */
+let extraNavItems: NavItem[] = [];
+
+/** Register downstream nav entries (idempotent replace). Call from a mount effect. */
+export function registerExtraNavItems(items: NavItem[]): void {
+	extraNavItems = items;
+}
+
+/** Nav items sorted for rendering (built-in registry + any registered extras). */
 export function sortedNavItems(): NavItem[] {
-	return [...navItems].sort((a, b) => a.order - b.order);
+	return [...navItems, ...extraNavItems].sort((a, b) => a.order - b.order);
+}
+
+/**
+ * Filter a nav list down to what the current user may see. Items with a
+ * `requiredPermission` the user lacks are dropped; ungated items always pass.
+ * `permissions` is the user's permission list (empty/undefined ⇒ only ungated
+ * items survive).
+ */
+export function visibleNavItems(items: NavItem[], permissions: readonly string[] = []): NavItem[] {
+	return items.filter(
+		(item) => !item.requiredPermission || permissions.includes(item.requiredPermission),
+	);
 }
 
 /**

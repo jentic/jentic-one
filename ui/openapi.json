@@ -2593,6 +2593,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identity that created the credential (its owner).",
+            "title": "Created By"
+          },
           "credential_id": {
             "description": "Stable credential identifier, prefixed `cred_`.",
             "title": "Credential Id",
@@ -6983,6 +6995,17 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
           },
           "credential_count": {
             "title": "Credential Count",

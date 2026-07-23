@@ -65,6 +65,7 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
         provider=view.provider,
         provider_account_ref=view.provider_account_ref,
         active=view.active,
+        created_by=view.created_by,
         created_at=view.created_at,
         updated_at=view.updated_at,
         details=details.model_dump(exclude_none=True) if details else None,
