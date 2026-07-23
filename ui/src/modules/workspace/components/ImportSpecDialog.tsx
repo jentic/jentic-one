@@ -199,7 +199,7 @@ export function ImportSpecDialog({ open, onClose }: ImportSpecDialogProps) {
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title="Add to your workspace"
+			title="Import an API"
 			size="lg"
 			className="max-w-xl"
 			dismissOnBackdrop={false}

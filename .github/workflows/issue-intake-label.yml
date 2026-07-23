@@ -1,0 +1,28 @@
+name: Label new issues for intake
+
+# Guarantees every newly opened issue carries the `ai-intake` label so the
+# issue-intake harness (.harness/ISSUE_INTAKE_STANDARDS.md) runs on it. The issue
+# forms already request `ai-intake`, but issues opened via the API / CLI / by
+# transfer may not — this backstops those. No-op if the label is already present.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: issue-intake-label-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add ai-intake label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: gh issue edit "$NUMBER" --repo "$REPO" --add-label ai-intake

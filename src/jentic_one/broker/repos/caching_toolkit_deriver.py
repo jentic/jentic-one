@@ -101,6 +101,15 @@ class CachingToolkitDeriver:
 
         return await self._single_flight.do(key, _load)
 
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        """Delegate the "any toolkit serves this API" check to the inner deriver.
+
+        Not cached: it is consulted only on the ``no_toolkit_binding`` denial path
+        (to pick the recovery directive), never on the hot success path, so the
+        TTL-LRU that fronts ``derive_toolkits`` would add complexity for no gain.
+        """
+        return await self._inner.any_toolkit_serves_api(vendor=vendor, name=name, version=version)
+
     def _store(self, key: str, entry: _CacheEntry) -> None:
         self._cache[key] = entry
         self._cache.move_to_end(key)

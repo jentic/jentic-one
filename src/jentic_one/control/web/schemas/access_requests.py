@@ -41,7 +41,15 @@ class CredentialSpecSchema(BaseModel):
 
 
 class AccessRequestItemRequest(BaseModel):
-    """A single line-item in a file request."""
+    """A single line-item in a file request.
+
+    **Permission rules:** Rules control which upstream API operations the broker
+    allows through a credential binding. They are enforced per (toolkit_id,
+    credential_id) pair, so they can only be attached to credential:bind items —
+    not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
+    rules; include them directly on the credential:bind item when filing the
+    access request, and the approver's decision persists them on the binding.
+    """
 
     resource_type: Literal["credential", "toolkit", "scope"]
     action: Literal["bind", "grant"]
@@ -49,7 +57,14 @@ class AccessRequestItemRequest(BaseModel):
     resource_reference: dict[str, Any] | None = None
     to_type: str | None = None
     to_id: str | None = None
-    rules: list[PermissionRuleSchema] | None = None
+    rules: list[PermissionRuleSchema] | None = Field(
+        default=None,
+        description=(
+            "Permission rules for the binding (credential:bind only). "
+            "Rules are evaluated first-match-wins by the broker; if no rule matches, "
+            'the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_resource_target(self) -> AccessRequestItemRequest:

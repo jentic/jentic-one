@@ -8,9 +8,13 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
+import structlog
 from pydantic import BaseModel
 
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.control_credential_boundary_repo import (
+    ControlCredentialBoundaryRepository,
+)
 from jentic_one.registry.services.errors import ApiNotFoundError, NoCurrentRevisionError
 from jentic_one.registry.web.schemas.apis import (
     SecuritySchemeFlowResponse,
@@ -21,6 +25,8 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.pagination import decode_cursor, encode_cursor
+
+logger = structlog.get_logger()
 
 
 class ApiPageItem(BaseModel):
@@ -190,6 +196,8 @@ class ApiService:
                 raise ApiNotFoundError(vendor, name, version)
             await ApiRepository.delete(session, api.id)
 
+        deactivated = await self._deactivate_control_credentials(vendor, name, version)
+
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.DELETE,
@@ -198,8 +206,37 @@ class ApiService:
             actor_type=identity.actor_type,
             actor_id=identity.sub,
             before={"vendor": vendor, "name": name, "version": version},
+            after={"deactivated_credentials": deactivated},
             origin=identity.origin.value,
         )
+
+    async def _deactivate_control_credentials(self, vendor: str, name: str, version: str) -> int:
+        """Deactivate control credentials stranded by this API delete.
+
+        Cross-DB and best-effort: the registry delete has already committed, and
+        the two databases cannot share a transaction (no 2PC). Deactivating (not
+        deleting) removes the credential from the broker resolver's active-match
+        set so a re-import can't collide with it (issue #643), while preserving
+        the row for the operator to see/rotate. When the deployment topology
+        denies this process control-DB access (registry-only parts mode), there
+        is nothing to reconcile here — skip quietly.
+        """
+        if not self._ctx.is_db_allowed("control"):
+            return 0
+        try:
+            async with self._ctx.control_db.transaction() as session:
+                return await ControlCredentialBoundaryRepository.deactivate_credentials_for_api(
+                    session, api_vendor=vendor, api_name=name, api_version=version
+                )
+        except Exception:
+            logger.warning(
+                "control_credential_deactivation_failed",
+                api_vendor=vendor,
+                api_name=name,
+                api_version=version,
+                exc_info=True,
+            )
+            return 0
 
     async def get_security_schemes(
         self, vendor: str, name: str, version: str

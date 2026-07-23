@@ -18,10 +18,46 @@
  */
 import { http, HttpResponse } from 'msw';
 
+// ── Rolling fixture clock ────────────────────────────────────────────────────
+// Fixtures were authored against a fixed 2026-06-19 anchor. The Monitor filters
+// derive a `from`/`since` lower bound from the time-window selector (e.g.
+// days=30 → now-30d), so absolute fixture dates silently fall out of every
+// window as real time passes — turning these mocks into a time-bomb that breaks
+// the suite ~30 days after authoring. Rebase every fixture timestamp at module
+// load so the dataset always sits just before "now", preserving the original
+// relative ordering and gaps. Any ISO-8601 date/datetime string (or bare
+// YYYY-MM-DD) is shifted by the same delta.
+const FIXTURE_ANCHOR = Date.parse('2026-06-19T10:07:00Z'); // newest authored instant
+const REBASE_DELTA_MS = Date.now() - 24 * 60 * 60 * 1000 - FIXTURE_ANCHOR;
+const ISO_RE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)?$/;
+
+function shiftIso(value: string): string {
+	const ms = Date.parse(value);
+	if (Number.isNaN(ms)) return value;
+	const shifted = new Date(ms + REBASE_DELTA_MS);
+	// Preserve the original granularity: bare date vs full datetime.
+	return value.length === 10 ? shifted.toISOString().slice(0, 10) : shifted.toISOString();
+}
+
+function rebaseFixture<T>(node: T): T {
+	if (typeof node === 'string') {
+		return (ISO_RE.test(node) ? shiftIso(node) : node) as unknown as T;
+	}
+	if (Array.isArray(node)) {
+		return node.map((item) => rebaseFixture(item)) as unknown as T;
+	}
+	if (node && typeof node === 'object') {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(node)) out[k] = rebaseFixture(v);
+		return out as T;
+	}
+	return node;
+}
+
 const TRACE_A = 'trace_aaaaaaaa';
 const TRACE_B = 'trace_bbbbbbbb';
 
-const EXECUTIONS = [
+const EXECUTIONS = rebaseFixture([
 	{
 		_links: { self: '/executions/exec_1' },
 		actor_id: 'agent_billing',
@@ -92,11 +128,11 @@ const EXECUTIONS = [
 		toolkit_id: 'tk_comms',
 		trace_id: 'unknown',
 	},
-];
+]);
 
 // Aggregation fixture for GET /monitoring/executions (jentic-one#386). Built so
 // totals are internally consistent (daily success+failed sums match totals).
-const EXECUTION_STATS = {
+const EXECUTION_STATS = rebaseFixture({
 	total_executions: 184,
 	success_rate_percent: 91.3,
 	daily_buckets: [
@@ -131,9 +167,9 @@ const EXECUTION_STATS = {
 			failed: 0,
 		},
 	],
-};
+});
 
-const JOBS = [
+const JOBS = rebaseFixture([
 	{
 		_links: { self: '/jobs/job_import_1', result: null, execution: null },
 		created_at: '2026-06-19T09:50:00Z',
@@ -164,9 +200,9 @@ const JOBS = [
 		status: 'failed',
 		updated_at: '2026-06-19T09:35:00Z',
 	},
-];
+]);
 
-const EVENTS = [
+const EVENTS = rebaseFixture([
 	{
 		_links: { self: '/events/evt_1', execution: '/executions/exec_2', job: null, action: null },
 		acknowledged: false,
@@ -197,9 +233,9 @@ const EVENTS = [
 		trace_id: TRACE_A,
 		type: 'import.completed',
 	},
-];
+]);
 
-const AUDIT = [
+const AUDIT = rebaseFixture([
 	{
 		action: 'execution.start',
 		actor_id: 'user_admin',
@@ -240,13 +276,13 @@ const AUDIT = [
 		trace_id: null,
 		user_agent: 'Mozilla/5.0',
 	},
-];
+]);
 
 function paginate<T>(rows: T[]) {
 	return { data: rows, has_more: false, next_cursor: null };
 }
 
-const ACTORS = [
+const ACTORS = rebaseFixture([
 	{
 		active: true,
 		actor_type: 'agent',
@@ -261,7 +297,7 @@ const ACTORS = [
 		id: 'user_admin',
 		name: 'Admin User',
 	},
-];
+]);
 
 /**
  * Cursor-aware pagination for the list handlers so the UI pager is exercised in

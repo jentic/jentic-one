@@ -235,6 +235,16 @@ class RevisionService:
             )
             await ApiRepository.set_current_revision(session, api.id, revision_uuid)
 
+            # The demote path above mutates revision rows via bulk UPDATEs and
+            # repoints ``Api.current_revision_id``. Bulk updates do not sync the
+            # ORM identity map, so the cached ``Api`` (and its ``current_revision``,
+            # which is ``lazy="joined"``) is now stale. Expire everything so
+            # ``_fetch_api_view`` re-reads fresh rows and its eager-load options
+            # populate the relationships, instead of triggering an async lazy load
+            # on a stale instance (which raises MissingGreenlet). See #642.
+            await session.flush()
+            session.expire_all()
+
             view = await ApiService._fetch_api_view(session, vendor, name, version)
 
         await record_audit_best_effort(

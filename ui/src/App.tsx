@@ -1,14 +1,16 @@
 import { Navigate, useRoutes, type RouteObject } from 'react-router-dom';
+import { useEffect } from 'react';
 import { AuthGuard } from '@/shared/auth/AuthGuard';
 import { SetupGate } from '@/shared/auth/SetupGate';
 import { LoginPage } from '@/shared/auth/LoginPage';
 import { SetupPage } from '@/shared/auth/SetupPage';
 import { ChangePasswordPage } from '@/shared/auth/ChangePasswordPage';
+import { RedeemInvitePage } from '@/shared/auth/RedeemInvitePage';
 import { OAuthPopupReturn } from '@/shared/auth/OAuthPopupReturn';
 import { Layout } from '@/shared/app/Layout';
 import { moduleRoutes, ROUTES } from '@/shared/app/routes';
 import { PlaceholderPage } from '@/shared/app/placeholders';
-import { sortedNavItems } from '@/shared/app/nav';
+import { sortedNavItems, registerExtraNavItems, type NavItem } from '@/shared/app/nav';
 // [ui-dashboard] Dashboard owns the /app index — replaces DashboardPlaceholder.
 import { dashboardIndexRoute } from '@/modules/dashboard/routes';
 import { publicDocsRoutes } from '@/modules/docs/routes';
@@ -23,6 +25,9 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  *                                      (→ /app/login, /app/setup)
  *   /change-password                 → outside the Layout, reachable pre-session
  *                                      (→ /app/change-password)
+ *   /redeem-invite                    → public invite-redemption landing
+ *                                      (→ /app/redeem-invite?token=…); outside
+ *                                      the AuthGuard, auto-logs in on success
  *   /oauth/connected                  → public OAuth popup landing (self-closes)
  *                                      (→ /app/oauth/connected; the backend
  *                                      callback redirects the popup here)
@@ -35,14 +40,44 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  * Because the bundle is served under `/app`, bare API prefixes (`/credentials`,
  * `/agents`, …) can never collide with an SPA route on hard refresh — they live
  * in a different namespace from the SPA entirely.
+ *
+ * `extraRoutes` is the SPA extension seam (parallel to the CLI's
+ * `AppContainer.ExtraCommands`): a downstream build passes additional
+ * `RouteObject`s that are appended into the authenticated shell (and claim their
+ * nav-slot path, suppressing that slot's placeholder), so it can ship its own
+ * SPA (OSS shell + built-in routes + its extras) without editing this repo.
+ * Omitted (the default) for the OSS binary.
+ *
+ * `extraNavItems` is the matching seam for NAVIGATION: a downstream build passes
+ * additional `NavItem`s (e.g. a permission-gated, `secondary` operator entry)
+ * that the navbars render alongside the built-in registry. They're stashed in
+ * the nav module's static registry (see `registerExtraNavItems`) so the
+ * deep-in-the-tree navbars can read them without prop-drilling. Registration
+ * happens in a commit-phase effect and is torn down on unmount. Omitted (the
+ * default) for the OSS binary.
  */
-export function App() {
-	return useRoutes(buildRoutes());
+export function App({
+	extraRoutes = [],
+	extraNavItems = [],
+}: { extraRoutes?: RouteObject[]; extraNavItems?: NavItem[] } = {}) {
+	// Register downstream nav entries as a commit-phase side effect (never during
+	// render, which must stay pure). Re-runs only if the list identity changes,
+	// and clears the registry on unmount so nothing leaks across app instances
+	// (e.g. between tests). The OSS binary passes nothing → the registry stays
+	// empty. The navbars mount under <Outlet> (after this effect has run), so
+	// they read the populated registry on their first paint.
+	useEffect(() => {
+		registerExtraNavItems(extraNavItems);
+		return () => registerExtraNavItems([]);
+	}, [extraNavItems]);
+	return useRoutes(buildRoutes(extraRoutes));
 }
 
-function buildRoutes(): RouteObject[] {
-	// A nav slot gets a placeholder until a real module route claims its path.
-	const claimed = new Set(moduleRoutes.map((r) => r.path).filter(Boolean));
+function buildRoutes(extraRoutes: RouteObject[] = []): RouteObject[] {
+	// A nav slot gets a placeholder until a real route claims its path. Both
+	// moduleRoutes AND extraRoutes count as "claimed" so a downstream route at a
+	// nav-slot path suppresses that slot's placeholder (no duplicate entry).
+	const claimed = new Set([...moduleRoutes, ...extraRoutes].map((r) => r.path).filter(Boolean));
 	const placeholderRoutes: RouteObject[] = sortedNavItems()
 		.filter((item) => item.to !== ROUTES.app && !claimed.has(relativeToApp(item.to)))
 		.map((item) => ({
@@ -61,6 +96,11 @@ function buildRoutes(): RouteObject[] {
 			],
 		},
 		{ path: '/change-password', element: <ChangePasswordPage /> },
+		// Public invite-redemption landing. An admin invites a user (POST /users
+		// → invite_token) and sends them here (→ /app/redeem-invite?token=…) to set
+		// a password and finish account creation. Outside the AuthGuard — the
+		// invitee has no session yet (redeem returns a JWT and auto-logs them in).
+		{ path: '/redeem-invite', element: <RedeemInvitePage /> },
 		// Public landing for the OAuth connect popup. The backend callback
 		// redirects the popup here (→ /app/oauth/connected?status=ok|error); it
 		// self-closes. Outside the AuthGuard (the popup has no guaranteed
@@ -77,7 +117,17 @@ function buildRoutes(): RouteObject[] {
 					// Basename index: the authenticated app shell home (`/app`).
 					path: '/',
 					element: <Layout />,
-					children: [dashboardIndexRoute, ...moduleRoutes, ...placeholderRoutes],
+					// `moduleRoutes` is the append-only route registry; it is
+					// spread here (not inlined) so a consumer can compose
+					// `[...moduleRoutes, ...extraRoutes]` at this single point
+					// without editing the registry. Order is load-bearing —
+					// placeholders stay last so a real module route wins.
+					children: [
+						dashboardIndexRoute,
+						...moduleRoutes,
+						...extraRoutes,
+						...placeholderRoutes,
+					],
 				},
 			],
 		},

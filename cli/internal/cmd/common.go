@@ -16,6 +16,10 @@ type exitCodeError struct{ code int }
 
 func (e *exitCodeError) Error() string { return fmt.Sprintf("child exited with code %d", e.code) }
 
+// ExitCode satisfies core.ExitCoder so core.Run mirrors a wrapped child's exit
+// code verbatim.
+func (e *exitCodeError) ExitCode() int { return e.code }
+
 // resolveIdentity loads the CLI config once and resolves the profile name and
 // control-plane base URL, honouring explicit flag values over config/defaults.
 func (a *App) resolveIdentity(profileFlag, baseURLFlag string) (profileName, baseURL string, err error) {

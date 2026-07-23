@@ -10,7 +10,10 @@ from jentic_one.registry.services.inspect.models import (
     ApiContext,
     AuthInstruction,
     InspectLinks,
+    OperationInputs,
     OperationInspectResult,
+    OperationParameter,
+    RequestBodySchema,
 )
 
 
@@ -18,7 +21,7 @@ def _make_result(
     *,
     server: str | None = "https://api.example.com",
     auth: list[AuthInstruction] | None = None,
-    parameters: dict[str, object] | None = None,
+    inputs: OperationInputs | None = None,
     response_schema: dict[str, object] | None = None,
 ) -> OperationInspectResult:
     return OperationInspectResult(
@@ -33,7 +36,7 @@ def _make_result(
             version="v1",
             description="A pet management API",
         ),
-        parameters=parameters,
+        inputs=inputs,
         response_schema=response_schema,
         auth=auth,
         server=server,
@@ -73,10 +76,54 @@ def test_render_markdown_includes_description() -> None:
 
 
 def test_render_markdown_includes_parameters() -> None:
-    result = _make_result(parameters={"limit": {"type": "integer", "description": "Max items"}})
+    result = _make_result(
+        inputs=OperationInputs(
+            query=[
+                OperationParameter(
+                    name="limit",
+                    schema_={"type": "integer", "description": "Max items"},
+                    description="Max items",
+                )
+            ]
+        )
+    )
     md = render_markdown(result)
     assert "`limit`" in md
     assert "integer" in md
+    assert "Query Parameters" in md
+
+
+def test_render_markdown_groups_parameters_by_location() -> None:
+    result = _make_result(
+        inputs=OperationInputs(
+            path=[OperationParameter(name="page_id", required=True)],
+            query=[OperationParameter(name="page_size", schema_={"type": "integer"})],
+            header=[OperationParameter(name="Notion-Version", required=True)],
+        )
+    )
+    md = render_markdown(result)
+    assert "Path Parameters" in md
+    assert "Query Parameters" in md
+    assert "Header Parameters" in md
+    assert "`page_id`" in md
+    assert "`Notion-Version`" in md
+    assert "(required)" in md
+
+
+def test_render_markdown_includes_request_body() -> None:
+    result = _make_result(
+        inputs=OperationInputs(
+            body=RequestBodySchema(
+                required=True,
+                content_type="application/json",
+                schema_={"type": "object", "properties": {"parent": {"type": "object"}}},
+            )
+        )
+    )
+    md = render_markdown(result)
+    assert "Request Body" in md
+    assert "application/json" in md
+    assert '"parent"' in md
 
 
 def test_render_markdown_includes_response_schema() -> None:
@@ -140,3 +187,39 @@ def test_render_openapi_yaml_no_server_omits_servers() -> None:
     output = render_openapi_yaml(result)
     parsed = yaml.safe_load(output)
     assert "servers" not in parsed
+
+
+def test_render_openapi_yaml_emits_parameters_with_correct_location() -> None:
+    result = _make_result(
+        inputs=OperationInputs(
+            path=[OperationParameter(name="page_id", required=True)],
+            query=[OperationParameter(name="page_size", schema_={"type": "integer"})],
+            header=[OperationParameter(name="Notion-Version", required=True)],
+        )
+    )
+    output = render_openapi_yaml(result)
+    parsed = yaml.safe_load(output)
+    params = parsed["paths"]["/v1/pets"]["get"]["parameters"]
+    by_name = {p["name"]: p for p in params}
+    assert by_name["page_id"]["in"] == "path"
+    assert by_name["page_size"]["in"] == "query"
+    assert by_name["page_size"]["schema"] == {"type": "integer"}
+    assert by_name["Notion-Version"]["in"] == "header"
+    assert by_name["Notion-Version"]["required"] is True
+
+
+def test_render_openapi_yaml_emits_request_body() -> None:
+    result = _make_result(
+        inputs=OperationInputs(
+            body=RequestBodySchema(
+                required=True,
+                content_type="application/json",
+                schema_={"type": "object"},
+            )
+        )
+    )
+    output = render_openapi_yaml(result)
+    parsed = yaml.safe_load(output)
+    request_body = parsed["paths"]["/v1/pets"]["get"]["requestBody"]
+    assert request_body["required"] is True
+    assert request_body["content"]["application/json"]["schema"] == {"type": "object"}

@@ -222,6 +222,7 @@ class AuthService:
                     actor_type=ActorType.USER,
                     actor_id=user.id,
                     reason="first-run admin bootstrap",
+                    origin=None,
                 )
         except DatabaseIntegrityError as exc:
             # The sentinel PK (or the unique email index) tripped — a concurrent
@@ -354,6 +355,7 @@ class AuthService:
                 actor_type=ActorType.USER,
                 actor_id=user.id,
                 reason="operator password reset",
+                origin=None,
             )
 
         logger.info("password_reset", user_id=user.id, email=email)

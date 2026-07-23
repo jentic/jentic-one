@@ -128,6 +128,18 @@ class ToolkitDeriverProtocol(Protocol):
         self, *, agent_id: str, vendor: str, name: str, version: str
     ) -> list[str]: ...
 
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        """Return whether *any* toolkit (for any owner) serves the given API.
+
+        A toolkit only "serves" an API once a credential for it is bound. This
+        distinguishes the "no toolkit exists yet — provision a credential first"
+        state from the "a toolkit serves it but this agent isn't bound" state, so
+        a ``no_toolkit_binding`` denial can hand the caller a recovery step that
+        can actually be completed (see issue #683). Unscoped by design: it drives
+        recovery guidance, not authorization.
+        """
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class IdempotencyClaim:

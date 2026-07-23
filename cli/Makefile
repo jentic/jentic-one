@@ -1,6 +1,6 @@
 BINARY_CTL := jenticctl
 BINARY_API := jentic
-VERSION ?= 0.1.0
+VERSION ?= dev
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 PKG := github.com/jentic/jentic-one/cli/internal/cmd

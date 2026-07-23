@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, MissingGreenlet, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.shared.config import DatabaseConfig
-from jentic_one.shared.db.errors import DatabaseIntegrityError, DatabaseUnavailableError
+from jentic_one.shared.db.errors import (
+    DatabaseConsistencyError,
+    DatabaseIntegrityError,
+    DatabaseUnavailableError,
+)
 from jentic_one.shared.db.session import DatabaseSession
 
 
@@ -81,3 +85,18 @@ async def test_run_in_transaction_does_not_retry_integrity_error(
         await sqlite_session.run_in_transaction(fn, backoff_s=0)
 
     assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_transaction_maps_missing_greenlet_to_consistency_error(
+    sqlite_session: DatabaseSession,
+) -> None:
+    """MissingGreenlet (an InvalidRequestError) surfaces as DatabaseConsistencyError.
+
+    Regression guard for #642: an accidental async lazy load inside a
+    transaction must map to a known domain error rather than escaping raw.
+    """
+    with pytest.raises(DatabaseConsistencyError):
+        async with sqlite_session.transaction() as session:
+            await session.execute(text("SELECT 1"))
+            raise MissingGreenlet("greenlet_spawn has not been called")

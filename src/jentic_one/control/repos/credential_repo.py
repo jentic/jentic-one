@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.credentials import Credential
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 
 class CredentialRepository:
@@ -63,8 +64,15 @@ class CredentialRepository:
 
     @staticmethod
     async def list_by_vendor(session: AsyncSession, api_vendor: str) -> list[Credential]:
+        """Fetch candidates for a vendor.
+
+        Widen the prefilter to also match the caller's raw (un-slugified) input so
+        historical rows persisted before vendor normalization still surface as
+        candidates; the final identity match is normalized in the resolver.
+        """
+        normalized = slugify_api_field(api_vendor)
         result = await session.execute(
-            select(Credential).where(Credential.api_vendor == api_vendor)
+            select(Credential).where(Credential.api_vendor.in_({api_vendor, normalized}))
         )
         return list(result.scalars().all())
 

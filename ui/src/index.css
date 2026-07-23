@@ -22,6 +22,9 @@
 	--color-muted: hsl(var(--muted));
 	--color-muted-foreground: hsl(var(--muted-foreground));
 
+	/* Form placeholder — a muted grey, clearly lighter than entered text */
+	--color-input-placeholder: hsl(var(--input-placeholder));
+
 	/* Card */
 	--color-card: hsl(var(--card));
 	--color-card-foreground: hsl(var(--card-foreground));
@@ -165,6 +168,10 @@
 	--foreground-lighter: var(--primary-100); /* #E4EAEB */
 	--muted: var(--primary-850); /* #193238 */
 	--muted-foreground: var(--primary-100); /* #E4EAEB */
+
+	/* Placeholder text — deliberately a muted grey so empty fields read as
+	   empty and don't look identical to entered (near-white) text (#673). */
+	--input-placeholder: var(--primary-500); /* #689296 */
 
 	/* Brand */
 	--primary: var(--primary-300); /* #A3CACC */

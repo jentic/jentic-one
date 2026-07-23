@@ -81,9 +81,13 @@ Or work from source:
 
 ```bash
 make install   # install dependencies and git hooks
-make check     # lint + typecheck + tests
-make start-app # run the application locally
+make dev        # idempotent local bring-up: fixtures + migrations + UI, then run the app
 ```
+
+`make dev` is the one-command local flow (including after a reboot) — it starts
+Docker fixtures if needed, applies migrations, builds the UI, and runs the app,
+and is safe to re-run. See the [Local development setup](docs/development/local-setup.md)
+guide for details and the individual targets it wraps.
 
 See the [Build & Deploy Guide](deploy/README.md) for full setup instructions.
 See the [Security Hardening Guide](docs/security/hardening.md) for information on securing your deployment.
@@ -115,6 +119,7 @@ Common `make` targets (run `make help` for the full list):
 | Target | Description |
 | ------ | ----------- |
 | `make install` | Full dev setup: sync deps + install git hooks |
+| `make dev` | One-command local bring-up (idempotent): fixtures + migrations + UI, then start the app |
 | `make check` | Lint, score, secrets audit, unit + arch tests |
 | `make fix` | Auto-fix lint issues and reformat code |
 | `make test` | Run unit tests |
@@ -128,6 +133,15 @@ Tests are split into tiers:
 - **Smoke** — liveness against running services (`make test-smoke`).
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) with a mandatory scope, enforced repo-wide by a `commit-msg` hook.
+
+### Architecture rule facts
+
+The architecture tests self-enforce against a small vendored subset of facts
+([`tests/arch/vendored/`](tests/arch/vendored/)), so a plain clone needs nothing
+extra. If a fuller set of rule facts is available locally, point the tests at it
+with `JENTIC_RULES_DIR=/path/to/rules` (or place them under a gitignored
+`.rules/` directory); the arch tests pick them up automatically and fall back to
+the vendored subset otherwise, so external contributors are unaffected.
 
 ## Security & telemetry
 

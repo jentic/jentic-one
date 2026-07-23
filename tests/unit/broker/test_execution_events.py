@@ -11,7 +11,7 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.core.exceptions import BrokerError
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import (
-    default_pipeline,
+    default_broker,
     persist_streaming_execution,
     run_execution,
 )
@@ -70,7 +70,7 @@ def _ctx_req() -> ExecuteRequestContext:
 async def test_run_execution_emits_completed_event() -> None:
     """Successful execution emits EXECUTION_COMPLETED."""
     session = AsyncMock()
-    pipeline = default_pipeline(_SuccessRunner())
+    broker = default_broker(_SuccessRunner())
 
     with (
         patch(
@@ -87,7 +87,7 @@ async def test_run_execution_emits_completed_event() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
         )
@@ -104,7 +104,7 @@ async def test_run_execution_emits_completed_event() -> None:
 async def test_run_execution_emits_failed_event_on_broker_error() -> None:
     """BrokerError during execution emits EXECUTION_FAILED before re-raising."""
     session = AsyncMock()
-    pipeline = default_pipeline(_FailRunner())
+    broker = default_broker(_FailRunner())
 
     with (
         patch(
@@ -122,7 +122,7 @@ async def test_run_execution_emits_failed_event_on_broker_error() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
         )
@@ -253,7 +253,7 @@ async def test_run_execution_tags_failed_event_with_thirdparty_auth(
     same-timestamp events, so a second event would skew the funnel.
     """
     session = AsyncMock()
-    pipeline = default_pipeline(_StatusRunner(status_code))
+    broker = default_broker(_StatusRunner(status_code))
 
     with (
         patch(
@@ -270,7 +270,7 @@ async def test_run_execution_tags_failed_event_with_thirdparty_auth(
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
         )
@@ -290,7 +290,7 @@ async def test_run_execution_tags_failed_event_with_thirdparty_auth(
 async def test_run_execution_no_auth_tag_on_success() -> None:
     """A 2xx upstream response emits no tagged failure event."""
     session = AsyncMock()
-    pipeline = default_pipeline(_SuccessRunner())
+    broker = default_broker(_SuccessRunner())
 
     with (
         patch(
@@ -307,7 +307,7 @@ async def test_run_execution_no_auth_tag_on_success() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
         )
@@ -448,7 +448,7 @@ async def test_persist_streaming_execution_no_auth_tag_without_vendor() -> None:
 async def test_run_execution_no_auth_tag_without_vendor() -> None:
     """A vendorless call (no credential path) emits an untagged failure on 401."""
     session = AsyncMock()
-    pipeline = default_pipeline(_StatusRunner(401))
+    broker = default_broker(_StatusRunner(401))
     ctx_req = ExecuteRequestContext(
         upstream_url="https://api.example.com/v1/test",
         method="GET",
@@ -477,7 +477,7 @@ async def test_run_execution_no_auth_tag_without_vendor() -> None:
             body=None,
             headers=None,
             session=session,
-            pipeline=pipeline,
+            broker=broker,
             actor_id="agt_abc",
             actor_type="agent",
         )

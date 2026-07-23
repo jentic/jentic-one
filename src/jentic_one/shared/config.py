@@ -10,7 +10,16 @@ from typing import Annotated, Any, Literal
 
 import structlog
 import yaml
-from pydantic import BaseModel, BeforeValidator, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from jentic_one.shared.state.factory import StateBackendConfig
 
@@ -693,19 +702,23 @@ class BrokerConfig(BaseModel):
 
 
 class SearchConfig(BaseModel):
-    """Lexical search configuration.
+    """Search configuration.
 
-    Search is lexical (full-text / BM25) only: ingest builds an
-    ``operations.search_text`` projection and the query is matched against it.
+    The built-in mode is "lexical" (BM25 on SQLite, native full-text on
+    PostgreSQL). ``search_mode`` is validated against the registered
+    SearchStrategy set at resolve time (``resolve_strategy``), so an unknown mode
+    fails loudly with the available modes for the active dialect rather than at
+    config load. Additional modes (e.g. "semantic", "vector") can be registered
+    via ``register_strategy`` without editing this schema.
     """
 
     # Gate ingest-time construction of the lexical search_text projection.
     enabled: bool = True
     # Toggle query-time search independently of ingest-time indexing.
     search_enabled: bool = True
-    # Only "lexical" is supported in the open-source build (BM25 on SQLite,
-    # native full-text on PostgreSQL).
-    search_mode: Literal["lexical"] = "lexical"
+    # Search mode name; resolved against the SearchStrategy registry per dialect.
+    # "lexical" is the built-in mode.
+    search_mode: str = "lexical"
 
 
 class IngestConfig(BaseModel):
@@ -784,6 +797,12 @@ class TelemetryConfig(BaseModel):
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
+    # Reject unknown top-level keys that are neither a known field nor a
+    # registered extension — surfaces misconfig loudly instead of dropping it.
+    # Registered extension sections are extracted by load_config() before
+    # validation, so they never reach this model as unknown keys.
+    model_config = ConfigDict(extra="forbid")
+
     databases: DatabasesConfig
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     worker: WorkerConfig = Field(default_factory=WorkerConfig)
@@ -802,6 +821,50 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
+
+    # Validated extension sub-configs, keyed by their registered section name.
+    # Populated by load_config() from top-level keys matching the registry
+    # (see register_config). Empty unless a section has been registered.
+    extensions: dict[str, BaseModel] = Field(default_factory=dict)
+
+    def extension(self, name: str) -> BaseModel | None:
+        """Return a registered extension config by section name (None if absent)."""
+        return self.extensions.get(name)
+
+
+# --- Extension config registry -----------------------------------------------
+# A downstream package registers extra sub-config models at import time; by
+# default the registry is empty. Keyed by the top-level YAML/env section name.
+# load_config() pulls any matching top-level key out of the merged config and
+# validates it with the registered model, storing the result in
+# AppConfig.extensions[name].
+_CONFIG_EXTENSIONS: dict[str, type[BaseModel]] = {}
+
+
+def register_config(name: str, model: type[BaseModel]) -> None:
+    """Register an extension sub-config model under a top-level config key.
+
+    Idempotent for the same (name, model); raises on a conflicting re-register so
+    two extensions can't fight over one key. Call at import time (e.g. in a
+    registering package's __init__) before load_config() runs.
+    """
+    # Collision guard: an extension key must not shadow a core AppConfig field
+    # (e.g. "broker", "search") nor the reserved "extensions" container itself —
+    # either would break the parser or silently override core config.
+    if name in AppConfig.model_fields or name == "extensions":
+        raise ConfigError(
+            f"Config extension name {name!r} collides with a core AppConfig field "
+            "or the reserved 'extensions' key"
+        )
+    existing = _CONFIG_EXTENSIONS.get(name)
+    if existing is not None and existing is not model:
+        raise ConfigError(f"Config extension {name!r} already registered to {existing!r}")
+    _CONFIG_EXTENSIONS[name] = model
+
+
+def registered_config_models() -> dict[str, type[BaseModel]]:
+    """Snapshot of the extension registry (for tests/introspection)."""
+    return dict(_CONFIG_EXTENSIONS)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -867,6 +930,19 @@ def load_config(path: Path | None = None) -> AppConfig:
 
     if "apps" in merged and isinstance(merged["apps"], str):
         merged["apps"] = [item.strip() for item in merged["apps"].split(",") if item.strip()]
+
+    # Extract registered extension sections before validating the core model, so
+    # extra="forbid" accepts them and each is validated by its own model.
+    extensions: dict[str, BaseModel] = {}
+    for name, model in _CONFIG_EXTENSIONS.items():
+        if name in merged:
+            raw = merged.pop(name)
+            try:
+                extensions[name] = model.model_validate(raw)
+            except ValidationError as e:
+                raise ConfigError(f"Invalid config for extension {name!r}: {e}") from e
+    if extensions:
+        merged["extensions"] = extensions
 
     try:
         return AppConfig.model_validate(merged)
