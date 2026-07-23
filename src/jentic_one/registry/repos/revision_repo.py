@@ -129,6 +129,29 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def reactivate_imported(
+        session: AsyncSession,
+        revision: ApiRevision,
+        *,
+        origin: str,
+    ) -> ApiRevision:
+        """Re-mark an existing revision as the active IMPORTED one.
+
+        Re-importing an unchanged spec produces the same ``spec_digest``. Rather
+        than inserting a duplicate (which violates the ``(api_id, spec_digest)``
+        unique constraint and fails the job), we reuse the existing revision:
+        flip it back to IMPORTED and refresh its promotion timestamp/origin. The
+        caller archives any *other* active imported revision first, so exactly
+        one stays active. Makes re-import idempotent.
+        """
+        revision.state = ApiRevisionState.IMPORTED
+        revision.origin = origin
+        revision.promoted_at = datetime.now(UTC)
+        revision.archived_at = None
+        await session.flush()
+        return revision
+
+    @staticmethod
     async def set_operation_count(
         session: AsyncSession, revision_id: uuid.UUID, count: int
     ) -> None:

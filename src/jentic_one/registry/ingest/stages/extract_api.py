@@ -39,24 +39,39 @@ class CreateRevisionStage(BasePipelineStage):
     async def _run(self, ctx: PipelineContext) -> None:
         api_id = ctx.require("api_id", uuid.UUID)
         spec = ctx.specification
+        digest = spec.sha or ""
         if spec.origin is not None:
-            await ApiRevisionRepository.archive_active_imported(ctx.session, api_id, spec.origin)
-            revision = await ApiRevisionRepository.create_imported(
-                ctx.session,
-                api_id=api_id,
-                origin=spec.origin,
-                spec_digest=spec.sha or "",
-                source_type=spec.source_type or ApiRevisionSourceType.UNKNOWN,
-                source_url=spec.source_url,
-                source_filename=spec.source_filename,
-                submitted_by=spec.submitted_by,
-                created_by=ctx.created_by,
-            )
+            # Re-importing an unchanged spec yields the same digest. Reuse the
+            # existing revision instead of inserting a duplicate (which would
+            # violate the (api_id, spec_digest) unique constraint and fail the
+            # import job). Archive any *other* active imported revision, then
+            # reactivate the matching one — so re-import is an idempotent no-op.
+            existing = await ApiRevisionRepository.get_by_digest(ctx.session, api_id, digest)
+            if existing is not None:
+                await ApiRevisionRepository.archive_all_active_imported(ctx.session, api_id)
+                revision = await ApiRevisionRepository.reactivate_imported(
+                    ctx.session, existing, origin=spec.origin
+                )
+            else:
+                await ApiRevisionRepository.archive_active_imported(
+                    ctx.session, api_id, spec.origin
+                )
+                revision = await ApiRevisionRepository.create_imported(
+                    ctx.session,
+                    api_id=api_id,
+                    origin=spec.origin,
+                    spec_digest=digest,
+                    source_type=spec.source_type or ApiRevisionSourceType.UNKNOWN,
+                    source_url=spec.source_url,
+                    source_filename=spec.source_filename,
+                    submitted_by=spec.submitted_by,
+                    created_by=ctx.created_by,
+                )
         else:
             revision = await ApiRevisionRepository.create_draft(
                 ctx.session,
                 api_id=api_id,
-                spec_digest=spec.sha or "",
+                spec_digest=digest,
                 source_type=spec.source_type or ApiRevisionSourceType.UNKNOWN,
                 source_url=spec.source_url,
                 source_filename=spec.source_filename,

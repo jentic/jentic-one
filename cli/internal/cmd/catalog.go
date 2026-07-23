@@ -426,7 +426,8 @@ func pollImportJobProgress(
 			return nil, err
 		}
 		switch job.Status {
-		case catalogclient.JobCompleted, catalogclient.JobFailed, catalogclient.JobCancelled:
+		case catalogclient.JobCompleted, catalogclient.JobFailed,
+			catalogclient.JobCancelled, catalogclient.JobDeadLetter:
 			return job, nil
 		}
 		if time.Now().After(deadline) {

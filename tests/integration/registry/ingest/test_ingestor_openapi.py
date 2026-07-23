@@ -155,3 +155,46 @@ async def test_ingest_idempotent_reingest(
 
         revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(revisions) == 2
+
+
+async def test_reimport_same_spec_is_idempotent(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Re-importing an unchanged spec reuses the revision instead of failing.
+
+    Regression: a catalog re-import re-fetches the identical spec (same digest);
+    with `origin` set the ingestor archived the old IMPORTED revision then tried
+    to INSERT a new one with the same (api_id, spec_digest), violating the unique
+    constraint. The failure retried to the worker's dead-letter, which the CLI
+    poller didn't recognise as terminal — so `jentic catalog import` looked like
+    it hung until its 2-minute timeout. The imported branch now reactivates the
+    existing same-digest revision, so a re-import is a clean idempotent no-op.
+    """
+    spec = _build_spec(sha="same_digest_xyz")
+    spec.origin = "catalog"
+
+    ingestor = Ingestor(ingest_context)
+    result1 = await ingestor.ingest(spec, created_by="usr_test")
+    # Second import of the identical spec must NOT raise and must reuse the revision.
+    result2 = await ingestor.ingest(_reimport_spec(), created_by="usr_test")
+
+    assert result1.revision_id == result2.revision_id, "re-import should reuse the same revision"
+    assert result2.state == "imported"
+
+    async with registry_db.session() as session:
+        apis = (await session.execute(select(Api))).unique().scalars().all()
+        assert len(apis) == 1
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert len(revisions) == 1, "no duplicate revision should be created on re-import"
+        assert revisions[0].state == "imported"
+        # Operations were rebuilt for the reused revision, not duplicated.
+        ops = (await session.execute(select(Operation))).unique().scalars().all()
+        assert len(ops) == 3
+
+
+def _reimport_spec() -> IngestSpecification:
+    spec = _build_spec(sha="same_digest_xyz")
+    spec.origin = "catalog"
+    return spec
