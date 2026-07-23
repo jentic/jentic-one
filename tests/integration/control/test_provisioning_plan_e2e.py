@@ -20,6 +20,8 @@ import pytest
 from sqlalchemy import delete, select, text
 
 from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.broker.repos.toolkit_binding_resolver import ToolkitBindingResolver
+from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
@@ -209,6 +211,124 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     assert any(
         s.api_vendor == "httpbin-org" for s in apis
     ), f"binding should report the served API, got {apis}"
+
+
+async def test_noauth_plan_is_executable_via_broker_resolvers(
+    integration_context: Context, clean: None
+) -> None:
+    """A fulfilled NO-AUTH plan must be resolvable by BOTH broker resolvers at
+    execute time — the toolkit-binding resolver AND the credential resolver —
+    when the operation resolves to a concrete version.
+
+    This is the end-to-end guard for issue #775. A no-auth API's credential is
+    versionless (api_version NULL = "covers all versions"), and the broker
+    resolves the operation to a concrete version (e.g. "4.2.3"). Every resolver
+    on the execute path must treat NULL as a wildcard, or a fully-approved plan
+    still 403s (no_toolkit_binding) / 424s (credential_not_provisioned) despite
+    valid bindings. The provisioning-path test above stops at approval; this one
+    drives the actual resolver logic the broker runs on `jentic execute`.
+    """
+    ctx = integration_context
+    access_svc = AccessRequestService(ctx)
+    toolkit_svc = ToolkitService(ctx)
+    cred_svc = CredentialService(ctx)
+
+    # A no-auth API. The version the OPERATION resolves to at execute time.
+    api = {"vendor": "country-is", "name": "country-is"}
+    resolved_version = "4.2.3"
+
+    # 1. AGENT files a no-auth plan (as `--provision … --auth none` builds it).
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Look up the caller's country from their IP",
+        items=[
+            {"resource_type": "toolkit", "action": "create", "resource_reference": api},
+            {
+                "resource_type": "credential",
+                "action": "provision",
+                "resource_reference": {**api, "security_scheme": "no_auth"},
+            },
+            {
+                "resource_type": "credential",
+                "action": "bind",
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+            {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
+        ],
+        identity=_agent_identity(),
+    )
+    bind_item = next(
+        i for i in view.items if i.resource_type == "credential" and i.action == "bind"
+    )
+    agent_bind_item = next(
+        i for i in view.items if i.resource_type == "toolkit" and i.action == "bind"
+    )
+
+    # 2. WIZARD fulfils: create the toolkit + a NO_AUTH credential (no version →
+    #    persisted NULL), amend their ids onto the binds, then approve.
+    created_toolkit, _key = await toolkit_svc.create(
+        name="country-is/country-is", identity=_owner_identity()
+    )
+    created_cred = await cred_svc.create(
+        CredentialCreate(
+            type=CredentialType.NO_AUTH,
+            name="country-is (no-auth)",
+            api=APIReference(vendor="country-is", name="country-is", version=""),
+        ),
+        identity=_owner_identity(),
+    )
+    await access_svc.amend(
+        view.id,
+        identity=_owner_identity(),
+        item_amendments=[
+            {
+                "item_id": bind_item.id,
+                "to_id": created_toolkit.id,
+                "resource_id": created_cred.credential_id,
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+            {"item_id": agent_bind_item.id, "resource_id": created_toolkit.id},
+        ],
+    )
+    refreshed = await access_svc.get(view.id, identity=_owner_identity())
+    decided = await access_svc.decide(
+        view.id,
+        identity=_owner_identity(),
+        item_decisions=[
+            {"item_id": i.id, "decision": "approved"}
+            for i in refreshed.items
+            if i.status == "pending"
+        ],
+    )
+    assert decided.status == "approved", [
+        (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
+    ]
+
+    # Sanity: the credential persisted a NULL version (the wildcard), not "".
+    async with ctx.control_db.session() as session:
+        cred_row = await session.get(Credential, created_cred.credential_id)
+        assert cred_row is not None
+        assert cred_row.api_version is None, "versionless credential must store NULL, not ''"
+
+    # 3. EXECUTE-PATH RESOLVERS: both must resolve for the CONCRETE version.
+    #    (a) toolkit-binding resolver — which toolkit serves this API for the agent.
+    toolkit_resolver = ToolkitBindingResolver(ctx.admin_db, ctx.control_db)
+    toolkits = await toolkit_resolver.derive_toolkits(
+        agent_id=AGENT_SUB, vendor="country-is", name="country-is", version=resolved_version
+    )
+    assert toolkits == [created_toolkit.id], (
+        "toolkit-binding resolver must serve the no-auth API at a concrete version "
+        f"(NULL-version credential wildcard); got {toolkits}"
+    )
+
+    #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH).
+    cred_resolver = CredentialResolver(ctx)
+    resolved = await cred_resolver.resolve(
+        api=APIReference(vendor="country-is", name="country-is", version=resolved_version),
+        caller=AGENT_SUB,
+    )
+    assert resolved.credential_id == created_cred.credential_id
+    assert resolved.wire_type == CredentialType.NO_AUTH
 
 
 async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
