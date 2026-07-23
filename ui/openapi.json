@@ -112,6 +112,11 @@
               }
             ],
             "description": "Look up the resource by API identity instead of by ID. For toolkit:bind, provide {vendor, name, version} to resolve the toolkit that serves the given API. Use this when you don't know the toolkit ID.",
+            "example": {
+              "name": "issues",
+              "vendor": "github",
+              "version": "v3"
+            },
             "title": "Resource Reference"
           },
           "resource_type": {
