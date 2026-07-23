@@ -94,4 +94,9 @@ describe('WorkspacePage', () => {
 		await user.click(screen.getAllByTestId('workspace-import-open')[0]);
 		expect(await screen.findByTestId('import-spec-dialog')).toBeInTheDocument();
 	});
+
+	it('auto-opens the import dialog when deep-linked with ?import=1 (from Discover)', async () => {
+		renderWithProviders(<WorkspacePage />, { route: '/workspace?import=1' });
+		expect(await screen.findByTestId('import-spec-dialog')).toBeInTheDocument();
+	});
 });

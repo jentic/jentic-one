@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
-from jentic_one.registry.services.inspect.models import OperationInspectResult
+from jentic_one.registry.services.inspect.models import (
+    OperationInputs,
+    OperationInspectResult,
+    OperationParameter,
+    RequestBodySchema,
+)
 
 
 def render_markdown(result: OperationInspectResult) -> str:
@@ -34,11 +38,8 @@ def _render_operation_markdown(result: OperationInspectResult) -> str:
         lines.append(f"> {result.api.description}")
     lines.append("")
 
-    if result.parameters:
-        lines.append("## Parameters")
-        lines.append("")
-        _describe_params(lines, result.parameters)
-        lines.append("")
+    if result.inputs:
+        _describe_inputs(lines, result.inputs)
 
     if result.response_schema:
         lines.append("## Response Schema")
@@ -64,23 +65,52 @@ def _render_operation_markdown(result: OperationInspectResult) -> str:
     return "\n".join(lines)
 
 
-def _describe_params(lines: list[str], params: dict[str, object]) -> None:
-    for name, schema in params.items():
-        type_str = _schema_type(schema) if isinstance(schema, dict) else "unknown"
-        desc = ""
-        if isinstance(schema, dict):
-            desc = _describe_field(schema)
-        lines.append(f"- `{name}` ({type_str}){desc}")
+def _describe_inputs(lines: list[str], inputs: OperationInputs) -> None:
+    groups = (
+        ("Path Parameters", inputs.path),
+        ("Query Parameters", inputs.query),
+        ("Header Parameters", inputs.header),
+    )
+    if any(params for _, params in groups):
+        lines.append("## Parameters")
+        lines.append("")
+        for heading, params in groups:
+            if not params:
+                continue
+            lines.append(f"### {heading}")
+            lines.append("")
+            _describe_params(lines, params)
+            lines.append("")
+
+    if inputs.body is not None:
+        _describe_body(lines, inputs.body)
 
 
-def _describe_field(schema: dict[str, Any]) -> str:
-    desc = schema.get("description", "")
-    if desc:
-        return f" — {desc}"
-    return ""
+def _describe_params(lines: list[str], params: list[OperationParameter]) -> None:
+    for param in params:
+        type_str = _schema_type(param.schema_)
+        required = " (required)" if param.required else ""
+        desc = f" — {param.description}" if param.description else ""
+        lines.append(f"- `{param.name}` ({type_str}){required}{desc}")
 
 
-def _schema_type(schema: Any) -> str:
+def _describe_body(lines: list[str], body: RequestBodySchema) -> None:
+    lines.append("## Request Body")
+    lines.append("")
+    if body.content_type:
+        lines.append(f"**Content-Type:** `{body.content_type}`")
+    lines.append(f"**Required:** {'yes' if body.required else 'no'}")
+    if body.description:
+        lines.append(f"> {body.description}")
+    lines.append("")
+    if body.schema_:
+        lines.append("```json")
+        lines.append(json.dumps(body.schema_, indent=2))
+        lines.append("```")
+        lines.append("")
+
+
+def _schema_type(schema: dict[str, object] | None) -> str:
     if isinstance(schema, dict):
         return str(schema.get("type", "object"))
     return "unknown"

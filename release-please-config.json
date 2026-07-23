@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "python",
+  "bootstrap-sha": "61e720aa144f8e850c3c927da4bf27af6fd2ea8f",
+  "packages": {
+    ".": {
+      "package-name": "jentic-one",
+      "component": "jentic-one",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "draft": false,
+      "prerelease": false,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='jentic-one')].version"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/observability/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/broker/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/app/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/registry/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/admin/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/control/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/gateway/Chart.yaml"
+        },
+        {
+          "type": "generic",
+          "path": "deploy/helm/jentic-one/charts/common/Chart.yaml"
+        }
+      ]
+    }
+  },
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactors" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "docs", "section": "Documentation", "hidden": false },
+    { "type": "build", "section": "Build System", "hidden": false },
+    { "type": "ci", "section": "CI/CD", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous", "hidden": true },
+    { "type": "style", "section": "Styles", "hidden": true }
+  ]
+}

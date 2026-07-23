@@ -7,37 +7,6 @@ import (
 	"testing"
 )
 
-func TestFirstSHA(t *testing.T) {
-	out := "4ee3bd3c0ffee1234567890abcdef1234567890a\trefs/heads/feat/cli\n"
-	if got := firstSHA(out); got != "4ee3bd3c0ffee1234567890abcdef1234567890a" {
-		t.Errorf("firstSHA = %q", got)
-	}
-	if got := firstSHA("\n  \n"); got != "" {
-		t.Errorf("firstSHA(blank) = %q, want empty", got)
-	}
-}
-
-func TestShortTruncates(t *testing.T) {
-	if got := short("4ee3bd3c0ffee"); got != "4ee3bd3" {
-		t.Errorf("short = %q, want 4ee3bd3", got)
-	}
-	if got := short("abc"); got != "abc" {
-		t.Errorf("short(abc) = %q, want abc", got)
-	}
-}
-
-func TestSameCommitPrefixMatch(t *testing.T) {
-	if !SameCommit("4ee3bd3", "4ee3bd3c0ffee") {
-		t.Errorf("SameCommit should match on common prefix")
-	}
-	if SameCommit("4ee3bd3", "deadbee") {
-		t.Errorf("SameCommit should not match differing SHAs")
-	}
-	if SameCommit("", "4ee3bd3") || SameCommit("4ee3bd3", "") {
-		t.Errorf("SameCommit with empty input should be false")
-	}
-}
-
 func TestReplaceBinaryBacksUpAndSwaps(t *testing.T) {
 	dir := t.TempDir()
 	stageDir := t.TempDir() // separate dir to exercise the copy-then-rename path

@@ -156,7 +156,7 @@ describe('AgentsPage — agents lifecycle', () => {
 		);
 
 		const dialog = await screen.findByRole('dialog');
-		await user.type(within(dialog).getByLabelText(/to confirm/i), 'support-agent');
+		await user.type(within(dialog).getByLabelText(/to confirm/i), 'archive');
 		await user.click(within(dialog).getByRole('button', { name: 'Archive agent' }));
 
 		// The collapsible "Removed agents" disclosure appears with the row in it.
@@ -178,7 +178,7 @@ describe('AgentsPage — agents lifecycle', () => {
 			}),
 		);
 		const dialog = await screen.findByRole('dialog');
-		await user.type(within(dialog).getByLabelText(/to confirm/i), 'support-agent');
+		await user.type(within(dialog).getByLabelText(/to confirm/i), 'archive');
 		await user.click(within(dialog).getByRole('button', { name: 'Archive agent' }));
 
 		// Failure → error toast, dialog stays open so the user can retry, and the

@@ -37,6 +37,7 @@ def _make_credential(
     cred.active = active
     cred.provider = provider
     cred.server_variables = None
+    cred.created_at = None
     cred.token_value_credential = MagicMock(encrypted_token_value="enc:tok")
     cred.customer_api_key = None
     cred.basic_credential = None
@@ -90,7 +91,9 @@ async def test_multiple_matches_no_header_raises_ambiguous_with_candidates() -> 
     ):
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
 
-    assert set(exc.value.candidates) == {"read-only", "admin"}
+    assert {c.name for c in exc.value.candidates} == {"read-only", "admin"}
+    assert {c.id for c in exc.value.candidates} == {"cred_1", "cred_2"}
+    assert all(c.last4 == c.id[-4:] for c in exc.value.candidates)
 
 
 @pytest.mark.asyncio
@@ -134,7 +137,7 @@ async def test_multiple_matches_with_invalid_header_raises_not_found() -> None:
         )
 
     assert exc.value.requested_name == "nonexistent"
-    assert set(exc.value.candidates) == {"read-only", "admin"}
+    assert {c.name for c in exc.value.candidates} == {"read-only", "admin"}
 
 
 @pytest.mark.asyncio
@@ -174,4 +177,4 @@ async def test_single_match_with_non_matching_header_raises_not_found() -> None:
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1", credential_name="staging")
 
     assert exc.value.requested_name == "staging"
-    assert exc.value.candidates == ["production"]
+    assert [c.name for c in exc.value.candidates] == ["production"]

@@ -22,11 +22,13 @@ from jentic_one.broker.adapters.runners.base import RunnerRequest, RunnerResult,
 from jentic_one.broker.core.exceptions import BrokerError, CircuitOpenError
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.broker.default_broker import DefaultBroker
 from jentic_one.broker.services.execution.pipeline import (
     BrokerExecutionPipeline,
     ExecutionContext,
     ExecutionOutcome,
 )
+from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
@@ -91,6 +93,17 @@ def default_pipeline(runner: UpstreamRunner) -> BrokerExecutionPipeline:
     return BrokerExecutionPipeline(runner)
 
 
+def default_broker(runner: UpstreamRunner) -> Broker:
+    """Build the default :class:`Broker` for a runner.
+
+    The per-request factory the surface + worker use when no ``Broker`` is
+    injected via the ``AppContainer``. Wraps :func:`default_pipeline` in a
+    :class:`DefaultBroker` so the execution path depends on the neutral ``Broker``
+    seam; a caller swaps this factory to inject its own implementation.
+    """
+    return DefaultBroker(default_pipeline(runner))
+
+
 def _api_reference(ctx_req: ExecuteRequestContext) -> APIReference | None:
     if not ctx_req.api_vendor:
         return None
@@ -108,19 +121,20 @@ async def run_execution(
     headers: dict[str, str] | None,
     session: Any,
     timeout: float = 30.0,
-    pipeline: BrokerExecutionPipeline,
+    broker: Broker,
     execution_id: str | None = None,
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
 ) -> ExecutionOutcome:
-    """Run the upstream call through the shared pipeline and persist the record.
+    """Run the upstream call through the injected ``Broker`` and persist the record.
 
-    On a transport-level failure the pipeline's runner raises a ``BrokerError``;
+    On a transport-level failure the broker's pipeline raises a ``BrokerError``;
     we persist a FAILED record before re-raising so the central handler can map
-    it to problem+json. The ``pipeline`` (and thus the shared upstream client it
-    wraps) is supplied by the caller (§04 — one client per process).
+    it to problem+json. The ``broker`` (and thus the shared upstream client it
+    wraps) is supplied by the caller (§04 — one client per process); the default
+    builds a :class:`DefaultBroker` per request, a caller may inject its own.
 
     ``execution_id`` lets the async worker reuse the id already handed to the
     client in the ``202`` (and used as the job's correlation id) so the persisted
@@ -168,7 +182,7 @@ async def run_execution(
             span.set_attribute("toolkit_id", ctx_req.toolkit_id or "")
             span.set_attribute("api_vendor", ctx_req.api_vendor or "")
             with jentic_tracestate(tracestate_member):
-                outcome = await pipeline.execute(runner_request, exec_context)
+                outcome = await broker.execute(runner_request, exec_context)
     except BrokerError as exc:
         logger.error("execution_failed", execution_id=execution_id, error=exc.detail[:128])
         await _persist(
@@ -287,20 +301,20 @@ async def execute_upstream(
     headers: dict[str, str] | None = None,
     session: Any,
     timeout: float = 30.0,
-    pipeline: BrokerExecutionPipeline,
+    broker: Broker,
     actor_id: str,
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
 ) -> RunnerResult:
-    """Run the pipeline and return only the upstream result (status/headers/body)."""
+    """Run the broker and return only the upstream result (status/headers/body)."""
     outcome = await run_execution(
         ctx_req,
         body=body,
         headers=headers,
         session=session,
         timeout=timeout,
-        pipeline=pipeline,
+        broker=broker,
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,

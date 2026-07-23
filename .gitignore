@@ -111,3 +111,8 @@ cli/AGENTS.md
 
 # Local toolchain (Go install for CLI builds)
 .toolchain/
+
+# Optional local rules mount. If a `.rules/` directory is present it is read at
+# runtime by the arch tests (or point elsewhere via JENTIC_RULES_DIR); it is
+# never committed. Without it, the vendored subset under tests/arch is used.
+.rules/

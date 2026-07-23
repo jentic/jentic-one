@@ -66,11 +66,21 @@ branch on the exit code instead of mistaking the 4xx body for success. The
 directive tells you exactly how to recover — which differs by denial:
 
 - **`no_toolkit_binding` (403)** — you're not bound to a toolkit for this API.
-  File an access request and wait for a human to approve it:
+  The directive's `parameters.toolkit_serves_api` tells you which recovery
+  applies:
+  - `toolkit_serves_api: true` — a toolkit already serves this API; you just
+    aren't bound to it. File a binding request and wait for approval:
 
 ```
 jentic access request --toolkit stripe.com/api --wait
 ```
+
+  - `toolkit_serves_api: false` — **no** toolkit serves this API yet, so a
+    toolkit-binding request would be denied ("No toolkit serves API …"). Filing
+    it now is a dead-end. First a credential must be connected (provisioned) and
+    bound to a toolkit — that is what makes a toolkit serve the API. Ask your
+    operator to connect (bind) a credential for this API, then file the
+    `jentic access request --toolkit …` binding and retry.
 
 - **`credential_not_provisioned` (424)** — you're bound to a toolkit, but no
   credential (account) is connected. Filing an access request will **not** fix
@@ -256,10 +266,12 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   means the **broker target** is wrong; on a local install point at the local
   broker. Only a broker **denial** (exit **2**, with an `agent_directive` on
   stderr) is an access/credential issue:
-  - **403 `no_toolkit_binding`** → run the `jentic access request …` it suggests
-    and wait for approval. If it comes back **denied** with "No toolkit serves
-    API …", a toolkit for that API doesn't exist yet — ask your operator to
-    create one and bind a credential, then re-file (you can't self-serve this).
+  - **403 `no_toolkit_binding`** → check the directive's
+    `parameters.toolkit_serves_api`. If `true`, run the `jentic access request …`
+    it suggests and wait for approval. If `false`, no toolkit serves the API yet
+    and a binding request would be denied ("No toolkit serves API …") — ask your
+    operator to connect (bind) a credential for that API first, then file the
+    binding request and retry (you can't self-serve the credential step).
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).

@@ -42,6 +42,24 @@ class PrerequisiteRepository:
         return result.scalar_one_or_none() is not None
 
     @staticmethod
+    async def list_toolkit_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
+        """Return the ids of every toolkit the agent is actively bound to.
+
+        Used to widen control-surface read scoping: an agent must always be able
+        to see a toolkit (and its credentials) it is bound to, even when the
+        toolkit is owned by someone else — or by no one, as with the orphaned
+        bootstrap agent (issues #665/#682). The binding lives in the admin DB, so
+        this runs against an admin session and returns plain ids the caller feeds
+        into ``build_access_filters`` (the control scoping module must not import
+        admin ORM models or query across databases).
+        """
+        result = await session.execute(
+            text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :agent_id"),
+            {"agent_id": agent_id},
+        )
+        return [row[0] for row in result.fetchall()]
+
+    @staticmethod
     async def delete_agent_toolkit_bindings_for_toolkit(
         session: AsyncSession, *, toolkit_id: str
     ) -> int:

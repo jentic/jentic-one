@@ -27,7 +27,6 @@ import asyncio
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
 
 from fastapi import Response
 from starlette.background import BackgroundTask
@@ -39,21 +38,16 @@ from jentic_one.broker.adapters.runners.base import (
     StreamingUpstreamRunner,
 )
 from jentic_one.broker.core.exceptions import ErrorOrigin, UpstreamTimeoutError
-from jentic_one.broker.core.headers import JenticHeader
+from jentic_one.broker.core.headers import REGION_MISMATCH_HINT, JenticHeader
 from jentic_one.broker.core.proxy_headers import passthrough_streaming_headers
 from jentic_one.broker.core.schemas import ExecuteRequestContext
+from jentic_one.shared.broker.execution import StreamingOutcome
 
-
-@dataclass
-class StreamingOutcome:
-    """Captures the final state of a streaming execution for persistence."""
-
-    execution_id: str
-    http_status: int
-    started_at_perf: float = field(default_factory=time.perf_counter)
-    duration_ms: int = 0
-    error: str | None = None
-    bytes_transferred: int = 0
+__all__ = [
+    "StreamingOutcome",
+    "guarded_body",
+    "open_streaming_response",
+]
 
 
 async def guarded_body(
@@ -136,6 +130,10 @@ def _metadata_headers(
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
     if status_code >= 400:
         metadata[JenticHeader.ERROR_ORIGIN.value] = ErrorOrigin.UPSTREAM.value
+    # Region-mismatch hint for a templated-host API's upstream 401/403 (#638),
+    # surfaced via header — the streamed upstream body stays verbatim.
+    if status_code in (401, 403) and ctx_req.has_server_variable:
+        metadata[JenticHeader.HINT.value] = REGION_MISMATCH_HINT
     return metadata
 
 

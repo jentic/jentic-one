@@ -8,6 +8,7 @@ from jentic_one.shared.models.actors import (
     Origin,
     actor_type_from_id,
 )
+from jentic_one.shared.models.api_identity import API_FIELD_MAX_LENGTH, slugify_api_field
 from jentic_one.shared.models.audit import AuditAction, AuditReason, AuditTargetType
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
@@ -25,6 +26,7 @@ from jentic_one.shared.models.registry import (
 from jentic_one.shared.models.users import AuthProvider, InviteState
 
 __all__ = [
+    "API_FIELD_MAX_LENGTH",
     "AccessRequestItemStatus",
     "AccessRequestStatus",
     "ActorStatus",
@@ -48,4 +50,5 @@ __all__ = [
     "OverlayStatus",
     "StoredCredentialType",
     "actor_type_from_id",
+    "slugify_api_field",
 ]

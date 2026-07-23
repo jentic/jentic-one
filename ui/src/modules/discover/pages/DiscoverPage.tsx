@@ -13,7 +13,9 @@
  * It never touches `@/shared/api` directly (ESLint-enforced).
  */
 import { useEffect, useState } from 'react';
-import { PageShell, PageHeader, PageHelp } from '@/shared/ui';
+import { Upload } from 'lucide-react';
+import { PageShell, PageHeader, PageHelp, AppLink } from '@/shared/ui';
+import { ROUTES } from '@/shared/app/routes';
 import { DiscoverToolbar } from '@/modules/discover/components/DiscoverToolbar';
 import { DiscoveryGrid } from '@/modules/discover/components/DiscoveryGrid';
 import { ApiDetailSheet } from '@/modules/discover/components/ApiDetailSheet';
@@ -63,39 +65,50 @@ export default function DiscoverPage() {
 	return (
 		<PageShell spacing="space-y-0">
 			<PageHeader
-				title="Discover"
-				subtitle="Browse the public Jentic catalog. Import an API to use it in your workspace."
+				title="Discover APIs"
+				subtitle="Browse the public Jentic catalog. Import an API to use it — or import your own in Workspace."
 				actions={
-					<PageHelp
-						title="About Discover"
-						intro={
-							<p>
-								Discover lists the public Jentic catalog of importable APIs,
-								flagging which are already imported into your workspace.
-							</p>
-						}
-						sections={[
-							{
-								heading: 'Imported vs Available',
-								body: (
-									<p>
-										<strong>Imported</strong> APIs already live in your
-										workspace. <strong>Available</strong> APIs can be imported
-										to register them locally.
-									</p>
-								),
-							},
-							{
-								heading: 'Previewing operations',
-								body: (
-									<p>
-										Open any API to preview its operations before importing — no
-										registration required.
-									</p>
-								),
-							},
-						]}
-					/>
+					<>
+						<AppLink
+							href={`${ROUTES.workspace}?import=1`}
+							variant="outline"
+							size="sm"
+							data-testid="discover-upload-own"
+						>
+							<Upload size={14} aria-hidden="true" />
+							Import your own API
+						</AppLink>
+						<PageHelp
+							title="About Discover"
+							intro={
+								<p>
+									Discover lists the public Jentic catalog of importable APIs,
+									flagging which are already imported into your workspace.
+								</p>
+							}
+							sections={[
+								{
+									heading: 'Imported vs Available',
+									body: (
+										<p>
+											<strong>Imported</strong> APIs already live in your
+											workspace. <strong>Available</strong> APIs can be
+											imported to register them locally.
+										</p>
+									),
+								},
+								{
+									heading: 'Previewing operations',
+									body: (
+										<p>
+											Open any API to preview its operations before importing
+											— no registration required.
+										</p>
+									),
+								},
+							]}
+						/>
+					</>
 				}
 			/>
 

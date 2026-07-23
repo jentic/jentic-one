@@ -33,6 +33,7 @@ from jentic_one.shared.resilience import CircuitBreaker, RateLimiter
 from jentic_one.shared.state import build_state_backend
 from jentic_one.shared.tracing import instrument_outbound_client
 from jentic_one.shared.web.app_factory import create_surface_app
+from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.health import make_health_router
 
 
@@ -51,8 +52,17 @@ def _routers(*, readiness_saturation_threshold: float) -> list[tuple[APIRouter, 
     ]
 
 
-def create_app(ctx: Context) -> FastAPI:
-    """Create the broker FastAPI application for standalone deployment."""
+def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
+    """Create the broker FastAPI application for standalone deployment.
+
+    ``container`` is the DI seam: when omitted the default is used and behavior is
+    unchanged. A caller passes its own container to inject a ``Broker`` — it is
+    threaded to :func:`create_surface_app`, which sets ``app.state.broker`` and
+    ``app.state.broker_factory`` so the injected broker reaches BOTH the sync
+    router and the async worker (the worker's ``PipelineExecutor`` reads
+    ``broker_factory`` in ``broker_lifespan`` below).
+    """
+    container = container or AppContainer.default(ctx)
     resilience = ctx.config.broker.resilience
     upstream_cfg = resilience.upstream
     meter = get_meter("broker")
@@ -155,7 +165,18 @@ def create_app(ctx: Context) -> FastAPI:
         # resolves credentials with the same CredentialService. Both are stashed
         # on app.state so the shared/ worker factory wires them without importing
         # broker/ (the arch boundary). Built here so they wrap the live runner.
-        app.state.broker_upstream_executor = PipelineExecutor(registry)
+        #
+        # Seam symmetry ("one pipeline, two callers"): if a caller set a
+        # `broker_factory` on app.state (the same factory the sync router honors
+        # in web/routers/execute.py), the worker's executor uses it too — so an
+        # injected Broker reaches BOTH the sync and async paths, not just sync.
+        # Unset by default → PipelineExecutor falls back to `default_broker`.
+        injected_broker_factory = getattr(app.state, "broker_factory", None)
+        app.state.broker_upstream_executor = (
+            PipelineExecutor(registry, broker_factory=injected_broker_factory)
+            if injected_broker_factory is not None
+            else PipelineExecutor(registry)
+        )
         app.state.broker_credential_injector = CredentialService(ctx)
         try:
             yield
@@ -175,6 +196,7 @@ def create_app(ctx: Context) -> FastAPI:
         title="jentic-one-broker",
         routers=_routers(readiness_saturation_threshold=resilience.readiness_saturation_threshold),
         extra_lifespan=broker_lifespan,
+        container=container,
     )
     # One admission gate shared by the shedding middleware and the readiness
     # probe (§05 R5.2), so both observe the same in-flight counter.

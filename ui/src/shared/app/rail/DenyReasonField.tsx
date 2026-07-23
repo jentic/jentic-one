@@ -29,7 +29,7 @@ export function DenyReasonField({ id, value, onChange, autoFocus }: DenyReasonFi
 				rows={2}
 				autoFocus={autoFocus}
 				placeholder="Why is this being denied?"
-				className="border-border bg-background focus:border-primary w-full resize-none rounded border px-2 py-1 text-[11px] outline-none"
+				className="border-border bg-background focus:border-primary placeholder:text-input-placeholder w-full resize-none rounded border px-2 py-1 text-[11px] outline-none"
 			/>
 		</div>
 	);

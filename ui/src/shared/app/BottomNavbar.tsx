@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { MoreHorizontal, X } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { sortedNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
+import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
+import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { useDismissable } from '@/shared/ui/Menu';
@@ -116,15 +117,21 @@ function BottomTile({
  */
 export function BottomNavbar() {
 	const { pathname } = useLocation();
-	const items = sortedNavItems();
+	const { user } = useAuth();
+	const allItems = visibleNavItems(sortedNavItems(), user?.permissions ?? []);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const closeSheet = useCallback(() => setSheetOpen(false), []);
 	// Wires Escape (and outside-click) on the sheet, matching the
 	// dismiss behaviour of every other dropdown / overlay in the app.
 	const sheetRef = useDismissable<HTMLDivElement>(sheetOpen, closeSheet);
 
-	const primary = items.slice(0, TILE_LIMIT - 1);
-	const overflow = items.slice(TILE_LIMIT - 1);
+	// Primary (product) items compete for the tile row; secondary (operator/
+	// admin) items always live in the "More" sheet, so mobile mirrors the
+	// desktop's divided placement rather than burning a scarce tile slot.
+	const primaryItems = allItems.filter((i) => !i.secondary);
+	const secondaryItems = allItems.filter((i) => i.secondary);
+	const primary = primaryItems.slice(0, TILE_LIMIT - 1);
+	const overflow = [...primaryItems.slice(TILE_LIMIT - 1), ...secondaryItems];
 	const overflowActive = overflow.some((item) => isNavItemActive(item, pathname));
 
 	return (

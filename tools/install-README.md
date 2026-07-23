@@ -39,12 +39,39 @@ You can also run it from a checkout:
    pinned Go into `~/.jentic/toolchain` (reused on subsequent runs).
 4. Shallow + sparse clones only the `cli/` subtree of the repo into a temp dir.
 5. Builds both binaries with version metadata stamped in via `-ldflags`.
-6. Installs them to `~/.jentic/bin/{jenticctl,jentic}` and links them into a PATH
-   directory when possible (otherwise prints a PATH hint).
+6. Installs them to `~/.jentic/bin/{jenticctl,jentic}` and makes them reachable
+   by name (see [PATH handling](#path-handling) below).
 7. Runs `jenticctl --version` and `jentic --version` to verify.
 
 The temp clone/build directory is removed on exit; the only things left behind
 are the binaries (and the cached Go toolchain, if it was downloaded).
+
+## PATH handling
+
+The binaries install into `~/.jentic/bin`. So `jenticctl` / `jentic` work by
+name, the installer makes that directory reachable using the first of these
+that applies:
+
+1. **Already on `PATH`** — if `~/.jentic/bin` is already on your `PATH`, nothing
+   is changed and nothing extra is printed.
+2. **Symlink into an on-`PATH` dir** — if a conventional directory that's
+   already on your `PATH` is writable (`/usr/local/bin`, then `~/.local/bin`),
+   both binaries are symlinked there. This takes effect immediately, no shell
+   restart needed.
+3. **Append to your shell profile** — otherwise the installer appends a single
+   guarded block to the right rc file for your login shell and prints the exact
+   `export` line to use right now:
+   - **zsh** → `~/.zshrc`
+   - **bash** → `~/.bashrc` and `~/.bash_profile`
+   - other shells → the first existing common rc, else `~/.profile`
+
+   The block is marked with a comment so re-running the installer **never**
+   duplicates it — it's added at most once and left in place afterward. After a
+   fresh append, **restart your terminal** (or `source` the rc file) so the new
+   `PATH` takes effect.
+
+To install somewhere already on your `PATH` and skip all of the above, set
+`JENTIC_INSTALL_DIR` (e.g. `JENTIC_INSTALL_DIR=/usr/local/bin`).
 
 ## Configuration
 
@@ -90,8 +117,11 @@ jentic --help
 - **`Found go1.xx but Go 1.26+ is required`** — your system Go is too old. The
   script downloads a newer Go automatically; if you'd rather use your own, update
   Go to 1.26 or newer.
-- **`~/.jentic/bin is not on your PATH`** — add the printed `export PATH=...`
-  line to your shell profile (`~/.bashrc`, `~/.zshrc`) and restart your shell.
+- **`~/.jentic/bin is not on your PATH`** — the installer appends a guarded
+  `export PATH=...` block to your shell profile (`~/.zshrc`/`~/.bashrc`); restart
+  your terminal (or `source` the rc file) to pick it up. To use the CLIs in the
+  current shell immediately, run the printed `export PATH="$HOME/.jentic/bin:$PATH"`
+  line. See [PATH handling](#path-handling).
 - **Windows** — run the installer inside WSL; native Windows is not supported.
 
 ## Notes

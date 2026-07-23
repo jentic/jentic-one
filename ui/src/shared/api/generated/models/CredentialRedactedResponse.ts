@@ -21,6 +21,10 @@ export type CredentialRedactedResponse = {
      */
     created_at: string;
     /**
+     * Identity that created the credential (its owner).
+     */
+    created_by?: (string | null);
+    /**
      * Stable credential identifier, prefixed `cred_`.
      */
     credential_id: string;

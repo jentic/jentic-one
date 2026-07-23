@@ -1,0 +1,55 @@
+name: "💡 Request or feedback"
+description: A feature, an improvement, an idea, a pain point, or a docs gap — anything that isn't a bug.
+title: "[request] "
+labels: ["needs-triage", "ai-intake"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One form for everything that isn't a bug — a concrete **feature**, a rough
+        **idea**, a **pain point** (friction/confusion during real use), or a
+        **docs** gap. You don't need to categorize it: our intake assistant reads
+        this, classifies it, and may follow up in the comments for anything
+        important that's missing. Just tell us what you experienced or want.
+
+        🔒 **Redact secrets** — never paste API keys, tokens, or passwords. Use `***`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem, friction, or need?
+      description: >-
+        Focus on what you were trying to do and what got in the way — the need,
+        not a pre-baked solution. "I ran `jentic register` and had no idea what to
+        do next" is a great start.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like instead? (optional)
+      description: A proposal, a sketch, or "not sure — just flagging it".
+    validations:
+      required: false
+  - type: input
+    id: where
+    attributes:
+      label: Where did this come up? (optional)
+      placeholder: "jentic register  /  UI → Credentials page  /  docs/deploy/README.md"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else? (optional)
+      description: Current workaround, prior art, links, or how much it's slowing you down.
+    validations:
+      required: false
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched [existing issues](https://github.com/jentic/jentic-one/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I agree to follow this project's [Code of Conduct](https://github.com/jentic/.github/blob/main/CODE_OF_CONDUCT.md).
+          required: true

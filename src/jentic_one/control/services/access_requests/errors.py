@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.scopes import GRANTABLE_SCOPES
 
 
@@ -115,10 +116,7 @@ class ToolkitReferenceUnresolvedError(AccessRequestServiceError):
     """
 
     def __init__(self, reference: dict[str, object]) -> None:
-        super().__init__(
-            f"No toolkit serves API {_format_api_reference(reference)}; "
-            "provision and bind a credential for it first"
-        )
+        super().__init__(no_toolkit_serves_api_reason(_format_api_reference(reference)))
         self.reference = reference
 
 
@@ -194,11 +192,25 @@ class RulesNotSupportedForBindError(AccessRequestServiceError):
 
     def __init__(self, resource_type: str, action: str) -> None:
         super().__init__(
-            f"rules are not supported on {resource_type}:{action}; "
-            "attach rules to a credential:bind instead"
+            f"Permission rules are not supported on {resource_type}:{action} items. "
+            "Rules are enforced per (toolkit_id, credential_id) binding, so they "
+            "can only be attached to credential:bind items. To set rules, file an "
+            "access request with resource_type='credential', action='bind' and "
+            "include your rules there (toolkits:write scope is not needed)."
         )
         self.resource_type = resource_type
         self.action = action
+
+
+class RequiredFieldMissingError(AccessRequestServiceError):
+    """Raised when a required field is absent on an access request item."""
+
+    def __init__(self, field: str, *, context: str) -> None:
+        super().__init__(
+            f"Required field '{field}' is missing on the access request item; {context}"
+        )
+        self.field = field
+        self.context = context
 
 
 def assert_grantable_scope(scope: str | None) -> None:
@@ -206,10 +218,10 @@ def assert_grantable_scope(scope: str | None) -> None:
 
     Single source of truth for the scope:grant allow-list check, shared by the
     file-time guard (AccessRequestService) and the decide-time guard
-    (EffectApplicator) so the two can never drift. A falsy scope (missing, None,
-    or empty string) is reported as ``"<missing>"``. See issue #672.
+    (EffectApplicator) so the two can never drift. A falsy scope is reported as
+    a missing-field error. See issue #672.
     """
     if not scope:
-        raise UnsupportedScopeGrantError("<missing>")
+        raise RequiredFieldMissingError("resource_id", context="scope:grant requires a scope value")
     if scope not in GRANTABLE_SCOPES:
         raise UnsupportedScopeGrantError(scope)
