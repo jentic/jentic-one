@@ -9,7 +9,7 @@ guard the portable, dialect-aware day-bucket expression.
 The usage aggregations (``overall_stats``, ``time_buckets``, ``grouped_top``,
 ``grouped_trend``) likewise once hard-coded Postgres-only SQL —
 ``percentile_cont … WITHIN GROUP``, ``extract('epoch', …)`` and ``concat()`` —
-which 500'd ``GET /monitoring/usage`` and the enterprise usage overview on
+which 500'd ``GET /monitoring/usage`` and any downstream usage overview on
 SQLite. The tests below guard their dialect-aware forms (percentiles are simply
 ``None`` on SQLite, which has no ordered-set aggregate).
 """

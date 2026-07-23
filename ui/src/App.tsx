@@ -1,4 +1,5 @@
 import { Navigate, useRoutes, type RouteObject } from 'react-router-dom';
+import { useEffect } from 'react';
 import { AuthGuard } from '@/shared/auth/AuthGuard';
 import { SetupGate } from '@/shared/auth/SetupGate';
 import { LoginPage } from '@/shared/auth/LoginPage';
@@ -51,16 +52,24 @@ import { publicDocsRoutes } from '@/modules/docs/routes';
  * additional `NavItem`s (e.g. a permission-gated, `secondary` operator entry)
  * that the navbars render alongside the built-in registry. They're stashed in
  * the nav module's static registry (see `registerExtraNavItems`) so the
- * deep-in-the-tree navbars can read them without prop-drilling. Omitted (the
+ * deep-in-the-tree navbars can read them without prop-drilling. Registration
+ * happens in a commit-phase effect and is torn down on unmount. Omitted (the
  * default) for the OSS binary.
  */
 export function App({
 	extraRoutes = [],
 	extraNavItems = [],
 }: { extraRoutes?: RouteObject[]; extraNavItems?: NavItem[] } = {}) {
-	// Register downstream nav entries once, before the navbars first read the
-	// registry. Idempotent on re-render (replaces with the same list).
-	registerExtraNavItems(extraNavItems);
+	// Register downstream nav entries as a commit-phase side effect (never during
+	// render, which must stay pure). Re-runs only if the list identity changes,
+	// and clears the registry on unmount so nothing leaks across app instances
+	// (e.g. between tests). The OSS binary passes nothing → the registry stays
+	// empty. The navbars mount under <Outlet> (after this effect has run), so
+	// they read the populated registry on their first paint.
+	useEffect(() => {
+		registerExtraNavItems(extraNavItems);
+		return () => registerExtraNavItems([]);
+	}, [extraNavItems]);
 	return useRoutes(buildRoutes(extraRoutes));
 }
 

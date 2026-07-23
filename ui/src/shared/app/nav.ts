@@ -63,12 +63,13 @@ export const navItems: NavItem[] = [
  * `extraRoutes` seam). Stored in a module-level registry — same "static
  * registry" model as `navItems` — so the deep-in-the-tree navbar renderers
  * (`NavTabs`/`BottomNavbar`, rendered under `<Outlet>`) can read them without
- * prop-drilling through `Layout`. Set once at app construction via
- * `registerExtraNavItems`; the OSS binary never calls it (stays empty).
+ * prop-drilling through `Layout`. Registered from `App`'s mount effect via
+ * `registerExtraNavItems` (and cleared on unmount); the OSS binary never calls
+ * it (stays empty).
  */
 let extraNavItems: NavItem[] = [];
 
-/** Register downstream nav entries (idempotent replace). Call once on boot. */
+/** Register downstream nav entries (idempotent replace). Call from a mount effect. */
 export function registerExtraNavItems(items: NavItem[]): void {
 	extraNavItems = items;
 }

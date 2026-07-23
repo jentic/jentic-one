@@ -122,8 +122,7 @@ class MonitoringRepository:
 
     @staticmethod
     async def daily_buckets(session: AsyncSession, cutoff: datetime) -> list[DailyBucketRow]:
-        dialect = session.bind.dialect.name if session.bind else "postgresql"
-        if dialect == "postgresql":
+        if _is_postgres(session):
             day_col = cast(func.date_trunc("day", ExecutionRecord.started_at), Text).label("day")
         else:
             # SQLite has no date_trunc; strftime yields a portable YYYY-MM-DD string.

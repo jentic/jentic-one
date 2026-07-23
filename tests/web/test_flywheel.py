@@ -1,4 +1,4 @@
-"""End-to-end "flywheel" integration test for the admin-console flow.
+"""End-to-end "flywheel" integration test for the role-enforced entity flow.
 
 Exercises the whole loop against the REAL combined control-plane app + a real
 database, spanning three surfaces (admin `/users`, auth `/agents`, control
@@ -15,6 +15,12 @@ by minting per-actor JWTs with ``issue_jwt`` (the real ``resolve_identity`` path
 mirroring ``tests/web/admin/test_users.py``. Deterministic across repeat runs:
 every entity uses a unique suffix and is created through the real API, and the
 seeded users/permissions are cleaned up on teardown.
+
+Postgres-only: like the rest of ``tests/web`` it builds the combined app against
+the Postgres fixtures (``tests/web/conftest.py`` has no SQLite backend switch),
+and its teardown ordering relies on Postgres FK ``RESTRICT`` enforcement. SQLite
+dialect coverage for the read paths lives in
+``tests/integration/admin/test_monitoring_repo.py``.
 """
 
 from __future__ import annotations

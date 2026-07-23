@@ -1,4 +1,4 @@
-"""Manual flywheel driver — exercises the admin-console flow against a running app.
+"""Manual flywheel driver — exercises the role-enforced user/agent/toolkit flow.
 
 Not a test; a throwaway script to observe real behaviour end-to-end:
   1. bootstrap admin

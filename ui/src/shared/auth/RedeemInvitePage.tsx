@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/shared/auth/AuthContext';
 import { ApiError } from '@/shared/api';
 import { ROUTES } from '@/shared/app/routes';
@@ -23,10 +23,11 @@ import { MIN_PASSWORD_LENGTH } from '@/shared/auth/password';
  * the invitee has no session yet.
  */
 export function RedeemInvitePage() {
-	const { redeemInvite } = useAuth();
+	const { redeemInvite, status } = useAuth();
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const token = searchParams.get('token') ?? '';
+	const tokenMissing = token === '';
 
 	const [password, setPassword] = useState('');
 	const [confirm, setConfirm] = useState('');
@@ -45,6 +46,14 @@ export function RedeemInvitePage() {
 	useEffect(() => {
 		passwordRef.current?.focus();
 	}, []);
+
+	// Surface a broken link (no `?token=`) immediately on mount — before the
+	// visitor bothers filling in a password — and keep the form disabled.
+	useEffect(() => {
+		if (tokenMissing) {
+			setError('This invite link is missing its token. Ask your admin to resend it.');
+		}
+	}, [tokenMissing]);
 
 	const handleSubmit = async (event: React.FormEvent) => {
 		event.preventDefault();
@@ -82,6 +91,13 @@ export function RedeemInvitePage() {
 		}
 	};
 
+	// An already-signed-in visitor has no invite to redeem; redeeming here would
+	// silently swap their session. Bounce them home (mirrors Login/Setup). Placed
+	// after all hooks so the Rules of Hooks hold regardless of auth state.
+	if (status === 'authenticated') {
+		return <Navigate to={ROUTES.app} replace />;
+	}
+
 	return (
 		<main className="bg-background text-foreground flex min-h-screen items-center justify-center px-4">
 			<form
@@ -107,6 +123,7 @@ export function RedeemInvitePage() {
 							showPasswordToggle
 							required
 							minLength={MIN_PASSWORD_LENGTH}
+							disabled={tokenMissing}
 							value={password}
 							onChange={(e) => setPassword(e.target.value)}
 						/>
@@ -122,6 +139,7 @@ export function RedeemInvitePage() {
 							autoComplete="new-password"
 							showPasswordToggle
 							required
+							disabled={tokenMissing}
 							value={confirm}
 							onChange={(e) => setConfirm(e.target.value)}
 						/>
@@ -130,7 +148,13 @@ export function RedeemInvitePage() {
 
 				{error !== null && <ErrorAlert message={error} className="mt-4" />}
 
-				<Button type="submit" loading={submitting} fullWidth className="mt-6">
+				<Button
+					type="submit"
+					loading={submitting}
+					disabled={tokenMissing}
+					fullWidth
+					className="mt-6"
+				>
 					{submitting ? 'Setting up…' : 'Activate account'}
 				</Button>
 			</form>
