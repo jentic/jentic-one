@@ -312,15 +312,18 @@ export function ProvisioningRequestDialog({
 
 	const stepFooter: Record<Step, React.ReactNode> = {
 		toolkit: (
-			<Button
-				variant="primary"
-				onClick={handleCreateToolkit}
-				loading={busy}
-				disabled={busy || !toolkitName.trim()}
-			>
-				Create toolkit
-				<ArrowRight className="h-4 w-4" />
-			</Button>
+			<>
+				<span />
+				<Button
+					variant="primary"
+					onClick={handleCreateToolkit}
+					loading={busy}
+					disabled={busy || !toolkitName.trim()}
+				>
+					Create toolkit
+					<ArrowRight className="h-4 w-4" />
+				</Button>
+			</>
 		),
 		credential: (
 			<>
@@ -353,9 +356,12 @@ export function ProvisioningRequestDialog({
 			</>
 		),
 		done: (
-			<Button variant="primary" onClick={onClose}>
-				Done
-			</Button>
+			<>
+				<span />
+				<Button variant="primary" onClick={onClose}>
+					Done
+				</Button>
+			</>
 		),
 	};
 
