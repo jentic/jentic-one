@@ -34,6 +34,8 @@ import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
 import { Badge } from '@/shared/ui/Badge';
+import { ActorLabel } from '@/shared/ui/ActorLabel';
+import { AgentBadge } from '@/shared/ui/AgentBadge';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/PermissionRuleEditor';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
@@ -367,8 +369,19 @@ export function ProvisioningRequestDialog({
 				className="sm:max-w-4xl"
 				subtitle={
 					<div className="space-y-2">
-						<span className="flex items-center gap-1.5">
-							Grant this agent access to
+						<span className="flex flex-wrap items-center gap-1.5">
+							Grant
+							<AgentBadge
+								id={request.actor_id}
+								name={request.actor_id}
+								kind="Agent"
+								size="sm"
+							/>
+							<ActorLabel
+								actorId={request.actor_id}
+								className="text-foreground font-medium"
+							/>
+							access to
 							<Badge variant="default">{apiLabel(apiRef)}</Badge>
 						</span>
 						{request.reason && (
@@ -605,8 +618,12 @@ function TerminalSummaryDialog({
 			title="Access request"
 			size="lg"
 			subtitle={
-				<span className="flex items-center gap-1.5">
-					For
+				<span className="flex flex-wrap items-center gap-1.5">
+					<ActorLabel
+						actorId={request.actor_id}
+						className="text-foreground font-medium"
+					/>
+					· for
 					<Badge variant="default">{apiLabel}</Badge>
 				</span>
 			}
