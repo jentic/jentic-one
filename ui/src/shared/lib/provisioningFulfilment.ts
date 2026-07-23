@@ -21,19 +21,35 @@ export interface CreatedPlanToolkit {
 }
 
 /**
- * Create a toolkit for the plan. The name must be unique (the backend enforces
- * a unique constraint), so callers derive it from the API slug and may need to
- * disambiguate on a 409.
+ * Create a toolkit for the plan. Toolkit names are globally unique (the backend
+ * maps a duplicate to 409), so on a collision — e.g. two plans for the same API,
+ * or reopening a plan after a "finish later" that left an earlier toolkit — we
+ * transparently disambiguate the name with a numeric suffix (`…-2`, `…-3`, …)
+ * and retry. The name is cosmetic (all downstream wiring resolves the toolkit by
+ * id), so a suffixed name changes nothing functional. Gives up after a bounded
+ * number of attempts to avoid an unbounded retry loop.
  */
+const _MAX_NAME_ATTEMPTS = 20;
+
 export async function createPlanToolkit(name: string): Promise<CreatedPlanToolkit> {
-	try {
-		const res = await ToolkitsService.createToolkit({
-			requestBody: { name },
-		});
-		return { toolkitId: res.toolkit.toolkit_id, name: res.toolkit.name };
-	} catch (error) {
-		throw toRailError(error, 'Failed to create the toolkit.');
+	for (let attempt = 1; attempt <= _MAX_NAME_ATTEMPTS; attempt++) {
+		const candidate = attempt === 1 ? name : `${name}-${attempt}`;
+		try {
+			const res = await ToolkitsService.createToolkit({
+				requestBody: { name: candidate },
+			});
+			return { toolkitId: res.toolkit.toolkit_id, name: res.toolkit.name };
+		} catch (error) {
+			const railError = toRailError(error, 'Failed to create the toolkit.');
+			// Only a name collision (409) is retryable with a new name; anything
+			// else (auth, validation, server error) is surfaced immediately.
+			if (railError.status !== 409 || attempt === _MAX_NAME_ATTEMPTS) {
+				throw railError;
+			}
+		}
 	}
+	// Unreachable — the loop either returns or throws — but satisfies the type.
+	throw toRailError(new Error('exhausted name attempts'), 'Failed to create the toolkit.');
 }
 
 /**

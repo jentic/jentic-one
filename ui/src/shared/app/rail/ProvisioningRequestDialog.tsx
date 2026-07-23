@@ -286,6 +286,22 @@ export function ProvisioningRequestDialog({
 		return null;
 	}
 
+	// A plan that's already been decided (approved / partially_approved / denied /
+	// expired / withdrawn) must NOT show the live create/approve wizard — that
+	// would let an operator re-fulfil a settled request (stranding orphan objects,
+	// then failing at decide). Show a read-only outcome summary instead. The
+	// wizard only drives PENDING plans.
+	if (request.status !== 'pending') {
+		return (
+			<TerminalSummaryDialog
+				open={open}
+				request={request}
+				apiLabel={apiLabel(apiRef)}
+				onClose={onClose}
+			/>
+		);
+	}
+
 	const credentialLabel = credentialType
 		? (CREDENTIAL_TYPE_LABELS[credentialType as CredentialType] ?? credentialType)
 		: null;
@@ -541,6 +557,87 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
 			</dt>
 			<dd className="text-foreground min-w-0 flex-1 break-words">{children}</dd>
 		</div>
+	);
+}
+
+/**
+ * Read-only summary shown when a provisioning plan is opened after it's already
+ * been decided (or otherwise left `pending`). No create/approve controls — just
+ * the outcome and, for a denial, the reason the agent reads back. Prevents
+ * re-fulfilling a settled request.
+ */
+function TerminalSummaryDialog({
+	open,
+	request,
+	apiLabel,
+	onClose,
+}: {
+	open: boolean;
+	request: AccessRequest;
+	apiLabel: string;
+	onClose: () => void;
+}) {
+	const approved = request.status === 'approved' || request.status === 'partially_approved';
+	const deniedItem = request.items.find((it) => it.status === 'denied');
+	const STATUS_COPY: Record<string, string> = {
+		approved: 'This request was approved — access is set up.',
+		partially_approved: 'This request was partially approved.',
+		denied: 'This request was denied.',
+		expired: 'This request expired before it was decided.',
+		withdrawn: 'The agent withdrew this request.',
+	};
+	return (
+		<Dialog
+			open={open}
+			onClose={onClose}
+			title="Access request"
+			size="md"
+			subtitle={
+				<span className="flex items-center gap-1.5">
+					For
+					<Badge variant="default">{apiLabel}</Badge>
+				</span>
+			}
+			footer={
+				<Button variant="primary" onClick={onClose}>
+					Close
+				</Button>
+			}
+		>
+			<div className="flex flex-col items-center gap-4 py-4 text-center">
+				<div
+					className={
+						approved
+							? 'bg-success/10 flex h-14 w-14 items-center justify-center rounded-full'
+							: 'bg-danger/10 flex h-14 w-14 items-center justify-center rounded-full'
+					}
+				>
+					{approved ? (
+						<CheckCircle2 className="text-success h-8 w-8" />
+					) : (
+						<XCircle className="text-danger h-8 w-8" />
+					)}
+				</div>
+				<div className="space-y-1">
+					<p className="text-foreground text-base font-medium capitalize">
+						{request.status.replace('_', ' ')}
+					</p>
+					<p className="text-muted-foreground text-sm">
+						{STATUS_COPY[request.status] ?? 'This request is no longer pending.'}
+					</p>
+				</div>
+				{deniedItem?.decision_reason && (
+					<div className="border-border bg-muted/40 w-full max-w-md rounded-lg border p-3 text-left">
+						<p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+							Reason
+						</p>
+						<p className="text-foreground mt-0.5 text-sm">
+							{deniedItem.decision_reason}
+						</p>
+					</div>
+				)}
+			</div>
+		</Dialog>
 	);
 }
 
