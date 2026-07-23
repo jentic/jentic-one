@@ -55,6 +55,7 @@ class AccessRequestItemRequest(BaseModel):
         description="Look up the resource by API identity instead of by ID."
         " For toolkit:bind, provide {vendor, name, version} to resolve the toolkit"
         " that serves the given API. Use this when you don't know the toolkit ID.",
+        json_schema_extra={"example": {"vendor": "github", "name": "issues", "version": "v3"}},
     )
     to_type: str | None = None
     to_id: str | None = None
