@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, TypeAdapter
 
 from jentic_one.control.services.credentials.errors import InvalidCredentialInputError
 from jentic_one.control.services.credentials.schemas.credentials import CredentialCreate
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
-from jentic_one.control.web.schemas.credentials import OAuth2CreateRequest
+from jentic_one.control.web.schemas.credentials import (
+    CredentialCreateRequest,
+    NoAuthCreateRequest,
+    OAuth2CreateRequest,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import (
     AppConfig,
@@ -163,3 +167,26 @@ async def test_non_oauth2_types_unaffected() -> None:
     )
     with pytest.raises(InvalidCredentialInputError, match="token"):
         await svc.create(payload, identity=_fake_identity())
+
+
+def test_credential_create_request_accepts_no_auth() -> None:
+    """The create-request union must accept a `no_auth` body.
+
+    Regression for a 422 (union_tag_invalid) hit provisioning a no-auth API: the
+    provisioning wizard auto-creates a NO_AUTH credential (no secret) so the
+    credential:bind can attach the toolkit binding + rules, but the create union
+    only listed bearer_token/api_key/basic/oauth2 — so POST /credentials rejected
+    `type=no_auth` before reaching the (already no_auth-aware) service.
+    """
+    ta = TypeAdapter(CredentialCreateRequest)
+    model = ta.validate_python(
+        {
+            "type": "no_auth",
+            "provider": "static",
+            "name": "country-is/country-is (no-auth)",
+            "api": {"vendor": "country-is", "name": "country-is"},
+        }
+    )
+    assert isinstance(model, NoAuthCreateRequest)
+    assert model.type == "no_auth"
+    assert model.name == "country-is/country-is (no-auth)"
