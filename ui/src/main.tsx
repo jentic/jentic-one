@@ -37,6 +37,14 @@ async function enableMocking() {
 		// 404s under the base, registration fails, and the SPA never mounts.
 		serviceWorker: { url: `${import.meta.env.BASE_URL}mockServiceWorker.js` },
 	});
+	// Backendless dev has no real login, so without a token the AuthGuard bounces
+	// every `/app/*` route to /login and the shell renders "nothing". Seed the
+	// mock session token (matches the MSW `/auth/login` fixture) so hitting any
+	// deep link — e.g. the dev access-request map at /app/dev/access-requests —
+	// boots straight into the authenticated shell. DEV + MSW only; tree-shaken
+	// from production. You can still exercise the real login by clearing it.
+	const { setToken, getToken } = await import('@/shared/api/token-store');
+	if (getToken() === null) setToken('mock-access-token');
 }
 
 function mount() {

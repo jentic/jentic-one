@@ -78,11 +78,16 @@ in advance:
 jentic access request --provision <vendor/name> \
   --auth <bearer|api_key|basic|oauth2|none> \
   --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
+  --reason "why you need this — shown to the human who approves it" \
   --wait
 ```
 
 `--wait` blocks until a human fulfils and approves the plan in the dashboard;
 once approved, the toolkit binding is live immediately — just retry `execute`.
+Always pass `--reason` on **every** access request (`--provision`, `--toolkit`,
+or `--scope`): a human reviews it before approving and your reason is shown to
+them — a clear one-liner ("fetch the user's open PRs to summarise them") is what
+gets you approved faster.
 You normally do **not** need `jentic access refresh` after a `--provision` plan:
 bindings take effect live, and a plan grants no new token scope. Only refresh
 after an approved `scope:grant` **and** only if `whoami` flags the scope as not
@@ -102,6 +107,7 @@ The directive tells you exactly how to recover — which differs by denial:
 jentic access request --provision stripe.com/api \
   --auth bearer \
   --rules-json '[{"effect":"allow","methods":["GET"],"path":".*"}]' \
+  --reason "why you need this — shown to the human who approves it" \
   --wait
 ```
 
@@ -202,7 +208,7 @@ jentic catalog import googleapis.com/sheets
    wait for a human to approve, refresh your token, then retry:
 
 ```
-jentic access request --scope catalog:import --wait
+jentic access request --scope catalog:import --reason "import the Sheets API to read the user's spreadsheet" --wait
 jentic access refresh
 jentic catalog import googleapis.com/sheets
 ```
@@ -273,9 +279,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jentic profile list` — see profiles and which is active (start here).
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
-- `jentic access request --toolkit <vendor/name> [--wait --timeout 120s]` —
+- `jentic access request --toolkit <vendor/name> [--reason <text>] [--wait --timeout 120s]` —
   ask a human to bind you to an **existing** toolkit; prints an `approve_url`.
-- `jentic access request --provision <vendor/name> [--auth <type>] [--rules-json <json>] [--wait]` —
+- `jentic access request --provision <vendor/name> [--auth <type>] [--rules-json <json>] [--reason <text>] [--wait]` —
   file the whole path to first execution as one plan (create toolkit, provision
   credential, bind + rules, bind agent) when nothing serves the API yet. Scopes
   for an approved agent are granted automatically; you do not request

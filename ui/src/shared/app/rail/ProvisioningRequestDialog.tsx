@@ -20,7 +20,15 @@
  * session and offers to discard them on cancel (client-side, best-effort).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, KeyRound, ShieldCheck, XCircle } from 'lucide-react';
+import {
+	ArrowLeft,
+	ArrowRight,
+	CheckCircle2,
+	KeyRound,
+	MessageSquare,
+	ShieldCheck,
+	XCircle,
+} from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
@@ -70,6 +78,28 @@ function apiLabel(ref: PlanApiReference | null): string {
 	return ref.version ? `${base}@${ref.version}` : base;
 }
 
+/**
+ * Map the agent-declared `--auth` value carried on the plan's
+ * `credential:provision` item (`security_scheme`, e.g. "bearer") to the
+ * credential form's {@link CredentialType} so the form opens pre-selected.
+ * Returns undefined for an unknown/absent scheme (form falls back to its
+ * default), so a bad agent value never breaks the wizard.
+ */
+function authTypeToCredentialType(auth: string | null): CredentialType | undefined {
+	switch (auth) {
+		case 'bearer':
+			return CredentialType.BEARER_TOKEN;
+		case 'api_key':
+			return CredentialType.API_KEY;
+		case 'basic':
+			return CredentialType.BASIC;
+		case 'oauth2':
+			return CredentialType.OAUTH2;
+		default:
+			return undefined;
+	}
+}
+
 export function ProvisioningRequestDialog({
 	open,
 	request,
@@ -79,6 +109,10 @@ export function ProvisioningRequestDialog({
 	const apiRef = useMemo(() => planApiReference(request), [request]);
 	const noAuth = useMemo(() => planIsNoAuth(request), [request]);
 	const detectedAuth = useMemo(() => planAuthType(request), [request]);
+	const initialCredentialType = useMemo(
+		() => authTypeToCredentialType(detectedAuth),
+		[detectedAuth],
+	);
 	const bindItem = useMemo(() => findItem(request, 'credential', 'bind'), [request]);
 	const agentBindItem = useMemo(() => findItem(request, 'toolkit', 'bind'), [request]);
 
@@ -275,6 +309,17 @@ export function ProvisioningRequestDialog({
 						<Stepper step={step} noAuth={noAuth} />
 					</div>
 					<div className="min-w-0 flex-1">
+						{request.reason && (
+							<div className="bg-muted/50 mb-4 flex items-baseline gap-2 rounded-md px-2.5 py-1.5">
+								<span className="text-muted-foreground flex shrink-0 items-center gap-1 text-[10px] font-medium tracking-wide uppercase">
+									<MessageSquare className="h-3 w-3" aria-hidden="true" />
+									Reason
+								</span>
+								<p className="text-foreground text-xs">
+									&ldquo;{request.reason}&rdquo;
+								</p>
+							</div>
+						)}
 						{error && (
 							<div className="mb-4">
 								<ErrorAlert message={error} />
@@ -452,6 +497,7 @@ export function ProvisioningRequestDialog({
 				open={credentialDialogOpen}
 				onClose={() => setCredentialDialogOpen(false)}
 				onCreated={handleCredentialCreated}
+				initialType={initialCredentialType}
 			/>
 		</>
 	);
