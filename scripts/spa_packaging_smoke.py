@@ -112,6 +112,32 @@ def _check_serving() -> None:
     if deep.status_code != 200 or "<!doctype html" not in deep.text.lower():
         raise AssertionError("client-routed deep link did not fall back to index.html")
 
+    # The #647 case: a versioned deep-link whose final segment looks like a file
+    # extension (``/1.0``) must still boot the shell for a browser navigation
+    # (rescued by the SPA navigation fallback), and must NOT be cacheable —
+    # the same URL answers 404 to non-navigation clients.
+    dotted = client.get(
+        f"{SPA_MOUNT_PATH}/workspace/stripe-com/stripe-com-api/1.0", headers=html_headers
+    )
+    if dotted.status_code != 200 or "<!doctype html" not in dotted.text.lower():
+        raise AssertionError(
+            f"dotted versioned deep-link did not serve the SPA shell (#647) "
+            f"(got {dotted.status_code})"
+        )
+    if dotted.headers.get("cache-control") != "no-store":
+        raise AssertionError("rescued dotted deep-link shell must be Cache-Control: no-store")
+    dotted_api = client.get(
+        f"{SPA_MOUNT_PATH}/workspace/stripe-com/stripe-com-api/1.0",
+        headers={"Accept": "application/json"},
+    )
+    if dotted_api.status_code != 404:
+        raise AssertionError("dotted deep-link must stay a 404 for non-navigation clients")
+    # A missing *recognized* asset type must stay a 404 even for a navigation
+    # (a broken deploy surfaces as an error, never a silent shell boot).
+    missing_asset = client.get(f"{SPA_MOUNT_PATH}/assets/missing-xyz.js", headers=html_headers)
+    if missing_asset.status_code != 404 or "<!doctype" in missing_asset.text.lower():
+        raise AssertionError("missing recognized asset was rescued into the shell")
+
     # Anything OUTSIDE the /app namespace is unambiguously a backend call: an
     # unknown path is a true 404 for every client (no Accept-header guesswork),
     # so the SPA mount can never shadow the API.
@@ -164,8 +190,9 @@ def _check_serving() -> None:
             )
 
     print(
-        "OK  bare root redirects to /app/, SPA served under /app, "
-        "non-/app 404 preserved, root icon probes 307 into /app and resolve, "
+        "OK  bare root redirects to /app/, SPA served under /app "
+        "(incl. dotted versioned deep-links, #647), non-/app 404 preserved, "
+        "root icon probes 307 into /app and resolve, "
         "runtime config exposed, no database required"
     )
 
