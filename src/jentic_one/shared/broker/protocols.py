@@ -146,7 +146,11 @@ class ToolkitDerivation:
     - ``agent_bound_any`` — the agent has at least one toolkit binding at all.
     - ``api_served_toolkits`` — every toolkit whose bound credential covers the
       API (independent of the agent). ``()`` means no toolkit serves the API yet;
-      this subsumes the old ``any_toolkit_serves_api`` probe.
+      this subsumes the old ``any_toolkit_serves_api`` probe. **These ids can
+      belong to other owners** (the derivation is agent-independent), so only its
+      *truthiness* may be consumed here — the raw ids must not be serialized into
+      a directive/response without owner-scoping, or they'd leak cross-tenant
+      toolkit ids.
     - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
       bound but nothing serves the API because a bound credential's identity does
       not cover the operation.

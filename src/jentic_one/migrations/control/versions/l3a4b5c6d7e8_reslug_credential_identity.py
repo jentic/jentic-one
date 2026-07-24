@@ -14,6 +14,15 @@ it was when the migration was written even if the app helper later changes.
 ``api_version`` is intentionally left untouched — versions are trimmed, never
 slugified (slugifying ``1.1.4`` → ``1-1-4`` would corrupt it).
 
+Note: re-slugging can *collapse* two formerly-distinct rows into identical
+scopes (e.g. ``github.com`` and ``github-com`` both become ``github-com``). No
+unique constraint prevents this, so two previously-distinct credentials can end
+up the same identity and surface as a same-specificity ``ambiguous_credential``
+(409) at resolve time. This is accepted: the rows were only ever distinct by a
+non-canonical spelling that could never match the (canonical) operation identity
+anyway. The operator resolves it by deleting/renaming the duplicate, or the
+caller disambiguates with the ``Jentic-Credential-Name`` header.
+
 DML-only. Idempotent — a canonical value slugifies to itself, so a re-run is a
 no-op.
 
