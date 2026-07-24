@@ -16,7 +16,12 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import (
+    CredentialScope,
+    canonical_credential_scope,
+    credential_covers,
+    credential_specificity,
+)
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
     CredentialType,
@@ -71,40 +76,66 @@ class CredentialResolver:
         Raises CredentialNotProvisionedError if no match.
         Raises AmbiguousCredentialError if >1 match and no credential_name given.
         Raises CredentialNameNotFoundError if credential_name doesn't match any candidate.
+
+        Resolution order: filter to credentials whose stored scope *covers* the
+        API, then — if a ``credential_name`` is given — restrict to that name
+        across **all** covering credentials (an explicit name is the strongest
+        disambiguation signal, so it can select a covering-but-less-specific
+        credential), and only then apply most-specific-wins to break ties.
         """
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
-            # Normalize both sides before comparing: stored values are slugified
-            # at create time, but historical rows and the incoming registry
-            # identity may differ only by casing/format. Comparing on the shared
-            # slug form prevents a silent default-deny on such mismatches.
-            want_name = slugify_api_field(api.name) if api.name else ""
+            # Coverage + specificity via the shared seam. A credential's stored
+            # scope (canonicalized here so legacy '' / non-slug rows compare on
+            # the same footing) covers the concrete operation when each axis is
+            # either unscoped (NULL → wildcard) or equal. Precompute (cred, scope)
+            # once so the scope isn't recomputed per predicate below.
+            covering: list[tuple[Credential, CredentialScope]] = []
+            for c in candidates:
+                if not c.active:
+                    continue
+                scope = canonical_credential_scope(
+                    vendor=c.api_vendor, name=c.api_name, version=c.api_version
+                )
+                if credential_covers(scope, vendor=api.vendor, name=api.name, version=api.version):
+                    covering.append((c, scope))
 
-            matches = [
-                c
-                for c in candidates
-                if c.active
-                and (not api.name or slugify_api_field(c.api_name or "") == want_name)
-                and (not api.version or c.api_version == api.version)
-            ]
-
-            if not matches:
+            if not covering:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
-            candidate_objs = [self._to_candidate(c) for c in matches]
-
+            # An explicit credential_name is the strongest disambiguation signal,
+            # so it searches *all* covering credentials — including a
+            # covering-but-less-specific one (e.g. the vendor-wide credential
+            # while a pin also exists). Applying it before specificity narrowing
+            # means naming that credential resolves it instead of a spurious
+            # CredentialNameNotFoundError.
             if credential_name is not None:
-                filtered = [c for c in matches if c.name == credential_name]
-                if not filtered:
+                named = [(c, s) for (c, s) in covering if c.name == credential_name]
+                if not named:
                     raise CredentialNameNotFoundError(
-                        api.vendor, api.name, api.version, credential_name, candidate_objs
+                        api.vendor,
+                        api.name,
+                        api.version,
+                        credential_name,
+                        [self._to_candidate(c) for (c, _) in covering],
                     )
-                matches = filtered
+                covering = named
+
+            # Among the remaining covering credentials, most-specific-wins: a
+            # vendor.name.version pin beats a vendor.name which beats a bare
+            # vendor wildcard, so a vendor-wide credential coexisting with a pin
+            # no longer forces a spurious 409.
+            best = max(credential_specificity(s) for (_, s) in covering)
+            matches = [c for (c, s) in covering if credential_specificity(s) == best]
 
             if len(matches) > 1:
                 raise AmbiguousCredentialError(
-                    api.vendor, api.name, api.version, len(matches), candidates=candidate_objs
+                    api.vendor,
+                    api.name,
+                    api.version,
+                    len(matches),
+                    candidates=[self._to_candidate(c) for c in matches],
                 )
 
             credential = matches[0]

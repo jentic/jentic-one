@@ -8,7 +8,15 @@ from jentic_one.shared.models.actors import (
     Origin,
     actor_type_from_id,
 )
-from jentic_one.shared.models.api_identity import API_FIELD_MAX_LENGTH, slugify_api_field
+from jentic_one.shared.models.api_identity import (
+    API_FIELD_MAX_LENGTH,
+    CredentialScope,
+    canonical_credential_scope,
+    credential_coverage_where,
+    credential_covers,
+    credential_specificity,
+    slugify_api_field,
+)
 from jentic_one.shared.models.audit import AuditAction, AuditReason, AuditTargetType
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
@@ -39,6 +47,7 @@ __all__ = [
     "AuditTargetType",
     "AuthProvider",
     "CredentialLocation",
+    "CredentialScope",
     "CredentialType",
     "EventSeverity",
     "EventType",
@@ -50,5 +59,9 @@ __all__ = [
     "OverlayStatus",
     "StoredCredentialType",
     "actor_type_from_id",
+    "canonical_credential_scope",
+    "credential_coverage_where",
+    "credential_covers",
+    "credential_specificity",
     "slugify_api_field",
 ]
