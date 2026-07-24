@@ -23,6 +23,7 @@ class ExecutionRecord(AuditableMixin, AdminBase):
         Index("ix_execution_records_toolkit_started", "toolkit_id", "started_at"),
         Index("ix_execution_records_status", "status"),
         Index("ix_execution_records_actor", "actor_id", "actor_type"),
+        Index("ix_execution_records_credential_id", "credential_id"),
         Index(
             "ix_execution_records_repeated_failure_scan",
             "actor_id",
@@ -55,3 +56,10 @@ class ExecutionRecord(AuditableMixin, AdminBase):
     actor_id: Mapped[str] = mapped_column(String(255), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
     origin: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Credential attribution (#740). Nullable for historical rows, executions
+    # that used inline auth, and executions that failed before the resolver
+    # picked a credential. No FK: ``credentials`` lives in the control DB
+    # (cross-DB, same reason ``toolkit_id`` has no FK here). Indexed for the
+    # audit-console "what did this credential do?" query.
+    credential_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    credential_name: Mapped[str | None] = mapped_column(String(255), nullable=True)

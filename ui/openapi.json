@@ -3367,6 +3367,28 @@
             "title": "Created At",
             "type": "string"
           },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "credential_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Name"
+          },
           "duration_ms": {
             "anyOf": [
               {
