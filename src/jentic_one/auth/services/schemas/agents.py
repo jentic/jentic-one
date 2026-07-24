@@ -51,6 +51,9 @@ class ToolkitBindingView(BaseModel):
     id: str
     agent_id: str
     toolkit_id: str
+    # Human-readable toolkit name resolved from the control DB (issue #686).
+    # None when the toolkit no longer exists or the control DB is unreachable.
+    name: str | None = None
     bound_at: datetime
     # APIs the bound toolkit serves, derived from its credentials (control DB).
     serves: list[ServedApi] = []

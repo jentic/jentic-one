@@ -36,3 +36,8 @@ class ExecuteRequestContext(BaseModel):
     api_version: str | None = None
     prefer: str | None = None
     pinned_revisions: dict[str, Any] | None = None
+    # True when the discovered API's spec uses a templated host / server variable
+    # (e.g. ``https://{region}.posthog.com``). Drives the region-mismatch hint the
+    # broker attaches to an upstream 401/403 (#638) so a valid key hitting the
+    # wrong host is not a dead-end "Invalid Key".
+    has_server_variable: bool = False

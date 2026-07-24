@@ -1,6 +1,6 @@
 """Unit tests for the shared apply_server_variables() utility."""
 
-from jentic_one.shared.url import apply_server_variables
+from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 
 
 def test_single_variable_substitution() -> None:
@@ -40,3 +40,28 @@ def test_handles_repeated_placeholder() -> None:
     url = "https://{host}.{host}.example.com"
     result = apply_server_variables(url, {"host": "api"})
     assert result == "https://api.api.example.com"
+
+
+def test_has_host_server_variable_detects_templated_host() -> None:
+    assert has_host_server_variable("https://{region}.posthog.com/api/projects") is True
+
+
+def test_has_host_server_variable_detects_templated_subdomain() -> None:
+    assert has_host_server_variable("https://{your-domain}.atlassian.net/rest/api/3") is True
+
+
+def test_has_host_server_variable_false_for_static_host() -> None:
+    assert has_host_server_variable("https://api.posthog.com/api/projects") is False
+
+
+def test_has_host_server_variable_ignores_path_parameters() -> None:
+    # A path parameter is not a server variable — it must not trigger the hint.
+    assert has_host_server_variable("https://api.example.com/users/{id}/items") is False
+
+
+def test_has_host_server_variable_ignores_query_placeholders() -> None:
+    assert has_host_server_variable("https://api.example.com/search?q={term}") is False
+
+
+def test_has_host_server_variable_ignores_empty_braces() -> None:
+    assert has_host_server_variable("https://api.example.com/{}/x") is False

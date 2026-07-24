@@ -101,6 +101,7 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
         toolkit_bindings=[
             ToolkitBindingEntry(
                 toolkit_id=tb.toolkit_id,
+                name=tb.name,
                 bound_at=tb.bound_at,
                 serves=[
                     ApiRef(

@@ -33,7 +33,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_from_id
-from jentic_one.shared.slug import slugify_identifier
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 logger = structlog.get_logger(__name__)
 
@@ -418,8 +418,8 @@ class EffectApplicator:
         raw_name = reference.get("name")
         candidates = await EffectsRepository.resolve_toolkits_for_api(
             session,
-            vendor=slugify_identifier(str(vendor)),
-            name=slugify_identifier(str(raw_name)) if raw_name else raw_name,
+            vendor=slugify_api_field(str(vendor)),
+            name=slugify_api_field(str(raw_name)) if raw_name else raw_name,
             version=reference.get("version"),
             owner_ids=owner_ids,
         )

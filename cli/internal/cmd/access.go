@@ -646,7 +646,11 @@ func (a *App) printMe(me *accessclient.Me) {
 		return
 	}
 	for _, b := range me.ToolkitBindings {
-		fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitID))
+		if b.Name != "" {
+			fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.Name)+"  "+theme.Dim.Render(b.ToolkitID))
+		} else {
+			fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitID))
+		}
 	}
 }
 

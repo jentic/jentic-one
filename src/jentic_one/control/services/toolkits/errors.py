@@ -15,6 +15,24 @@ class ToolkitNotFoundError(ToolkitServiceError):
         self.toolkit_id = toolkit_id
 
 
+class ToolkitAccessDeniedError(ToolkitServiceError):
+    """Raised when a toolkit exists but is hidden from the caller by owner scoping.
+
+    Distinguishes an authorization outcome from a missing row: the toolkit is
+    real, but the caller neither owns it, is bound to it, nor holds ``org:admin``,
+    so a write is refused. Surfacing this as ``403`` (rather than a misleading
+    ``404 toolkit_not_found``) names the real requirement to the caller. See
+    issue #682.
+    """
+
+    def __init__(self, toolkit_id: str) -> None:
+        super().__init__(
+            f"Toolkit '{toolkit_id}' exists but is not accessible; write access requires "
+            "a binding to it, matching ownership, or org:admin"
+        )
+        self.toolkit_id = toolkit_id
+
+
 class ToolkitKeyNotFoundError(ToolkitServiceError):
     """Raised when a toolkit key identified by ID does not exist."""
 
@@ -41,6 +59,38 @@ class DuplicateBindingError(ToolkitServiceError):
         super().__init__(f"Credential '{credential_id}' is already bound to toolkit '{toolkit_id}'")
         self.toolkit_id = toolkit_id
         self.credential_id = credential_id
+
+
+class ConflictingApiBindingError(ToolkitServiceError):
+    """Raised when a toolkit already has an active credential for the same API.
+
+    Binding a second active credential for one API into one toolkit produces a
+    guaranteed-ambiguous state that the broker later refuses with ``409``
+    (issue #643). Refuse at bind time instead; the caller can unbind the existing
+    credential (``existing_credential_id``) to replace it.
+    """
+
+    def __init__(
+        self,
+        toolkit_id: str,
+        credential_id: str,
+        existing_credential_id: str,
+        api_vendor: str,
+        api_name: str | None,
+        api_version: str | None,
+    ) -> None:
+        api = f"({api_vendor}, {api_name or ''}, {api_version or ''})"
+        super().__init__(
+            f"Toolkit '{toolkit_id}' already has active credential "
+            f"'{existing_credential_id}' for api {api}; unbind it before binding "
+            f"'{credential_id}'"
+        )
+        self.toolkit_id = toolkit_id
+        self.credential_id = credential_id
+        self.existing_credential_id = existing_credential_id
+        self.api_vendor = api_vendor
+        self.api_name = api_name
+        self.api_version = api_version
 
 
 class KeyAlreadyRevokedError(ToolkitServiceError):

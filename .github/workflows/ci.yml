@@ -26,6 +26,7 @@ jobs:
       packaging: ${{ steps.filter.outputs.packaging }}
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
+      installer: ${{ steps.filter.outputs.installer }}
     steps:
       - uses: actions/checkout@v7
 
@@ -52,6 +53,9 @@ jobs:
               - 'src/jentic_one/migrations/**'
             cli:
               - 'cli/**'
+            installer:
+              - 'tools/install.sh'
+              - 'tests/tools/**'
             openapi-client:
               # Inputs that can change the generated UI client. The committed
               # spec (ui/openapi.json) is the codegen input — a spec change from
@@ -573,10 +577,25 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+  installer:
+    name: Installer script tests
+    needs: [changes]
+    if: needs.changes.outputs.installer == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The harness itself is a bash script; it internally drives the installer
+      # through sh/dash/bash (via run_installer_via) to exercise the POSIX
+      # re-exec path that the macOS `curl ... | sh` failure was about. Ubuntu's
+      # /bin/sh is dash, so the sh-invocation cases run for real here.
+      - name: Run installer tests
+        run: bash tests/tools/install_test.sh
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -592,6 +611,7 @@ jobs:
             ${{ needs.ui-e2e-realbackend.result }}
             ${{ needs.smoke-packaging.result }}
             ${{ needs.cli.result }}
+            ${{ needs.installer.result }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then

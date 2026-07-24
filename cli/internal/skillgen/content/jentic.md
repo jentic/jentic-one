@@ -111,6 +111,17 @@ jentic access request --provision stripe.com/api \
   --wait
 ```
 
+  - `toolkit_serves_api: false` — **no** toolkit serves this API yet, so a bare
+    `--toolkit` binding request would be denied ("No toolkit serves API …").
+    Filing it now is a dead-end. File the `--provision` plan above instead: it
+    describes the whole path (create toolkit, provision + bind a credential with
+    your proposed rules, bind you), which a human fulfils and approves in the
+    dashboard. The directive's `suggested_command` already points at `--provision`
+    in this case.
+  - `toolkit_serves_api: true` — a toolkit already serves this API and you just
+    aren't bound to it; the directive suggests `jentic access request --toolkit
+    <vendor/name> --wait`. File that and wait for approval.
+
 - **`credential_not_provisioned` (424)** — you're bound to a toolkit, but no
   credential (account) is connected. Filing an access request will **not** fix
   this; the directive carries a `provisioning_url` — hand it to your operator to
@@ -327,12 +338,14 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   means the **broker target** is wrong; on a local install point at the local
   broker. Only a broker **denial** (exit **2**, with an `agent_directive` on
   stderr) is an access/credential issue:
-  - **403 `no_toolkit_binding`** → run the `jentic access request …` it suggests
-    and wait for approval. When nothing serves the API yet the directive
-    suggests `--provision` — file that plan (propose `--auth` and `--rules-json`
-    from the spec) and your operator fulfils it in the dashboard. A bare
-    `--toolkit` for an unserved API comes back **denied** with "No toolkit serves
-    API …"; switch to `--provision` rather than re-filing the bind.
+  - **403 `no_toolkit_binding`** → check the directive's
+    `parameters.toolkit_serves_api`. If `true`, a toolkit already serves the API
+    and you just aren't bound — run the `jentic access request --toolkit …` it
+    suggests and wait for approval. If `false`, nothing serves the API yet and a
+    bare `--toolkit` bind would be **denied** ("No toolkit serves API …"); the
+    directive suggests `--provision` instead — file that plan (propose `--auth`
+    and `--rules-json` from the spec, pass `--reason`) and your operator fulfils
+    it in the dashboard.
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).

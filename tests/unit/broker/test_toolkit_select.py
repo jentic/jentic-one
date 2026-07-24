@@ -10,9 +10,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jentic.problem_details import Forbidden, ProblemDetailException
 
-from jentic_one.broker.core.exceptions import ActionDeniedError, AmbiguousMatchError
+from jentic_one.broker.core.exceptions import (
+    ActionDeniedError,
+    AmbiguousMatchError,
+    no_toolkit_binding_directive,
+)
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.execute import select_toolkit
+from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
@@ -22,9 +27,11 @@ _INSTANCE = "/acme.example.com/v1/widgets"
 
 
 class _StubDeriver:
-    def __init__(self, candidates: list[str]) -> None:
+    def __init__(self, candidates: list[str], *, toolkit_serves_api: bool = True) -> None:
         self.candidates = candidates
+        self._toolkit_serves_api = toolkit_serves_api
         self.calls: list[dict[str, str]] = []
+        self.serves_calls: list[dict[str, str]] = []
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
@@ -33,6 +40,10 @@ class _StubDeriver:
             {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version}
         )
         return self.candidates
+
+    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
+        self.serves_calls.append({"vendor": vendor, "name": name, "version": version})
+        return self._toolkit_serves_api
 
 
 def _identity(actor_type: str = "agent") -> Identity:
@@ -87,16 +98,37 @@ async def test_single_candidate_no_header_uses_it() -> None:
     assert result == "tk_only"
 
 
-async def test_zero_candidates_no_header_raises_403() -> None:
+async def test_zero_candidates_no_header_toolkit_serves_recommends_binding() -> None:
+    # A toolkit serves this API; the caller just isn't bound. The directive
+    # recommends the (approvable) toolkit-binding request.
     with pytest.raises(ActionDeniedError) as exc:
-        await _select(_StubDeriver([]), header_toolkit=None)
+        await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit=None)
     assert exc.value.type == "no_toolkit_binding"
     assert exc.value.instance == _INSTANCE
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
+    assert exc.value.directive.parameters["toolkit_serves_api"] is True
     assert exc.value.directive.parameters["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+        'jentic access request --toolkit acme/widgets --wait'
     )
+
+
+async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -> None:
+    # No toolkit serves this API yet (issue #683). A bare toolkit-binding request
+    # would be denied, so the directive must point at provisioning a credential
+    # first rather than filing an unapprovable binding request.
+    deriver = _StubDeriver([], toolkit_serves_api=False)
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(deriver, header_toolkit=None)
+    assert exc.value.type == "no_toolkit_binding"
+    assert exc.value.directive is not None
+    assert exc.value.directive.strategy == "prompt_human"
+    assert exc.value.directive.parameters["toolkit_serves_api"] is False
+    instruction = exc.value.directive.human_readable_instruction
+    assert "credential" in instruction.lower()
+    assert "provision" in instruction.lower()
+    # The broker consulted the "any toolkit serves this API?" predicate.
+    assert deriver.serves_calls == [{"vendor": "acme", "name": "widgets", "version": "1.0.0"}]
 
 
 async def test_multiple_candidates_no_header_raises_409_with_candidates() -> None:
@@ -134,16 +166,29 @@ async def test_header_present_but_not_bound_raises_403() -> None:
 
 
 async def test_header_present_not_bound_and_no_candidates_prompts_human() -> None:
-    # The agent named a toolkit but is bound to none at all: it should be told to
-    # file an access request (prompt_human), not handed a dead-end 403.
+    # The agent named a toolkit but is bound to none at all. When a toolkit does
+    # serve the API it should be told to file the binding request (prompt_human);
+    # it should never be handed a dead-end 403.
     with pytest.raises(ActionDeniedError) as exc:
-        await _select(_StubDeriver([]), header_toolkit="tk_unbound")
+        await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit="tk_unbound")
     assert exc.value.type == "no_toolkit_binding"
     assert exc.value.directive is not None
     assert exc.value.directive.strategy == "prompt_human"
+    assert exc.value.directive.parameters["toolkit_serves_api"] is True
     assert exc.value.directive.parameters["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+        'jentic access request --toolkit acme/widgets --wait'
     )
+
+
+async def test_header_present_not_bound_and_no_toolkit_serves_recommends_credential_first() -> None:
+    # The agent named a toolkit, is bound to none, and no toolkit serves the API:
+    # recover by provisioning a credential first (issue #683), not a binding request.
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(_StubDeriver([], toolkit_serves_api=False), header_toolkit="tk_unbound")
+    assert exc.value.type == "no_toolkit_binding"
+    assert exc.value.directive is not None
+    assert exc.value.directive.parameters["toolkit_serves_api"] is False
+    assert "credential" in exc.value.directive.human_readable_instruction.lower()
 
 
 async def test_derivation_uses_discovered_api_identity() -> None:
@@ -204,7 +249,7 @@ def test_no_toolkit_binding_body_carries_prompt_human_directive() -> None:
 
     @app.get("/p")
     async def _p() -> None:
-        await _select(_StubDeriver([]), header_toolkit=None)
+        await _select(_StubDeriver([], toolkit_serves_api=True), header_toolkit=None)
 
     resp = TestClient(app, raise_server_exceptions=False).get("/p")
     assert resp.status_code == 403
@@ -212,5 +257,27 @@ def test_no_toolkit_binding_body_carries_prompt_human_directive() -> None:
     assert body["type"] == "no_toolkit_binding"
     assert body["agent_directive"]["strategy"] == "prompt_human"
     assert body["agent_directive"]["parameters"]["suggested_command"] == (
-        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+        'jentic access request --toolkit acme/widgets --wait'
     )
+
+
+def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree() -> None:
+    """The broker directive (no toolkit yet) and the control denial reason agree.
+
+    Regression for issue #683: the ``no_toolkit_binding`` directive must recommend
+    provisioning a credential first, matching the reason the toolkit:bind approval
+    denies with when no toolkit serves the API — so the two never contradict.
+    """
+    directive = no_toolkit_binding_directive(
+        vendor="acme", name="widgets", version="1.0.0", toolkit_serves_api=False
+    )
+    instruction = directive.human_readable_instruction.lower()
+    assert directive.parameters["toolkit_serves_api"] is False
+    assert "credential" in instruction
+    assert "provision" in instruction
+
+    denial_reason = no_toolkit_serves_api_reason("acme/widgets").lower()
+    # Both recommend provisioning/binding a credential as the first step.
+    assert "credential" in denial_reason
+    assert "provision" in denial_reason
+    assert "no toolkit serves" in denial_reason

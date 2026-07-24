@@ -299,6 +299,9 @@ class CredentialRedactedResponse(BaseModel):
         default=None, description="Opaque reference to the provider account, when applicable."
     )
     active: bool = Field(description="Whether the credential is enabled for injection.")
+    created_by: str | None = Field(
+        default=None, description="Identity that created the credential (its owner)."
+    )
     created_at: datetime = Field(description="Creation timestamp (UTC).")
     updated_at: datetime | None = Field(default=None, description="Last update timestamp (UTC).")
     details: dict[str, Any] | None = Field(

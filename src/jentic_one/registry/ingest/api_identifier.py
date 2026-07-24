@@ -4,7 +4,7 @@ from typing import Any
 
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.models import ApiIdentifier
-from jentic_one.shared.slug import slugify_identifier as _slugify
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 
 def resolve_api_identifier(
@@ -40,7 +40,7 @@ def resolve_api_identifier(
     assert resolved_version is not None
 
     return ApiIdentifier(
-        vendor=_slugify(resolved_vendor),
-        name=_slugify(resolved_name),
+        vendor=slugify_api_field(resolved_vendor),
+        name=slugify_api_field(resolved_name),
         version=str(resolved_version).strip(),
     )

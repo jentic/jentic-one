@@ -26,6 +26,10 @@ class ToolkitBindingEntry(BaseModel):
     """Toolkit binding summary for the /me response."""
 
     toolkit_id: str
+    # Human-readable toolkit name, so an agent can map the opaque `tk_…` id to a
+    # name it can present to its operator (issue #686). Null when the toolkit no
+    # longer exists or its name could not be resolved.
+    name: str | None = None
     bound_at: datetime
     # The APIs this toolkit serves (derived from its bound credentials). Empty
     # when the toolkit has no credential bound yet.

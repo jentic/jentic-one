@@ -14,6 +14,7 @@ from jentic_one.admin.repos import (
     AgentToolkitBindingRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
+from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     InvalidOwnerError,
@@ -279,18 +280,24 @@ class AgentService:
         await self.get_agent(agent_id, identity=identity)
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
-        toolkit_ids = [b.toolkit_id for b in bindings]
-        served = await self._served_apis_by_toolkit(toolkit_ids)
-        return [
-            ToolkitBindingView(
-                id=b.id,
-                agent_id=b.agent_id,
-                toolkit_id=b.toolkit_id,
-                bound_at=b.bound_at,
-                serves=served.get(b.toolkit_id, []),
-            )
-            for b in bindings
-        ]
+        views = [ToolkitBindingView.model_validate(b) for b in bindings]
+        # Enrich each binding from the control DB with (a) a human-readable
+        # toolkit name so an agent can map an opaque `tk_…` id to something it can
+        # show its operator (issue #686), and (b) the APIs the toolkit's bound
+        # credentials serve, so `whoami` tells the agent what it can already call
+        # and can skip a redundant provisioning plan / a throwaway denied execute.
+        # Names/serves live in the control DB; the bindings above are already
+        # scoped to this agent, so we only resolve for toolkits the caller is
+        # bound to. Failure to reach the control DB is non-fatal.
+        toolkit_ids = [v.toolkit_id for v in views]
+        if toolkit_ids and self._ctx.is_db_allowed("control"):
+            async with self._ctx.control_db.session() as session:
+                names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
+            served = await self._served_apis_by_toolkit(toolkit_ids)
+            for view in views:
+                view.name = names.get(view.toolkit_id)
+                view.serves = served.get(view.toolkit_id, [])
+        return views
 
     async def _served_apis_by_toolkit(
         self, toolkit_ids: list[str]

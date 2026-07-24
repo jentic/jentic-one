@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from jentic_one.broker.services.credentials.errors import (
     AmbiguousCredentialError,
+    CredentialCandidate,
     CredentialNameNotFoundError,
     CredentialNotProvisionedError,
 )
@@ -15,6 +16,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
     CredentialType,
@@ -73,37 +75,43 @@ class CredentialResolver:
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
-            # A NULL/empty stored api_name/api_version is a WILDCARD — the
-            # credential covers all names/versions for the vendor (a credential,
-            # esp. a no-auth one, isn't tied to a spec version; it serves whatever
-            # version the operation resolves to). This mirrors the NULL="covers
-            # all" semantics of the toolkit-binding + bind-time resolvers; without
-            # it a versionless credential (api_version NULL) never matches a
-            # concrete resolved version like "4.2.3" and execute 424s (#775).
+            # Match rules for the credential's stored (api_name, api_version):
+            #  - A NULL/empty stored value is a WILDCARD — the credential covers
+            #    all names/versions for the vendor (a credential, esp. a no-auth
+            #    one, isn't tied to a spec version; it serves whatever version the
+            #    operation resolves to). Without this a versionless credential
+            #    (api_version NULL) never matches a concrete resolved version like
+            #    "4.2.3" and execute 424s (#775).
+            #  - For a non-empty name, compare on the shared SLUG form: stored
+            #    values are slugified at create time, but historical rows / the
+            #    incoming registry identity may differ only by casing/format, and
+            #    comparing raw would silently default-deny (#656). Versions are not
+            #    slugified, so they compare verbatim.
+            want_name = slugify_api_field(api.name) if api.name else ""
             matches = [
                 c
                 for c in candidates
                 if c.active
-                and (not api.name or not c.api_name or c.api_name == api.name)
+                and (not api.name or not c.api_name or slugify_api_field(c.api_name) == want_name)
                 and (not api.version or not c.api_version or c.api_version == api.version)
             ]
 
             if not matches:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
 
-            candidate_names = [c.name for c in matches]
+            candidate_objs = [self._to_candidate(c) for c in matches]
 
             if credential_name is not None:
                 filtered = [c for c in matches if c.name == credential_name]
                 if not filtered:
                     raise CredentialNameNotFoundError(
-                        api.vendor, api.name, api.version, credential_name, candidate_names
+                        api.vendor, api.name, api.version, credential_name, candidate_objs
                     )
                 matches = filtered
 
             if len(matches) > 1:
                 raise AmbiguousCredentialError(
-                    api.vendor, api.name, api.version, len(matches), candidates=candidate_names
+                    api.vendor, api.name, api.version, len(matches), candidates=candidate_objs
                 )
 
             credential = matches[0]
@@ -111,6 +119,20 @@ class CredentialResolver:
             wire_type = to_wire(stored_type)
 
             return self._build_resolved(credential, wire_type, stored_type)
+
+    @staticmethod
+    def _to_candidate(credential: Credential) -> CredentialCandidate:
+        """Build a distinguishable ambiguity candidate (issue #643).
+
+        ``last4`` is the tail of the non-secret credential id — never the secret
+        — so two same-named credentials render distinctly in the 409 body.
+        """
+        return CredentialCandidate(
+            id=credential.id,
+            name=credential.name,
+            last4=credential.id[-4:],
+            created_at=credential.created_at,
+        )
 
     def _build_resolved(
         self,

@@ -79,7 +79,7 @@
         "type": "object"
       },
       "AccessRequestItemRequest": {
-        "description": "A single line-item in a file request.",
+        "description": "A single line-item in a file request.\n\n**Permission rules:** Rules control which upstream API operations the broker\nallows through a credential binding. They are enforced per (toolkit_id,\ncredential_id) pair, so they can only be attached to credential:bind items —\nnot toolkit:bind or scope:grant. You do not need toolkits:write scope to set\nrules; include them directly on the credential:bind item when filing the\naccess request, and the approver's decision persists them on the binding.",
         "properties": {
           "action": {
             "enum": [
@@ -135,6 +135,7 @@
                 "type": "null"
               }
             ],
+            "description": "Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{\"effect\": \"allow\", \"path\": \".*\"}].",
             "title": "Rules"
           },
           "to_id": {
@@ -2641,6 +2642,18 @@
             "title": "Created At",
             "type": "string"
           },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identity that created the credential (its owner).",
+            "title": "Created By"
+          },
           "credential_id": {
             "description": "Stable credential identifier, prefixed `cred_`.",
             "title": "Credential Id",
@@ -4099,6 +4112,59 @@
           "expires_in"
         ],
         "title": "MintResponse",
+        "type": "object"
+      },
+      "NoAuthCreateRequest": {
+        "description": "Create request for no_auth credentials.\n\nA no-auth credential carries no secret — it represents \"this API is called\nwithout authentication\". It still exists as a credential row so a toolkit\nbinding (and its permission rules) can hang off it, and the broker resolves\nit as a no-op auth (see broker credential resolver / injection).",
+        "properties": {
+          "api": {
+            "$ref": "#/components/schemas/APIReferenceRequest"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "default": "static",
+            "title": "Provider",
+            "type": "string"
+          },
+          "runtime_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_variables": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Variables"
+          },
+          "type": {
+            "const": "no_auth",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "api"
+        ],
+        "title": "NoAuthCreateRequest",
         "type": "object"
       },
       "NoteApiReference": {
@@ -6506,6 +6572,17 @@
             "title": "Bound At",
             "type": "string"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
           "serves": {
             "default": [],
             "items": {
@@ -7029,6 +7106,17 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
           },
           "credential_count": {
             "title": "Credential Count",
@@ -17980,6 +18068,7 @@
                     "api_key": "#/components/schemas/ApiKeyCreateRequest",
                     "basic": "#/components/schemas/BasicAuthCreateRequest",
                     "bearer_token": "#/components/schemas/BearerTokenCreateRequest",
+                    "no_auth": "#/components/schemas/NoAuthCreateRequest",
                     "oauth2": "#/components/schemas/OAuth2CreateRequest"
                   },
                   "propertyName": "type"
@@ -17996,6 +18085,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/OAuth2CreateRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NoAuthCreateRequest"
                   }
                 ],
                 "title": "Body"

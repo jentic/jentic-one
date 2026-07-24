@@ -140,6 +140,7 @@ class ToolkitResponse(BaseModel):
     permissions: list[dict[str, object]]
     key_count: int
     credential_count: int
+    created_by: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
 

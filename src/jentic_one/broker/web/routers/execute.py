@@ -28,6 +28,7 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
+    AgentDirective,
     AmbiguousMatchError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
@@ -43,6 +44,7 @@ from jentic_one.broker.core.exceptions import (
 from jentic_one.broker.core.execution import mint_execution_id
 from jentic_one.broker.core.headers import (
     JENTIC_REVISION_HEADER,
+    REGION_MISMATCH_HINT,
     TRACESTATE_HEADER,
     JenticHeader,
 )
@@ -98,7 +100,7 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.tracing import JENTIC_TRACESTATE_KEY, pack_jentic_tracestate
-from jentic_one.shared.url import apply_server_variables
+from jentic_one.shared.url import apply_server_variables, has_host_server_variable
 from jentic_one.shared.url_validation import validate_upstream_url
 from jentic_one.shared.web.deps import get_ctx
 
@@ -252,6 +254,26 @@ def _context_from_discovery(
     )
 
 
+async def _no_toolkit_binding_directive(
+    deriver: ToolkitDeriverProtocol, api: APIReference
+) -> AgentDirective:
+    """Build the ``no_toolkit_binding`` directive with the right recovery step.
+
+    The caller is bound to no toolkit serving ``api``. Whether the right recovery
+    is "provision a credential first" or "file a toolkit binding" depends on
+    whether a toolkit serves the API *at all* — a state the broker can read
+    (independent of the caller's bindings). Consulted only on this denial path,
+    never on the success path, so the extra read costs nothing in the common
+    case. See issue #683.
+    """
+    serves = await deriver.any_toolkit_serves_api(
+        vendor=api.vendor, name=api.name, version=api.version
+    )
+    return no_toolkit_binding_directive(
+        vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
+    )
+
+
 async def select_toolkit(
     *,
     deriver: ToolkitDeriverProtocol,
@@ -300,8 +322,8 @@ async def select_toolkit(
             # Recoverable: the agent named a toolkit it isn't bound to. Carry the
             # agent-recovery contract like every other broker denial — point it at
             # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
-            # at filing an access request (prompt_human). A bare Forbidden here
-            # would be a dead-end 403 with no directive (§03 invariant).
+            # at the correct provisioning/binding step (prompt_human). A bare
+            # Forbidden here would be a dead-end 403 with no directive (§03 invariant).
             if candidates:
                 raise ActionDeniedError(
                     f"Not bound to toolkit '{header_toolkit}' for this API",
@@ -313,9 +335,7 @@ async def select_toolkit(
                 f"Not bound to toolkit '{header_toolkit}' for this API",
                 type="no_toolkit_binding",
                 instance=instance,
-                directive=no_toolkit_binding_directive(
-                    vendor=api.vendor, name=api.name, version=api.version
-                ),
+                directive=await _no_toolkit_binding_directive(deriver, api),
             )
         return header_toolkit
 
@@ -324,9 +344,7 @@ async def select_toolkit(
             "No toolkit binding for this API",
             type="no_toolkit_binding",
             instance=instance,
-            directive=no_toolkit_binding_directive(
-                vendor=api.vendor, name=api.name, version=api.version
-            ),
+            directive=await _no_toolkit_binding_directive(deriver, api),
         )
     if len(candidates) > 1:
         raise AmbiguousMatchError(
@@ -490,6 +508,10 @@ async def _handle(
         upstream_url=upstream_url, method=method, request=request, resolved=resolved
     )
     ctx_req.pinned_revisions = pinned_revisions
+    # Capture whether the spec's host is templated (server variable) *before*
+    # credential injection substitutes it — this is the signal that drives the
+    # region-mismatch hint on an upstream 401/403 (#638).
+    ctx_req.has_server_variable = has_host_server_variable(upstream_url)
     # Toolkit is derived from the discovered API identity (never the inbound header
     # verbatim); drives credential injection and execution attribution (§03).
     ctx_req.toolkit_id = await select_toolkit(
@@ -671,12 +693,27 @@ async def _handle_streaming(
     )
 
 
+def _region_mismatch_hint(status_code: int, ctx_req: ExecuteRequestContext) -> str | None:
+    """The region-mismatch hint for a templated-host API's upstream 401/403 (#638).
+
+    Returns ``None`` when it does not apply. The hint is surfaced via the
+    ``Jentic-Hint`` response header — the mirrored upstream body is left verbatim
+    (§6b B-002 passthrough invariant).
+    """
+    if status_code in (401, 403) and ctx_req.has_server_variable:
+        return REGION_MISMATCH_HINT
+    return None
+
+
 def _assemble_response(outcome: ExecutionOutcome, ctx_req: ExecuteRequestContext) -> Response:
     result = outcome.result
     metadata = _metadata_headers(ctx_req, outcome.context.execution_id)
     metadata[JenticHeader.UPSTREAM_STATUS.value] = str(result.status_code)
     if outcome.error_origin is not None:
         metadata[JenticHeader.ERROR_ORIGIN.value] = outcome.error_origin.value
+    hint = _region_mismatch_hint(result.status_code, ctx_req)
+    if hint is not None:
+        metadata[JenticHeader.HINT.value] = hint
 
     passthrough = passthrough_response_headers(result.headers)
     return Response(

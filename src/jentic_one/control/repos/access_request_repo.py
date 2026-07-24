@@ -19,7 +19,7 @@ from jentic_one.control.core.schema.access_request_items import (
 )
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
-from jentic_one.shared.slug import slugify_identifier
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 
 def compute_aggregate_status(item_statuses: list[str]) -> AccessRequestStatus:
@@ -47,8 +47,8 @@ def _normalize_reference(reference: dict[str, Any] | None) -> tuple[str, str, st
     """
     if not reference:
         return None
-    vendor = slugify_identifier(str(reference.get("vendor", "")))
-    name = slugify_identifier(str(reference.get("name", "")))
+    vendor = slugify_api_field(str(reference.get("vendor", "")))
+    name = slugify_api_field(str(reference.get("name", "")))
     version = str(reference.get("version", "")).strip().lower()
     return (vendor, name, version)
 

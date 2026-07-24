@@ -247,8 +247,8 @@ describe('CredentialsPage', () => {
 
 		// The cascade-aware dialog gates the destructive action behind a
 		// type-to-confirm field, so the confirm button only fires after the
-		// credential name is typed back exactly.
-		await user.type(screen.getByLabelText(/Type Doomed to confirm/i), 'Doomed');
+		// fixed confirm word is typed.
+		await user.type(screen.getByLabelText(/Type delete to confirm/i), 'delete');
 		await user.click(screen.getByRole('button', { name: 'Delete credential' }));
 
 		await waitFor(() => expect(screen.queryByText('Doomed')).not.toBeInTheDocument());

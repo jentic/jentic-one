@@ -169,6 +169,7 @@ class CredentialRedactedView(BaseModel):
     provider: str
     provider_account_ref: str | None = None
     active: bool
+    created_by: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
     details: (

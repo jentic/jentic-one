@@ -1,11 +1,13 @@
 """Same-origin SPA static serving for the admin surface.
 
-The built UI bundle (``ui/dist``) is packaged into the wheel at
-``jentic_one/static`` via ``pyproject.toml`` ``force-include`` — the same
-mechanism used for the bundled OpenAPI specs. At runtime we resolve that
-directory with ``importlib.resources`` and, when present, serve it via
-FastAPI's first-class :meth:`FastAPI.frontend` so the admin surface serves the
-SPA same-origin (no CORS).
+The bundle is packaged into the wheel at ``jentic_one/static`` via
+``pyproject.toml`` ``force-include`` — the same mechanism used for the bundled
+OpenAPI specs. At runtime we resolve that directory with
+``importlib.resources`` and, when present, serve it via FastAPI's first-class
+:meth:`FastAPI.frontend` so the admin surface serves the SPA same-origin (no
+CORS). When running from a source checkout (``make dev``) the packaged copy
+does not exist, so we fall back to the repo's ``ui/dist`` directly — no manual
+``ui/dist`` → ``src/jentic_one/static`` copy step is needed.
 
 The bundle is mounted under :data:`SPA_MOUNT_PATH` (``/app``), NOT the site
 root. This is the key namespace-isolation property: the SPA owns ``/app`` and
@@ -76,20 +78,63 @@ _ROOT_ICON_PROBES = {
 }
 
 
+def _repo_root() -> Path:
+    """Repo root of a source checkout, four parents up from this module.
+
+    ``src/jentic_one/shared/web/static.py`` → repo root. In a wheel install this
+    still resolves to *some* directory under ``site-packages``; callers guard
+    against that via the ``pyproject.toml`` check in :func:`_resolve_dev_static_dir`.
+    """
+    return Path(__file__).resolve().parents[4]
+
+
+def _resolve_dev_static_dir(repo_root: Path | None = None) -> Path | None:
+    """Return ``ui/dist`` from a source checkout if it holds a built SPA.
+
+    Dev-only fallback for running straight from the repo (``make dev`` /
+    ``uv run python -m jentic_one``), where the SPA is **not** packaged under
+    ``jentic_one/static`` — that copy only exists in the built wheel. The
+    ``ui/dist`` bundle is produced by ``make ui-build`` and lives at the repo
+    root. Resolving it here removes the former manual ``ui/dist`` →
+    ``src/jentic_one/static`` symlink step.
+
+    Returns ``None`` when the checkout layout is absent (e.g. a wheel install,
+    where this module lives under ``site-packages`` and there is no sibling
+    ``ui/dist``) or the bundle has not been built, so production/wheel serving
+    is unaffected — the packaged ``static/`` in :func:`_resolve_static_dir`
+    still takes precedence.
+    """
+    root = repo_root if repo_root is not None else _repo_root()
+    if not (root / "pyproject.toml").is_file():
+        # Not a source checkout (e.g. installed under site-packages): bail out
+        # so wheel installs never accidentally resolve an unrelated directory.
+        return None
+
+    dist = root / "ui" / "dist"
+    if not (dist / "index.html").is_file():
+        return None
+    return dist
+
+
 def _resolve_static_dir() -> Path | None:
-    """Return the packaged static dir if it holds a built SPA, else None."""
+    """Return the SPA bundle directory if one holds a built SPA, else None.
+
+    Prefers the packaged ``jentic_one/static`` bundle (wheel/production); when
+    that is absent, falls back to a source checkout's ``ui/dist`` so a dev run
+    from the repo serves the SPA without a manual copy/symlink step.
+    """
     try:
         static_root = importlib.resources.files("jentic_one") / "static"
     except (ModuleNotFoundError, FileNotFoundError):
-        return None
+        static_root = None
 
-    index = static_root / "index.html"
-    if not index.is_file():
-        return None
-    # ``files()`` may return a non-filesystem traversable; ``app.frontend``
-    # needs a real directory path. The wheel install is always on the
-    # filesystem.
-    return Path(str(static_root))
+    if static_root is not None and (static_root / "index.html").is_file():
+        # ``files()`` may return a non-filesystem traversable; ``app.frontend``
+        # needs a real directory path. The wheel install is always on the
+        # filesystem.
+        return Path(str(static_root))
+
+    return _resolve_dev_static_dir()
 
 
 def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:

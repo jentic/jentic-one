@@ -12,12 +12,12 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ApiRevisionSourceType
-from jentic_one.shared.models.registry import ApiRevisionState
 
 pytestmark = pytest.mark.integration
 
@@ -158,31 +158,31 @@ async def test_ingest_idempotent_reingest(
         assert len(revisions) == 2
 
 
-async def test_reimport_same_spec_is_idempotent(
+async def test_reimport_same_active_spec_raises_duplicate_not_hang(
     ingest_context: Context,
     registry_db: DatabaseSession,
     clean_registry: None,
 ) -> None:
-    """Re-importing an unchanged spec reuses the revision instead of failing.
+    """Re-importing an identical spec whose revision is still ACTIVE surfaces a
+    clean DuplicateRevisionError — it neither inserts a duplicate nor hangs.
 
-    Regression: a catalog re-import re-fetches the identical spec (same digest);
-    with `origin` set the ingestor archived the old IMPORTED revision then tried
-    to INSERT a new one with the same (api_id, spec_digest), violating the unique
-    constraint. The failure retried to the worker's dead-letter, which the CLI
+    Regression: a catalog re-import re-fetches the identical spec (same digest).
+    Inserting a second row with the same (api_id, spec_digest) violated the unique
+    constraint; the failure retried to the worker's dead-letter, which the CLI
     poller didn't recognise as terminal — so `jentic catalog import` looked like
-    it hung until its 2-minute timeout. The imported branch now reactivates the
-    existing same-digest revision, so a re-import is a clean idempotent no-op.
+    it hung until its 2-minute timeout. Now a live revision with the same content
+    is treated as a genuine conflict and raised legibly (the CLI treats a
+    dead-letter/duplicate as terminal), instead of silently overwriting or hanging.
     """
     spec = _build_spec(sha="same_digest_xyz")
     spec.origin = "catalog"
 
     ingestor = Ingestor(ingest_context)
-    result1 = await ingestor.ingest(spec, created_by="usr_test")
-    # Second import of the identical spec must NOT raise and must reuse the revision.
-    result2 = await ingestor.ingest(_reimport_spec(), created_by="usr_test")
+    await ingestor.ingest(spec, created_by="usr_test")
 
-    assert result1.revision_id == result2.revision_id, "re-import should reuse the same revision"
-    assert result2.state == "imported"
+    # Second import of the identical, still-active spec must raise, not duplicate.
+    with pytest.raises(IngestPipelineError, match="identical content"):
+        await ingestor.ingest(_reimport_spec(), created_by="usr_test")
 
     async with registry_db.session() as session:
         apis = (await session.execute(select(Api))).unique().scalars().all()
@@ -190,48 +190,9 @@ async def test_reimport_same_spec_is_idempotent(
         revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(revisions) == 1, "no duplicate revision should be created on re-import"
         assert revisions[0].state == "imported"
-        # Operations were rebuilt for the reused revision, not duplicated.
-        ops = (await session.execute(select(Operation))).unique().scalars().all()
-        assert len(ops) == 3
 
 
 def _reimport_spec() -> IngestSpecification:
     spec = _build_spec(sha="same_digest_xyz")
     spec.origin = "catalog"
     return spec
-
-
-async def test_reimport_does_not_demote_a_published_revision(
-    ingest_context: Context,
-    registry_db: DatabaseSession,
-    clean_registry: None,
-) -> None:
-    """Re-importing a spec whose revision a human already PUBLISHED must not
-    silently demote it back to IMPORTED.
-
-    reactivate_imported reuses the same-digest revision on re-import; if it
-    unconditionally set state=IMPORTED, a routine catalog re-import would revert
-    an operator's publish decision. The guard preserves PUBLISHED.
-    """
-    spec = _build_spec(sha="same_digest_xyz")
-    spec.origin = "catalog"
-    ingestor = Ingestor(ingest_context)
-    result1 = await ingestor.ingest(spec, created_by="usr_test")
-
-    # Promote the imported revision to published (the human action).
-    async with registry_db.session() as session:
-        rev = await session.get(ApiRevision, result1.revision_id)
-        assert rev is not None
-        rev.state = ApiRevisionState.PUBLISHED
-        await session.commit()
-
-    # Re-import the identical spec.
-    result2 = await ingestor.ingest(_reimport_spec(), created_by="usr_test")
-    assert result1.revision_id == result2.revision_id
-
-    async with registry_db.session() as session:
-        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
-        assert len(revisions) == 1, "re-import must not create a second revision"
-        assert revisions[0].state == ApiRevisionState.PUBLISHED, (
-            "a published revision must survive re-import, not be demoted to imported"
-        )

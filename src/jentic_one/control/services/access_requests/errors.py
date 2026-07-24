@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.scopes import GRANTABLE_SCOPES
 
 
@@ -115,10 +116,7 @@ class ToolkitReferenceUnresolvedError(AccessRequestServiceError):
     """
 
     def __init__(self, reference: dict[str, object]) -> None:
-        super().__init__(
-            f"No toolkit serves API {_format_api_reference(reference)}; "
-            "provision and bind a credential for it first"
-        )
+        super().__init__(no_toolkit_serves_api_reason(_format_api_reference(reference)))
         self.reference = reference
 
 
@@ -194,8 +192,11 @@ class RulesNotSupportedForBindError(AccessRequestServiceError):
 
     def __init__(self, resource_type: str, action: str) -> None:
         super().__init__(
-            f"rules are not supported on {resource_type}:{action}; "
-            "attach rules to a credential:bind instead"
+            f"Permission rules are not supported on {resource_type}:{action} items. "
+            "Rules are enforced per (toolkit_id, credential_id) binding, so they "
+            "can only be attached to credential:bind items. To set rules, file an "
+            "access request with resource_type='credential', action='bind' and "
+            "include your rules there (toolkits:write scope is not needed)."
         )
         self.resource_type = resource_type
         self.action = action

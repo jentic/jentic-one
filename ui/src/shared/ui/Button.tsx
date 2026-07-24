@@ -5,6 +5,19 @@ import { cn } from '@/shared/lib/utils';
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline';
 type Size = 'sm' | 'md' | 'lg' | 'icon';
 
+/**
+ * Shared base classes for the button *look* (layout, radius, font, focus ring,
+ * transitions). Exported so navigable primitives (e.g. `AppLink`) can render a
+ * link that looks like a button without re-implementing — or drifting from —
+ * these tokens. `AppLink` supplies its own focus ring, so the button base is
+ * split from the ring below.
+ */
+const buttonBase =
+	'inline-flex cursor-pointer items-center justify-center rounded-lg font-medium transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-out active:scale-[0.98] disabled:cursor-not-allowed motion-reduce:active:scale-100';
+
+const buttonFocusRing =
+	'focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none';
+
 const variantClasses: Record<Variant, string> = {
 	primary: 'bg-primary text-background shadow-card hover:bg-primary-hover disabled:opacity-50',
 	secondary:
@@ -51,7 +64,8 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
 			aria-busy={loading || undefined}
 			aria-disabled={disabled || loading || undefined}
 			className={cn(
-				'focus-visible:ring-ring focus-visible:ring-offset-background inline-flex cursor-pointer items-center justify-center rounded-lg font-medium transition-[transform,background-color,border-color,color,box-shadow] duration-150 ease-out focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none active:scale-[0.98] disabled:cursor-not-allowed motion-reduce:active:scale-100',
+				buttonBase,
+				buttonFocusRing,
 				variantClasses[variant],
 				sizeClasses[size],
 				fullWidth && 'w-full',
@@ -67,4 +81,5 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function 
 
 Button.displayName = 'Button';
 
-export type { ButtonProps };
+export { buttonBase, variantClasses as buttonVariantClasses, sizeClasses as buttonSizeClasses };
+export type { ButtonProps, Variant as ButtonVariant, Size as ButtonSize };

@@ -869,14 +869,14 @@
             {
               "name": "broker-host",
               "type": "string",
-              "default": "https://127.0.0.1:8100",
-              "usage": "broker target host"
+              "default": "127.0.0.1:8100",
+              "usage": "broker target host as host[:port] (no scheme; use --broker-scheme)"
             },
             {
               "name": "broker-scheme",
               "type": "string",
               "default": "https",
-              "usage": "broker target scheme"
+              "usage": "broker target scheme (http or https)"
             },
             {
               "name": "data",
@@ -1683,8 +1683,8 @@
           "name": "update",
           "path": "jenticctl update",
           "use": "update",
-          "short": "Update the jentic CLIs (and check the stack) to the latest build",
-          "long": "update reports the installed CLI and server versions, compares the tracked\ngit ref against its latest commit on GitHub, and (unless --check) rebuilds\nand replaces the jenticctl and jentic binaries in place, then rebuilds the\ninstalled stack. Use --cli-only or --stack-only to update just one half.",
+          "short": "Update the jentic CLIs (and check the stack) to the latest release",
+          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
@@ -1707,7 +1707,7 @@
             {
               "name": "ref",
               "type": "string",
-              "usage": "git ref to update to (default: the installed ref)"
+              "usage": "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)"
             },
             {
               "name": "stack-only",

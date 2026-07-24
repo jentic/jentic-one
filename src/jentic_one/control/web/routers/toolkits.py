@@ -50,6 +50,7 @@ def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
         permissions=toolkit.permissions,
         key_count=len(toolkit.keys),
         credential_count=len(toolkit.bindings),
+        created_by=toolkit.created_by,
         created_at=toolkit.created_at,
         updated_at=toolkit.updated_at,
     )

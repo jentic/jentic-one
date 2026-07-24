@@ -2,7 +2,8 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { LayoutGroup, motion } from 'framer-motion';
-import { sortedNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
+import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
+import { useAuth } from '@/shared/auth/AuthContext';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, menuItemClass, useDismissable } from '@/shared/ui/Menu';
@@ -106,7 +107,12 @@ function NavTab({ item, isActive }: { item: NavItem; isActive: boolean }) {
  */
 export function NavTabs() {
 	const { pathname } = useLocation();
-	const items = sortedNavItems();
+	const { user } = useAuth();
+	const allItems = visibleNavItems(sortedNavItems(), user?.permissions ?? []);
+	// Secondary items (operator/admin areas) render in a divided slot at the end,
+	// outside the width-measured overflow logic that governs the primary tabs.
+	const items = allItems.filter((i) => !i.secondary);
+	const secondary = allItems.filter((i) => i.secondary);
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [visibleCount, setVisibleCount] = useState(items.length);
 	const [overflowOpen, setOverflowOpen] = useState(false);
@@ -139,9 +145,10 @@ export function NavTabs() {
 		const ro = new ResizeObserver(measure);
 		if (containerRef.current) ro.observe(containerRef.current);
 		return () => ro.disconnect();
-		// `items` is derived from the static registry — stable across renders.
+		// `items` is derived from the static registry (+ the user's permissions) —
+		// stable across renders for a given session.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, []);
+	}, [items.length]);
 
 	const primary = items.slice(0, visibleCount);
 	const overflow = items.slice(visibleCount);
@@ -205,6 +212,21 @@ export function NavTabs() {
 							</MenuPanel>
 						)}
 					</div>
+				)}
+
+				{/* Secondary (operator/admin) entries: a divider then the tab(s),
+				    signalling a distinct area from the primary product nav. */}
+				{secondary.length > 0 && (
+					<>
+						<div className="bg-border mx-1.5 h-4 w-px shrink-0" aria-hidden="true" />
+						{secondary.map((item) => (
+							<NavTab
+								key={item.id}
+								item={item}
+								isActive={isNavItemActive(item, pathname)}
+							/>
+						))}
+					</>
 				)}
 			</div>
 		</LayoutGroup>

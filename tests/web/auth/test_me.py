@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
@@ -37,6 +37,13 @@ pytestmark = pytest.mark.integration
 
 ADMIN_EMAIL = "me-test-admin@test.local"
 OWNER_EMAIL = "me-test-owner@test.local"
+
+# A real toolkit (control DB) the agent is bound to — /me must resolve its name
+# (issue #686). ``tk_me_orphan`` is a binding with no toolkit row, exercising the
+# graceful name=None path.
+NAMED_TOOLKIT_ID = "tk_me_named"
+NAMED_TOOLKIT_NAME = "Design news radar"
+ORPHAN_TOOLKIT_ID = "tk_me_orphan"
 
 
 def _build_app(ctx: Context) -> FastAPI:
@@ -165,7 +172,10 @@ async def approved_agent_id(
         )
         await AgentRepository.set_approval(session, agent.id, approved_by=admin_user_id)
         await AgentToolkitBindingRepository.bind(
-            session, agent_id=agent.id, toolkit_id="tk_example", created_by="usr_test"
+            session, agent_id=agent.id, toolkit_id=NAMED_TOOLKIT_ID, created_by="usr_test"
+        )
+        await AgentToolkitBindingRepository.bind(
+            session, agent_id=agent.id, toolkit_id=ORPHAN_TOOLKIT_ID, created_by="usr_test"
         )
         # A live scope grant the presented token won't carry — exercises #673:
         # /me must reflect current grants, not just the token's baked-in scopes.
@@ -177,6 +187,17 @@ async def approved_agent_id(
             granted_by=admin_user_id,
             created_by="usr_test",
         )
+    # The toolkit name lives in the control DB; seed a real row so /me can resolve
+    # NAMED_TOOLKIT_ID → its name (issue #686). ORPHAN_TOOLKIT_ID has no row.
+    async with ctx.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, created_by) "
+                "VALUES (:id, :name, :created_by) ON CONFLICT DO NOTHING"
+            ),
+            {"id": NAMED_TOOLKIT_ID, "name": NAMED_TOOLKIT_NAME, "created_by": owner_user_id},
+        )
+        await session.commit()
     yield agent.id
 
     async with ctx.admin_db.session() as session:
@@ -185,6 +206,9 @@ async def approved_agent_id(
         )
         await ActorScopeGrantRepository.revoke_all(session, agent.id)
         await session.execute(delete(Agent).where(Agent.id == agent.id))
+        await session.commit()
+    async with ctx.control_db.session() as session:
+        await session.execute(text("DELETE FROM toolkits WHERE id = :id"), {"id": NAMED_TOOLKIT_ID})
         await session.commit()
 
 
@@ -282,8 +306,14 @@ def test_me_agent(web_context: Context, approved_agent_id: str) -> None:
     assert body["token_scopes"] == ["toolkits:execute"]
     assert body["parent_agent_id"] is None
     assert body["approved_by"] is not None
-    assert len(body["toolkit_bindings"]) == 1
-    assert body["toolkit_bindings"][0]["toolkit_id"] == "tk_example"
+    bindings = {b["toolkit_id"]: b for b in body["toolkit_bindings"]}
+    assert len(bindings) == 2
+    # The bound toolkit's human-readable name is resolved from the control DB so
+    # the agent can map the opaque id to a name (issue #686)…
+    assert bindings[NAMED_TOOLKIT_ID]["name"] == NAMED_TOOLKIT_NAME
+    # …while a binding whose toolkit row is absent degrades gracefully to null
+    # rather than failing the whole response.
+    assert bindings[ORPHAN_TOOLKIT_ID]["name"] is None
 
 
 async def test_me_agent_opaque_token_surfaces_minted_scopes(

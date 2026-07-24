@@ -18,12 +18,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    pg = op.get_bind().dialect.name == "postgresql"
     op.create_table(
         "agent_toolkit_bindings",
         sa.Column(
             "id",
             sa.String(30),
-            server_default=sa.func.generate_ksuid("atb"),
+            # Postgres generates the ksuid server-side; SQLite has no such
+            # function so there is no server_default there. Every insert is
+            # expected to go through the ORM model, whose Python-side default
+            # (generate_ksuid("atb")) supplies the id. A *raw* INSERT on SQLite
+            # that omits id would violate NOT NULL — seed/test code must use the
+            # ORM model or pass an explicit id.
+            server_default=sa.func.generate_ksuid("atb") if pg else None,
             nullable=False,
         ),
         sa.Column(

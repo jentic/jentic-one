@@ -160,6 +160,80 @@ async def clean_access_requests(web_context: Context) -> AsyncGenerator[None, No
         await session.commit()
 
 
+# A bound but orphaned agent (issues #665/#682): it owns nothing (parent_actor_id
+# None, like the jentic-cli-default bootstrap agent) but is bound to tk_target via
+# the seed_binding fixture. It carries the default agent owner-read scopes so it
+# passes the route gate; visibility must then come purely from the binding.
+BOUND_ORPHAN_IDENTITY = Identity(
+    sub=FILER_SUB,
+    email="orphan@test.local",
+    permissions=["owner:toolkits:read", "owner:credentials:read"],
+    actor_type=ActorType.AGENT,
+    parent_actor_id=None,
+)
+
+
+@pytest.fixture()
+def bound_orphan_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as a bound-but-orphaned agent (owns nothing, bound to tk_target)."""
+    app = _build_app(web_context, BOUND_ORPHAN_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
+# A bound orphan that ALSO holds toolkits:write (issue #682, write path): it owns
+# nothing but is bound to tk_target, so a write to that toolkit must succeed —
+# not 404 as owner-only scoping produced before the fix.
+BOUND_ORPHAN_WRITER_IDENTITY = Identity(
+    sub=FILER_SUB,
+    email="orphan-writer@test.local",
+    permissions=["toolkits:write", "owner:toolkits:read", "owner:credentials:read"],
+    actor_type=ActorType.AGENT,
+    parent_actor_id=None,
+)
+
+# A writer that neither owns nor is bound to tk_target and is not org:admin. A
+# write to tk_target (which exists, owned by OWNER_SUB) must be 403 — naming the
+# real requirement — not a misleading 404 (issue #682).
+UNBOUND_WRITER_IDENTITY = Identity(
+    sub="usr_webtest_unbound_writer",
+    email="unbound-writer@test.local",
+    permissions=["toolkits:write"],
+)
+
+
+@pytest.fixture()
+def bound_orphan_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as a bound-but-orphaned agent that holds toolkits:write."""
+    app = _build_app(web_context, BOUND_ORPHAN_WRITER_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture()
+def unbound_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient holding toolkits:write but neither owning nor bound to tk_target."""
+    app = _build_app(web_context, UNBOUND_WRITER_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture()
+def admin_writer_client(
+    web_context: Context, seed_binding: None, clean_access_requests: None
+) -> Iterator[TestClient]:
+    """TestClient as org:admin against the seed_binding toolkit (tk_target)."""
+    app = _build_app(web_context, ADMIN_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
+
+
 @pytest.fixture()
 def filer_client(
     web_context: Context, seed_binding: None, clean_access_requests: None

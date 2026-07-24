@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.16.0](https://github.com/jentic/jentic-one/compare/v0.15.3...v0.16.0) (2026-07-23)
+
+
+### Features
+
+* **auth:** invite-redemption page for finishing account creation ([#734](https://github.com/jentic/jentic-one/issues/734)) ([d758df4](https://github.com/jentic/jentic-one/commit/d758df4981baa4badd56426d49a30333dc71cffd))
+* **cli:** make jenticctl update version/tag-driven and default confirm to Yes ([#766](https://github.com/jentic/jentic-one/issues/766)) ([591a327](https://github.com/jentic/jentic-one/commit/591a32716f8659505b31eda9b5d91628e923a462))
+
+## [0.15.3](https://github.com/jentic/jentic-one/compare/v0.15.2...v0.15.3) (2026-07-22)
+
+
+### Bug Fixes
+
+* **install.sh:** re-exec under full bash from POSIX-mode /bin/sh ([#764](https://github.com/jentic/jentic-one/issues/764)) ([b98f205](https://github.com/jentic/jentic-one/commit/b98f20532b5488dabaefd9227d13fef8bf4e4d03))
+* **registry:** preserve path params for RFC 6570 reserved-expansion paths (e.g. {+property}) ([#759](https://github.com/jentic/jentic-one/issues/759)) ([#762](https://github.com/jentic/jentic-one/issues/762)) ([fb03462](https://github.com/jentic/jentic-one/commit/fb034626bbade95b96a18fa7b0db255bfe83be98))
+
+## [0.15.2](https://github.com/jentic/jentic-one/compare/v0.15.1...v0.15.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* **update:** resolve v-prefixed release tags for bare-semver refs ([#760](https://github.com/jentic/jentic-one/issues/760)) ([107d530](https://github.com/jentic/jentic-one/commit/107d530614be07dfc22e5c5a537b83cdeb4d1e35))
+
+## [0.15.1](https://github.com/jentic/jentic-one/compare/v0.15.0...v0.15.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **broker:** parse permission-rule JSON columns on the SQLite read path ([#756](https://github.com/jentic/jentic-one/issues/756)) ([74f1a5e](https://github.com/jentic/jentic-one/commit/74f1a5e4c6fab5fa7e4bfd3614776892634d18c0))
+* **build:** exclude generated src/jentic_one/static from Docker context ([#729](https://github.com/jentic/jentic-one/issues/729)) ([83403a1](https://github.com/jentic/jentic-one/commit/83403a17f4d50dc15f093a9aea7b3f4545b53494)), closes [#654](https://github.com/jentic/jentic-one/issues/654)
+* **control:** widen credentials.api_version and map DB data errors to 4xx ([#722](https://github.com/jentic/jentic-one/issues/722)) ([b0da8d0](https://github.com/jentic/jentic-one/commit/b0da8d0dea0be6a5388a293bf3171aea1ec92fa8)), closes [#690](https://github.com/jentic/jentic-one/issues/690)
+* **install:** reliably add ~/.jentic/bin to PATH ([#730](https://github.com/jentic/jentic-one/issues/730)) ([97e0b8f](https://github.com/jentic/jentic-one/commit/97e0b8ff14cf71b0a1741cc4fc8e49bb49e5725b))
+* **registry,control,broker:** stop stranded credentials colliding on API re-import ([#643](https://github.com/jentic/jentic-one/issues/643)) ([#728](https://github.com/jentic/jentic-one/issues/728)) ([16287d5](https://github.com/jentic/jentic-one/commit/16287d51b3ba00537c2e78cbd815b54ac5f3cba0))
+* **ui:** use a dedicated muted token for input placeholder text ([#736](https://github.com/jentic/jentic-one/issues/736)) ([4d79812](https://github.com/jentic/jentic-one/commit/4d7981288c63826de2fdd6847e62ab1ff1335d8b)), closes [#673](https://github.com/jentic/jentic-one/issues/673)
+
+## [0.15.0](https://github.com/jentic/jentic-one/compare/v0.14.3...v0.15.0) (2026-07-21)
+
+
+### Features
+
+* **auth:** resolve toolkit binding names in /me whoami ([#686](https://github.com/jentic/jentic-one/issues/686)) ([#726](https://github.com/jentic/jentic-one/issues/726)) ([45c4683](https://github.com/jentic/jentic-one/commit/45c4683a9084892a61137b8af8b6007a42613801))
+
+
+### Bug Fixes
+
+* **admin:** generate agent-toolkit-binding ids app-side on SQLite ([#715](https://github.com/jentic/jentic-one/issues/715)) ([d8e2006](https://github.com/jentic/jentic-one/commit/d8e20068169250b57ad11e5960d6386ca3fa3e15))
+* **auth:** add token_endpoint_auth_signing_alg_values_supported to OAuth metadata ([#712](https://github.com/jentic/jentic-one/issues/712)) ([7926e6d](https://github.com/jentic/jentic-one/commit/7926e6df781db2ed696d8c400fd9f6c7d88d40a0))
+* **broker:** hint at region/server-variable mismatch on upstream 401/403 ([#638](https://github.com/jentic/jentic-one/issues/638)) ([#717](https://github.com/jentic/jentic-one/issues/717)) ([9098a71](https://github.com/jentic/jentic-one/commit/9098a7113868cce74c9908ff23975883ea6d6dc7))
+* **broker:** make no_toolkit_binding directive recommend credential-first order ([#720](https://github.com/jentic/jentic-one/issues/720)) ([1292b1e](https://github.com/jentic/jentic-one/commit/1292b1edf1045ee5ecc34f965697c4c266aa8282)), closes [#683](https://github.com/jentic/jentic-one/issues/683)
+* **cli:** make broker default host bare to avoid double scheme ([#724](https://github.com/jentic/jentic-one/issues/724)) ([be0c945](https://github.com/jentic/jentic-one/commit/be0c945eb8add345e4280587cdf379d6ef5ef984)), closes [#657](https://github.com/jentic/jentic-one/issues/657)
+* **control:** let a bound agent read its toolkit and its credentials ([#665](https://github.com/jentic/jentic-one/issues/665), [#682](https://github.com/jentic/jentic-one/issues/682)) ([#718](https://github.com/jentic/jentic-one/issues/718)) ([5f68945](https://github.com/jentic/jentic-one/commit/5f689456f1a5d2dfa339a0e6863f94ce3ff5f14f))
+* **control:** let a bound agent write to its toolkit and 403 (not 404) when scope-hidden ([#725](https://github.com/jentic/jentic-one/issues/725)) ([16bdbdb](https://github.com/jentic/jentic-one/commit/16bdbdb0add21a02687c02b4be80b66c6af023fd)), closes [#682](https://github.com/jentic/jentic-one/issues/682)
+* **control:** normalize credential api_vendor/api_name to registry slug ([#719](https://github.com/jentic/jentic-one/issues/719)) ([083d871](https://github.com/jentic/jentic-one/commit/083d87127c5096e85a469599283df07a42612023)), closes [#656](https://github.com/jentic/jentic-one/issues/656)
+* **registry:** make spec re-import idempotent and surface readable errors ([#721](https://github.com/jentic/jentic-one/issues/721)) ([2b93cfd](https://github.com/jentic/jentic-one/commit/2b93cfd0561deec99eb5819001e51683899c1ea7)), closes [#688](https://github.com/jentic/jentic-one/issues/688)
+* **registry:** reload API view after promote-over-live to avoid MissingGreenlet ([#723](https://github.com/jentic/jentic-one/issues/723)) ([0eb426d](https://github.com/jentic/jentic-one/commit/0eb426d6fb556733ba7c1d8f7629aa080cd491d5)), closes [#642](https://github.com/jentic/jentic-one/issues/642)
+
+
+### Documentation
+
+* **control,broker:** clarify permission rules and broker path format ([#576](https://github.com/jentic/jentic-one/issues/576)) ([a00a974](https://github.com/jentic/jentic-one/commit/a00a974ff4a1540a0813c0b8c28aa1dbe4ac132b))
+* **intake:** point de-dup at the candidate_issues list, not a live search ([#649](https://github.com/jentic/jentic-one/issues/649)) ([9269ba6](https://github.com/jentic/jentic-one/commit/9269ba6671e85025a546bcdc8f13e0437f55d230))
+
 ## [0.14.3](https://github.com/jentic/jentic-one/compare/v0.14.2...v0.14.3) (2026-07-20)
 
 

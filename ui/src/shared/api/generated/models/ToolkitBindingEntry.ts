@@ -8,6 +8,7 @@ import type { ApiRef } from './ApiRef';
  */
 export type ToolkitBindingEntry = {
     bound_at: string;
+    name?: (string | null);
     serves?: Array<ApiRef>;
     toolkit_id: string;
 };

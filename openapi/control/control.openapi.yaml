@@ -58,7 +58,15 @@ components:
       title: AccessRequestFileRequest
       type: object
     AccessRequestItemRequest:
-      description: A single line-item in a file request.
+      description: |-
+        A single line-item in a file request.
+
+        **Permission rules:** Rules control which upstream API operations the broker
+        allows through a credential binding. They are enforced per (toolkit_id,
+        credential_id) pair, so they can only be attached to credential:bind items —
+        not toolkit:bind or scope:grant. You do not need toolkits:write scope to set
+        rules; include them directly on the credential:bind item when filing the
+        access request, and the approver's decision persists them on the binding.
       properties:
         action:
           enum:
@@ -92,6 +100,7 @@ components:
               $ref: '#/components/schemas/jentic_one__control__web__schemas__access_requests__PermissionRuleSchema'
             type: array
           - type: 'null'
+          description: 'Permission rules for the binding (credential:bind only). Rules are evaluated first-match-wins by the broker; if no rule matches, the request is denied. Example: [{"effect": "allow", "path": ".*"}].'
           title: Rules
         to_id:
           anyOf:
@@ -1654,6 +1663,12 @@ components:
           format: date-time
           title: Created At
           type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Identity that created the credential (its owner).
+          title: Created By
         credential_id:
           description: Stable credential identifier, prefixed `cred_`.
           title: Credential Id
@@ -2604,6 +2619,45 @@ components:
       - access_token
       - expires_in
       title: MintResponse
+      type: object
+    NoAuthCreateRequest:
+      description: |-
+        Create request for no_auth credentials.
+
+        A no-auth credential carries no secret — it represents "this API is called
+        without authentication". It still exists as a credential row so a toolkit
+        binding (and its permission rules) can hang off it, and the broker resolves
+        it as a no-op auth (see broker credential resolver / injection).
+      properties:
+        api:
+          $ref: '#/components/schemas/APIReferenceRequest'
+        name:
+          title: Name
+          type: string
+        provider:
+          default: static
+          title: Provider
+          type: string
+        runtime_config:
+          anyOf:
+          - $ref: '#/components/schemas/RuntimeConfig'
+          - type: 'null'
+        server_variables:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Server Variables
+        type:
+          const: no_auth
+          title: Type
+          type: string
+      required:
+      - type
+      - name
+      - api
+      title: NoAuthCreateRequest
       type: object
     NoteApiReference:
       additionalProperties: false
@@ -4127,6 +4181,11 @@ components:
           format: date-time
           title: Bound At
           type: string
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
         serves:
           default: []
           items:
@@ -4454,6 +4513,11 @@ components:
           format: date-time
           title: Created At
           type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
         credential_count:
           title: Credential Count
           type: integer
@@ -9931,6 +9995,7 @@ paths:
                   api_key: '#/components/schemas/ApiKeyCreateRequest'
                   basic: '#/components/schemas/BasicAuthCreateRequest'
                   bearer_token: '#/components/schemas/BearerTokenCreateRequest'
+                  no_auth: '#/components/schemas/NoAuthCreateRequest'
                   oauth2: '#/components/schemas/OAuth2CreateRequest'
                 propertyName: type
               oneOf:
@@ -9938,6 +10003,7 @@ paths:
               - $ref: '#/components/schemas/ApiKeyCreateRequest'
               - $ref: '#/components/schemas/BasicAuthCreateRequest'
               - $ref: '#/components/schemas/OAuth2CreateRequest'
+              - $ref: '#/components/schemas/NoAuthCreateRequest'
               title: Body
         required: true
       responses:

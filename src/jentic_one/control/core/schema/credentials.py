@@ -40,7 +40,9 @@ class Credential(AuditableMixin, ControlBase):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_vendor: Mapped[str] = mapped_column(String(100), nullable=False)
     api_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    api_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Match apis.version (String(100)); the registry does not length-cap versions
+    # and SNAPSHOT builds carry a commit suffix that overflows 50 chars (#690).
+    api_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, default="static", server_default=text("'static'")
     )

@@ -120,13 +120,13 @@ class CredentialService:
             raise InvalidCredentialNameError(
                 detail=str(exc),
                 type="credential_name_not_found",
-                extra={"candidates": exc.candidates},
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
             ) from exc
         except AmbiguousCredentialError as exc:
             raise AmbiguousMatchError(
                 detail=str(exc),
                 type="ambiguous_credential",
-                extra={"candidates": exc.candidates},
+                extra={"candidates": [c.model_dump(mode="json") for c in exc.candidates]},
             ) from exc
         except RefreshInvalidGrantError as exc:
             # Jentic-side auth failure: our OAuth refresh against the token

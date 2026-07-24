@@ -100,6 +100,7 @@ export type { MeServiceAccount } from './models/MeServiceAccount';
 export type { MeUser } from './models/MeUser';
 export type { MintRequest } from './models/MintRequest';
 export type { MintResponse } from './models/MintResponse';
+export type { NoAuthCreateRequest } from './models/NoAuthCreateRequest';
 export type { NoteApiReference } from './models/NoteApiReference';
 export { NoteConfidence } from './models/NoteConfidence';
 export type { NoteCreateRequest } from './models/NoteCreateRequest';
