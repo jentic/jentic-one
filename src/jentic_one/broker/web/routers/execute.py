@@ -428,6 +428,7 @@ async def _resolve_credentials(
         api_version=ctx_req.api_version or "",
         identity=identity,
         credential_name=credential_name,
+        trace_id=ctx_req.trace_id,
     )
 
 
