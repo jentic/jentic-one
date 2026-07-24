@@ -205,6 +205,28 @@ After running, `~/.jentic` contains only the backups:
 └── config-old.yaml       # was config.yaml
 ```
 
+### Reinstalling over existing data
+
+On a Docker install `uninstall` **preserves** the database volume by default
+(the "reinstall reattaches your data" contract in `--keep-data`'s help), and
+a plain re-`install` never touches it. The next `jenticctl install` reuses
+secrets from an existing `jentic-one.yaml` at `--out` (or the
+`jentic-one-old.yaml` backup beside it) so the fresh config's encryption key
+matches the one that encrypted the credentials, invite pepper, OAuth tokens
+etc. in the preserved data:
+
+- Reused: `credentials.encryption` (whole keyset — a hand-rotated
+  `active_id: v2` + `v1`/`v2` layout survives verbatim), `admin.auth.jwt_secret`,
+  `admin.invite.pepper`, `credentials.connect.state_secret`,
+  `auth.id_signing`, `telemetry.instance_id`.
+- Not reused: wizard-owned settings (ports, backend, apps list, etc.) — the
+  operator may be legitimately changing them.
+- **Don't delete `jentic-one-old.yaml` by hand** if you plan to reinstall
+  and keep the data — that file holds the encryption key that makes the
+  preserved credentials decryptable.
+- Pass `--fresh-secrets` to `jenticctl install` for deliberate rotation
+  (invalidates existing sessions, invites, and stored ciphertexts).
+
 ### Wizard structure
 
 The wizard is a **hub-and-spoke TUI** ([`internal/install/wizard.go`](internal/install/wizard.go),

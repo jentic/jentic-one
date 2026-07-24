@@ -1734,14 +1734,14 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. Use --purge to also delete the data volume\n(this destroys the database), or --keep-data to force preservation. With\nno flag and an interactive terminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
               "name": "keep-data",
               "type": "bool",
               "default": "false",
-              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it)"
+              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it and reuses jentic-one-old.yaml's encryption key)"
             },
             {
               "name": "purge",
