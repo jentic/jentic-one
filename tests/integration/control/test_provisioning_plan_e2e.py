@@ -141,9 +141,8 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     )
 
     # 2. WIZARD (operator) fulfils the create/provision steps with real resources.
-    created_toolkit, _key = await toolkit_svc.create(
-        name="httpbin.org/httpbin", identity=_owner_identity()
-    )
+    _create = await toolkit_svc.create(name="httpbin.org/httpbin", identity=_owner_identity())
+    created_toolkit = _create.toolkit
     created_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.BEARER_TOKEN,
@@ -266,9 +265,8 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
 
     # 2. WIZARD fulfils: create the toolkit + a NO_AUTH credential (no version →
     #    persisted NULL), amend their ids onto the binds, then approve.
-    created_toolkit, _key = await toolkit_svc.create(
-        name="country-is/country-is", identity=_owner_identity()
-    )
+    _create = await toolkit_svc.create(name="country-is/country-is", identity=_owner_identity())
+    created_toolkit = _create.toolkit
     created_cred = await cred_svc.create(
         CredentialCreate(
             type=CredentialType.NO_AUTH,

@@ -1,7 +1,7 @@
 """drop toolkits.permissions (never enforced)
 
-Revision ID: l3f4a5b6c7d8
-Revises: k2f3a4b5c6d7
+Revision ID: n5b6c7d8e9f0
+Revises: m4a5b6c7d8e9
 Create Date: 2026-07-24
 
 """
@@ -11,8 +11,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "l3f4a5b6c7d8"
-down_revision: str | None = "k2f3a4b5c6d7"
+revision: str = "n5b6c7d8e9f0"
+down_revision: str | None = "m4a5b6c7d8e9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

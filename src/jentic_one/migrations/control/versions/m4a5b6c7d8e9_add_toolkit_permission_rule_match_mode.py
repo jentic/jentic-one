@@ -1,7 +1,7 @@
 """add match_mode to toolkit_permission_rules
 
-Revision ID: k2f3a4b5c6d7
-Revises: j1e2f3a4b5c6
+Revision ID: m4a5b6c7d8e9
+Revises: l3a4b5c6d7e8
 Create Date: 2026-07-24
 
 """
@@ -11,8 +11,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "k2f3a4b5c6d7"
-down_revision: str | None = "j1e2f3a4b5c6"
+revision: str = "m4a5b6c7d8e9"
+down_revision: str | None = "l3a4b5c6d7e8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
