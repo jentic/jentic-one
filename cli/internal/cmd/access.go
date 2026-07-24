@@ -292,13 +292,13 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 	items = append(items, accessclient.Item{
 		ResourceType: "credential", Action: "provision", ResourceReference: provRef,
 	})
-	// Step 3+4: bind the (to-be-created) credential to the (to-be-created)
+	// Step 3: bind the (to-be-created) credential to the (to-be-created)
 	// toolkit, carrying the agent's proposed first-pass rules. The operator
 	// amends the concrete credential/toolkit ids onto this item before approval.
 	items = append(items, accessclient.Item{
 		ResourceType: "credential", Action: "bind", Rules: rules,
 	})
-	// Step 5: bind the agent to the toolkit, named by the same API reference.
+	// Step 4: bind the agent to the toolkit, named by the same API reference.
 	items = append(items, accessclient.Item{
 		ResourceType: "toolkit", Action: "bind", ResourceReference: ref,
 	})

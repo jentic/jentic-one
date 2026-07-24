@@ -27,8 +27,10 @@ provisioning engine.
 - **The agent proposes the rules** as a first pass, read from the API spec (#621).
 - **Reusable in the frontend.** The wizard is built against a *plan model*, so an
   operator can launch the same flow by clicking, with no agent-filed request.
-- **`amend` authorization is widened to the approver/owner** for v1 (fallback: a
-  dedicated `:fulfil` verb only if widening `amend` proves unsafe).
+- **`amend` needs no authorization change.** Verified during build: `amend()` and
+  `decide()` already scope through the same `build_access_filters` (filer +
+  filer-owner), so whoever can decide a request can amend it — the approver/owner
+  can fulfil a plan without widening anything. (No `:fulfil` verb needed.)
 - **No-auth support is full (#603):** a real `NO_AUTH` provisioning path so the
   `credential:provision` step is genuinely skippable (e.g. open-meteo).
 - **#656 (vendor normalization) is a blocking prerequisite; #641 (region) is a

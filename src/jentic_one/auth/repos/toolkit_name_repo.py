@@ -43,3 +43,33 @@ class ToolkitNameRepository:
         )
         result = await session.execute(stmt, {"ids": unique_ids})
         return {row[0]: row[1] for row in result.fetchall()}
+
+    @staticmethod
+    async def get_served_apis_for_ids(
+        session: AsyncSession, toolkit_ids: Sequence[str]
+    ) -> dict[str, list[tuple[str, str | None, str | None]]]:
+        """Return ``{toolkit_id: [(api_vendor, api_name, api_version), ...]}``.
+
+        For each toolkit, the APIs its bound credentials serve — so an agent
+        reading ``/me`` can tell which APIs it can already call and skip a
+        redundant provisioning plan / a throwaway denied execute. Joins
+        ``toolkit_credential_bindings`` to ``credentials`` in the control DB via
+        raw SQL (same cross-boundary convention as ``get_names_for_ids`` — the
+        auth module must not import the control ORM). Returns primitive tuples;
+        the service maps them to its ``ServedApi`` view. Runs against a
+        control-DB session; callers pass already scope-checked binding ids.
+        """
+        if not toolkit_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(toolkit_ids))
+        stmt = text(
+            "SELECT tcb.toolkit_id, c.api_vendor, c.api_name, c.api_version "
+            "FROM toolkit_credential_bindings tcb "
+            "JOIN credentials c ON c.id = tcb.credential_id "
+            "WHERE tcb.toolkit_id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True))
+        result = await session.execute(stmt, {"ids": unique_ids})
+        served: dict[str, list[tuple[str, str | None, str | None]]] = {}
+        for toolkit_id, vendor, name, version in result.fetchall():
+            served.setdefault(toolkit_id, []).append((vendor, name, version))
+        return served

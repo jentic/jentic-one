@@ -24,6 +24,10 @@ _AGENT_TOOLKITS = text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agen
 # names/versions for this vendor" — APIReferenceRequest defaults name/version to
 # "" (not None), so a versionless credential persists "" rather than NULL; both
 # are treated as the wildcard here so it still matches a concrete version (#775).
+# CredentialService.create now coerces "" -> NULL, but there is NO data migration
+# backfilling already-stored "" rows, so the `OR c.api_* = ''` clauses are
+# PERMANENT (they carry the historical "" rows forever); don't drop them without
+# a backfill.
 #
 # NB: this run-time resolver intentionally treats a NULL-wildcard credential
 # binding as a valid match and applies *no* exact-name preference — at execution

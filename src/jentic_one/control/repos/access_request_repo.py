@@ -21,6 +21,13 @@ from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.shared.models.access_requests import AccessRequestItemStatus, AccessRequestStatus
 from jentic_one.shared.models.api_identity import slugify_api_field
 
+# A credential:bind's assignment target is always a toolkit — the wizard stamps
+# a toolkit id onto the bind item, so `to_type` is fixed to this. Named rather
+# than a bare literal at the write site (there is no shared `to_type` enum;
+# `resource_type` uses a Literal in the web schema, but `to_type` is a plain
+# column).
+_BIND_TO_TYPE_TOOLKIT = "toolkit"
+
 
 def compute_aggregate_status(item_statuses: list[str]) -> AccessRequestStatus:
     """Derive the aggregate request status from its items' statuses."""
@@ -264,7 +271,7 @@ class AccessRequestRepository:
             # onto a credential:bind item's bind target after Step 1. to_type is
             # always "toolkit" for a credential:bind, so set it in lock-step.
             item.to_id = to_id
-            item.to_type = "toolkit"
+            item.to_type = _BIND_TO_TYPE_TOOLKIT
         await session.flush()
         return item
 

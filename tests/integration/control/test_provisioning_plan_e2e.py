@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from sqlalchemy import delete, select, text
 
-from jentic_one.auth.services.agent_service import AgentService
+from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.broker.repos.toolkit_binding_resolver import ToolkitBindingResolver
 from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.control.core.schema.access_request_items import AccessRequestItem
@@ -204,12 +204,11 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
 
     # whoami / list_toolkits now reports which APIs the binding serves, so an
     # agent can tell it already has access without a throwaway denied execute.
-    # (Exercise the served-APIs resolver directly — the get_agent visibility gate
-    # in list_toolkits is covered by the auth /me web tests.)
-    agent_svc = AgentService(ctx)
-    served = await agent_svc._served_apis_by_toolkit([created_toolkit.id])
+    # Exercise the served-APIs repository (the cross-boundary read whoami uses).
+    async with ctx.control_db.session() as session:
+        served = await ToolkitNameRepository.get_served_apis_for_ids(session, [created_toolkit.id])
     apis = served.get(created_toolkit.id, [])
-    assert any(s.api_vendor == "httpbin-org" for s in apis), (
+    assert any(vendor == "httpbin-org" for vendor, _name, _version in apis), (
         f"binding should report the served API, got {apis}"
     )
 

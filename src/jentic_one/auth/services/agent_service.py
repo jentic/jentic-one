@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -293,39 +292,14 @@ class AgentService:
         if toolkit_ids and self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
                 names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
-            served = await self._served_apis_by_toolkit(toolkit_ids)
+                served = await ToolkitNameRepository.get_served_apis_for_ids(session, toolkit_ids)
             for view in views:
                 view.name = names.get(view.toolkit_id)
-                view.serves = served.get(view.toolkit_id, [])
-        return views
-
-    async def _served_apis_by_toolkit(self, toolkit_ids: list[str]) -> dict[str, list[ServedApi]]:
-        """Resolve, per toolkit, the APIs its bound credentials serve.
-
-        Toolkit→credential bindings and credentials live in the control DB, so
-        this queries it directly with raw SQL — the auth module must not import
-        control ORM (enforced by tests/arch/test_module_boundaries). Mirrors the
-        cross-boundary raw-SQL pattern of control's PrerequisiteRepository. The
-        (vendor, name, version) tuple lets an agent reading `whoami` see which
-        APIs it can already call and skip a redundant provisioning plan / a
-        throwaway denied execute.
-        """
-        if not toolkit_ids:
-            return {}
-        query = text(
-            "SELECT tcb.toolkit_id, c.api_vendor, c.api_name, c.api_version "
-            "FROM toolkit_credential_bindings tcb "
-            "JOIN credentials c ON c.id = tcb.credential_id "
-            "WHERE tcb.toolkit_id IN :toolkit_ids"
-        ).bindparams(bindparam("toolkit_ids", expanding=True))
-        result: dict[str, list[ServedApi]] = {}
-        async with self._ctx.control_db.session() as session:
-            rows = await session.execute(query, {"toolkit_ids": toolkit_ids})
-            for toolkit_id, vendor, name, version in rows.all():
-                result.setdefault(toolkit_id, []).append(
+                view.serves = [
                     ServedApi(api_vendor=vendor, api_name=name, api_version=version)
-                )
-        return result
+                    for vendor, name, version in served.get(view.toolkit_id, [])
+                ]
+        return views
 
     async def bind_toolkit(
         self, agent_id: str, *, toolkit_id: str, identity: Identity
