@@ -39,7 +39,7 @@ import {
 	useToolkitBindings,
 	useToolkitKeys,
 	useUnbindCredential,
-	useUnbindToolkitFromAgent,
+	useUnlinkAgentFromToolkit,
 	useUpdateToolkit,
 } from '@/modules/toolkits/api';
 import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
@@ -105,7 +105,7 @@ export function ToolkitDetailBody({
 	const bindCredential = useBindCredential(toolkitId);
 	const unbindCredential = useUnbindCredential(toolkitId);
 	const linkAgent = useLinkAgentToToolkit(toolkitId);
-	const unlinkAgent = useUnbindToolkitFromAgent(toolkitId);
+	const unlinkAgent = useUnlinkAgentFromToolkit(toolkitId);
 	const deleteToolkit = useDeleteToolkit();
 
 	const [showKeyCreate, setShowKeyCreate] = useState(false);

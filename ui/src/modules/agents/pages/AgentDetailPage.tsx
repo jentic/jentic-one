@@ -12,31 +12,43 @@
  * can't be filtered by agent) and a JWKS card (`AgentResponse` exposes no key
  * metadata). We link out to Monitor for cross-agent execution history instead.
  */
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { ArrowRight, KeyRound, Shield, Activity, Ban, History } from 'lucide-react';
+import {
+	ArrowRight,
+	KeyRound,
+	Link as LinkIcon,
+	Shield,
+	Activity,
+	Ban,
+	History,
+	Unlink,
+} from 'lucide-react';
 import {
 	AgentBadge,
 	ActorLabel,
 	AppLink,
 	BackButton,
 	Badge,
+	Button,
 	Card,
 	CardBody,
 	CardHeader,
 	CardTitle,
 	CascadeDeleteDialog,
 	CopyButton,
+	Dialog,
 	ErrorAlert,
 	LoadingState,
 	PageHeader,
 	PageShell,
-	Button,
 } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	useAgent,
 	useAgentToolkits,
+	useBindToolkitToAgent,
+	useUnbindToolkitFromAgent,
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
 	useApproveAgent,
@@ -54,6 +66,7 @@ import {
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
+import { ToolkitPicker } from '@/modules/agents/components/ToolkitPicker';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
 import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
@@ -86,6 +99,8 @@ export default function AgentDetailPage() {
 
 	const agentQuery = useAgent(id);
 	const toolkits = useAgentToolkits(id);
+	const bindToolkit = useBindToolkitToAgent(id);
+	const unbindToolkit = useUnbindToolkitFromAgent(id);
 	const apiKeyInfo = useAgentApiKeyInfo(id);
 	const apiKeyHistory = useAgentApiKeyHistory(id);
 
@@ -99,6 +114,17 @@ export default function AgentDetailPage() {
 
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 	const [apiKey, setApiKey] = useState<string | null>(null);
+	const [bindToolkitOpen, setBindToolkitOpen] = useState(false);
+	const [unlinkToolkitId, setUnlinkToolkitId] = useState<string | null>(null);
+
+	// Memoised so ToolkitPicker's internal useMemos (available list, candidate
+	// count) don't invalidate on every parent re-render — a fresh ``new Set`` on
+	// each render would force a filter over the whole toolkit list every time
+	// (rev-1 review #6).
+	const boundToolkitIds = useMemo(
+		() => new Set((toolkits.data ?? []).map((t) => t.toolkitId)),
+		[toolkits.data],
+	);
 
 	if (agentQuery.isPending) {
 		return (
@@ -408,13 +434,17 @@ export default function AgentDetailPage() {
 				</Card>
 			)}
 
-			{/* Bound toolkits — real (GET /agents/{id}/toolkits). */}
+			{/* Bound toolkits — real (GET /agents/{id}/toolkits). Bind/unlink from
+			 *  the agent side (#607) mirror the toolkit page's "Link agent". */}
 			<Card>
 				<CardHeader className="flex flex-row items-center justify-between gap-2">
 					<div className="flex items-center gap-2">
 						<Shield className="text-primary h-4 w-4" />
 						<CardTitle>Bound toolkits</CardTitle>
 					</div>
+					<Button variant="secondary" size="sm" onClick={() => setBindToolkitOpen(true)}>
+						<LinkIcon className="h-4 w-4" /> Bind toolkit
+					</Button>
 				</CardHeader>
 				<CardBody className="space-y-2">
 					{toolkits.isPending ? (
@@ -423,27 +453,42 @@ export default function AgentDetailPage() {
 						<ErrorAlert message={toolkits.error as Error} />
 					) : !toolkits.data || toolkits.data.length === 0 ? (
 						<div className="text-muted-foreground border-border/60 rounded-lg border border-dashed p-4 text-center text-sm">
-							No toolkits bound to this agent.
+							No toolkits bound to this agent. Bind one to let this agent call its
+							APIs.
 						</div>
 					) : (
 						toolkits.data.map((t) => (
-							<AppLink
+							<div
 								key={t.id}
-								href={ROUTE_PATHS.toolkit(t.toolkitId)}
-								className="group hover:border-primary/40 border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors"
+								data-testid="bound-toolkit-row"
+								className="group border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2"
 							>
 								<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-								<code className="text-foreground flex-1 truncate font-mono text-xs">
-									{t.toolkitId}
-								</code>
-								<span
-									className="text-muted-foreground/70 text-[11px]"
-									title={formatTimestamp(t.boundAt)}
+								<AppLink
+									href={ROUTE_PATHS.toolkit(t.toolkitId)}
+									className="hover:text-primary flex min-w-0 flex-1 items-center gap-2 transition-colors"
 								>
-									{timeAgo(t.boundAt)}
-								</span>
-								<ArrowRight className="text-muted-foreground/40 group-hover:text-primary h-3.5 w-3.5 shrink-0 transition-colors" />
-							</AppLink>
+									<code className="text-foreground flex-1 truncate font-mono text-xs">
+										{t.toolkitId}
+									</code>
+									<span
+										className="text-muted-foreground/70 shrink-0 text-[11px]"
+										title={formatTimestamp(t.boundAt)}
+									>
+										{timeAgo(t.boundAt)}
+									</span>
+									<ArrowRight className="text-muted-foreground/40 group-hover:text-primary h-3.5 w-3.5 shrink-0 transition-colors" />
+								</AppLink>
+								<Button
+									variant="danger"
+									size="sm"
+									className="ml-1 inline-flex shrink-0 items-center gap-1 px-2 py-1 text-xs"
+									onClick={() => setUnlinkToolkitId(t.toolkitId)}
+									aria-label={`Unbind toolkit ${t.toolkitId}`}
+								>
+									<Unlink className="h-3 w-3" /> Unlink
+								</Button>
+							</div>
 						))
 					)}
 				</CardBody>
@@ -532,6 +577,79 @@ export default function AgentDetailPage() {
 			/>
 
 			<ApiKeyDialog open={apiKey != null} apiKey={apiKey} onClose={() => setApiKey(null)} />
+
+			{/* Bind toolkit — agent-side picker mirroring the toolkit page's
+			 *  "Link agent" (#607). */}
+			<Dialog
+				open={bindToolkitOpen}
+				onClose={() => {
+					// Don't let a mid-flight bind be Esc/backdrop-dismissed — if it then
+					// fails the error toast fires but the dialog is gone, leaving the
+					// user unable to retry in place (rev-1 review #8).
+					if (bindToolkit.isPending) return;
+					setBindToolkitOpen(false);
+				}}
+				title="Bind toolkit"
+				size="sm"
+				footer={
+					<Button
+						variant="secondary"
+						onClick={() => setBindToolkitOpen(false)}
+						disabled={bindToolkit.isPending}
+					>
+						Cancel
+					</Button>
+				}
+			>
+				<div className="space-y-3">
+					<p className="text-muted-foreground text-sm">
+						Pick a toolkit to bind to this agent. The agent's identity will be able to
+						call the toolkit's bound APIs. Manage toolkits on the{' '}
+						<AppLink href={ROUTES.toolkits} className="text-primary font-medium">
+							Toolkits
+						</AppLink>{' '}
+						page.
+					</p>
+					<ToolkitPicker
+						boundIds={boundToolkitIds}
+						onSelect={async (toolkitId) => {
+							try {
+								await bindToolkit.mutateAsync(toolkitId);
+								setBindToolkitOpen(false);
+							} catch {
+								// onError toasts; keep the dialog open so the user can retry
+								// (matches the unlink flow below and every other confirm dialog
+								// on this page — rev-1 review #10).
+							}
+						}}
+						pending={bindToolkit.isPending}
+						enabled={bindToolkitOpen}
+					/>
+				</div>
+			</Dialog>
+
+			<ConfirmDialog
+				open={unlinkToolkitId != null}
+				title="Unbind toolkit"
+				body="Revoke this toolkit for the agent? The agent will no longer be able to call the toolkit's APIs. You can bind it again later."
+				confirmLabel="Unlink"
+				pending={unbindToolkit.isPending}
+				onConfirm={async () => {
+					if (!unlinkToolkitId) return;
+					try {
+						await unbindToolkit.mutateAsync(unlinkToolkitId);
+						setUnlinkToolkitId(null);
+					} catch {
+						// onError toasts; keep the dialog open so the user can retry.
+					}
+				}}
+				onClose={() => {
+					// Same as the Bind dialog: don't allow Esc/backdrop-dismissal while
+					// the DELETE is in flight (rev-1 review #8).
+					if (unbindToolkit.isPending) return;
+					setUnlinkToolkitId(null);
+				}}
+			/>
 		</PageShell>
 	);
 }

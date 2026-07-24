@@ -56,7 +56,7 @@ describe('AgentDetailPage', () => {
 	it('shows an honest empty state when no toolkits are bound', async () => {
 		renderDetail('agnt_pending_1');
 		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
-		expect(await screen.findByText('No toolkits bound to this agent.')).toBeInTheDocument();
+		expect(await screen.findByText(/No toolkits bound to this agent\./)).toBeInTheDocument();
 	});
 
 	it('renders a not-found surface for an unknown id', async () => {

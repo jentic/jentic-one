@@ -15,6 +15,7 @@ import {
 	AgentsService,
 	PermissionsService,
 	ServiceAccountsService,
+	ToolkitsService,
 	type AgentResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
@@ -25,6 +26,7 @@ import {
 	type ApiKeyHistoryEntry,
 	type ApiKeyInfoEntity,
 	type ApiKeyResult,
+	type LinkableToolkit,
 	type PermissionCatalogEntry,
 	type ServiceAccountEntity,
 	type ToolkitBindingEntity,
@@ -162,6 +164,60 @@ export async function listAgentToolkits(agentId: string): Promise<ToolkitBinding
 		}));
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to load bound toolkits.');
+	}
+}
+
+/**
+ * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Reads the
+ * org-wide ``GET /toolkits`` surface through the shared API — the agents module
+ * must not import the toolkits module (module-boundary rule), so it maps the
+ * shared ``ToolkitResponse`` into a small picker shape here.
+ *
+ * Paginates via ``cursor``/``has_more`` so a workspace with more than one page
+ * of toolkits (default page size 50) still lists everything — a hardcoded
+ * ``limit`` would silently drop the tail (rev-1 review #1). A hard page cap
+ * keeps a runaway/misconfigured backend from looping forever. Kill-switched
+ * toolkits are *included* here (``active`` is carried through); the picker
+ * itself refuses to select them so a broken binding can't be created (rev-1
+ * review #4) — but keeping them in the list lets callers show them as a
+ * disabled row with a "suspended" affordance, which is easier to reason about
+ * than a silently-missing toolkit.
+ */
+export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
+	try {
+		const out: LinkableToolkit[] = [];
+		let cursor: string | null = null;
+		const MAX_PAGES = 20;
+		for (let page = 0; page < MAX_PAGES; page += 1) {
+			const res = await ToolkitsService.listToolkits({ cursor, limit: 100 });
+			for (const t of res.data) {
+				out.push({ toolkitId: t.toolkit_id, name: t.name, active: t.active });
+			}
+			if (!res.has_more || !res.next_cursor) break;
+			cursor = res.next_cursor;
+		}
+		return out;
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to load toolkits.');
+	}
+}
+
+/** Bind a toolkit to an agent (`POST /agents/{id}/toolkits`) — the agent-side
+ * mirror of the toolkit page's "Link agent" (#607). */
+export async function bindToolkitToAgent(agentId: string, toolkitId: string): Promise<void> {
+	try {
+		await AgentsService.bindToolkit({ agentId, requestBody: { toolkit_id: toolkitId } });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to bind the toolkit.');
+	}
+}
+
+/** Unbind a toolkit from an agent (`DELETE /agents/{id}/toolkits/{toolkit_id}`). */
+export async function unbindToolkitFromAgent(agentId: string, toolkitId: string): Promise<void> {
+	try {
+		await AgentsService.unbindToolkit({ agentId, toolkitId });
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to unbind the toolkit.');
 	}
 }
 
