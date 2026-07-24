@@ -21,6 +21,7 @@ from jentic_one.control.services.access_requests.effects import (
     EffectPhase,
     admin_effect_keys,
     classify_effect,
+    plan_governed_bind_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
@@ -84,7 +85,9 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
 # plan. Their presence means the bind items are fulfilled out-of-band by the
 # setup wizard (create toolkit + credential, then amend their ids), so a plain
 # approval of an unfulfilled bind must be denied with a plan-aware reason rather
-# than half-approving into a guaranteed-broken state.
+# than half-approving into a guaranteed-broken state. Governance is computed
+# per-item by :func:`plan_governed_bind_items` (issue #778); this constant is
+# retained only for tests/documentation that name the combinations.
 _PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
     {("toolkit", "create"), ("credential", "provision")}
 )
@@ -363,12 +366,14 @@ class AccessRequestService:
                 raise NotAReviewerError(request_id)
 
             items_by_id = {item.id: item for item in request.items}
-            # A request is a provisioning plan when it carries fulfilment intents;
-            # its bind items are only satisfiable after the wizard fulfils them, so
-            # validate() denies an unfulfilled bind with a plan-aware reason.
-            is_plan = any(
-                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS for it in request.items
-            )
+            # Provisioning-plan governance is per-item (issue #778): a bind is
+            # only held to the "must resolve by id (wizard-stamped)" contract
+            # when a live intent in the same request actually targets it. An
+            # independent reference-only toolkit:bind for a different API in
+            # the same request stays on the plain contract and resolves by its
+            # reference; a withdrawn/denied intent no longer governs. See
+            # ``plan_governed_bind_items`` for the full rule.
+            plan_governed = plan_governed_bind_items(request.items)
             control_effect_items: list[tuple[str, Any]] = []
 
             for decision in item_decisions:
@@ -403,7 +408,7 @@ class AccessRequestService:
                                 existing,
                                 identity=identity,
                                 control_session=session,
-                                is_provisioning_plan=is_plan,
+                                is_provisioning_plan=existing.id in plan_governed,
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -440,7 +445,7 @@ class AccessRequestService:
                         target,
                         identity=identity,
                         control_session=session,
-                        is_provisioning_plan=is_plan,
+                        is_provisioning_plan=target.id in plan_governed,
                     )
 
                 phase = classify_effect(target.resource_type, target.action)

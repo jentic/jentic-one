@@ -14,6 +14,7 @@ from jentic_one.control.services.access_requests.effects import (
     admin_effect_keys,
     classify_effect,
     is_admin_effect,
+    plan_governed_bind_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
@@ -70,6 +71,7 @@ def _make_item(
     actor_id: str = "agnt_001",
     rules: list[dict[str, Any]] | None = None,
     item_id: str = "arqi_001",
+    status: str = "pending",
 ) -> MagicMock:
     item = MagicMock()
     item.id = item_id
@@ -80,6 +82,7 @@ def _make_item(
     item.to_id = to_id
     item.actor_id = actor_id
     item.rules = rules
+    item.status = status
     return item
 
 
@@ -934,3 +937,191 @@ async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
             control_session=session,
             is_provisioning_plan=True,
         )
+
+
+# --- plan governance (issue #778) --------------------------------------------
+#
+# ``plan_governed_bind_items`` is the pure function that replaced the
+# request-wide ``is_plan`` flag. These tests exercise the four things the flag
+# used to get wrong:
+#
+#   1. an intent for API X should not govern an independent bind for API Y;
+#   2. non-live (withdrawn/denied) intents should not govern anything;
+#   3. the CLI's 4-item plan bundle (all items target the same API) still has
+#      every bind governed — the CLI behaviour is preserved;
+#   4. slug normalization ("httpbin.org" vs "httpbin-org") does not defeat
+#      governance.
+
+
+def _intent(
+    *,
+    kind: str = "toolkit_create",
+    vendor: str = "acme",
+    name: str | None = "widgets",
+    item_id: str = "arqi_intent",
+    status: str = "pending",
+) -> MagicMock:
+    combos = {
+        "toolkit_create": ("toolkit", "create"),
+        "credential_provision": ("credential", "provision"),
+    }
+    resource_type, action = combos[kind]
+    ref: dict[str, Any] = {"vendor": vendor}
+    if name is not None:
+        ref["name"] = name
+    return _make_item(
+        resource_type=resource_type,
+        action=action,
+        resource_id=None,
+        resource_reference=ref,
+        to_id=None,
+        item_id=item_id,
+        status=status,
+    )
+
+
+def test_plan_governed_empty_when_no_intents() -> None:
+    bind = _make_item(item_id="arqi_bind_1")
+    assert plan_governed_bind_items([bind]) == frozenset()
+
+
+def test_plan_governed_governs_matching_toolkit_bind() -> None:
+    # The CLI's typical 4-item plan bundle: intents + binds all for the same API.
+    items = [
+        _intent(kind="toolkit_create", vendor="acme", name="widgets", item_id="arqi_i1"),
+        _intent(kind="credential_provision", vendor="acme", name="widgets", item_id="arqi_i2"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind",
+        ),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    governed = plan_governed_bind_items(items)
+    assert governed == frozenset({"arqi_cbind", "arqi_tbind"})
+
+
+def test_plan_governed_leaves_independent_toolkit_bind_ungoverned() -> None:
+    # #778 core case: one intent for API X + an independent reference-only
+    # toolkit:bind for API Y must not flip the Y bind onto the plan contract.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_intent"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "other", "name": "thing"},
+            item_id="arqi_independent_bind",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset()
+
+
+def test_plan_governed_governs_all_credential_binds_when_any_intent_lives() -> None:
+    # A credential:bind sharing a request with a live intent is always
+    # wizard-fulfilled: agents never carry credential ids at file time.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind_any",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset({"arqi_cbind_any"})
+
+
+def test_plan_governed_ignores_withdrawn_intents() -> None:
+    # An abandoned plan must not carry over: subsequent binds revert to the
+    # plain contract on the next decide().
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="withdrawn"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset()
+
+
+def test_plan_governed_ignores_denied_intents() -> None:
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="denied"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset()
+
+
+def test_plan_governed_normalizes_slug_vs_raw_domain() -> None:
+    # An agent files a reference with a raw domain (``httpbin.org``); the
+    # intent may have been stored slugified. Governance must match either way.
+    items = [
+        _intent(vendor="httpbin-org", name=None, item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "httpbin.org"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset({"arqi_tbind"})
+
+
+def test_plan_governed_intent_name_wildcards_all_versions() -> None:
+    # An intent's (vendor, name) matches a bind for the same API regardless
+    # of version — the intent covers all versions of that API.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets", "version": "1.0.0"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset({"arqi_tbind"})
+
+
+def test_plan_governed_excludes_already_decided_binds() -> None:
+    # decide() only re-validates PENDING or APPROVED items; a DENIED/WITHDRAWN
+    # bind is never re-validated so its governance doesn't matter and we omit
+    # it to keep the set tight against actual decide() behaviour.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_dead_bind",
+            status="denied",
+        ),
+    ]
+    assert plan_governed_bind_items(items) == frozenset()
