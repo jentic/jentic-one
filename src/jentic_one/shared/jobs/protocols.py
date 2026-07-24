@@ -46,7 +46,14 @@ class CredentialInjector(Protocol):
     """
 
     async def inject(
-        self, *, api_vendor: str, api_name: str, api_version: str, identity: Identity
+        self,
+        *,
+        api_vendor: str,
+        api_name: str,
+        api_version: str,
+        identity: Identity,
+        credential_name: str | None = None,
+        trace_id: str | None = None,
     ) -> InjectedAuth:
         """Return the auth to apply; empty ``InjectedAuth`` when there is no credential path."""
         ...

@@ -191,7 +191,11 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
     )
 
     result = await CredentialService(_ctx()).inject(
-        api_vendor="stripe", api_name="charges", api_version="v1", identity=_IDENTITY
+        api_vendor="stripe",
+        api_name="charges",
+        api_version="v1",
+        identity=_IDENTITY,
+        trace_id="trace_xyz",
     )
 
     assert result.headers == {"Authorization": "injected"}
@@ -211,6 +215,8 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
     assert kwargs["api_vendor"] == "stripe"
     assert kwargs["api_name"] == "charges"
     assert kwargs["api_version"] == "v1"
+    # #740: audit event joins to the triggering execution via trace_id.
+    assert kwargs["trace_id"] == "trace_xyz"
 
 
 @pytest.mark.asyncio

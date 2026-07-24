@@ -67,6 +67,7 @@ class CredentialService:
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        trace_id: str | None = None,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -74,6 +75,12 @@ class CredentialService:
         credential path). Credential failures are mapped to broker-domain
         exceptions (424/409/401/502) so both call-sites render identical
         problem+json.
+
+        ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
+        an operator inspecting an execution can join the credential-use record
+        back to the specific execution that triggered it (#740). Optional so
+        non-execution call-sites (bind-time probes, service accounts) don't
+        have to fabricate one.
         """
         if not api_vendor:
             return _EMPTY
@@ -102,6 +109,7 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
+                    trace_id=trace_id,
                 )
             return InjectedAuth(
                 headers=result.headers,
