@@ -313,12 +313,12 @@ async def test_noauth_plan_is_executable_via_broker_resolvers(
     # 3. EXECUTE-PATH RESOLVERS: both must resolve for the CONCRETE version.
     #    (a) toolkit-binding resolver — which toolkit serves this API for the agent.
     toolkit_resolver = ToolkitBindingResolver(ctx.admin_db, ctx.control_db)
-    toolkits = await toolkit_resolver.derive_toolkits(
+    derivation = await toolkit_resolver.derive_toolkits(
         agent_id=AGENT_SUB, vendor="country-is", name="country-is", version=resolved_version
     )
-    assert toolkits == [created_toolkit.id], (
+    assert derivation.toolkits == (created_toolkit.id,), (
         "toolkit-binding resolver must serve the no-auth API at a concrete version "
-        f"(NULL-version credential wildcard); got {toolkits}"
+        f"(NULL-version credential wildcard); got {derivation.toolkits}"
     )
 
     #    (b) credential resolver — the credential to inject (a no-op for NO_AUTH).

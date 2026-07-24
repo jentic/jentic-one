@@ -69,6 +69,7 @@ func TestRenderBodyIncludesBaseURLAndSections(t *testing.T) {
 		"### 2. Check what you can do, and request access if needed",
 		"jentic access request",
 		"credential_not_provisioned",
+		"credential_identity_mismatch",
 		"provisioning_url",
 		"exits 2",
 		"## Verification",

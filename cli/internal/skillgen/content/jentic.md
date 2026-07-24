@@ -126,6 +126,15 @@ jentic access request --provision stripe.com/api \
   credential (account) is connected. Filing an access request will **not** fix
   this; the directive carries a `provisioning_url` — hand it to your operator to
   connect the account, then retry.
+- **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
+  credential *is* connected, but that credential's stored identity doesn't cover
+  this API (e.g. it targets a different name/version, or was stored in a
+  non-canonical form). Filing an access request will **not** fix this — the
+  binding already exists. The directive's `parameters.expected` vs
+  `parameters.found` name the mismatch; if `parameters.would_match_if_normalized`
+  is `true` the credential just needs re-provisioning to canonicalize its
+  identity. Either way, ask your operator to fix or re-provision the credential
+  so it targets `expected`, then retry.
 - **`ambiguous_toolkit` (409)** — multiple toolkits you're bound to serve this
   API. The directive lists `candidates`; resend the same `execute` with
   `--header Jentic-Toolkit-Id=<toolkit_id>` (the directive also gives a
@@ -349,6 +358,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).
+  - **403 `credential_identity_mismatch`** → a bound credential exists but its
+    identity doesn't cover this API (`parameters.expected` vs
+    `parameters.found`). An access request won't help — ask your operator to fix
+    or re-provision the credential so it targets `expected`, then retry.
   Follow the directive; don't keep re-sending the same `execute`.
 - You file and wait for access; you can't approve your own requests.
 - **Don't execute to test access.** `whoami` already tells you what your bindings

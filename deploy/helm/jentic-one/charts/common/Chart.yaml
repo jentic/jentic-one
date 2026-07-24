@@ -2,4 +2,4 @@ apiVersion: v2
 name: common
 description: Shared library chart with template helpers
 type: library
-version: 0.16.0 # x-release-please-version
+version: 0.17.0 # x-release-please-version

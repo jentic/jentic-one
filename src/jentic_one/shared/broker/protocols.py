@@ -116,29 +116,64 @@ class ToolkitBindingCheckerProtocol(Protocol):
     async def has_binding(self, agent_id: str, toolkit_id: str) -> bool: ...
 
 
+@dataclass(frozen=True, slots=True)
+class IdentityMismatch:
+    """A nearest-miss credential identity for an unresolved-but-bound API.
+
+    Populated when the agent is bound to toolkit(s) but no credential's stored
+    identity covers the (concrete) operation identity — the #747/#748 case. All
+    fields are plain strings so the directive layer can serialize them directly
+    without touching a pydantic model.
+    """
+
+    expected_vendor: str
+    expected_name: str
+    expected_version: str
+    found_vendor: str
+    found_name: str | None
+    found_version: str | None
+    would_match_if_normalized: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ToolkitDerivation:
+    """Result of toolkit derivation, carrying *why* the toolkit set may be empty.
+
+    ``toolkits`` is the intersection callers use (``()`` → 403, one → use it,
+    many → 409). The remaining fields let the broker distinguish the empty cases
+    and emit the right recovery directive without a second DB round-trip:
+
+    - ``agent_bound_any`` — the agent has at least one toolkit binding at all.
+    - ``api_served_toolkits`` — every toolkit whose bound credential covers the
+      API (independent of the agent). ``()`` means no toolkit serves the API yet;
+      this subsumes the old ``any_toolkit_serves_api`` probe. **These ids can
+      belong to other owners** (the derivation is agent-independent), so only its
+      *truthiness* may be consumed here — the raw ids must not be serialized into
+      a directive/response without owner-scoping, or they'd leak cross-tenant
+      toolkit ids.
+    - ``identity_mismatch`` — a nearest-miss for the diagnostic when the agent is
+      bound but nothing serves the API because a bound credential's identity does
+      not cover the operation.
+    """
+
+    toolkits: tuple[str, ...]
+    agent_bound_any: bool
+    api_served_toolkits: tuple[str, ...]
+    identity_mismatch: IdentityMismatch | None
+
+
 @runtime_checkable
 class ToolkitDeriverProtocol(Protocol):
     """Derives which of an agent's toolkits contain a given API identity.
 
-    ``[]`` → 403, ``[one]`` → use it, ``[many]`` → 409 (caller disambiguates with
-    the ``Jentic-Toolkit-Id`` header).
+    Empty ``toolkits`` → 403, one → use it, many → 409 (caller disambiguates with
+    the ``Jentic-Toolkit-Id`` header). The full :class:`ToolkitDerivation` also
+    carries why an empty set is empty so the denial can pick the right directive.
     """
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> list[str]: ...
-
-    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
-        """Return whether *any* toolkit (for any owner) serves the given API.
-
-        A toolkit only "serves" an API once a credential for it is bound. This
-        distinguishes the "no toolkit exists yet — provision a credential first"
-        state from the "a toolkit serves it but this agent isn't bound" state, so
-        a ``no_toolkit_binding`` denial can hand the caller a recovery step that
-        can actually be completed (see issue #683). Unscoped by design: it drives
-        recovery guidance, not authorization.
-        """
-        ...
+    ) -> ToolkitDerivation: ...
 
 
 @dataclass(frozen=True, slots=True)

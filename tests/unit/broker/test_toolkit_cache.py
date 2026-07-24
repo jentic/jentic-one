@@ -7,7 +7,17 @@ import asyncio
 import pytest
 
 from jentic_one.broker.repos.caching_toolkit_deriver import CachingToolkitDeriver
-from jentic_one.shared.broker.protocols import ToolkitDeriverProtocol
+from jentic_one.shared.broker.protocols import ToolkitDerivation, ToolkitDeriverProtocol
+
+
+def _derivation(toolkits: list[str]) -> ToolkitDerivation:
+    tk = tuple(toolkits)
+    return ToolkitDerivation(
+        toolkits=tk,
+        agent_bound_any=bool(tk),
+        api_served_toolkits=tk,
+        identity_mismatch=None,
+    )
 
 
 class _CountingDeriver:
@@ -20,14 +30,11 @@ class _CountingDeriver:
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> list[str]:
+    ) -> ToolkitDerivation:
         self.calls += 1
         if self.gate is not None:
             await self.gate.wait()
-        return list(self.result)
-
-    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
-        return bool(self.result)
+        return _derivation(self.result)
 
 
 def test_wrapper_satisfies_protocol() -> None:
@@ -44,8 +51,8 @@ async def test_second_request_hits_cache() -> None:
     first = await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
     second = await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
 
-    assert first == ["tk_1", "tk_2"]
-    assert second == ["tk_1", "tk_2"]
+    assert first.toolkits == ("tk_1", "tk_2")
+    assert second.toolkits == ("tk_1", "tk_2")
     assert inner.calls == 1
 
 
@@ -82,7 +89,7 @@ async def test_concurrent_misses_single_flight_to_one_lookup() -> None:
     inner.gate = asyncio.Event()
     cache = CachingToolkitDeriver(inner, cache_ttl_seconds=300.0)
 
-    async def call() -> list[str]:
+    async def call() -> ToolkitDerivation:
         return await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
 
     tasks = [asyncio.create_task(call()) for _ in range(15)]
@@ -91,23 +98,24 @@ async def test_concurrent_misses_single_flight_to_one_lookup() -> None:
     results = await asyncio.gather(*tasks)
 
     assert inner.calls == 1
-    assert all(r == ["tk_1"] for r in results)
+    assert all(r.toolkits == ("tk_1",) for r in results)
     # And a subsequent call is now a pure cache hit.
     await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
     assert inner.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_returned_list_is_isolated_from_cache() -> None:
-    """Mutating a returned list does not corrupt the cached entry."""
+async def test_cached_result_is_immutable() -> None:
+    """The cached derivation is a frozen dataclass of tuples — callers can't corrupt it."""
     inner = _CountingDeriver(["tk_1"])
     cache = CachingToolkitDeriver(inner, cache_ttl_seconds=300.0)
 
     first = await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
-    first.append("tk_injected")
+    with pytest.raises(AttributeError):
+        first.toolkits = ("tk_injected",)  # type: ignore[misc]
     second = await cache.derive_toolkits(agent_id="a1", vendor="acme", name="api", version="1")
 
-    assert second == ["tk_1"]
+    assert second.toolkits == ("tk_1",)
 
 
 @pytest.mark.asyncio

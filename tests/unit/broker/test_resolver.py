@@ -331,3 +331,141 @@ async def test_resolve_matches_when_only_casing_differs() -> None:
         result = await resolver.resolve(api=api, caller="caller_1")
 
     assert result.credential_id == "cred_abc"
+
+
+@pytest.mark.asyncio
+async def test_resolve_vendor_scoped_wildcard_covers_concrete_op() -> None:
+    """A vendor-scoped credential (NULL name/version) resolves for a concrete op (#775)."""
+    cred = _make_credential(api_vendor="stripe", api_name=None, api_version=None)
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:wild"
+    cred.token_value_credential = tvc
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_abc"
+    assert result.encrypted_secret == "enc:wild"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_resolve_empty_string_stored_axis_covers_concrete_op() -> None:
+    """A legacy '' name/version credential still resolves (canonicalized at read, #775)."""
+    cred = _make_credential(api_vendor="stripe", api_name="", api_version="")
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:legacy"
+    cred.token_value_credential = tvc
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[cred],
+    ):
+        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_abc"
+
+
+@pytest.mark.asyncio
+async def test_resolve_wrong_version_does_not_cover() -> None:
+    """A version-pinned credential does not cover a different version."""
+    cred = _make_credential(api_vendor="stripe", api_name="payments", api_version="v2")
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with (
+        patch(
+            "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+            new_callable=AsyncMock,
+            return_value=[cred],
+        ),
+        pytest.raises(CredentialNotProvisionedError),
+    ):
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+
+@pytest.mark.asyncio
+async def test_resolve_pin_wins_over_vendor_wildcard_no_ambiguity() -> None:
+    """A vendor wildcard coexisting with a pinned credential → pin wins, no 409 (#775)."""
+    wildcard = _make_credential(cred_id="cred_wild", api_name=None, api_version=None)
+    pinned = _make_credential(cred_id="cred_pin", api_name="payments", api_version="v1")
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:pin"
+    pinned.token_value_credential = tvc
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[wildcard, pinned],
+    ):
+        result = await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+    assert result.credential_id == "cred_pin"
+
+
+@pytest.mark.asyncio
+async def test_resolve_same_specificity_tie_is_ambiguous() -> None:
+    """Two credentials at the same specificity remain a genuine 409."""
+    a = _make_credential(cred_id="cred_a", api_name="payments", api_version="v1")
+    b = _make_credential(cred_id="cred_b", api_name="payments", api_version="v1")
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with (
+        patch(
+            "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+            new_callable=AsyncMock,
+            return_value=[a, b],
+        ),
+        pytest.raises(AmbiguousCredentialError),
+    ):
+        await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+
+@pytest.mark.asyncio
+async def test_resolve_credential_name_selects_less_specific_covering() -> None:
+    """An explicit credential_name may pick a covering-but-less-specific credential (N1).
+
+    A vendor-wide wildcard and a name/version pin both cover the API. Naming the
+    wildcard must resolve *it* — the name search runs over all covering
+    credentials, before specificity narrowing — instead of raising
+    CredentialNameNotFoundError because the pin out-ranked it.
+    """
+    wildcard = _make_credential(
+        cred_id="cred_wild", name="shared-account", api_name=None, api_version=None
+    )
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:wild"  # pragma: allowlist secret
+    wildcard.token_value_credential = tvc
+    pinned = _make_credential(
+        cred_id="cred_pin", name="pinned-account", api_name="payments", api_version="v1"
+    )
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[wildcard, pinned],
+    ):
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", credential_name="shared-account"
+        )
+
+    assert result.credential_id == "cred_wild"

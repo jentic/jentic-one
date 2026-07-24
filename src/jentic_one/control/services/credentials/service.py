@@ -49,7 +49,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -116,34 +116,25 @@ class CredentialService:
 
         self._validate_create_fields(payload, managed=provider_obj.managed)
 
+        # Canonicalize the API identity at the service boundary: slug vendor/name,
+        # coerce an unset name/version to NULL (the single wildcard sentinel), and
+        # trim the version. This is what makes credential scoping (vendor /
+        # vendor.name / vendor.name.version) resolve against a concrete operation
+        # identity at execute time (#775), and stores github.com as github-com
+        # rather than a dead-on-arrival identity (#746).
+        api_scope = self._canonical_api_scope(payload.api)
+
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
-
-        # Normalize the vendor/name to the same slug form the registry stores at
-        # import time (dots -> dashes) so the broker's vendor join matches instead
-        # of silently default-denying. See issue #656.
-        api_vendor = slugify_api_field(payload.api.vendor)
-        # `api_name`/`api_version` use NULL as the "covers all names/versions"
-        # wildcard (see effects_repo.resolve_toolkits_for_api and the broker's
-        # toolkit_binding_resolver). But APIReferenceRequest defaults these to
-        # "" (not None), so a versionless/nameless credential would persist an
-        # empty string that matches NEITHER NULL nor a concrete value — the
-        # toolkit then serves nothing at execute time (issue #775). Coerce empty
-        # to NULL so the wildcard convention holds.
-        api_name = slugify_api_field(payload.api.name) if payload.api.name else None
-        # Trim the version too so a formatting difference (trailing space) doesn't
-        # defeat the exact-version match in the resolvers, mirroring how the
-        # registry stores `str(version).strip()` (#656/#775). Empty -> NULL wildcard.
-        api_version = payload.api.version.strip() or None if payload.api.version else None
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
                 session,
                 type=stored_type.value,
                 name=payload.name,
-                api_vendor=api_vendor,
-                api_name=api_name,
-                api_version=api_version,
+                api_vendor=api_scope.vendor,
+                api_name=api_scope.name,
+                api_version=api_scope.version,
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
@@ -557,3 +548,19 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
             if not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
+
+    @staticmethod
+    def _canonical_api_scope(api: APIReference) -> CredentialScope:
+        """Canonicalize the credential's API scope, rejecting a path-shaped identity.
+
+        A ``name``/``version`` containing a path separator is a strong signal the
+        caller sent a spec *file path* segment rather than an identity (e.g.
+        ``api_version='api.github.com/main/1.1.4'``, #746). Reject it loudly as a
+        400 rather than persisting a credential that can never resolve.
+        """
+        for axis, value in (("name", api.name), ("version", api.version)):
+            if value and "/" in value:
+                raise InvalidCredentialInputError(
+                    f"api.{axis} '{value}' is not an identity — it looks like a spec path"
+                )
+        return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
