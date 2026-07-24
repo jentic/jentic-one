@@ -292,6 +292,85 @@ export function ToolkitDetailBody({
 				)}
 			</AnimatePresence>
 
+			{/* Bound Agents — reverse lookup via GET /toolkits/{id}/agents. Led
+			    first (issue #636): "which agent can use this toolkit" is the
+			    safety-critical relationship an operator acts on, so it sits next
+			    to the kill-switch header, above the API/credential detail. Link /
+			    unlink reuse the agent-side bind endpoints (AgentsService). */}
+			<div className="bg-card border-border overflow-hidden rounded-xl border">
+				<div className="border-border flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3.5 sm:px-5 sm:py-4">
+					<h3 className="font-heading text-foreground font-semibold">
+						Bound Agents ({agents.length})
+					</h3>
+					<Button variant="secondary" size="sm" onClick={() => setLinkAgentOpen(true)}>
+						<LinkIcon className="h-4 w-4" /> Link agent
+					</Button>
+				</div>
+				<div className="space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">
+					{agentsError && <ErrorAlert message="Failed to load bound agents." />}
+					{!agentsError && agents.length === 0 ? (
+						<div className="border-border/50 rounded-lg border border-dashed px-5 py-6 text-center">
+							<Bot className="text-muted-foreground/50 mx-auto h-6 w-6" />
+							<p className="text-muted-foreground mt-2 text-sm">
+								No agents linked. Link an agent to let its identity call this
+								toolkit.
+							</p>
+						</div>
+					) : (
+						<AnimatePresence initial={false}>
+							{agents.map((agent) => (
+								<motion.div
+									key={agent.agent_id}
+									{...rowMotion}
+									layout
+									data-testid="bound-agent-row"
+									className="bg-muted/30 border-border/60 hover:border-border flex flex-wrap items-center gap-3 overflow-hidden rounded-lg border p-3 transition-colors"
+								>
+									<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+										<Bot className="h-4 w-4" />
+									</div>
+									<div className="min-w-0 flex-1 basis-40">
+										<div className="flex items-center gap-2">
+											<AppLink
+												href={ROUTE_PATHS.agent(agent.agent_id)}
+												className="text-foreground hover:text-primary truncate text-sm font-medium transition-colors"
+											>
+												{agent.agent_name}
+											</AppLink>
+											<ActorStatusBadge
+												status={agent.status}
+												className="text-[10px]"
+											/>
+										</div>
+										<p className="text-muted-foreground truncate font-mono text-xs">
+											{agent.agent_id}
+											{agent.bound_at
+												? ` · linked ${timeAgo(Date.parse(agent.bound_at))}`
+												: ''}
+										</p>
+									</div>
+									<div className="ml-auto w-full sm:w-auto">
+										<InlineConfirm
+											onConfirm={() => unlinkAgent.mutate(agent.agent_id)}
+											message="Revoke this toolkit for the agent?"
+											confirmLabel="Unlink"
+										>
+											<Button
+												variant="danger"
+												size="sm"
+												className="inline-flex items-center gap-1 px-2 py-1 text-xs"
+											>
+												<Unlink className="h-3 w-3" /> Unlink
+											</Button>
+										</InlineConfirm>
+									</div>
+								</motion.div>
+							))}
+						</AnimatePresence>
+					)}
+				</div>
+			</div>
+
 			{/* API Keys */}
 			<div
 				className={`overflow-hidden rounded-xl border ${suspended ? 'border-danger/50' : 'border-border'} bg-card`}
@@ -574,94 +653,6 @@ export function ToolkitDetailBody({
 									</motion.div>
 								);
 							})}
-						</AnimatePresence>
-					)}
-				</div>
-			</div>
-
-			{/* Bound Agents — reverse lookup via GET /toolkits/{id}/agents. Link /
-			    unlink reuse the agent-side bind endpoints (AgentsService). */}
-			<div className="bg-card border-border overflow-hidden rounded-xl border">
-				<div className="border-border flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3.5 sm:px-5 sm:py-4">
-					<h3 className="font-heading text-foreground font-semibold">
-						Bound Agents ({agents.length})
-					</h3>
-					<div className="flex items-center gap-2">
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => setLinkAgentOpen(true)}
-						>
-							<LinkIcon className="h-4 w-4" /> Link agent
-						</Button>
-						<AppLink
-							href={ROUTES.agents}
-							className="border-border bg-card text-foreground hover:bg-muted inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors"
-						>
-							<Bot className="h-4 w-4" /> Manage
-						</AppLink>
-					</div>
-				</div>
-				<div className="space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">
-					{agentsError && <ErrorAlert message="Failed to load bound agents." />}
-					{!agentsError && agents.length === 0 ? (
-						<div className="border-border/50 rounded-lg border border-dashed px-5 py-6 text-center">
-							<Bot className="text-muted-foreground/50 mx-auto h-6 w-6" />
-							<p className="text-muted-foreground mt-2 text-sm">
-								No agents linked. Link an agent to let its identity call this
-								toolkit.
-							</p>
-						</div>
-					) : (
-						<AnimatePresence initial={false}>
-							{agents.map((agent) => (
-								<motion.div
-									key={agent.agent_id}
-									{...rowMotion}
-									layout
-									data-testid="bound-agent-row"
-									className="bg-muted/30 border-border/60 hover:border-border flex flex-wrap items-center gap-3 overflow-hidden rounded-lg border p-3 transition-colors"
-								>
-									<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-										<Bot className="h-4 w-4" />
-									</div>
-									<div className="min-w-0 flex-1 basis-40">
-										<div className="flex items-center gap-2">
-											<AppLink
-												href={ROUTE_PATHS.agent(agent.agent_id)}
-												className="text-foreground hover:text-primary truncate text-sm font-medium transition-colors"
-											>
-												{agent.agent_name}
-											</AppLink>
-											<ActorStatusBadge
-												status={agent.status}
-												className="text-[10px]"
-											/>
-										</div>
-										<p className="text-muted-foreground truncate font-mono text-xs">
-											{agent.agent_id}
-											{agent.bound_at
-												? ` · linked ${timeAgo(Date.parse(agent.bound_at))}`
-												: ''}
-										</p>
-									</div>
-									<div className="ml-auto w-full sm:w-auto">
-										<InlineConfirm
-											onConfirm={() => unlinkAgent.mutate(agent.agent_id)}
-											message="Revoke this toolkit for the agent?"
-											confirmLabel="Unlink"
-										>
-											<Button
-												variant="danger"
-												size="sm"
-												className="inline-flex items-center gap-1 px-2 py-1 text-xs"
-											>
-												<Unlink className="h-3 w-3" /> Unlink
-											</Button>
-										</InlineConfirm>
-									</div>
-								</motion.div>
-							))}
 						</AnimatePresence>
 					)}
 				</div>
