@@ -23,6 +23,13 @@ func randomBase64(n int) (string, error) {
 // values. The encryption key is a 32-byte (AES-256) base64 string, matching the
 // credentials.encryption keyset format. The other secrets are random tokens
 // suitable for local installs. Call once before rendering the config.
+//
+// Fields that already carry a value are preserved: [ReuseSecrets] populates
+// them from an existing config so a reinstall keeps the on-disk data readable
+// (a rotated encryption key would silently brick stored credentials). Only
+// blank fields are filled here. The `--fresh-secrets` install flag skips the
+// reuse step entirely and re-enters this with a zero draft, giving the old
+// "always fresh" behavior for deliberate rotation.
 func (d *Draft) FillSecrets() error {
 	// Each surface secret is an independent 32-byte (256-bit) random token.
 	for _, dst := range []*string{
@@ -31,6 +38,9 @@ func (d *Draft) FillSecrets() error {
 		&d.AdminInvitePepper,
 		&d.ConnectStateSecret,
 	} {
+		if *dst != "" {
+			continue
+		}
 		v, err := randomBase64(32)
 		if err != nil {
 			return err

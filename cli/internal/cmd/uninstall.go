@@ -39,9 +39,12 @@ func newUninstallCmd(app *App) *cobra.Command {
 			"For a Docker install the database lives in a named volume (SQLite data or\n" +
 			"the managed Postgres data dir), not under ~/.jentic. uninstall tears the\n" +
 			"stack down but PRESERVES that volume by default, so a later `install`\n" +
-			"reattaches your data. Use --purge to also delete the data volume\n" +
-			"(this destroys the database), or --keep-data to force preservation. With\n" +
-			"no flag and an interactive terminal, uninstall asks before deleting it.\n\n" +
+			"reattaches your data. The credential-encryption key for that data lives\n" +
+			"in the jentic-one-old.yaml backup — install auto-reuses it so encrypted\n" +
+			"credentials stay readable; deleting the backup by hand strands them.\n" +
+			"Use --purge to also delete the data volume (this destroys the database),\n" +
+			"or --keep-data to force preservation. With no flag and an interactive\n" +
+			"terminal, uninstall asks before deleting it.\n\n" +
 			"On a local (source) install it stops the background app/broker processes\n" +
 			"first so they aren't orphaned when their files are removed.",
 		Args: cobra.NoArgs,
@@ -53,20 +56,15 @@ func newUninstallCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.purge, "purge", false,
 		"also remove the Docker stack's data volume (destroys the database)")
 	cmd.Flags().BoolVar(&opts.keepData, "keep-data", false,
-		"preserve the Docker stack's data volume (the default; reinstall reattaches it)")
+		"preserve the Docker stack's data volume (the default; reinstall reattaches it "+
+			"and reuses jentic-one-old.yaml's encryption key)")
 	return cmd
 }
 
 // preservedConfigs maps a config filename to the backup name it's moved to.
 var preservedConfigs = map[string]string{
-	config.InstallConfigName: backupName(config.InstallConfigName), // jentic-one.yaml -> jentic-one-old.yaml
-	config.ConfigName:        backupName(config.ConfigName),        // config.yaml -> config-old.yaml
-}
-
-// backupName turns "name.ext" into "name-old.ext" (or "name-old" if no ext).
-func backupName(name string) string {
-	ext := filepath.Ext(name)
-	return strings.TrimSuffix(name, ext) + "-old" + ext
+	config.InstallConfigName: config.BackupName(config.InstallConfigName), // jentic-one.yaml -> jentic-one-old.yaml
+	config.ConfigName:        config.BackupName(config.ConfigName),        // config.yaml -> config-old.yaml
 }
 
 func (a *App) uninstallE(opts *uninstallOptions) error {
@@ -299,7 +297,9 @@ func confirmUninstallVolumes(dbLabel string) (bool, error) {
 	if err := install.RunConfirm(
 		huh.NewConfirm().
 			Title(fmt.Sprintf("Also delete the Docker data volume? This permanently deletes %s.", dbLabel)).
-			Description("Keep it to let a later `install` reattach your data.").
+			Description("Keep it to let a later `install` reattach your data. " +
+				"The backup jentic-one-old.yaml holds the encryption key install " +
+				"needs to keep the reattached credentials readable — don't delete it.").
 			Affirmative("Yes, delete the data").
 			Negative("No, keep the data").
 			Value(&confirm),

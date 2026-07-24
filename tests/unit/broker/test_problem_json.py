@@ -14,6 +14,7 @@ from jentic_one.broker.core.exceptions import (
     CredentialNeedsReconnectError,
     CredentialNotProvisionedError,
     CredentialRefreshTransientError,
+    CredentialUndecryptableError,
     ErrorOrigin,
     OperationNotFoundError,
     UpstreamTimeoutError,
@@ -181,6 +182,7 @@ def test_status_table_maps_taxonomy() -> None:
 def test_status_table_maps_credential_errors() -> None:
     # Regression: these previously fell through to a bare BrokerError -> 500.
     assert STATUS_BY_ERROR[CredentialNotProvisionedError] == 424
+    assert STATUS_BY_ERROR[CredentialUndecryptableError] == 424
     assert STATUS_BY_ERROR[CredentialNeedsReconnectError] == 401
     assert STATUS_BY_ERROR[CredentialRefreshTransientError] == 502
 
@@ -190,6 +192,7 @@ def test_status_table_maps_credential_errors() -> None:
     ("error", "expected_status"),
     [
         (CredentialNotProvisionedError("nope"), 424),
+        (CredentialUndecryptableError("undecryptable"), 424),
         (CredentialNeedsReconnectError("reconnect"), 401),
         (CredentialRefreshTransientError("transient"), 502),
         (OperationNotFoundError("missing"), 404),
