@@ -292,6 +292,59 @@ def _empty_derivation_denial(
     )
 
 
+def _is_unserved_no_toolkit_binding(exc: ActionDeniedError) -> bool:
+    """True when ``exc`` denies with the pre-binding "no toolkit serves this API" case.
+
+    Splits the two ``no_toolkit_binding`` flavours ``_empty_derivation_denial``
+    emits: ``serves=True`` (a toolkit exists, the caller just isn't bound) is
+    agent-recoverable via an access request and does not warrant an operator
+    event; ``serves=False`` (nothing serves this API yet — a credential must be
+    provisioned first) is the operator-attention case, mirroring the 424
+    ``CREDENTIAL_NOT_PROVISIONED`` event on the post-binding side.
+    """
+    if exc.type != "no_toolkit_binding" or exc.directive is None:
+        return False
+    return exc.directive.parameters.get("toolkit_serves_api") is False
+
+
+async def _emit_toolkit_binding_unserved(
+    ctx: Context, *, api: APIReference, identity: Identity
+) -> None:
+    """Emit ``TOOLKIT_BINDING_UNSERVED`` best-effort (mirrors the PBAC_DENIED emit).
+
+    Fires once per denied execute request (the caller wraps `select_toolkit`);
+    the caller's own retry loop will re-emit — acceptable at WARNING severity,
+    and consistent with how ``CREDENTIAL_NOT_PROVISIONED`` (424) already emits
+    per attempt without in-process debouncing.
+    """
+    api_id = "/".join(part for part in (api.vendor, api.name) if part) or api.vendor
+    summary = f"No toolkit serves API '{api_id}' — provision a credential to enable binding."
+    try:
+        async with ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.TOOLKIT_BINDING_UNSERVED,
+                severity=EventSeverity.WARNING,
+                summary=summary,
+                created_by=identity.sub,
+                actor_id=identity.sub,
+                actor_type=identity.actor_type.value,
+                data={
+                    "api": {
+                        "vendor": api.vendor,
+                        "name": api.name,
+                        "version": api.version,
+                    },
+                },
+            )
+    except Exception:
+        logger.warning(
+            "telemetry_emit_failed",
+            event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+            exc_info=True,
+        )
+
+
 async def select_toolkit(
     *,
     deriver: ToolkitDeriverProtocol,
@@ -533,13 +586,23 @@ async def _handle(
     ctx_req.has_server_variable = has_host_server_variable(upstream_url)
     # Toolkit is derived from the discovered API identity (never the inbound header
     # verbatim); drives credential injection and execution attribution (§03).
-    ctx_req.toolkit_id = await select_toolkit(
-        deriver=deriver,
-        identity=identity,
-        api=resolved.api,
-        header_toolkit=request.headers.get("jentic-toolkit-id"),
-        instance=request.url.path,
-    )
+    try:
+        ctx_req.toolkit_id = await select_toolkit(
+            deriver=deriver,
+            identity=identity,
+            api=resolved.api,
+            header_toolkit=request.headers.get("jentic-toolkit-id"),
+            instance=request.url.path,
+        )
+    except ActionDeniedError as exc:
+        # Emit the operator-visible signal for the pre-binding no-toolkit case
+        # (nothing serves this API yet) before re-raising. The 424
+        # ``credential_not_provisioned`` path already emits
+        # ``CREDENTIAL_NOT_PROVISIONED`` (post-binding); this is the missing
+        # pre-binding twin. See ``TOOLKIT_BINDING_UNSERVED``.
+        if _is_unserved_no_toolkit_binding(exc):
+            await _emit_toolkit_binding_unserved(ctx, api=resolved.api, identity=identity)
+        raise
 
     # Evaluate toolkit permission rules — default-deny when no rule matches.
     # Unconditional: even if toolkit_id were empty the evaluator returns a
