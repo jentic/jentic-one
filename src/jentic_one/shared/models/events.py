@@ -54,6 +54,14 @@ class EventType:
     AGENT_REGISTRATION_APPROVED = "agent.registration_approved"
     AGENT_REGISTRATION_DENIED = "agent.registration_denied"
     PBAC_DENIED = "broker.pbac_denied"
+    # Emitted when the broker denies an execute with 403 ``no_toolkit_binding``
+    # AND no toolkit yet serves the requested API — the caller's next step is
+    # for an operator to provision a credential (which is what makes a toolkit
+    # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
+    # when a bound toolkit's credential is unresolvable at inject time): this
+    # event is the *pre-binding* signal, giving operators visibility into
+    # agent-needed APIs before a doomed access request appears.
+    TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
 
     ALL: frozenset[str] = frozenset(
         {
@@ -91,6 +99,7 @@ class EventType:
             AGENT_REGISTRATION_APPROVED,
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
+            TOOLKIT_BINDING_UNSERVED,
         }
     )
 
