@@ -33,6 +33,34 @@ func TestFillSecretsPopulatesUniqueValues(t *testing.T) {
 	}
 }
 
+func TestFillSecretsPreservesPreSeededValues(t *testing.T) {
+	// Reuse (see reuse.go) pre-seeds the draft with the existing config's
+	// secrets before FillSecrets runs. Those fields must survive so a
+	// reinstall over live data doesn't rotate the encryption key underneath
+	// stored ciphertexts.
+	d := NewDraft()
+	d.EncryptionKey = "preserved-encryption-key"
+	d.AdminJWTSecret = "preserved-jwt-secret"
+	// AdminInvitePepper deliberately left blank — it must still get filled.
+
+	if err := d.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+
+	if d.EncryptionKey != "preserved-encryption-key" {
+		t.Errorf("EncryptionKey rotated: got %q", d.EncryptionKey)
+	}
+	if d.AdminJWTSecret != "preserved-jwt-secret" {
+		t.Errorf("AdminJWTSecret rotated: got %q", d.AdminJWTSecret)
+	}
+	if d.AdminInvitePepper == "" {
+		t.Errorf("AdminInvitePepper was blank and should have been filled")
+	}
+	if d.ConnectStateSecret == "" {
+		t.Errorf("ConnectStateSecret was blank and should have been filled")
+	}
+}
+
 func TestFillSecretsNoSSOKeyWithoutSSO(t *testing.T) {
 	d := NewDraft()
 	if err := d.FillSecrets(); err != nil {
