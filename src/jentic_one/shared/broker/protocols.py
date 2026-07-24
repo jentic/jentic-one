@@ -89,13 +89,31 @@ class TokenResolverProtocol(Protocol):
     async def resolve_access_token(self, token: str) -> Identity | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class RuleEvaluation:
+    """Outcome of a permission-rule evaluation with just enough context to explain a deny.
+
+    ``allowed`` is the same signal the pre-#578 bare-bool evaluator emitted.
+    ``rules_loaded`` distinguishes two very different deny paths that used to
+    collapse into one bare 403 (#578): a zero-length pool (nothing matched
+    because there was nothing to match — wrong vendor, unbound credential,
+    empty binding, misconfigured store) vs a non-empty pool where no rule
+    happened to match. The router turns this into a two-variant detail
+    sentence — no rule contents, no internal ids, redaction-safe.
+    """
+
+    allowed: bool
+    rules_loaded: int
+
+
 @runtime_checkable
 class RuleEvaluatorProtocol(Protocol):
     """Evaluates toolkit permission rules against an inbound request.
 
-    Returns ``True`` if the request is allowed, ``False`` if denied. Evaluation
-    follows a first-match-wins policy over an ordered rule list; an exhausted
-    list defaults to deny (secure-by-default).
+    Returns a :class:`RuleEvaluation` with the allow/deny outcome and the
+    size of the vendor-pooled rule list evaluated. Evaluation follows
+    first-match-wins over an ordered rule list; an exhausted list defaults
+    to deny (secure-by-default).
     """
 
     async def evaluate(
@@ -106,7 +124,7 @@ class RuleEvaluatorProtocol(Protocol):
         path: str,
         operation_id: str | None,
         api_vendor: str = "",
-    ) -> bool: ...
+    ) -> RuleEvaluation: ...
 
 
 @runtime_checkable

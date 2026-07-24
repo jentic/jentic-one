@@ -44,14 +44,15 @@ async def test_evaluator_denies_when_no_rules_loaded() -> None:
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 
     evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    allowed = await evaluator.evaluate(
+    result = await evaluator.evaluate(
         toolkit_id="tk_test",
         method="POST",
         path="/v1/resource",
         operation_id="createResource",
         api_vendor="acme",
     )
-    assert allowed is False
+    assert result.allowed is False
+    assert result.rules_loaded == 0
 
 
 @pytest.mark.asyncio
@@ -65,11 +66,11 @@ async def test_evaluator_denies_with_empty_toolkit_id() -> None:
     mock_db.session = MagicMock(return_value=_AsyncCtx(mock_session))
 
     evaluator = RuleEvaluator(mock_db, cache_ttl_seconds=300.0)
-    allowed = await evaluator.evaluate(
+    result = await evaluator.evaluate(
         toolkit_id="",
         method="GET",
         path="/anything",
         operation_id=None,
         api_vendor="vendor",
     )
-    assert allowed is False
+    assert result.allowed is False

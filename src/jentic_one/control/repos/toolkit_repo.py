@@ -23,14 +23,12 @@ class ToolkitRepository:
         name: str,
         description: str | None = None,
         active: bool = True,
-        permissions: list[dict[str, object]] | None = None,
         created_by: str,
     ) -> Toolkit:
         toolkit = Toolkit(
             name=name,
             description=description,
             active=active,
-            permissions=permissions if permissions is not None else [],
             created_by=created_by,
         )
         session.add(toolkit)
