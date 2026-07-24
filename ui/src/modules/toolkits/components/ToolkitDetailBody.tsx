@@ -521,17 +521,9 @@ export function ToolkitDetailBody({
 					<h3 className="font-heading text-foreground font-semibold">
 						Bound Credentials ({bindings.length})
 					</h3>
-					<div className="flex items-center gap-2">
-						<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
-							<LinkIcon className="h-4 w-4" /> Bind existing
-						</Button>
-						<AppLink
-							href={ROUTES.credentials}
-							className="border-border bg-card text-foreground hover:bg-muted inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors"
-						>
-							Manage
-						</AppLink>
-					</div>
+					<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
+						<LinkIcon className="h-4 w-4" /> Bind API
+					</Button>
 				</div>
 				<div className="space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">
 					{bindingsError && <ErrorAlert message="Failed to load bound credentials." />}
@@ -619,15 +611,15 @@ export function ToolkitDetailBody({
 													onConfirm={() =>
 														unbindCredential.mutate(cred.credential_id)
 													}
-													message="Unbind this credential?"
-													confirmLabel="Unbind"
+													message="Unbind this API?"
+													confirmLabel="Unbind API"
 												>
 													<Button
 														variant="danger"
 														size="sm"
 														className="inline-flex items-center gap-1 px-2 py-1 text-xs"
 													>
-														<Unlink className="h-3 w-3" /> Unbind
+														<Unlink className="h-3 w-3" /> Unbind API
 													</Button>
 												</InlineConfirm>
 											</div>
@@ -722,7 +714,7 @@ export function ToolkitDetailBody({
 			<Dialog
 				open={bindOpen}
 				onClose={() => setBindOpen(false)}
-				title="Bind credential"
+				title="Bind API"
 				size="sm"
 				footer={
 					<Button variant="secondary" onClick={() => setBindOpen(false)}>
