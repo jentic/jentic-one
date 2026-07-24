@@ -286,14 +286,20 @@ def no_toolkit_binding_directive(
         )
 
     # No toolkit serves this API yet: a credential must be provisioned and bound
-    # first (which creates the serving toolkit), then the toolkit binding can be
-    # requested. A bare `toolkit:bind` request now can never be approved.
-    parameters["suggested_command"] = f"jentic access request --toolkit {api} --wait"
+    # first (which creates the serving toolkit), then the agent is bound. A bare
+    # `toolkit:bind` request now can never be approved — so steer the agent to
+    # file the whole path as one provisioning plan (`--provision`), which a human
+    # fulfils and approves in the dashboard (they enter the secret + grant).
+    parameters["suggested_command"] = (
+        f'jentic access request --provision {api} --reason "<why you need this>" --wait'
+    )
     instruction = (
-        f"No toolkit serves '{api}' yet, so a toolkit-binding request cannot be approved. "
-        f"Ask your operator to connect (provision) a credential for '{api}' and bind it to a "
-        f"toolkit first — that is what makes a toolkit serve the API. Once a toolkit serves it, "
-        f"file `jentic access request --toolkit {api} --wait` to bind yourself, then retry."
+        f"Nothing serves '{api}' yet, so a bare toolkit-binding request cannot be approved. "
+        f'File a provisioning plan with `jentic access request --provision {api} --reason "<why>" '
+        "--wait` — propose the auth type (`--auth`) and permission rules (`--rules-json`) you read "
+        "from the API spec, and pass a `--reason` the approver sees; then ask your operator to "
+        "fulfil it in the dashboard (they enter the credential secret and approve). Only a human "
+        "can grant this. Once approved, retry this call."
     )
     return AgentDirective(
         strategy="prompt_human",

@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Discriminator
 
+from jentic_one.shared.schemas import ServedApiRef
+
 
 class ToolkitBindingEntry(BaseModel):
     """Toolkit binding summary for the /me response."""
@@ -17,6 +19,9 @@ class ToolkitBindingEntry(BaseModel):
     # longer exists or its name could not be resolved.
     name: str | None = None
     bound_at: datetime
+    # The APIs this toolkit serves (derived from its bound credentials). Empty
+    # when the toolkit has no credential bound yet.
+    serves: list[ServedApiRef] = []
 
 
 class MeUser(BaseModel):

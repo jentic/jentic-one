@@ -15,6 +15,7 @@ from jentic_one.control.repos.toolkit_permission_repo import ToolkitPermissionRe
 from jentic_one.control.scoping.filters import build_access_filters, toolkit_owner_scope
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    ProvisioningPlanNotFulfilledError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
@@ -32,6 +33,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_b
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.actors import actor_type_from_id
+from jentic_one.shared.models.api_identity import slugify_api_field
 
 logger = structlog.get_logger(__name__)
 
@@ -44,12 +46,17 @@ class EffectPhase(enum.Enum):
     ``CONTROL_SESSION`` effects are written in the caller's control-DB
     transaction and are therefore atomic with the decision. ``ADMIN`` effects
     write to the admin DB in their own independent transaction and are applied
-    after the control commit (reconcilable on retry). ``UNSUPPORTED`` is a
-    no-op (skipped) effect for an unknown ``(resource_type, action)`` pair.
+    after the control commit (reconcilable on retry). ``FULFILMENT_ONLY`` items
+    (``toolkit:create``, ``credential:provision``) are provisioning-plan
+    placeholders: the applicator never mutates state for them — a human fulfils
+    them out-of-band via the existing create endpoints — so approving one is a
+    recorded no-op. ``UNSUPPORTED`` is a no-op (skipped) effect for an unknown
+    ``(resource_type, action)`` pair.
     """
 
     CONTROL_SESSION = "control_session"
     ADMIN = "admin"
+    FULFILMENT_ONLY = "fulfilment_only"
     UNSUPPORTED = "unsupported"
 
 
@@ -60,6 +67,8 @@ _EFFECT_PHASES: dict[tuple[str, str], EffectPhase] = {
     ("credential", "bind"): EffectPhase.CONTROL_SESSION,
     ("toolkit", "bind"): EffectPhase.ADMIN,
     ("scope", "grant"): EffectPhase.ADMIN,
+    ("toolkit", "create"): EffectPhase.FULFILMENT_ONLY,
+    ("credential", "provision"): EffectPhase.FULFILMENT_ONLY,
 }
 
 
@@ -117,6 +126,20 @@ class EffectApplicator:
                 )
             return await self._apply_scope_grant(item, decided_by=decided_by)
 
+        if phase is EffectPhase.FULFILMENT_ONLY:
+            # A provisioning-plan placeholder (toolkit:create / credential:provision).
+            # The applicator never mutates state for these — a human fulfils them
+            # via the existing create endpoints and writes the resulting ids onto
+            # the downstream bind items (amend). Record an explicit, non-null
+            # skipped effect so an approved intent is an audited no-op rather than
+            # a silent one.
+            return SkippedEffect(
+                reason=(
+                    f"fulfilment-only intent {item.resource_type}:{item.action} "
+                    "is provisioned out-of-band; no effect applied"
+                ),
+            )
+
         logger.warning(
             "unsupported_effect_combination",
             resource_type=item.resource_type,
@@ -133,6 +156,7 @@ class EffectApplicator:
         *,
         identity: Identity,
         control_session: Any,
+        is_provisioning_plan: bool = False,
     ) -> None:
         """Validate an approved item's effect can be applied — without writing.
 
@@ -142,9 +166,18 @@ class EffectApplicator:
         commits: admin-DB effects (toolkit bind, scope grant) commit in their own
         transactions and cannot be rolled back by the control-DB transaction, so
         the only safe place to fail is up front.
+
+        ``is_provisioning_plan`` is set by ``decide()`` when the item's request
+        also carries fulfilment intents (``toolkit:create`` / ``credential:provision``).
+        A bind item in such a plan that hasn't been fulfilled (no ``to_id`` /
+        ``resource_id`` stamped by the wizard) is denied with a plan-aware,
+        actionable reason rather than the cryptic "to_id missing" / "no toolkit
+        serves API" a plain approval would otherwise surface.
         """
         key = (item.resource_type, item.action)
         if key == ("credential", "bind"):
+            if is_provisioning_plan and not (item.to_id and item.resource_id):
+                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
             # credential:bind writes only to the shared control-session and so
             # rolls back cleanly with the decision. We still pre-validate that the
             # named credential exists and is visible to the decider, so a bad
@@ -160,6 +193,13 @@ class EffectApplicator:
             # _apply_toolkit_bind for the full rationale.
             if item.rules:
                 raise RulesNotSupportedForBindError(item.resource_type, item.action)
+            if is_provisioning_plan and not (item.resource_id or item.to_id):
+                # In a plan the agent binding must resolve by the concrete toolkit
+                # id the wizard creates (the credential→toolkit binding it depends
+                # on isn't visible to the reference join until the credential:bind
+                # applies later in the same decision). An unfulfilled reference-only
+                # toolkit:bind can't be satisfied by a plain approval.
+                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
             await self._resolve_toolkit_bind_target(
                 item, identity=identity, session=control_session
             )
@@ -167,6 +207,16 @@ class EffectApplicator:
             # Mirror _apply_scope_grant's guard so a bad scope-grant item fails
             # here (422) rather than mid-apply with a bare ValueError (500).
             assert_grantable_scope(item.resource_id)
+        elif (
+            classify_effect(item.resource_type, item.action) is EffectPhase.FULFILMENT_ONLY
+            and item.rules
+        ):
+            # Fulfilment-only intents (toolkit:create, credential:provision) are
+            # inert placeholders — the applicator never mutates state for them.
+            # They still cannot carry enforceable rules (there is no binding key
+            # to attach them to), so reject rules up front, consistent with the
+            # file/amend-time guard. Everything else validates cleanly.
+            raise RulesNotSupportedForBindError(item.resource_type, item.action)
 
     async def _validate_credential_bind_target(
         self, item: AccessRequestItem, *, identity: Identity, session: Any
@@ -359,10 +409,17 @@ class EffectApplicator:
                 f"resource_reference with a vendor, item={item.id}"
             )
 
+        # Normalize vendor/name to the registry's slug form (dots -> dashes) so
+        # the reference matches the credential's stored, normalized api_vendor.
+        # Agents file references from discovered vendor/name that may be raw
+        # domains (e.g. httpbin.org); credentials store the slug (httpbin-org),
+        # so an un-normalized join would find no toolkit and deny a satisfiable
+        # bind. See issue #656 (same mismatch the credential store fixes).
+        raw_name = reference.get("name")
         candidates = await EffectsRepository.resolve_toolkits_for_api(
             session,
-            vendor=vendor,
-            name=reference.get("name"),
+            vendor=slugify_api_field(str(vendor)),
+            name=slugify_api_field(str(raw_name)) if raw_name else raw_name,
             version=reference.get("version"),
             owner_ids=owner_ids,
         )

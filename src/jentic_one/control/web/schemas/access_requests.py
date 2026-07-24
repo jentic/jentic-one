@@ -52,7 +52,7 @@ class AccessRequestItemRequest(BaseModel):
     """
 
     resource_type: Literal["credential", "toolkit", "scope"]
-    action: Literal["bind", "grant"]
+    action: Literal["bind", "grant", "create", "provision"]
     resource_id: str | None = None
     resource_reference: dict[str, Any] | None = None
     to_type: str | None = None
@@ -73,10 +73,22 @@ class AccessRequestItemRequest(BaseModel):
         if has_id and has_ref:
             msg = "Provide exactly one of resource_id or resource_reference, not both"
             raise ValueError(msg)
-        # Only the (resource_type, action) pairs the effect applicator dispatches on
-        # are meaningful; reject combinations that would silently no-op (e.g.
-        # ("scope", "bind")) so a filer gets immediate feedback.
-        valid = {("credential", "bind"), ("toolkit", "bind"), ("scope", "grant")}
+        # Only the (resource_type, action) pairs the system understands are
+        # meaningful. Two families:
+        #   * enforced effects — the applicator dispatches on them at approval
+        #     (credential:bind, toolkit:bind, scope:grant).
+        #   * fulfilment intents — placeholders in a provisioning plan that a
+        #     human fulfils via the existing create endpoints; the applicator
+        #     never executes them (toolkit:create, credential:provision).
+        # Reject anything else (e.g. ("scope", "bind")) so a filer gets immediate
+        # feedback instead of a silent no-op.
+        valid = {
+            ("credential", "bind"),
+            ("toolkit", "bind"),
+            ("scope", "grant"),
+            ("toolkit", "create"),
+            ("credential", "provision"),
+        }
         if (self.resource_type, self.action) not in valid:
             msg = (
                 f"Unsupported resource_type/action combination: {self.resource_type}/{self.action}"
@@ -112,6 +124,7 @@ class AmendItemSchema(BaseModel):
     item_id: str
     rules: list[PermissionRuleSchema] | None = None
     resource_id: str | None = None
+    to_id: str | None = None
 
 
 class AmendRequest(BaseModel):

@@ -34,6 +34,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 
 _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
@@ -279,17 +280,25 @@ class AgentService:
         async with self._ctx.admin_db.session() as session:
             bindings = await AgentToolkitBindingRepository.list_for_agent(session, agent_id)
         views = [ToolkitBindingView.model_validate(b) for b in bindings]
-        # Resolve human-readable toolkit names so an agent can map an opaque
-        # `tk_…` id to a name it can show its operator (issue #686). Names live in
-        # the control DB; the bindings above are already scoped to this agent, so
-        # we only ever resolve names for toolkits the caller is bound to. Failure
-        # to reach the control DB is non-fatal — the name is simply left None.
+        # Enrich each binding from the control DB with (a) a human-readable
+        # toolkit name so an agent can map an opaque `tk_…` id to something it can
+        # show its operator (issue #686), and (b) the APIs the toolkit's bound
+        # credentials serve, so `whoami` tells the agent what it can already call
+        # and can skip a redundant provisioning plan / a throwaway denied execute.
+        # Names/serves live in the control DB; the bindings above are already
+        # scoped to this agent, so we only resolve for toolkits the caller is
+        # bound to. Failure to reach the control DB is non-fatal.
         toolkit_ids = [v.toolkit_id for v in views]
         if toolkit_ids and self._ctx.is_db_allowed("control"):
             async with self._ctx.control_db.session() as session:
                 names = await ToolkitNameRepository.get_names_for_ids(session, toolkit_ids)
+                served = await ToolkitNameRepository.get_served_apis_for_ids(session, toolkit_ids)
             for view in views:
                 view.name = names.get(view.toolkit_id)
+                view.serves = [
+                    ServedApiRef(api_vendor=vendor, api_name=name, api_version=version)
+                    for vendor, name, version in served.get(view.toolkit_id, [])
+                ]
         return views
 
     async def bind_toolkit(

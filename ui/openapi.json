@@ -84,7 +84,9 @@
           "action": {
             "enum": [
               "bind",
-              "grant"
+              "grant",
+              "create",
+              "provision"
             ],
             "title": "Action",
             "type": "string"
@@ -836,6 +838,17 @@
               }
             ],
             "title": "Rules"
+          },
+          "to_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Id"
           }
         },
         "required": [
@@ -2696,7 +2709,8 @@
           "bearer_token",
           "api_key",
           "basic",
-          "oauth2"
+          "oauth2",
+          "no_auth"
         ],
         "title": "CredentialType",
         "type": "string"
@@ -4062,6 +4076,59 @@
           "expires_in"
         ],
         "title": "MintResponse",
+        "type": "object"
+      },
+      "NoAuthCreateRequest": {
+        "description": "Create request for no_auth credentials.\n\nA no-auth credential carries no secret — it represents \"this API is called\nwithout authentication\". It still exists as a credential row so a toolkit\nbinding (and its permission rules) can hang off it, and the broker resolves\nit as a no-op auth (see broker credential resolver / injection).",
+        "properties": {
+          "api": {
+            "$ref": "#/components/schemas/APIReferenceRequest"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "default": "static",
+            "title": "Provider",
+            "type": "string"
+          },
+          "runtime_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_variables": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Variables"
+          },
+          "type": {
+            "const": "no_auth",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "api"
+        ],
+        "title": "NoAuthCreateRequest",
         "type": "object"
       },
       "NoteApiReference": {
@@ -6014,6 +6081,42 @@
         "title": "SecuritySchemeResponse",
         "type": "object"
       },
+      "ServedApiRef": {
+        "description": "An API served by a toolkit's bound credential, keyed by its stored identity.\n\nDistinct from ``APIReference`` on purpose: this carries the *stored* credential\nidentity, where ``api_name``/``api_version`` may be NULL (the \"covers all\nnames/versions\" wildcard, #775) — so they're optional here, unlike the strict\nall-required ``APIReference``. Shared so the auth service schema and the\n``/me`` web schema use ONE model instead of two identical copies.",
+        "properties": {
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Name"
+          },
+          "api_vendor": {
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version"
+          }
+        },
+        "required": [
+          "api_vendor"
+        ],
+        "title": "ServedApiRef",
+        "type": "object"
+      },
       "ServiceAccountCreateRequest": {
         "description": "Request body for creating a service account.",
         "properties": {
@@ -6479,6 +6582,14 @@
               }
             ],
             "title": "Name"
+          },
+          "serves": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ServedApiRef"
+            },
+            "title": "Serves",
+            "type": "array"
           },
           "toolkit_id": {
             "title": "Toolkit Id",
@@ -17957,6 +18068,7 @@
                     "api_key": "#/components/schemas/ApiKeyCreateRequest",
                     "basic": "#/components/schemas/BasicAuthCreateRequest",
                     "bearer_token": "#/components/schemas/BearerTokenCreateRequest",
+                    "no_auth": "#/components/schemas/NoAuthCreateRequest",
                     "oauth2": "#/components/schemas/OAuth2CreateRequest"
                   },
                   "propertyName": "type"
@@ -17973,6 +18085,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/OAuth2CreateRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NoAuthCreateRequest"
                   }
                 ],
                 "title": "Body"

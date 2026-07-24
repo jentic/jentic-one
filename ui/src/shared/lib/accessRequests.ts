@@ -120,6 +120,19 @@ export interface ItemDecision {
 	decision_reason?: string | null;
 }
 
+/**
+ * A per-item amendment sent to the `:amend` verb. The provisioning-plan wizard
+ * uses this to write the freshly-created toolkit/credential ids onto a pending
+ * `credential:bind` item (`to_id` = toolkit, `resource_id` = credential) and to
+ * attach the operator-confirmed permission `rules`, before the final `:decide`.
+ */
+export interface ItemAmendment {
+	item_id: string;
+	resource_id?: string | null;
+	to_id?: string | null;
+	rules?: PermissionRule[] | null;
+}
+
 export interface ListAccessRequestsParams {
 	status?: string | null;
 	actorId?: string | null;
@@ -181,6 +194,29 @@ export async function decideAccessRequest(
 		});
 	} catch (error) {
 		throw toRailError(error, 'Failed to record the decision.');
+	}
+}
+
+/**
+ * Amend pending items on an access request (`POST /access-requests/{id}:amend`).
+ * Used by the provisioning-plan wizard to write resolved toolkit/credential ids
+ * and confirmed rules onto a pending `credential:bind` item before approval.
+ */
+export async function amendAccessRequest(
+	requestId: string,
+	items: ItemAmendment[],
+): Promise<AccessRequest> {
+	try {
+		return await apiRequest<AccessRequest>(OpenAPI, {
+			method: 'POST',
+			url: '/access-requests/{request_id}:amend',
+			path: { request_id: requestId },
+			body: { items },
+			mediaType: 'application/json',
+			errors: { 404: 'Access request not found.' },
+		});
+	} catch (error) {
+		throw toRailError(error, 'Failed to amend the access request.');
 	}
 }
 

@@ -37,6 +37,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialPage,
     CredentialRedactedView,
     CredentialUpdate,
+    NoAuthFull,
+    NoAuthRedacted,
     OAuth2Full,
     OAuth2Redacted,
     ProviderDiscoveryEntry,
@@ -138,7 +140,7 @@ class CredentialService:
                 server_variables=payload.server_variables,
             )
 
-            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full
+            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full | NoAuthFull
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
@@ -224,6 +226,12 @@ class CredentialService:
                     grant_type=grant,
                     scopes=payload.scopes,
                 )
+            elif payload.type == CredentialType.NO_AUTH:
+                # A no-auth credential is a marker that the API needs no secret
+                # (e.g. open-meteo). No sub-table row and no secret are stored;
+                # the broker injects nothing for it. This lets a provisioning
+                # plan reach first execution without a credential secret (#603).
+                secret = NoAuthFull()
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
 
@@ -457,7 +465,13 @@ class CredentialService:
         stored_type = StoredCredentialType(credential.type)
         wire_type = to_wire(stored_type)
 
-        details: BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted
+        details: (
+            BearerTokenRedacted
+            | ApiKeyRedacted
+            | BasicAuthRedacted
+            | OAuth2Redacted
+            | NoAuthRedacted
+        )
 
         if wire_type == CredentialType.BEARER_TOKEN:
             tvc = credential.token_value_credential
@@ -486,6 +500,8 @@ class CredentialService:
                 grant_type="client_credentials",
                 scopes=occ.scope.split() if occ and occ.scope else None,
             )
+        elif wire_type == CredentialType.NO_AUTH:
+            details = NoAuthRedacted()
         else:
             details = BearerTokenRedacted(token_preview=None)
 

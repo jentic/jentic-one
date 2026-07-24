@@ -34,7 +34,14 @@ def inject_auth(
         return _inject_basic(resolved, ctx)
     if resolved.wire_type == CredentialType.OAUTH2:
         return _inject_oauth2(access_token)
-    return InjectionResult(headers={}, query_params={}, cookies={})
+    if resolved.wire_type == CredentialType.NO_AUTH:
+        # A no-auth credential injects nothing — the API needs no secret (#603).
+        return InjectionResult(headers={}, query_params={}, cookies={})
+    # An unknown wire type must fail loudly rather than silently inject nothing:
+    # a quiet empty injection would send an unauthenticated request and surface
+    # as a confusing upstream 401/403 far from the cause. Every known type is
+    # handled above (exhaustive over CredentialType).
+    raise ValueError(f"Unsupported credential wire_type for injection: {resolved.wire_type!r}")
 
 
 def _inject_bearer(resolved: ResolvedCredential, ctx: Context) -> InjectionResult:

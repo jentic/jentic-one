@@ -12,7 +12,7 @@ import { clearToken, setToken } from '@/shared/api';
 import { AuthProvider } from '@/shared/auth/AuthContext';
 import { App } from '@/App';
 import { clearAllToasts, Toaster } from '@/shared/ui';
-import { CredentialType } from '@/modules/credentials/api';
+import { CredentialType } from '@/shared/credentials/api';
 import { CredentialsPage } from '@/modules/credentials/pages/CredentialsPage';
 import {
 	makeMockApi,
@@ -20,7 +20,7 @@ import {
 	makeMockCredential,
 	resetApisStore,
 	resetCredentialsStore,
-} from '@/modules/credentials/mocks/handlers';
+} from '@/shared/credentials/mocks/handlers';
 
 /**
  * The success toast that previously lived as a one-time-secret dialog is now

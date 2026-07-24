@@ -133,8 +133,31 @@ class OAuth2CreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class NoAuthCreateRequest(BaseModel):
+    """Create request for no_auth credentials.
+
+    A no-auth credential carries no secret — it represents "this API is called
+    without authentication". It still exists as a credential row so a toolkit
+    binding (and its permission rules) can hang off it, and the broker resolves
+    it as a no-op auth (see broker credential resolver / injection).
+    """
+
+    type: Literal["no_auth"]
+    name: str
+    api: APIReferenceRequest
+    provider: str = "static"
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialCreateRequest = Annotated[
-    BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest,
+    BearerTokenCreateRequest
+    | ApiKeyCreateRequest
+    | BasicAuthCreateRequest
+    | OAuth2CreateRequest
+    | NoAuthCreateRequest,
     Field(discriminator="type"),
 ]
 

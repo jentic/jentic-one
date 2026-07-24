@@ -29,6 +29,8 @@ export namespace AccessRequestItemRequest {
     export enum action {
         BIND = 'bind',
         GRANT = 'grant',
+        CREATE = 'create',
+        PROVISION = 'provision',
     }
     export enum resource_type {
         CREDENTIAL = 'credential',

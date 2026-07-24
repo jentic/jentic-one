@@ -72,6 +72,8 @@ components:
           enum:
           - bind
           - grant
+          - create
+          - provision
           title: Action
           type: string
         resource_id:
@@ -523,6 +525,11 @@ components:
             type: array
           - type: 'null'
           title: Rules
+        to_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: To Id
       required:
       - item_id
       title: AmendItemSchema
@@ -1696,6 +1703,7 @@ components:
       - api_key
       - basic
       - oauth2
+      - no_auth
       title: CredentialType
       type: string
     CurrentUserResponse:
@@ -2585,6 +2593,45 @@ components:
       - access_token
       - expires_in
       title: MintResponse
+      type: object
+    NoAuthCreateRequest:
+      description: |-
+        Create request for no_auth credentials.
+
+        A no-auth credential carries no secret — it represents "this API is called
+        without authentication". It still exists as a credential row so a toolkit
+        binding (and its permission rules) can hang off it, and the broker resolves
+        it as a no-op auth (see broker credential resolver / injection).
+      properties:
+        api:
+          $ref: '#/components/schemas/APIReferenceRequest'
+        name:
+          title: Name
+          type: string
+        provider:
+          default: static
+          title: Provider
+          type: string
+        runtime_config:
+          anyOf:
+          - $ref: '#/components/schemas/RuntimeConfig'
+          - type: 'null'
+        server_variables:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Server Variables
+        type:
+          const: no_auth
+          title: Type
+          type: string
+      required:
+      - type
+      - name
+      - api
+      title: NoAuthCreateRequest
       type: object
     NoteApiReference:
       additionalProperties: false
@@ -3824,6 +3871,33 @@ components:
       - type
       title: SecuritySchemeResponse
       type: object
+    ServedApiRef:
+      description: |-
+        An API served by a toolkit's bound credential, keyed by its stored identity.
+
+        Distinct from ``APIReference`` on purpose: this carries the *stored* credential
+        identity, where ``api_name``/``api_version`` may be NULL (the "covers all
+        names/versions" wildcard, #775) — so they're optional here, unlike the strict
+        all-required ``APIReference``. Shared so the auth service schema and the
+        ``/me`` web schema use ONE model instead of two identical copies.
+      properties:
+        api_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Name
+        api_vendor:
+          title: Api Vendor
+          type: string
+        api_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Version
+      required:
+      - api_vendor
+      title: ServedApiRef
+      type: object
     ServiceAccountCreateRequest:
       description: Request body for creating a service account.
       properties:
@@ -4113,6 +4187,12 @@ components:
           - type: string
           - type: 'null'
           title: Name
+        serves:
+          default: []
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Serves
+          type: array
         toolkit_id:
           title: Toolkit Id
           type: string
@@ -9916,6 +9996,7 @@ paths:
                   api_key: '#/components/schemas/ApiKeyCreateRequest'
                   basic: '#/components/schemas/BasicAuthCreateRequest'
                   bearer_token: '#/components/schemas/BearerTokenCreateRequest'
+                  no_auth: '#/components/schemas/NoAuthCreateRequest'
                   oauth2: '#/components/schemas/OAuth2CreateRequest'
                 propertyName: type
               oneOf:
@@ -9923,6 +10004,7 @@ paths:
               - $ref: '#/components/schemas/ApiKeyCreateRequest'
               - $ref: '#/components/schemas/BasicAuthCreateRequest'
               - $ref: '#/components/schemas/OAuth2CreateRequest'
+              - $ref: '#/components/schemas/NoAuthCreateRequest'
               title: Body
         required: true
       responses:

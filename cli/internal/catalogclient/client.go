@@ -17,11 +17,12 @@ import (
 
 // Job status values returned by GET /jobs/{id}.
 const (
-	JobQueued    = "queued"
-	JobRunning   = "running"
-	JobCompleted = "completed"
-	JobFailed    = "failed"
-	JobCancelled = "cancelled"
+	JobQueued     = "queued"
+	JobRunning    = "running"
+	JobCompleted  = "completed"
+	JobFailed     = "failed"
+	JobCancelled  = "cancelled"
+	JobDeadLetter = "dead_letter"
 )
 
 // Client talks to a single Jentic control-plane base URL.

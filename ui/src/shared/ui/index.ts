@@ -126,3 +126,14 @@ export type { ScopeGroupProps } from '@/shared/ui/ScopeGroup';
 
 export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
+
+export {
+	PermissionRuleEditor,
+	isEmptyAllowRule,
+	PERMISSION_EFFECTS,
+} from '@/shared/ui/PermissionRuleEditor';
+export type {
+	PermissionRuleEditorProps,
+	PermissionRuleInput,
+	PermissionEffect,
+} from '@/shared/ui/PermissionRuleEditor';
