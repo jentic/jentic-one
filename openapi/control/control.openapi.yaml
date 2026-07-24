@@ -846,32 +846,6 @@ components:
       - has_more
       title: ApiListResponse
       type: object
-    ApiRef:
-      description: |-
-        An API a toolkit serves — the (vendor, name, version) identity tuple.
-
-        Populated from the credentials bound to the toolkit, so an agent reading its
-        own `whoami` can tell which APIs it can already call — and skip filing a
-        provisioning plan for an API it is already bound to, instead of executing
-        just to discover it's denied.
-      properties:
-        api_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Api Name
-        api_vendor:
-          title: Api Vendor
-          type: string
-        api_version:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Api Version
-      required:
-      - api_vendor
-      title: ApiRef
-      type: object
     ApiReferenceResponse:
       description: Core API identifier triple plus derived host.
       properties:
@@ -3897,6 +3871,33 @@ components:
       - type
       title: SecuritySchemeResponse
       type: object
+    ServedApiRef:
+      description: |-
+        An API served by a toolkit's bound credential, keyed by its stored identity.
+
+        Distinct from ``APIReference`` on purpose: this carries the *stored* credential
+        identity, where ``api_name``/``api_version`` may be NULL (the "covers all
+        names/versions" wildcard, #775) — so they're optional here, unlike the strict
+        all-required ``APIReference``. Shared so the auth service schema and the
+        ``/me`` web schema use ONE model instead of two identical copies.
+      properties:
+        api_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Name
+        api_vendor:
+          title: Api Vendor
+          type: string
+        api_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Version
+      required:
+      - api_vendor
+      title: ServedApiRef
+      type: object
     ServiceAccountCreateRequest:
       description: Request body for creating a service account.
       properties:
@@ -4189,7 +4190,7 @@ components:
         serves:
           default: []
           items:
-            $ref: '#/components/schemas/ApiRef'
+            $ref: '#/components/schemas/ServedApiRef'
           title: Serves
           type: array
         toolkit_id:

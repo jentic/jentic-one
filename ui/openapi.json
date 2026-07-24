@@ -1350,42 +1350,6 @@
         "title": "ApiListResponse",
         "type": "object"
       },
-      "ApiRef": {
-        "description": "An API a toolkit serves — the (vendor, name, version) identity tuple.\n\nPopulated from the credentials bound to the toolkit, so an agent reading its\nown `whoami` can tell which APIs it can already call — and skip filing a\nprovisioning plan for an API it is already bound to, instead of executing\njust to discover it's denied.",
-        "properties": {
-          "api_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Name"
-          },
-          "api_vendor": {
-            "title": "Api Vendor",
-            "type": "string"
-          },
-          "api_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Version"
-          }
-        },
-        "required": [
-          "api_vendor"
-        ],
-        "title": "ApiRef",
-        "type": "object"
-      },
       "ApiReferenceResponse": {
         "description": "Core API identifier triple plus derived host.",
         "properties": {
@@ -6117,6 +6081,42 @@
         "title": "SecuritySchemeResponse",
         "type": "object"
       },
+      "ServedApiRef": {
+        "description": "An API served by a toolkit's bound credential, keyed by its stored identity.\n\nDistinct from ``APIReference`` on purpose: this carries the *stored* credential\nidentity, where ``api_name``/``api_version`` may be NULL (the \"covers all\nnames/versions\" wildcard, #775) — so they're optional here, unlike the strict\nall-required ``APIReference``. Shared so the auth service schema and the\n``/me`` web schema use ONE model instead of two identical copies.",
+        "properties": {
+          "api_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Name"
+          },
+          "api_vendor": {
+            "title": "Api Vendor",
+            "type": "string"
+          },
+          "api_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Version"
+          }
+        },
+        "required": [
+          "api_vendor"
+        ],
+        "title": "ServedApiRef",
+        "type": "object"
+      },
       "ServiceAccountCreateRequest": {
         "description": "Request body for creating a service account.",
         "properties": {
@@ -6586,7 +6586,7 @@
           "serves": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/ApiRef"
+              "$ref": "#/components/schemas/ServedApiRef"
             },
             "title": "Serves",
             "type": "array"

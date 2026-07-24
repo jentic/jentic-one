@@ -24,7 +24,6 @@ from jentic_one.auth.services.errors import (
 from jentic_one.auth.services.schemas.agents import (
     AgentCreatePayload,
     AgentView,
-    ServedApi,
     ToolkitBindingView,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
@@ -35,6 +34,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
 
 _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
@@ -296,7 +296,7 @@ class AgentService:
             for view in views:
                 view.name = names.get(view.toolkit_id)
                 view.serves = [
-                    ServedApi(api_vendor=vendor, api_name=name, api_version=version)
+                    ServedApiRef(api_vendor=vendor, api_name=name, api_version=version)
                     for vendor, name, version in served.get(view.toolkit_id, [])
                 ]
         return views

@@ -56,7 +56,7 @@ class ToolkitNameRepository:
         ``toolkit_credential_bindings`` to ``credentials`` in the control DB via
         raw SQL (same cross-boundary convention as ``get_names_for_ids`` — the
         auth module must not import the control ORM). Returns primitive tuples;
-        the service maps them to its ``ServedApi`` view. Runs against a
+        the service maps them to its ``ServedApiRef`` view. Runs against a
         control-DB session; callers pass already scope-checked binding ids.
         """
         if not toolkit_ids:

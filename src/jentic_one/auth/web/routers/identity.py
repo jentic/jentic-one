@@ -16,7 +16,6 @@ from jentic_one.auth.web.deps import (
     get_user_service,
 )
 from jentic_one.auth.web.schemas.identity import (
-    ApiRef,
     MeAgent,
     MeResponse,
     MeServiceAccount,
@@ -103,14 +102,9 @@ async def _resolve_agent(request: Request, identity: Identity, agent_svc: AgentS
                 toolkit_id=tb.toolkit_id,
                 name=tb.name,
                 bound_at=tb.bound_at,
-                serves=[
-                    ApiRef(
-                        api_vendor=s.api_vendor,
-                        api_name=s.api_name,
-                        api_version=s.api_version,
-                    )
-                    for s in tb.serves
-                ],
+                # service + web share ServedApiRef, so the serves list passes
+                # straight through with no per-item remapping.
+                serves=tb.serves,
             )
             for tb in toolkits
         ],

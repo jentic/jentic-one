@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from jentic_one.shared.schemas import ServedApiRef
+
 
 class AgentView(BaseModel):
     """Read-model for an agent record."""
@@ -35,14 +37,6 @@ class AgentCreatePayload(BaseModel):
     scopes: list[str] | None = None
 
 
-class ServedApi(BaseModel):
-    """An API a toolkit serves (from its bound credentials)."""
-
-    api_vendor: str
-    api_name: str | None = None
-    api_version: str | None = None
-
-
 class ToolkitBindingView(BaseModel):
     """Read-model for a toolkit binding."""
 
@@ -56,4 +50,4 @@ class ToolkitBindingView(BaseModel):
     name: str | None = None
     bound_at: datetime
     # APIs the bound toolkit serves, derived from its credentials (control DB).
-    serves: list[ServedApi] = []
+    serves: list[ServedApiRef] = []

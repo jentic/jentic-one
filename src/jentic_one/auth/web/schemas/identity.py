@@ -7,19 +7,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Discriminator
 
-
-class ApiRef(BaseModel):
-    """An API a toolkit serves — the (vendor, name, version) identity tuple.
-
-    Populated from the credentials bound to the toolkit, so an agent reading its
-    own `whoami` can tell which APIs it can already call — and skip filing a
-    provisioning plan for an API it is already bound to, instead of executing
-    just to discover it's denied.
-    """
-
-    api_vendor: str
-    api_name: str | None = None
-    api_version: str | None = None
+from jentic_one.shared.schemas import ServedApiRef
 
 
 class ToolkitBindingEntry(BaseModel):
@@ -33,7 +21,7 @@ class ToolkitBindingEntry(BaseModel):
     bound_at: datetime
     # The APIs this toolkit serves (derived from its bound credentials). Empty
     # when the toolkit has no credential bound yet.
-    serves: list[ApiRef] = []
+    serves: list[ServedApiRef] = []
 
 
 class MeUser(BaseModel):
