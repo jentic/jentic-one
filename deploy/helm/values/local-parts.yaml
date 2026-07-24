@@ -38,6 +38,13 @@ admin:
   service:
     type: NodePort
     nodePort: 30082
+  extraEnv:
+    # The admin pod also hosts the auth surface (see admin.Dockerfile). Same
+    # contract as combined mode: the JWT-Bearer assertion audience is built
+    # from canonical_base_url and MUST match the URL clients actually use —
+    # the gateway on kind host port 8000 — or every token exchange fails
+    # 400 invalid_grant. See the longer note in local-combined.yaml.
+    JENTIC__AUTH__CANONICAL_BASE_URL: http://localhost:8000
 
 control:
   enabled: true
