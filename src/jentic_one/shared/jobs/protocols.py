@@ -18,12 +18,21 @@ class InjectedAuth:
     dropped (a headers-only return would lose both). Cookie entries are merged
     into the outbound ``Cookie`` header by the call-site (sync router / worker).
     Server-variable entries are substituted into the upstream URL template.
+
+    ``credential_id`` / ``credential_name`` attribute the material back to the
+    stored credential the resolver chose (#740) so downstream call-sites can
+    stamp ``Jentic-Credential-*`` response headers, persist attribution on the
+    execution record, and join the ``CREDENTIAL_ACCESSED`` audit event to an
+    execution via ``trace_id``. Both are ``None`` when no credential was used
+    (inline auth, credential-less API, or a resolve-fail before injection).
     """
 
     headers: dict[str, str]
     query_params: dict[str, str]
     cookies: dict[str, str]
     server_variables: dict[str, str] | None = None
+    credential_id: str | None = None
+    credential_name: str | None = None
 
 
 class CredentialInjector(Protocol):
