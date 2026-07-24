@@ -1413,6 +1413,12 @@
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
+              "name": "fresh-secrets",
+              "type": "bool",
+              "default": "false",
+              "usage": "rotate every generated secret instead of reusing an existing config's (default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)"
+            },
+            {
               "name": "no-start",
               "type": "bool",
               "default": "false",

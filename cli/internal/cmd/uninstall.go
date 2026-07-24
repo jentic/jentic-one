@@ -59,14 +59,8 @@ func newUninstallCmd(app *App) *cobra.Command {
 
 // preservedConfigs maps a config filename to the backup name it's moved to.
 var preservedConfigs = map[string]string{
-	config.InstallConfigName: backupName(config.InstallConfigName), // jentic-one.yaml -> jentic-one-old.yaml
-	config.ConfigName:        backupName(config.ConfigName),        // config.yaml -> config-old.yaml
-}
-
-// backupName turns "name.ext" into "name-old.ext" (or "name-old" if no ext).
-func backupName(name string) string {
-	ext := filepath.Ext(name)
-	return strings.TrimSuffix(name, ext) + "-old" + ext
+	config.InstallConfigName: config.BackupName(config.InstallConfigName), // jentic-one.yaml -> jentic-one-old.yaml
+	config.ConfigName:        config.BackupName(config.ConfigName),        // config.yaml -> config-old.yaml
 }
 
 func (a *App) uninstallE(opts *uninstallOptions) error {

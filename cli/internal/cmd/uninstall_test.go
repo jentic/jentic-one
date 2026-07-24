@@ -155,7 +155,7 @@ func TestUninstall_SourceWipesDataAndBacksUpConfig(t *testing.T) {
 	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 		t.Errorf("data dir should be removed, stat err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, backupName(config.InstallConfigName))); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, config.BackupName(config.InstallConfigName))); err != nil {
 		t.Errorf("install config should be backed up: %v", err)
 	}
 	if strings.Contains(out.String(), "Docker stack") {
