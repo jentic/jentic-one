@@ -19,7 +19,7 @@
  * fulfilment can leave real objects. The wizard tracks what it created this
  * session and offers to discard them on cancel (client-side, best-effort).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -154,6 +154,62 @@ export function ProvisioningRequestDialog({
 	// until the fetch resolves; the terminal gate falls back to the snapshot.
 	const [freshStatus, setFreshStatus] = useState<string | null>(null);
 
+	// Refs shadow the latest state values for the unmount cleanup (#781). The
+	// cleanup runs in an effect return, which captures the *first* render's
+	// closure; without refs it would read stale ``null``s and never discard.
+	const toolkitIdRef = useRef<string | null>(null);
+	const credentialIdRef = useRef<string | null>(null);
+	const outcomeRef = useRef<Outcome | null>(null);
+	// True once ``handleCancel`` (Dialog X/Escape/backdrop) has run its
+	// confirm-to-discard prompt — success or dismiss. The unmount cleanup
+	// then skips: the operator was asked and made a choice, we don't want
+	// to second-guess them on the way out.
+	const cleanupHandledRef = useRef(false);
+	useEffect(() => {
+		toolkitIdRef.current = toolkitId;
+	}, [toolkitId]);
+	useEffect(() => {
+		credentialIdRef.current = credentialId;
+	}, [credentialId]);
+	useEffect(() => {
+		outcomeRef.current = outcome;
+	}, [outcome]);
+	// Reset the cleanup-handled flag when the operator opens a fresh request.
+	// A different id means the previous request's tracked ids/outcome no longer
+	// apply here, and this session hasn't had its own confirm-to-discard yet.
+	useEffect(() => {
+		cleanupHandledRef.current = false;
+	}, [request.id]);
+
+	// Programmatic-close orphan cleanup (#781). ``handleCancel`` is the
+	// confirm-to-discard safety net for the operator-driven close paths
+	// (X/Escape/backdrop). It does NOT run when the wizard is unmounted for
+	// any *other* reason — a route change, the list query refreshing and
+	// replacing ``active`` with ``null``, or a container swap. Without a
+	// return-cleanup effect, any toolkit/credential created in step 1/2 is
+	// silently orphaned in those cases. Fire-and-forget the same discards
+	// on unmount whenever the wizard exits with tracked ids and no granted
+	// outcome. ``cleanupHandledRef`` guards against double-discard when the
+	// operator already answered the confirm prompt via ``handleCancel``.
+	//
+	// Not covered: the OAuth ``redirected`` branch, which unloads the SPA —
+	// React lifecycle effects never fire in that case (see #781 discussion).
+	// A durable draft (persist created ids to storage, offer recovery on
+	// re-open) is the follow-up path there and is out of scope here.
+	useEffect(() => {
+		return () => {
+			if (cleanupHandledRef.current) return;
+			if (outcomeRef.current === 'granted') return;
+			const tid = toolkitIdRef.current;
+			const cid = credentialIdRef.current;
+			if (!tid && !cid) return;
+			void (async () => {
+				if (cid) await discardPlanCredential(cid);
+				if (tid) await discardPlanToolkit(tid);
+			})();
+		};
+	}, []);
+
 	// Transient flags reset on every (re)open; the draft (created ids, rules)
 	// persists between dismissals so a peek doesn't discard fulfilment progress.
 	// If a prior submit ended on the `done` screen with an ERROR (the request is
@@ -262,6 +318,9 @@ export function ProvisioningRequestDialog({
 	const handleCancel = useCallback(async () => {
 		// Orphan control: if we created a toolkit/credential but didn't approve,
 		// offer to discard them so an abandoned fulfilment doesn't strand objects.
+		// Whichever branch runs (discard, keep, or no objects), mark cleanup as
+		// handled so the unmount effect (#781) doesn't second-guess the operator
+		// on the way out.
 		if ((toolkitId || credentialId) && outcome !== 'granted') {
 			const discard = window.confirm(
 				'Discard the toolkit and credential created for this request? ' +
@@ -272,6 +331,7 @@ export function ProvisioningRequestDialog({
 				if (toolkitId) await discardPlanToolkit(toolkitId);
 			}
 		}
+		cleanupHandledRef.current = true;
 		onClose();
 	}, [toolkitId, credentialId, outcome, onClose]);
 
