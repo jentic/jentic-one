@@ -258,11 +258,14 @@ def _context_from_discovery(
 
 
 def _empty_derivation_denial(
-    d: ToolkitDerivation, api: APIReference, *, detail: str, instance: str
+    d: ToolkitDerivation, api: APIReference, *, instance: str
 ) -> BrokerError:
     """Pick the right denial for an empty toolkit derivation (#683 + #747/#748).
 
-    Four cases, distinguished by the structured derivation result:
+    Two cases, distinguished by the structured derivation result — each with its
+    own ``detail`` so the problem+json ``type`` and ``detail`` never tell
+    different stories (e.g. a ``credential_identity_mismatch`` must not carry a
+    "not bound to toolkit" detail):
 
     - Bound + a bound credential is a near-miss for the API → the credential's
       identity does not cover the operation (#747/#748). Fix the *credential*,
@@ -274,13 +277,13 @@ def _empty_derivation_denial(
     serves = bool(d.api_served_toolkits)
     if d.agent_bound_any and not serves and d.identity_mismatch is not None:
         return CredentialIdentityMismatchError(
-            detail,
+            "A bound credential's identity does not cover this API",
             type="credential_identity_mismatch",
             instance=instance,
             directive=credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
         )
     return ActionDeniedError(
-        detail,
+        "No toolkit binding for this API",
         type="no_toolkit_binding",
         instance=instance,
         directive=no_toolkit_binding_directive(
@@ -326,6 +329,15 @@ async def select_toolkit(
             )
         return identity.sub
 
+    # Invariant: the API identity here is the *discovered* spec identity, which is
+    # always concrete (vendor/name/version all set) — the registry never yields a
+    # wildcard. Derivation and the nearest-miss diagnostic (#748) rely on this
+    # (they slugify and compare each axis), so assert it at the boundary rather
+    # than silently deriving against a blank axis.
+    assert api.vendor and api.name and api.version, (
+        "select_toolkit requires a concrete discovered API identity"
+    )
+
     derivation = await deriver.derive_toolkits(
         agent_id=identity.sub,
         vendor=api.vendor,
@@ -348,18 +360,11 @@ async def select_toolkit(
                     instance=instance,
                     directive=ambiguous_toolkit_directive(candidates),
                 )
-            raise _empty_derivation_denial(
-                derivation,
-                api,
-                detail=f"Not bound to toolkit '{header_toolkit}' for this API",
-                instance=instance,
-            )
+            raise _empty_derivation_denial(derivation, api, instance=instance)
         return header_toolkit
 
     if not candidates:
-        raise _empty_derivation_denial(
-            derivation, api, detail="No toolkit binding for this API", instance=instance
-        )
+        raise _empty_derivation_denial(derivation, api, instance=instance)
     if len(candidates) > 1:
         raise AmbiguousMatchError(
             "Multiple toolkits match this API; resend with the Jentic-Toolkit-Id header.",

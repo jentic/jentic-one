@@ -399,3 +399,37 @@ async def test_resolve_same_specificity_tie_is_ambiguous() -> None:
         pytest.raises(AmbiguousCredentialError),
     ):
         await CredentialResolver(ctx).resolve(api=api, caller="caller_1")
+
+
+@pytest.mark.asyncio
+async def test_resolve_credential_name_selects_less_specific_covering() -> None:
+    """An explicit credential_name may pick a covering-but-less-specific credential (N1).
+
+    A vendor-wide wildcard and a name/version pin both cover the API. Naming the
+    wildcard must resolve *it* — the name search runs over all covering
+    credentials, before specificity narrowing — instead of raising
+    CredentialNameNotFoundError because the pin out-ranked it.
+    """
+    wildcard = _make_credential(
+        cred_id="cred_wild", name="shared-account", api_name=None, api_version=None
+    )
+    tvc = MagicMock()
+    tvc.encrypted_token_value = "enc:wild"  # pragma: allowlist secret
+    wildcard.token_value_credential = tvc
+    pinned = _make_credential(
+        cred_id="cred_pin", name="pinned-account", api_name="payments", api_version="v1"
+    )
+
+    ctx = _make_ctx_with_control_session(AsyncMock())
+    api = APIReference(vendor="stripe", name="payments", version="v1")
+
+    with patch(
+        "jentic_one.broker.services.credentials.resolver.CredentialRepository.list_by_vendor",
+        new_callable=AsyncMock,
+        return_value=[wildcard, pinned],
+    ):
+        result = await CredentialResolver(ctx).resolve(
+            api=api, caller="caller_1", credential_name="shared-account"
+        )
+
+    assert result.credential_id == "cred_wild"

@@ -302,6 +302,16 @@ def no_toolkit_binding_directive(
     )
 
 
+def _render_identity(vendor: str, name: str | None, version: str | None) -> str:
+    """Render a ``vendor/name/version`` identity with ``*`` for unset axes.
+
+    Unset (``None`` or empty) name/version become ``*`` so a
+    ``(vendor, None, "1.1")`` identity reads as ``vendor/*/1.1`` rather than the
+    ambiguous ``vendor/1.1`` (which looks like vendor/name).
+    """
+    return "/".join((vendor, name or "*", version or "*"))
+
+
 def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
     """Directive for a ``credential_identity_mismatch`` 403 — fix the credential.
 
@@ -311,17 +321,17 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
     points at re-provisioning/fixing the **credential** and names the concrete
     expected-vs-found identity so the operator has an actionable diagnostic. The
     strategy is the fixed ``prompt_human`` (only a human can fix the credential).
+
+    No ``suggested_command`` is emitted: fixing a credential is an operator
+    action with no single verbatim CLI command an agent can run (there is no
+    ``jentic credentials`` command group), so the prose instruction is the
+    contract. Unset identity axes render as ``*`` (e.g. ``vendor/*/1.1``) so the
+    caller never confuses a missing name for a version.
     """
-    expected = "/".join(
-        part
-        for part in (mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version)
-        if part
+    expected = _render_identity(
+        mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version
     )
-    found = "/".join(
-        part
-        for part in (mismatch.found_vendor, mismatch.found_name or "", mismatch.found_version or "")
-        if part
-    )
+    found = _render_identity(mismatch.found_vendor, mismatch.found_name, mismatch.found_version)
     if mismatch.would_match_if_normalized:
         instruction = (
             f"A toolkit is bound for this API, but the bound credential's stored identity "
@@ -351,7 +361,6 @@ def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> Age
                 "version": mismatch.found_version,
             },
             "would_match_if_normalized": mismatch.would_match_if_normalized,
-            "suggested_command": f"jentic credentials provision {expected}",
         },
         human_readable_instruction=instruction,
     )

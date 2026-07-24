@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.shared.db.ids import generate_ksuid
-from jentic_one.shared.models.api_identity import credential_coverage_where
+from jentic_one.shared.models.api_identity import credential_coverage_where, slugify_api_field
 
 
 class BindTargetMissingError(Exception):
@@ -182,14 +182,22 @@ class EffectsRepository:
         (``api_name IS NULL``) credential, an **exact** name/version match is
         preferred: NULL-wildcard credentials only contribute when no exact match
         exists for the requested name.
+
+        The ``vendor``/``name`` reference axes are canonicalized (slugified) here
+        before binding, because stored rows are canonical (the credential service
+        slugifies on write and the backfill migration re-slugs legacy rows). The
+        shared SQL fragment compares bind params verbatim against those canonical
+        rows, so a raw reference like ``GitHub.com`` must be slugified to
+        ``github-com`` here or it would match nothing. ``version`` is trimmed but
+        never slugified, matching ``canonical_credential_scope``.
         """
+        params: dict[str, object] = {"vendor": slugify_api_field(vendor)}
+        if name:
+            params["name"] = slugify_api_field(name)
+        if version:
+            params["version"] = version.strip()
         name_scoped = bool(name)
         version_scoped = bool(version)
-        params: dict[str, object] = {"vendor": vendor}
-        if name_scoped:
-            params["name"] = name
-        if version_scoped:
-            params["version"] = version
         owner_clause = EffectsRepository._owner_in_clause(owner_ids, params, column="tk.created_by")
         if owner_clause is None:
             return []

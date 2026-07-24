@@ -258,3 +258,93 @@ async def test_derive_toolkits_served_false_when_no_toolkit_serves(
     )
 
     assert result.api_served_toolkits == ()
+
+
+async def test_nearest_miss_same_vendor_wrong_name(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Bound to a same-vendor credential with the wrong name → identity mismatch (#748).
+
+    The agent is bound and a credential covers the vendor, but its name doesn't
+    match the operation. This is a genuine credential-identity mismatch, not a
+    provisioning gap.
+    """
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-billing", vendor="acme-com", name="billing", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="payments", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is not None
+    assert result.identity_mismatch.found_name == "billing"
+    assert result.identity_mismatch.would_match_if_normalized is False
+
+
+async def test_nearest_miss_legacy_non_canonical_would_match(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """A legacy non-canonical stored identity flags would_match_if_normalized (#746)."""
+    # Stored verbatim (bypassing the canonicalizing service), as a legacy row.
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-legacy", vendor="Acme.com", name="Pets-API", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    # The operation identity is canonical; the stored row only matches once slugged.
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="pets-api", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is not None
+    assert result.identity_mismatch.would_match_if_normalized is True
+
+
+async def test_nearest_miss_unrelated_vendor_is_no_mismatch(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """Bound only to an unrelated vendor → no mismatch, falls through to #683.
+
+    An agent bound to Slack calling Stripe must NOT be told to retarget its Slack
+    credential. The vendor-affinity gate returns no mismatch, so the caller yields
+    ``no_toolkit_binding`` instead.
+    """
+    tk_id = await _seed_toolkit_with_credential(
+        control_db, toolkit_name="tk-slack", vendor="slack-com", name="chat", version="v1"
+    )
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="stripe-com", name="payments", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is None
+
+
+async def test_nearest_miss_none_when_no_bound_credentials(
+    admin_db: DatabaseSession, control_db: DatabaseSession, clean_tables: None
+) -> None:
+    """The agent's toolkits have no bound credentials → provisioning gap, not mismatch."""
+    toolkit = Toolkit(name="tk-empty")
+    async with control_db.session() as session:
+        session.add(toolkit)
+        await session.flush()
+        tk_id = toolkit.id
+        await session.commit()
+    agent_id = await _seed_agent_with_toolkits(admin_db, toolkit_ids=[tk_id])
+
+    resolver = ToolkitBindingResolver(admin_db, control_db)
+    result = await resolver.derive_toolkits(
+        agent_id=agent_id, vendor="acme-com", name="pets-api", version="v1"
+    )
+
+    assert result.toolkits == ()
+    assert result.identity_mismatch is None
