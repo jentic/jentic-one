@@ -268,10 +268,13 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 		return nil, err
 	}
 
-	items := []accessclient.Item{
-		// Step 1: create a toolkit that will serve this API.
-		{ResourceType: "toolkit", Action: "create", ResourceReference: ref},
-	}
+	// The plan is a fixed 4-item chain (toolkit:create, credential:provision,
+	// credential:bind, toolkit:bind); preallocate to that capacity.
+	items := make([]accessclient.Item, 0, 4)
+	// Step 1: create a toolkit that will serve this API.
+	items = append(items, accessclient.Item{
+		ResourceType: "toolkit", Action: "create", ResourceReference: ref,
+	})
 	// Step 2: provision a credential for this API. security_scheme carries the
 	// agent-detected auth type so the operator's credential form can pre-select
 	// it; the operator enters the secret — it never rides in the agent-filed
