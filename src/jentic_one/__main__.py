@@ -35,6 +35,14 @@ SURFACE_DB_DEPS: dict[str, set[str]] = {
     # but the toolkit name lives in the control DB.
     "auth": {"admin", "control"},
     "broker": {"admin", "control", "registry"},
+    # Every standalone surface in SURFACES_NEEDING_AUTH verifies callers locally
+    # via the auth verifier (_install_auth_verifier), whose ApiKeyResolver and
+    # PermissionService resolve API keys / permissions against the admin DB.
+    # Without this, a standalone control/registry process crashes at boot with
+    # "Access to 'admin' database is not allowed in this context" — the failure
+    # mode behind the parts-mode Helm smoke timeouts.
+    "control": {"admin"},
+    "registry": {"admin"},
 }
 
 SURFACES_NEEDING_AUTH: set[str] = {"admin", "control", "registry", "broker"}

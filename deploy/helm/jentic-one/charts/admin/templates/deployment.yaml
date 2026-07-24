@@ -24,6 +24,10 @@ spec:
           ports:
             - containerPort: 8000
           env:
+{{- range $k, $v := .Values.extraEnv }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+{{- end }}
 {{ include "common.logging-env" . | indent 12 }}
 {{ include "common.metrics-env" . | indent 12 }}
 {{ include "common.db-env" . | indent 12 }}
