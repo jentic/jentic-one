@@ -51,6 +51,25 @@ control:
   service:
     type: NodePort
     nodePort: 30083
+  # Credential-at-rest encryption keyset (+ the platform OAuth2 provider) —
+  # same contract as combined mode (see local-combined.yaml): `entries` is a
+  # list, which the flat JENTIC__* env-var convention cannot express, and
+  # without it every credential write on the control surface 500s
+  # ("EncryptionConfig.entries must not be empty"). LOCAL/SMOKE-ONLY: the key
+  # is a throwaway dev value committed for the kind cluster — never reuse it
+  # anywhere real (the ConfigMap is not a Secret).
+  configFile:
+    contents:
+      credentials:
+        encryption:
+          active_id: v1
+          entries:
+            - id: v1
+              material: "9ysLYfGPDFNdEcL9Z9RUa5YoREALVwjX9E2MCQ8iE7Q="  # pragma: allowlist secret
+        providers:
+          direct_oauth2:
+            kind: direct_oauth2
+            redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 global:
   postgresql:
