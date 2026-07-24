@@ -135,18 +135,23 @@ class ApiRevisionRepository:
         *,
         origin: str,
     ) -> ApiRevision:
-        """Re-mark an existing revision as the active IMPORTED one.
+        """Re-mark an existing revision as the active one for re-import.
 
         Re-importing an unchanged spec produces the same ``spec_digest``. Rather
         than inserting a duplicate (which violates the ``(api_id, spec_digest)``
-        unique constraint and fails the job), we reuse the existing revision:
-        flip it back to IMPORTED and refresh its promotion timestamp/origin. The
-        caller archives any *other* active imported revision first, so exactly
-        one stays active. Makes re-import idempotent.
+        unique constraint and fails the job), we reuse the existing revision. The
+        caller archives any *other* active imported revision first, so exactly one
+        stays active. Makes re-import idempotent.
+
+        A revision that a human already **published** is left published — a routine
+        re-import of the same spec must not silently demote that promotion. An
+        archived/imported revision is (re)activated to IMPORTED. Origin is
+        refreshed and any archived marker cleared either way.
         """
-        revision.state = ApiRevisionState.IMPORTED
+        if revision.state != ApiRevisionState.PUBLISHED:
+            revision.state = ApiRevisionState.IMPORTED
+            revision.promoted_at = datetime.now(UTC)
         revision.origin = origin
-        revision.promoted_at = datetime.now(UTC)
         revision.archived_at = None
         await session.flush()
         return revision

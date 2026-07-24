@@ -17,6 +17,7 @@ from jentic_one.control.services.access_requests.effects import (
 )
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
+    ProvisioningPlanNotFulfilledError,
     RequiredFieldMissingError,
     RulesNotSupportedForBindError,
     ToolkitNotVisibleError,
@@ -828,3 +829,108 @@ def test_is_admin_effect_false_for_control_and_unsupported() -> None:
 
 def test_admin_effect_keys_are_exactly_the_admin_combinations() -> None:
     assert set(admin_effect_keys()) == {("toolkit", "bind"), ("scope", "grant")}
+
+
+# --- provisioning-plan classification + guard (issues #619/#684) ---
+
+
+def test_classify_toolkit_create_is_fulfilment_only() -> None:
+    assert classify_effect("toolkit", "create") is EffectPhase.FULFILMENT_ONLY
+
+
+def test_classify_credential_provision_is_fulfilment_only() -> None:
+    assert classify_effect("credential", "provision") is EffectPhase.FULFILMENT_ONLY
+
+
+def test_fulfilment_only_intents_are_not_admin_effects() -> None:
+    # Inert intents must never be classified as admin effects, or they'd be
+    # routed through the post-commit reconcile path instead of skipped.
+    assert is_admin_effect(_make_item(resource_type="toolkit", action="create")) is False
+    assert is_admin_effect(_make_item(resource_type="credential", action="provision")) is False
+
+
+async def test_apply_fulfilment_only_intent_is_skipped() -> None:
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    for resource_type, action in (("toolkit", "create"), ("credential", "provision")):
+        item = _make_item(resource_type=resource_type, action=action, rules=None)
+        effect = await applicator.apply(item, identity=_make_identity(), control_session=session)
+        assert isinstance(effect, SkippedEffect)
+
+
+async def test_validate_fulfilment_only_intent_with_rules_is_rejected() -> None:
+    # A fulfilment-only intent can carry no enforceable rules (no binding key).
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="create",
+        rules=[{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+    )
+    with pytest.raises(RulesNotSupportedForBindError):
+        await applicator.validate(item, identity=_make_identity(), control_session=session)
+
+
+async def test_validate_credential_bind_in_plan_denies_when_unfulfilled() -> None:
+    # In a provisioning plan a credential:bind that the wizard hasn't fulfilled
+    # (missing to_id AND/OR resource_id) must be denied with the plan-aware error.
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    for to_id, resource_id in ((None, None), ("tk_001", None), (None, "cred_001")):
+        item = _make_item(action="bind", to_id=to_id, resource_id=resource_id)
+        with pytest.raises(ProvisioningPlanNotFulfilledError):
+            await applicator.validate(
+                item,
+                identity=_make_identity(),
+                control_session=session,
+                is_provisioning_plan=True,
+            )
+
+
+@patch(f"{_MODULE}.CredentialRepository")
+async def test_validate_credential_bind_in_plan_passes_when_fulfilled(
+    mock_cred_repo: MagicMock,
+) -> None:
+    # Both ids present → the plan guard passes and it proceeds to the DB
+    # visibility validator (mocked to a visible credential), i.e. no
+    # ProvisioningPlanNotFulfilledError.
+    mock_cred_repo.get_by_id = AsyncMock(return_value=MagicMock(created_by="agnt_001"))
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(action="bind", to_id="tk_001", resource_id="cred_001")
+    # Should not raise the plan error (a DB-validator raise would be a different type).
+    try:
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            is_provisioning_plan=True,
+        )
+    except ProvisioningPlanNotFulfilledError:  # pragma: no cover - failure path
+        pytest.fail("a fulfilled credential:bind must not raise ProvisioningPlanNotFulfilledError")
+
+
+async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
+    # A reference-only toolkit:bind in a plan (no resolved id) must be denied —
+    # it can't resolve by the not-yet-visible credential->toolkit join.
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            is_provisioning_plan=True,
+        )

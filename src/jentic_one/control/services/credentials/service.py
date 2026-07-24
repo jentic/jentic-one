@@ -113,7 +113,10 @@ class CredentialService:
         # toolkit then serves nothing at execute time (issue #775). Coerce empty
         # to NULL so the wildcard convention holds.
         api_name = slugify_identifier(payload.api.name) if payload.api.name else None
-        api_version = payload.api.version or None
+        # Trim the version too so a formatting difference (trailing space) doesn't
+        # defeat the exact-version match in the resolvers, mirroring how the
+        # registry stores `str(version).strip()` (#656/#775). Empty -> NULL wildcard.
+        api_version = payload.api.version.strip() or None if payload.api.version else None
 
         async with self._ctx.control_db.transaction() as session:
             credential = await CredentialRepository.create(
@@ -128,7 +131,7 @@ class CredentialService:
                 server_variables=payload.server_variables,
             )
 
-            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full
+            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full | NoAuthFull
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token

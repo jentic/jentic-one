@@ -17,6 +17,7 @@ from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ApiRevisionSourceType
+from jentic_one.shared.models.registry import ApiRevisionState
 
 pytestmark = pytest.mark.integration
 
@@ -198,3 +199,39 @@ def _reimport_spec() -> IngestSpecification:
     spec = _build_spec(sha="same_digest_xyz")
     spec.origin = "catalog"
     return spec
+
+
+async def test_reimport_does_not_demote_a_published_revision(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Re-importing a spec whose revision a human already PUBLISHED must not
+    silently demote it back to IMPORTED.
+
+    reactivate_imported reuses the same-digest revision on re-import; if it
+    unconditionally set state=IMPORTED, a routine catalog re-import would revert
+    an operator's publish decision. The guard preserves PUBLISHED.
+    """
+    spec = _build_spec(sha="same_digest_xyz")
+    spec.origin = "catalog"
+    ingestor = Ingestor(ingest_context)
+    result1 = await ingestor.ingest(spec, created_by="usr_test")
+
+    # Promote the imported revision to published (the human action).
+    async with registry_db.session() as session:
+        rev = await session.get(ApiRevision, result1.revision_id)
+        assert rev is not None
+        rev.state = ApiRevisionState.PUBLISHED
+        await session.commit()
+
+    # Re-import the identical spec.
+    result2 = await ingestor.ingest(_reimport_spec(), created_by="usr_test")
+    assert result1.revision_id == result2.revision_id
+
+    async with registry_db.session() as session:
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert len(revisions) == 1, "re-import must not create a second revision"
+        assert revisions[0].state == ApiRevisionState.PUBLISHED, (
+            "a published revision must survive re-import, not be demoted to imported"
+        )

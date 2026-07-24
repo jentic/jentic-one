@@ -252,14 +252,17 @@ def no_toolkit_binding_directive(*, vendor: str, name: str, version: str) -> Age
         strategy="prompt_human",
         parameters={
             "api": {"vendor": vendor, "name": name, "version": version},
-            "suggested_command": f"jentic access request --provision {api} --wait",
+            "suggested_command": (
+                f'jentic access request --provision {api} --reason "<why you need this>" --wait'
+            ),
         },
         human_readable_instruction=(
             f"Nothing serves '{api}' yet. File a provisioning plan with "
-            f"`jentic access request --provision {api} --wait` — propose the auth type "
-            "(`--auth`) and permission rules (`--rules-json`) you read from the API spec, "
-            "then ask your operator to fulfil it in the dashboard (they enter the credential "
-            "secret and approve). Only a human can grant this. Once approved, retry this call."
+            f'`jentic access request --provision {api} --reason "<why>" --wait` — propose the auth '
+            "type (`--auth`) and permission rules (`--rules-json`) you read from the API spec, and "
+            "pass a `--reason` the approver sees; then ask your operator to fulfil it in the "
+            "dashboard (they enter the credential secret and approve). Only a human can grant this. "
+            "Once approved, retry this call."
         ),
     )
 
