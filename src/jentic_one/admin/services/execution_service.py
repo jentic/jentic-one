@@ -109,4 +109,6 @@ class ExecutionService:
             actor_id=record.actor_id,
             actor_type=record.actor_type,
             origin=record.origin,
+            credential_id=getattr(record, "credential_id", None),
+            credential_name=getattr(record, "credential_name", None),
         )

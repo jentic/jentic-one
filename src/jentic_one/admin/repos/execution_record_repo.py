@@ -33,6 +33,8 @@ class ExecutionRecordRepository:
         created_by: str,
         actor_id: str,
         actor_type: str,
+        credential_id: str | None = None,
+        credential_name: str | None = None,
     ) -> ExecutionRecord:
         record = ExecutionRecord(
             toolkit_id=toolkit_id,
@@ -51,6 +53,8 @@ class ExecutionRecordRepository:
             created_by=created_by,
             actor_id=actor_id,
             actor_type=actor_type,
+            credential_id=credential_id,
+            credential_name=credential_name,
         )
         session.add(record)
         await session.flush()

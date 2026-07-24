@@ -57,7 +57,14 @@ class _FakeInjector:
         self._injection = injection
 
     async def inject(
-        self, *, api_vendor: str, api_name: str, api_version: str, identity: Any
+        self,
+        *,
+        api_vendor: str,
+        api_name: str,
+        api_version: str,
+        identity: Any,
+        credential_name: str | None = None,
+        trace_id: str | None = None,
     ) -> InjectedAuth:
         return self._injection
 

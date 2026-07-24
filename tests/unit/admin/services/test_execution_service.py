@@ -29,6 +29,12 @@ def _make_record(**overrides: Any) -> MagicMock:
         "actor_id": "usr_default",
         "actor_type": "user",
         "origin": None,
+        # #740: credential attribution — always populate the axis so
+        # ``_to_view``'s ``getattr(record, "credential_*", None)`` reads a real
+        # value instead of a MagicMock autospec attribute (which Pydantic then
+        # rejects as a non-string).
+        "credential_id": None,
+        "credential_name": None,
     }
     defaults.update(overrides)
     record = MagicMock()

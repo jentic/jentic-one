@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from jentic_one.broker.core.headers import TRACESTATE_HEADER
+from jentic_one.broker.core.headers import TRACESTATE_HEADER, JenticHeader
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.web.routers.execute import _metadata_headers
+from jentic_one.broker.web.streaming import _metadata_headers as _stream_metadata_headers
 
 
 def _ctx(**overrides: object) -> ExecuteRequestContext:
@@ -35,3 +36,39 @@ def test_metadata_headers_tracestate_uses_placeholders_for_missing_fields():
         "exec_1",
     )
     assert headers[TRACESTATE_HEADER] == "jentic=exec_1:_:_:_:_"
+
+
+def test_metadata_headers_stamp_credential_attribution_when_present():
+    """A resolved credential is echoed as ``Jentic-Credential-Id``/``-Name`` (#740)."""
+    headers = _metadata_headers(
+        _ctx(credential_id="cred_abc", credential_name="stripe-live"),
+        "exec_1",
+    )
+    assert headers[JenticHeader.CREDENTIAL_ID.value] == "cred_abc"
+    assert headers[JenticHeader.CREDENTIAL_NAME.value] == "stripe-live"
+
+
+def test_metadata_headers_omit_credential_attribution_when_absent():
+    """No credential → no attribution header (unambiguous ``no credential used``)."""
+    headers = _metadata_headers(_ctx(credential_id=None, credential_name=None), "exec_1")
+    assert JenticHeader.CREDENTIAL_ID.value not in headers
+    assert JenticHeader.CREDENTIAL_NAME.value not in headers
+
+
+def test_stream_metadata_headers_stamp_credential_attribution():
+    """Streaming path stays symmetric with the sync router (#740)."""
+    headers = _stream_metadata_headers(
+        _ctx(credential_id="cred_abc", credential_name="stripe-live"),
+        "exec_1",
+        200,
+    )
+    assert headers[JenticHeader.CREDENTIAL_ID.value] == "cred_abc"
+    assert headers[JenticHeader.CREDENTIAL_NAME.value] == "stripe-live"
+
+
+def test_stream_metadata_headers_omit_credential_attribution_when_absent():
+    headers = _stream_metadata_headers(
+        _ctx(credential_id=None, credential_name=None), "exec_1", 200
+    )
+    assert JenticHeader.CREDENTIAL_ID.value not in headers
+    assert JenticHeader.CREDENTIAL_NAME.value not in headers
