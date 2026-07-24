@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.control.repos.toolkit_binding_repo import ToolkitBindingRepository
 from jentic_one.shared.db.ids import generate_ksuid
+from jentic_one.shared.models.api_identity import credential_coverage_where
 
 
 class BindTargetMissingError(Exception):
@@ -182,24 +183,30 @@ class EffectsRepository:
         preferred: NULL-wildcard credentials only contribute when no exact match
         exists for the requested name.
         """
-        params: dict[str, object] = {
-            "vendor": vendor,
-            "name": name or "",
-            "version": version or "",
-        }
+        name_scoped = bool(name)
+        version_scoped = bool(version)
+        params: dict[str, object] = {"vendor": vendor}
+        if name_scoped:
+            params["name"] = name
+        if version_scoped:
+            params["version"] = version
         owner_clause = EffectsRepository._owner_in_clause(owner_ids, params, column="tk.created_by")
         if owner_clause is None:
             return []
 
+        # Shared coverage rule (see shared/models/api_identity.credential_coverage_where):
+        # a wildcard *reference* axis (empty name/version at bind time) omits that
+        # axis so it matches anything; a scoped axis matches NULL-wildcard or exact.
+        coverage = credential_coverage_where(name_scoped=name_scoped, version_scoped=version_scoped)
+        # Prefer an exact name match only when the reference names one — otherwise
+        # there is no exactness to rank on.
+        name_exact = "(CASE WHEN c.api_name = :name THEN 1 ELSE 0 END)" if name_scoped else "0"
         base_query = (
-            "SELECT DISTINCT tcb.toolkit_id, "
-            "  (CASE WHEN :name <> '' AND c.api_name = :name THEN 1 ELSE 0 END) AS name_exact "
+            f"SELECT DISTINCT tcb.toolkit_id, {name_exact} AS name_exact "
             "FROM toolkit_credential_bindings tcb "
             "JOIN credentials c ON c.id = tcb.credential_id "
             "JOIN toolkits tk ON tk.id = tcb.toolkit_id "
-            "WHERE c.api_vendor = :vendor "
-            "  AND (:name = '' OR c.api_name IS NULL OR c.api_name = :name) "
-            "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = :version) "
+            f"WHERE {coverage} "
             f"{owner_clause}"
         )
         result = await session.execute(text(base_query), params)

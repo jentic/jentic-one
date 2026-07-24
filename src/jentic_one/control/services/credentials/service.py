@@ -47,7 +47,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import DirectOAuth2ProviderConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import CredentialScope, canonical_credential_scope
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
@@ -114,6 +114,14 @@ class CredentialService:
 
         self._validate_create_fields(payload, managed=provider_obj.managed)
 
+        # Canonicalize the API identity at the service boundary: slug vendor/name,
+        # coerce an unset name/version to NULL (the single wildcard sentinel), and
+        # trim the version. This is what makes credential scoping (vendor /
+        # vendor.name / vendor.name.version) resolve against a concrete operation
+        # identity at execute time (#775), and stores github.com as github-com
+        # rather than a dead-on-arrival identity (#746).
+        api_scope = self._canonical_api_scope(payload.api)
+
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
 
@@ -122,9 +130,9 @@ class CredentialService:
                 session,
                 type=stored_type.value,
                 name=payload.name,
-                api_vendor=slugify_api_field(payload.api.vendor),
-                api_name=slugify_api_field(payload.api.name),
-                api_version=payload.api.version,
+                api_vendor=api_scope.vendor,
+                api_name=api_scope.name,
+                api_version=api_scope.version,
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
@@ -524,3 +532,19 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
             if not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
+
+    @staticmethod
+    def _canonical_api_scope(api: APIReference) -> CredentialScope:
+        """Canonicalize the credential's API scope, rejecting a path-shaped identity.
+
+        A ``name``/``version`` containing a path separator is a strong signal the
+        caller sent a spec *file path* segment rather than an identity (e.g.
+        ``api_version='api.github.com/main/1.1.4'``, #746). Reject it loudly as a
+        400 rather than persisting a credential that can never resolve.
+        """
+        for axis, value in (("name", api.name), ("version", api.version)):
+            if value and "/" in value:
+                raise InvalidCredentialInputError(
+                    f"api.{axis} '{value}' is not an identity — it looks like a spec path"
+                )
+        return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)

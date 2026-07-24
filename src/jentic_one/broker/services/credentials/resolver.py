@@ -16,7 +16,12 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos import CredentialRepository
 from jentic_one.control.services.credentials.mapping import to_wire
 from jentic_one.shared.context import Context
-from jentic_one.shared.models.api_identity import slugify_api_field
+from jentic_one.shared.models.api_identity import (
+    CredentialScope,
+    canonical_credential_scope,
+    credential_covers,
+    credential_specificity,
+)
 from jentic_one.shared.models.credentials import (
     CredentialLocation,
     CredentialType,
@@ -75,22 +80,32 @@ class CredentialResolver:
         async with self._ctx.control_db.session() as session:
             candidates = await CredentialRepository.list_by_vendor(session, api.vendor)
 
-            # Normalize both sides before comparing: stored values are slugified
-            # at create time, but historical rows and the incoming registry
-            # identity may differ only by casing/format. Comparing on the shared
-            # slug form prevents a silent default-deny on such mismatches.
-            want_name = slugify_api_field(api.name) if api.name else ""
+            # Coverage + specificity via the shared seam. A credential's stored
+            # scope (canonicalized here so legacy '' / non-slug rows compare on
+            # the same footing) covers the concrete operation when each axis is
+            # either unscoped (NULL → wildcard) or equal. Among covering
+            # credentials, most-specific-wins: a vendor.name.version pin beats a
+            # vendor.name which beats a bare vendor wildcard, so a vendor-wide
+            # credential coexisting with a pin no longer forces a spurious 409.
+            def _scope(c: Credential) -> CredentialScope:
+                return canonical_credential_scope(
+                    vendor=c.api_vendor, name=c.api_name, version=c.api_version
+                )
 
-            matches = [
+            covering = [
                 c
                 for c in candidates
                 if c.active
-                and (not api.name or slugify_api_field(c.api_name or "") == want_name)
-                and (not api.version or c.api_version == api.version)
+                and credential_covers(
+                    _scope(c), vendor=api.vendor, name=api.name, version=api.version
+                )
             ]
 
-            if not matches:
+            if not covering:
                 raise CredentialNotProvisionedError(api.vendor, api.name, api.version)
+
+            best = max(credential_specificity(_scope(c)) for c in covering)
+            matches = [c for c in covering if credential_specificity(_scope(c)) == best]
 
             candidate_objs = [self._to_candidate(c) for c in matches]
 

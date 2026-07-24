@@ -13,12 +13,14 @@ from jentic.problem_details import Forbidden, ProblemDetailException
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
     AmbiguousMatchError,
+    CredentialIdentityMismatchError,
     no_toolkit_binding_directive,
 )
 from jentic_one.broker.web.errors import install_broker_error_handlers
 from jentic_one.broker.web.routers.execute import select_toolkit
 from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.broker.protocols import IdentityMismatch, ToolkitDerivation
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.schemas import APIReference
 
@@ -27,23 +29,49 @@ _INSTANCE = "/acme.example.com/v1/widgets"
 
 
 class _StubDeriver:
-    def __init__(self, candidates: list[str], *, toolkit_serves_api: bool = True) -> None:
+    """Stub deriver returning a hand-built ToolkitDerivation.
+
+    ``toolkit_serves_api`` controls whether ``api_served_toolkits`` is non-empty;
+    ``agent_bound_any`` defaults to True when there are candidates, else follows
+    the explicit flag. ``mismatch`` injects a nearest-miss for the #747/#748 case.
+    """
+
+    def __init__(
+        self,
+        candidates: list[str],
+        *,
+        toolkit_serves_api: bool = True,
+        agent_bound_any: bool | None = None,
+        mismatch: IdentityMismatch | None = None,
+    ) -> None:
         self.candidates = candidates
         self._toolkit_serves_api = toolkit_serves_api
+        self._agent_bound_any = agent_bound_any
+        self._mismatch = mismatch
         self.calls: list[dict[str, str]] = []
-        self.serves_calls: list[dict[str, str]] = []
 
     async def derive_toolkits(
         self, *, agent_id: str, vendor: str, name: str, version: str
-    ) -> list[str]:
+    ) -> ToolkitDerivation:
         self.calls.append(
             {"agent_id": agent_id, "vendor": vendor, "name": name, "version": version}
         )
-        return self.candidates
-
-    async def any_toolkit_serves_api(self, *, vendor: str, name: str, version: str) -> bool:
-        self.serves_calls.append({"vendor": vendor, "name": name, "version": version})
-        return self._toolkit_serves_api
+        bound = (
+            self._agent_bound_any if self._agent_bound_any is not None else bool(self.candidates)
+        )
+        # A served set that is independent of the agent's candidates: when a
+        # toolkit serves the API, model at least one serving toolkit even if the
+        # agent is bound to none of them (the "bound elsewhere" case).
+        if self._toolkit_serves_api:
+            served = tuple(self.candidates) if self.candidates else ("tk_serving",)
+        else:
+            served = ()
+        return ToolkitDerivation(
+            toolkits=tuple(self.candidates),
+            agent_bound_any=bound or bool(self.candidates),
+            api_served_toolkits=served,
+            identity_mismatch=self._mismatch,
+        )
 
 
 def _identity(actor_type: str = "agent") -> Identity:
@@ -127,8 +155,43 @@ async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -
     instruction = exc.value.directive.human_readable_instruction
     assert "credential" in instruction.lower()
     assert "provision" in instruction.lower()
-    # The broker consulted the "any toolkit serves this API?" predicate.
-    assert deriver.serves_calls == [{"vendor": "acme", "name": "widgets", "version": "1.0.0"}]
+
+
+async def test_zero_candidates_bound_with_identity_mismatch_points_at_credential() -> None:
+    # #747/#748: the agent is bound, but no toolkit serves the API because the
+    # bound credential's identity does not cover it. The denial must be a
+    # credential_identity_mismatch pointing at the credential — never a bind request.
+    mismatch = IdentityMismatch(
+        expected_vendor="acme",
+        expected_name="widgets",
+        expected_version="1.0.0",
+        found_vendor="acme.com",
+        found_name="widgets",
+        found_version="1.0.0",
+        would_match_if_normalized=True,
+    )
+    deriver = _StubDeriver([], toolkit_serves_api=False, agent_bound_any=True, mismatch=mismatch)
+    with pytest.raises(CredentialIdentityMismatchError) as exc:
+        await _select(deriver, header_toolkit=None)
+    assert exc.value.type == "credential_identity_mismatch"
+    assert exc.value.instance == _INSTANCE
+    assert exc.value.directive is not None
+    assert exc.value.directive.strategy == "prompt_human"
+    assert exc.value.directive.parameters["expected"]["vendor"] == "acme"
+    assert exc.value.directive.parameters["found"]["vendor"] == "acme.com"
+    assert exc.value.directive.parameters["would_match_if_normalized"] is True
+    instruction = exc.value.directive.human_readable_instruction.lower()
+    assert "credential" in instruction
+    assert "access request" not in instruction or "do not file an access request" in instruction
+
+
+async def test_zero_candidates_bound_no_mismatch_stays_no_toolkit_binding() -> None:
+    # Bound elsewhere, nothing serves this API, but no near-miss credential:
+    # this is a genuine provisioning gap, not a mismatch → no_toolkit_binding.
+    deriver = _StubDeriver([], toolkit_serves_api=False, agent_bound_any=True, mismatch=None)
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(deriver, header_toolkit=None)
+    assert exc.value.type == "no_toolkit_binding"
 
 
 async def test_multiple_candidates_no_header_raises_409_with_candidates() -> None:

@@ -19,6 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from jentic_one.shared.broker.execution import ErrorOrigin as ErrorOrigin
+from jentic_one.shared.broker.protocols import IdentityMismatch
 
 AgentStrategy = Literal[
     "wait",
@@ -174,6 +175,17 @@ class ActionDeniedError(BrokerError):
     """The request was denied by a toolkit permission rule (403)."""
 
 
+class CredentialIdentityMismatchError(BrokerError):
+    """Bound to a toolkit, but no credential's identity covers this API (403).
+
+    Distinct from :class:`ActionDeniedError` and ``no_toolkit_binding``: the
+    agent *is* bound and a credential *is* bound to a toolkit, but the
+    credential's stored API identity does not cover the resolved operation
+    identity (#747/#748). The recovery is to fix/re-provision the **credential**,
+    not to file an access request (which would auto-deny).
+    """
+
+
 class UpstreamTimeoutError(BrokerError):
     """The upstream did not respond within the deadline (504, §04/§09)."""
 
@@ -286,6 +298,61 @@ def no_toolkit_binding_directive(
     return AgentDirective(
         strategy="prompt_human",
         parameters=parameters,
+        human_readable_instruction=instruction,
+    )
+
+
+def credential_identity_mismatch_directive(*, mismatch: IdentityMismatch) -> AgentDirective:
+    """Directive for a ``credential_identity_mismatch`` 403 — fix the credential.
+
+    The agent is bound and a credential is bound to a toolkit, but the
+    credential's stored API identity does not cover the resolved operation
+    (#747/#748). Filing an access request here auto-denies, so the directive
+    points at re-provisioning/fixing the **credential** and names the concrete
+    expected-vs-found identity so the operator has an actionable diagnostic. The
+    strategy is the fixed ``prompt_human`` (only a human can fix the credential).
+    """
+    expected = "/".join(
+        part
+        for part in (mismatch.expected_vendor, mismatch.expected_name, mismatch.expected_version)
+        if part
+    )
+    found = "/".join(
+        part
+        for part in (mismatch.found_vendor, mismatch.found_name or "", mismatch.found_version or "")
+        if part
+    )
+    if mismatch.would_match_if_normalized:
+        instruction = (
+            f"A toolkit is bound for this API, but the bound credential's stored identity "
+            f"'{found}' only matches '{expected}' after normalization — it was stored in a "
+            f"non-canonical form. Ask your operator to re-provision (or recreate) the "
+            f"credential for '{expected}' so its identity is canonical, then retry. Do not "
+            f"file an access request — the binding already exists."
+        )
+    else:
+        instruction = (
+            f"A toolkit is bound for this API, but its credential's identity '{found}' does "
+            f"not match this API '{expected}'. Ask your operator to fix or re-provision the "
+            f"credential so it targets '{expected}', then retry. Do not file an access "
+            f"request — the binding already exists."
+        )
+    return AgentDirective(
+        strategy="prompt_human",
+        parameters={
+            "expected": {
+                "vendor": mismatch.expected_vendor,
+                "name": mismatch.expected_name,
+                "version": mismatch.expected_version,
+            },
+            "found": {
+                "vendor": mismatch.found_vendor,
+                "name": mismatch.found_name,
+                "version": mismatch.found_version,
+            },
+            "would_match_if_normalized": mismatch.would_match_if_normalized,
+            "suggested_command": f"jentic credentials provision {expected}",
+        },
         human_readable_instruction=instruction,
     )
 
