@@ -5,6 +5,8 @@
 import type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } from '../models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
 import type { PermissionRuleListResponse } from '../models/PermissionRuleListResponse';
 import type { PermissionsPatchRequest } from '../models/PermissionsPatchRequest';
+import type { PermissionTestRequest } from '../models/PermissionTestRequest';
+import type { PermissionTestResponse } from '../models/PermissionTestResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -93,6 +95,46 @@ export class ToolkitPermissionsService {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/toolkits/{toolkit_id}/credentials/{credential_id}/permissions',
+            path: {
+                'toolkit_id': toolkitId,
+                'credential_id': credentialId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                404: `Not Found`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Dry-run permission evaluation
+     * Answer "what would the broker do for this request?" without calling upstream.
+     *
+     * Evaluates the same **vendor-pooled** rule set the broker sees at request
+     * time — rules from all same-vendor bindings on this toolkit compete in one
+     * ordered list. The response names which binding contributed the matching
+     * rule, which is not obvious from the toolkit id alone under pooling.
+     * @returns PermissionTestResponse Successful Response
+     * @throws ApiError
+     */
+    public static testToolkitPermissions({
+        toolkitId,
+        credentialId,
+        requestBody,
+    }: {
+        toolkitId: string,
+        credentialId: string,
+        requestBody: PermissionTestRequest,
+    }): CancelablePromise<PermissionTestResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test',
             path: {
                 'toolkit_id': toolkitId,
                 'credential_id': credentialId,

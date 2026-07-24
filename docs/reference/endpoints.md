@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **150**._
+_Total endpoints: **151**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -200,7 +200,7 @@ _Total endpoints: **150**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (59)
+## Any authenticated actor (60)
 
 
 ### `access-requests`
@@ -320,6 +320,7 @@ _Total endpoints: **150**._
 | GET | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:read`, `owner:toolkits:read` | any | List binding permission rules |
 | PATCH | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Patch binding permission rules |
 | PUT | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions` | `toolkits:write` | any | Replace binding permission rules |
+| POST | `/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test` | `toolkits:read`, `owner:toolkits:read` | any | Dry-run permission evaluation |
 | GET | `/toolkits/{toolkit_id}/keys` | `toolkits:read`, `owner:toolkits:read` | any | List toolkit keys |
 | POST | `/toolkits/{toolkit_id}/keys` | `toolkits:write` | any | Issue toolkit key |
 | DELETE | `/toolkits/{toolkit_id}/keys/{key_id}` | `toolkits:write` | any | Revoke toolkit key |

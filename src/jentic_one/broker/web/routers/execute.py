@@ -542,23 +542,42 @@ async def _handle(
     )
 
     # Evaluate toolkit permission rules — default-deny when no rule matches.
-    # Unconditional: even if toolkit_id were empty the evaluator returns False
-    # (no rules → deny), preserving the secure-by-default posture.
-    allowed = await rule_evaluator.evaluate(
+    # Unconditional: even if toolkit_id were empty the evaluator returns a
+    # zero-rules-loaded denial, preserving the secure-by-default posture.
+    evaluation = await rule_evaluator.evaluate(
         toolkit_id=ctx_req.toolkit_id,
         method=method,
         path=urlparse(upstream_url).path,
         operation_id=resolved.operation_id,
         api_vendor=resolved.api.vendor,
     )
-    if not allowed:
+    if not evaluation.allowed:
+        # #578: distinguish the two deny paths in the caller-visible detail.
+        # ``rules_loaded == 0`` means the vendor-pooled rule set is empty —
+        # nothing to match (wrong vendor, empty binding, misconfigured store);
+        # otherwise we loaded rules but none matched the request shape. Both
+        # branches emit ``PBAC_DENIED`` telemetry with the corresponding
+        # summary so operators can grep for the branch.
+        no_rules = evaluation.rules_loaded == 0
+        summary = (
+            "Operation denied by toolkit permission rule (no rules loaded for this vendor)"
+            if no_rules
+            else "Operation denied by toolkit permission rule (no rule matched)"
+        )
+        detail = (
+            "The requested operation is denied — this toolkit has no permission rules "
+            "loaded for the target API's vendor. Attach rules to the vendor's binding "
+            "under PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions."
+            if no_rules
+            else "The requested operation is denied by a toolkit permission rule."
+        )
         try:
             async with ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
                     session,
                     type=EventType.PBAC_DENIED,
                     severity=EventSeverity.WARNING,
-                    summary="Operation denied by toolkit permission rule",
+                    summary=summary,
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
@@ -566,7 +585,7 @@ async def _handle(
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
         raise ActionDeniedError(
-            detail="The requested operation is denied by a toolkit permission rule.",
+            detail=detail,
             type="action_denied",
             instance=request.url.path,
             directive=action_denied_directive(),

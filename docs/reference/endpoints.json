@@ -3055,6 +3055,32 @@
         "owner:toolkits:read": [],
         "toolkits:read": []
       },
+      "method": "POST",
+      "operation_id": "testToolkitPermissions",
+      "path": "/toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test",
+      "public": false,
+      "required_scopes": [
+        "toolkits:read",
+        "owner:toolkits:read"
+      ],
+      "summary": "Dry-run permission evaluation",
+      "surface": "toolkits",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "owner:toolkits:read": [],
+        "toolkits:read": []
+      },
       "method": "GET",
       "operation_id": "listKeys",
       "path": "/toolkits/{toolkit_id}/keys",
@@ -4453,5 +4479,5 @@
     ],
     "total": 30
   },
-  "total": 150
+  "total": 151
 }

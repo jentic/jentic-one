@@ -6,7 +6,6 @@ from typing import NoReturn
 
 import structlog
 
-from jentic_one.control.core.schema.toolkit_credential_bindings import ToolkitCredentialBinding
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
@@ -28,13 +27,22 @@ from jentic_one.control.services.toolkits.errors import (
     ToolkitNotFoundError,
 )
 from jentic_one.control.services.toolkits.key_gen import generate_toolkit_key
-from jentic_one.control.services.toolkits.schemas import BindingPage, BindingWithPermissions
+from jentic_one.control.services.toolkits.schemas import (
+    BINDING_WARNING_NO_RULES,
+    BindingPage,
+    BindingWarning,
+    BindingWithPermissions,
+    BindResult,
+    PermissionTestResult,
+    ToolkitCreateResult,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.permissions.matching import compile_matcher
 from jentic_one.shared.scopes import ORG_ADMIN
 
 logger = structlog.get_logger()
@@ -105,12 +113,13 @@ class ToolkitService:
         identity: Identity,
         description: str | None = None,
         active: bool = True,
-        permissions: list[dict[str, object]] | None = None,
         credential_ids: list[str] | None = None,
-    ) -> tuple[Toolkit, str]:
+    ) -> ToolkitCreateResult:
         """Create a toolkit with an initial API key.
 
-        Returns (toolkit, plaintext_key).
+        Returns a :class:`ToolkitCreateResult` with the toolkit, its
+        plaintext key (shown once), and any bind-time warnings for
+        inline-bound credentials.
         """
         plaintext, hashed, preview, lookup = generate_toolkit_key()
 
@@ -120,7 +129,6 @@ class ToolkitService:
                 name=name,
                 description=description,
                 active=active,
-                permissions=permissions,
                 created_by=identity.sub,
             )
             await ToolkitKeyRepository.create(
@@ -143,6 +151,23 @@ class ToolkitService:
             assert loaded is not None
             toolkit = loaded
 
+        # ``POST /toolkits`` with ``credential_ids`` inline-binds each
+        # credential with zero rules — the broker denies by default until
+        # rules are added. Warn per bind so the caller notices before
+        # shipping a "created but permanently denied" toolkit (#750).
+        warnings = tuple(
+            BindingWarning(
+                code=BINDING_WARNING_NO_RULES,
+                message=(
+                    "This binding has no permission rules; the broker denies all calls "
+                    "until rules are added via "
+                    f"PUT /toolkits/{toolkit.id}/credentials/{cred_id}/permissions"
+                ),
+                credential_id=cred_id,
+            )
+            for cred_id in (credential_ids or [])
+        )
+
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.CREATE,
@@ -158,7 +183,7 @@ class ToolkitService:
             summary=f"Toolkit {toolkit.id} created",
             identity=identity,
         )
-        return toolkit, plaintext
+        return ToolkitCreateResult(toolkit=toolkit, plaintext_key=plaintext, warnings=warnings)
 
     async def get(self, toolkit_id: str, *, identity: Identity) -> Toolkit:
         bound_ids = await self._bound_toolkit_ids(identity)
@@ -458,7 +483,31 @@ class ToolkitService:
         *,
         identity: Identity,
         permissions: list[dict[str, object]] | None = None,
-    ) -> ToolkitCredentialBinding:
+        allow_all: bool = False,
+    ) -> BindResult:
+        """Bind a credential and return the binding + effective rules + warnings.
+
+        Returns a :class:`BindResult` — the ORM binding, the rule rows
+        effective on it (avoiding a second read in the router), and any
+        bind-time warnings. When ``allow_all`` is set, writes a single
+        wildcard ``allow`` rule so the binding grants everything for its
+        vendor; this is mutually exclusive with ``permissions`` (checked
+        on the request schema).
+        """
+        if allow_all and permissions:
+            # Belt-and-braces: the schema-level check already rejects this,
+            # but a direct caller (tests, effect applicator later) benefits
+            # from a service-side guardrail too.
+            msg = "allow_all and permissions are mutually exclusive"
+            raise ValueError(msg)
+        effective_permissions = permissions
+        if allow_all:
+            # A specific catch-all rule (not condition-less) — satisfies
+            # #659's condition-less-``allow`` guard and states the intent
+            # visibly in the rule list. ``regex`` full-match on ``.*``
+            # matches every path.
+            effective_permissions = [{"effect": "allow", "path": ".*", "match_mode": "regex"}]
+
         access_filters = build_access_filters(
             identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
         )
@@ -491,10 +540,32 @@ class ToolkitService:
             binding = await ToolkitBindingRepository.bind(
                 session, toolkit_id=toolkit_id, credential_id=credential_id, created_by=identity.sub
             )
-            if permissions:
+            if effective_permissions:
                 await ToolkitPermissionRepository.replace_user_rules(
-                    session, toolkit_id, credential_id, permissions, created_by=identity.sub
+                    session,
+                    toolkit_id,
+                    credential_id,
+                    effective_permissions,
+                    created_by=identity.sub,
                 )
+            # Read the effective rules once inside the same transaction —
+            # the router previously did this in a follow-up call.
+            rules = await ToolkitPermissionRepository.list_rules(session, toolkit_id, credential_id)
+
+        warnings: tuple[BindingWarning, ...] = ()
+        if not rules:
+            warnings = (
+                BindingWarning(
+                    code=BINDING_WARNING_NO_RULES,
+                    message=(
+                        "This binding has no permission rules; the broker denies all calls "
+                        "until rules are added via "
+                        f"PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions"
+                    ),
+                    credential_id=credential_id,
+                ),
+            )
+
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.GRANT,
@@ -511,7 +582,7 @@ class ToolkitService:
             summary=f"Credential {credential_id} bound to toolkit {toolkit_id}",
             identity=identity,
         )
-        return binding
+        return BindResult(binding=binding, rules=rules, warnings=warnings)
 
     async def list_bindings(
         self, toolkit_id: str, *, cursor: str | None = None, limit: int = 50, identity: Identity
@@ -683,3 +754,82 @@ class ToolkitService:
             identity=identity,
         )
         return result
+
+    async def test_permissions(
+        self,
+        toolkit_id: str,
+        credential_id: str,
+        *,
+        method: str,
+        path: str,
+        operation_id: str | None,
+        identity: Identity,
+    ) -> PermissionTestResult:
+        """Dry-run permission evaluation for a `(method, path, operation_id)` triple.
+
+        Evaluates the same **vendor-pooled** rule set the broker sees at
+        request time — for a given `(toolkit_id, api_vendor)` all rules
+        attached to any same-vendor binding are pooled and ordered by
+        sequence. A per-binding read would misrepresent what the broker
+        actually enforces (see issue #751 review). The named
+        ``credential_id`` locates the pool via its ``api_vendor``, and
+        surfaces which binding contributed the matching rule when there is
+        one.
+
+        The broker's condition-less-``allow`` skip is honoured here too so
+        legacy misconfigured rules don't lie in dry-run.
+        """
+        access_filters = build_access_filters(
+            identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+        )
+        async with self._ctx.control_db.session() as session:
+            toolkit = await ToolkitRepository.get_by_id(session, toolkit_id, filters=access_filters)
+            if toolkit is None:
+                await self._raise_toolkit_unavailable(toolkit_id)
+            binding = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
+            if binding is None:
+                raise BindingNotFoundError(toolkit_id, credential_id)
+            credential = await CredentialRepository.get_by_id(session, credential_id)
+            api_vendor = credential.api_vendor if credential is not None else ""
+            pooled = await ToolkitPermissionRepository.list_rules_for_vendor(
+                session, toolkit_id, api_vendor
+            )
+
+        method_upper = method.upper()
+        for idx, rule in enumerate(pooled):
+            rule_methods = rule.methods
+            rule_path = rule.path
+            rule_ops = rule.operations
+            # Mirror the broker's condition-less-`allow` skip; a bare
+            # `allow` with no constraints must not silently unlock a dry-run
+            # any more than it unlocks a real request.
+            is_condition_less = rule_methods is None and rule_path is None and rule_ops is None
+            if is_condition_less and rule.effect.lower() == "allow":
+                continue
+            if rule_methods is not None:
+                methods_set = {m.upper() for m in rule_methods}
+                if method_upper not in methods_set:
+                    continue
+            if rule_path is not None:
+                matcher = compile_matcher(rule_path, str(rule.match_mode or "regex"))
+                if matcher is not None and not matcher.matches(path):
+                    continue
+            if rule_ops is not None and (operation_id is None or operation_id not in rule_ops):
+                continue
+            allowed = rule.effect.lower() == "allow"
+            return PermissionTestResult(
+                allowed=allowed,
+                matched=True,
+                effect=rule.effect,
+                rule_index=idx,
+                credential_id=rule.credential_id,
+                is_system=rule.is_system,
+            )
+        return PermissionTestResult(
+            allowed=False,
+            matched=False,
+            effect=None,
+            rule_index=None,
+            credential_id=None,
+            is_system=None,
+        )

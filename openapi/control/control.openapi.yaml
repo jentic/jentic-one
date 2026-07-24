@@ -1339,6 +1339,28 @@ components:
       - type
       title: BearerTokenUpdateRequest
       type: object
+    BindingWarningSchema:
+      description: A non-fatal signal about a bind (or create-time inline bind).
+      properties:
+        code:
+          description: Stable machine-readable warning code.
+          title: Code
+          type: string
+        credential_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Credential the warning applies to; null when the whole binding is meant.
+          title: Credential Id
+        message:
+          description: Human-readable explanation with a recovery pointer.
+          title: Message
+          type: string
+      required:
+      - code
+      - message
+      title: BindingWarningSchema
+      type: object
     CatalogEntryLinksResponse:
       description: Hypermedia links for a catalog entry.
       examples:
@@ -3173,6 +3195,14 @@ components:
           - deny
           title: Effect
           type: string
+        match_mode:
+          default: regex
+          enum:
+          - regex
+          - prefix
+          - exact
+          title: Match Mode
+          type: string
         methods:
           anyOf:
           - items:
@@ -3195,6 +3225,69 @@ components:
       required:
       - effect
       title: PermissionRuleReadSchema
+      type: object
+    PermissionTestRequest:
+      additionalProperties: false
+      description: Request body for :test — dry-run a request shape against pooled rules.
+      properties:
+        method:
+          description: HTTP method of the hypothetical request (case-insensitive).
+          title: Method
+          type: string
+        operation_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Optional OpenAPI operation id resolved from the request URL.
+          title: Operation Id
+        path:
+          description: Path of the hypothetical request as the broker would see it.
+          title: Path
+          type: string
+      required:
+      - method
+      - path
+      title: PermissionTestRequest
+      type: object
+    PermissionTestResponse:
+      description: Dry-run result matching :class:`PermissionTestResult`.
+      properties:
+        allowed:
+          description: Whether the broker would allow this request under the pooled rules.
+          title: Allowed
+          type: boolean
+        credential_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Which binding contributed the matching rule — vendor pooling means this may not equal the credential in the request URL.
+          title: Credential Id
+        effect:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Effect of the matching rule (`allow`/`deny`); null when no match.
+          title: Effect
+        is_system:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          description: True when the matching rule was written by the system; null when no match.
+          title: Is System
+        matched:
+          description: Whether any rule matched; when false, the outcome is default-deny.
+          title: Matched
+          type: boolean
+        rule_index:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          description: Zero-based index in the vendor-pooled rule list; null when no match.
+          title: Rule Index
+      required:
+      - allowed
+      - matched
+      title: PermissionTestResponse
       type: object
     Permissions:
       description: 'Structured permissions view: assigned + effective.'
@@ -4259,13 +4352,6 @@ components:
           maxLength: 255
           title: Name
           type: string
-        permissions:
-          anyOf:
-          - items:
-              $ref: '#/components/schemas/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema'
-            type: array
-          - type: 'null'
-          title: Permissions
       required:
       - name
       title: ToolkitCreateRequest
@@ -4278,14 +4364,26 @@ components:
           type: string
         toolkit:
           $ref: '#/components/schemas/ToolkitResponse'
+        warnings:
+          description: Non-fatal signals about the create — e.g. inline-bound credentials that landed with zero permission rules (broker denies by default).
+          items:
+            $ref: '#/components/schemas/BindingWarningSchema'
+          title: Warnings
+          type: array
       required:
       - toolkit
       - api_key
       title: ToolkitCreateResponse
       type: object
     ToolkitCredentialBindRequest:
+      additionalProperties: false
       description: Bind a credential to a toolkit.
       properties:
+        allow_all:
+          default: false
+          description: 'Convenience flag: bind with a single `allow` rule that matches every request for this binding''s vendor. Mutually exclusive with `permissions`.'
+          title: Allow All
+          type: boolean
         credential_id:
           title: Credential Id
           type: string
@@ -4338,6 +4436,12 @@ components:
         toolkit_id:
           title: Toolkit Id
           type: string
+        warnings:
+          description: Non-fatal bind-time signals — e.g. a binding that landed with zero permission rules (broker denies by default until rules are added).
+          items:
+            $ref: '#/components/schemas/BindingWarningSchema'
+          title: Warnings
+          type: array
       required:
       - toolkit_id
       - credential_id
@@ -4533,12 +4637,6 @@ components:
         name:
           title: Name
           type: string
-        permissions:
-          items:
-            additionalProperties: true
-            type: object
-          title: Permissions
-          type: array
         toolkit_id:
           title: Toolkit Id
           type: string
@@ -4552,7 +4650,6 @@ components:
       - toolkit_id
       - name
       - active
-      - permissions
       - key_count
       - credential_count
       - created_at
@@ -4937,44 +5034,14 @@ components:
           - require-approval
           title: Effect
           type: string
-        methods:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Methods
-        operations:
-          anyOf:
-          - items:
-              type: string
-            type: array
-          - type: 'null'
-          title: Operations
-        path:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Path
-      required:
-      - effect
-      title: PermissionRuleSchema
-      type: object
-    jentic_one__control__web__schemas__toolkits__PermissionRuleSchema:
-      additionalProperties: false
-      description: |-
-        Permission rule for a toolkit-credential binding.
-
-        Rules are evaluated first-match-wins. If no rule matches, the request is
-        denied (default-deny). A binding with zero rules therefore blocks all
-        operations — users must explicitly add at least one allow rule.
-      properties:
-        effect:
-          description: Whether this rule allows or denies the matched request.
+        match_mode:
+          default: regex
+          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
           enum:
-          - allow
-          - deny
-          title: Effect
+          - regex
+          - prefix
+          - exact
+          title: Match Mode
           type: string
         methods:
           anyOf:
@@ -4996,7 +5063,58 @@ components:
           anyOf:
           - type: string
           - type: 'null'
-          description: Regex pattern for the request path. None matches all paths.
+          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
+          title: Path
+      required:
+      - effect
+      title: PermissionRuleSchema
+      type: object
+    jentic_one__control__web__schemas__toolkits__PermissionRuleSchema:
+      additionalProperties: false
+      description: |-
+        Permission rule for a toolkit-credential binding.
+
+        Rules are evaluated first-match-wins. If no rule matches, the request is
+        denied (default-deny). A binding with zero rules therefore blocks all
+        operations — users must explicitly add at least one allow rule.
+      properties:
+        effect:
+          description: Whether this rule allows or denies the matched request.
+          enum:
+          - allow
+          - deny
+          title: Effect
+          type: string
+        match_mode:
+          default: regex
+          description: 'How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.'
+          enum:
+          - regex
+          - prefix
+          - exact
+          title: Match Mode
+          type: string
+        methods:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: HTTP methods to match (case-insensitive). None matches all.
+          title: Methods
+        operations:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: OpenAPI operation IDs to match. None matches all operations.
+          title: Operations
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.'
           title: Path
       required:
       - effect
@@ -13795,7 +13913,8 @@ paths:
 
         The plaintext key (`jntc_live_…`) is returned **once** in `api_key` and is
         never retrievable again. Optional `credential_ids` bind existing credentials
-        at creation time.
+        at creation time; each inline bind emits a ``no_permission_rules`` warning
+        because the broker denies by default until rules are added.
       operationId: createToolkit
       requestBody:
         content:
@@ -14655,6 +14774,96 @@ paths:
       security:
       - BearerAuth: []
       summary: Replace binding permission rules
+      tags:
+      - Toolkit Permissions
+  /toolkits/{toolkit_id}/credentials/{credential_id}/permissions:test:
+    post:
+      description: |-
+        Answer "what would the broker do for this request?" without calling upstream.
+
+        Evaluates the same **vendor-pooled** rule set the broker sees at request
+        time — rules from all same-vendor bindings on this toolkit compete in one
+        ordered list. The response names which binding contributed the matching
+        rule, which is not obvious from the toolkit id alone under pooling.
+      operationId: testToolkitPermissions
+      parameters:
+      - in: path
+        name: toolkit_id
+        required: true
+        schema:
+          title: Toolkit Id
+          type: string
+      - in: path
+        name: credential_id
+        required: true
+        schema:
+          title: Credential Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PermissionTestRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionTestResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '404':
+          content:
+            application/problem+json:
+              example: *id007
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Not Found
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Dry-run permission evaluation
       tags:
       - Toolkit Permissions
   /toolkits/{toolkit_id}/keys:
@@ -15852,7 +16061,7 @@ tags:
 - description: |-
     Sub-resource of **Toolkits** (Core / Access bounded context). The fine-grained PBAC tier — per-`(toolkit, credential)` allow / deny / require-approval rules evaluated server-side. Rules use a priority model: `deny` > `require-approval` > `allow` — the strictest matching rule wins. Absence of a matching rule is an implicit deny. System rules (`_system: true`) participate in the same priority pool as user rules.
 
-    The coarse JWT-embedded scope tier on `Toolkit.permissions` (`capabilities:execute`, `apis:read`) is checked separately and composes with these rules — both must allow.
+    Toolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope (`capabilities:execute`), and every gated operation is decided by these per-binding rules.
   name: Toolkit Permissions
 - description: |-
     Actor-agnostic, multi-item access-request surface (Core / Access bounded context). When an agent's brokered call is rejected by a permission rule — or the agent needs access it doesn't yet have — the agent files an `AccessRequest` containing one or more line items (`AccessRequestItem`). The request enters `pending` state and surfaces an `approve_url` that the agent presents to a human reviewer.
@@ -15947,7 +16156,7 @@ tags:
 
     One reserved superpower short-circuits individual checks in code: `org:admin` (full deployment-wide access, granted via direct DB action). It is not enumerated to non-holders by `GET /permissions`, and is rejected by `PUT /users/{user_id}/permissions` from any caller who doesn't already hold it.
 
-    The same vocabulary is used for `User.permissions` and for `Toolkit.permissions` — coarse JWT-embedded scopes — so the one catalogue covers both. Per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately under the `Toolkit Permissions` tag.
+    The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — so the catalogue below covers user assignment. Toolkits have no separate scope tier of their own: a toolkit API key is minted with the fixed broker-execute scope, and the per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately under the `Toolkit Permissions` tag.
   name: Permissions
 - description: Operational endpoints for service health and platform tooling. Not part of any bounded context — surfaced here so orchestrators and load balancers have a stable probe target.
   name: System

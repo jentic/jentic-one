@@ -49,6 +49,7 @@ export type { BasicAuthCreateRequest } from './models/BasicAuthCreateRequest';
 export type { BasicAuthUpdateRequest } from './models/BasicAuthUpdateRequest';
 export type { BearerTokenCreateRequest } from './models/BearerTokenCreateRequest';
 export type { BearerTokenUpdateRequest } from './models/BearerTokenUpdateRequest';
+export type { BindingWarningSchema } from './models/BindingWarningSchema';
 export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksResponse';
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
@@ -123,6 +124,8 @@ export type { PermissionRuleListResponse } from './models/PermissionRuleListResp
 export { PermissionRuleReadSchema } from './models/PermissionRuleReadSchema';
 export type { Permissions } from './models/Permissions';
 export type { PermissionsPatchRequest } from './models/PermissionsPatchRequest';
+export type { PermissionTestRequest } from './models/PermissionTestRequest';
+export type { PermissionTestResponse } from './models/PermissionTestResponse';
 export type { PreviewInfoResponse } from './models/PreviewInfoResponse';
 export type { PreviewOperationResponse } from './models/PreviewOperationResponse';
 export type { PreviewParameterResponse } from './models/PreviewParameterResponse';

@@ -5,32 +5,17 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
 
 # --- Request models ---
 
 
-class PermissionRuleSchema(BaseModel):
+class PermissionRuleSchema(BasePermissionRuleSchema):
     """Permission rule for an access request item."""
 
-    model_config = ConfigDict(extra="forbid")
-
     effect: Literal["allow", "deny", "require-approval"]
-    methods: list[str] | None = None
-    path: str | None = None
-    operations: list[str] | None = None
-
-    @model_validator(mode="after")
-    def _reject_condition_less_allow(self) -> PermissionRuleSchema:
-        # A condition-less `allow` (no methods, path, or operations) matches every
-        # request under the broker's first-match-wins evaluation — i.e. an
-        # unrestricted grant. Reject it so an approver can never grant blanket
-        # access by accident. A condition-less `deny`/`require-approval` stays
-        # valid: a catch-all deny is a legitimate default-deny construct.
-        if self.effect == "allow" and not (self.methods or self.path or self.operations):
-            msg = "An 'allow' rule must constrain at least one of methods, path, or operations"
-            raise ValueError(msg)
-        return self
 
 
 class CredentialSpecSchema(BaseModel):

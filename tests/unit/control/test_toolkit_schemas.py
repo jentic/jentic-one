@@ -26,22 +26,21 @@ def test_toolkit_create_request_minimal() -> None:
     assert req.description is None
     assert req.active is True
     assert req.credential_ids is None
-    assert req.permissions is None
 
 
 def test_toolkit_create_request_full() -> None:
+    # Toolkit-level ``permissions`` were dropped from the schema in issue
+    # #655 — the field is silently ignored by Pydantic here (the router
+    # rejects it with a raw-body peek at request time).
     req = ToolkitCreateRequest(
         name="full-toolkit",
         description="A toolkit",
         active=False,
         credential_ids=["cred_1", "cred_2"],
-        permissions=[PermissionRuleSchema(effect="allow", path="/api/*")],
     )
     assert req.name == "full-toolkit"
     assert req.active is False
     assert req.credential_ids == ["cred_1", "cred_2"]
-    assert req.permissions is not None
-    assert req.permissions[0].path == "/api/*"
 
 
 def test_toolkit_update_request_partial() -> None:
@@ -57,7 +56,6 @@ def test_toolkit_response_round_trip() -> None:
         toolkit_id="tk_abc123",
         name="test",
         active=True,
-        permissions=[],
         key_count=2,
         credential_count=1,
         created_at=now,
@@ -66,6 +64,9 @@ def test_toolkit_response_round_trip() -> None:
     assert data["toolkit_id"] == "tk_abc123"
     assert data["key_count"] == 2
     assert data["credential_count"] == 1
+    # #655: toolkit-level ``permissions`` was dropped from the response —
+    # the enforced surface is per-binding rules.
+    assert "permissions" not in data
 
 
 def test_permission_rule_schema_minimal() -> None:
@@ -147,6 +148,13 @@ def test_toolkit_credential_bind_request() -> None:
 def test_toolkit_create_request_missing_name_fails() -> None:
     with pytest.raises(ValidationError):
         ToolkitCreateRequest()  # type: ignore[call-arg]
+
+
+def test_toolkit_create_request_no_longer_has_permissions_field() -> None:
+    # #655 regression: the ``permissions`` field was silently accepted then
+    # dropped by the broker. It must be gone from the model — the router's
+    # raw-body peek is what catches a client still submitting the key.
+    assert "permissions" not in ToolkitCreateRequest.model_fields
 
 
 def test_toolkit_create_request_name_too_long() -> None:

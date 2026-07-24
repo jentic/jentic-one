@@ -13,7 +13,6 @@ export type ToolkitResponse = {
     description?: (string | null);
     key_count: number;
     name: string;
-    permissions: Array<Record<string, any>>;
     toolkit_id: string;
     updated_at?: (string | null);
 };

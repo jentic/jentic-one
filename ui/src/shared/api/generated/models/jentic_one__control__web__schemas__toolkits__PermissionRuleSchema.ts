@@ -15,6 +15,10 @@ export type jentic_one__control__web__schemas__toolkits__PermissionRuleSchema = 
      */
     effect: jentic_one__control__web__schemas__toolkits__PermissionRuleSchema.effect;
     /**
+     * How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+     */
+    match_mode?: jentic_one__control__web__schemas__toolkits__PermissionRuleSchema.match_mode;
+    /**
      * HTTP methods to match (case-insensitive). None matches all.
      */
     methods?: (Array<string> | null);
@@ -23,7 +27,7 @@ export type jentic_one__control__web__schemas__toolkits__PermissionRuleSchema = 
      */
     operations?: (Array<string> | null);
     /**
-     * Regex pattern for the request path. None matches all paths.
+     * Path pattern to match. Interpreted per `match_mode`: `regex` uses full-match semantics (the pattern must describe the whole path); `prefix` and `exact` are literal. None matches all paths.
      */
     path?: (string | null);
 };
@@ -34,6 +38,14 @@ export namespace jentic_one__control__web__schemas__toolkits__PermissionRuleSche
     export enum effect {
         ALLOW = 'allow',
         DENY = 'deny',
+    }
+    /**
+     * How `path` is interpreted: `regex` (full-match), `prefix` (string prefix), or `exact` (equality). Defaults to `regex` for backwards compatibility.
+     */
+    export enum match_mode {
+        REGEX = 'regex',
+        PREFIX = 'prefix',
+        EXACT = 'exact',
     }
 }
 
