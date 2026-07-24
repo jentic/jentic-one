@@ -173,11 +173,7 @@ class CredentialRedactedView(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     details: (
-        BearerTokenRedacted
-        | ApiKeyRedacted
-        | BasicAuthRedacted
-        | OAuth2Redacted
-        | NoAuthRedacted
+        BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted | NoAuthRedacted
     )
     server_variables: dict[str, str] | None = None
 

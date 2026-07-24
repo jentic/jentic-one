@@ -15,6 +15,7 @@ be folded into the permanent suite or removed.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from sqlalchemy import delete, select, text
@@ -110,7 +111,7 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
 
     # 1. AGENT files the provisioning plan (as the CLI --provision builder does).
-    plan_items = [
+    plan_items: list[dict[str, Any]] = [
         {"resource_type": "toolkit", "action": "create", "resource_reference": api},
         {
             "resource_type": "credential",
@@ -208,9 +209,9 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     agent_svc = AgentService(ctx)
     served = await agent_svc._served_apis_by_toolkit([created_toolkit.id])
     apis = served.get(created_toolkit.id, [])
-    assert any(
-        s.api_vendor == "httpbin-org" for s in apis
-    ), f"binding should report the served API, got {apis}"
+    assert any(s.api_vendor == "httpbin-org" for s in apis), (
+        f"binding should report the served API, got {apis}"
+    )
 
 
 async def test_noauth_plan_is_executable_via_broker_resolvers(

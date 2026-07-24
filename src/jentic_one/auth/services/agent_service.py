@@ -299,9 +299,7 @@ class AgentService:
                 view.serves = served.get(view.toolkit_id, [])
         return views
 
-    async def _served_apis_by_toolkit(
-        self, toolkit_ids: list[str]
-    ) -> dict[str, list[ServedApi]]:
+    async def _served_apis_by_toolkit(self, toolkit_ids: list[str]) -> dict[str, list[ServedApi]]:
         """Resolve, per toolkit, the APIs its bound credentials serve.
 
         Toolkit→credential bindings and credentials live in the control DB, so

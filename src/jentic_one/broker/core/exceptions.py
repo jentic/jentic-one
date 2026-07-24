@@ -293,7 +293,6 @@ def no_toolkit_binding_directive(
         strategy="prompt_human",
         parameters=parameters,
         human_readable_instruction=instruction,
-
     )
 
 

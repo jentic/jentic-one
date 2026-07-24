@@ -367,8 +367,7 @@ class AccessRequestService:
             # its bind items are only satisfiable after the wizard fulfils them, so
             # validate() denies an unfulfilled bind with a plan-aware reason.
             is_plan = any(
-                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS
-                for it in request.items
+                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS for it in request.items
             )
             control_effect_items: list[tuple[str, Any]] = []
 

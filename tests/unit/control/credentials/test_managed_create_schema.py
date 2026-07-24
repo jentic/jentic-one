@@ -178,7 +178,7 @@ def test_credential_create_request_accepts_no_auth() -> None:
     only listed bearer_token/api_key/basic/oauth2 — so POST /credentials rejected
     `type=no_auth` before reaching the (already no_auth-aware) service.
     """
-    ta = TypeAdapter(CredentialCreateRequest)
+    ta: TypeAdapter[CredentialCreateRequest] = TypeAdapter(CredentialCreateRequest)
     model = ta.validate_python(
         {
             "type": "no_auth",
