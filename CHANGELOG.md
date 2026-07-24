@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/jentic/jentic-one/compare/v0.18.0...v0.19.0) (2026-07-24)
+
+
+### Features
+
+* **control:** generic access-filter seam for extension read scoping ([#769](https://github.com/jentic/jentic-one/issues/769)) ([8ca6267](https://github.com/jentic/jentic-one/commit/8ca62671b4788db039cebdd05a02723d13ba9676))
+
 ## [0.18.0](https://github.com/jentic/jentic-one/compare/v0.17.0...v0.18.0) (2026-07-24)
 
 
