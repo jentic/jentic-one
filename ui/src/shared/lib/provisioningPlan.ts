@@ -115,3 +115,37 @@ export function planSteps(request: AccessRequest): PlanStep[] {
 	steps.push('credentialBind', 'toolkitBind', 'review');
 	return steps;
 }
+
+/**
+ * The bind items that actually WIRE access for a plan: `credential:bind` (binds
+ * the credential to the toolkit + rules) and `toolkit:bind` (binds the agent to
+ * the toolkit). Both must be approved for the agent to be able to call the API.
+ */
+function planBindItems(request: AccessRequest): AccessRequestItem[] {
+	return request.items.filter(
+		(it) =>
+			(it.resource_type === 'credential' && it.action === 'bind') ||
+			(it.resource_type === 'toolkit' && it.action === 'bind'),
+	);
+}
+
+/**
+ * True only when a plan reached a genuinely executable state: every access-wiring
+ * bind item is approved. The request-level `partially_approved` is NOT success —
+ * if one bind is denied the agent still can't call the API (a denied `toolkit:bind`
+ * with an approved `credential:bind`, or vice-versa). Guards against reporting a
+ * misleading "Access granted".
+ */
+export function isPlanGranted(request: AccessRequest): boolean {
+	const binds = planBindItems(request);
+	if (binds.length === 0) return false;
+	return binds.every((it) => it.status === 'approved');
+}
+
+/** The first denial reason among a plan's items, for surfacing why it wasn't granted. */
+export function planDenialReason(request: AccessRequest): string | null {
+	const denied = request.items.find(
+		(it) => it.status === 'denied' && (it.decision_reason ?? '').trim() !== '',
+	);
+	return denied?.decision_reason ?? null;
+}

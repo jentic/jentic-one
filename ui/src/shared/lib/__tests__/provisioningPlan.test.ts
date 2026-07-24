@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
 	FULFILMENT_ITEM_TYPES,
 	findItem,
+	isPlanGranted,
 	isProvisioningPlan,
 	itemKey,
 	planApiReference,
 	planAuthType,
+	planDenialReason,
 	planIsNoAuth,
 	planSteps,
 } from '@/shared/lib/provisioningPlan';
@@ -21,6 +23,7 @@ function item(partial: Partial<AccessRequestItem>): AccessRequestItem {
 		resource_id: partial.resource_id ?? null,
 		to_id: partial.to_id ?? null,
 		rules: partial.rules ?? null,
+		decision_reason: partial.decision_reason ?? null,
 	};
 }
 
@@ -131,5 +134,50 @@ describe('provisioningPlan', () => {
 		);
 		expect(FULFILMENT_ITEM_TYPES.has('credential:provision')).toBe(true);
 		expect(FULFILMENT_ITEM_TYPES.has('credential:bind')).toBe(false);
+	});
+
+	describe('isPlanGranted / planDenialReason', () => {
+		const bind = (status: string, reason?: string): AccessRequestItem[] => [
+			item({ id: 'i1', resource_type: 'toolkit', action: 'create', status: 'approved' }),
+			item({ id: 'i3', resource_type: 'credential', action: 'bind', status }),
+			item({
+				id: 'i4',
+				resource_type: 'toolkit',
+				action: 'bind',
+				status,
+				decision_reason: reason ?? null,
+			}),
+		];
+
+		it('is granted only when BOTH bind items are approved', () => {
+			const req = plan(bind('approved'));
+			req.status = 'approved';
+			expect(isPlanGranted(req)).toBe(true);
+		});
+
+		it('is NOT granted when a bind is denied even if aggregate is partially_approved', () => {
+			// credential:bind approved, toolkit:bind denied → agent still can't call.
+			const req = plan([
+				item({ id: 'i1', resource_type: 'toolkit', action: 'create', status: 'approved' }),
+				item({ id: 'i3', resource_type: 'credential', action: 'bind', status: 'approved' }),
+				item({
+					id: 'i4',
+					resource_type: 'toolkit',
+					action: 'bind',
+					status: 'denied',
+					decision_reason: 'no toolkit serves it',
+				}),
+			]);
+			req.status = 'partially_approved';
+			expect(isPlanGranted(req)).toBe(false);
+			expect(planDenialReason(req)).toBe('no toolkit serves it');
+		});
+
+		it('is not granted when there are no bind items', () => {
+			const req = plan([
+				item({ resource_type: 'toolkit', action: 'create', status: 'approved' }),
+			]);
+			expect(isPlanGranted(req)).toBe(false);
+		});
 	});
 });

@@ -128,6 +128,15 @@ export function CredentialTypeFields({
 }: FieldsProps) {
 	const secretHint = mode === 'edit' ? 'Leave blank to keep the current value.' : undefined;
 
+	if (type === CredentialType.NO_AUTH) {
+		// A no-auth credential carries no secret — render no fields. Defensive:
+		// no-auth plans auto-create the credential and skip this form, and the
+		// manual picker doesn't offer NO_AUTH, so this isn't reached today — but
+		// without it a NO_AUTH type would fall through to the OAuth2 branch below
+		// and render Client ID/secret fields for a credential that has none.
+		return null;
+	}
+
 	if (type === CredentialType.BEARER_TOKEN) {
 		return (
 			<Field

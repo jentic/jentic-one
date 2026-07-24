@@ -52,8 +52,10 @@ import {
 } from '@/shared/lib/accessRequests';
 import {
 	findItem,
+	isPlanGranted,
 	planApiReference,
 	planAuthType,
+	planDenialReason,
 	planIsNoAuth,
 	type PlanApiReference,
 } from '@/shared/lib/provisioningPlan';
@@ -144,14 +146,48 @@ export function ProvisioningRequestDialog({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
+	// The request's status re-fetched on open. Callers pass a possibly-stale
+	// snapshot from the list query; before showing the LIVE create/approve
+	// controls we confirm the request is still pending, so an operator can't
+	// re-fulfil a request that was decided/expired since the list was fetched
+	// (which would strand a real toolkit/credential then fail at decide). Null
+	// until the fetch resolves; the terminal gate falls back to the snapshot.
+	const [freshStatus, setFreshStatus] = useState<string | null>(null);
 
 	// Transient flags reset on every (re)open; the draft (created ids, rules)
 	// persists between dismissals so a peek doesn't discard fulfilment progress.
+	// If a prior submit ended on the `done` screen with an ERROR (the request is
+	// still pending — the decide failed), reopening should return the operator to
+	// the review step to retry rather than stranding them on the error screen. A
+	// GRANTED done screen is left as-is (the request is now decided; the terminal
+	// gate re-routes it to the read-only summary on the next open anyway).
 	useEffect(() => {
 		if (!open) return;
 		setBusy(false);
 		setError(null);
+		setStep((prev) => (prev === 'done' && outcome === 'error' ? 'review' : prev));
+		if (outcome === 'error') setOutcome(null);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [open]);
+
+	// Confirm the request is still pending on open (the snapshot may be stale).
+	// A superseded status flips the UI to the read-only terminal summary before
+	// the operator can run create→amend→decide against a settled request.
+	useEffect(() => {
+		if (!open) return;
+		let cancelled = false;
+		void getAccessRequest(request.id)
+			.then((fresh) => {
+				if (!cancelled) setFreshStatus(fresh.status);
+			})
+			.catch(() => {
+				// Best-effort: on a fetch failure keep the snapshot status; the
+				// decide step still re-fetches and will surface any real error.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [open, request.id]);
 
 	// Seed name + rules once per request id (not on every open flip).
 	useEffect(() => {
@@ -162,6 +198,7 @@ export function ProvisioningRequestDialog({
 		setToolkitName(suggestToolkitName(apiRef?.vendor ?? '', apiRef?.name));
 		setRules(proposedRules);
 		setOutcome(null);
+		setFreshStatus(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [request.id]);
 
@@ -279,13 +316,28 @@ export function ProvisioningRequestDialog({
 			const decisions = fresh.items
 				.filter((it) => it.status === 'pending')
 				.map((it) => ({ item_id: it.id, decision: 'approved' as const }));
+			if (decisions.length === 0) {
+				// Nothing left to decide — the request was already decided elsewhere
+				// (e.g. a stale snapshot). Reflect the current server truth instead
+				// of POSTing an empty decision.
+				const alreadyGranted = isPlanGranted(fresh);
+				setOutcome(alreadyGranted ? 'granted' : 'error');
+				if (!alreadyGranted) {
+					setError(planDenialReason(fresh) ?? 'This request was already decided.');
+				}
+				setStep('done');
+				return;
+			}
 			const decided = await decideAccessRequest(request.id, decisions);
-			const granted =
-				decided.status === 'approved' || decided.status === 'partially_approved';
+			// A plan is only truly granted when BOTH bind items that wire access
+			// (credential:bind + toolkit:bind) end up approved. The aggregate
+			// `partially_approved` is NOT success here: if one bind is denied the
+			// agent still can't call the API, so surface it as an error with the
+			// denied item's reason rather than a misleading "Access granted".
+			const granted = isPlanGranted(decided);
 			setOutcome(granted ? 'granted' : 'error');
 			if (!granted) {
-				const denied = decided.items.find((it) => it.status === 'denied');
-				setError(denied?.decision_reason ?? 'The request could not be fully approved.');
+				setError(planDenialReason(decided) ?? 'The request could not be fully approved.');
 			} else {
 				onFulfilled?.();
 			}
@@ -318,12 +370,16 @@ export function ProvisioningRequestDialog({
 	// expired / withdrawn) must NOT show the live create/approve wizard — that
 	// would let an operator re-fulfil a settled request (stranding orphan objects,
 	// then failing at decide). Show a read-only outcome summary instead. The
-	// wizard only drives PENDING plans.
-	if (request.status !== 'pending') {
+	// wizard only drives PENDING plans. Prefer the freshly-fetched status over the
+	// (possibly stale) snapshot so a request decided since the list was loaded is
+	// caught before any create/amend runs.
+	const effectiveStatus = freshStatus ?? request.status;
+	if (effectiveStatus !== 'pending') {
 		return (
 			<TerminalSummaryDialog
 				open={open}
 				request={request}
+				status={effectiveStatus}
 				apiLabel={apiLabel(apiRef)}
 				onClose={onClose}
 			/>
@@ -615,15 +671,17 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
 function TerminalSummaryDialog({
 	open,
 	request,
+	status,
 	apiLabel,
 	onClose,
 }: {
 	open: boolean;
 	request: AccessRequest;
+	status: string;
 	apiLabel: string;
 	onClose: () => void;
 }) {
-	const approved = request.status === 'approved' || request.status === 'partially_approved';
+	const approved = status === 'approved' || status === 'partially_approved';
 	const deniedItem = request.items.find((it) => it.status === 'denied');
 
 	// Reconstruct what the approval actually wired, from the decided items.
@@ -681,10 +739,10 @@ function TerminalSummaryDialog({
 					</div>
 					<div>
 						<p className="text-foreground text-base font-medium capitalize">
-							{request.status.replace('_', ' ')}
+							{status.replace('_', ' ')}
 						</p>
 						<p className="text-muted-foreground text-sm">
-							{STATUS_COPY[request.status] ?? 'This request is no longer pending.'}
+							{STATUS_COPY[status] ?? 'This request is no longer pending.'}
 						</p>
 					</div>
 				</div>
