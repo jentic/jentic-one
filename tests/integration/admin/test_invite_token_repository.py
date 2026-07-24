@@ -202,6 +202,34 @@ async def test_user_ids_with_active_invite_expired_and_redeemed_excluded(
         assert result == set()
 
 
+async def test_user_ids_with_active_invite_reissued_after_expiry_is_active(
+    admin_db: DatabaseSession, test_user: str
+) -> None:
+    # The re-issue path: a user with a lapsed token PLUS a fresh active one is
+    # active (any live token counts). This is what flips a regenerated invite
+    # back from expired to pending in the derived state.
+    async with admin_db.session() as session:
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="reissue_old_expired",
+            expires_at=datetime.now(UTC) - timedelta(hours=1),
+            created_by="usr_test",
+        )
+        await InviteTokenRepository.create(
+            session,
+            user_id=test_user,
+            token_hash="reissue_fresh_active",
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    async with admin_db.session() as session:
+        result = await InviteTokenRepository.user_ids_with_active_invite(session, [test_user])
+        assert result == {test_user}
+
+
 async def test_user_ids_with_active_invite_batches_users(
     admin_db: DatabaseSession, clean_invite_tokens: None
 ) -> None:

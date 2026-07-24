@@ -37,9 +37,11 @@ def _derive_invite_state(stored: str, user_id: str, active_invite_user_ids: set[
     """Overlay the read-time EXPIRED invite state (never persisted).
 
     A ``pending`` user with no unredeemed, unexpired invite token has a lapsed
-    invite — surface it as ``expired`` so admins know to regenerate. All other
-    states (redeemed/accepted) pass through unchanged. Mirrors the AccessRequest
-    EXPIRED derivation: the DB keeps ``pending`` and the truth is ``expires_at``.
+    invite — surface it as ``expired`` so admins know to regenerate. Only
+    ``pending`` is overlaid; every other stored state (``redeemed`` and
+    ``accepted`` — the latter is persisted for external-auth users) passes
+    through unchanged. Mirrors the AccessRequest EXPIRED derivation: the DB keeps
+    ``pending`` and the token's ``expires_at`` is the source of truth.
     """
     if stored == InviteState.PENDING and user_id not in active_invite_user_ids:
         return InviteState.EXPIRED
@@ -91,6 +93,12 @@ class UserService:
         limit: int = 50,
         invite_state: InviteState | None = None,
     ) -> Page[UserView]:
+        # NOTE: the `invite_state` filter matches the STORED column, so it can't
+        # filter by the derived EXPIRED state (never persisted) — `EXPIRED`
+        # returns nothing and `PENDING` may return rows that render as expired.
+        # This mirrors AccessRequestService.list_all, which filters on stored
+        # status and derives EXPIRED only in the view. If filtering by expired is
+        # ever needed, translate it to `PENDING AND user_id NOT IN (active)` here.
         cursor_dt = None
         if cursor is not None:
             cursor_dt, _ = decode_cursor(cursor)
