@@ -11,7 +11,7 @@
 ### Bug Fixes
 
 * **credentials:** canonical identity matching across broker/control ([#775](https://github.com/jentic/jentic-one/issues/775), [#746](https://github.com/jentic/jentic-one/issues/746), [#747](https://github.com/jentic/jentic-one/issues/747), [#748](https://github.com/jentic/jentic-one/issues/748)) ([#784](https://github.com/jentic/jentic-one/issues/784)) ([71c5a04](https://github.com/jentic/jentic-one/commit/71c5a048e1b4cfb3e2a99487cb7895f0433c749c))
-* **permissions:** overhaul rule authoring, storage, and enforcement ([#786](https://github.com/jentic/jentic-one/issues/786)) ([2967dc2](https://github.com/jentic/jentic-one/commit/2967dc255f37074ce4a28e5d684d2e42dcc26ad8))
+* **permissions:** overhaul rule authoring, storage, and enforcement ([#655](https://github.com/jentic/jentic-one/issues/655), [#751](https://github.com/jentic/jentic-one/issues/751), [#750](https://github.com/jentic/jentic-one/issues/750), [#578](https://github.com/jentic/jentic-one/issues/578)) ([#786](https://github.com/jentic/jentic-one/issues/786)) ([2967dc2](https://github.com/jentic/jentic-one/commit/2967dc255f37074ce4a28e5d684d2e42dcc26ad8))
 
 ## [0.17.0](https://github.com/jentic/jentic-one/compare/v0.16.0...v0.17.0) (2026-07-24)
 
