@@ -40,7 +40,8 @@ _TOOLKITS_FOR_API = text(
     "JOIN credentials c ON c.id = tcb.credential_id "
     "WHERE c.api_vendor = :vendor "
     "  AND (:name = '' OR c.api_name IS NULL OR c.api_name = '' OR c.api_name = :name) "
-    "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = '' OR c.api_version = :version)"
+    "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = '' "
+    "       OR c.api_version = :version)"
 )
 
 

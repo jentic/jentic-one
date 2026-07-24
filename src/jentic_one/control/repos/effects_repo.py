@@ -199,7 +199,8 @@ class EffectsRepository:
             "JOIN toolkits tk ON tk.id = tcb.toolkit_id "
             "WHERE c.api_vendor = :vendor "
             "  AND (:name = '' OR c.api_name IS NULL OR c.api_name = '' OR c.api_name = :name) "
-            "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = '' OR c.api_version = :version) "
+            "  AND (:version = '' OR c.api_version IS NULL OR c.api_version = '' "
+            "       OR c.api_version = :version) "
             f"{owner_clause}"
         )
         result = await session.execute(text(base_query), params)
