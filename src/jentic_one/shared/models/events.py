@@ -42,6 +42,7 @@ class EventType:
     CREDENTIAL_CONNECTION_FAILED = "credential.connection_failed"
     CREDENTIAL_REFRESH_FAILED = "credential.refresh_failed"
     CREDENTIAL_NOT_PROVISIONED = "credential.not_provisioned"
+    CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
     CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
     CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
     TOOLKIT_CREATED = "toolkit.created"
@@ -79,6 +80,7 @@ class EventType:
             CREDENTIAL_CONNECTION_FAILED,
             CREDENTIAL_REFRESH_FAILED,
             CREDENTIAL_NOT_PROVISIONED,
+            CREDENTIAL_UNDECRYPTABLE,
             CREDENTIAL_BOUND_TO_TOOLKIT,
             CREDENTIAL_UNBOUND_FROM_TOOLKIT,
             TOOLKIT_CREATED,

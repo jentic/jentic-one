@@ -159,6 +159,25 @@ class CredentialNotProvisionedError(BrokerError):
     """No credential is provisioned for the resolved API/caller (424, §02b)."""
 
 
+class CredentialUndecryptableError(BrokerError):
+    """A resolved credential's stored ciphertext cannot be decrypted (424).
+
+    Same-class failure as :class:`CredentialNotProvisionedError` (the request
+    is fine; a stored dependency is unusable), but a different recovery: the
+    caller cannot re-provision itself — an operator has to re-add the
+    credential because the encryption key that produced the stored blob is
+    gone. Common cause: a reinstall regenerated the encryption keyset under
+    the same key id, so lookup succeeds and AES-GCM authentication fails
+    (see ``shared/crypto/encryption.py`` — ``InvalidTag`` →
+    :class:`~jentic_one.shared.crypto.DecryptionError`); other paths in
+    include a hand-rotated key without keeping the retired entry, a
+    corrupted row, or a database restored under a different key. The
+    ``prompt_human`` directive tells the agent to escalate to an operator
+    rather than retry. Never carry ciphertext or key material in the body
+    (redaction rule).
+    """
+
+
 class CredentialNeedsReconnectError(BrokerError):
     """The OAuth2 grant was revoked/disconnected — the caller must reconnect (401, §02b)."""
 
