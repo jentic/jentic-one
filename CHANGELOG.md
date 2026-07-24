@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/jentic/jentic-one/compare/v0.16.0...v0.17.0) (2026-07-24)
+
+
+### Features
+
+* **admin:** derive expired invite state at read time ([#782](https://github.com/jentic/jentic-one/issues/782)) ([2456eef](https://github.com/jentic/jentic-one/commit/2456eefaf94a351ee3e00f6e1dcac0bb4ba93898))
+* **ui:** discovery, import entry point, and simpler delete confirm ([#767](https://github.com/jentic/jentic-one/issues/767)) ([650265c](https://github.com/jentic/jentic-one/commit/650265c67cfd34d7f84b18f7055a79e0a2d8f54c))
+
+
+### Bug Fixes
+
+* **registry:** restore operation inputs (parameters + requestBody) on import ([#773](https://github.com/jentic/jentic-one/issues/773)) ([f82b8c7](https://github.com/jentic/jentic-one/commit/f82b8c7545f779447e57b1f48376fb8a22d3b297)), closes [#768](https://github.com/jentic/jentic-one/issues/768)
+
 ## [0.16.0](https://github.com/jentic/jentic-one/compare/v0.15.3...v0.16.0) (2026-07-23)
 
 
