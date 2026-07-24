@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import exists, select
+from sqlalchemy import ColumnElement, exists, select
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
@@ -212,7 +212,7 @@ def test_orphaned_agent_sees_credential_bound_to_bound_toolkit() -> None:
 def test_include_shared_invokes_registered_provider() -> None:
     """A registered provider's clause is OR-merged on the read path."""
 
-    def _provider(identity: Identity, model: type) -> object | None:
+    def _provider(identity: Identity, model: type) -> ColumnElement[bool] | None:
         if model is Toolkit:
             # A dummy EXISTS keyed on the caller — stands in for a share table.
             return exists(select(Toolkit.id).where(Toolkit.created_by == f"shared:{identity.sub}"))
@@ -234,7 +234,7 @@ def test_include_shared_invokes_registered_provider() -> None:
 def test_include_shared_default_off_ignores_providers() -> None:
     """Without include_shared (the write path), providers are not consulted."""
 
-    def _provider(identity: Identity, model: type) -> object | None:
+    def _provider(identity: Identity, model: type) -> ColumnElement[bool] | None:
         return exists(select(Toolkit.id).where(Toolkit.created_by == "PROVIDER_MARKER"))
 
     register_access_filter_provider(_provider)
