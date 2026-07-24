@@ -2,27 +2,27 @@ apiVersion: v2
 name: jentic-one
 description: Umbrella Helm chart for jentic-one services
 type: application
-version: 0.19.0 # x-release-please-version
-appVersion: "0.19.0" # x-release-please-version
+version: 0.19.1 # x-release-please-version
+appVersion: "0.19.1" # x-release-please-version
 
 dependencies:
   - name: broker
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: broker.enabled
   - name: app
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: app.enabled
   - name: registry
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: registry.enabled
   - name: admin
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: admin.enabled
   - name: control
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: control.enabled
   - name: gateway
-    version: 0.19.0 # x-release-please-version
+    version: 0.19.1 # x-release-please-version
     condition: gateway.enabled
   - name: postgresql
     version: 16.4.3

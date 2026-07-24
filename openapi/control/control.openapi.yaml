@@ -5299,7 +5299,7 @@ info:
     name: Apache-2.0
   summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
   title: Jentic Control Plane API
-  version: 0.19.0
+  version: 0.19.1
 openapi: 3.1.0
 paths:
   /.well-known/jwks.json:
