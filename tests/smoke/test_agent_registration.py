@@ -12,6 +12,7 @@ from jwt.algorithms import OKPAlgorithm
 
 from tests.smoke.conftest import (
     SmokeAgent,
+    _skip_if_no_admin_surface,
     agent_token_exchange,
     approve_agent,
     authed_request,
@@ -23,6 +24,7 @@ from tests.smoke.conftest import (
 @pytest.mark.smoke
 def test_register_agent_returns_pending(base_url: str) -> None:
     """POST /register with valid JWKS returns 201 with pending status."""
+    _skip_if_no_admin_surface()
     client_name = f"smoke-reg-{uuid.uuid4().hex[:12]}"
     _, jwks = generate_ed25519_jwks()
 
@@ -41,6 +43,7 @@ def test_register_agent_returns_pending(base_url: str) -> None:
 @pytest.mark.smoke
 def test_poll_pending_status(base_url: str) -> None:
     """GET /register/{agent_id} with RAT returns pending status."""
+    _skip_if_no_admin_surface()
     client_name = f"smoke-poll-{uuid.uuid4().hex[:12]}"
     _, jwks = generate_ed25519_jwks()
 
@@ -64,6 +67,7 @@ def test_approve_invalidates_rat(base_url: str, admin_token: str) -> None:
     status. Active status is instead confirmed via token exchange in
     ``test_agent_token_exchange``.
     """
+    _skip_if_no_admin_surface()
     client_name = f"smoke-approve-{uuid.uuid4().hex[:12]}"
     private_key, jwks = generate_ed25519_jwks()
 
@@ -84,6 +88,7 @@ def test_approve_invalidates_rat(base_url: str, admin_token: str) -> None:
 @pytest.mark.smoke
 def test_agent_token_exchange(base_url: str, admin_token: str) -> None:
     """After approval, JWT-bearer token exchange succeeds and the token is usable."""
+    _skip_if_no_admin_surface()
     client_name = f"smoke-exchange-{uuid.uuid4().hex[:12]}"
     private_key, jwks = generate_ed25519_jwks()
 
@@ -102,6 +107,7 @@ def test_agent_token_exchange(base_url: str, admin_token: str) -> None:
 @pytest.mark.smoke
 def test_list_agents_includes_registered(base_url: str, test_agent: SmokeAgent) -> None:
     """GET /agents?status=active includes the newly registered agent."""
+    _skip_if_no_admin_surface()
     body, status = authed_request(
         f"{base_url}/agents?status=active",
         token=test_agent.owner_token,
@@ -115,6 +121,7 @@ def test_list_agents_includes_registered(base_url: str, test_agent: SmokeAgent) 
 @pytest.mark.smoke
 def test_disable_blocks_token_exchange(base_url: str, admin_token: str) -> None:
     """Disabling an agent blocks token exchange; re-enabling restores it."""
+    _skip_if_no_admin_surface()
     client_name = f"smoke-disable-{uuid.uuid4().hex[:12]}"
     private_key, jwks = generate_ed25519_jwks()
 

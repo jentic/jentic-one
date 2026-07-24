@@ -229,6 +229,10 @@ def test_user(base_url: str, admin_token: str) -> Generator[SmokeUser]:
         "events:read",
         "credentials:read",
         "apis:read",
+        # URL/inline import via POST /apis requires apis:write (apis:read only
+        # covers listing/inspection) — the import_and_wait tests file imports
+        # as this user.
+        "apis:write",
         "executions:read",
     ]
     perm_body, perm_status = authed_request(
@@ -439,6 +443,30 @@ def agent_token_exchange(base_url: str, agent_id: str, private_key: Ed25519Priva
     return access_token
 
 
+def grant_agent_scope(base_url: str, agent_id: str, admin_token: str, scope: str) -> None:
+    """Grant an extra scope on top of the agent's current grants.
+
+    Scopes are minted into the access token at exchange time, so call this
+    *before* ``agent_token_exchange`` for the grant to take effect.
+    """
+    scopes_body, status = authed_request(
+        f"{base_url}/agents/{agent_id}/scopes",
+        token=admin_token,
+    )
+    assert status == 200, f"Reading agent scopes failed: {status} {scopes_body}"
+    assert isinstance(scopes_body, dict)
+    scopes = list(scopes_body["scopes"])
+    if scope not in scopes:
+        scopes.append(scope)
+    _, put_status = authed_request(
+        f"{base_url}/agents/{agent_id}/scopes",
+        method="PUT",
+        token=admin_token,
+        body={"scopes": scopes},
+    )
+    assert put_status == 200, f"Granting {scope} failed: {put_status}"
+
+
 @pytest.fixture()
 def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
     """Register, approve, and token-exchange an agent; archive on teardown."""
@@ -447,6 +475,10 @@ def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
 
     agent_id, rat = register_agent(base_url, client_name, jwks)
     approve_agent(base_url, agent_id, admin_token)
+    # URL/inline import (POST /apis) needs apis:write, which is deliberately
+    # not in DEFAULT_AGENT_SCOPES — an owner must approve the elevation. The
+    # smoke agent imports specs directly, so simulate that owner approval here.
+    grant_agent_scope(base_url, agent_id, admin_token, "apis:write")
     access_token = agent_token_exchange(base_url, agent_id, private_key)
 
     yield SmokeAgent(
