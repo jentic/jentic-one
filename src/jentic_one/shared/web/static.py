@@ -16,7 +16,17 @@ backend call*. An unknown non-``/app`` path is a plain 404 regardless of the
 ``Accept`` header — there is no content-negotiation guesswork and no
 hand-maintained "API-owned prefix" allow-list. Within ``/app/*`` the
 ``fallback="auto"`` behaviour still applies so SPA deep-link refreshes
-(``/app/agents/123``) serve ``index.html``.
+(``/app/agents/123``) serve ``index.html``. A dedicated HTML-navigation
+fallback additionally covers *dotted* deep-links (e.g. an API-version segment
+``/app/workspace/<vendor>/<name>/1.0``) that ``fallback="auto"``'s final-segment
+extension heuristic would otherwise mis-classify as a static file and 404
+(issue #647); real bundle files and non-navigation requests still resolve/404 as
+before. That fallback distinguishes a *route* from an *asset* by whether the
+final segment names a recognized static-file type (by :mod:`mimetypes`, so it
+tracks real asset extensions instead of drifting from ``ui/vite.config.ts``),
+not by a curated directory-prefix list — so a missing/renamed asset anywhere in
+the bundle (``assets/…`` *or* a mount-root file like ``broker-openapi.json``)
+still surfaces as a ``404`` rather than a silent app boot.
 
 ``app.frontend()`` registers the bundle as *low-priority* routes: real API
 path operations are matched first, and the static files are only consulted when
@@ -41,13 +51,19 @@ in, so it exposes that path to the SPA via a tiny JSON config endpoint
 
 from __future__ import annotations
 
+import contextlib
+import email.message
 import importlib.resources
-from collections.abc import Awaitable, Callable
+import mimetypes
+import os
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.middleware import Middleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _logger = structlog.get_logger(__name__)
 
@@ -76,6 +92,259 @@ _ROOT_ICON_PROBES = {
     "apple-touch-icon.png": "apple-touch-icon.png",
     "apple-touch-icon-precomposed.png": "apple-touch-icon.png",
 }
+
+def _accept_header(scope: Scope) -> str:
+    """Return the request's combined ``Accept`` header value from an ASGI scope.
+
+    Reads only the ``accept`` header (avoids materialising a full header dict on
+    the hot SPA path) and RFC 7230-combines repeated header lines with commas —
+    a client/intermediary may split ``Accept`` across multiple lines, and taking
+    only the last would drop an earlier ``text/html`` and 404 a real navigation.
+    """
+    values = [
+        value.decode("latin-1")
+        for key, value in scope.get("headers", [])
+        if key == b"accept"
+    ]
+    return ",".join(values)
+
+
+def _iter_accept_media_types(accept: str) -> Iterator[tuple[str, float]]:
+    """Yield ``(media_type, quality)`` pairs from an ``Accept`` header value.
+
+    Mirrors FastAPI's own header parsing (``fastapi.routing``) so our navigation
+    check agrees with the framework on what "the client accepts HTML" means.
+    """
+    for raw_value in accept.split(","):
+        message = email.message.Message()
+        message["content-type"] = raw_value.strip()
+        q = message.get_param("q")
+        quality = 1.0
+        if isinstance(q, str):
+            with contextlib.suppress(ValueError):
+                quality = float(q)
+        yield (
+            f"{message.get_content_maintype()}/{message.get_content_subtype()}",
+            quality,
+        )
+
+
+def _looks_like_static_asset(spa_path: str) -> bool:
+    """True when the final path segment names a *recognized* static file type.
+
+    Keys off :mod:`mimetypes` (``.json``, ``.svg``, ``.png``, ``.js``, ``.css``,
+    ``.webmanifest``, …) rather than a hardcoded directory-prefix list, so it
+    tracks real asset types instead of drifting from ``ui/vite.config.ts``. The
+    bundle ships assets both under ``assets/`` *and* at the mount root
+    (``broker-openapi.json``, ``favicon.svg``, ``site.webmanifest``, …), so a
+    prefix list can't cover them; a MIME-mapped extension can.
+
+    A missing/renamed asset of a recognized type must surface as a ``404`` (a
+    broken deploy), never the SPA shell — so callers refuse the shell fallback
+    for these. Version-like segments (``1.0`` → ``.0``, ``2.1.3`` → ``.3``) and
+    unknown extensions are *not* recognized asset types and stay ambiguous
+    (handled by the explicit-``text/html`` rule).
+    """
+    ext = os.path.splitext(spa_path.rsplit("/", 1)[-1])[1].lower()
+    return bool(ext) and ext in mimetypes.types_map
+
+
+def _has_extension(spa_path: str) -> bool:
+    """True when the final path segment has *any* extension (dot-suffix).
+
+    Matches FastAPI's ``fallback="auto"`` heuristic (``os.path.splitext`` on the
+    last segment). Used to decide *how strict* the navigation check must be for
+    a path that is not a recognized static asset: an extension-less path is
+    unambiguously an app route, whereas a dotted-but-unrecognized final segment
+    (e.g. an API version ``1.0``) is ambiguous and so demands an explicit
+    ``text/html`` accept.
+    """
+    return bool(os.path.splitext(spa_path.rsplit("/", 1)[-1])[1])
+
+
+def _is_html_navigation(accept: str, *, require_explicit_html: bool) -> bool:
+    """True when the request is a genuine browser navigation (wants HTML).
+
+    ``accept`` is the request's combined ``Accept`` header value (see
+    :func:`_accept_header`). The dotted-final-segment case (issue #647) is the
+    tricky one: FastAPI's ``fallback="auto"`` mis-reads a versioned deep-link
+    (``/app/.../1.0``) as a static-file request and 404s it. We relax that — but
+    *carefully*, to avoid turning every missing ``foo.json``/``bar.js`` into a
+    silent app boot:
+
+    * ``require_explicit_html=False`` (extension-less path, unambiguously a
+      route): accept a browser navigation the way FastAPI does — explicit
+      ``text/html`` **or** a ``*/*`` wildcard.
+    * ``require_explicit_html=True`` (dotted final segment, ambiguous): require
+      an **explicit** ``text/html`` (or ``application/xhtml+xml``) accept. Real
+      top-level browser navigations always send ``text/html``; asset/XHR/CLI
+      clients send ``*/*`` or a specific non-HTML type, so a missing dotted asset
+      still 404s.
+    """
+    wildcard_accepted = False
+    html_rejected = False
+    for media_type, quality in _iter_accept_media_types(accept):
+        if media_type in {"text/html", "application/xhtml+xml"}:
+            if quality == 0:
+                html_rejected = True
+            else:
+                return True
+        elif media_type == "*/*" and quality != 0:
+            wildcard_accepted = True
+    if require_explicit_html:
+        return False
+    return wildcard_accepted and not html_rejected
+
+
+class _SpaNavigationFallbackMiddleware:
+    """Serve the SPA shell for a browser navigation the app 404'd (issue #647).
+
+    A thin ASGI shim registered as the **innermost** user middleware (see
+    :func:`mount_spa`), so the shell it rescues still flows back out through the
+    request-id and telemetry middleware — the rescued deep-link boot carries
+    ``x-request-id`` and is recorded as the ``200`` the client actually receives,
+    not the inner ``404``.
+
+    It delegates every request to the wrapped app untouched and only rewrites the
+    response when **all** of these hold:
+
+    * method is GET or HEAD,
+    * the path is under the SPA mount (``/app/…``),
+    * the wrapped app produced a ``404`` status, and
+    * the request is a genuine browser navigation (see :func:`_is_html_navigation`),
+      with the extra strictness for dotted final segments, and the final segment
+      is *not* a recognized static-file type (by :mod:`mimetypes`) so a missing
+      asset still 404s (no shell leak) — see :func:`_looks_like_static_asset`.
+
+    In that one case the 404 is swapped for the SPA shell (``200`` +
+    ``index.html``) so the client router can resolve the deep-link. This keeps
+    the framework's ``app.frontend()`` static serving fully authoritative for
+    real files (conditional ``304`` revalidation, ``Range``, directory index,
+    symlink policy) — we never re-serve assets by hand; we only reinterpret a
+    navigation miss.
+    """
+
+    def __init__(self, app: ASGIApp, *, index_file: Path, mount_prefix: str) -> None:
+        self.app = app
+        self.index_file = index_file
+        self.mount_prefix = mount_prefix
+
+    def _should_consider(self, scope: Scope) -> bool:
+        if scope["type"] != "http":
+            return False
+        if scope["method"] not in ("GET", "HEAD"):
+            return False
+        # Compare against the *routing* path (root_path stripped): behind a
+        # path-prefix proxy ``scope["path"]`` carries the mount prefix (e.g.
+        # ``/console/app/…``) that Starlette's routing already strips, so a raw
+        # ``startswith("/app/")`` would miss the deep-link and reintroduce #647.
+        # Strip only on a segment boundary so ``/consoleX/…`` isn't mis-stripped.
+        route_path = self._strip_root_path(scope)
+        if not route_path.startswith(self.mount_prefix):
+            return False
+        spa_path = route_path[len(self.mount_prefix) :]
+        # A recognized static asset (``.json``/``.svg``/``.png``/``.js``/… by
+        # MIME type, at the mount root or under ``assets/``) that the app 404'd
+        # is a missing/renamed file — it must stay a 404, never the SPA shell, so
+        # a broken deploy surfaces as an error instead of silently booting the
+        # app. Version-like/unknown extensions are not assets and stay ambiguous.
+        if _looks_like_static_asset(spa_path):
+            return False
+        # Dotted-but-unrecognized final segments (e.g. an API version ``1.0``)
+        # are ambiguous (asset vs. route) so require an explicit ``text/html``
+        # accept; extension-less paths accept the looser ``*/*`` navigation form.
+        return _is_html_navigation(
+            _accept_header(scope), require_explicit_html=_has_extension(spa_path)
+        )
+
+    def _strip_root_path(self, scope: Scope) -> str:
+        """Return ``scope['path']`` with any ``root_path`` prefix removed.
+
+        Only strips on a path-segment boundary so a coincidental non-boundary
+        prefix (``root_path='/console'`` vs ``path='/consoleX/…'``) is left
+        intact rather than mangled to ``X/…``.
+        """
+        root_path: str = scope.get("root_path", "")
+        path: str = scope["path"]
+        if not root_path:
+            return path
+        if path == root_path:
+            return "/"
+        if path.startswith(root_path + "/"):
+            return path[len(root_path) :]
+        return path
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if not self._should_consider(scope):
+            await self.app(scope, receive, send)
+            return
+
+        # Peek at the wrapped app's response start. If it's a 404 we serve the
+        # shell instead; otherwise we replay the captured start and stream the
+        # rest of the body through untouched (no buffering of real responses).
+        started = False
+        is_404 = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal started, is_404
+            if message["type"] == "http.response.start" and not started:
+                started = True
+                is_404 = message["status"] == 404
+                if is_404:
+                    # Swallow the 404 start; the shell is sent after the wrapped
+                    # app finishes (below).
+                    return
+                await send(message)
+                return
+            # Once we've decided to rescue a 404, drop *every* inner message
+            # (body chunks, and defensively any trailers/pathsend), so nothing
+            # from the discarded 404 response interleaves with the shell's start.
+            if is_404:
+                return
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+        if not is_404:
+            return
+
+        # The bundle could be mid-swap / incomplete (atomic redeploy) — if the
+        # shell isn't on disk, don't 500; replay a clean 404 instead.
+        if not self.index_file.is_file():
+            await _send_plain_404(send)
+            return
+
+        # Serve the shell as a full 200. Strip Range/If-Range so a navigation
+        # that happens to carry a range (resumed nav, some prefetchers) gets the
+        # whole shell, not a 206/416 partial that fails to boot the SPA. The
+        # wrapped app already drained ``receive`` (request body consumed), so hand
+        # FileResponse a receive that only reports a disconnect — otherwise its
+        # disconnect-listener could await a drained stream and stall completion.
+        shell_scope = dict(scope)
+        shell_scope["headers"] = [
+            (name, value)
+            for name, value in scope.get("headers", [])
+            if name not in (b"range", b"if-range")
+        ]
+
+        async def _disconnected_receive() -> Message:
+            return {"type": "http.disconnect"}
+
+        await FileResponse(self.index_file, status_code=200)(
+            shell_scope, _disconnected_receive, send
+        )
+
+
+async def _send_plain_404(send: Send) -> None:
+    """Emit a minimal ``404`` when the rescued shell is unexpectedly absent."""
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 404,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+        }
+    )
+    await send({"type": "http.response.body", "body": b"Not Found"})
 
 
 def _repo_root() -> Path:
@@ -203,6 +472,56 @@ def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     # routes never live under /app anyway, so this only governs unknown /app/*
     # subpaths (always SPA routes in practice).
     app.frontend(SPA_MOUNT_PATH, directory=str(static_dir), fallback="auto")
+
+    # HTML-navigation fallback for dotted deep-links (issue #647).
+    #
+    # ``app.frontend(fallback="auto")`` above already serves index.html for
+    # extension-less deep-link navigations (``/app/agents/123``) and serves every
+    # real bundle file with the framework's full refinements (conditional 304
+    # revalidation, Range, directory index, symlink policy). But its navigation
+    # heuristic treats any path whose final segment has a file extension as a
+    # static-file request — so a versioned API deep-link like
+    # ``/app/workspace/<vendor>/<name>/1.0`` (final segment ``1.0``) is mis-read
+    # as a file and 404s even for a browser navigation.
+    #
+    # We close *only* that gap, and deliberately do NOT re-serve assets by hand:
+    # a thin ASGI shim delegates everything to the app untouched and only
+    # rewrites the response when ALL hold — GET/HEAD, path under ``/app/``, the
+    # app produced a 404, and the request is a genuine browser navigation. In
+    # that one case it swaps the 404 for the SPA shell (200) so the client router
+    # can resolve the route. Real files (200/206/304), real API 404s, non-``/app``
+    # paths, and non-navigation ``/app`` misses all pass through byte-for-byte.
+    #
+    # Registered as the **innermost** user middleware (appended, not
+    # ``add_middleware`` which prepends): the request-id + telemetry middleware
+    # are added earlier (outermost) in the app factory, so the rescued shell
+    # flows back out through them — it carries ``x-request-id`` and is recorded as
+    # the 200 the client receives, not the inner 404.
+    index_file = static_dir / "index.html"
+
+    # Idempotency: never stack a second shim (a duplicate would risk two
+    # http.response.start on a rescued 404). If already mounted, no-op.
+    if any(
+        getattr(m, "cls", None) is _SpaNavigationFallbackMiddleware
+        for m in app.user_middleware
+    ):
+        _logger.info("spa_navigation_fallback_already_mounted")
+    else:
+        app.user_middleware.append(
+            Middleware(
+                _SpaNavigationFallbackMiddleware,
+                index_file=index_file,
+                mount_prefix=f"{SPA_MOUNT_PATH}/",
+            )
+        )
+        # Invalidate the (not-yet-built) stack so the appended entry is picked up;
+        # Starlette rebuilds lazily on the first request. ``add_middleware``
+        # prepends (outermost) — we append to land *inside* request-id/telemetry.
+        # Assert the stack hasn't been built yet: nulling a built stack would
+        # silently discard it and re-open Starlette's "add after start" guard.
+        assert app.middleware_stack is None, (
+            "SPA fallback must be mounted before the middleware stack is built"
+        )
 
     _logger.info(
         "spa_mounted",
