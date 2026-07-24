@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import exists, or_, select
@@ -51,6 +52,43 @@ _DELEGATION_SCOPES: dict[type[Any], str] = {
     AccessRequest: OWNER_ACCESS_REQUESTS_READ,
 }
 
+# ---------------------------------------------------------------------------
+# Extra access-filter providers (extension seam).
+#
+# An out-of-tree extension (e.g. the enterprise package) may widen READ-only
+# visibility beyond ownership — e.g. a "shared-with-me" grant — WITHOUT this OSS
+# module importing the extension. A provider is `fn(identity, model) -> clause |
+# None`; it returns an extra OR-clause for a model it widens, or None otherwise.
+# Providers run ONLY on read paths (`include_shared=True`); mutations stay
+# owner-only. OSS ships zero providers, so with no extension present behaviour is
+# byte-for-byte the owner-scoped default. Mirrors `register_telemetry_event`.
+# ---------------------------------------------------------------------------
+AccessFilterProvider = Callable[[Identity, type], "ColumnElement[bool] | None"]
+
+_ACCESS_FILTER_PROVIDERS: list[AccessFilterProvider] = []
+
+
+def register_access_filter_provider(provider: AccessFilterProvider) -> None:
+    """Register an extra READ-only visibility-clause provider (idempotent).
+
+    Call at import time from a registering package (see the enterprise
+    ``register()``). The clause a provider returns is OR-merged into the caller's
+    owner-scoped read filter. Any table the clause references must be readable by
+    the control DB role (i.e. live in the ``control`` schema).
+    """
+    if provider not in _ACCESS_FILTER_PROVIDERS:
+        _ACCESS_FILTER_PROVIDERS.append(provider)
+
+
+def _provider_clauses(identity: Identity, model: type[Any]) -> list[ColumnElement[bool]]:
+    """Collect the non-null clauses every registered provider yields for a model."""
+    clauses: list[ColumnElement[bool]] = []
+    for provider in _ACCESS_FILTER_PROVIDERS:
+        extra = provider(identity, model)
+        if extra is not None:
+            clauses.append(extra)
+    return clauses
+
 
 def _binding_visibility_clause(
     model: type[Any], bound_toolkit_ids: list[str] | None
@@ -81,6 +119,7 @@ def build_access_filters(
     model: type[Any],
     *,
     bound_toolkit_ids: list[str] | None = None,
+    include_shared: bool = False,
 ) -> list[ColumnElement[bool]]:
     """Build SQLAlchemy filter expressions scoping queries to the caller's visibility.
 
@@ -98,6 +137,12 @@ def build_access_filters(
     :meth:`PrerequisiteRepository.list_toolkit_ids_for_agent`) and passes them in;
     this module stays single-DB and free of admin imports. ``None``/empty leaves
     the owner-only behaviour unchanged.
+
+    ``include_shared`` (READ call sites only) invokes any registered
+    access-filter providers (see :func:`register_access_filter_provider`) and
+    OR-merges their clauses — e.g. an extension's "shared-with-me" grant. It must
+    NOT be set on write call sites, so a sharee can see but never mutate. With no
+    providers registered (stock OSS) it is a no-op.
 
     Raises ValueError for an unknown model or empty sub.
     """
@@ -120,10 +165,13 @@ def build_access_filters(
             )
         else:
             owner_clause = col == identity.sub
+        clauses: list[ColumnElement[bool]] = [owner_clause]
         binding_clause = _binding_visibility_clause(model, bound_toolkit_ids)
         if binding_clause is not None:
-            return [or_(owner_clause, binding_clause)]
-        return [owner_clause]
+            clauses.append(binding_clause)
+        if include_shared:
+            clauses.extend(_provider_clauses(identity, model))
+        return [or_(*clauses)] if len(clauses) > 1 else clauses
 
     if model in _CHILD_MODELS:
         child_fk, _parent_model, parent_pk, parent_owner = _CHILD_MODELS[model]
