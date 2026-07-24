@@ -13,14 +13,17 @@ from jentic_one.control.core.schema.access_request_items import RULE_BEARING_COM
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.access_requests.effects import (
+    UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
     admin_effect_keys,
     classify_effect,
+    plan_governance_for_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
@@ -51,11 +54,12 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, emit_event_best_effort
 from jentic_one.shared.models import (
     AccessRequestItemStatus,
     AccessRequestStatus,
 )
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.scopes import AGENTS_WRITE, ORG_ADMIN
@@ -84,7 +88,9 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
 # plan. Their presence means the bind items are fulfilled out-of-band by the
 # setup wizard (create toolkit + credential, then amend their ids), so a plain
 # approval of an unfulfilled bind must be denied with a plan-aware reason rather
-# than half-approving into a guaranteed-broken state.
+# than half-approving into a guaranteed-broken state. Governance is computed
+# per-item by :func:`plan_governance_for_items` (issue #778); this constant is
+# retained only for tests/documentation that name the combinations.
 _PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
     {("toolkit", "create"), ("credential", "provision")}
 )
@@ -160,6 +166,104 @@ class AccessRequestService:
                 )
         except Exception:
             logger.warning("emit_event_failed", request_id=request_id, type=type, exc_info=True)
+
+    async def _advise_unserved_bind_references(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        filer_owner_id: str,
+        identity: Identity,
+        request_id: str,
+    ) -> None:
+        """Emit a best-effort ``TOOLKIT_BINDING_UNSERVED`` for unfulfillable filings.
+
+        A plain (non-plan) ``toolkit:bind`` filed by ``vendor/name`` reference
+        will deny on approval with :class:`ToolkitReferenceUnresolvedError`
+        when no toolkit visible to the filer's owner currently serves that
+        API. Surfacing that at file time gives operators an early signal —
+        symmetric to the broker's own emit for the same event on execute-time
+        denials (see ``execute._emit_toolkit_binding_unserved``).
+
+        Deliberately silent when:
+
+        - the item names a specific ``resource_id``/``to_id`` (fulfilment is by
+          id, not by reference — no cheap file-time check applies);
+        - the request also carries fulfilment intents (a *provisioning plan*
+          creates the toolkit that will serve the API, so "nothing serves it
+          yet" is expected);
+        - a toolkit already serves the API for this owner (the plain-approve
+          path will resolve cleanly).
+
+        Never blocks the filing — the emit is best-effort and any lookup
+        failure logs and continues.
+        """
+        plan_types = {("toolkit", "create"), ("credential", "provision")}
+        if any((it.get("resource_type"), it.get("action")) in plan_types for it in items):
+            return
+
+        actor_type_value = identity.actor_type.value if identity.actor_type is not None else None
+        for item in items:
+            if (item.get("resource_type"), item.get("action")) != ("toolkit", "bind"):
+                continue
+            if item.get("resource_id") or item.get("to_id"):
+                continue
+            reference = item.get("resource_reference") or {}
+            vendor = reference.get("vendor")
+            if not vendor:
+                continue
+            raw_name = reference.get("name")
+            try:
+                async with self._ctx.control_db.session() as session:
+                    candidates = await EffectsRepository.resolve_toolkits_for_api(
+                        session,
+                        vendor=slugify_api_field(str(vendor)),
+                        name=(slugify_api_field(str(raw_name)) if raw_name else raw_name),
+                        version=reference.get("version"),
+                        owner_ids=[filer_owner_id],
+                    )
+            except Exception:
+                logger.warning(
+                    "unserved_binding_check_failed",
+                    request_id=request_id,
+                    vendor=vendor,
+                    exc_info=True,
+                )
+                continue
+
+            if candidates:
+                continue
+
+            api_id = "/".join(part for part in (str(vendor), raw_name) if part) or str(vendor)
+            summary = (
+                f"Access request {request_id} names API '{api_id}' but no owned "
+                "toolkit serves it yet — provision a credential to enable binding."
+            )
+            try:
+                async with self._ctx.admin_db.transaction() as session:
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.TOOLKIT_BINDING_UNSERVED,
+                        severity=EventSeverity.WARNING,
+                        summary=summary,
+                        created_by=identity.sub,
+                        actor_id=identity.sub,
+                        actor_type=actor_type_value,
+                        data={
+                            "request_id": request_id,
+                            "api": {
+                                "vendor": vendor,
+                                "name": raw_name,
+                                "version": reference.get("version"),
+                            },
+                        },
+                    )
+            except Exception:
+                logger.warning(
+                    "telemetry_emit_failed",
+                    event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+                    request_id=request_id,
+                    exc_info=True,
+                )
 
     async def file(
         self,
@@ -250,6 +354,14 @@ class AccessRequestService:
             created_by=created_by,
             actor_id=created_by,
             actor_type=identity.actor_type,
+        )
+        # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
+        # referenced by vendor/name that no owned toolkit currently serves will
+        # deny on approval with ToolkitReferenceUnresolvedError (§03). Emit an
+        # operator-visible signal *now* so the operator sees the gap before an
+        # approve/deny cycle. Best-effort — never blocks the file() commit.
+        await self._advise_unserved_bind_references(
+            items=items, filer_owner_id=filer_owner_id, identity=identity, request_id=view.id
         )
         await record_audit_best_effort(
             self._ctx,
@@ -363,12 +475,17 @@ class AccessRequestService:
                 raise NotAReviewerError(request_id)
 
             items_by_id = {item.id: item for item in request.items}
-            # A request is a provisioning plan when it carries fulfilment intents;
-            # its bind items are only satisfiable after the wizard fulfils them, so
-            # validate() denies an unfulfilled bind with a plan-aware reason.
-            is_plan = any(
-                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS for it in request.items
-            )
+            # Provisioning-plan governance is per-item (issue #778): a bind is
+            # only held to the "must resolve by id (wizard-stamped)" contract
+            # when a live intent in the same request actually targets it. An
+            # independent reference-only toolkit:bind for a different API in
+            # the same request stays on the plain contract and resolves by its
+            # reference; a withdrawn/denied intent no longer governs. See
+            # ``plan_governance_for_items`` for the full rule. The mapping
+            # carries a per-item ``PlanGovernance`` value (intent ids + api
+            # tuple, or the empty default for non-plan items) so ``validate()``
+            # gets the *reason* an item is governed rather than a coarse bool.
+            plan_governance = plan_governance_for_items(request.items)
             control_effect_items: list[tuple[str, Any]] = []
 
             for decision in item_decisions:
@@ -403,7 +520,7 @@ class AccessRequestService:
                                 existing,
                                 identity=identity,
                                 control_session=session,
-                                is_provisioning_plan=is_plan,
+                                plan_governance=plan_governance.get(existing.id, UNGOVERNED_PLAN),
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -440,7 +557,7 @@ class AccessRequestService:
                         target,
                         identity=identity,
                         control_session=session,
-                        is_provisioning_plan=is_plan,
+                        plan_governance=plan_governance.get(target.id, UNGOVERNED_PLAN),
                     )
 
                 phase = classify_effect(target.resource_type, target.action)

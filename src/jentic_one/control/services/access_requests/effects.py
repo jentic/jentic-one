@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import enum
-from typing import Any
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import structlog
 
@@ -32,12 +34,189 @@ from jentic_one.control.services.access_requests.schemas.effects import (
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.access_requests import AccessRequestItemStatus
 from jentic_one.shared.models.actors import actor_type_from_id
 from jentic_one.shared.models.api_identity import slugify_api_field
 
 logger = structlog.get_logger(__name__)
 
 EffectResult = CredentialBindEffect | ToolkitBindEffect | ScopeGrantEffect | SkippedEffect
+
+
+# The fulfilment-only intent item types that mark a request as a provisioning
+# plan. Exposed here (rather than only on the service) so ``plan_governance_for_items``
+# — the pure function that computes which binds a plan governs — stays close
+# to the phase table it consults.
+PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
+    {("toolkit", "create"), ("credential", "provision")}
+)
+
+# Bind item combinations whose fulfilment contract flips inside a plan.
+_PLAN_GOVERNABLE_BINDS: frozenset[tuple[str, str]] = frozenset(
+    {("credential", "bind"), ("toolkit", "bind")}
+)
+
+# Item statuses that keep an intent (or bind) "live" for the purposes of
+# governance. A withdrawn/denied intent no longer defines a plan on a later
+# decide() call.
+_LIVE_ITEM_STATUSES: frozenset[str] = frozenset(
+    {AccessRequestItemStatus.PENDING.value, AccessRequestItemStatus.APPROVED.value}
+)
+
+
+class _PlanGovernanceItem(Protocol):
+    """Minimal read-only view of an access-request item for governance.
+
+    ``plan_governance_for_items`` only inspects a handful of attributes; declaring
+    that surface explicitly lets the tests pass ordinary duck-typed mocks
+    without an ``AccessRequestItem`` construction.
+    """
+
+    id: str
+    resource_type: str
+    action: str
+    resource_reference: dict[str, Any] | None
+    status: str
+
+
+def _canonical_api_key(reference: dict[str, Any] | None) -> tuple[str, str | None] | None:
+    """Return the ``(vendor, name)`` slug key an item's reference targets.
+
+    Version is deliberately excluded from the key: an intent filed against
+    ``vendor/name`` wildcards every version of that API for governance purposes
+    — a plan for ``sendgrid`` covers a bind for ``sendgrid@1``. Both axes are
+    slugified via the shared identity seam so raw-domain references from the
+    CLI (``httpbin.org``) match stored slug form (``httpbin-org``); see the
+    same normalization in ``_resolve_toolkit_reference``.
+    """
+    if not reference:
+        return None
+    vendor = reference.get("vendor")
+    if not vendor:
+        return None
+    raw_name = reference.get("name")
+    return (
+        slugify_api_field(str(vendor)),
+        slugify_api_field(str(raw_name)) if raw_name else None,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PlanGovernance:
+    """Why a bind item is governed by a provisioning plan.
+
+    Carries the specific live intent item ids whose fulfilment the wizard
+    must stamp before this bind can approve, and — for ``toolkit:bind`` — the
+    canonical ``(vendor, name)`` slug key that made those intents relevant.
+    ``credential:bind`` items intentionally leave ``governing_api`` at
+    ``None``: the credential-bind governance rule is "any live intent" (§778
+    review), not tied to a specific API.
+
+    Default construction (``PlanGovernance()``) means "not governed by any
+    plan" — the plain fulfilment contract applies. ``is_governed`` is the
+    single decision point call-sites branch on; the id / API fields are for
+    the diagnostic path (which intent must be fulfilled? which API tuple?),
+    replacing the coarser ``is_provisioning_plan: bool`` that used to be
+    threaded through :meth:`EffectApplicator.validate`.
+    """
+
+    governing_intent_ids: frozenset[str] = field(default_factory=frozenset)
+    governing_api: tuple[str, str | None] | None = None
+
+    @property
+    def is_governed(self) -> bool:
+        return bool(self.governing_intent_ids)
+
+
+# Shared no-plan sentinel — cheap to reuse across every call-site and every
+# non-governed bind item without re-allocating an empty dataclass instance.
+# Exported (no leading underscore) so ``AccessRequestService.decide`` can pass
+# it as the default when looking a bind up in a governance mapping.
+UNGOVERNED_PLAN: PlanGovernance = PlanGovernance()
+
+
+def plan_governance_for_items(
+    items: Sequence[_PlanGovernanceItem],
+) -> Mapping[str, PlanGovernance]:
+    """Compute per-item plan governance for a request's bind items.
+
+    A request is a *plan* iff it carries at least one live fulfilment-only
+    intent (``toolkit:create`` / ``credential:provision``). This function
+    returns a mapping from bind ``item_id`` to :class:`PlanGovernance` for
+    every bind whose fulfilment contract the plan flips — the bind can only
+    be satisfied by ids stamped by the wizard (see
+    ``EffectApplicator.validate``); a plain approval of such a bind denies
+    with :class:`ProvisioningPlanNotFulfilledError`. Bind items not in the
+    mapping are governed by the plain contract.
+
+    Governance is per-item, not request-wide (issue #778):
+
+    - A ``toolkit:bind`` is governed iff a live intent's canonical
+      ``(vendor, name)`` matches the bind's ``resource_reference``. Version is
+      not part of the key — an intent for ``vendor/name`` covers all versions.
+      A bind for a different API is *not* governed and resolves normally by
+      its reference.
+    - A ``credential:bind`` is governed whenever any live intent exists in
+      the request: agents never carry credential ids at file time, so a
+      credential-bind sharing a request with an intent is always the wizard's
+      to satisfy.
+
+    Non-live intents (``denied`` / ``withdrawn``) do not govern — abandoning a
+    plan reverts remaining binds to the plain contract on the next decide.
+
+    The mapping value carries *which* live intent(s) govern this bind and, for
+    ``toolkit:bind``, *which* API tuple made them relevant — richer than a
+    boolean so a diagnostic (an ``UNFULFILLABLE`` DENY reason, an operator
+    dashboard row) can name the intent the wizard needs to fulfil rather than
+    just "some plan somewhere".
+    """
+    live_intents = [
+        it
+        for it in items
+        if (it.resource_type, it.action) in PLAN_INTENT_COMBINATIONS
+        and (it.status in _LIVE_ITEM_STATUSES)
+    ]
+    if not live_intents:
+        return {}
+
+    intents_by_api: dict[tuple[str, str | None], list[str]] = {}
+    untargeted_intent_ids: list[str] = []
+    for it in live_intents:
+        key = _canonical_api_key(it.resource_reference)
+        if key is None:
+            untargeted_intent_ids.append(it.id)
+        else:
+            intents_by_api.setdefault(key, []).append(it.id)
+
+    governance: dict[str, PlanGovernance] = {}
+    all_live_intent_ids = frozenset(it.id for it in live_intents)
+    for item in items:
+        key = (item.resource_type, item.action)
+        if key not in _PLAN_GOVERNABLE_BINDS:
+            continue
+        if item.status not in _LIVE_ITEM_STATUSES:
+            # An already-decided bind isn't going to be re-validated; excluding
+            # it keeps the mapping to items decide() actually processes.
+            continue
+        if key == ("credential", "bind"):
+            # Every live intent could plausibly be the reason this credential
+            # bind exists — record them all so a diagnostic can name them.
+            governance[item.id] = PlanGovernance(governing_intent_ids=all_live_intent_ids)
+            continue
+        # ("toolkit", "bind"): governed only when a live intent targets the
+        # same API. An untargeted intent (unusual — the CLI always fills a
+        # reference) is treated as covering all bind targets to preserve the
+        # pre-#778 conservative behaviour for that edge case.
+        bind_key = _canonical_api_key(item.resource_reference)
+        matching_intent_ids: list[str] = list(untargeted_intent_ids)
+        if bind_key is not None and bind_key in intents_by_api:
+            matching_intent_ids.extend(intents_by_api[bind_key])
+        if matching_intent_ids:
+            governance[item.id] = PlanGovernance(
+                governing_intent_ids=frozenset(matching_intent_ids),
+                governing_api=bind_key,
+            )
+    return governance
 
 
 class EffectPhase(enum.Enum):
@@ -156,7 +335,7 @@ class EffectApplicator:
         *,
         identity: Identity,
         control_session: Any,
-        is_provisioning_plan: bool = False,
+        plan_governance: PlanGovernance = UNGOVERNED_PLAN,
     ) -> None:
         """Validate an approved item's effect can be applied — without writing.
 
@@ -167,17 +346,24 @@ class EffectApplicator:
         transactions and cannot be rolled back by the control-DB transaction, so
         the only safe place to fail is up front.
 
-        ``is_provisioning_plan`` is set by ``decide()`` when the item's request
-        also carries fulfilment intents (``toolkit:create`` / ``credential:provision``).
-        A bind item in such a plan that hasn't been fulfilled (no ``to_id`` /
-        ``resource_id`` stamped by the wizard) is denied with a plan-aware,
-        actionable reason rather than the cryptic "to_id missing" / "no toolkit
-        serves API" a plain approval would otherwise surface.
+        ``plan_governance`` is computed by ``decide()`` from the request's live
+        fulfilment intents (see :func:`plan_governance_for_items`). Governed
+        bind items can only be satisfied by the ids the wizard stamps
+        (``to_id`` / ``resource_id``); a plain approval of one is denied with
+        an actionable, plan-aware reason that names the intent id(s) still
+        awaiting fulfilment rather than the cryptic "to_id missing" / "no
+        toolkit serves API" a plain approval would otherwise surface.
+        Default (``_UNGOVERNED``) means "plain contract" — non-plan items and
+        non-plan requests never construct a governance value at all.
         """
         key = (item.resource_type, item.action)
         if key == ("credential", "bind"):
-            if is_provisioning_plan and not (item.to_id and item.resource_id):
-                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
+            if plan_governance.is_governed and not (item.to_id and item.resource_id):
+                raise ProvisioningPlanNotFulfilledError(
+                    item.resource_type,
+                    item.action,
+                    governing_intent_ids=plan_governance.governing_intent_ids,
+                )
             # credential:bind writes only to the shared control-session and so
             # rolls back cleanly with the decision. We still pre-validate that the
             # named credential exists and is visible to the decider, so a bad
@@ -193,13 +379,18 @@ class EffectApplicator:
             # _apply_toolkit_bind for the full rationale.
             if item.rules:
                 raise RulesNotSupportedForBindError(item.resource_type, item.action)
-            if is_provisioning_plan and not (item.resource_id or item.to_id):
+            if plan_governance.is_governed and not (item.resource_id or item.to_id):
                 # In a plan the agent binding must resolve by the concrete toolkit
                 # id the wizard creates (the credential→toolkit binding it depends
                 # on isn't visible to the reference join until the credential:bind
                 # applies later in the same decision). An unfulfilled reference-only
                 # toolkit:bind can't be satisfied by a plain approval.
-                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
+                raise ProvisioningPlanNotFulfilledError(
+                    item.resource_type,
+                    item.action,
+                    governing_intent_ids=plan_governance.governing_intent_ids,
+                    governing_api=plan_governance.governing_api,
+                )
             await self._resolve_toolkit_bind_target(
                 item, identity=identity, session=control_session
             )
