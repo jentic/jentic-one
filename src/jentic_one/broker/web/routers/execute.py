@@ -634,6 +634,8 @@ async def _handle(
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(ctx_req, ctx, identity, credential_name)
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.credential_id = injection.credential_id
+    ctx_req.credential_name = injection.credential_name
     if injection.server_variables:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)
@@ -692,6 +694,8 @@ async def _handle_streaming(
     credential_name = request.headers.get("jentic-credential-name")
     injection = await _resolve_credentials(ctx_req, ctx, identity, credential_name)
     ctx_req.upstream_url, auth_headers = _apply_injection(ctx_req.upstream_url, injection, request)
+    ctx_req.credential_id = injection.credential_id
+    ctx_req.credential_name = injection.credential_name
     if injection.server_variables:
         try:
             validate_upstream_url(ctx_req.upstream_url, ctx.config.broker.egress)

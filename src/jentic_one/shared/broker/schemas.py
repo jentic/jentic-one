@@ -41,3 +41,11 @@ class ExecuteRequestContext(BaseModel):
     # broker attaches to an upstream 401/403 (#638) so a valid key hitting the
     # wrong host is not a dead-end "Invalid Key".
     has_server_variable: bool = False
+    # Attribution for the stored credential the resolver picked, once injection
+    # has run (#740). ``None`` before injection, when no credential path exists,
+    # or when the request used inline auth. Carried on the context so both the
+    # sync router and the async worker can stamp ``Jentic-Credential-*`` response
+    # headers, persist the ids on the execution record, and correlate the
+    # ``CREDENTIAL_ACCESSED`` audit event to this execution.
+    credential_id: str | None = None
+    credential_name: str | None = None

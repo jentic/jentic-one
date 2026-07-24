@@ -34,6 +34,11 @@ class ResolvedCredential(BaseModel):
     """Result of credential resolution — enough data for inject_auth."""
 
     credential_id: str
+    # Human-readable credential name from the stored row (`Credential.name`).
+    # Carried alongside ``credential_id`` so ``InjectedAuth`` can attribute the
+    # material back to the stored credential without a second DB round-trip
+    # (#740). Always populated by the resolver; never a secret.
+    name: str
     wire_type: CredentialType
     stored_type: StoredCredentialType
     provider: str
@@ -169,6 +174,7 @@ class CredentialResolver:
             tvc = credential.token_value_credential
             return ResolvedCredential(
                 credential_id=credential.id,
+                name=credential.name,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -180,6 +186,7 @@ class CredentialResolver:
             cak = credential.customer_api_key
             return ResolvedCredential(
                 credential_id=credential.id,
+                name=credential.name,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -193,6 +200,7 @@ class CredentialResolver:
             bc = credential.basic_credential
             return ResolvedCredential(
                 credential_id=credential.id,
+                name=credential.name,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -205,6 +213,7 @@ class CredentialResolver:
             token = credential.oauth_token
             return ResolvedCredential(
                 credential_id=credential.id,
+                name=credential.name,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,
@@ -221,6 +230,7 @@ class CredentialResolver:
             # apply so region/host templating works for no-auth APIs (#603).
             return ResolvedCredential(
                 credential_id=credential.id,
+                name=credential.name,
                 wire_type=wire_type,
                 stored_type=stored_type,
                 provider=credential.provider,

@@ -60,6 +60,7 @@ def _ctx(*, account_linking_base_url: str | None = None) -> MagicMock:
 def _resolved() -> ResolvedCredential:
     return ResolvedCredential(
         credential_id="cred_abc",
+        name="abc",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="stripe",
@@ -90,6 +91,9 @@ async def test_empty_vendor_returns_empty_injection() -> None:
     assert result.headers == {}
     assert result.query_params == {}
     assert result.cookies == {}
+    # No credential path attempted ⇒ no attribution to carry (#740).
+    assert result.credential_id is None
+    assert result.credential_name is None
 
 
 @pytest.mark.asyncio
@@ -191,6 +195,11 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
     )
 
     assert result.headers == {"Authorization": "injected"}
+    # #740: attribution follows the injection back through the caller so the
+    # sync/streaming routers can stamp ``Jentic-Credential-*`` response headers
+    # and persist attribution on ``execution_records`` without a second lookup.
+    assert result.credential_id == "cred_abc"
+    assert result.credential_name == "abc"
     audit.assert_awaited_once()
     assert audit.await_args is not None
     kwargs = audit.await_args.kwargs
