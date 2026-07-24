@@ -81,6 +81,7 @@ export type { ExecutionResponse } from './models/ExecutionResponse';
 export type { ExecutionStatsResponse } from './models/ExecutionStatsResponse';
 export { GroupBy } from './models/GroupBy';
 export type { HealthResponse } from './models/HealthResponse';
+export type { InstanceIdentityResponse } from './models/InstanceIdentityResponse';
 export type { IntrospectRequest } from './models/IntrospectRequest';
 export type { IntrospectResponse } from './models/IntrospectResponse';
 export type { InviteIssuedResponse } from './models/InviteIssuedResponse';

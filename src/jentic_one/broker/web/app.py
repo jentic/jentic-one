@@ -197,6 +197,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         routers=_routers(readiness_saturation_threshold=resilience.readiness_saturation_threshold),
         extra_lifespan=broker_lifespan,
         container=container,
+        include_instance_router=False,
     )
     # One admission gate shared by the shedding middleware and the readiness
     # probe (§05 R5.2), so both observe the same in-flight counter.

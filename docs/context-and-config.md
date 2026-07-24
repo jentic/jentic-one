@@ -121,3 +121,62 @@ Autogenerate compares the target database's base metadata (e.g. `RegistryBase.me
 ## Runtime configuration
 
 `AppConfig.runtime` holds hot-reloadable flags (debug, log_level, maintenance_mode). Use `config.runtime.reload(overrides)` to produce an updated `RuntimeConfig` from a dict of new values.
+
+## Local / remote coexistence: which backend am I talking to?
+
+A `jentic-one` install declares its own locality via `server.backend`: `local`
+for a self-hosted install on your own machine/network, or `remote` for a hosted
+install run elsewhere (e.g. Jentic Cloud). It defaults to `local`; the hosted
+platform sets `remote` in its own config. A client — the `jentic` CLI, an agent,
+or an MCP server — is pointed at *one* backend via its own configuration. When a
+local install and a remote one are both reachable it is easy for two clients to
+disagree: e.g. an MCP server still bound to a remote backend while the CLI talks
+to a fresh local install. The two backends have independent registries and
+credentials, so a tool call answered by the *other* backend looks like data loss
+("APIs disappeared", "credentials vanished", ID-format mismatches) when the
+systems are simply different.
+
+### The `GET /instance` identity probe
+
+Every `jentic-one` install exposes an unauthenticated backend-identity endpoint
+so any client can confirm which backend it reached before diagnosing missing
+data:
+
+```bash
+curl -s http://127.0.0.1:8000/instance
+```
+
+```json
+{
+  "backend": "local",
+  "canonical_base_url": "http://127.0.0.1:8000",
+  "host": "127.0.0.1:8000",
+  "instance_id": "…"
+}
+```
+
+- `backend` is the operator-declared locality from `server.backend`: `local` (the
+  default) for a self-hosted install on your own machine/network, `remote` for a
+  hosted install run elsewhere. It is a hint for humans/agents, not an
+  authorization signal.
+- `canonical_base_url` / `host` come from `auth.canonical_base_url` (set in
+  `config/local.yaml` to `http://127.0.0.1:8000` for local runs; a hosted
+  platform sets its own). This is the instance describing *itself*, so it is
+  the value to trust over any client-side assumption.
+- `instance_id` is the opaque telemetry instance id when telemetry has resolved
+  one (else `null`); it disambiguates two installs that share a host.
+
+To check which backend a given base URL is bound to, hit `/instance` on that
+URL. If the `backend`/`host` is not the one you expected, the client is pointed
+at the wrong backend.
+
+### Repointing an MCP server (or any client) at a local install
+
+The per-response backend field is added by the external Jentic MCP server; the
+`jentic-one` side of the contract is the `/instance` endpoint above. To move an
+MCP server (or the CLI) from a remote backend to a local install, update *that
+client's* backend base URL to your local `canonical_base_url` (e.g.
+`http://127.0.0.1:8000`) and re-check with `GET /instance`. `jentic-one` never
+silently resolves to a remote backend on its own — a client only reaches a
+remote backend because it is configured to.
+

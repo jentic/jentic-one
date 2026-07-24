@@ -739,6 +739,8 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # Health probes (root + per-surface) are dependency-free liveness checks.
         "getHealth",
+        # Backend-identity probe: unauthenticated, self-describing, no secrets.
+        "getInstance",
         "health",
         "controlHealth",
         "adminHealth",
@@ -792,6 +794,7 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/health$"), "System"),
     (re.compile(r"^/[^/]+/health$"), "System"),
+    (re.compile(r"^/instance$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),

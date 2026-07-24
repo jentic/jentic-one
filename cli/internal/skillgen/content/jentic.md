@@ -181,6 +181,24 @@ need no request — an approved agent already holds `apis:read` and
 `catalog:import` by default, so just import and search again. Don't file an
 access request for a made-up "catalog read" scope.
 
+**Before concluding "the data is gone", confirm which backend you're on.** If
+APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
+unfamiliar — you may be talking to a **different** backend than you expect. A
+hosted (`remote`) Jentic install and a `local` self-hosted one have independent
+registries and credentials, and the CLI, an agent, or an MCP server can each be
+bound to a different one. Check the backend your base URL serves before
+diagnosing data loss:
+
+```
+curl -s "$(jentic config get base-url 2>/dev/null || echo http://127.0.0.1:8000)/instance"
+```
+
+The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
+the install's declared `server.backend`), `canonical_base_url`, and `host`. If
+it's not the backend you meant to use (e.g. an MCP server still on a remote
+backend while you imported locally), repoint that client at the right base URL
+rather than importing/searching again.
+
 ### 4. Inspect the operation's contract
 
 Resolve an operation to its method, path, parameters, and schemas before
@@ -261,6 +279,13 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `catalog:import` by default. (Importing arbitrary URL/inline specs via `POST
   /apis` is the only import path that needs `apis:write`.) Don't invent other
   "catalog read" scopes; they're rejected.
+- **"My APIs/credentials disappeared" is often a wrong-backend problem, not data
+  loss.** A hosted (`remote`) install and a `local` one are separate backends
+  with separate registries and credentials; a client (CLI, agent, MCP server)
+  bound to the other one will honestly report your data as missing. Before
+  re-importing or filing a request, confirm the backend with
+  `curl -s <base-url>/instance` (reports `backend` = `local`/`remote` plus
+  `host`); if it's the wrong one, repoint that client.
 - An `execute` failure is not always an access problem. A DNS/transport error
   (`lookup broker.jentic.ai: no such host`, connection refused — exit **1**)
   means the **broker target** is wrong; on a local install point at the local

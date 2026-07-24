@@ -754,6 +754,12 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = False
+    backend: Literal["local", "remote"] = "local"
+    """Self-declared backend locality surfaced by ``GET /instance``: ``local`` for
+    a self-hosted install on the operator's own machine/network, ``remote`` for a
+    hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
+    which backend they reached — not an authorization signal. Defaults to
+    ``local``; the hosted platform sets ``remote`` in its own config."""
 
 
 class TelemetryConfig(BaseModel):

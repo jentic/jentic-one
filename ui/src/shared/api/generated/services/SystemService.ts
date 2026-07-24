@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { HealthResponse } from '../models/HealthResponse';
+import type { InstanceIdentityResponse } from '../models/InstanceIdentityResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -82,6 +83,28 @@ export class SystemService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/health',
+        });
+    }
+    /**
+     * Backend identity
+     * Return this backend's self-describing identity.
+     *
+     * Unauthenticated and dependency-free so any client (an MCP server, the
+     * CLI, an agent) can read which backend it is bound to — local vs. a
+     * remote install — and label its responses accordingly.
+     * @returns InstanceIdentityResponse Successful Response
+     * @throws ApiError
+     */
+    public static getInstance(): CancelablePromise<InstanceIdentityResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/instance',
+            errors: {
+                400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
         });
     }
     /**
