@@ -128,6 +128,12 @@ def _metadata_headers(
         metadata[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:
         metadata[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
+    # Credential attribution (#740). Absent when no credential was used, so
+    # the streaming path stays symmetric with the sync router.
+    if ctx_req.credential_id:
+        metadata[JenticHeader.CREDENTIAL_ID.value] = ctx_req.credential_id
+    if ctx_req.credential_name:
+        metadata[JenticHeader.CREDENTIAL_NAME.value] = ctx_req.credential_name
     if status_code >= 400:
         metadata[JenticHeader.ERROR_ORIGIN.value] = ErrorOrigin.UPSTREAM.value
     # Region-mismatch hint for a templated-host API's upstream 401/403 (#638),
