@@ -18,6 +18,16 @@ class JenticHeader(StrEnum):
     TOOLKIT_ID = "Jentic-Toolkit-Id"
     OPERATION = "Jentic-Operation"
     API_VENDOR = "Jentic-Api-Vendor"
+    # The credential the broker resolved and used for this execution (#740). The
+    # id is stable + non-secret (uuid); the name is the human-readable label
+    # from the stored row. Both are emitted only when a credential was actually
+    # used — broker-origin failures before credential resolution carry neither.
+    # Note: ``Jentic-Credential-Name`` is *also* a request header that clients
+    # send inbound to disambiguate ambiguous resolution — the outbound response
+    # header shares the name intentionally (same convention as
+    # ``Jentic-Toolkit-Id``, which is both request and response).
+    CREDENTIAL_ID = "Jentic-Credential-Id"
+    CREDENTIAL_NAME = "Jentic-Credential-Name"
     UPSTREAM_STATUS = "Jentic-Upstream-Status"
     ERROR_ORIGIN = "Jentic-Error-Origin"
     HINT = "Jentic-Hint"

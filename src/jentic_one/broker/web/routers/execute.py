@@ -393,6 +393,14 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
         meta[JenticHeader.OPERATION.value] = ctx_req.operation_id
     if ctx_req.api_vendor:
         meta[JenticHeader.API_VENDOR.value] = ctx_req.api_vendor
+    # Credential attribution (#740). Emitted only when the resolver actually
+    # picked a stored credential — a broker-origin failure before injection,
+    # inline auth, or a credential-less API leaves both ``None`` and both
+    # headers absent, so a missing header unambiguously means "no credential".
+    if ctx_req.credential_id:
+        meta[JenticHeader.CREDENTIAL_ID.value] = ctx_req.credential_id
+    if ctx_req.credential_name:
+        meta[JenticHeader.CREDENTIAL_NAME.value] = ctx_req.credential_name
     # Echo the jentic= tracestate member (same who/what payload as the outbound
     # request) so a caller can correlate the response to its distributed trace
     # without re-deriving it (§04 / OpenAPI Tracestate).
