@@ -522,6 +522,26 @@ def upstream_incluster_url() -> str:
     return os.environ.get("UPSTREAM_INCLUSTER_URL", "http://jentic-smoke-upstream:8084")
 
 
+@pytest.fixture(scope="session")
+def upstream_direct_url() -> str:
+    """The harness URL as the test runner sees it (kind host port)."""
+    return os.environ.get("UPSTREAM_DIRECT_URL", "http://localhost:8084")
+
+
+@pytest.fixture(scope="session")
+def _harness_deployed(upstream_direct_url: str) -> bool:
+    """Probe the harness once per session from the test-runner side.
+
+    Probes the live-spec path itself (the harness serves no /health): if the
+    spec isn't fetchable, ingest cannot succeed either.
+    """
+    try:
+        with urlopen(f"{upstream_direct_url}{SMOKE_UPSTREAM_SPEC_PATH}", timeout=3) as resp:
+            return bool(200 <= resp.status < 300)
+    except (URLError, OSError):
+        return False
+
+
 @pytest.fixture()
 def broker_upstream_timeout_s() -> float:
     """The broker's configured upstream timeout (BrokerResilienceConfig default 30s).
@@ -569,6 +589,7 @@ def harness_api(
     base_url: str,
     test_agent: SmokeAgent,
     upstream_incluster_url: str,
+    _harness_deployed: bool,
 ) -> HarnessApi:
     """Ingest the harness live spec as the agent; return its API identity.
 
@@ -576,7 +597,15 @@ def harness_api(
     uq_api_revisions_api_id_spec_digest collision). The same vendor is returned
     so credential provisioning can reuse it — broker credential resolution is
     keyed on (vendor, name, version).
+
+    Every harness-dependent smoke test funnels through this fixture, so the
+    deployment probe here gates them all: the smoke-upstream harness is not yet
+    built/deployed by the CI flow (tools.deploy ci-smoke), and without it every
+    ingest job dead-letters on DNS resolution after ~60s. Skipping keeps the
+    matrix honest until the harness ships as a deployable image.
     """
+    if not _harness_deployed:
+        pytest.skip("smoke-upstream harness not deployed (no live spec at UPSTREAM_DIRECT_URL)")
     vendor = unique_vendor("smoke-upstream")
     job = ingest_harness(base_url, test_agent.access_token, upstream_incluster_url, vendor=vendor)
 
