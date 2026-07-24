@@ -35,11 +35,14 @@ import {
 	getServiceAccountScopes,
 	listAgentToolkits,
 	listAgents,
+	listLinkableToolkits,
 	listPermissions,
 	listServiceAccounts,
 	replaceAgentScopes,
 	replaceServiceAccountScopes,
 	revokeAgentApiKey,
+	bindToolkitToAgent,
+	unbindToolkitFromAgent,
 	fetchActorAccessRequests,
 	type ListResult,
 } from '@/modules/agents/api/client';
@@ -48,6 +51,7 @@ import type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	LinkableToolkit,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
@@ -90,6 +94,16 @@ const serviceAccountKeys = {
  * registry. The `agents` root already owns the `permissions` namespace here.
  */
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
+
+/**
+ * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Kept
+ * under **its own root** (not ``agentsKeys.all``) so a broad
+ * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
+ * doesn't pointlessly refetch ``GET /toolkits`` (rev-1 review #7). Mirrors the
+ * toolkits module keeping its ``linkableAgents`` cache under its own toolkits
+ * root for the same reason.
+ */
+const linkableToolkitsKey = ['agents-linkable-toolkits'] as const;
 
 /**
  * Access requests filed BY an actor (#619), keyed by the actor's id + status.
@@ -142,6 +156,68 @@ export function useAgentToolkits(id: string | null) {
 		queryKey: agentsKeys.toolkits(id ?? ''),
 		queryFn: () => listAgentToolkits(id as string),
 		enabled: id != null,
+	});
+}
+
+/**
+ * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Fetched
+ * only while the dialog is open (``enabled``) so it costs nothing on the rest
+ * of the detail page. Keyed under its own root (``linkableToolkitsKey``) rather
+ * than ``agentsKeys.all`` so a broad ``sharedQueryKeys.agentsRoot``
+ * invalidation (used by approve/deny/create) does not pointlessly refetch
+ * ``GET /toolkits`` (rev-1 review #7).
+ */
+export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = {}) {
+	return useQuery<LinkableToolkit[]>({
+		queryKey: linkableToolkitsKey,
+		queryFn: () => listLinkableToolkits(),
+		enabled,
+	});
+}
+
+/** Bind a toolkit to this agent (#607) — refreshes both the agent's bound
+ * toolkits list and the picker's candidates list on success. Mirrors the
+ * toolkit page's "Link agent". Accepts a nullable agent id and refuses to fire
+ * without one so a stray call before the agent has resolved cannot POST to
+ * ``/agents//toolkits`` (rev-1 review #5). */
+export function useBindToolkitToAgent(agentId: string | null) {
+	const qc = useQueryClient();
+	return useMutation<void, Error, string>({
+		mutationFn: (toolkitId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot bind a toolkit before the agent loads.'));
+			}
+			return bindToolkitToAgent(agentId, toolkitId);
+		},
+		onSuccess: () => {
+			if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
+			// Candidates change when the just-bound toolkit becomes ineligible for
+			// this agent; the toolkit-side sibling invalidates its own
+			// ``linkableAgents`` on bind/unbind for the same reason (rev-1 review #3).
+			qc.invalidateQueries({ queryKey: linkableToolkitsKey });
+			toast({ title: 'Toolkit bound', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to bind the toolkit.'),
+	});
+}
+
+/** Unbind a toolkit from this agent (#607). See {@link useBindToolkitToAgent}
+ * for the null-guard and cache-invalidation rationale. */
+export function useUnbindToolkitFromAgent(agentId: string | null) {
+	const qc = useQueryClient();
+	return useMutation<void, Error, string>({
+		mutationFn: (toolkitId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot unbind a toolkit before the agent loads.'));
+			}
+			return unbindToolkitFromAgent(agentId, toolkitId);
+		},
+		onSuccess: () => {
+			if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
+			qc.invalidateQueries({ queryKey: linkableToolkitsKey });
+			toast({ title: 'Toolkit unbound', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),
 	});
 }
 
