@@ -1281,3 +1281,177 @@ async def test_decide_conflict_raises_item_not_pending(
             identity=reviewer,
             item_decisions=[{"item_id": filed.items[0].id, "decision": "denied"}],
         )
+
+
+# --- file-time fulfillability advisory (theme 3 residual) ---
+
+
+async def _list_events_by_type(admin_db: DatabaseSession, event_type: str) -> list[Event]:
+    async with admin_db.session() as session:
+        return await EventRepository.list_all(session, event_type=[event_type])
+
+
+async def test_file_emits_unserved_advisory_for_plain_toolkit_bind_with_no_serving_toolkit(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """A plain `toolkit:bind` by reference with no serving toolkit emits an advisory."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind me to a not-yet-served api",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "no-such-vendor", "name": "no-such-api"},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"  # advisory doesn't block the filing
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert len(matching) == 1
+    event = matching[0]
+    assert event.severity == "warning"
+    assert event.data["api"] == {
+        "vendor": "no-such-vendor",
+        "name": "no-such-api",
+        "version": None,
+    }
+    assert "no-such-vendor/no-such-api" in event.summary
+
+
+async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+) -> None:
+    """When a toolkit already serves the referenced API, no advisory fires."""
+    async with control_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, created_by) "
+                "VALUES (:id, :name, :created_by) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {
+                "id": "tk_served",
+                "name": "served-toolkit",
+                "created_by": OWNER_SUB,
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, created_by) "
+                "VALUES (:id, 'token', :name, :vendor, :api_name, :created_by) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {
+                "id": "cred_served_001",
+                "name": "served-cred",
+                "vendor": "servedvendor",
+                "api_name": "widgets",
+                "created_by": OWNER_SUB,
+            },
+        )
+        await EffectsRepository.bind_credential_to_toolkit(
+            session,
+            toolkit_id="tk_served",
+            credential_id="cred_served_001",
+            created_by=OWNER_SUB,
+        )
+
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind me to a served api",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "servedvendor", "name": "widgets"},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []
+
+
+async def test_file_skips_unserved_advisory_when_request_carries_fulfilment_intent(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Plans expect nothing to serve the API yet — the advisory must stay silent."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="provision then bind",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "create",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+            {
+                "resource_type": "credential",
+                "action": "provision",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []
+
+
+async def test_file_skips_unserved_advisory_when_bind_names_toolkit_by_id(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """A `toolkit:bind` with an explicit id (not a reference) is not by-name — no advisory."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind by id",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_id": "tk_target",
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []
