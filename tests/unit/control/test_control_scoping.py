@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import ColumnElement, exists, select
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkits import Toolkit
-from jentic_one.control.scoping.filters import build_access_filters
+from jentic_one.control.scoping.filters import (
+    _ACCESS_FILTER_PROVIDERS,
+    build_access_filters,
+    register_access_filter_provider,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import (
@@ -199,6 +204,63 @@ def test_orphaned_agent_sees_credential_bound_to_bound_toolkit() -> None:
     assert "EXISTS" in sql
     assert "toolkit_credential_bindings" in sql
     assert "tk_bound_1" in sql
+
+
+# --- Read-only sharing seam (register_access_filter_provider) ---
+
+
+def test_include_shared_invokes_registered_provider() -> None:
+    """A registered provider's clause is OR-merged on the read path."""
+
+    def _provider(identity: Identity, model: type) -> ColumnElement[bool] | None:
+        if model is Toolkit:
+            # A dummy EXISTS keyed on the caller — stands in for a share table.
+            return exists(select(Toolkit.id).where(Toolkit.created_by == f"shared:{identity.sub}"))
+        return None
+
+    register_access_filter_provider(_provider)
+    try:
+        identity = _identity(sub="user_share", permissions=[])
+        filters = build_access_filters(identity, Toolkit, include_shared=True)
+        assert len(filters) == 1
+        sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "created_by" in sql  # owner branch preserved
+        assert "EXISTS" in sql
+        assert "shared:user_share" in sql  # provider clause merged in
+    finally:
+        _ACCESS_FILTER_PROVIDERS.remove(_provider)
+
+
+def test_include_shared_default_off_ignores_providers() -> None:
+    """Without include_shared (the write path), providers are not consulted."""
+
+    def _provider(identity: Identity, model: type) -> ColumnElement[bool] | None:
+        return exists(select(Toolkit.id).where(Toolkit.created_by == "PROVIDER_MARKER"))
+
+    register_access_filter_provider(_provider)
+    try:
+        identity = _identity(sub="user_share", permissions=[])
+        filters = build_access_filters(identity, Toolkit)  # include_shared defaults False
+        sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "PROVIDER_MARKER" not in sql
+    finally:
+        _ACCESS_FILTER_PROVIDERS.remove(_provider)
+
+
+def test_no_providers_is_owner_only() -> None:
+    """Stock OSS (no providers) yields the plain owner filter even with include_shared."""
+    identity = _identity(sub="user_share", permissions=[])
+    filters = build_access_filters(identity, Toolkit, include_shared=True)
+    assert len(filters) == 1
+    sql = str(filters[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "created_by" in sql
+    assert "EXISTS" not in sql
+
+
+def test_admin_ignores_include_shared() -> None:
+    """org:admin stays unrestricted even with include_shared."""
+    identity = _identity(permissions=["org:admin"])
+    assert build_access_filters(identity, Toolkit, include_shared=True) == []
 
 
 # --- AccessRequest model tests ---

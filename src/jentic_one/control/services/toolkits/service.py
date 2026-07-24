@@ -187,7 +187,9 @@ class ToolkitService:
 
     async def get(self, toolkit_id: str, *, identity: Identity) -> Toolkit:
         bound_ids = await self._bound_toolkit_ids(identity)
-        access_filters = build_access_filters(identity, Toolkit, bound_toolkit_ids=bound_ids)
+        access_filters = build_access_filters(
+            identity, Toolkit, bound_toolkit_ids=bound_ids, include_shared=True
+        )
         async with self._ctx.control_db.session() as session:
             toolkit = await ToolkitRepository.get_with_relations(
                 session, toolkit_id, filters=access_filters
@@ -206,7 +208,10 @@ class ToolkitService:
             decoded_cursor = (ts, cid)
 
         access_filters = build_access_filters(
-            identity, Toolkit, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+            identity,
+            Toolkit,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
             rows = await ToolkitRepository.list_all(

@@ -286,7 +286,10 @@ class CredentialService:
     async def get(self, credential_id: str, *, identity: Identity) -> CredentialRedactedView:
         """Get a credential by ID with redacted secrets."""
         access_filters = build_access_filters(
-            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
         )
         async with self._ctx.control_db.session() as session:
             credential = await CredentialRepository.get_by_id(
@@ -311,7 +314,10 @@ class CredentialService:
             decoded_cursor = (ts, cid)
 
         access_filters = build_access_filters(
-            identity, Credential, bound_toolkit_ids=await self._bound_toolkit_ids(identity)
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
         )
 
         async with self._ctx.control_db.session() as session:
