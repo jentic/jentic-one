@@ -46,22 +46,23 @@ the shared workspace.
 A `su agent` (non-login) that keeps the operator's cwd will land the agent shell
 in the operator's home. Whether it can *read* there depends on how the operator's
 home is permissioned and on **what group(s) the agent account belongs to** — and
-this varies between machines (stock macOS, MDM-managed corporate laptops, and
-Linux distros all differ, and a managed device may place new accounts in a group
-that can read more of the operator's home than you'd expect). **Don't rely on the
-defaults being safe.** The robust rule is independent of any specific machine's
-group layout:
+this varies between machines, so a freshly-created account may or may not share a
+group with the operator and be able to read more of the operator's home than you'd
+expect. **Don't rely on the defaults being safe.** The robust rule is independent of
+any specific machine's group layout:
 
-1. **Make the agent a minimal-privilege account in its own group**, so it never
-   shares a group with the operator by accident (steps below).
-2. **Start the agent with a login shell in its own home** (`su - agent`) so its cwd
-   is never the operator's home in the first place.
+1. **Lock the operator's home to owner-only** (`chmod 700 ~`). This is the one
+   machine-independent guarantee: with no group or world bits, *no* other account —
+   whatever group it lands in — can traverse or read the operator's home. It needs
+   no shared-group bookkeeping and it's the cheapest way to close the read path.
+2. **Start the agent with a login shell in its own home** (`su - agent` /
+   `sudo -u agent -i`) so its cwd is never the operator's home in the first place.
 3. **Don't leave anything sensitive group/other-readable.** Note Jentic One's own
    default writes its config under `~/.jentic/` and the directory is world-listable
    even though the key *file* is `0600`; the clean answer is to not store the key in
    the operator's home at all (keychain / a different owning user — see
-   [`03`](03-mitigations.md) fix 2a). Combined with (1), the agent account has no
-   group path into the operator's home regardless of platform defaults.
+   [`03`](03-mitigations.md) fix 2a). Combined with (1), the agent has no path into
+   the operator's home regardless of platform defaults.
 
 With those three in place, the cwd question is a non-issue and the read-exposure
 question is closed by construction rather than by luck.
@@ -73,20 +74,22 @@ the agent's outputs, logs, and working files.
 
 - A user's home directory is **just a path in the account record** (`NFSHomeDirectory`
   on macOS; the 6th passwd field on Linux). It does **not** have to be under
-  `/Users/agent` — you can point it at a neutral path such as `/Users/Shared/agent-home`
-  or a dedicated `/opt/agents/agent`.
-- `/Users/Shared` is the conventional macOS "both users can reach it" location, but
-  it is world-writable — so don't leave the agent's home wide open there.
+  `/Users/<agent>` — you can point it at a neutral path. This doc uses
+  `/Users/Shared/<agent-name>` on macOS and `/opt/<agent-name>` on Linux, one home
+  per agent under an existing shared parent.
+- `/Users/Shared` is the conventional macOS "both users can reach it" location. It
+  is world-writable, so the agent's home is created owned by the agent and closed to
+  others (the operator gets in by the named ACL below) — don't leave it wide open.
 
 **Do not naively set the agent's home to a world-readable/writable dir** — that
 recreates the exposure we're trying to remove (now the *operator's* processes, or
 any user, could tamper with the agent's home). The right shape depends on how many
 humans need access:
 
-- **One human user (the common case):** don't bother with a group. Keep the agent
-  home and workspace `700`-owned-by-`agent`, and grant the single operator access
-  by **name** via an inherited ACL (`user:<operator> allow …`). No group to create
-  or maintain, and still no world access.
+- **One human user (the common case):** don't bother with a group. Leave the agent's
+  home owned by the agent, and grant the single operator access by **name** via an
+  inherited ACL (`user:<operator> allow …`). No group to create or maintain, and
+  still no world access.
 - **Several humans:** create a **shared group** (e.g. `agents`) containing the
   operator(s) + the agent user, own the agent home `2750` and the shared workspace
   `2770` (setgid so new files inherit the group), and let group membership be the
@@ -105,15 +108,16 @@ gives the shared-workspace ergonomics without exposing either user's private hom
 ## Concrete setup — how many commands does the operator actually run?
 
 The point of this section is to answer "is this a weekend project or a
-copy-paste?" **For a single-user machine it's two commands, and a one-line launch
+copy-paste?" **For a single-user machine it's four commands, and a one-line launch
 each time.** All the account-creation commands need `sudo`; the daily launch does
 not.
 
 There are two shapes. **Most machines have exactly one human user**, and that case
-is genuinely tiny: create the agent, then grant the operator read/write into the
-agent's home with a single ACL. The agent's home *is* the shared space — the agent
-works there and the operator can read and edit all of it. A group is only worth it
-when *several* humans need access. Pick your OS below and run the block that fits.
+is genuinely tiny: create the agent + its home, grant the operator read/write into
+that home with a single ACL, then lock the operator's own home. The agent's home
+*is* the shared space — the agent works there and the operator can read and edit all
+of it. A group is only worth it when *several* humans need access. Pick your OS and run
+the block that fits.
 
 > Giving the operator write into the agent's home is deliberate — the operator is
 > the trusted party, and this is the access we *want* them to have (review, edit,
@@ -123,20 +127,32 @@ when *several* humans need access. Pick your OS below and run the block that fit
 
 ## macOS
 
-### Single human user — the common case (two commands)
+### Single human user — the common case
 
 ```bash
-# 1. Create a minimal-privilege (standard, non-admin) 'agent' user with its own home.
-sudo sysadminctl -addUser agent -fullName "Local Agent" -home /Users/Shared/agent -password -
+AGENT="$(whoami)-local-agent"; AGENT_HOME_DIR="/Users/Shared/$AGENT"
 
-# 2. Let the operator read + write everything in the agent's home, now and for new files.
-sudo chmod +a "user:$(whoami) allow read,write,execute,file_inherit,directory_inherit" /Users/Shared/agent
+# 1. Create a minimal-privilege (standard, non-admin) agent user. sysadminctl only
+#    *records* the home path; -password - prompts you to set the account password.
+sudo sysadminctl -addUser "$AGENT" -fullName "$(whoami) Local Agent" -home "$AGENT_HOME_DIR" -password -
+
+# 2. Actually create the home directory from the account record.
+sudo createhomedir -c -u "$AGENT"
+
+# 3. Let the operator read + write everything in the agent's home, now and for new files.
+sudo chmod +a "user:$(whoami) allow read,write,execute,file_inherit,directory_inherit" "$AGENT_HOME_DIR"
+
+# 4. Lock the operator's own home to owner-only, so no other account can read it
+#    regardless of what group the agent lands in. (Skip if it is already 700.)
+chmod 700 ~
 ```
 
-That's it. `$(whoami)` is the operator; the `*_inherit` flags make the grant apply
-to everything the agent creates later, so the operator keeps full read/write access
-by default without ever re-running anything. No group, no setgid, no numeric modes
-to reason about.
+The agent is named `<operator>-local-agent` (e.g. `alice-local-agent`), so
+the setup scales cleanly to several operators or a second agent on one machine. The
+`*_inherit` flags make the operator's grant apply to everything the agent creates
+later, so the operator keeps full read/write access without ever re-running
+anything. No group, no setgid — step 4 is the whole isolation story and it doesn't
+depend on any machine default.
 
 ### Optional: passwordless launch
 
@@ -151,15 +167,15 @@ install in one line:
 # $(whoami) is the operator (expanded before the pipe). visudo validates the
 # result and only installs it (mode 0440) if it parses — so a typo can never
 # lock you out of sudo.
-echo "$(whoami) ALL=(agent) NOPASSWD: /bin/bash" | sudo SUDO_EDITOR='tee -a' visudo -f /etc/sudoers.d/jentic-agent
+echo "$(whoami) ALL=($(whoami)-local-agent) NOPASSWD: /bin/bash" | sudo SUDO_EDITOR='tee -a' visudo -f /etc/sudoers.d/jentic-agent
 ```
 
 (If you ever *do* lock yourself out editing sudoers by hand: authenticate from
 another admin account, or reboot into macOS Recovery and fix `/etc/sudoers.d/` —
 the pattern above avoids that by never installing an invalid file.)
 
-The `(agent)` target scopes this to *becoming `agent`* — it is **not** a general
-root grant. You can instead enable **Touch ID for sudo** (add
+The `(<operator>-local-agent)` target scopes this to *becoming the agent user* — it
+is **not** a general root grant. You can instead enable **Touch ID for sudo** (add
 `auth sufficient pam_tid.so` to `/etc/pam.d/sudo_local`) so launches ask for a
 fingerprint rather than a password.
 
@@ -169,12 +185,13 @@ When more than one person needs the agent's output, swap the named-user ACL for 
 group so you add/remove people in one place.
 
 ```bash
-sudo sysadminctl -addUser agent -fullName "Local Agent" \
-  -home /Users/Shared/agent-home -shell /bin/zsh -password -
+# Shared agent, so it isn't tied to one operator — neutral name 'local-agent'.
+sudo sysadminctl -addUser local-agent -fullName "Local Agent" \
+  -home /Users/Shared/local-agent -shell /bin/zsh -password -
 sudo dseditgroup -o create agents                                  # shared group...
-sudo dseditgroup -o edit -a "$(whoami)" -t user agents; sudo dseditgroup -o edit -a agent -t user agents
-sudo chown -R agent:agents /Users/Shared/agent-home && sudo chmod 2750 /Users/Shared/agent-home
-sudo mkdir -p /Users/Shared/workspace && sudo chown agent:agents /Users/Shared/workspace && sudo chmod 2770 /Users/Shared/workspace
+sudo dseditgroup -o edit -a "$(whoami)" -t user agents; sudo dseditgroup -o edit -a local-agent -t user agents
+sudo chown -R local-agent:agents /Users/Shared/local-agent && sudo chmod 2750 /Users/Shared/local-agent
+sudo mkdir -p /Users/Shared/workspace && sudo chown local-agent:agents /Users/Shared/workspace && sudo chmod 2770 /Users/Shared/workspace
 sudo chmod +a "group:agents allow read,write,delete,add_file,add_subdirectory,file_inherit,directory_inherit" /Users/Shared/workspace
 ```
 
@@ -182,55 +199,60 @@ sudo chmod +a "group:agents allow read,write,delete,add_file,add_subdirectory,fi
 
 ```bash
 # Login shell => starts in the agent's own home, fresh env (no operator tokens leak).
-sudo -u agent -i bash -lc 'exec claude'
+sudo -u "$(whoami)-local-agent" -i bash -lc 'exec claude'
 ```
 
 The login shell starts in the agent's home, which *is* the shared space in the
-single-user setup, so there's nothing to `cd` into. (In the multi-user setup, add
-`cd /Users/Shared/workspace &&`.)
+single-user setup, so there's nothing to `cd` into. (In the multi-user setup the
+user is `local-agent`, and add `cd /Users/Shared/workspace &&`.)
 
 ## Linux
 
-### Single human user — the common case (two commands)
+### Single human user — the common case
 
 ```bash
-sudo useradd -m -d /opt/agents/agent -s /bin/bash agent
-sudo setfacl -R -m u:"$USER":rwX /opt/agents/agent && sudo setfacl -R -d -m u:"$USER":rwX /opt/agents/agent
+AGENT="$(whoami)-local-agent"; AGENT_HOME_DIR="/opt/$AGENT"
+sudo useradd -m -d "$AGENT_HOME_DIR" -s /bin/bash "$AGENT"
+sudo setfacl -R -m u:"$USER":rwX "$AGENT_HOME_DIR" && sudo setfacl -R -d -m u:"$USER":rwX "$AGENT_HOME_DIR"
+chmod 700 ~   # lock the operator's own home so no other account can read it
 ```
 
-The `-d` (default) ACL makes the grant apply to everything the agent creates later,
-so the operator keeps full read/write access without re-running anything.
+The `-d` (default) ACL makes the operator's grant apply to everything the agent
+creates later, so the operator keeps full read/write access without re-running
+anything; the final `chmod 700 ~` is the machine-independent isolation guarantee.
 
 ### Optional: passwordless launch
 
 Same as macOS — a scoped `sudoers` drop-in installed through `visudo`:
 
 ```bash
-echo "$(whoami) ALL=(agent) NOPASSWD: /bin/bash" | sudo SUDO_EDITOR='tee -a' visudo -f /etc/sudoers.d/jentic-agent
+echo "$(whoami) ALL=($(whoami)-local-agent) NOPASSWD: /bin/bash" | sudo SUDO_EDITOR='tee -a' visudo -f /etc/sudoers.d/jentic-agent
 ```
 
-The `(agent)` target scopes this to *becoming `agent`*, not a general root grant.
-(If you ever lock yourself out editing sudoers by hand, fix `/etc/sudoers.d/` from
-a root shell — the validate-on-install pattern above prevents it.)
+The `(<operator>-local-agent)` target scopes this to *becoming the agent user*, not
+a general root grant. (If you ever lock yourself out editing sudoers by hand, fix
+`/etc/sudoers.d/` from a root shell — the validate-on-install pattern above prevents
+it.)
 
 ### Multiple humans — add a shared group
 
 ```bash
-sudo useradd -m -d /opt/agents/agent -s /bin/bash agent
-sudo groupadd agents; sudo usermod -aG agents "$USER"; sudo usermod -aG agents agent
-sudo chown -R agent:agents /opt/agents/agent && sudo chmod 2750 /opt/agents/agent
-sudo mkdir -p /srv/workspace && sudo chown agent:agents /srv/workspace && sudo chmod 2770 /srv/workspace
+# Shared agent, so it isn't tied to one operator — neutral name 'local-agent'.
+sudo useradd -m -d /opt/local-agent -s /bin/bash local-agent
+sudo groupadd agents; sudo usermod -aG agents "$USER"; sudo usermod -aG agents local-agent
+sudo chown -R local-agent:agents /opt/local-agent && sudo chmod 2750 /opt/local-agent
+sudo mkdir -p /srv/workspace && sudo chown local-agent:agents /srv/workspace && sudo chmod 2770 /srv/workspace
 sudo setfacl -d -m g:agents:rwx /srv/workspace
 ```
 
 ### Launch (every time)
 
 ```bash
-sudo -u agent -i bash -lc 'exec claude'
+sudo -u "$(whoami)-local-agent" -i bash -lc 'exec claude'
 ```
 
-Single-user starts in the agent's home directly; for the multi-user setup add
-`cd /srv/workspace &&`.
+Single-user starts in the agent's home directly; for the multi-user setup the user
+is `local-agent`, and add `cd /srv/workspace &&`.
 
 ---
 
@@ -287,13 +309,15 @@ is the whole story. For completeness:
 ## Honest assessment
 
 **Real issues (design around them):**
-1. **Home-directory readability depends on group membership, which varies by
-   machine.** On some setups (notably MDM-managed corporate laptops) a freshly
-   created account can share a group with the operator and thus read parts of the
-   operator's home — and Jentic One's own `~/.jentic` and Claude's `~/.claude` are
-   world-listable directories. The setup above closes this by construction (agent
-   in its own group + login shell), but it's the thing to get right, and it's why
-   the key should not live in the operator's home in the first place.
+1. **Home-directory readability depends on the operator's home mode and on group
+   membership, which varies by machine.** Depending on how accounts are provisioned,
+   a freshly-created agent may share a group with the operator, and if the operator's
+   home is group-readable it could read parts of it — including world/group-readable
+   dirs like Jentic One's `~/.jentic` and Claude's `~/.claude` (the key *file* stays
+   `0600`, but the directory is listable). The setup above closes this by
+   construction with the machine-independent `chmod 700 ~` (owner-only home, no group
+   path for anyone) plus a login shell, but it's the thing to get right — and it's
+   why the key should not live in the operator's home in the first place.
 2. Per-user auth means the agent must have its **own** Claude Code login / API key
    and its **own** `jentic` identity — one-time setup, and headless Keychain unlock
    needs thought.
