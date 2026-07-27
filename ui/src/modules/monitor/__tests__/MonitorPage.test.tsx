@@ -160,15 +160,15 @@ describe('MonitorPage', () => {
 		await screen.findByText('Execution Volume');
 
 		// Switching the window re-queries with a tighter `since` and keeps the
-		// chart mounted.
+		// chart mounted (subtitle reflects the wider window).
 		await user.click(screen.getByRole('button', { name: '30d' }));
-		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
+		expect(await screen.findByText(/Last 30 days, colored by/)).toBeInTheDocument();
 
-		// The 24h window exercises the hourly-bucket path: the mock serves
-		// sub-day points inside the last 24h, so the chart renders bars (with
-		// an hourly cadence subtitle) instead of falling into the empty state.
+		// The 24h window exercises the sub-day path: the mock serves recent
+		// points inside the last 24h, so the chart renders bars instead of
+		// falling into the empty state.
 		await user.click(screen.getByRole('button', { name: '24h' }));
-		expect(await screen.findByText(/Hourly executions/)).toBeInTheDocument();
+		expect(await screen.findByText(/Last 24 hours, colored by/)).toBeInTheDocument();
 		expect(screen.queryByText('No executions yet')).not.toBeInTheDocument();
 	});
 

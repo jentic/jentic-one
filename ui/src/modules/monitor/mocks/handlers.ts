@@ -520,8 +520,8 @@ export const monitorHandlers = [
 		const failed = buckets.reduce((sum, b) => sum + b.failed, 0);
 		const avgMs = total ? buckets.reduce((sum, b) => sum + b.avg_ms * b.total, 0) / total : 0;
 
-		// Scale the full-window top rows to the requested window so `top` and
-		// `stats` agree (the real backend computes both from the same rows).
+		// Scale the full-window top rows (and their trend series — the backend
+		// computes both from the same windowed rows) so `top` and `stats` agree.
 		const factor = total / USAGE_FIXTURE_TOTAL;
 		const top =
 			total === 0
@@ -532,6 +532,7 @@ export const monitorHandlers = [
 							total: Math.max(1, Math.round((row.total as number) * factor)),
 							success: Math.round((row.success as number) * factor),
 							failed: Math.round((row.failed as number) * factor),
+							trend: (row.trend as number[]).map((v) => Math.round(v * factor)),
 						}))
 						.slice(0, topLimit);
 

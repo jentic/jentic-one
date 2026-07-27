@@ -182,7 +182,7 @@ export function OverviewTab() {
 						<HealthStrip overview={overview} apis={apis} />
 					</motion.div>
 					<motion.div variants={chartVariant}>
-						<UsageCharts usage={data} />
+						<UsageCharts usage={data} apis={apis} toolkits={toolkits} agents={agents} />
 					</motion.div>
 					<motion.div variants={chartVariant}>
 						<UsageBubbleChart apis={apis} toolkits={toolkits} agents={agents} />

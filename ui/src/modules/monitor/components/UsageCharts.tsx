@@ -1,245 +1,434 @@
 /**
- * "Execution Volume" card — ported from jentic-mini's ApiDailyBarChart look
- * (titled card, stacked bars, y-axis gridlines, legend). No charting library:
- * hand-rolled bars, matching the rest of the module.
+ * "Execution Volume" card — jentic-mini's ApiDailyBarChart, rebuilt on the
+ * enriched usage endpoint (jentic-one-internal#561): an SVG stacked bar chart
+ * colored per entity, with the APIs / Toolkits / Agents grouping toggle, an
+ * interactive legend (hovering a chip or segment dims the rest), y-axis
+ * gridlines, and a per-segment hover tooltip.
  *
- * Reads the enriched usage endpoint's time buckets (jentic-one-internal#561).
- * `bucket_seconds` adapts to the window — 60s (≤1h), 1h (≤24h), 6h (≤7d),
- * daily beyond — and the backend only returns buckets that contain rows
- * (plain GROUP BY, no zero-fill), so we zero-fill the series client-side to
- * keep the time axis contiguous. Bars stack success (green) over failed
- * (pink), plus a muted segment when a bucket's total includes non-terminal
- * executions.
+ * Mini bucketed raw TimelinePoints client-side. Here the per-entity series
+ * comes from the endpoint's `top[].trend` — 12 equal segments spanning
+ * exactly [since, until) — so each of the 12 bars stacks one segment per top
+ * entity. Executions outside the top rows (or unattributed) appear as a
+ * muted "Other" remainder derived from the aggregate `buckets`, so bar
+ * heights always add up to the real totals.
  *
- * Known divergence from jentic-mini's chart: mini stacked per-entity segments
- * with an APIs/Toolkits/Agents toggle and interactive legend. The jentic-one
- * endpoint returns one aggregate series per bucket (no per-entity bucket
- * breakdown), so that lens can't be rebuilt client-side; the bubble chart and
- * Breakdown below carry the per-entity views instead.
+ * Colors reuse the shared lens palettes indexed by busiest-first row order,
+ * matching the bubble chart and Breakdown, so an entity keeps one color
+ * across all three charts.
  */
-import { useId, useMemo } from 'react';
-import type { UsageBucket, UsageResponse } from '@/modules/monitor/api';
+import { useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { cn } from '@/shared/lib/utils';
+import { SegmentedToggle } from '@/shared/ui';
+import type { UsageResponse } from '@/modules/monitor/api';
+import { getInitials, lensPalette, textColor, type UsageLens } from '@/modules/monitor/lib/palette';
+import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
-const DAY_SECONDS = 86_400;
-const SIX_HOURS = 21_600;
+const TREND_POINTS = 12;
+const OTHER_COLOR = '#94a3b8';
 
-function bucketDate(b: UsageBucket): Date {
-	return new Date(b.ts * 1000);
+interface BarSegment {
+	key: string;
+	label: string;
+	count: number;
+	color: string;
+	textColor: string;
 }
 
-/** Axis granularity, from the backend's bucket tier. */
-type Granularity = 'time' | 'day-time' | 'day';
-
-function granularityOf(bucketSeconds: number): Granularity {
-	if (bucketSeconds >= DAY_SECONDS) return 'day';
-	// 6h buckets span multiple days, so a bare time-of-day label is ambiguous.
-	if (bucketSeconds >= SIX_HOURS) return 'day-time';
-	return 'time';
+interface Bar {
+	startSec: number;
+	label: string;
+	subLabel: string;
+	total: number;
+	segments: BarSegment[];
 }
 
-function formatBucketLabel(b: UsageBucket, granularity: Granularity): string {
-	const date = bucketDate(b);
-	if (Number.isNaN(date.getTime())) return '';
-	if (granularity === 'time') {
-		return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-	}
-	// Daily buckets are UTC-day aggregates (epoch floored to UTC midnight), so
-	// format them in UTC: in any zone west of UTC a local-time weekday would be
-	// off by one. Sub-day buckets are real instants — local time is right there.
-	return date.toLocaleDateString(undefined, {
-		weekday: 'short',
-		...(granularity === 'day' ? { timeZone: 'UTC' } : {}),
-	});
-}
+const LENS_NOUNS: Record<UsageLens, string> = {
+	apis: 'API',
+	toolkits: 'toolkit',
+	agents: 'agent',
+};
 
-function formatBucketSubLabel(b: UsageBucket, granularity: Granularity): string {
-	const date = bucketDate(b);
-	if (Number.isNaN(date.getTime())) return '';
-	if (granularity === 'time') return '';
-	if (granularity === 'day-time') {
-		return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-	}
-	return date.toLocaleDateString(undefined, {
-		month: 'numeric',
-		day: 'numeric',
-		timeZone: 'UTC',
-	});
+function windowSubtitle(windowSeconds: number): string {
+	if (windowSeconds <= 86_400) return 'Last 24 hours';
+	if (windowSeconds <= 7 * 86_400) return 'Last 7 days';
+	return 'Last 30 days';
 }
 
 /**
- * Expand the backend's sparse buckets into a contiguous series over
- * [since, until), inserting zero buckets for empty slots. Bucket timestamps
- * are epoch-floored multiples of `bucket_seconds`, so the first slot starts
- * at floor(since); a defensive cap avoids rendering thousands of bars if the
- * server ever returns a surprising window/tier combination.
+ * Label a trend segment by its start instant. Unlike the backend's UTC-floored
+ * daily buckets, trend segments are real instants (since + i·step), so local
+ * time is always the right formatting.
  */
-function zeroFillBuckets(usage: UsageResponse): UsageBucket[] {
-	const step = usage.bucket_seconds;
-	if (!step || step <= 0 || usage.until <= usage.since) return usage.buckets;
-	const first = Math.floor(usage.since / step) * step;
-	const count = Math.ceil((usage.until - first) / step);
-	if (count > 400) return usage.buckets;
-	const byTs = new Map(usage.buckets.map((b) => [b.ts, b]));
-	return Array.from({ length: count }, (_, i) => {
-		const ts = first + i * step;
-		return byTs.get(ts) ?? { ts, total: 0, success: 0, failed: 0, avg_ms: 0 };
+function segmentLabels(startSec: number, windowSeconds: number): { label: string; sub: string } {
+	const date = new Date(startSec * 1000);
+	if (Number.isNaN(date.getTime())) return { label: '', sub: '' };
+	if (windowSeconds <= 86_400) {
+		return {
+			label: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+			sub: '',
+		};
+	}
+	if (windowSeconds <= 7 * 86_400) {
+		return {
+			label: date.toLocaleDateString(undefined, { weekday: 'short' }),
+			sub: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+		};
+	}
+	return {
+		label: date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }),
+		sub: '',
+	};
+}
+
+/**
+ * Build the 12 stacked bars for a lens: per-entity counts from `top[].trend`,
+ * plus a muted "Other" remainder so the bar reaches the aggregate total.
+ * Aggregate buckets are re-bucketed into the same 12 segments by flooring
+ * (ts - since) / segmentSeconds — same arithmetic the backend used to build
+ * the trends, so the two series line up.
+ */
+function buildBars(usage: UsageResponse, rows: EntityUsageRow[], palette: string[]): Bar[] {
+	const windowSeconds = usage.until - usage.since;
+	if (windowSeconds <= 0) return [];
+	const num = Math.max(1, rows.find((r) => r.trend.length > 0)?.trend.length ?? TREND_POINTS);
+	const segmentSeconds = windowSeconds / num;
+
+	const aggregate = new Array<number>(num).fill(0);
+	for (const b of usage.buckets) {
+		// A bucket's span can straddle a segment boundary (6h buckets vs 14h
+		// segments); attributing by start instant keeps totals conserved.
+		const idx = Math.min(
+			num - 1,
+			Math.max(0, Math.floor((b.ts - usage.since) / segmentSeconds)),
+		);
+		aggregate[idx] += b.total;
+	}
+
+	return Array.from({ length: num }, (_, i) => {
+		const startSec = usage.since + i * segmentSeconds;
+		const { label, sub } = segmentLabels(startSec, windowSeconds);
+		const segments: BarSegment[] = [];
+		let entityTotal = 0;
+		rows.forEach((row, rowIdx) => {
+			const count = row.trend[i] ?? 0;
+			if (count <= 0) return;
+			entityTotal += count;
+			const color = palette[rowIdx % palette.length];
+			segments.push({
+				key: row.id,
+				label: row.label,
+				count,
+				color,
+				textColor: textColor(color),
+			});
+		});
+		const other = Math.max(0, aggregate[i] - entityTotal);
+		if (other > 0) {
+			segments.push({
+				key: '__other__',
+				label: 'Other',
+				count: other,
+				color: OTHER_COLOR,
+				textColor: textColor(OTHER_COLOR),
+			});
+		}
+		segments.sort((a, b) => b.count - a.count);
+		return { startSec, label, subLabel: sub, total: entityTotal + other, segments };
 	});
 }
 
-function VolumeChart({
-	buckets,
-	granularity,
-	labelledBy,
-}: {
-	buckets: UsageBucket[];
-	granularity: Granularity;
-	labelledBy: string;
-}) {
-	// 15% headroom above the tallest bar (mirrors mini's `rawMax * 1.15`) so
-	// bars never touch the container top.
-	const rawMax = Math.max(...buckets.map((b) => b.total), 0);
-	const max = Math.max(1, Math.ceil(rawMax * 1.15));
-	const gridValues = [max, Math.round(max / 2)];
-	// With sub-day windows there can be dozens of buckets — label every nth
-	// column so the axis stays readable.
-	const labelStep = Math.max(1, Math.ceil(buckets.length / 10));
+interface TooltipState {
+	barIndex: number;
+	x: number;
+}
+
+interface UsageChartsProps {
+	/** API-grouped response (also carries the aggregate buckets/window). */
+	usage: UsageResponse;
+	apis: EntityUsageRow[];
+	toolkits: EntityUsageRow[];
+	agents: EntityUsageRow[];
+	className?: string;
+}
+
+export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageChartsProps) {
+	const [lens, setLens] = useState<UsageLens>('apis');
+	const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+	const [hoveredSegKey, setHoveredSegKey] = useState<string | null>(null);
+
+	const rows = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
+	const palette = lensPalette(lens);
+	const windowSeconds = usage.until - usage.since;
+
+	const bars = useMemo(() => buildBars(usage, rows, palette), [usage, rows, palette]);
+
+	// Legend: one chip per entity that appears anywhere in the window,
+	// busiest-first (mirrors mini's allSegments reduction).
+	const legend = useMemo(() => {
+		const seen = new Map<string, BarSegment & { total: number }>();
+		for (const bar of bars) {
+			for (const seg of bar.segments) {
+				const prev = seen.get(seg.key);
+				if (prev) prev.total += seg.count;
+				else seen.set(seg.key, { ...seg, total: seg.count });
+			}
+		}
+		return [...seen.values()].sort((a, b) => b.total - a.total);
+	}, [bars]);
+
+	const rawMax = Math.max(...bars.map((b) => b.total), 1);
+	const maxTotal = Math.ceil(rawMax * 1.15);
+
+	// Fixed virtual width; the SVG scales to the card via viewBox so no
+	// ResizeObserver is needed (tooltip x is translated to % of width).
+	const WIDTH = 760;
+	const PADDING = { top: 12, bottom: 36, left: 36, right: 8 };
+	const BAR_HEIGHT = 220;
+	const svgH = PADDING.top + BAR_HEIGHT + PADDING.bottom;
+	const chartW = WIDTH - PADDING.left - PADDING.right;
+	const barW = Math.max(12, chartW / bars.length - 8);
+	const gap = bars.length > 1 ? (chartW - barW * bars.length) / (bars.length - 1) : 0;
+	const toY = (count: number) => PADDING.top + BAR_HEIGHT - (count / maxTotal) * BAR_HEIGHT;
+	const yTickStep = Math.max(1, Math.ceil(maxTotal / 4));
+	const yTicks = Array.from({ length: 5 }, (_, i) => i * yTickStep);
+
+	const hasData = bars.some((b) => b.total > 0);
+	const tooltipBar = tooltip ? bars[tooltip.barIndex] : null;
 
 	return (
-		<div className="mt-4 flex gap-2">
-			{/* y-axis tick labels (top-of-chart, midline, baseline) */}
-			<div
-				aria-hidden="true"
-				className="text-muted-foreground relative h-44 w-6 shrink-0 text-right text-[9px]"
-			>
-				<span className="absolute top-0 right-0 -translate-y-1/2">{gridValues[0]}</span>
-				<span className="absolute top-1/2 right-0 -translate-y-1/2">{gridValues[1]}</span>
-				<span className="absolute right-0 bottom-0 translate-y-1/2">0</span>
-			</div>
-			<div className="relative flex-1">
-				{/* gridlines behind the bars */}
-				<div
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-x-0 top-0 h-44"
-				>
-					<div className="border-border/50 absolute inset-x-0 top-0 border-t border-dashed" />
-					<div className="border-border/50 absolute inset-x-0 top-1/2 border-t border-dashed" />
-					<div className="border-border/50 absolute inset-x-0 bottom-0 border-t" />
+		<div
+			className={cn(
+				'border-border bg-card relative min-w-0 overflow-hidden rounded-xl border',
+				className,
+			)}
+		>
+			<div className="flex items-start justify-between gap-2 px-4 pt-3 pb-0">
+				<div>
+					<h2 className="text-foreground text-sm font-semibold">Execution Volume</h2>
+					<p className="text-muted-foreground text-xs">
+						{windowSubtitle(windowSeconds)}, colored by {LENS_NOUNS[lens]}
+					</p>
 				</div>
-				<ul
-					aria-labelledby={labelledBy}
-					className="relative flex h-44 items-end justify-between gap-1"
-				>
-					{buckets.map((b) => {
-						const successPct = (b.success / max) * 100;
-						const failedPct = (b.failed / max) * 100;
-						// Buckets can include non-terminal executions (pending /
-						// running); render them as a muted segment so the bar height
-						// always matches the stated total.
-						const otherPct = (Math.max(0, b.total - b.success - b.failed) / max) * 100;
-						const label = formatBucketLabel(b, granularity);
-						const subLabel = formatBucketSubLabel(b, granularity);
-						return (
-							<li
-								key={b.ts}
-								className="group relative flex h-full flex-1 flex-col justify-end"
-								aria-label={`${label}${subLabel ? ` ${subLabel}` : ''}: ${b.total} executions, ${b.success} succeeded, ${b.failed} failed`}
-							>
-								<div className="flex h-full flex-col justify-end overflow-hidden rounded-md">
-									<div
-										className="bg-muted-foreground/30 w-full transition-all duration-500"
-										style={{ height: `${otherPct}%` }}
-									/>
-									<div
-										className="bg-accent-pink w-full transition-all duration-500"
-										style={{ height: `${failedPct}%` }}
-									/>
-									<div
-										className="bg-accent-green w-full transition-all duration-500"
-										style={{ height: `${successPct}%` }}
-									/>
-								</div>
+				<SegmentedToggle
+					options={[
+						{ value: 'apis', label: 'APIs' },
+						{ value: 'toolkits', label: 'Toolkits' },
+						{ value: 'agents', label: 'Agents' },
+					]}
+					value={lens}
+					onChange={setLens}
+					ariaLabel="Volume chart grouping"
+				/>
+			</div>
 
-								{/* hover tooltip */}
-								<div className="border-border/40 bg-card/95 pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 hidden -translate-x-1/2 rounded-lg border px-2.5 py-1.5 text-[11px] whitespace-nowrap shadow-lg backdrop-blur-md group-hover:block">
-									<p className="text-foreground font-semibold">{b.total} total</p>
-									<p className="text-accent-green">{b.success} ok</p>
-									{b.failed > 0 && (
-										<p className="text-accent-pink">{b.failed} failed</p>
+			{!hasData ? (
+				<p className="text-muted-foreground py-16 text-center text-sm">
+					No execution data available
+				</p>
+			) : (
+				<>
+					<svg
+						viewBox={`0 0 ${WIDTH} ${svgH}`}
+						className="block w-full"
+						role="img"
+						aria-label={`Execution volume stacked by ${LENS_NOUNS[lens]}`}
+					>
+						{yTicks.map((tick) => (
+							<g key={tick}>
+								<line
+									x1={PADDING.left}
+									y1={toY(tick)}
+									x2={WIDTH - PADDING.right}
+									y2={toY(tick)}
+									stroke="currentColor"
+									strokeOpacity={tick === 0 ? 0.12 : 0.05}
+									strokeDasharray={tick === 0 ? undefined : '3 3'}
+								/>
+								<text
+									x={PADDING.left - 8}
+									y={toY(tick)}
+									textAnchor="end"
+									dominantBaseline="middle"
+									fontSize={10}
+									fill="currentColor"
+									opacity={0.4}
+									style={{ fontFamily: 'var(--font-sans, system-ui)' }}
+								>
+									{tick}
+								</text>
+							</g>
+						))}
+
+						<AnimatePresence mode="wait">
+							<motion.g
+								key={lens}
+								initial={{ opacity: 0 }}
+								animate={{ opacity: 1 }}
+								exit={{ opacity: 0 }}
+								transition={{ duration: 0.2 }}
+							>
+								{bars.map((bar, i) => {
+									const bx = PADDING.left + i * (barW + gap);
+									let stackY = PADDING.top + BAR_HEIGHT;
+
+									return (
+										<g
+											key={bar.startSec}
+											onMouseEnter={() =>
+												setTooltip({ barIndex: i, x: bx + barW / 2 })
+											}
+											onMouseLeave={() => {
+												setTooltip(null);
+												setHoveredSegKey(null);
+											}}
+										>
+											<rect
+												x={bx}
+												y={PADDING.top}
+												width={barW}
+												height={BAR_HEIGHT}
+												fill="transparent"
+											/>
+
+											{bar.segments.map((seg) => {
+												const segH = (seg.count / maxTotal) * BAR_HEIGHT;
+												stackY -= segH;
+												const isDimmed =
+													hoveredSegKey && hoveredSegKey !== seg.key;
+												return (
+													<rect
+														key={seg.key}
+														x={bx}
+														y={stackY}
+														width={barW}
+														height={Math.max(1, segH)}
+														rx={segH > 4 ? 2 : 0}
+														fill={seg.color}
+														opacity={isDimmed ? 0.2 : 1}
+														className="transition-opacity duration-150"
+														onMouseEnter={() =>
+															setHoveredSegKey(seg.key)
+														}
+													/>
+												);
+											})}
+
+											<text
+												x={bx + barW / 2}
+												y={PADDING.top + BAR_HEIGHT + 14}
+												textAnchor="middle"
+												fontSize={10}
+												fontWeight={500}
+												fill="currentColor"
+												opacity={0.6}
+												style={{
+													fontFamily: 'var(--font-sans, system-ui)',
+												}}
+											>
+												{bar.label}
+											</text>
+											{bar.subLabel && (
+												<text
+													x={bx + barW / 2}
+													y={PADDING.top + BAR_HEIGHT + 27}
+													textAnchor="middle"
+													fontSize={9}
+													fill="currentColor"
+													opacity={0.35}
+													style={{
+														fontFamily: 'var(--font-sans, system-ui)',
+													}}
+												>
+													{bar.subLabel}
+												</text>
+											)}
+										</g>
+									);
+								})}
+							</motion.g>
+						</AnimatePresence>
+					</svg>
+
+					<AnimatePresence mode="wait">
+						<motion.div
+							key={lens}
+							className="border-border flex flex-wrap items-center gap-3 border-t px-4 py-2.5"
+							initial={{ opacity: 0 }}
+							animate={{ opacity: 1 }}
+							exit={{ opacity: 0 }}
+							transition={{ duration: 0.2 }}
+						>
+							{legend.map((seg) => (
+								<button
+									key={seg.key}
+									type="button"
+									className={cn(
+										'flex items-center gap-1.5 rounded-full py-0.5 pr-2 pl-0.5 transition-opacity',
+										hoveredSegKey && hoveredSegKey !== seg.key
+											? 'opacity-30'
+											: 'opacity-100',
 									)}
-								</div>
-							</li>
-						);
-					})}
-				</ul>
-				{/* x-axis labels below the plot so gridlines align with bar heights */}
-				<div aria-hidden="true" className="mt-1 flex justify-between gap-1">
-					{buckets.map((b, i) => {
-						const showLabel = i % labelStep === 0;
-						const label = formatBucketLabel(b, granularity);
-						const subLabel = formatBucketSubLabel(b, granularity);
-						return (
-							<div key={b.ts} className="h-6 flex-1 text-center leading-tight">
-								{showLabel && (
-									<>
-										<p className="text-foreground text-[10px] font-medium">
-											{label}
-										</p>
-										{subLabel && (
-											<p className="text-muted-foreground text-[9px]">
-												{subLabel}
-											</p>
-										)}
-									</>
-								)}
-							</div>
-						);
-					})}
-				</div>
-			</div>
+									onMouseEnter={() => setHoveredSegKey(seg.key)}
+									onMouseLeave={() => setHoveredSegKey(null)}
+								>
+									<span
+										className="flex h-4 w-4 items-center justify-center rounded-full text-[6px] font-bold"
+										style={{
+											backgroundColor: seg.color,
+											color: seg.textColor,
+										}}
+									>
+										{getInitials(seg.label)}
+									</span>
+									<span className="text-foreground text-[11px]">{seg.label}</span>
+								</button>
+							))}
+						</motion.div>
+					</AnimatePresence>
+
+					{tooltipBar && tooltipBar.total > 0 && (
+						<BarTooltip bar={tooltipBar} xRatio={tooltip!.x / WIDTH} />
+					)}
+				</>
+			)}
 		</div>
 	);
 }
 
-function cadenceLabel(bucketSeconds: number): string {
-	if (bucketSeconds >= DAY_SECONDS) return 'Daily';
-	if (bucketSeconds >= SIX_HOURS) return '6-hour';
-	if (bucketSeconds >= 3600) return 'Hourly';
-	return 'Per-minute';
-}
+function BarTooltip({ bar, xRatio }: { bar: Bar; xRatio: number }) {
+	const isRight = xRatio > 0.6;
 
-export function UsageCharts({ usage }: { usage: UsageResponse }) {
-	const titleId = useId();
-	const granularity = granularityOf(usage.bucket_seconds);
-	const filled = useMemo(() => zeroFillBuckets(usage), [usage]);
 	return (
-		<div className="border-border bg-card rounded-xl border p-4">
-			<div className="flex items-start justify-between">
-				<div>
-					<h2 id={titleId} className="text-foreground text-sm font-semibold">
-						Execution Volume
-					</h2>
-					<p className="text-muted-foreground text-xs">
-						{cadenceLabel(usage.bucket_seconds)} executions, success vs failed
-					</p>
-				</div>
-				<div className="flex items-center gap-3 text-xs">
-					<span className="text-muted-foreground flex items-center gap-1.5">
-						<span className="bg-accent-green inline-block h-2 w-2 rounded-sm" />
-						Success
-					</span>
-					<span className="text-muted-foreground flex items-center gap-1.5">
-						<span className="bg-accent-pink inline-block h-2 w-2 rounded-sm" />
-						Failed
-					</span>
-				</div>
+		<div
+			className="border-border bg-card pointer-events-none absolute top-14 z-30 w-52 rounded-lg border p-3 shadow-xl"
+			style={
+				isRight
+					? { right: `${Math.max(0, 100 - xRatio * 100)}%` }
+					: { left: `${xRatio * 100}%` }
+			}
+		>
+			<div className="mb-2 flex items-center justify-between">
+				<span className="text-foreground text-xs font-medium">
+					{bar.label} {bar.subLabel}
+				</span>
+				<span className="text-muted-foreground text-xs">{bar.total} total</span>
 			</div>
-			{usage.buckets.length === 0 ? (
-				<p className="text-muted-foreground py-12 text-center text-sm">
-					No execution data available
-				</p>
-			) : (
-				<VolumeChart buckets={filled} granularity={granularity} labelledBy={titleId} />
-			)}
+
+			<div className="space-y-1.5">
+				{bar.segments.map((seg) => (
+					<div key={seg.key} className="flex items-center gap-2">
+						<span
+							className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[6px] font-bold"
+							style={{ backgroundColor: seg.color, color: seg.textColor }}
+						>
+							{getInitials(seg.label)}
+						</span>
+						<span className="text-foreground flex-1 truncate text-xs">{seg.label}</span>
+						<span className="text-foreground text-xs font-medium">{seg.count}</span>
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }
