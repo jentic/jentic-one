@@ -153,6 +153,22 @@ func LaunchCmd(ctx context.Context, agentUser, binary, dir string) *exec.Cmd {
 	return exec.CommandContext(ctx, "sudo", "-u", agentUser, "-i", "bash", "-lc", inner) //nolint:gosec // agentUser/binary/dir are config-derived, shell-quoted.
 }
 
+// EnsureLocalBinOnPathCmd makes ~/.local/bin resolvable for the agent user by
+// appending an idempotent export line to the agent's login profiles. It runs as
+// the agent user so the files are created owned by the agent, and it covers the
+// bash login files the launch reads (.profile / .bash_profile) plus .zprofile
+// for any interactive zsh session. Re-running is a no-op (guarded by a marker).
+func EnsureLocalBinOnPathCmd(agentUser string) *exec.Cmd {
+	const snippet = `line='export PATH="$HOME/.local/bin:$PATH"'
+marker='# added by jentic run (ensure ~/.local/bin on PATH)'
+for f in "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zprofile"; do
+  if ! grep -qF "$marker" "$f" 2>/dev/null; then
+    printf '\n%s\n%s\n' "$marker" "$line" >> "$f"
+  fi
+done`
+	return exec.Command("sudo", "-u", agentUser, "-i", "bash", "-lc", snippet) //nolint:gosec // agentUser is a config account name; snippet is a fixed literal.
+}
+
 // OperatorBinaryPath resolves the operator's own copy of binary via `command
 // -v`, returning "" if the operator doesn't have it either. Used to offer the
 // copy route.

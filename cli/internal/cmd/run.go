@@ -152,11 +152,23 @@ func (a *App) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *r
 	case localagent.BinaryOnPath:
 		return nil
 	case localagent.BinaryFoundOffPath:
-		fmt.Fprintln(a.Out, theme.Warnf("%s is installed for %s but not on its PATH.", desc.Binary, agentUser))
-		fmt.Fprintln(a.Out, theme.Dim.Render("  Add its install dir to the agent's PATH (e.g. in the agent's shell profile), then re-run."))
-		return fmt.Errorf("%s not on the agent's PATH", desc.Binary)
+		// Installed at a known location but not resolvable by the login shell —
+		// put ~/.local/bin on the agent's PATH and carry on, rather than erroring.
+		fmt.Fprintln(a.Out, theme.Infof("%s is installed for %s but not on its PATH — adding ~/.local/bin ...", desc.Binary, agentUser))
+		return a.ensureLocalBinOnPath(agentUser)
 	case localagent.BinaryMissing:
 		return a.provisionBinary(ctx, cmd, opts, agentUser, desc)
+	}
+	return nil
+}
+
+// ensureLocalBinOnPath appends ~/.local/bin to the agent's login PATH so the
+// launch can exec a binary that lives there (copy and install both land there).
+func (a *App) ensureLocalBinOnPath(agentUser string) error {
+	c := localagent.EnsureLocalBinOnPathCmd(agentUser)
+	c.Stdout, c.Stderr = a.Out, a.Err
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("add ~/.local/bin to the agent's PATH: %w", err)
 	}
 	return nil
 }
@@ -193,12 +205,20 @@ func (a *App) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *run
 			return fmt.Errorf("copy binary: %w", err)
 		}
 		fmt.Fprintln(a.Out, theme.Dim.Render("  The copy carries the binary, not credentials — the agent still logs in as itself on first run."))
+		// The copy lands in ~/.local/bin, which a fresh account may not have on
+		// its login PATH — make sure it does so the launch can find it.
+		if err := a.ensureLocalBinOnPath(agentUser); err != nil {
+			return err
+		}
 	case "install":
 		fmt.Fprintln(a.Out, theme.Infof("Installing %s as %s ...", desc.Binary, agentUser))
 		inst := localagent.InstallBinaryCmd(agentUser, desc.Install)
 		inst.Stdin, inst.Stdout, inst.Stderr = os.Stdin, a.Out, a.Err
 		if err := inst.Run(); err != nil {
 			return fmt.Errorf("install binary: %w", err)
+		}
+		if err := a.ensureLocalBinOnPath(agentUser); err != nil {
+			return err
 		}
 	case "skip":
 		fmt.Fprintln(a.Out, theme.Dim.Render("Skipped. Install it for the agent yourself, then re-run."))
