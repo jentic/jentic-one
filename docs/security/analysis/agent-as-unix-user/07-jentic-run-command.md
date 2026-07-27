@@ -130,5 +130,75 @@ Each known `<agent>` is one small record so adding an agent is data, not code:
 `hermes`, `codex`, `cursor-agent`, … are additional rows. An unknown `<agent>`
 errors with the list of known identifiers.
 
-<!-- Sections added incrementally: directory access, danger-flagging, and the
-     wiring back into 05/jenticctl. -->
+## Step 3 — resolve the working directory and its access
+
+By default `jentic run claude` (no `[path]`) means "work on the directory I'm
+standing in." But the operator's cwd is almost always inside the operator's own home
+— which is now `700` and owned by the operator — so **the agent user has no
+filesystem access to it.** The agent would start there and immediately fail to read
+anything. `jentic run` resolves this up front rather than letting it surface as
+opaque permission errors mid-session.
+
+### The check
+
+For the resolved target directory (the `[path]` arg, or cwd), test whether the agent
+user can actually read and write it:
+
+```bash
+sudo -u "$AGENT" test -r "$DIR" -a -w "$DIR" -a -x "$DIR"
+```
+
+If the agent already has access (e.g. the directory is under the agent's own home,
+or a shared-group workspace from [`05`](05-agent-as-own-unix-user.md)), `jentic run`
+launches there with no prompt. If not, it offers a succinct choice:
+
+```
+Agent alice-local-agent has no access to /Users/alice/projects/api.
+  [a] Allow the agent read/write to this directory   (adds an inherited ACL)
+  [h] Open in the agent's home instead  (~alice-local-agent)             [default]
+  [c] Cancel
+Choice [h]:
+```
+
+- **Allow** — grant the agent access to *just this directory* via an inherited ACL,
+  the same named-user mechanism [`05`](05-agent-as-own-unix-user.md) uses for the
+  operator (reversed direction):
+
+  ```bash
+  # macOS
+  sudo chmod +a "user:$AGENT allow read,write,execute,file_inherit,directory_inherit" "$DIR"
+  # Linux
+  sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
+  ```
+
+  The grant is **scoped to that directory subtree only** — it does not open the
+  operator's home generally, only the one path the operator chose. This is a
+  system-level grant; **Claude Code (or whichever agent) still governs its own
+  workspace-trust prompt** on top, so the operator confirms twice for two different
+  things (OS access vs. the agent's own trust model). `jentic run` says which is
+  which so the two prompts aren't confused.
+
+- **Open in home** (default) — skip the grant entirely and launch the session in the
+  agent's own home, the always-accessible shared space. The safe default: it never
+  widens access, and the operator can copy files into the agent's home if they want
+  the agent to see them.
+
+- **Cancel** — do nothing.
+
+`--allow-dir` / `--no-allow-dir` / `--home` pre-answer this prompt for scripted use.
+
+### Persistence and revocation
+
+An ACL granted this way **persists** after the session ends — the agent keeps access
+to that directory until it's removed. `jentic run` should:
+
+- **Not silently accumulate grants.** On a repeat run against an already-granted
+  directory it proceeds without re-prompting, but a `jentic run --list-grants` (or a
+  line in `jenticctl doctor`) should surface every directory the agent has been given,
+  so access doesn't quietly sprawl.
+- Offer **`jentic revoke-dir <path>`** (or `--revoke` on the run command) that
+  removes the ACL entry, so granting is reversible in one step rather than requiring
+  the operator to remember `chmod -a` / `setfacl -x` syntax.
+
+<!-- Sections added incrementally: danger-flagging, launch, and the wiring back
+     into 05/jenticctl. -->
