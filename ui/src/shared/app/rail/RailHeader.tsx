@@ -40,6 +40,7 @@ const KIND_LABEL: Record<StreamEvent['kind'], string> = {
 	execution: 'executions',
 	access_request: 'access',
 	credential: 'creds',
+	agent: 'agents',
 	other: 'other',
 };
 const ALL_KINDS = Object.keys(KIND_LABEL) as Array<StreamEvent['kind']>;

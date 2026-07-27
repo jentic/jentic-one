@@ -51,7 +51,7 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, settle_actionable_events
 from jentic_one.shared.models import (
     AccessRequestItemStatus,
     AccessRequestStatus,
@@ -87,6 +87,17 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
 # than half-approving into a guaranteed-broken state.
 _PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
     {("toolkit", "create"), ("credential", "provision")}
+)
+
+# Statuses in which a request has been decided and its actionable
+# `access_request.filed` alert must be settled. PENDING (partial decision)
+# keeps the alert live; WITHDRAWN settles via withdraw()'s own path.
+_SETTLED_STATUSES: frozenset[AccessRequestStatus] = frozenset(
+    {
+        AccessRequestStatus.APPROVED,
+        AccessRequestStatus.PARTIALLY_APPROVED,
+        AccessRequestStatus.DENIED,
+    }
 )
 
 
@@ -160,6 +171,33 @@ class AccessRequestService:
                 )
         except Exception:
             logger.warning("emit_event_failed", request_id=request_id, type=type, exc_info=True)
+
+    async def _settle_filed_alerts(self, request_id: str, *, acknowledged_by: str) -> int:
+        """Acknowledge the actionable ``access_request.filed`` alert for a settled request.
+
+        Filed events carry the request id in ``data.request_id`` (the top-level
+        actor is the requesting agent, which may have many open requests), so
+        the match is on the data payload. Best-effort in its own short admin
+        transaction — alert bookkeeping must never fail the decision, which is
+        already durable in the control DB by the time this runs.
+
+        Returns the number of alerts settled (0 on failure). Settlement is
+        idempotent, so a non-zero count doubles as the durable "this decision
+        was never announced" marker that lets ``decide()`` recover the decision
+        event on the reconcile/retry path.
+        """
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                return await settle_actionable_events(
+                    session,
+                    event_type=EventType.ACCESS_REQUEST_FILED,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="request settled",
+                    data_match={"request_id": request_id},
+                )
+        except Exception:
+            logger.warning("settle_filed_alerts_failed", request_id=request_id, exc_info=True)
+            return 0
 
     async def file(
         self,
@@ -477,7 +515,23 @@ class AccessRequestService:
             names = await self._resolve_names(session, [refreshed])
             view = self._to_view(refreshed, names=names)
 
-        if any_transition:
+        # Announce the decision. `any_transition` alone is NOT a sufficient
+        # gate: decide() is documented as safe to retry, and if a first attempt
+        # crashed after the control commit (or `_reconcile_admin_effects`
+        # raised), the decision is durable but was never announced — a retry
+        # transitions nothing, so gating purely on transitions would skip the
+        # decision event AND leave the actionable `access_request.filed` alert
+        # live forever. The still-unacknowledged filed alert is the durable
+        # marker for that lost announcement: settlement is idempotent, and a
+        # non-zero settle count on a no-transition call means the first
+        # attempt's announcement never completed, so emit it now. (A crash
+        # between settle and emit can still drop the passive decision event on
+        # the next retry, but the actionable alert — the operator-facing bug —
+        # is settled by then; event history is best-effort.)
+        settled = 0
+        if view.status in _SETTLED_STATUSES:
+            settled = await self._settle_filed_alerts(view.id, acknowledged_by=decided_by)
+        if any_transition or settled:
             await self._emit_decision(view, decided_by=decided_by, identity=identity)
         return view
 
@@ -676,6 +730,9 @@ class AccessRequestService:
             actor_id=identity.sub,
             actor_type=identity.actor_type,
         )
+        # A withdrawn request no longer needs review — settle its filed alert
+        # so the operator attention surfaces drop the dead row.
+        await self._settle_filed_alerts(view.id, acknowledged_by=identity.sub)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,

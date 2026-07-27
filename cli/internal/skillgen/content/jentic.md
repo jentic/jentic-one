@@ -296,36 +296,29 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 
 ## Quick Reference
 
+- The authoritative command + flag reference is **generated from the CLI
+  itself**, not this file: run `jentic --help` / `jentic <command> --help`
+  (always current, works offline), or open the platform docs at `/app/docs` on
+  the control plane (Reference → CLI) — the same reference rendered for humans,
+  next to the HTTP API and Broker API references.
 - `jentic profile list` — see profiles and which is active (start here).
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
-- `jentic access request --toolkit <vendor/name> [--reason <text>] [--wait --timeout 120s]` —
-  ask a human to bind you to an **existing** toolkit; prints an `approve_url`.
-- `jentic access request --provision <vendor/name> [--auth <type>] [--rules-json <json>] [--reason <text>] [--wait]` —
-  file the whole path to first execution as one plan (create toolkit, provision
-  credential, bind + rules, bind agent) when nothing serves the API yet. Scopes
-  for an approved agent are granted automatically; you do not request
-  catalog/registry scopes.
+- `jentic access request` — ask a human for access. `--provision <vendor/name>`
+  files the whole path to first execution as one plan when nothing serves the
+  API yet; `--toolkit <vendor/name>` asks to be bound to an **existing**
+  toolkit; `--scope <scope>` requests a missing scope. Always pass `--reason`;
+  add `--wait` to block on approval (see Procedure for full examples).
 - `jentic access list | status <id> | withdraw <id>` — track your requests.
-- `jentic access refresh` — re-mint your token so a newly granted **scope**
-  takes effect. Only needed after an approved `scope:grant` that `whoami` shows
-  as not yet on your token; `--provision --wait` already re-mints for you when a
-  scope was granted. A binding-only plan (toolkit/credential binds) needs no
-  refresh — bindings are live.
-- `jentic catalog search "<query>"` — find importable APIs in the public catalog.
-- `jentic catalog import <vendor/name>` — import an API into the local registry
-  (required before `search` can find its operations). Gated on `catalog:import`,
-  a default agent scope — no access request needed.
-- `jentic search "<query>"` — discover imported operations (JSON when piped);
-  pass a hit's `operation_id` to `inspect`/`execute`.
-- `jentic apis operations <vendor/name/version>` — list an imported API's
-  operations and their ids.
-- `jentic inspect <operation_id | "METHOD URL">` — see method, path, params, schemas.
-- `jentic execute <operation_id | METHOD:URL>` — call it through the broker. Use
-  the full upstream URL (e.g. `POST:https://api.example.com/v1/users`); the
-  broker is a forward proxy, not a path router. On a local install, target the
-  local broker (`--broker-scheme http --broker-host 127.0.0.1:8100` or
-  `~/.jentic/config.yaml`).
+- `jentic access refresh` — re-mint your token after an approved **scope**
+  grant that `whoami` flags as not yet on your token. Bindings need no
+  refresh — they are live on approval.
+- `jentic catalog search "<query>"` / `jentic catalog import <vendor/name>` —
+  find and import APIs (import first; `search` only sees imported operations).
+- `jentic search "<query>"` → `jentic inspect <operation_id>` →
+  `jentic execute <operation_id | METHOD:URL>` — discover, inspect, and call
+  operations through the broker (use the full upstream URL; the broker is a
+  forward proxy, not a path router).
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
 - Add `--json` to force machine-readable output on a terminal.

@@ -111,6 +111,8 @@ Full reference: [`cli/README.md`](cli/README.md).
 | ----- | ----------- |
 | [Build & Deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, local kind cluster, and observability |
 | [API Specs](openapi/) | OpenAPI specifications (broker, control) |
+| [Endpoint & scope reference](docs/reference/endpoints.md) | Generated map of every HTTP route, its scope, and who may call it |
+| Reference docs (in-app) | Open `/app/docs` on a running deployment for the rendered HTTP API, Broker API, and CLI references — all generated from code (`/docs` serves the interactive Swagger UI) |
 
 ## Development & testing
 

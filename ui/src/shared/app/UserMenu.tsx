@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { BookOpen, ExternalLink, KeyRound, LogOut } from 'lucide-react';
+import { ExternalLink, KeyRound, LogOut } from 'lucide-react';
 import { AppLink } from '@/shared/ui/AppLink';
 import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
@@ -67,23 +67,6 @@ export function UserMenu() {
 					>
 						<KeyRound className="h-4 w-4 shrink-0" aria-hidden="true" />
 						Change password
-					</AppLink>
-
-					<AppLink
-						href="/docs"
-						external
-						role="menuitem"
-						onClick={close}
-						className={menuItemClass()}
-						aria-label="API docs (opens in a new tab)"
-						title="API docs (opens in a new tab)"
-					>
-						<BookOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
-						API docs
-						<ExternalLink
-							className="ml-auto h-3 w-3 shrink-0 opacity-60"
-							aria-hidden="true"
-						/>
 					</AppLink>
 
 					<AppLink

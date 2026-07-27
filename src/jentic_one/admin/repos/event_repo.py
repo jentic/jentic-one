@@ -119,40 +119,6 @@ class EventRepository:
         return event
 
     @staticmethod
-    async def list_since(
-        session: AsyncSession,
-        since: datetime,
-        *,
-        limit: int = 100,
-        event_type: list[str] | None = None,
-        severity: list[str] | None = None,
-        requires_action: bool | None = None,
-        trace_id: str | None = None,
-        actor_id: str | None = None,
-        actor_type: str | None = None,
-    ) -> list[Event]:
-        stmt = (
-            select(Event)
-            .where(Event.created_at > since)
-            .order_by(Event.created_at.asc())
-            .limit(limit)
-        )
-        if event_type is not None:
-            stmt = stmt.where(Event.type.in_(event_type))
-        if severity is not None:
-            stmt = stmt.where(Event.severity.in_(severity))
-        if requires_action is not None:
-            stmt = stmt.where(Event.requires_action == requires_action)
-        if trace_id is not None:
-            stmt = stmt.where(Event.trace_id == trace_id)
-        if actor_id is not None:
-            stmt = stmt.where(Event.actor_id == actor_id)
-        if actor_type is not None:
-            stmt = stmt.where(Event.actor_type == actor_type)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
-
-    @staticmethod
     async def list_after_cursor(
         session: AsyncSession,
         cursor: tuple[datetime, str],

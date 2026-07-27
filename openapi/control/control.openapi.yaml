@@ -3682,6 +3682,8 @@ components:
       description: POST /register request body.
       properties:
         client_name:
+          maxLength: 255
+          minLength: 1
           title: Client Name
           type: string
         grant_types:

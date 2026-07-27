@@ -74,10 +74,17 @@ export async function createNoAuthCredential(
  * number of attempts to avoid an unbounded retry loop.
  */
 const _MAX_NAME_ATTEMPTS = 20;
+/** Server-side toolkit name cap (control/web/schemas/toolkits.py). */
+const _TOOLKIT_NAME_MAX = 255;
 
 export async function createPlanToolkit(name: string): Promise<CreatedPlanToolkit> {
 	for (let attempt = 1; attempt <= _MAX_NAME_ATTEMPTS; attempt++) {
-		const candidate = attempt === 1 ? name : `${name}-${attempt}`;
+		// Clamp the base so a suffixed candidate never exceeds the server cap:
+		// a manually-entered name near 255 chars that collides would otherwise
+		// retry as `${name}-2` > 255 and surface a confusing 422 instead of the
+		// collision being resolved.
+		const suffix = attempt === 1 ? '' : `-${attempt}`;
+		const candidate = `${name.slice(0, _TOOLKIT_NAME_MAX - suffix.length)}${suffix}`;
 		try {
 			const res = await ToolkitsService.createToolkit({
 				requestBody: { name: candidate },
@@ -97,11 +104,26 @@ export async function createPlanToolkit(name: string): Promise<CreatedPlanToolki
 }
 
 /**
- * Suggest a toolkit name from the plan's API reference — the vendor/name slug,
- * which reads naturally (e.g. `posthog-com/posthog-api`) and is stable per API.
+ * Suggest a toolkit name for the plan. A toolkit is the AGENT's bundle of
+ * access, so the suggestion leads with the requesting agent when the actor
+ * directory has resolved it (e.g. `Claude Code toolkit`). Until then — or when
+ * the requester is unknown — fall back to the API vendor/name slug, which still
+ * reads naturally (e.g. `posthog-com/posthog-api`) and is stable per API.
  */
-export function suggestToolkitName(vendor: string, name?: string): string {
-	return [vendor, name].filter(Boolean).join('/');
+export function suggestToolkitName(
+	agentName: string | undefined,
+	vendor: string,
+	name?: string,
+): string {
+	const agent = agentName?.trim();
+	// Toolkit names are capped at 255 chars server-side; agent names can be up
+	// to 255 themselves. Clamp with headroom for " toolkit" plus a possible
+	// 409-disambiguation suffix ("-NN") so the create never 422s on length.
+	if (agent) return `${agent.slice(0, 240)} toolkit`;
+	// Last-resort fallback (agent name unknown): still read like a toolkit
+	// name, not a bare API slug pasted into the field.
+	const api = [vendor, name].filter(Boolean).join('/');
+	return api ? `${api.slice(0, 240)} toolkit` : '';
 }
 
 /**

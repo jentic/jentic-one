@@ -97,6 +97,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(kindForType('import.completed')).toBe('import');
 		expect(kindForType('access_request.filed')).toBe('access_request');
 		expect(kindForType('credential.expired')).toBe('credential');
+		expect(kindForType('agent.self_registered')).toBe('agent');
 		expect(kindForType('webhook.delivered')).toBe('other');
 	});
 
@@ -205,6 +206,88 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(kinds).not.toContain('approve');
 	});
 
+	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
+		// A DCR self-registration event carries the agent as the ACTOR, not in
+		// `data` — the token must still land so Review can deep-link.
+		const ev = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent',
+				type: 'agent.self_registered',
+				requires_action: true,
+				actor_id: 'agt_42',
+				actor_type: 'agent',
+			}),
+		);
+		expect(ev.kind).toBe('agent');
+		expect(ev.tokens.agent_id).toBe('agt_42');
+		// Explicit data wins over the actor fallback when both are present.
+		const explicit = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent2',
+				type: 'agent.registration_approved',
+				actor_id: 'usr_1',
+				actor_type: 'user',
+				data: { agent_id: 'agt_43' },
+			}),
+		);
+		expect(explicit.tokens.agent_id).toBe('agt_43');
+		// But an unguarded `data.actor_id` must NOT outrank the guarded actor:
+		// some emitters put the deciding USER's id in data.actor_id, and routing
+		// Review to /agents/<user_id> would 404.
+		const mixed = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent3',
+				type: 'agent.self_registered',
+				actor_id: 'agt_44',
+				actor_type: 'agent',
+				data: { actor_id: 'usr_9' },
+			}),
+		);
+		expect(mixed.tokens.agent_id).toBe('agt_44');
+		// And with NO guarded source at all, `data.actor_id` is ignored entirely
+		// (no emitter populates it today; one that did could carry a user id).
+		const unguarded = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent4',
+				type: 'access_request.approved',
+				actor_id: 'usr_1',
+				actor_type: 'user',
+				data: { actor_id: 'usr_9' },
+			}),
+		);
+		expect(unguarded.tokens.agent_id).toBeUndefined();
+	});
+
+	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {
+		const ev = makeEvent({
+			type: 'agent.self_registered',
+			kind: 'agent',
+			requiresAction: true,
+			tokens: { agent_id: 'agt_42' },
+		});
+		const actions = inlineActionsFor(ev);
+		const kinds = actions.map((a) => a.kind);
+		expect(kinds).toContain('view_agent');
+		expect(kinds).toContain('acknowledge');
+		// Review deep-links to the agent's approval page.
+		const review = actions.find((a) => a.kind === 'view_agent');
+		expect(review?.label).toBe('Review');
+		expect(review?.href?.(ev)).toBe('/agents/agt_42');
+		// Once acknowledged the row keeps only the passive deep-link.
+		const acked = inlineActionsFor({ ...ev, acknowledged: true });
+		expect(acked.map((a) => a.kind)).toEqual(['view_agent']);
+		expect(acked[0]?.label).toBe('View agent');
+	});
+
+	it('primaryDestinationFor routes agent events to the agent page', () => {
+		const ev = makeEvent({
+			type: 'agent.self_registered',
+			kind: 'agent',
+			tokens: { agent_id: 'agt_42' },
+		});
+		expect(primaryDestinationFor(ev)).toBe('/agents/agt_42');
+	});
+
 	describe('buildTraceBundle', () => {
 		const now = 1_700_000_000_000;
 		const windowMs = 5 * 60 * 1000;
@@ -265,6 +348,47 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: { toolkit_id: 'tk_a', operation_id: 'op_a' },
 		});
 		expect(key).toBe('execution:execution.completed:op_a');
+	});
+
+	it('buildGroupKey separates distinct agents and access requests', () => {
+		// Two agents registering within the grouping window must NOT collapse
+		// into one row (the second registration would hide behind a group head).
+		const a = buildGroupKeyForTest({
+			kind: 'agent',
+			type: 'agent.self_registered',
+			tokens: { agent_id: 'agt_1' },
+		});
+		const b = buildGroupKeyForTest({
+			kind: 'agent',
+			type: 'agent.self_registered',
+			tokens: { agent_id: 'agt_2' },
+		});
+		expect(a).not.toBe(b);
+		const req = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_1' },
+		});
+		expect(req).toBe('access_request:access_request.filed:arq_1');
+	});
+
+	it('buildGroupKey separates two requests filed by the SAME agent', () => {
+		// Real `access_request.filed` events carry BOTH tokens: request_id from
+		// the data payload and agent_id from the top-level actor. The request
+		// id must win, or a CLI agent filing several requests in one burst
+		// collapses them into one row and the extras hide behind the group head.
+		const first = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_1', agent_id: 'agt_same' },
+		});
+		const second = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_2', agent_id: 'agt_same' },
+		});
+		expect(first).toBe('access_request:access_request.filed:arq_1');
+		expect(second).toBe('access_request:access_request.filed:arq_2');
 	});
 });
 
