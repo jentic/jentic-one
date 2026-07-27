@@ -177,6 +177,16 @@ async def settle_actionable_events(
         # 1000 is effectively "all" — generous rather than silently partial.
         limit=1000,
     )
+    if len(pending) >= 1000:
+        # The page IS partial after all — an older matching alert may sit
+        # beyond it and stay live. Loud so operators can spot the backlog;
+        # the fleet reaching 1000 outstanding actionable alerts is itself
+        # the anomaly worth investigating.
+        logger.warning(
+            "settle_actionable_events_page_full",
+            event_type=event_type,
+            actor_id=actor_id,
+        )
     settled = 0
     for event in pending:
         data = event.data or {}
