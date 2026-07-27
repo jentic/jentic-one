@@ -64,10 +64,16 @@ setup will not be adopted and will cost users. So the design space splits into:
 - [`04-current-state.md`](04-current-state.md) — factual map of the current
   mechanisms (auth, crypto, install defaults) with file citations, so the above
   is grounded and not speculative.
-- [`05-agent-as-own-unix-user.md`](05-agent-as-own-unix-user.md) — deep-dive on the
-  structural fix of running a CLI agent (Claude Code) as its own Unix user:
-  working-directory behaviour, shared-home layout, a ~5-command setup recipe, and
-  the real sharp edges.
-- [`06-gui-ide-as-agent-user.md`](06-gui-ide-as-agent-user.md) — the GUI case: can
-  Cursor / VS Code run as the agent user? (No, not the raw GUI — but yes via the
-  client/server Remote-SSH split, or headless `cursor-agent`.)
+- [`agent-as-unix-user/`](agent-as-unix-user/) — the structural fix of running the
+  agent as its own Unix user, in three docs:
+  - [`05-agent-as-own-unix-user.md`](agent-as-unix-user/05-agent-as-own-unix-user.md)
+    — deep-dive on running a CLI agent (Claude Code) as its own Unix user:
+    working-directory behaviour, shared-home layout, the setup recipe, and the real
+    sharp edges.
+  - [`06-gui-ide-as-agent-user.md`](agent-as-unix-user/06-gui-ide-as-agent-user.md)
+    — the GUI case: can Cursor / VS Code run as the agent user? (No, not the raw GUI
+    — but yes via the client/server Remote-SSH split, or headless `cursor-agent`.)
+  - [`07-jentic-run-command.md`](agent-as-unix-user/07-jentic-run-command.md) — a
+    proposed `jentic run <agent>` launcher that makes the isolated posture the
+    default: provisions the agent's binary, guides directory access, and launches
+    the session as the agent user.

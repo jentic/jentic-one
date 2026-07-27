@@ -1,6 +1,6 @@
 # Deep-dive: running the agent as its own Unix user
 
-> Expands structural fix **1b** in [`03-mitigations.md`](03-mitigations.md). Focus:
+> Expands structural fix **1b** in [`03-mitigations.md`](../03-mitigations.md). Focus:
 > a **CLI-initiated** coding agent (Claude Code as the worked example) run under a
 > dedicated, unprivileged OS user distinct from the operator's login user, on
 > macOS (with Linux notes). The goal is to know the real ergonomics and the real
@@ -14,7 +14,7 @@ If the agent runs as user `agent` and the operator is their normal login user, t
 by Unix ownership + macOS TCC the `agent` user cannot read the operator's
 `~/.jentic/jentic-one.yaml` (keyset + `jwt_secret`), the operator's DB files, the
 operator's browser profile, or the operator's Keychain. That closes **AP-1, AP-2,
-AP-3, AP-4** in one move (see [`01`](01-threat-model.md)) — the agent can only
+AP-3, AP-4** in one move (see [`01`](../01-threat-model.md)) — the agent can only
 reach Jentic One the way any client does: loopback HTTP + its own scoped token.
 
 It is weaker than a container (**same kernel, same machine** — a
@@ -61,7 +61,7 @@ any specific machine's group layout:
    default writes its config under `~/.jentic/` and the directory is world-listable
    even though the key *file* is `0600`; the clean answer is to not store the key in
    the operator's home at all (keychain / a different owning user — see
-   [`03`](03-mitigations.md) fix 2a). Combined with (1), the agent has no path into
+   [`03`](../03-mitigations.md) fix 2a). Combined with (1), the agent has no path into
    the operator's home regardless of platform defaults.
 
 With those three in place, the cwd question is a non-issue and the read-exposure
@@ -264,7 +264,7 @@ Code login and its own `jentic register`) — see the next section.
 > platform detection) collapses even the two-command recipe into one, and a
 > `jenticctl doctor` check can warn when the agent is running as the same uid as
 > Jentic One. That is the "make the safe path the default path" lever from
-> [`03`](03-mitigations.md), applied here.
+> [`03`](../03-mitigations.md), applied here.
 
 ## Interaction with Claude Code specifically
 

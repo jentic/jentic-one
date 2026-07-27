@@ -147,7 +147,7 @@ poor daily driver.
    Keychain/TCC isolation you're after.
 
 ## How this feeds the mitigations doc
-This confirms structural fix **1a/1b** in [`03`](03-mitigations.md) extends to
+This confirms structural fix **1a/1b** in [`03`](../03-mitigations.md) extends to
 IDE-driven agents **without** us owning the client: the client/server split is a
 built-in IDE feature, so the only operator setup is "Remote-SSH to `agent@localhost`"
 on top of the [`05`](05-agent-as-own-unix-user.md) account recipe. The strongest
