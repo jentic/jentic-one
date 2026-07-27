@@ -259,12 +259,14 @@ is `local-agent`, and add `cd /srv/workspace &&`.
 First run only, authenticate the agent's own tools as that user (its own Claude
 Code login and its own `jentic register`) — see the next section.
 
-> **This is exactly the kind of thing `jenticctl` should wrap** — a
-> `jenticctl agent-user setup` that runs the above (idempotently, with the right
+> **This is exactly the kind of thing `jentic` should wrap** — a
+> `jentic agent-user setup` that runs the above (idempotently, with the right
 > platform detection) collapses even the two-command recipe into one, and a
-> `jenticctl doctor` check can warn when the agent is running as the same uid as
-> Jentic One. That is the "make the safe path the default path" lever from
-> [`03`](../03-mitigations.md), applied here.
+> `jentic doctor` check can warn when the agent is running as the same uid as
+> Jentic One. It lives in `jentic` (not `jenticctl`) because that package is
+> guaranteed to run in the same environment as the agent — see
+> [`07`](07-jentic-run-command.md). That is the "make the safe path the default
+> path" lever from [`03`](../03-mitigations.md), applied here.
 
 ## Interaction with Claude Code specifically
 
@@ -338,12 +340,18 @@ anything needing the operator's own sessions/credentials to be visible to the
 agent (which is the whole thing we're preventing — if a workflow needs that, the
 boundary can't hold regardless).
 
-## Suggested `jenticctl` support (so we make it turnkey)
+## Suggested `jentic` support (so we make it turnkey)
 
-- A **doctor/preflight check**: detect when the agent appears to run as the *same*
-  uid as Jentic One and warn (this is the T0 tripwire).
-- A documented, copy-pasteable **setup recipe**: create `agent` user (with a
-  distinct primary group), set its home to a neutral shared-group path, create the
-  `agents` group + setgid workspace + inherited ACL, and the `su - agent` launch
-  line. Ship it in `hardening.md` as the "local, no-container" hardening step
-  between T0 and full containerisation.
+This belongs in `jentic` (not `jenticctl`) — it must run in the same environment as
+the agent. Full command design is in [`07`](07-jentic-run-command.md); in brief:
+
+- **`jentic agent-user setup`** — run the recipe above idempotently, with platform
+  detection: create the `<operator>-local-agent` user + its home (incl. the
+  `createhomedir` step on macOS), the operator's inherited ACL, and `chmod 700 ~`.
+- **`jentic run <agent>`** — the daily-driver launcher that provisions the agent's
+  binary, resolves directory access, and launches as the agent user.
+- **`jentic doctor`** — detect when the agent appears to run as the *same* uid as
+  the operator / Jentic One and warn (the T0 tripwire), and list directory grants.
+
+Ship the recipe in `hardening.md` too, as the "local, no-container" hardening step
+between T0 and full containerisation.

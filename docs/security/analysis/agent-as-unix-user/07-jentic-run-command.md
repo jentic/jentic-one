@@ -51,8 +51,9 @@ jentic run <agent> [path] [flags]
 ### What it does, in order
 
 1. **Resolve the agent user** (`<operator>-local-agent` by default) and verify it
-   exists; if not, point at the [`05`](05-agent-as-own-unix-user.md) setup (or the
-   proposed `jenticctl agent-user setup`).
+   exists; if not, offer to create it (the `jentic agent-user setup` flow — see
+   [below](#agent-creation-belongs-in-jentic-not-jenticctl)), which runs the
+   [`05`](05-agent-as-own-unix-user.md) recipe.
 2. **Ensure the agent's binary is installed** for that user — the provisioning flow
    (next section, added in a later commit).
 3. **Resolve the working directory** and its access — the directory-access flow
@@ -190,11 +191,14 @@ Choice [h]:
 ### Persistence and revocation
 
 An ACL granted this way **persists** after the session ends — the agent keeps access
-to that directory until it's removed. `jentic run` should:
+to that directory until it's removed. **This is intentional:** the operator grants a
+working directory once, and the agent can be re-run against it on subsequent days
+without re-prompting; a project the agent works on is not a per-session decision.
+Because the grant is durable, `jentic run` should:
 
 - **Not silently accumulate grants.** On a repeat run against an already-granted
   directory it proceeds without re-prompting, but a `jentic run --list-grants` (or a
-  line in `jenticctl doctor`) should surface every directory the agent has been given,
+  line in `jentic doctor`) should surface every directory the agent has been given,
   so access doesn't quietly sprawl.
 - Offer **`jentic revoke-dir <path>`** (or `--revoke` on the run command) that
   removes the ACL entry, so granting is reversible in one step rather than requiring
@@ -252,18 +256,36 @@ agent's home. This is exactly the launch line from [`05`](05-agent-as-own-unix-u
 now with the user/dir/binary filled in by the preceding steps instead of by the
 operator's memory.
 
-## How this feeds [`05`](05-agent-as-own-unix-user.md) and `jenticctl`
+## Agent creation belongs in `jentic`, not `jenticctl`
+
+Account creation, binary provisioning, directory grants, and launch are all one
+responsibility and must live in **`jentic`** — the client-side package that is
+**guaranteed to run in the same environment as the agent** (the operator's machine,
+as the operator's user). `jenticctl` administers a Jentic One deployment and may run
+on a different host entirely; if it owned agent-user setup, that logic could land
+somewhere with no relationship to where the agent actually runs. Keeping the whole
+lifecycle in `jentic` means:
+
+- `jentic agent-user setup` — one-time: create the `<operator>-local-agent` account
+  and its home per the [`05`](05-agent-as-own-unix-user.md) recipe.
+- `jentic run <agent>` — daily driver: the four steps above.
+- `jentic revoke-dir` / `jentic run --list-grants` — manage the durable grants.
+- `jentic doctor` — report every ACL grant made and warn on any pointing at
+  sensitive trees, and flag when the agent appears to run as the *same* uid as the
+  operator (the [`05`](05-agent-as-own-unix-user.md) tripwire).
+
+`jenticctl` keeps its deployment-side role (installing/operating Jentic One itself);
+it does **not** create or manage agent users.
+
+## How this feeds [`05`](05-agent-as-own-unix-user.md)
 
 - `jentic run` is the **daily-driver** counterpart to the one-time
-  `jenticctl agent-user setup` proposed in [`05`](05-agent-as-own-unix-user.md):
-  setup creates the account; `run` is what the operator types every time after.
+  `jentic agent-user setup`: setup creates the account; `run` is what the operator
+  types every time after.
 - It turns the three real-issues from [`05`](05-agent-as-own-unix-user.md)'s honest
   assessment into guided prompts instead of tripwires: **per-user toolchain** (step
   2), **shared-workspace access** (step 3), and it keeps the **login-shell / own-home
   start** correct by construction (step 4).
-- The directory denylist and the grant inventory are natural inputs to the
-  [`03`](../03-mitigations.md) "doctor" idea: `jenticctl doctor` can report every ACL
-  grant `jentic run` has made and warn on any that point at sensitive trees.
 - **Not owning the agent client still holds** (framing point #4): `jentic run` wraps
   *our* CLI and the OS, and merely execs the third-party agent binary. The operator's
   only new verb is `jentic run <agent>` instead of the raw `sudo -u … -i` line.
