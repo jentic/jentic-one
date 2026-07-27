@@ -41,6 +41,11 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'Makefile'
+              # The arch suite drift-checks the docs-SPA broker artifact
+              # (ui/public/broker-openapi.json) against the hand-curated broker
+              # spec, so edits to either must run it.
+              - 'openapi/broker/**'
+              - 'ui/public/broker-openapi.json'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -53,6 +58,9 @@ jobs:
               - 'src/jentic_one/migrations/**'
             cli:
               - 'cli/**'
+              # The cli job drift-checks the generated CLI reference the docs
+              # SPA renders, so hand-edits to the artifact must run it too.
+              - 'ui/public/cli-reference.json'
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
@@ -576,6 +584,16 @@ jobs:
 
       - name: Test (race)
         run: go test -race ./...
+
+      # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
+      # CLI") is generated from the cobra command tree by `make cli-reference`.
+      # Nothing else pins it, so a command/flag change without a regen would
+      # silently drift the published CLI docs.
+      - name: CLI reference up to date
+        run: |
+          go run ./cmd/clidocs -o ../ui/public/cli-reference.json
+          git diff --exit-code -- ../ui/public/cli-reference.json \
+            || { echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'; exit 1; }
 
   installer:
     name: Installer script tests
