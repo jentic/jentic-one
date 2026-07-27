@@ -41,14 +41,40 @@ export function lensPalette(lens: UsageLens): string[] {
 	return API_PALETTE;
 }
 
-/** "stripe-api" → "S", "Billing Agent" → "BA". Mirrors jentic-mini's helper. */
+/**
+ * "stripe-api" → "S", "Billing Agent" → "BA". Mirrors jentic-mini's helper:
+ * strip the first "api" occurrence, split on whitespace/hyphen/underscore
+ * (NOT dots or slashes — mini keeps "stripe.com" as one word → "S"), take the
+ * first letter of the first two words. Falls back to "?" so an initials tile
+ * never renders blank.
+ */
 export function getInitials(name: string): string {
 	const words = name
-		.replace(/api/gi, '')
+		.replace(/\s*api\s*/i, '')
 		.trim()
-		.split(/[\s\-_/.]+/)
+		.split(/[\s\-_]+/)
 		.filter(Boolean);
 	return ((words[0]?.[0] ?? '?') + (words[1]?.[0] ?? '')).toUpperCase();
+}
+
+/**
+ * Black-or-white text for a hex background, picked by WCAG relative luminance
+ * (mini shipped a per-vendor `textColor` in its palette — e.g. dark text on
+ * amber; we derive it instead of maintaining a second palette).
+ */
+export function textColor(hex: string): string {
+	const m = /^#([0-9a-f]{6})$/i.exec(hex);
+	if (!m) return '#fff';
+	const num = parseInt(m[1], 16);
+	const channel = (c: number) => {
+		const s = c / 255;
+		return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+	};
+	const luminance =
+		0.2126 * channel((num >> 16) & 0xff) +
+		0.7152 * channel((num >> 8) & 0xff) +
+		0.0722 * channel(num & 0xff);
+	return luminance > 0.45 ? '#1a1a1a' : '#fff';
 }
 
 /**

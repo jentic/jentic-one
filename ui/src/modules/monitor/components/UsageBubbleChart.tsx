@@ -17,7 +17,13 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
 import { SegmentedToggle } from '@/shared/ui';
 import { formatLatency, formatPercent } from '@/modules/monitor/lib/format';
-import { getInitials, lensPalette, ringColor, type UsageLens } from '@/modules/monitor/lib/palette';
+import {
+	getInitials,
+	lensPalette,
+	ringColor,
+	textColor,
+	type UsageLens,
+} from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 interface UsageBubbleChartProps {
@@ -335,7 +341,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 												y={bubble.y - (bubble.radius > 40 ? 6 : 0)}
 												textAnchor="middle"
 												dominantBaseline="central"
-												fill="#fff"
+												fill={textColor(bubble.color)}
 												fontSize={
 													bubble.radius > 50
 														? 14
@@ -357,7 +363,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 													y={bubble.y + (bubble.radius > 50 ? 12 : 8)}
 													textAnchor="middle"
 													dominantBaseline="central"
-													fill="#fff"
+													fill={textColor(bubble.color)}
 													fontSize={bubble.radius > 50 ? 9 : 8}
 													opacity={0.7}
 													className="pointer-events-none select-none"

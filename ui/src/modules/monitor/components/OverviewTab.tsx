@@ -1,6 +1,6 @@
 /**
  * Overview tab — the headline usage lens, ported from jentic-mini's Overview
- * at full parity (jentic-one-internal#561).
+ * (jentic-one-internal#561).
  *
  * Powered by `GET /monitoring/usage` (`useUsageStats`): HealthStrip (health +
  * latency pills, active-APIs cluster), the Execution Volume chart (sub-day
@@ -10,8 +10,16 @@
  * dimension (same pattern as jentic-mini's MonitorPage) so toggling lenses is
  * instant; buckets/overall stats are read off the API-grouped response since
  * they're identical across groupings.
+ *
+ * Intentional divergences from jentic-mini:
+ * - Window options are 24h/7d/30d only. Mini also offered `1h`/`all`, but the
+ *   `?days` URL param is shared with the list tabs' filter bar, which speaks
+ *   integer days — sub-day and unbounded windows would fork that contract.
+ * - All-zero data swaps the page for an EmptyState with guidance. Mini
+ *   rendered a (misleading) 100%-healthy strip over empty charts.
  */
 import { useMemo } from 'react';
+import { motion } from 'framer-motion';
 import { BarChart3 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorAlert, LoadingState, SegmentedToggle } from '@/shared/ui';
@@ -29,6 +37,17 @@ const WINDOW_OPTIONS = [
 ];
 
 const TOP_LIMIT = 12;
+
+// Mini's staggered chart entrance: children fade/rise in sequence, re-keyed
+// on the window so changing ranges replays the entrance.
+const staggerContainer = {
+	hidden: {},
+	show: { transition: { staggerChildren: 0.08 } },
+};
+const chartVariant = {
+	hidden: { opacity: 0, y: 12 },
+	show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 260, damping: 24 } },
+} as const;
 
 function parseDays(value: string | null): number {
 	const n = Number(value);
@@ -124,12 +143,26 @@ export function OverviewTab() {
 					description={`No API calls were recorded in the last ${days === 1 ? '24 hours' : `${days} days`}. Once agents start running operations, usage trends and per-API activity will appear here.`}
 				/>
 			) : (
-				<>
-					<HealthStrip overview={overview} apis={apis} />
-					<UsageCharts usage={data} />
-					<UsageBubbleChart apis={apis} toolkits={toolkits} agents={agents} />
-					<UsageBreakdown apis={apis} toolkits={toolkits} agents={agents} />
-				</>
+				<motion.div
+					key={`content-${days}`}
+					variants={staggerContainer}
+					initial="hidden"
+					animate="show"
+					className="space-y-4"
+				>
+					<motion.div variants={chartVariant}>
+						<HealthStrip overview={overview} apis={apis} />
+					</motion.div>
+					<motion.div variants={chartVariant}>
+						<UsageCharts usage={data} />
+					</motion.div>
+					<motion.div variants={chartVariant}>
+						<UsageBubbleChart apis={apis} toolkits={toolkits} agents={agents} />
+					</motion.div>
+					<motion.div variants={chartVariant}>
+						<UsageBreakdown apis={apis} toolkits={toolkits} agents={agents} />
+					</motion.div>
+				</motion.div>
 			)}
 		</div>
 	);
