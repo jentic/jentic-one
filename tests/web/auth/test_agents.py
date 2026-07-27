@@ -12,10 +12,12 @@ from sqlalchemy import delete
 from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
-from jentic_one.admin.repos import ActorScopeGrantRepository, AgentRepository
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.repos import ActorScopeGrantRepository, AgentRepository, EventRepository
 from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
+from jentic_one.shared.models.events import EventType
 from tests.web.auth.conftest import _build_app
 
 pytestmark = pytest.mark.integration
@@ -287,6 +289,84 @@ async def test_rat_cleared_after_approval(
         assert agent is not None
         assert agent.registration_access_token_hash is None
         assert agent.rat_expires_at is None
+
+
+@pytest.fixture()
+async def self_registered_alert_id(
+    web_context: Context, dcr_agent_id: str
+) -> AsyncGenerator[str, None]:
+    """The actionable `agent.self_registered` event DCR files for the agent."""
+    async with web_context.admin_db.transaction() as session:
+        event = await EventRepository.create(
+            session,
+            type=EventType.AGENT_SELF_REGISTERED,
+            severity="info",
+            summary="Agent 'dcr-self-registered' self-registered and awaits approval",
+            requires_action=True,
+            data={"agent_id": dcr_agent_id, "agent_name": "dcr-self-registered"},
+            created_by="dcr",
+            actor_id=dcr_agent_id,
+            actor_type="agent",
+        )
+    yield event.id
+
+    async with web_context.admin_db.session() as session:
+        await session.execute(delete(Event).where(Event.id == event.id))
+        await session.commit()
+
+
+async def test_approve_settles_self_registered_alert(
+    admin_client: TestClient,
+    web_context: Context,
+    dcr_agent_id: str,
+    self_registered_alert_id: str,
+) -> None:
+    """Approving IS the review: the pending alert must not stay actionable.
+
+    Also pins the decision event's payload contract — `data.agent_id` is what
+    lets the UI deep-link the rail row to the agent page (the top-level actor
+    on the decision event is the deciding user, not the agent).
+    """
+    resp = admin_client.post(f"/agents/{dcr_agent_id}:approve")
+    assert resp.status_code == 200
+
+    async with web_context.admin_db.session() as session:
+        alert = await EventRepository.get_by_id(session, self_registered_alert_id)
+        assert alert is not None
+        assert alert.acknowledged is True
+        assert alert.acknowledged_by is not None
+
+        decisions = await EventRepository.list_all(
+            session, event_type=[EventType.AGENT_REGISTRATION_APPROVED]
+        )
+        decision = next(e for e in decisions if e.data.get("agent_id") == dcr_agent_id)
+        assert decision.data["agent_name"] == "dcr-self-registered"
+        assert decision.actor_type == "user"
+        await session.execute(delete(Event).where(Event.id == decision.id))
+        await session.commit()
+
+
+async def test_deny_settles_self_registered_alert(
+    admin_client: TestClient,
+    web_context: Context,
+    dcr_agent_id: str,
+    self_registered_alert_id: str,
+) -> None:
+    resp = admin_client.post(f"/agents/{dcr_agent_id}:deny", json={"reason": "nope"})
+    assert resp.status_code == 200
+
+    async with web_context.admin_db.session() as session:
+        alert = await EventRepository.get_by_id(session, self_registered_alert_id)
+        assert alert is not None
+        assert alert.acknowledged is True
+
+        decisions = await EventRepository.list_all(
+            session, event_type=[EventType.AGENT_REGISTRATION_DENIED]
+        )
+        decision = next(e for e in decisions if e.data.get("agent_id") == dcr_agent_id)
+        assert decision.data["agent_name"] == "dcr-self-registered"
+        await session.execute(delete(Event).where(Event.id == decision.id))
+        await session.commit()
 
 
 def test_password_rotation_required(web_context: Context) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,7 @@ from jentic_one.admin.repos import (
     AgentCredentialRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
+    EventRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import ToolkitNameRepository
@@ -36,6 +38,8 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+
+logger = structlog.get_logger(__name__)
 
 _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.APPROVE: {ActorStatus.PENDING: ActorStatus.ACTIVE},
@@ -151,6 +155,36 @@ class AgentService:
         view.has_api_key = has_key
         return view
 
+    async def _settle_registration_alerts(
+        self, session: AsyncSession, agent_id: str, *, acknowledged_by: str
+    ) -> None:
+        """Acknowledge outstanding ``agent.self_registered`` alerts for the agent.
+
+        Self-registration files a ``requires_action`` event so operators are
+        prompted to review. Approving/denying IS that review, so leaving the
+        alert live would keep a stale "awaits approval" row (with a working
+        Review button) on the rail and dashboard forever. Best-effort like the
+        emit itself: alert bookkeeping must never roll back the decision.
+        """
+        try:
+            pending = await EventRepository.list_all(
+                session,
+                event_type=[EventType.AGENT_SELF_REGISTERED],
+                requires_action=True,
+                acknowledged=False,
+                actor_id=agent_id,
+                actor_type=ActorType.AGENT.value,
+            )
+            for event in pending:
+                await EventRepository.acknowledge(
+                    session,
+                    event.id,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="registration decided",
+                )
+        except Exception:
+            logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
+
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE)
@@ -193,11 +227,15 @@ class AgentService:
                 session,
                 type=EventType.AGENT_REGISTRATION_APPROVED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration approved",
+                summary=f"Agent '{agent.name}' registration approved",
+                # `agent_id` lets the UI deep-link the rail row to the agent's
+                # page (the top-level actor here is the deciding USER).
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
@@ -220,11 +258,13 @@ class AgentService:
                 session,
                 type=EventType.AGENT_REGISTRATION_DENIED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration denied",
+                summary=f"Agent '{agent.name}' registration denied",
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:
