@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from jentic_one.admin.repos import EventRepository
 from jentic_one.admin.services.schemas.events import EventView, Heartbeat
@@ -23,6 +23,7 @@ class EventStreamService:
         since: datetime | None = None,
         last_event_id: str | None = None,
         poll_interval_seconds: float = 5.0,
+        overlap_seconds: float = 15.0,
         event_type: list[str] | None = None,
         severity: list[str] | None = None,
         requires_action: bool | None = None,
@@ -30,48 +31,73 @@ class EventStreamService:
         actor_id: str | None = None,
         actor_type: str | None = None,
     ) -> AsyncIterator[EventView | Heartbeat]:
-        cursor: tuple[datetime, str] | None = None
-        last_seen: datetime = since if since is not None else datetime.now(UTC)
+        """Yield new events (and heartbeats when idle) forever.
 
+        Visibility-race note (the reason for ``overlap_seconds``)
+        ----------------------------------------------------------
+        ``created_at`` is stamped when the ORM flushes the row, but the row only
+        becomes visible to this poller once the WRITER's transaction commits —
+        which can be noticeably later (an event emitted mid-transaction, e.g.
+        ``agent.self_registered`` inside the DCR ``/register`` transaction, is
+        stamped early and committed at the end). A strict high-watermark poll
+        (``created_at > newest_seen``) therefore PERMANENTLY skips any event
+        whose commit lands after the watermark has moved past its timestamp —
+        the rail then never shows it until a full page refresh.
+
+        Instead, every poll re-queries from ``watermark - overlap`` and dedups
+        per-connection by event id, so a late-committing row is picked up on a
+        subsequent poll as long as its commit lag (plus writer/poller clock
+        skew) stays under the overlap. Each event is yielded at most once per
+        connection; the paging loop advances a (created_at, id) cursor so bursts
+        larger than one repo page can't wedge the poll.
+        """
+        overlap = timedelta(seconds=overlap_seconds)
+        # Newest created_at yielded so far (or the caller's resume point).
+        watermark: datetime
+        # Ids already yielded on THIS connection, kept for the overlap horizon.
+        seen: dict[str, datetime] = {}
+
+        watermark = since if since is not None else datetime.now(UTC)
         if last_event_id is not None:
             async with self._ctx.admin_db.session() as session:
                 event = await EventRepository.get_by_id(session, last_event_id)
             if event is not None:
-                cursor = (event.created_at, event.id)
+                watermark = event.created_at
+                seen[event.id] = event.created_at
 
         while True:
-            # The DB session is strictly scoped to this ``async with`` block and
-            # never held across the ``await asyncio.sleep`` below. Keeping the
-            # session local (never stashed on ``self``) guarantees that a
-            # ``CancelledError`` raised on SSE client disconnect unwinds the
-            # context manager and returns the pooled connection to the engine —
-            # the leak guarded against in #627.
-            async with self._ctx.admin_db.session() as session:
-                if cursor is not None:
-                    events = await EventRepository.list_after_cursor(
-                        session,
-                        cursor,
-                        event_type=event_type,
-                        severity=severity,
-                        requires_action=requires_action,
-                        trace_id=trace_id,
-                        actor_id=actor_id,
-                        actor_type=actor_type,
-                    )
-                else:
-                    events = await EventRepository.list_since(
-                        session,
-                        last_seen,
-                        event_type=event_type,
-                        severity=severity,
-                        requires_action=requires_action,
-                        trace_id=trace_id,
-                        actor_id=actor_id,
-                        actor_type=actor_type,
-                    )
+            yielded = False
+            # "" sorts before every real id, so the two-tuple cursor starts
+            # strictly at the horizon without skipping same-instant rows.
+            page_cursor: tuple[datetime, str] = (watermark - overlap, "")
 
-            if events:
-                for event in events:
+            while True:
+                # The DB session is strictly scoped to this ``async with`` block
+                # and never held across a yield or the ``asyncio.sleep`` below.
+                # Keeping the session local (never stashed on ``self``)
+                # guarantees that a ``CancelledError`` raised on SSE client
+                # disconnect unwinds the context manager and returns the pooled
+                # connection to the engine — the leak guarded against in #627.
+                async with self._ctx.admin_db.session() as session:
+                    batch = await EventRepository.list_after_cursor(
+                        session,
+                        page_cursor,
+                        event_type=event_type,
+                        severity=severity,
+                        requires_action=requires_action,
+                        trace_id=trace_id,
+                        actor_id=actor_id,
+                        actor_type=actor_type,
+                    )
+                if not batch:
+                    break
+                for event in batch:
+                    if event.id in seen:
+                        continue
+                    seen[event.id] = event.created_at
+                    if event.created_at > watermark:
+                        watermark = event.created_at
+                    yielded = True
                     yield EventView(
                         id=event.id,
                         type=event.type,
@@ -90,8 +116,14 @@ class EventStreamService:
                         actor_type=event.actor_type,
                         created_at=event.created_at,
                     )
-                cursor = (events[-1].created_at, events[-1].id)
-            else:
+                page_cursor = (batch[-1].created_at, batch[-1].id)
+
+            if not yielded:
                 yield Heartbeat(sent_at=datetime.now(UTC))
+
+            # Drop dedup entries that fell behind the overlap horizon — the
+            # query can no longer return them, so the map stays bounded.
+            horizon = watermark - overlap
+            seen = {id_: ts for id_, ts in seen.items() if ts >= horizon}
 
             await asyncio.sleep(poll_interval_seconds)

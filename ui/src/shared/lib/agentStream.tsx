@@ -430,13 +430,21 @@ export function AgentStreamProvider({
 			return undefined;
 		}
 		setStatus('connecting');
+		// Ids already delivered on this subscription. Reconnects rewind `since`
+		// past the boundary (and the server re-queries an overlap window), so a
+		// re-delivered event must RECONCILE list state (upsert is authoritative)
+		// but must NOT re-fire the toast/audio cue or the invalidation fan-out.
+		const deliveredIds = new Set<string>();
 		const unsubscribe = streamEvents(
 			{},
 			{
 				onOpen: () => setStatus('live'),
 				onEvent: (wire) => {
 					const ev = adaptEvent(wire);
+					const firstDelivery = !deliveredIds.has(ev.id);
+					deliveredIds.add(ev.id);
 					upsert([ev], true);
+					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
 					// queue + dashboard counts. Refresh those surfaces so they

@@ -213,6 +213,54 @@ async def test_stream_same_second_events_not_dropped(
     assert items[0].id == id_a
 
 
+async def test_stream_delivers_event_committed_after_watermark_passed(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A late-committing event whose created_at is already behind the watermark still arrives.
+
+    ``created_at`` is stamped at ORM flush, but the row only becomes visible at
+    COMMIT — e.g. ``agent.self_registered`` is stamped early inside the DCR
+    ``/register`` transaction and committed at the end. A strict high-watermark
+    poll would skip it forever (the rail then misses the registration until a
+    page refresh). The overlap-window re-query must deliver it — exactly once.
+    """
+    ctx = integration_context
+    service = EventStreamService(ctx)
+
+    # Connect FIRST: watermark = now. The event then appears with a created_at
+    # 5 seconds in the past (inside the overlap), as if its transaction had
+    # been open across the connect and committed late.
+    gen = service.stream(poll_interval_seconds=0, overlap_seconds=15.0)
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
+
+    late_id = "evt_1a7ec0331775c0331775c033"
+    async with ctx.admin_db.session() as session:
+        session.add(
+            Event(
+                id=late_id,
+                type="agent.self_registered",
+                severity="info",
+                summary="Late-committed registration",
+                requires_action=True,
+                acknowledged=False,
+                data={},
+                created_by="usr_test",
+                created_at=datetime.now(UTC) - timedelta(seconds=5),
+            )
+        )
+        await session.commit()
+
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.id == late_id
+
+    # The overlap re-query must not re-yield it on the next poll.
+    dup_check = await gen.__anext__()
+    assert isinstance(dup_check, Heartbeat)
+    await gen.aclose()
+
+
 async def test_stream_filters_with_cursor(integration_context: Context, clean_events: None) -> None:
     """Cursor-based resumption composes correctly with event_type filters."""
     ctx = integration_context
@@ -314,10 +362,10 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
     # banned; we only delay the repo call) so the lazy ``AsyncSession`` actually
     # pulls a connection from the pool before hanging.
     release = asyncio.Event()
-    real_list_since = EventRepository.list_since
+    real_list_after_cursor = EventRepository.list_after_cursor
 
     async def _hang(session: object, *args: object, **kwargs: object) -> list[Event]:
-        await real_list_since(session, *args, **kwargs)  # type: ignore[arg-type]
+        await real_list_after_cursor(session, *args, **kwargs)  # type: ignore[arg-type]
         await release.wait()
         return []
 
@@ -333,7 +381,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
 
     with (
         warnings.catch_warnings(),
-        patch.object(EventRepository, "list_since", new=_hang),
+        patch.object(EventRepository, "list_after_cursor", new=_hang),
     ):
         warnings.simplefilter("error", SAWarning)
         task = asyncio.ensure_future(drive())
