@@ -31,6 +31,13 @@ describe('sharedQueryKeys', () => {
 		expect(sharedQueryKeys.accessRequestsRoot).toEqual(['access-requests']);
 	});
 
+	it('exposes the actor-directory root', () => {
+		// `useActorDirectory` caches the directory aggressively as reference
+		// data; the SSE→query bridge invalidates this root when an agent
+		// registers so freshly-registered agents resolve to names, not raw ids.
+		expect(sharedQueryKeys.actorDirectoryRoot).toEqual(['actor-directory']);
+	});
+
 	it('keeps every registered root a non-empty string array', () => {
 		for (const [name, key] of Object.entries(sharedQueryKeys)) {
 			expect(Array.isArray(key), `${name} must be an array`).toBe(true);

@@ -120,7 +120,10 @@ export function suggestToolkitName(
 	// to 255 themselves. Clamp with headroom for " toolkit" plus a possible
 	// 409-disambiguation suffix ("-NN") so the create never 422s on length.
 	if (agent) return `${agent.slice(0, 240)} toolkit`;
-	return [vendor, name].filter(Boolean).join('/');
+	// Last-resort fallback (agent name unknown): still read like a toolkit
+	// name, not a bare API slug pasted into the field.
+	const api = [vendor, name].filter(Boolean).join('/');
+	return api ? `${api.slice(0, 240)} toolkit` : '';
 }
 
 /**

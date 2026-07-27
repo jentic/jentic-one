@@ -28,16 +28,18 @@ describe('suggestToolkitName — agent-first naming', () => {
 		);
 	});
 
-	it('falls back to the API vendor/name while the agent is unresolved', () => {
+	it('falls back to an API-based toolkit name while the agent is unresolved', () => {
+		// Even the fallback must READ like a toolkit name — a bare API slug in
+		// the field looks like a bug, not a suggestion.
 		expect(suggestToolkitName(undefined, 'posthog-com', 'posthog-api')).toBe(
-			'posthog-com/posthog-api',
+			'posthog-com/posthog-api toolkit',
 		);
-		expect(suggestToolkitName(undefined, 'httpbin-org')).toBe('httpbin-org');
+		expect(suggestToolkitName(undefined, 'httpbin-org')).toBe('httpbin-org toolkit');
 	});
 
 	it('treats a blank agent name as unresolved', () => {
 		expect(suggestToolkitName('   ', 'posthog-com', 'posthog-api')).toBe(
-			'posthog-com/posthog-api',
+			'posthog-com/posthog-api toolkit',
 		);
 	});
 

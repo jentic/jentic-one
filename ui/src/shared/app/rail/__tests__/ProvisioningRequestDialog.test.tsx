@@ -67,22 +67,34 @@ function planRequest(): AccessRequest {
 	};
 }
 
-function stubDirectoryAndRequest(request: AccessRequest) {
+function stubDirectoryAndRequest(request: AccessRequest, opts?: { directoryMisses?: boolean }) {
 	worker.use(
 		http.get('/actors', () =>
 			// Paginated envelope — fetchActorDirectory walks `data`/`next_cursor`.
 			HttpResponse.json({
-				data: [
-					{
-						id: AGENT_ID,
-						actor_type: 'agent',
-						name: 'Weather Agent',
-						active: true,
-						created_at: '2026-01-01T00:00:00Z',
-					},
-				],
+				data: opts?.directoryMisses
+					? []
+					: [
+							{
+								id: AGENT_ID,
+								actor_type: 'agent',
+								name: 'Weather Agent',
+								active: true,
+								created_at: '2026-01-01T00:00:00Z',
+							},
+						],
 				has_more: false,
 				next_cursor: null,
+			}),
+		),
+		// The wizard's directory-miss fallback fetches the agent directly.
+		http.get('/agents/:id', () =>
+			HttpResponse.json({
+				id: AGENT_ID,
+				name: 'Weather Agent',
+				status: 'approved',
+				registered_by: 'usr_admin',
+				created_at: '2026-01-01T00:00:00Z',
 			}),
 		),
 		http.get('/access-requests/:id', () => HttpResponse.json(request)),
@@ -100,6 +112,19 @@ describe('ProvisioningRequestDialog — toolkit-name lifecycle', () => {
 
 	it('upgrades the suggested name once the actor directory resolves', async () => {
 		stubDirectoryAndRequest(planRequest());
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+		);
+
+		const input = await screen.findByLabelText('Toolkit name');
+		await waitFor(() => expect(input).toHaveValue('Weather Agent toolkit'));
+	});
+
+	it('falls back to a direct agent fetch when the cached directory misses', async () => {
+		// The real-world race: the agent registered seconds ago, so the cached
+		// directory predates it. The wizard must not settle for the raw
+		// `agnt_…` id / API-slug name — it fetches the agent by id itself.
+		stubDirectoryAndRequest(planRequest(), { directoryMisses: true });
 		renderWithProviders(
 			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
 		);

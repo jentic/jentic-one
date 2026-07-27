@@ -43,7 +43,7 @@ import { useActorDirectory } from '@/shared/hooks';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
 import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
-import { CredentialType } from '@/shared/api';
+import { CredentialType, AgentsService } from '@/shared/api';
 import {
 	amendAccessRequest,
 	decideAccessRequest,
@@ -155,8 +155,34 @@ export function ProvisioningRequestDialog({
 	// agent's access bundle, so it should be named after the agent — not the
 	// credential/API). Resolves asynchronously; undefined until the directory
 	// query lands or when the id is unknown.
-	const { resolve: resolveActor } = useActorDirectory();
-	const agentName = resolveActor(request.actor_id);
+	const directory = useActorDirectory();
+	const directoryName = directory.resolve(request.actor_id);
+
+	// Directory miss fallback: the directory is cached reference data, and the
+	// normal CLI flow registers the agent SECONDS before this dialog opens — a
+	// cached-before-registration directory misses it, which used to leave the
+	// raw `agnt_…` id in the header and an API-slug toolkit name. Fetch the
+	// agent directly by id once the directory has definitively missed.
+	const [fetchedAgentName, setFetchedAgentName] = useState<string | undefined>(undefined);
+	useEffect(() => {
+		setFetchedAgentName(undefined);
+		if (!request.actor_id.startsWith('agnt_')) return;
+		let cancelled = false;
+		void AgentsService.getAgent({ agentId: request.actor_id })
+			.then((agent) => {
+				if (!cancelled && agent.name) setFetchedAgentName(agent.name);
+			})
+			.catch(() => {
+				// Best-effort: the directory (or its invalidation on the live
+				// agent event) remains the primary path; a failed lookup just
+				// keeps the id fallback.
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [request.actor_id]);
+
+	const agentName = directoryName ?? fetchedAgentName;
 
 	// Seed the rule editor from the agent's proposed rules on the bind item.
 	const proposedRules = useMemo<PermissionRuleInput[]>(() => {

@@ -338,6 +338,13 @@ export function AgentStreamProvider({
 	const invalidateAgentSurfaces = useCallback(() => {
 		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 		void queryClient.invalidateQueries({ queryKey: AGENTS_ROOT_KEY });
+		// A registration changes the actor DIRECTORY too — it's cached
+		// aggressively (5-min staleTime) as reference data, and a CLI agent
+		// files its provisioning request seconds after registering. Without
+		// this, every `actor_id` resolution for the new agent (rail rows, the
+		// setup wizard's badge and agent-named toolkit suggestion) misses and
+		// falls back to the raw `agnt_…` id until the cache expires.
+		void queryClient.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 	}, [queryClient]);
 
 	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
