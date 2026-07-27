@@ -1,5 +1,5 @@
 # Trivy ignore list — every entry needs a justification and an exit condition.
-# Docs: https://trivy.dev/docs/configuration/filtering/#trivyignore
+# Docs: https://trivy.dev/latest/docs/configuration/filtering/#trivyignore
 
 # react-router GHSA-qwww-vcr4-c8h2 (HIGH): CSRF bypass in RSC *server* mode —
 # `unstable_RSCRouteConfig` server actions execute before the origin check

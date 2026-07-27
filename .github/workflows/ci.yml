@@ -41,11 +41,15 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'Makefile'
-              # The arch suite drift-checks the docs-SPA broker artifact
-              # (ui/public/broker-openapi.json) against the hand-curated broker
-              # spec, so edits to either must run it.
+              # The arch suite drift-checks generated reference artifacts
+              # (docs-SPA broker JSON, control spec, endpoint reference)
+              # against their sources AND generators, so edits to any of them
+              # must run it.
               - 'openapi/broker/**'
+              - 'openapi/control/**'
               - 'ui/public/broker-openapi.json'
+              - 'tools/**'
+              - 'docs/reference/**'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -219,6 +223,10 @@ jobs:
           scan-ref: '.'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
+          # Explicit rather than relying on the trivy CLI's implicit
+          # cwd-relative `.trivyignore` default, which the action only
+          # forwards by accident of its working directory.
+          trivyignores: '.trivyignore'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -592,8 +600,13 @@ jobs:
       - name: CLI reference up to date
         run: |
           go run ./cmd/clidocs -o ../ui/public/cli-reference.json
-          git diff --exit-code -- ../ui/public/cli-reference.json \
-            || { echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'; exit 1; }
+          # `status --porcelain` (not `diff --exit-code`) so a deleted-then-
+          # regenerated artifact shows up as untracked instead of passing.
+          if [ -n "$(git status --porcelain -- ../ui/public/cli-reference.json)" ]; then
+            git --no-pager diff -- ../ui/public/cli-reference.json
+            echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'
+            exit 1
+          fi
 
   installer:
     name: Installer script tests
