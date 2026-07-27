@@ -15,6 +15,7 @@ import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, KeyRound, Link as LinkIcon, SearchX } from 'lucide-react';
 import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
+import { apiRefDisplayName } from '@/shared/lib';
 import { useBindableCredentials } from '@/modules/toolkits/api';
 import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolkits/api/types';
 
@@ -57,6 +58,7 @@ export function CredentialPicker({
 			return (
 				c.name.toLowerCase().includes(q) ||
 				(c.vendor?.toLowerCase().includes(q) ?? false) ||
+				(c.apiName?.toLowerCase().includes(q) ?? false) ||
 				(c.provider?.toLowerCase().includes(q) ?? false)
 			);
 		});
@@ -145,7 +147,27 @@ function CredentialRow({
 	onSelect: (credentialId: string) => void;
 	disabled?: boolean;
 }) {
-	const subtitle = cred.vendor ?? cred.provider ?? cred.credential_id;
+	// The API's friendly name is the primary line so a user with three
+	// PostHog credentials sees the API up front. `apiRefDisplayName` strips a
+	// repeated vendor prefix off the sub-API `name`, so an NYT Article Search
+	// credential leads with `Article Search` rather than the vendor
+	// `Nytimes.Com`. Fall back through provider / credential_id when no API
+	// identity is present — never render blank.
+	const title =
+		apiRefDisplayName({ vendor: cred.vendor, name: cred.apiName }) ||
+		cred.provider ||
+		cred.credential_id;
+	// Muted technical subtitle: the raw vendor/name tuple. Empty (and hidden)
+	// when there's no API identity — we never fall back to `cred.name` here,
+	// because that's the third line's job and would otherwise duplicate it.
+	const subtitle =
+		cred.vendor && cred.apiName
+			? `${cred.vendor}/${cred.apiName}`
+			: (cred.vendor ?? cred.apiName ?? '');
+	// The user's own credential label, kept as a small third line so a user
+	// with several credentials for the same API can still disambiguate.
+	// Hidden when it would just repeat the title or the subtitle.
+	const showLabel = !!cred.name && cred.name !== title && cred.name !== subtitle;
 	return (
 		<button
 			type="button"
@@ -158,12 +180,15 @@ function CredentialRow({
 				<KeyRound className="h-4 w-4" />
 			</div>
 			<div className="min-w-0 flex-1">
-				<span className="text-foreground block truncate text-sm font-medium">
-					{cred.name}
-				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{subtitle}
-				</p>
+				<span className="text-foreground block truncate text-sm font-medium">{title}</span>
+				{subtitle && (
+					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
+						{subtitle}
+					</p>
+				)}
+				{showLabel && (
+					<p className="text-foreground/70 mt-0.5 truncate text-xs">{cred.name}</p>
+				)}
 			</div>
 			<Badge variant="default" className="shrink-0 text-[10px]">
 				{CREDENTIAL_TYPE_LABELS[cred.type] ?? cred.type}

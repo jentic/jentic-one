@@ -69,3 +69,16 @@ export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
 // Monitor's Events tab and the Dashboard's "Needs attention" card so the same
 // event reads identically in both surfaces.
 export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
+
+// API-identity display helpers — one humanising rule applied everywhere a
+// machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
+// friendly primary line. Originally lived in `modules/discover/api/adapters.ts`
+// (`titleFromApiId`); moved here so Discover, the credential picker, and the
+// toolkit surfaces all share the same rule.
+export {
+	humanizeSegment,
+	humanizeVendor,
+	titleFromApiId,
+	toolkitCredDisplayName,
+	apiRefDisplayName,
+} from '@/shared/lib/api-display';

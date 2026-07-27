@@ -85,6 +85,8 @@ export interface BindableCredential {
 	name: string;
 	type: string;
 	vendor: string | null;
+	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
+	apiName: string | null;
 	provider: string | null;
 }
 

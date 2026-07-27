@@ -51,6 +51,7 @@ import { AgentPicker } from '@/modules/toolkits/components/AgentPicker';
 import { ToolkitAuditPanel } from '@/modules/toolkits/components/ToolkitAuditPanel';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
+import { toolkitCredDisplayName } from '@/shared/lib';
 
 const rowMotion = {
 	initial: { opacity: 0, y: -4, height: 0 },
@@ -470,6 +471,14 @@ export function ToolkitDetailBody({
 								const agentRules = (cred.permissions ?? []).filter(
 									(r) => !r._system,
 								);
+								// Compute the friendly title once — it's referenced by both
+								// the heading and the third-line guard, and the guard must
+								// compare against the *resolved* heading (which falls back to
+								// the label / id when the friendly name is empty) so a
+								// vendor-less binding doesn't print its label twice.
+								const friendly = toolkitCredDisplayName(cred);
+								const heading = friendly || cred.label || cred.credential_id;
+								const showLabel = !!cred.label && cred.label !== heading;
 								return (
 									<motion.div
 										key={cred.credential_id}
@@ -480,11 +489,18 @@ export function ToolkitDetailBody({
 										<div className="flex flex-wrap items-center gap-3 px-4 py-3">
 											<div className="min-w-0 flex-1 basis-40">
 												<span className="text-foreground text-sm font-medium">
-													{cred.label ?? cred.credential_id}
+													{heading}
 												</span>
-												{(cred.api_name || cred.api_vendor) && (
+												{(cred.api_vendor || cred.api_name) && (
 													<p className="text-muted-foreground truncate font-mono text-xs">
-														{cred.api_name ?? cred.api_vendor}
+														{cred.api_vendor && cred.api_name
+															? `${cred.api_vendor}/${cred.api_name}`
+															: (cred.api_vendor ?? cred.api_name)}
+													</p>
+												)}
+												{showLabel && (
+													<p className="text-foreground/70 truncate text-xs">
+														{cred.label}
 													</p>
 												)}
 												<p className="text-muted-foreground mt-0.5 flex items-center gap-1 text-xs">

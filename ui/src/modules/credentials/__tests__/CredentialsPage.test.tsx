@@ -219,7 +219,9 @@ describe('CredentialsPage', () => {
 		await screen.findByText('No credentials stored');
 		await user.click(screen.getByRole('button', { name: /add your first credential/i }));
 		await user.type(screen.getByLabelText('Search APIs'), 'acme');
-		await user.click(await screen.findByText('acme.com'));
+		// Catalog rows lead with the friendly, TLD-aware title (via the shared
+		// `apiRefDisplayName`) rather than the raw `acme.com` slug.
+		await user.click(await screen.findByText('Acme.Com'));
 
 		// The summary chip now signals the upcoming :import via an inline
 		// subtitle (replacing the old standalone badge) — the wording matches

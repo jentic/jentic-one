@@ -3,6 +3,7 @@ import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
 import { AgentBadge, Badge, EmptyState, ErrorAlert, Input, LoadingState } from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
+import { apiRefDisplayName } from '@/shared/lib';
 import {
 	useApis,
 	useCatalog,
@@ -43,7 +44,15 @@ const ROW_VARIANTS: Variants = {
 
 function localToSelected(row: ApiResponse): SelectedApi {
 	const ref = row.api;
-	const label = row.display_name ?? `${ref.vendor}/${ref.name}`;
+	// A workspace API without a `display_name` used to render the raw
+	// `vendor/name` tuple as its primary line — the exact case #631 flags on
+	// the credentials page's "Add credential" picker. Route the fallback
+	// through the shared helper so it reads `Posthog.Com` etc.
+	const label = apiRefDisplayName({
+		displayName: row.display_name,
+		vendor: ref.vendor,
+		name: ref.name,
+	});
 	return {
 		source: 'local',
 		vendor: ref.vendor,
@@ -58,11 +67,22 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	// Catalog `api_id` is a flat slug (e.g. "stripe.com"). We split path-like
 	// entries into vendor/name; otherwise we fall back to using the slug as
 	// both. Version isn't on the catalog entry, so we default to "1.0.0".
+	//
+	// Row label: the friendly title, via the same shared helper the workspace
+	// rows use — so the same API can't read `github.com` in the catalog
+	// section and `Github.Com` in the "in your workspace" section of this one
+	// picker. We feed the helper the identity straight off the `api_id` slug
+	// (`domain[/sub-api]`), which is the richest field the catalog carries:
+	// the sub-API segment promotes to `Article Search`, and a bare domain
+	// falls through to the TLD-aware vendor humanise (`github.com` →
+	// `Github.Com`). The create-credential dialog's Name field pre-fills from
+	// this label.
 	const slug = entry.api_id;
 	const parts = (entry.path ?? slug).split('/').filter(Boolean);
 	const vendor = entry.vendor ?? parts[0] ?? slug;
 	const name = parts[1] ?? 'main';
 	const version = parts[2] ?? '1.0.0';
+	const slugParts = slug.split('/').filter(Boolean);
 	return {
 		source: 'catalog',
 		vendor,
@@ -71,7 +91,7 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 		apiId: slug,
 		specUrl: entry.spec_url ?? undefined,
 		registered: entry.registered,
-		label: slug,
+		label: apiRefDisplayName({ vendor: slugParts[0] ?? slug, name: slugParts[1] ?? 'main' }),
 	};
 }
 

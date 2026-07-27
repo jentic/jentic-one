@@ -11,12 +11,17 @@
  */
 import { ChevronRight, GitBranch, ShieldCheck, Zap } from 'lucide-react';
 import { AppLink, Badge, VendorIcon } from '@/shared/ui';
+import { apiRefDisplayName } from '@/shared/lib';
 import { encodeApiId } from '@/modules/workspace/api';
 import type { WorkspaceApi } from '@/modules/workspace/api';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 
 function titleFor(api: WorkspaceApi): string {
-	return api.displayName ?? `${api.api.vendor}/${api.api.name}`;
+	return apiRefDisplayName({
+		displayName: api.displayName,
+		vendor: api.api.vendor,
+		name: api.api.name,
+	});
 }
 
 export function ApiCard({ api }: { api: WorkspaceApi }) {

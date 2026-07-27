@@ -46,7 +46,10 @@ describe('ApiPicker', () => {
 
 		await userEvent.type(screen.getByLabelText('Search APIs'), 'github');
 
-		const row = await screen.findByText('github.com', {}, { timeout: 3000 });
+		// The catalog row now leads with the friendly, TLD-aware title (via the
+		// shared `apiRefDisplayName`) — the same casing the workspace rows use —
+		// rather than the raw `github.com` slug.
+		const row = await screen.findByText('Github.Com', {}, { timeout: 3000 });
 		expect(screen.getByText('From the Jentic public catalog')).toBeInTheDocument();
 		await userEvent.click(row);
 
