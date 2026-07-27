@@ -124,7 +124,15 @@ export function AgentRail() {
 	const [frozenIds, setFrozenIds] = useState<Set<string> | null>(null);
 
 	useEffect(() => {
-		if (feedFrozen && frozenIds === null) setFrozenIds(new Set(events.map((e) => e.id)));
+		// Never freeze an EMPTY feed: if the cursor happens to rest over the rail
+		// while it mounts (page load, or the shared pointer in browser-mode CI),
+		// `mouseenter` fires before the backlog fetch resolves — snapshotting
+		// zero ids would hold every event back indefinitely and the feed would
+		// sit at "Holding · N" with nothing rendered. Wait for the first events
+		// to land, then snapshot.
+		if (feedFrozen && frozenIds === null && events.length > 0) {
+			setFrozenIds(new Set(events.map((e) => e.id)));
+		}
 		if (!feedFrozen && frozenIds !== null) setFrozenIds(null);
 	}, [feedFrozen, frozenIds, events]);
 
