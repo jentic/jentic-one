@@ -97,6 +97,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(kindForType('import.completed')).toBe('import');
 		expect(kindForType('access_request.filed')).toBe('access_request');
 		expect(kindForType('credential.expired')).toBe('credential');
+		expect(kindForType('agent.self_registered')).toBe('agent');
 		expect(kindForType('webhook.delivered')).toBe('other');
 	});
 
@@ -203,6 +204,63 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		const kinds = inlineActionsFor(ev).map((a) => a.kind);
 		expect(kinds).toContain('acknowledge');
 		expect(kinds).not.toContain('approve');
+	});
+
+	it('adaptEvent resolves agent_id from the top-level actor for agent.* events', () => {
+		// A DCR self-registration event carries the agent as the ACTOR, not in
+		// `data` — the token must still land so Review can deep-link.
+		const ev = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent',
+				type: 'agent.self_registered',
+				requires_action: true,
+				actor_id: 'agt_42',
+				actor_type: 'agent',
+			}),
+		);
+		expect(ev.kind).toBe('agent');
+		expect(ev.tokens.agent_id).toBe('agt_42');
+		// Explicit data wins over the actor fallback when both are present.
+		const explicit = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent2',
+				type: 'agent.registration_approved',
+				actor_id: 'usr_1',
+				actor_type: 'user',
+				data: { agent_id: 'agt_43' },
+			}),
+		);
+		expect(explicit.tokens.agent_id).toBe('agt_43');
+	});
+
+	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {
+		const ev = makeEvent({
+			type: 'agent.self_registered',
+			kind: 'agent',
+			requiresAction: true,
+			tokens: { agent_id: 'agt_42' },
+		});
+		const actions = inlineActionsFor(ev);
+		const kinds = actions.map((a) => a.kind);
+		expect(kinds).toContain('view_agent');
+		expect(kinds).toContain('acknowledge');
+		// Review deep-links to the agent's approval page.
+		const review = actions.find((a) => a.kind === 'view_agent');
+		expect(review?.label).toBe('Review');
+		expect(review?.href?.(ev)).toBe('/agents/agt_42');
+		// Once acknowledged the row keeps only the passive deep-link.
+		const acked = inlineActionsFor({ ...ev, acknowledged: true });
+		expect(acked.map((a) => a.kind)).toEqual(['view_agent']);
+		expect(acked[0]?.label).toBe('View agent');
+	});
+
+	it('primaryDestinationFor routes agent events to the agent page', () => {
+		const ev = makeEvent({
+			type: 'agent.self_registered',
+			kind: 'agent',
+			tokens: { agent_id: 'agt_42' },
+		});
+		expect(primaryDestinationFor(ev)).toBe('/agents/agt_42');
 	});
 
 	describe('buildTraceBundle', () => {

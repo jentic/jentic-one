@@ -135,7 +135,13 @@ class RegistrationService:
                 session,
                 type=EventType.AGENT_SELF_REGISTERED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent.id} self-registered",
+                summary=f"Agent '{client_name}' self-registered and awaits approval",
+                # An operator has to approve/deny the registration, so surface it
+                # on the dashboard alerts card and give the rail row its inline
+                # Review action. `agent_id` in data powers the UI deep-link to
+                # the agent's approval page.
+                requires_action=True,
+                data={"agent_id": agent.id, "agent_name": client_name},
                 created_by="dcr",
                 actor_id=agent.id,
                 actor_type=ActorType.AGENT.value,

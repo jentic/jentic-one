@@ -33,6 +33,7 @@ import { decideAllPending } from '@/shared/lib/accessRequests';
 */
 const DASHBOARD_ROOT_KEY = sharedQueryKeys.dashboardRoot;
 const ACCESS_REQUESTS_ROOT_KEY = sharedQueryKeys.accessRequestsRoot;
+const AGENTS_ROOT_KEY = sharedQueryKeys.agentsRoot;
 
 /*
   AGENT RAIL STREAM — backed by the REAL platform event feed.
@@ -60,7 +61,8 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * dot of `EventResponse.type`). `other` is the safe bucket for any namespace
  * the backend adds later so the rail never crashes on an unknown type.
  */
-export type StreamKind = 'import' | 'execution' | 'access_request' | 'credential' | 'other';
+export type StreamKind =
+	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
@@ -116,7 +118,13 @@ export const RAIL_COLLAPSE_CHANGE_EVENT = 'j1:rail-collapse-change';
 /* Wire → UI adaptation                                                */
 /* ------------------------------------------------------------------ */
 
-const KNOWN_KINDS = new Set<StreamKind>(['import', 'execution', 'access_request', 'credential']);
+const KNOWN_KINDS = new Set<StreamKind>([
+	'import',
+	'execution',
+	'access_request',
+	'credential',
+	'agent',
+]);
 
 /** Namespace before the first dot → `StreamKind` (`other` for anything else). */
 export function kindForType(type: string): StreamKind {
@@ -134,6 +142,7 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	execution: 'Execution',
 	credential: 'Credential',
 	access_request: 'Access request',
+	agent: 'Agent',
 	other: 'Platform',
 };
 
@@ -180,6 +189,13 @@ export const buildGroupKeyForTest = buildGroupKey;
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
 	const data = (e.data ?? {}) as Record<string, unknown>;
+	// `agent.*` events (e.g. self-registration) identify the agent via the
+	// top-level `actor_id`, not the free-form `data` map — fall back to it so
+	// the row can deep-link to the agent's approval page.
+	const actorAgentId =
+		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
+			? e.actor_id
+			: undefined;
 	const tokens: StreamTokens = {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
@@ -189,7 +205,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		execution_id: stringField(data, 'execution_id'),
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
-		agent_id: stringField(data, 'agent_id') ?? stringField(data, 'actor_id'),
+		agent_id: stringField(data, 'agent_id') ?? stringField(data, 'actor_id') ?? actorAgentId,
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
@@ -302,6 +318,17 @@ export function AgentStreamProvider({
 		void queryClient.invalidateQueries({ queryKey: ACCESS_REQUESTS_ROOT_KEY });
 	}, [queryClient]);
 
+	/**
+	 * Refresh the agent-approval surfaces (pending-agents card, "Awaiting
+	 * approval" tile, agents list + nav badge). A CLI self-registration lands as
+	 * an `agent.*` SSE event; without this bridge those surfaces sat on their
+	 * 45–60s fallback polls and looked broken right after `jentic register`.
+	 */
+	const invalidateAgentSurfaces = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
+		void queryClient.invalidateQueries({ queryKey: AGENTS_ROOT_KEY });
+	}, [queryClient]);
+
 	// Fresh mirror of `events` for callbacks that need the current list WITHOUT
 	// re-subscribing (e.g. `decide` reads a row's request id). Reading this ref
 	// avoids stale closures and avoids side-effecting inside a `setState` updater.
@@ -406,9 +433,13 @@ export function AgentStreamProvider({
 					// Bridge: a filed/decided access request changes the durable
 					// queue + dashboard counts. Refresh those surfaces so they
 					// stop going stale (the rail used to be the ONLY thing that
-					// reacted to these events).
+					// reacted to these events). Agent lifecycle events (CLI
+					// self-registration, approval) likewise refresh the agent
+					// surfaces the instant they land.
 					if (ev.kind === 'access_request') {
 						invalidateApprovalSurfaces();
+					} else if (ev.kind === 'agent') {
+						invalidateAgentSurfaces();
 					}
 				},
 				onError: () => setStatus('error'),
@@ -416,7 +447,7 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, upsert, invalidateApprovalSurfaces]);
+	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces]);
 
 	const acknowledge = useCallback(
 		async (eventId: string) => {
@@ -602,6 +633,7 @@ export type InlineActionKind =
 	| 'approve'
 	| 'deny'
 	| 'view_request'
+	| 'view_agent'
 	| 'view_execution'
 	| 'view_job'
 	| 'view_trace';
@@ -636,6 +668,8 @@ const NAV = {
 	},
 	job: (ev: StreamEvent) =>
 		ev.tokens.job_id ? `/monitor?tab=jobs&job=${encodeURIComponent(ev.tokens.job_id)}` : null,
+	agent: (ev: StreamEvent) =>
+		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
 };
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
@@ -654,6 +688,11 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 				decides: 'denied',
 				requiresReason: true,
 			});
+		} else if (ev.type === 'agent.self_registered' && ev.tokens.agent_id) {
+			// A self-registered agent awaits approval — route the operator to the
+			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
+			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else {
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		}
@@ -663,6 +702,10 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 		actions.push({ kind: 'view_execution', label: 'View execution', href: NAV.execution });
 	} else if (ev.tokens.job_id || ev.kind === 'import') {
 		actions.push({ kind: 'view_job', label: 'View job', href: NAV.job });
+	} else if (ev.kind === 'agent' && ev.tokens.agent_id) {
+		if (!actions.some((a) => a.kind === 'view_agent')) {
+			actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
+		}
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
 	}
@@ -728,6 +771,8 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 				: NAV.trace(ev);
 		case 'access_request':
 			return ev.tokens.agent_id ? `/agents/${ev.tokens.agent_id}` : NAV.trace(ev);
+		case 'agent':
+			return NAV.agent(ev) ?? NAV.trace(ev);
 		default:
 			return NAV.trace(ev);
 	}
