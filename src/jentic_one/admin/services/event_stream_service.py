@@ -11,6 +11,10 @@ from jentic_one.admin.services.schemas.events import EventView, Heartbeat
 from jentic_one.shared.context import Context
 from jentic_one.shared.models.events import EventSeverity
 
+# Rows fetched per repo page while draining the overlap window. A short page
+# (< limit) means the window is drained, saving the empty-batch round-trip.
+_PAGE_LIMIT = 100
+
 
 class EventStreamService:
     """Polls for new events and yields them as a transport-agnostic async stream."""
@@ -50,26 +54,77 @@ class EventStreamService:
         skew) stays under the overlap. Each event is yielded at most once per
         connection; the paging loop advances a (created_at, id) cursor so bursts
         larger than one repo page can't wedge the poll.
+
+        Delivery guarantee: at-least-once ACROSS connections (a reconnect may
+        re-receive events near its resume point — clients dedup by SSE id),
+        exactly-once WITHIN a connection. Rows already visible at connect time
+        that sit at-or-before the resume point are pre-seeded into the dedup map
+        below, so the overlap never replays history the caller didn't ask for —
+        only rows whose COMMIT lands after connect are rescued by it. Late
+        commits are rescued for up to ``overlap_seconds`` of lag + skew; beyond
+        that they are lost to the live stream (the durable backlog fetch still
+        shows them).
         """
         overlap = timedelta(seconds=overlap_seconds)
+        # FastAPI parses an offset-less ``?since=`` as a NAIVE datetime; the ORM
+        # returns aware-UTC rows, and naive-vs-aware comparison raises TypeError
+        # (killing the stream mid-SSE). Column values are UTC, so pin it.
+        if since is not None and since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
         # Newest created_at yielded so far (or the caller's resume point).
         watermark: datetime
         # Ids already yielded on THIS connection, kept for the overlap horizon.
         seen: dict[str, datetime] = {}
 
         watermark = since if since is not None else datetime.now(UTC)
+        resume_id: str | None = None
         if last_event_id is not None:
             async with self._ctx.admin_db.session() as session:
                 event = await EventRepository.get_by_id(session, last_event_id)
             if event is not None:
                 watermark = event.created_at
-                seen[event.id] = event.created_at
+                resume_id = event.id
+
+        # Pre-seed the dedup map with rows ALREADY VISIBLE at-or-before the
+        # resume point. Without this, the first poll's overlap window replays up
+        # to ``overlap_seconds`` of history on every fresh connect (re-firing
+        # client-side toasts/invalidations on page load). Rows seeded here are
+        # by definition not late-commit victims for THIS connection; anything
+        # that becomes visible after this scan is delivered normally.
+        page_cursor: tuple[datetime, str] = (watermark - overlap, "")
+        while True:
+            async with self._ctx.admin_db.session() as session:
+                batch = await EventRepository.list_after_cursor(
+                    session,
+                    page_cursor,
+                    limit=_PAGE_LIMIT,
+                    event_type=event_type,
+                    severity=severity,
+                    requires_action=requires_action,
+                    trace_id=trace_id,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                )
+            for event in batch:
+                # ``since``/fresh connects resume EXCLUSIVELY after the
+                # timestamp; a ``Last-Event-ID`` resume point also skips
+                # same-instant siblings up to and including that id.
+                before_resume = (
+                    (event.created_at, event.id) <= (watermark, resume_id)
+                    if resume_id is not None and event.created_at == watermark
+                    else event.created_at <= watermark
+                )
+                if before_resume:
+                    seen[event.id] = event.created_at
+            if len(batch) < _PAGE_LIMIT:
+                break
+            page_cursor = (batch[-1].created_at, batch[-1].id)
 
         while True:
             yielded = False
             # "" sorts before every real id, so the two-tuple cursor starts
             # strictly at the horizon without skipping same-instant rows.
-            page_cursor: tuple[datetime, str] = (watermark - overlap, "")
+            page_cursor = (watermark - overlap, "")
 
             while True:
                 # The DB session is strictly scoped to this ``async with`` block
@@ -82,6 +137,7 @@ class EventStreamService:
                     batch = await EventRepository.list_after_cursor(
                         session,
                         page_cursor,
+                        limit=_PAGE_LIMIT,
                         event_type=event_type,
                         severity=severity,
                         requires_action=requires_action,
@@ -89,14 +145,17 @@ class EventStreamService:
                         actor_id=actor_id,
                         actor_type=actor_type,
                     )
-                if not batch:
-                    break
                 for event in batch:
                     if event.id in seen:
                         continue
                     seen[event.id] = event.created_at
                     if event.created_at > watermark:
-                        watermark = event.created_at
+                        # Clamp the advance to wall-clock: one future-stamped
+                        # row (writer clock skew, bad backfill) must not push
+                        # the overlap horizon past the present, which would
+                        # black-hole every normally-stamped event until the
+                        # clock catches up.
+                        watermark = max(watermark, min(event.created_at, datetime.now(UTC)))
                     yielded = True
                     yield EventView(
                         id=event.id,
@@ -116,6 +175,10 @@ class EventStreamService:
                         actor_type=event.actor_type,
                         created_at=event.created_at,
                     )
+                # A short page means the window is drained — skip the extra
+                # round-trip that would only observe emptiness.
+                if len(batch) < _PAGE_LIMIT:
+                    break
                 page_cursor = (batch[-1].created_at, batch[-1].id)
 
             if not yielded:

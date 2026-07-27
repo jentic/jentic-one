@@ -230,7 +230,10 @@ async def test_stream_delivers_event_committed_after_watermark_passed(
     # Connect FIRST: watermark = now. The event then appears with a created_at
     # 5 seconds in the past (inside the overlap), as if its transaction had
     # been open across the connect and committed late.
-    gen = service.stream(poll_interval_seconds=0, overlap_seconds=15.0)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+    )
     first = await gen.__anext__()
     assert isinstance(first, Heartbeat)
 
@@ -258,6 +261,78 @@ async def test_stream_delivers_event_committed_after_watermark_passed(
     # The overlap re-query must not re-yield it on the next poll.
     dup_check = await gen.__anext__()
     assert isinstance(dup_check, Heartbeat)
+    await gen.aclose()
+
+
+async def test_stream_accepts_timezone_naive_since(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A naive ``since`` (offset-less ``?since=`` query param) must not crash the stream.
+
+    FastAPI parses ``?since=2026-07-27T10:00:00`` (no offset) as a NAIVE
+    datetime; rows come back timezone-aware from ``UTCDateTime``. The
+    overlap-window fix introduced Python-side comparisons against ``since``
+    (watermark advance + dedup pruning) which raise ``TypeError`` on
+    naive-vs-aware — killing the generator mid-SSE and hot-looping the client's
+    reconnect. The service must coerce naive input to UTC.
+    """
+    ctx = integration_context
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="After naive since",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    naive_since = (datetime.now(UTC) - timedelta(seconds=1)).replace(tzinfo=None)
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(since=naive_since, poll_interval_seconds=0),
+    )
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.summary == "After naive since"
+    # The pruning comprehension also compares timestamps — drive one more poll.
+    beat = await gen.__anext__()
+    assert isinstance(beat, Heartbeat)
+    await gen.aclose()
+
+
+async def test_stream_fresh_connect_does_not_replay_visible_history(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A fresh connect (``since=None``) must not replay already-visible events.
+
+    The overlap window exists to rescue LATE COMMITS, not to re-deliver
+    history: an event committed (visible) before the client connected is
+    already served by the durable backlog fetch, and replaying it over SSE
+    re-fires client-side toasts/audio/invalidations on every page load. The
+    connect-time seed scan must swallow it.
+    """
+    ctx = integration_context
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="Committed before connect",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(poll_interval_seconds=0, overlap_seconds=15.0),
+    )
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
     await gen.aclose()
 
 
@@ -335,7 +410,7 @@ async def test_stream_cancellation_mid_query_returns_pooled_connection(
     ever checked out and the test passed even with the bug present (false
     positive).
 
-    Here we patch ``EventRepository.list_since`` to hang forever, freezing the
+    Here we patch ``EventRepository.list_after_cursor`` to hang forever, freezing the
     generator *inside* the ``async with self._ctx.admin_db.session()`` block with
     a connection actively checked out of the pool. We then prove:
 
