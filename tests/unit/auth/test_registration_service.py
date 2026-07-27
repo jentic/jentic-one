@@ -84,6 +84,7 @@ async def test_register_emits_actionable_event_with_agent_tokens(
     await svc.register("my-agent", _valid_jwks())
 
     mock_emit.assert_awaited_once()
+    assert mock_emit.await_args is not None
     kwargs = mock_emit.await_args.kwargs
     assert kwargs["requires_action"] is True
     assert kwargs["data"] == {"agent_id": "agnt_test123", "agent_name": "my-agent"}
