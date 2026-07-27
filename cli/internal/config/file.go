@@ -35,11 +35,37 @@ type FileConfig struct {
 	// records whether the user has been asked; Enabled records their answer.
 	// Both are written together so the CLI never re-prompts after a decision.
 	Telemetry TelemetryConfig `yaml:"telemetry"`
+	// LocalAgents records the dedicated OS accounts `jentic run` launches
+	// coding agents under, keyed by the <agent> identifier the operator types
+	// (e.g. "claude"). It is the operator-side inventory of which local agents
+	// exist, where their homes live, and which directories they've been granted
+	// — paths and names only, never secrets.
+	LocalAgents map[string]LocalAgent `yaml:"local_agents,omitempty"`
 
 	// Path records where the config was loaded from (empty if no file existed).
 	Path string `yaml:"-"`
 	// Loaded reports whether a config file was actually found and parsed.
 	Loaded bool `yaml:"-"`
+}
+
+// LocalAgent is one configured local coding agent: the OS account `jentic run`
+// becomes, that account's home, the binary to exec, and the durable directory
+// grants made for it. Nothing here is secret (the agent's keys/tokens live in
+// its own home as that user), so it sits safely in the operator's config.
+type LocalAgent struct {
+	// User is the OS account name `jentic run` sudo's to.
+	User string `yaml:"user"`
+	// HomeDir is that account's home directory (the always-accessible
+	// working space; the session opens here unless a directory is granted).
+	HomeDir string `yaml:"home_dir,omitempty"`
+	// Binary is the agent executable to probe and exec (e.g. "claude").
+	Binary string `yaml:"binary,omitempty"`
+	// GrantedDirs is the inventory of directories the agent has been granted
+	// read/write access to (durable ACLs on disk). This is the record of what
+	// jentic granted; the on-disk ACL is the source of truth for access.
+	GrantedDirs []string `yaml:"granted_dirs,omitempty"`
+	// CreatedAt is when this entry was first recorded (RFC3339).
+	CreatedAt string `yaml:"created_at,omitempty"`
 }
 
 // TelemetryConfig is the telemetry consent section of config.yaml.
@@ -183,4 +209,54 @@ func SetDefaultProfile(paths Paths, name string) error {
 	}
 	cfg.DefaultProfile = name
 	return cfg.Save(paths)
+}
+
+// LocalAgent returns the configured local agent for the given identifier and
+// whether it was present.
+func (c *FileConfig) LocalAgent(id string) (LocalAgent, bool) {
+	a, ok := c.LocalAgents[id]
+	return a, ok
+}
+
+// SetLocalAgent records (or replaces) the local-agent entry for id and returns
+// the mutated config for chaining a Save. The map is created lazily.
+func (c *FileConfig) SetLocalAgent(id string, agent LocalAgent) {
+	if c.LocalAgents == nil {
+		c.LocalAgents = map[string]LocalAgent{}
+	}
+	c.LocalAgents[id] = agent
+}
+
+// AddGrantedDir records dir against the local agent id (idempotently) and
+// returns true if it was newly added. Callers Save afterwards.
+func (c *FileConfig) AddGrantedDir(id, dir string) bool {
+	agent, ok := c.LocalAgents[id]
+	if !ok {
+		return false
+	}
+	for _, d := range agent.GrantedDirs {
+		if d == dir {
+			return false
+		}
+	}
+	agent.GrantedDirs = append(agent.GrantedDirs, dir)
+	c.LocalAgents[id] = agent
+	return true
+}
+
+// RemoveGrantedDir drops dir from the local agent id's grant inventory and
+// returns true if it was present. Callers Save afterwards.
+func (c *FileConfig) RemoveGrantedDir(id, dir string) bool {
+	agent, ok := c.LocalAgents[id]
+	if !ok {
+		return false
+	}
+	for i, d := range agent.GrantedDirs {
+		if d == dir {
+			agent.GrantedDirs = append(agent.GrantedDirs[:i], agent.GrantedDirs[i+1:]...)
+			c.LocalAgents[id] = agent
+			return true
+		}
+	}
+	return false
 }

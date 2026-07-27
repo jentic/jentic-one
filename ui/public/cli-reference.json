@@ -1308,6 +1308,57 @@
           ]
         },
         {
+          "name": "run",
+          "path": "jentic run",
+          "use": "run \u003cagent\u003e [path]",
+          "short": "Launch a coding agent as its own isolated Unix user",
+          "long": "run launches a coding agent (claude, ...) under a dedicated, unprivileged\nOS account distinct from the operator's login user, so a compromised or\nprompt-injected agent cannot read the operator's keys, browser session, or\nthe jentic-one credential store. It provisions the agent's binary for that\naccount if missing, resolves filesystem access to the working directory\n(granting a scoped ACL only when the operator confirms), and starts the\nsession in a login shell so no operator environment leaks.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis under\ndocs/security/analysis/agent-as-unix-user/ for the full rationale.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "agent-user",
+              "type": "string",
+              "usage": "override the derived \u003coperator\u003e-local-agent account"
+            },
+            {
+              "name": "allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "grant the agent access to the working directory without prompting"
+            },
+            {
+              "name": "home",
+              "type": "bool",
+              "default": "false",
+              "usage": "open the session in the agent's own home, skipping the current directory"
+            },
+            {
+              "name": "list-grants",
+              "type": "bool",
+              "default": "false",
+              "usage": "list the directories the agent has been granted, then exit"
+            },
+            {
+              "name": "no-allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "never grant directory access; open in the agent's home instead"
+            },
+            {
+              "name": "revoke",
+              "type": "string",
+              "usage": "revoke the agent's access to the given directory, then exit"
+            },
+            {
+              "name": "yes",
+              "shorthand": "y",
+              "type": "bool",
+              "default": "false",
+              "usage": "assume the safe default for every prompt (never grants a flagged-dangerous dir)"
+            }
+          ]
+        },
+        {
           "name": "admin",
           "path": "jentic admin",
           "use": "admin",
