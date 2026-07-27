@@ -40,6 +40,14 @@ describe('suggestToolkitName — agent-first naming', () => {
 			'posthog-com/posthog-api',
 		);
 	});
+
+	it('clamps a very long agent name so the toolkit name never exceeds 255 chars', () => {
+		// Agent names can be up to 255 chars themselves; the suggestion must
+		// leave headroom for " toolkit" + a possible "-NN" 409 suffix.
+		const suggested = suggestToolkitName('a'.repeat(255), 'v', 'n');
+		expect(suggested).toBe(`${'a'.repeat(240)} toolkit`);
+		expect(suggested.length + '-20'.length).toBeLessThanOrEqual(255);
+	});
 });
 
 describe('createPlanToolkit — 409 name disambiguation', () => {

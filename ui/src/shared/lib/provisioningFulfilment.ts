@@ -109,7 +109,10 @@ export function suggestToolkitName(
 	name?: string,
 ): string {
 	const agent = agentName?.trim();
-	if (agent) return `${agent} toolkit`;
+	// Toolkit names are capped at 255 chars server-side; agent names can be up
+	// to 255 themselves. Clamp with headroom for " toolkit" plus a possible
+	// 409-disambiguation suffix ("-NN") so the create never 422s on length.
+	if (agent) return `${agent.slice(0, 240)} toolkit`;
 	return [vendor, name].filter(Boolean).join('/');
 }
 

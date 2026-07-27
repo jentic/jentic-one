@@ -229,6 +229,11 @@ export function ProvisioningRequestDialog({
 		try {
 			const created = await createPlanToolkit(toolkitName.trim());
 			setToolkitId(created.toolkitId);
+			// Adopt the name the toolkit was ACTUALLY created with — on a 409 it
+			// carries a disambiguation suffix (e.g. "Claude Code toolkit-2"), and
+			// the review step + no-auth credential name derive from this state.
+			// This also settles any async suggested-name upgrade racing the POST.
+			setToolkitName(created.name);
 			setStep(noAuth ? 'rules' : 'credential');
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
