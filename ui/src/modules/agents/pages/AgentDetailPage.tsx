@@ -13,7 +13,7 @@
  * metadata). We link out to Monitor for cross-agent execution history instead.
  */
 import { useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { ArrowRight, KeyRound, Shield, Activity, Ban, History } from 'lucide-react';
 import {
 	AgentBadge,

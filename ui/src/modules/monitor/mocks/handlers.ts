@@ -4,6 +4,7 @@
  * Mocks the observability surface the Monitor module consumes:
  *   GET   /executions                 — execution trace log
  *   GET   /executions/{execution_id}  — single execution
+ *   GET   /monitoring/usage           — enriched usage aggregation (#561)
  *   GET   /jobs                       — async job queue
  *   GET   /jobs/{job_id}             — single job
  *   POST  /jobs/{job_id}:cancel       — cancel a job
@@ -130,44 +131,137 @@ const EXECUTIONS = rebaseFixture([
 	},
 ]);
 
-// Aggregation fixture for GET /monitoring/executions (jentic-one#386). Built so
-// totals are internally consistent (daily success+failed sums match totals).
-const EXECUTION_STATS = rebaseFixture({
-	total_executions: 184,
-	success_rate_percent: 91.3,
-	daily_buckets: [
-		{ date: '2026-06-13', total: 22, success: 20, failed: 2 },
-		{ date: '2026-06-14', total: 18, success: 17, failed: 1 },
-		{ date: '2026-06-15', total: 31, success: 28, failed: 3 },
-		{ date: '2026-06-16', total: 27, success: 25, failed: 2 },
-		{ date: '2026-06-17', total: 24, success: 22, failed: 2 },
-		{ date: '2026-06-18', total: 33, success: 31, failed: 2 },
-		{ date: '2026-06-19', total: 29, success: 25, failed: 4 },
-	],
-	top_operations: [
+// Daily bucket series for GET /monitoring/usage (jentic-one-internal#561).
+// Rebased dates become unix-second timestamps at handler time. Built so totals
+// are internally consistent: daily buckets sum to 184 executions (168 success
+// / 16 failed) — the split every USAGE_TOP group resolves to at full window.
+const USAGE_DAILY = rebaseFixture([
+	{ date: '2026-06-13', total: 22, success: 20, failed: 2 },
+	{ date: '2026-06-14', total: 18, success: 17, failed: 1 },
+	{ date: '2026-06-15', total: 31, success: 28, failed: 3 },
+	{ date: '2026-06-16', total: 27, success: 25, failed: 2 },
+	{ date: '2026-06-17', total: 24, success: 22, failed: 2 },
+	{ date: '2026-06-18', total: 33, success: 31, failed: 2 },
+	{ date: '2026-06-19', total: 29, success: 25, failed: 4 },
+]);
+
+// Sub-day activity anchored to the request's `until`, so the 24h (hourly
+// buckets) window renders real bars: the rebase delta parks the newest daily
+// fixture point ≥ ~24h back, which would otherwise leave `days=1` empty and
+// gate the whole Overview behind its EmptyState in dev/tests. Sums to 34
+// executions (31 success / 3 failed).
+const USAGE_RECENT = [
+	{ hoursAgo: 2, total: 9, success: 8, failed: 1, avg_ms: 430 },
+	{ hoursAgo: 5, total: 6, success: 6, failed: 0, avg_ms: 380 },
+	{ hoursAgo: 9, total: 7, success: 6, failed: 1, avg_ms: 505 },
+	{ hoursAgo: 14, total: 4, success: 4, failed: 0, avg_ms: 350 },
+	{ hoursAgo: 21, total: 8, success: 7, failed: 1, avg_ms: 460 },
+];
+
+// Total executions across the full fixture (daily + recent) — the reference
+// the per-window `top` rows get scaled against.
+const USAGE_FIXTURE_TOTAL = 218;
+
+// Per-group full-window `top` rows (each group sums to the 184/168/16 daily
+// split; the handler scales them to the requested window) with the 12-point
+// sparkline trends the Breakdown and bubble charts render. Key/label formats
+// mirror monitoring_repo.grouped_top:
+// api rows are "vendor/name" (label identical to key), toolkit rows use the
+// raw toolkit_id as both key and label, agent rows are "actor_type/actor_id",
+// and unattributed executions surface as a null key/label (SQL `||` with a
+// NULL operand). Each group's rows sum to the same 184/168/16 split.
+const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
+	api: [
 		{
-			api_vendor: 'stripe',
-			api_name: 'stripe-api',
-			operation_id: 'POST /v1/charges',
-			total: 72,
+			key: 'stripe/stripe-api',
+			label: 'stripe/stripe-api',
+			total: 100,
+			success: 97,
 			failed: 3,
+			avg_ms: 412,
+			trend: [6, 9, 8, 12, 7, 10, 9, 11, 8, 9, 6, 5],
 		},
 		{
-			api_vendor: 'github',
-			api_name: 'github-api',
-			operation_id: 'GET /repos/{owner}/{repo}',
-			total: 41,
+			key: 'github/github-api',
+			label: 'github/github-api',
+			total: 52,
+			success: 43,
 			failed: 9,
+			avg_ms: 655,
+			trend: [3, 4, 6, 5, 4, 3, 5, 6, 4, 5, 4, 3],
 		},
 		{
-			api_vendor: 'stripe',
-			api_name: 'stripe-api',
-			operation_id: 'POST /v1/refunds',
-			total: 28,
-			failed: 0,
+			key: 'slack/slack-api',
+			label: 'slack/slack-api',
+			total: 32,
+			success: 28,
+			failed: 4,
+			avg_ms: 240,
+			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
 		},
 	],
-});
+	toolkit: [
+		{
+			key: 'tk_payments',
+			label: 'tk_payments',
+			total: 100,
+			success: 97,
+			failed: 3,
+			avg_ms: 430,
+			trend: [6, 9, 8, 12, 7, 10, 9, 11, 8, 9, 6, 5],
+		},
+		{
+			key: 'tk_dev',
+			label: 'tk_dev',
+			total: 52,
+			success: 43,
+			failed: 9,
+			avg_ms: 655,
+			trend: [3, 4, 6, 5, 4, 3, 5, 6, 4, 5, 4, 3],
+		},
+		{
+			key: 'tk_comms',
+			label: 'tk_comms',
+			total: 32,
+			success: 28,
+			failed: 4,
+			avg_ms: 240,
+			trend: [2, 3, 2, 4, 3, 2, 3, 2, 3, 4, 2, 2],
+		},
+	],
+	agent: [
+		{
+			key: 'agent/agent_billing',
+			label: 'agent/agent_billing',
+			total: 140,
+			success: 132,
+			failed: 8,
+			avg_ms: 445,
+			trend: [8, 11, 10, 14, 9, 12, 11, 13, 10, 11, 8, 7],
+		},
+		{
+			key: 'user/user_admin',
+			label: 'user/user_admin',
+			total: 30,
+			success: 24,
+			failed: 6,
+			avg_ms: 520,
+			trend: [2, 3, 2, 4, 2, 3, 2, 3, 2, 3, 2, 2],
+		},
+		// Rows with NULL actor columns: `actor_type || '/' || actor_id` is SQL
+		// NULL, so the key/label arrive as null. The UI must surface these as
+		// an "Unattributed" bucket, not drop them.
+		{
+			key: null,
+			label: null,
+			total: 14,
+			success: 12,
+			failed: 2,
+			avg_ms: 380,
+			trend: [1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 1, 0],
+		},
+	],
+};
 
 const JOBS = rebaseFixture([
 	{
@@ -338,21 +432,127 @@ export const monitorHandlers = [
 		const row = EXECUTIONS.find((r) => r.execution_id === String(params.id));
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
 	}),
-	http.get('/monitoring/executions', ({ request }) => {
-		// Honour the `days` window by slicing the trailing buckets so the chart
-		// and totals shift with the selector (mirrors the real endpoint shape).
+	http.get('/monitoring/usage', ({ request }) => {
+		// Enriched aggregation (jentic-one-internal#561). Mirrors the real
+		// MonitoringService semantics: `until` defaults to now floored to the
+		// minute, `since` defaults to a 24h window, `bucket_seconds` is derived
+		// from the window width (60s ≤1h, 1h ≤24h, 6h ≤7d, daily beyond),
+		// non-enum `group_by` values are rejected (FastAPI 422), buckets stay
+		// sparse (only slots with data — no zero-fill), and `stats`/`top` are
+		// computed from the same window as the buckets (`stats.total === 0`
+		// implies an empty `top`, like the real aggregation).
 		const url = new URL(request.url);
-		const days = Math.min(30, Math.max(1, Number(url.searchParams.get('days') ?? 7)));
-		const buckets = EXECUTION_STATS.daily_buckets.slice(-days);
+		const nowSec = Math.floor(Date.now() / 60_000) * 60;
+		const untilParam = url.searchParams.get('until');
+		const until = untilParam != null ? Number(untilParam) : nowSec;
+		const sinceParam = url.searchParams.get('since');
+		const since = sinceParam != null ? Number(sinceParam) : until - 86_400;
+		const groupBy = url.searchParams.get('group_by') ?? 'api';
+		const topLimit = Math.min(50, Math.max(1, Number(url.searchParams.get('top_limit') ?? 10)));
+
+		if (!Object.prototype.hasOwnProperty.call(USAGE_TOP, groupBy)) {
+			return HttpResponse.json(
+				{
+					detail: [
+						{
+							loc: ['query', 'group_by'],
+							msg: 'Input should be a valid enum member',
+							type: 'enum',
+						},
+					],
+				},
+				{ status: 422 },
+			);
+		}
+
+		const windowSeconds = until - since;
+		let bucketSeconds = 86_400;
+		if (windowSeconds <= 3_600) bucketSeconds = 60;
+		else if (windowSeconds <= 86_400) bucketSeconds = 3_600;
+		else if (windowSeconds <= 604_800) bucketSeconds = 21_600;
+
+		// Raw fixture instants: the rebased daily points plus the last-24h
+		// activity anchored to `until`. Window-filter first, then floor each
+		// instant to the bucket tier and merge collisions — matching the
+		// backend's floor(epoch/step)*step GROUP BY.
+		const AVG_MS = [412, 380, 505, 460, 430, 395, 520];
+		const rawPoints = [
+			...USAGE_DAILY.map((b, i) => ({
+				ts: Math.floor(Date.parse(`${b.date}T00:00:00Z`) / 1000),
+				total: b.total,
+				success: b.success,
+				failed: b.failed,
+				avg_ms: AVG_MS[i % AVG_MS.length],
+			})),
+			...USAGE_RECENT.map((p) => ({
+				ts: until - p.hoursAgo * 3_600,
+				total: p.total,
+				success: p.success,
+				failed: p.failed,
+				avg_ms: p.avg_ms,
+			})),
+		].filter((p) => p.ts >= since && p.ts < until);
+
+		const byBucket = new Map<number, (typeof rawPoints)[number]>();
+		for (const p of rawPoints) {
+			const ts = Math.floor(p.ts / bucketSeconds) * bucketSeconds;
+			const prev = byBucket.get(ts);
+			byBucket.set(
+				ts,
+				prev
+					? {
+							ts,
+							total: prev.total + p.total,
+							success: prev.success + p.success,
+							failed: prev.failed + p.failed,
+							avg_ms: Math.round(
+								(prev.avg_ms * prev.total + p.avg_ms * p.total) /
+									(prev.total + p.total),
+							),
+						}
+					: { ...p, ts },
+			);
+		}
+		const buckets = [...byBucket.values()].sort((a, b) => a.ts - b.ts);
+
 		const total = buckets.reduce((sum, b) => sum + b.total, 0);
 		const success = buckets.reduce((sum, b) => sum + b.success, 0);
+		const failed = buckets.reduce((sum, b) => sum + b.failed, 0);
+		const avgMs = total ? buckets.reduce((sum, b) => sum + b.avg_ms * b.total, 0) / total : 0;
+
+		// Scale the full-window top rows (and their trend series — the backend
+		// computes both from the same windowed rows) so `top` and `stats` agree.
+		const factor = total / USAGE_FIXTURE_TOTAL;
+		const top =
+			total === 0
+				? []
+				: USAGE_TOP[groupBy]
+						.map((row) => ({
+							...row,
+							total: Math.max(1, Math.round((row.total as number) * factor)),
+							success: Math.round((row.success as number) * factor),
+							failed: Math.round((row.failed as number) * factor),
+							trend: (row.trend as number[]).map((v) => Math.round(v * factor)),
+						}))
+						.slice(0, topLimit);
+
 		return HttpResponse.json({
-			...EXECUTION_STATS,
-			daily_buckets: buckets,
-			total_executions: total || EXECUTION_STATS.total_executions,
-			success_rate_percent: total
-				? (success / total) * 100
-				: EXECUTION_STATS.success_rate_percent,
+			since,
+			until,
+			bucket_seconds: bucketSeconds,
+			group_by: groupBy,
+			stats: {
+				total,
+				success,
+				failed,
+				avg_ms: Math.round(avgMs),
+				p50_ms: total ? 388 : null,
+				p95_ms: total ? 1240 : null,
+				active_now: 0,
+				pending: 0,
+			},
+			buckets,
+			top,
 		});
 	}),
 

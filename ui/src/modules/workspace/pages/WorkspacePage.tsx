@@ -9,7 +9,7 @@
  * the loaded rows. Catalog-wide search lives in Discover, not here.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Upload } from 'lucide-react';
 import { PageShell, PageHeader, PageHelp, Button } from '@/shared/ui';
 import { ApiGrid } from '@/modules/workspace/components/ApiGrid';

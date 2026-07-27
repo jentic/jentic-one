@@ -16,9 +16,9 @@
  * The Monitor tabs. Drives the `?tab=` deep-link + the segmented toggle.
  *
  * `overview` leads (it's the natural landing lens) and is fully wired: its
- * charts read the server-side usage-aggregation endpoint (#386) and per-agent
- * attribution reads `actor_id`/`actor_type` off executions (#375). All five
- * tabs are functional.
+ * charts read the enriched usage-aggregation endpoint `GET /monitoring/usage`
+ * (jentic-one-internal#561) and per-agent attribution reads
+ * `actor_id`/`actor_type` off executions (#375). All five tabs are functional.
  */
 export type MonitorTab = 'overview' | 'executions' | 'jobs' | 'events' | 'audit';
 

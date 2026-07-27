@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { page } from '@vitest/browser/context';
 import type { ReactElement } from 'react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { render, screen, waitFor, fireEvent, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
 import { ToastHost } from '@/shared/app/rail/ToastHost';
 import {
@@ -401,6 +401,21 @@ describe('AgentRail — shell-mounted live surface', () => {
 			await screen.findByText(/Execution failed: slack\.postMessage/i),
 		).toBeInTheDocument();
 		await checkA11y(container);
+	});
+
+	it('does not hold the feed empty when the cursor rests on the rail during mount', async () => {
+		// Regression: `mouseenter` before the backlog fetch resolves used to
+		// snapshot ZERO visible ids, so every seeded event was held back and the
+		// feed sat at "Holding · 4" with no rows. This is exactly what happens in
+		// browser-mode CI, where the shared pointer can be parked over the rail
+		// when the iframe mounts (and in prod when a user's cursor rests there
+		// during page load). An empty feed must never freeze.
+		renderRail(<AgentRail />);
+		const aside = await screen.findByRole('complementary', { name: 'Agent rail' });
+		fireEvent.mouseEnter(aside);
+		expect(
+			await screen.findByText(/Execution failed: slack\.postMessage/i),
+		).toBeInTheDocument();
 	});
 
 	it('collapses and persists the collapsed state to localStorage', async () => {

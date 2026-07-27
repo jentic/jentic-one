@@ -39,8 +39,8 @@ interface SegmentedToggleProps<T extends string = string> {
 	 */
 	as?: 'toggle' | 'tabs';
 	/**
-	 * Accessible name for the group. Used as `aria-label` on the tablist when
-	 * `as='tabs'`.
+	 * Accessible name for the group. Applied as `aria-label` on the tablist
+	 * when `as='tabs'`, or on a `role="group"` wrapper in toggle mode.
 	 */
 	ariaLabel?: string;
 	/**
@@ -111,8 +111,8 @@ export function SegmentedToggle<T extends string = string>({
 	return (
 		<div
 			ref={containerRef}
-			role={isTabs ? 'tablist' : undefined}
-			aria-label={isTabs ? ariaLabel : undefined}
+			role={isTabs ? 'tablist' : ariaLabel ? 'group' : undefined}
+			aria-label={ariaLabel}
 			className={cn(
 				'border-border bg-muted/50 relative flex rounded-lg border p-0.5',
 				className,

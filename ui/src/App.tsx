@@ -1,4 +1,4 @@
-import { Navigate, useRoutes, type RouteObject } from 'react-router-dom';
+import { Navigate, useRoutes, type RouteObject } from 'react-router';
 import { useEffect } from 'react';
 import { AuthGuard } from '@/shared/auth/AuthGuard';
 import { SetupGate } from '@/shared/auth/SetupGate';
