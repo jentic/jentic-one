@@ -7,7 +7,7 @@
  * value, so an unknown server status degrades to a neutral pill rather than a
  * broken colour. Clicking a row opens the trace detail sheet.
  */
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Activity } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert, RefreshButton, SegmentedToggle } from '@/shared/ui';
 import { useExecutions } from '@/modules/monitor/api';

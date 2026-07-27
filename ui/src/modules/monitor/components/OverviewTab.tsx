@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart3 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { EmptyState, ErrorAlert, LoadingState, SegmentedToggle } from '@/shared/ui';
 import { GroupBy, useUsageStats } from '@/modules/monitor/api';
 import { usageToEntityRows, usageToOverview } from '@/modules/monitor/lib/usage';

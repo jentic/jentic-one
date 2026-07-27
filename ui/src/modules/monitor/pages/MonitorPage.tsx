@@ -12,7 +12,7 @@
  * the per-tab todos; this page owns the shell + tab switching.
  */
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { PageShell, PageHeader, PageHelp, SegmentedToggle } from '@/shared/ui';
 import { MONITOR_TABS, type MonitorTab } from '@/modules/monitor/api';
 import { OverviewTab } from '@/modules/monitor/components/OverviewTab';

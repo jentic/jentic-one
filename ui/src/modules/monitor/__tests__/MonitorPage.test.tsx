@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import {
 	renderWithProviders,
 	screen,

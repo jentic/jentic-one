@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import {
 	renderWithProviders,
 	screen,

@@ -1,4 +1,4 @@
-import type { RouteObject } from 'react-router-dom';
+import type { RouteObject } from 'react-router';
 
 /**
  * Canonical client route paths, ALL root-relative to the router `basename`

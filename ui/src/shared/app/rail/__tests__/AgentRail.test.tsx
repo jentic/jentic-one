@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { page } from '@vitest/browser/context';
 import type { ReactElement } from 'react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { AgentRail } from '@/shared/app/rail/AgentRail';

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { MoreHorizontal, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { sortedNavItems, visibleNavItems, isNavItemActive, type NavItem } from '@/shared/app/nav';
