@@ -1,9 +1,10 @@
 /**
  * MonitorList / MonitorRow — the shared "feed" presentation for the Monitor
- * list tabs (Executions, Jobs, Events, Audit).
+ * list tabs (Jobs, Events, Audit; Executions uses the columned ExecutionTable
+ * ported from jentic-mini).
  *
  * This replaces the flat <DataTable> grid for these surfaces with the richer
- * row vocabulary the Overview already uses (see TopOperations): a colour-tinted
+ * row vocabulary the Overview already uses (see UsageBreakdown): a colour-tinted
  * status icon tile as a visual anchor, a strong title + muted subtitle identity
  * stack, optional inline meta badges, and a right-aligned trailing slot for
  * timing / actions. One component renders the same on phones and desktop

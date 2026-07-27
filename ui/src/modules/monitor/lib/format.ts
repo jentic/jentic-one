@@ -36,3 +36,17 @@ export function formatDuration(ms: number | null | undefined): string {
 	if (ms < 1000) return `${ms}ms`;
 	return `${(ms / 1000).toFixed(1)}s`;
 }
+
+/** Compact average-latency display for stat tiles, e.g. "412ms". */
+export function formatLatency(ms: number | null | undefined): string {
+	if (ms == null || !Number.isFinite(ms)) return '—';
+	return `${Math.round(ms)}ms`;
+}
+
+/** Percentage with at most one decimal, trimming ".0", e.g. "91.3%", "100%". */
+export function formatPercent(value: number | null | undefined): string {
+	if (value == null || !Number.isFinite(value)) return '—';
+	if (Number.isInteger(value)) return `${value}%`;
+	const rounded = value.toFixed(1);
+	return `${rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded}%`;
+}

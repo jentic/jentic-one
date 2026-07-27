@@ -25,9 +25,9 @@ const apiHost = process.env.VITE_API_HOST || 'http://localhost:8000';
 //   * `/@id`, `/@fs`, `/@vite`    — Vite module-resolution endpoints.
 //
 // Anything else (`/auth`, `/credentials`, `/agents`, `/openapi.json`, the
-// Monitor aggregation endpoint `/monitoring/executions` (#386), a brand new
-// router added tomorrow, …) is proxied with zero config changes. This is
-// drift-proof: adding a backend router needs no edit here.
+// Monitor aggregation endpoint `/monitoring/usage` (jentic-one-internal#561),
+// a brand new router added tomorrow, …) is proxied with zero config changes.
+// This is drift-proof: adding a backend router needs no edit here.
 //
 // `/app-config.json` is the one root-level path the SPA fetches that the
 // backend owns; it is NOT under `/app`, so the regex below proxies it (which is
