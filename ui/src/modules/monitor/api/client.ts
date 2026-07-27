@@ -116,9 +116,9 @@ export async function getExecution(executionId: string): Promise<ExecutionRespon
 /* ------------------------------------------------------------------ */
 
 export interface UsageStatsParams {
-	/** Unix-second window lower bound; the endpoint defaults to now-7d. */
+	/** Unix-second window lower bound; the endpoint defaults to until-24h. */
 	since?: number | null;
-	/** Unix-second window upper bound; the endpoint defaults to now. */
+	/** Unix-second window upper bound; the endpoint defaults to now (floored to the minute). */
 	until?: number | null;
 	/** Top-rows grouping dimension; the endpoint defaults to `api`. */
 	groupBy?: GroupBy | null;

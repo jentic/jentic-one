@@ -43,10 +43,35 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
 }
 
 /**
+ * Format a top-row key into a display label, per grouping dimension. The
+ * backend composes keys/labels mechanically (see monitoring_repo.grouped_top):
+ *   api     → "vendor/name" with NULL columns coalesced to "unknown"
+ *   toolkit → the raw toolkit_id (nullable → SQL NULL key)
+ *   agent   → "actor_type/actor_id" (NULL propagates: `||` yields NULL, so
+ *              unattributed executions arrive as a single null-key row)
+ * We strip the mechanical prefixes for display and surface null/unknown
+ * groups as an explicit "Unattributed" bucket, matching jentic-mini.
+ */
+function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
+	if (!key) return 'Unattributed';
+	if (groupBy === 'api') {
+		const [vendor, ...rest] = key.split('/');
+		const name = rest.join('/');
+		if (vendor === 'unknown' && (name === 'unknown' || name === '')) return 'Unattributed';
+		return name && name !== 'unknown' ? name : key;
+	}
+	if (groupBy === 'agent') {
+		const slash = key.indexOf('/');
+		return slash >= 0 ? key.slice(slash + 1) || 'Unattributed' : key;
+	}
+	return key;
+}
+
+/**
  * Map the response's `top` rows into entity rows, sorted busiest-first.
- * Rows with an empty `key` are legacy records with no attribution (e.g.
- * executions that predate actor stamping) — surfaced as an explicit
- * "Unattributed" bucket rather than silently dropped, matching jentic-mini.
+ * Null-key rows are executions with no attribution (NULL toolkit/actor
+ * columns) — surfaced as an explicit "Unattributed" bucket rather than
+ * silently dropped, matching jentic-mini.
  */
 export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsageRow[] {
 	if (!usage) return [];
@@ -54,9 +79,12 @@ export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsage
 		.map((row) => {
 			const total = row.total ?? 0;
 			const success = row.success ?? 0;
+			// The generated type says `key: string`, but the SQL key expression
+			// is nullable on the wire for toolkit/agent groupings.
+			const key = (row.key ?? null) as string | null;
 			return {
-				id: row.key || '__unattributed__',
-				label: row.label || row.key || 'Unattributed',
+				id: key || '__unattributed__',
+				label: formatEntityLabel(usage.group_by, key),
 				totalExecutions: total,
 				successRate: total > 0 ? (success / total) * 100 : 100,
 				avgLatencyMs: Math.round(row.avg_ms ?? 0),

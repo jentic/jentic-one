@@ -50,16 +50,30 @@ export function OverviewTab() {
 			{ replace: true },
 		);
 
-	// Unix-second window lower bound. Rounded to the minute so the query key
-	// stays stable across re-renders instead of busting the cache every tick.
-	const since = useMemo(() => {
+	// Unix-second window bounds. Rounded to the minute so the query key stays
+	// stable across re-renders instead of busting the cache every tick. `until`
+	// is sent explicitly: the backend picks `bucket_seconds` from the window
+	// width (until - since), and letting the server default `until` to *its*
+	// now makes a 7d window nondeterministically overflow 604800s and flip
+	// between 6h and daily buckets.
+	const { since, until } = useMemo(() => {
 		const nowSec = Math.floor(Date.now() / 60_000) * 60;
-		return nowSec - days * 86_400;
+		return { since: nowSec - days * 86_400, until: nowSec };
 	}, [days]);
 
-	const apiUsage = useUsageStats({ since, groupBy: GroupBy.API, topLimit: TOP_LIMIT });
-	const toolkitUsage = useUsageStats({ since, groupBy: GroupBy.TOOLKIT, topLimit: TOP_LIMIT });
-	const agentUsage = useUsageStats({ since, groupBy: GroupBy.AGENT, topLimit: TOP_LIMIT });
+	const apiUsage = useUsageStats({ since, until, groupBy: GroupBy.API, topLimit: TOP_LIMIT });
+	const toolkitUsage = useUsageStats({
+		since,
+		until,
+		groupBy: GroupBy.TOOLKIT,
+		topLimit: TOP_LIMIT,
+	});
+	const agentUsage = useUsageStats({
+		since,
+		until,
+		groupBy: GroupBy.AGENT,
+		topLimit: TOP_LIMIT,
+	});
 
 	const isLoading = apiUsage.isLoading || toolkitUsage.isLoading || agentUsage.isLoading;
 	const firstError = [apiUsage, toolkitUsage, agentUsage].find((q) => q.isError);

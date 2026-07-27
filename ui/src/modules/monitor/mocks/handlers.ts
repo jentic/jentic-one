@@ -146,12 +146,16 @@ const USAGE_DAILY = rebaseFixture([
 ]);
 
 // Per-group `top` rows with the 12-point sparkline trends the Breakdown and
-// bubble charts render. Each group's rows sum to the same 184/168/16 split.
+// bubble charts render. Key/label formats mirror monitoring_repo.grouped_top:
+// api rows are "vendor/name" (label identical to key), toolkit rows use the
+// raw toolkit_id as both key and label, agent rows are "actor_type/actor_id",
+// and unattributed executions surface as a null key/label (SQL `||` with a
+// NULL operand). Each group's rows sum to the same 184/168/16 split.
 const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 	api: [
 		{
-			key: 'stripe.com',
-			label: 'stripe-api',
+			key: 'stripe/stripe-api',
+			label: 'stripe/stripe-api',
 			total: 100,
 			success: 97,
 			failed: 3,
@@ -159,8 +163,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [6, 9, 8, 12, 7, 10, 9, 11, 8, 9, 6, 5],
 		},
 		{
-			key: 'github.com',
-			label: 'github-api',
+			key: 'github/github-api',
+			label: 'github/github-api',
 			total: 52,
 			success: 43,
 			failed: 9,
@@ -168,8 +172,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [3, 4, 6, 5, 4, 3, 5, 6, 4, 5, 4, 3],
 		},
 		{
-			key: 'slack.com',
-			label: 'slack-api',
+			key: 'slack/slack-api',
+			label: 'slack/slack-api',
 			total: 32,
 			success: 28,
 			failed: 4,
@@ -180,7 +184,7 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 	toolkit: [
 		{
 			key: 'tk_payments',
-			label: 'Payments',
+			label: 'tk_payments',
 			total: 100,
 			success: 97,
 			failed: 3,
@@ -189,7 +193,7 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 		},
 		{
 			key: 'tk_dev',
-			label: 'Dev Tools',
+			label: 'tk_dev',
 			total: 52,
 			success: 43,
 			failed: 9,
@@ -198,7 +202,7 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 		},
 		{
 			key: 'tk_comms',
-			label: 'Comms',
+			label: 'tk_comms',
 			total: 32,
 			success: 28,
 			failed: 4,
@@ -208,8 +212,8 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 	],
 	agent: [
 		{
-			key: 'agent_billing',
-			label: 'Billing Agent',
+			key: 'agent/agent_billing',
+			label: 'agent/agent_billing',
 			total: 140,
 			success: 132,
 			failed: 8,
@@ -217,19 +221,20 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			trend: [8, 11, 10, 14, 9, 12, 11, 13, 10, 11, 8, 7],
 		},
 		{
-			key: 'user_admin',
-			label: 'Admin User',
+			key: 'user/user_admin',
+			label: 'user/user_admin',
 			total: 30,
 			success: 24,
 			failed: 6,
 			avg_ms: 520,
 			trend: [2, 3, 2, 4, 2, 3, 2, 3, 2, 3, 2, 2],
 		},
-		// Legacy rows with no attribution come back with an empty key; the UI
-		// must surface these as an "Unattributed" bucket, not drop them.
+		// Rows with NULL actor columns: `actor_type || '/' || actor_id` is SQL
+		// NULL, so the key/label arrive as null. The UI must surface these as
+		// an "Unattributed" bucket, not drop them.
 		{
-			key: '',
-			label: '',
+			key: null,
+			label: null,
 			total: 14,
 			success: 12,
 			failed: 2,
@@ -409,17 +414,27 @@ export const monitorHandlers = [
 		return row ? HttpResponse.json(row) : new HttpResponse(null, { status: 404 });
 	}),
 	http.get('/monitoring/usage', ({ request }) => {
-		// Enriched aggregation (jentic-one-internal#561). Serves the rebased
-		// daily buckets (date → unix-second ts, plus a plausible avg_ms) and the
-		// per-group `top` rows with sparkline trends. `since`/`until` slice the
-		// bucket series so the charts shift with the window selector, mirroring
-		// the real endpoint; `group_by` swaps the top-rows dimension.
+		// Enriched aggregation (jentic-one-internal#561). Mirrors the real
+		// MonitoringService semantics: `until` defaults to now floored to the
+		// minute, `since` defaults to a 24h window, `bucket_seconds` is derived
+		// from the window width (60s ≤1h, 1h ≤24h, 6h ≤7d, daily beyond), and
+		// buckets stay sparse (only slots with data — no zero-fill). The rebased
+		// daily fixture points land on day boundaries, which every tier divides
+		// evenly, so their timestamps are already valid bucket floors.
 		const url = new URL(request.url);
-		const nowSec = Math.floor(Date.now() / 1000);
-		const since = Number(url.searchParams.get('since') ?? nowSec - 7 * 86_400);
-		const until = Number(url.searchParams.get('until') ?? nowSec);
+		const nowSec = Math.floor(Date.now() / 60_000) * 60;
+		const untilParam = url.searchParams.get('until');
+		const until = untilParam != null ? Number(untilParam) : nowSec;
+		const sinceParam = url.searchParams.get('since');
+		const since = sinceParam != null ? Number(sinceParam) : until - 86_400;
 		const groupBy = url.searchParams.get('group_by') ?? 'api';
 		const topLimit = Math.min(50, Math.max(1, Number(url.searchParams.get('top_limit') ?? 10)));
+
+		const windowSeconds = until - since;
+		let bucketSeconds = 86_400;
+		if (windowSeconds <= 3_600) bucketSeconds = 60;
+		else if (windowSeconds <= 86_400) bucketSeconds = 3_600;
+		else if (windowSeconds <= 604_800) bucketSeconds = 21_600;
 
 		const AVG_MS = [412, 380, 505, 460, 430, 395, 520];
 		const buckets = USAGE_DAILY.map((b, i) => ({
@@ -428,7 +443,7 @@ export const monitorHandlers = [
 			success: b.success,
 			failed: b.failed,
 			avg_ms: AVG_MS[i % AVG_MS.length],
-		})).filter((b) => b.ts >= since && b.ts <= until);
+		})).filter((b) => b.ts >= since && b.ts < until);
 
 		const total = buckets.reduce((sum, b) => sum + b.total, 0);
 		const success = buckets.reduce((sum, b) => sum + b.success, 0);
@@ -437,7 +452,7 @@ export const monitorHandlers = [
 		return HttpResponse.json({
 			since,
 			until,
-			bucket_seconds: 86_400,
+			bucket_seconds: bucketSeconds,
 			group_by: groupBy,
 			stats: {
 				total,

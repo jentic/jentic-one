@@ -141,12 +141,14 @@ describe('MonitorPage', () => {
 
 		// Both the bubble chart and the Breakdown carry an APIs/Toolkits/Agents
 		// toggle; flip the Breakdown's (the last one). The agent grouping was
-		// prefetched, so rows swap without a spinner — and the legacy empty-key
-		// row must surface as "Unattributed" rather than being dropped.
+		// prefetched, so rows swap without a spinner. Backend agent keys are
+		// mechanical "actor_type/actor_id" strings — the UI strips the type
+		// prefix for display — and NULL actor columns arrive as a null key that
+		// must surface as "Unattributed" rather than being dropped.
 		const agentToggles = screen.getAllByRole('button', { name: 'Agents' });
 		await user.click(agentToggles[agentToggles.length - 1]);
 
-		expect(await screen.findByText('Billing Agent')).toBeInTheDocument();
+		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
 		expect(screen.getByText('Unattributed')).toBeInTheDocument();
 	});
 
