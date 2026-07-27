@@ -298,8 +298,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 
 - The authoritative command + flag reference is **generated from the CLI
   itself**, not this file: run `jentic --help` / `jentic <command> --help`
-  (always current, works offline), or open the platform docs at `/docs` on the
-  control plane (Reference → CLI) — the same reference rendered for humans,
+  (always current, works offline), or open the platform docs at `/app/docs` on
+  the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
 - `jentic profile list` — see profiles and which is active (start here).
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings

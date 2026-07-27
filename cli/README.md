@@ -18,15 +18,16 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
-| `jentic` | **Identity & access** | `register` · `bootstrap` · `profile` · `logout` · `access` | Each profile is an agent. Register it (Ed25519 + Dynamic Client Registration), switch the active profile, clear cached tokens, and file/track access requests (`access whoami` · `request` · `list` · `status` · `withdraw` · `refresh`). |
+| `jentic` | **Identity & access** | `register` · `bootstrap` · `profile` · `logout` | Each profile is an agent. Register it (Ed25519 + Dynamic Client Registration), switch the active profile, and clear cached tokens. |
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference. |
-| `jentic` | **Discover & execute** | `search` · `inspect` · `execute` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. |
-| `jentic` | **Agent tooling** | `skill` · `admin` | Install the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …) and manage OAuth provider config. |
+| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `skill` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …). |
+| `jentic` | **Administration** | `admin` | Manage OAuth provider config. |
 
-The **complete command + flag reference** is generated from these cobra
-definitions (`make cli-reference`) and rendered in the platform docs — open
-`/docs` on your deployment (Reference → CLI). This README covers building,
-onboarding, and operating; it does not duplicate per-flag docs.
+The table mirrors the CLI's own command groups (what `jentic` with no args
+prints). The **complete command + flag reference** is generated from these
+cobra definitions (`make cli-reference`) and rendered in the platform docs —
+open `/app/docs` on your deployment (Reference → CLI). This README covers
+building, onboarding, and operating; it does not duplicate per-flag docs.
 
 **New here?** Run `jenticctl install` to set up locally, then `jentic register`
 to create an agent.
