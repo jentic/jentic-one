@@ -200,5 +200,70 @@ to that directory until it's removed. `jentic run` should:
   removes the ACL entry, so granting is reversible in one step rather than requiring
   the operator to remember `chmod -a` / `setfacl -x` syntax.
 
-<!-- Sections added incrementally: danger-flagging, launch, and the wiring back
-     into 05/jenticctl. -->
+### Flagging directories that shouldn't be granted
+
+Not every "Allow" is a good idea. Granting the agent access to the **operator's home
+root** (or other sensitive trees) would hand back exactly the read path that
+`chmod 700 ~` in [`05`](05-agent-as-own-unix-user.md) was there to close — defeating
+the whole posture in one keystroke. So before offering **Allow**, `jentic run`
+classifies the target directory and, when it's dangerous, makes **Allow** the
+non-default, explicitly-confirmed option:
+
+```
+⚠  /Users/alice IS THE OPERATOR'S HOME. Granting the agent access here re-opens the
+   credential boundary this setup exists to protect (keys, browser profile, SSH).
+  [h] Open in the agent's home instead                                   [default]
+  [a] I understand the risk — grant anyway  (type 'grant' to confirm)
+  [c] Cancel
+Choice [h]:
+```
+
+Directories that trip the warning (a denylist, matched against the resolved absolute
+path):
+
+- **the operator's home root** (`~operator`) and its direct dotfile dirs — `~/.ssh`,
+  `~/.jentic`, `~/.aws`, `~/.config`, `~/.gnupg`, the browser profile dirs, Keychain
+  paths;
+- **any other user's home** (`/Users/*`, `/home/*`) that isn't the agent's own;
+- **system trees** — `/etc`, `/usr`, `/var`, `/System`, `/Library`, `/`.
+
+For a flagged path the safe options come first, **Allow** requires a typed
+confirmation (not just a keypress), and `--yes` **declines** it rather than granting
+(the non-interactive default must never silently punch the hole). A normal project
+directory under a neutral location grants with the plain prompt from step 3.
+
+> The point isn't to make granting impossible — an operator may have a legitimate
+> reason to point the agent at an unusual path. It's to ensure the *dangerous* grants
+> are never the path of least resistance, and never happen without the operator
+> seeing why they're dangerous.
+
+## Step 4 — launch
+
+With user, binary, and directory resolved, launch as the agent user in a **login
+shell** (fresh environment, so no operator tokens/vars leak) in the resolved
+directory:
+
+```bash
+sudo -u "$AGENT" -i bash -lc 'cd "$DIR" && exec <binary>'
+```
+
+For the "open in home" path there's no `cd` — the login shell already starts in the
+agent's home. This is exactly the launch line from [`05`](05-agent-as-own-unix-user.md),
+now with the user/dir/binary filled in by the preceding steps instead of by the
+operator's memory.
+
+## How this feeds [`05`](05-agent-as-own-unix-user.md) and `jenticctl`
+
+- `jentic run` is the **daily-driver** counterpart to the one-time
+  `jenticctl agent-user setup` proposed in [`05`](05-agent-as-own-unix-user.md):
+  setup creates the account; `run` is what the operator types every time after.
+- It turns the three real-issues from [`05`](05-agent-as-own-unix-user.md)'s honest
+  assessment into guided prompts instead of tripwires: **per-user toolchain** (step
+  2), **shared-workspace access** (step 3), and it keeps the **login-shell / own-home
+  start** correct by construction (step 4).
+- The directory denylist and the grant inventory are natural inputs to the
+  [`03`](../03-mitigations.md) "doctor" idea: `jenticctl doctor` can report every ACL
+  grant `jentic run` has made and warn on any that point at sensitive trees.
+- **Not owning the agent client still holds** (framing point #4): `jentic run` wraps
+  *our* CLI and the OS, and merely execs the third-party agent binary. The operator's
+  only new verb is `jentic run <agent>` instead of the raw `sudo -u … -i` line.
