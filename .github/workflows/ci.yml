@@ -223,10 +223,6 @@ jobs:
           scan-ref: '.'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
-          # Explicit rather than relying on the trivy CLI's implicit
-          # cwd-relative `.trivyignore` default, which the action only
-          # forwards by accident of its working directory.
-          trivyignores: '.trivyignore'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
