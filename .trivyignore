@@ -1,0 +1,10 @@
+# Trivy ignore list. Every entry needs a justification and, where applicable,
+# a tracking reference for removing it.
+
+# react-router "RSC Mode CSRF Bypass Allows Action Execution Before 400
+# Response" (HIGH, >= 7.12.0 < 8.3.0, only fixed in the v8 major). Not
+# exploitable here: the UI is a client-only SPA using declarative
+# <BrowserRouter> (ui/src/main.tsx) — no RSC mode, no framework-mode server
+# actions, no react-router server runtime. Remove when the UI moves to
+# react-router 8.
+GHSA-qwww-vcr4-c8h2
