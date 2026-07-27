@@ -204,6 +204,50 @@ async def test_no_background_when_callback_is_none() -> None:
     assert resp.background is None
 
 
+@pytest.mark.asyncio
+async def test_duration_includes_connect_and_ttfb() -> None:
+    """Regression: `duration_ms` must cover the full round trip, not just body drain.
+
+    The upstream connect + request send + response-header wait all happen inside
+    `runner.stream()`; the outcome's perf anchor must predate it, otherwise real
+    calls persist as ~0ms and the monitor's latency stats are garbage.
+    """
+    result = StreamingResult(
+        status_code=200,
+        headers={"content-type": "text/plain"},
+        content_type="text/plain",
+        aiter=_finite_iter([b"ok"]),
+    )
+
+    class _SlowOpenRunner:
+        @asynccontextmanager
+        async def stream(self, _req: RunnerRequest) -> AsyncIterator[StreamingResult]:
+            await asyncio.sleep(0.05)  # simulated connect + TTFB
+            yield result
+
+    captured: list[StreamingOutcome] = []
+
+    async def _callback(outcome: StreamingOutcome) -> None:
+        captured.append(outcome)
+
+    resp = await open_streaming_response(
+        _SlowOpenRunner(),  # type: ignore[arg-type]
+        RunnerRequest(method="GET", url="https://api.example.com/x"),
+        _ctx_req(),
+        "exec-dur-1",
+        transfer_deadline_s=0,
+        background_callback=_callback,
+    )
+
+    async for _ in resp.body_iterator:  # type: ignore[attr-defined]
+        pass
+    assert resp.background is not None
+    await resp.background()
+
+    assert len(captured) == 1
+    assert captured[0].duration_ms >= 50
+
+
 # --- Persist callback behaviour tests ---
 
 

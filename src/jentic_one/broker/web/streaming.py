@@ -156,6 +156,12 @@ async def open_streaming_response(
     When ``background_callback`` is provided, it is invoked as a Starlette
     ``BackgroundTask`` after the response body completes — used for persistence.
     """
+    # Anchor the duration clock *before* the upstream stream is opened:
+    # ``runner.stream()`` awaits connect + request send + response headers, and
+    # ``StreamingOutcome``'s default ``started_at_perf`` (perf_counter at
+    # construction) would run only after all of that — recording body-drain
+    # time (~0ms for small responses) instead of the full round trip.
+    start_perf = time.perf_counter()
     stack = AsyncExitStack()
     try:
         result = await stack.enter_async_context(runner.stream(request))
@@ -169,6 +175,7 @@ async def open_streaming_response(
         outcome = StreamingOutcome(
             execution_id=execution_id,
             http_status=result.status_code,
+            started_at_perf=start_perf,
         )
         background = BackgroundTask(background_callback, outcome)
 
