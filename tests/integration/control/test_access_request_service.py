@@ -390,6 +390,80 @@ async def test_decide_all_denied(
     assert view.status == "denied"
 
 
+async def _filed_alert(admin_db: DatabaseSession, request_id: str) -> Event | None:
+    async with admin_db.session() as session:
+        rows = await EventRepository.list_all(
+            session, event_type=["access_request.filed"], limit=100
+        )
+    return next((e for e in rows if (e.data or {}).get("request_id") == request_id), None)
+
+
+async def test_decide_settles_filed_alert(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Deciding a request acknowledges its actionable `access_request.filed` alert.
+
+    The filed event is what puts the "review this request" row on the rail and
+    dashboard. The decision IS that review — leaving the alert live keeps a
+    stale actionable row whose buttons then fail on "already decided". Only the
+    decided request's alert may be touched (scoped by data.request_id).
+    """
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    other = await svc.file(
+        actor_id=FILER_SUB,
+        reason=None,
+        items=[
+            {
+                "resource_type": "credential",
+                "action": "write",
+                "resource_id": "cred_other",
+                "to_type": "toolkit",
+                "to_id": "tk_target",
+            }
+        ],
+        identity=filer,
+    )
+
+    reviewer = _owner_identity()
+    await svc.decide(
+        filed.id,
+        identity=reviewer,
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+
+    settled = await _filed_alert(admin_db, filed.id)
+    assert settled is not None
+    assert settled.acknowledged is True
+    assert settled.acknowledged_by == OWNER_SUB
+
+    untouched = await _filed_alert(admin_db, other.id)
+    assert untouched is not None
+    assert untouched.acknowledged is False
+
+
+async def test_withdraw_settles_filed_alert(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Withdrawing a request also settles its filed alert — nothing left to review."""
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+
+    await svc.withdraw(filed.id, identity=filer)
+
+    settled = await _filed_alert(admin_db, filed.id)
+    assert settled is not None
+    assert settled.acknowledged is True
+
+
 async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
     svc: AccessRequestService,
     clean_access_requests: None,

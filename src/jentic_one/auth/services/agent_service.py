@@ -12,7 +12,6 @@ from jentic_one.admin.repos import (
     AgentCredentialRepository,
     AgentRepository,
     AgentToolkitBindingRepository,
-    EventRepository,
 )
 from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import ToolkitNameRepository
@@ -32,7 +31,7 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
@@ -165,22 +164,22 @@ class AgentService:
         alert live would keep a stale "awaits approval" row (with a working
         Review button) on the rail and dashboard forever. Best-effort like the
         emit itself: alert bookkeeping must never roll back the decision.
+
+        The body runs inside a SAVEPOINT: on PostgreSQL a statement error
+        aborts the whole transaction, so a bare try/except here would swallow
+        the exception but leave the outer transaction poisoned — the decision's
+        commit would then fail anyway. Rolling back just the nested block keeps
+        the "never roll back the decision" promise for DB-level failures too.
         """
         try:
-            pending = await EventRepository.list_all(
-                session,
-                event_type=[EventType.AGENT_SELF_REGISTERED],
-                requires_action=True,
-                acknowledged=False,
-                actor_id=agent_id,
-                actor_type=ActorType.AGENT.value,
-            )
-            for event in pending:
-                await EventRepository.acknowledge(
+            async with session.begin_nested():
+                await settle_actionable_events(
                     session,
-                    event.id,
+                    event_type=EventType.AGENT_SELF_REGISTERED,
                     acknowledged_by=acknowledged_by,
                     acknowledgement_note="registration decided",
+                    actor_id=agent_id,
+                    actor_type=ActorType.AGENT.value,
                 )
         except Exception:
             logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)

@@ -359,6 +359,8 @@ async def test_deny_settles_self_registered_alert(
         alert = await EventRepository.get_by_id(session, self_registered_alert_id)
         assert alert is not None
         assert alert.acknowledged is True
+        # The audit trail must record WHO decided, on deny as well as approve.
+        assert alert.acknowledged_by is not None
 
         decisions = await EventRepository.list_all(
             session, event_type=[EventType.AGENT_REGISTRATION_DENIED]
@@ -367,6 +369,53 @@ async def test_deny_settles_self_registered_alert(
         assert decision.data["agent_name"] == "dcr-self-registered"
         await session.execute(delete(Event).where(Event.id == decision.id))
         await session.commit()
+
+
+async def test_approve_leaves_other_agents_alerts_untouched(
+    admin_client: TestClient,
+    web_context: Context,
+    dcr_agent_id: str,
+    self_registered_alert_id: str,
+) -> None:
+    """Settlement is scoped to the decided agent — no blanket acknowledge.
+
+    Two agents awaiting review is the normal fleet-onboarding case; deciding
+    one must never clear the other's actionable row from the rail/dashboard.
+    """
+    async with web_context.admin_db.transaction() as session:
+        other = await EventRepository.create(
+            session,
+            type=EventType.AGENT_SELF_REGISTERED,
+            severity="info",
+            summary="Agent 'other-agent' self-registered and awaits approval",
+            requires_action=True,
+            data={"agent_id": "agnt_other_pending", "agent_name": "other-agent"},
+            created_by="dcr",
+            actor_id="agnt_other_pending",
+            actor_type="agent",
+        )
+    other_id = other.id
+
+    try:
+        resp = admin_client.post(f"/agents/{dcr_agent_id}:approve")
+        assert resp.status_code == 200
+
+        async with web_context.admin_db.session() as session:
+            settled = await EventRepository.get_by_id(session, self_registered_alert_id)
+            assert settled is not None
+            assert settled.acknowledged is True
+
+            untouched = await EventRepository.get_by_id(session, other_id)
+            assert untouched is not None
+            assert untouched.acknowledged is False
+            assert untouched.acknowledged_by is None
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(delete(Event).where(Event.id == other_id))
+            await session.execute(
+                delete(Event).where(Event.type == EventType.AGENT_REGISTRATION_APPROVED)
+            )
+            await session.commit()
 
 
 def test_password_rotation_required(web_context: Context) -> None:

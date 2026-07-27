@@ -89,6 +89,9 @@ async def test_register_emits_actionable_event_with_agent_tokens(
     assert kwargs["requires_action"] is True
     assert kwargs["data"] == {"agent_id": "agnt_test123", "agent_name": "my-agent"}
     assert kwargs["actor_id"] == "agnt_test123"
+    # The settlement query in agent_service filters on actor_type == "agent";
+    # emitting with a different actor_type would orphan the alert forever.
+    assert kwargs["actor_type"] == "agent"
 
 
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
