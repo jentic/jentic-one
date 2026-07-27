@@ -336,6 +336,45 @@ async def test_stream_fresh_connect_does_not_replay_visible_history(
     await gen.aclose()
 
 
+async def test_stream_future_since_is_clamped_to_now(
+    integration_context: Context, clean_events: None
+) -> None:
+    """A future ``since`` (fast client clock) must not black-hole the stream.
+
+    Un-clamped, ``watermark = since`` puts the poll window's lower bound in the
+    future, so every normally-stamped event committed after connect sits below
+    it and is never returned — symmetric to the watermark-advance clamp for
+    future-stamped ROWS. The service must floor ``since`` at the present.
+    """
+    ctx = integration_context
+    service = EventStreamService(ctx)
+    gen = cast(
+        "AsyncGenerator[EventView | Heartbeat, None]",
+        service.stream(
+            since=datetime.now(UTC) + timedelta(seconds=120),
+            poll_interval_seconds=0,
+            overlap_seconds=15.0,
+        ),
+    )
+    first = await gen.__anext__()
+    assert isinstance(first, Heartbeat)
+
+    async with ctx.admin_db.session() as session:
+        await EventRepository.create(
+            session,
+            type="toolkit.error",
+            severity="error",
+            summary="After future since",
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    item = await gen.__anext__()
+    assert isinstance(item, EventView)
+    assert item.summary == "After future since"
+    await gen.aclose()
+
+
 async def test_stream_filters_with_cursor(integration_context: Context, clean_events: None) -> None:
     """Cursor-based resumption composes correctly with event_type filters."""
     ctx = integration_context

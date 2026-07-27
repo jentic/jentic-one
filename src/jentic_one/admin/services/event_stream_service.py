@@ -71,6 +71,12 @@ class EventStreamService:
         # (killing the stream mid-SSE). Column values are UTC, so pin it.
         if since is not None and since.tzinfo is None:
             since = since.replace(tzinfo=UTC)
+        # Clamp a future ``since`` (fast client clock) to the present —
+        # symmetric with the watermark-advance clamp below. Un-clamped, the
+        # horizon would sit in the future and every normally-stamped event
+        # until the clock caught up would be seeded as "history" and dropped.
+        if since is not None:
+            since = min(since, datetime.now(UTC))
         # Newest created_at yielded so far (or the caller's resume point).
         watermark: datetime
         # Ids already yielded on THIS connection, kept for the overlap horizon.
@@ -82,7 +88,12 @@ class EventStreamService:
             async with self._ctx.admin_db.session() as session:
                 event = await EventRepository.get_by_id(session, last_event_id)
             if event is not None:
-                watermark = event.created_at
+                # Same future-clamp as ``since``: a future-stamped resume row
+                # must not black-hole the stream. When clamped, the id
+                # tie-break below simply never fires and rows near the resume
+                # point are re-delivered — allowed (at-least-once across
+                # connections; clients dedup by SSE id).
+                watermark = min(event.created_at, datetime.now(UTC))
                 resume_id = event.id
 
         # Pre-seed the dedup map with rows ALREADY VISIBLE at-or-before the
@@ -116,7 +127,12 @@ class EventStreamService:
                 )
                 if before_resume:
                     seen[event.id] = event.created_at
-            if len(batch) < _PAGE_LIMIT:
+            # Rows past the watermark can never satisfy ``before_resume``, so
+            # once a page's tail crosses it the scan is done. Without this
+            # bound, an old resume point (a tab waking after hours) would page
+            # the ENTIRE backlog to the present before the first yield — pure
+            # wasted I/O the main loop then re-reads to deliver.
+            if len(batch) < _PAGE_LIMIT or batch[-1].created_at > watermark:
                 break
             page_cursor = (batch[-1].created_at, batch[-1].id)
 
