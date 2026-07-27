@@ -143,14 +143,28 @@ func RevokeDirCmd(agentUser, dir string) *exec.Cmd {
 }
 
 // LaunchCmd builds the interactive launch: become the agent user in a login
-// shell (fresh env, cd to the agent's home) and exec the binary. When dir is
-// non-empty the shell cd's there first. The caller wires os.Stdin/out/err.
+// shell (fresh env, HOME set to the agent's home) and exec the binary. When dir
+// is set the shell cd's there first; otherwise it cd's to the agent's home. The
+// caller wires os.Stdin/out/err.
+//
+// We use `sudo -u <user> -H bash -lc` rather than `sudo -i`: `-i` re-serializes
+// the command through the login shell (mangling any multi-token/multi-line
+// snippet), while plain sudo passes argv straight through. `-H` points HOME at
+// the agent's home and `bash -l` still sources the agent's login profiles (so a
+// PATH export we added there is honoured).
 func LaunchCmd(ctx context.Context, agentUser, binary, dir string) *exec.Cmd {
-	inner := "exec " + shellQuote(binary)
+	cd := `cd "$HOME"`
 	if dir != "" {
-		inner = "cd " + shellQuote(dir) + " && " + inner
+		cd = "cd " + shellQuote(dir)
 	}
-	return exec.CommandContext(ctx, "sudo", "-u", agentUser, "-i", "bash", "-lc", inner) //nolint:gosec // agentUser/binary/dir are config-derived, shell-quoted.
+	inner := cd + " && exec " + shellQuote(binary)
+	return exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, inner)...) //nolint:gosec // agentUser/binary/dir are config-derived, shell-quoted.
+}
+
+// agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
+// bash (see LaunchCmd for why not `sudo -i`). Shared by every agent invocation.
+func agentBashArgs(agentUser, snippet string) []string {
+	return []string{"-u", agentUser, "-H", "bash", "-lc", snippet}
 }
 
 // EnsureLocalBinOnPathCmd makes ~/.local/bin resolvable for the agent user by
@@ -166,7 +180,7 @@ for f in "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zprofile"; do
     printf '\n%s\n%s\n' "$marker" "$line" >> "$f"
   fi
 done`
-	return exec.Command("sudo", "-u", agentUser, "-i", "bash", "-lc", snippet) //nolint:gosec // agentUser is a config account name; snippet is a fixed literal.
+	return exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is a fixed literal.
 }
 
 // OperatorBinaryPath resolves the operator's own copy of binary via `command
@@ -194,13 +208,13 @@ func CopyBinaryCmd(agentUser, src, binary string) *exec.Cmd {
 // InstallBinaryCmd runs an agent's documented fresh-install command as the
 // agent user in a login shell, so the toolchain lands in the agent's home.
 func InstallBinaryCmd(agentUser, installCmd string) *exec.Cmd {
-	return exec.Command("sudo", "-u", agentUser, "-i", "bash", "-lc", installCmd) //nolint:gosec // agentUser is a config account name; installCmd is a fixed descriptor value.
+	return exec.Command("sudo", agentBashArgs(agentUser, installCmd)...) //nolint:gosec // agentUser is a config account name; installCmd is a fixed descriptor value.
 }
 
 // runAsAgent runs a shell snippet as the agent user in a login shell and returns
 // its error (nil on exit 0). Output is discarded; callers only need the verdict.
 func runAsAgent(ctx context.Context, agentUser, snippet string) error {
-	cmd := exec.CommandContext(ctx, "sudo", "-u", agentUser, "-i", "bash", "-lc", snippet) //nolint:gosec // agentUser is a config account name; snippet is built from shell-quoted values.
+	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is built from shell-quoted values.
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run()
