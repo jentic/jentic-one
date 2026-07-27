@@ -97,10 +97,19 @@ export async function createPlanToolkit(name: string): Promise<CreatedPlanToolki
 }
 
 /**
- * Suggest a toolkit name from the plan's API reference — the vendor/name slug,
- * which reads naturally (e.g. `posthog-com/posthog-api`) and is stable per API.
+ * Suggest a toolkit name for the plan. A toolkit is the AGENT's bundle of
+ * access, so the suggestion leads with the requesting agent when the actor
+ * directory has resolved it (e.g. `Claude Code toolkit`). Until then — or when
+ * the requester is unknown — fall back to the API vendor/name slug, which still
+ * reads naturally (e.g. `posthog-com/posthog-api`) and is stable per API.
  */
-export function suggestToolkitName(vendor: string, name?: string): string {
+export function suggestToolkitName(
+	agentName: string | undefined,
+	vendor: string,
+	name?: string,
+): string {
+	const agent = agentName?.trim();
+	if (agent) return `${agent} toolkit`;
 	return [vendor, name].filter(Boolean).join('/');
 }
 

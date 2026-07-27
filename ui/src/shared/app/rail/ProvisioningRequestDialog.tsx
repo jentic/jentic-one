@@ -38,6 +38,7 @@ import { ActorLabel } from '@/shared/ui/ActorLabel';
 import { AgentBadge } from '@/shared/ui/AgentBadge';
 import { ErrorAlert } from '@/shared/ui/ErrorAlert';
 import { PermissionRuleEditor, type PermissionRuleInput } from '@/shared/ui/PermissionRuleEditor';
+import { useActorDirectory } from '@/shared/hooks';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
 import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
@@ -122,6 +123,14 @@ export function ProvisioningRequestDialog({
 	const bindItem = useMemo(() => findItem(request, 'credential', 'bind'), [request]);
 	const agentBindItem = useMemo(() => findItem(request, 'toolkit', 'bind'), [request]);
 
+	// The requesting agent's display name, resolved from the actor directory.
+	// Feeds the header badge and the toolkit-name suggestion (a toolkit is the
+	// agent's access bundle, so it should be named after the agent — not the
+	// credential/API). Resolves asynchronously; undefined until the directory
+	// query lands or when the id is unknown.
+	const { resolve: resolveActor } = useActorDirectory();
+	const agentName = resolveActor(request.actor_id);
+
 	// Seed the rule editor from the agent's proposed rules on the bind item.
 	const proposedRules = useMemo<PermissionRuleInput[]>(() => {
 		if (!bindItem) return [];
@@ -139,6 +148,9 @@ export function ProvisioningRequestDialog({
 	const [step, setStep] = useState<Step>('toolkit');
 	const [toolkitId, setToolkitId] = useState<string | null>(null);
 	const [toolkitName, setToolkitName] = useState('');
+	// Set once the operator edits the toolkit name, so the async agent-name
+	// upgrade below never clobbers a manual edit.
+	const [toolkitNameEdited, setToolkitNameEdited] = useState(false);
 	const [credentialId, setCredentialId] = useState<string | null>(null);
 	const [credentialType, setCredentialType] = useState<string | null>(null);
 	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
@@ -195,12 +207,21 @@ export function ProvisioningRequestDialog({
 		setToolkitId(null);
 		setCredentialId(null);
 		setCredentialType(null);
-		setToolkitName(suggestToolkitName(apiRef?.vendor ?? '', apiRef?.name));
+		setToolkitNameEdited(false);
+		setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
 		setRules(proposedRules);
 		setOutcome(null);
 		setFreshStatus(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [request.id]);
+
+	// The actor directory resolves asynchronously, so the requester's name often
+	// lands AFTER the seed above. Upgrade the suggested name when it does — but
+	// never clobber a manual edit or a name the toolkit was already created with.
+	useEffect(() => {
+		if (toolkitNameEdited || toolkitId !== null) return;
+		setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
+	}, [agentName, toolkitNameEdited, toolkitId, apiRef]);
 
 	const handleCreateToolkit = useCallback(async () => {
 		setBusy(true);
@@ -460,7 +481,7 @@ export function ProvisioningRequestDialog({
 							Grant
 							<AgentBadge
 								id={request.actor_id}
-								name={request.actor_id}
+								name={agentName ?? request.actor_id}
 								kind="Agent"
 								size="sm"
 							/>
@@ -511,8 +532,11 @@ export function ProvisioningRequestDialog({
 									<Input
 										id="pw-toolkit-name"
 										value={toolkitName}
-										onChange={(e) => setToolkitName(e.target.value)}
-										placeholder="e.g. googleapis-com/sheets"
+										onChange={(e) => {
+											setToolkitNameEdited(true);
+											setToolkitName(e.target.value);
+										}}
+										placeholder="e.g. Claude Code toolkit"
 									/>
 								</div>
 							</StepBody>

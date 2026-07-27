@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { createPlanToolkit, createNoAuthCredential } from '@/shared/lib/provisioningFulfilment';
+import {
+	createPlanToolkit,
+	createNoAuthCredential,
+	suggestToolkitName,
+} from '@/shared/lib/provisioningFulfilment';
 import { ApiError, ToolkitsService, CredentialsService, CredentialType } from '@/shared/api';
 
 function conflict(): ApiError {
@@ -16,6 +20,27 @@ function ok(id: string, name: string) {
 		ReturnType<typeof ToolkitsService.createToolkit>
 	>;
 }
+
+describe('suggestToolkitName — agent-first naming', () => {
+	it('leads with the requesting agent when its name is known', () => {
+		expect(suggestToolkitName('Claude Code', 'posthog-com', 'posthog-api')).toBe(
+			'Claude Code toolkit',
+		);
+	});
+
+	it('falls back to the API vendor/name while the agent is unresolved', () => {
+		expect(suggestToolkitName(undefined, 'posthog-com', 'posthog-api')).toBe(
+			'posthog-com/posthog-api',
+		);
+		expect(suggestToolkitName(undefined, 'httpbin-org')).toBe('httpbin-org');
+	});
+
+	it('treats a blank agent name as unresolved', () => {
+		expect(suggestToolkitName('   ', 'posthog-com', 'posthog-api')).toBe(
+			'posthog-com/posthog-api',
+		);
+	});
+});
 
 describe('createPlanToolkit — 409 name disambiguation', () => {
 	let spy: ReturnType<typeof vi.spyOn>;
