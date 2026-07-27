@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class TokenRequest(BaseModel):
-    """Token endpoint request (form body)."""
+    """Token endpoint request (JSON body — not RFC 6749 form-encoded)."""
 
     grant_type: str
     refresh_token: str | None = None

@@ -388,6 +388,13 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
+    # Public, schema-hidden agent-discovery documents (onboarding skill +
+    # llms.txt). Mounted on every standalone surface so split deployments
+    # (gateway proxying to per-surface backends) serve them too. Registered
+    # *before* the surface routers and the container extension seam so neither
+    # the broker's /{upstream_url:path} catch-all nor an injected extra router
+    # can shadow these four literal paths.
+    app.include_router(get_agent_discovery_router())
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
@@ -399,10 +406,6 @@ def create_surface_app(
         )
     for installer in container.extra_installers:
         installer(app, ctx)
-    # Public, schema-hidden agent-discovery documents (onboarding skill +
-    # llms.txt). Mounted on every standalone surface so split deployments
-    # (gateway proxying to per-surface backends) serve them too.
-    app.include_router(get_agent_discovery_router())
     app.add_middleware(RequestIDMiddleware)
     app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
     attach_http_observability(app)

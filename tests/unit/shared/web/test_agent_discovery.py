@@ -13,7 +13,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from jentic_one.__main__ import _expand_allowed_dbs
 from jentic_one.auth.web.app import create_app as create_auth_app
+from jentic_one.broker.web.app import create_app as create_broker_app
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.agent_discovery import (
@@ -115,6 +117,37 @@ def test_standalone_surface_serves_discovery_documents(ctx: Context) -> None:
     client = TestClient(app, raise_server_exceptions=False)
     assert client.get(SKILL_PATH).status_code == 200
     assert client.get(LLMS_TXT_PATH).status_code == 200
+
+
+def test_broker_catch_all_does_not_shadow_discovery_documents(
+    app_config: AppConfig,
+) -> None:
+    """The broker's /{upstream_url:path} proxy must not swallow the documents.
+
+    The discovery router is registered before the surface routers precisely so
+    the broker's auth-gated catch-all cannot shadow these literal paths.
+    """
+    broker_ctx = Context(app_config, allowed_dbs=_expand_allowed_dbs(["broker"]))
+    app = create_broker_app(broker_ctx)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get(SKILL_PATH)
+    assert resp.status_code == 200
+    assert resp.text == load_skill_markdown()
+    assert client.get(LLMS_TXT_PATH).status_code == 200
+
+
+def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> None:
+    """Served instructions an LLM follows verbatim must match the backend.
+
+    Regression guard for review findings: the poll loop must key on the real
+    ``active`` status (there is no ``approved``), and the token call must be
+    described as JSON (the endpoint 422s a form-encoded body).
+    """
+    body = client.get(LLMS_TXT_PATH).text
+    assert "`active`" in body
+    assert "approved" not in body  # the status value is `active`, never `approved`
+    assert "JSON body" in body
+    assert "unique `jti`" in body
 
 
 def test_render_llms_txt_stamps_base_everywhere() -> None:

@@ -20,13 +20,13 @@ fine as long as they end up equal.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+from .conftest import SRC_ROOT
+
+REPO_ROOT = SRC_ROOT.parent.parent
 CLI_SKILL = REPO_ROOT / "cli" / "internal" / "skillgen" / "content" / "jentic.md"
-SERVED_SKILL = REPO_ROOT / "src" / "jentic_one" / "shared" / "web" / "content" / "jentic.md"
+SERVED_SKILL = SRC_ROOT / "shared" / "web" / "content" / "jentic.md"
 
 
 @pytest.mark.arch

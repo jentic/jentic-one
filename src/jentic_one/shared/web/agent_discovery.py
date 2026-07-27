@@ -6,12 +6,17 @@ Serves the canonical "how to use Jentic" onboarding skill over HTTP
 reach a deployment can self-onboard from the base URL alone — no manual copying
 of the CLI-generated skill file, no drift from the running version.
 
-The skill markdown is the same content the CLI embeds and writes into agent
-runtimes (``cli/internal/skillgen/content/jentic.md``); a drift test pins the
-two copies to each other (``tests/arch/test_skill_drift.py``).
+The skill markdown is the same canonical content the CLI embeds and renders
+into agent runtimes (``cli/internal/skillgen/content/jentic.md``); a drift test
+pins the two copies to each other (``tests/arch/test_skill_drift.py``).
 
 Hidden from the OpenAPI schema, like ``GET /reference/endpoints.json``: these
 are tooling/onboarding documents, not a product API.
+
+Split deployments: the router is mounted on every surface app, but the links
+in ``llms.txt`` span surfaces (auth, registry, control), so standalone
+surfaces should set ``auth.canonical_base_url`` to the gateway URL — otherwise
+the rendered links point at the single surface's own host and may 404 there.
 """
 
 from __future__ import annotations
@@ -22,9 +27,9 @@ from functools import cache
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
-from jentic_one.shared.config import AuthConfig
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.links import deployment_base_url
 
 SKILL_PATH = "/skills/jentic.md"
 SKILL_ALIAS_PATH = "/SKILL.md"
@@ -39,13 +44,6 @@ def load_skill_markdown() -> str:
     """The canonical onboarding-skill markdown, read once from package data."""
     resource = importlib.resources.files("jentic_one.shared.web") / "content" / "jentic.md"
     return resource.read_text(encoding="utf-8")
-
-
-def _base_url(config: AuthConfig, request: Request) -> str:
-    """Deployment base URL: the configured canonical URL, else the request's."""
-    if config.canonical_base_url:
-        return config.canonical_base_url.rstrip("/")
-    return str(request.base_url).rstrip("/")
 
 
 def render_llms_txt(base: str) -> str:
@@ -65,8 +63,8 @@ def render_llms_txt(base: str) -> str:
 > it.
 
 Agents: read the onboarding skill at {base}{SKILL_PATH} first. It is the
-canonical guide to the identity → discover → request access → execute loop,
-and is the same content the `jentic` CLI installs into agent runtimes.
+canonical guide to the identity → discover → request access → execute loop —
+the same canonical guide the `jentic` CLI renders into agent runtimes.
 
 ## Quickstart (agent onboarding)
 
@@ -82,23 +80,27 @@ sequence is:
    operator must approve the registration.
 2. Poll approval (RFC 7592): `GET {base}/register/{{client_id}}` with
    `Authorization: Bearer <registration_access_token>` until `status` is
-   approved.
-3. Get a token: `POST {base}/oauth/token` with
-   `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer` and an
-   EdDSA-signed JWT assertion (see the OAuth discovery document below).
+   `active` (it starts as `pending`; `rejected` means a human denied the
+   registration).
+3. Get a token: `POST {base}/oauth/token` with a JSON body (not form-encoded):
+   `{{"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+   "assertion": "<EdDSA-signed JWT>"}}`. Assertion claims: `iss` = your
+   `client_id`, `aud` = `{base}/oauth/token`, `exp` within 5 minutes, and a
+   unique `jti` (required — replayed or missing `jti` values are rejected).
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
    `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
 5. Request access: `POST {base}/access-requests` for the toolkit/API you need,
    then wait for a human to approve.
-6. Execute through the broker gateway (the CLI's `jentic execute` is the
-   audited path; credentials are injected by the broker, never handled by
-   you).
+6. Execute by sending the request through the broker's forward proxy with the
+   full upstream URL (the broker runs on its own host/port — see the skill's
+   execute section). The CLI's `jentic execute` is the equivalent audited
+   path. Credentials are injected by the broker, never handled by you.
 
 ## Docs
 
 - [Agent onboarding skill]({base}{SKILL_PATH}): canonical "how to use Jentic"
-  guide for agents; identical to the CLI-installed skill
+  guide for agents; same canonical content as the CLI-installed skill
 - [OpenAPI specification]({base}/openapi.json): the control-plane API
 - [Endpoint and scope reference]({base}/reference/endpoints.json): every
   endpoint with required scopes and typical caller (agent / operator)
@@ -120,7 +122,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_PATH, include_in_schema=False)
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
-        base = _base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config.auth, request)
         return PlainTextResponse(render_llms_txt(base), media_type=MARKDOWN_MEDIA_TYPE)
 
     return router
