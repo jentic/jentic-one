@@ -19,7 +19,7 @@
  * fulfilment can leave real objects. The wizard tracks what it created this
  * session and offers to discard them on cancel (client-side, best-effort).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowLeft,
 	ArrowRight,
@@ -71,6 +71,32 @@ import {
 
 type Step = 'toolkit' | 'credential' | 'rules' | 'review' | 'done';
 type Outcome = 'granted' | 'error';
+
+/** The wizard's resumable progress for one request. */
+interface WizardDraft {
+	step: Step;
+	toolkitId: string | null;
+	toolkitName: string;
+	toolkitNameEdited: boolean;
+	credentialId: string | null;
+	credentialType: string | null;
+	rules: PermissionRuleInput[];
+}
+
+/**
+ * Session-scoped drafts keyed by request id. The wizard's only production
+ * mount path (AccessRequestDecisionDialog) UNMOUNTS it on close, so component
+ * state alone would evaporate on "Keep & finish later" — reopening would then
+ * create a SECOND toolkit/credential, accumulating exactly the orphans the
+ * discard flow exists to prevent. Kept in module scope (not storage): drafts
+ * reference server objects created this session and shouldn't outlive it.
+ */
+const wizardDrafts = new Map<string, WizardDraft>();
+
+/** Test-only: drop all drafts so cases sharing request fixtures stay isolated. */
+export function resetProvisioningWizardDrafts(): void {
+	wizardDrafts.clear();
+}
 
 export interface ProvisioningRequestDialogProps {
 	open: boolean;
@@ -146,15 +172,31 @@ export function ProvisioningRequestDialog({
 		}));
 	}, [bindItem]);
 
-	const [step, setStep] = useState<Step>('toolkit');
-	const [toolkitId, setToolkitId] = useState<string | null>(null);
-	const [toolkitName, setToolkitName] = useState('');
+	// Draft-aware initial state: a reopened request resumes where it left off
+	// (see `wizardDrafts`). Lazy initializers so the FIRST render already
+	// carries the draft — a post-mount restore effect would race the
+	// draft-save effect below and clobber the draft with defaults.
+	const [step, setStep] = useState<Step>(() => wizardDrafts.get(request.id)?.step ?? 'toolkit');
+	const [toolkitId, setToolkitId] = useState<string | null>(
+		() => wizardDrafts.get(request.id)?.toolkitId ?? null,
+	);
+	const [toolkitName, setToolkitName] = useState(
+		() => wizardDrafts.get(request.id)?.toolkitName ?? '',
+	);
 	// Set once the operator edits the toolkit name, so the async agent-name
 	// upgrade below never clobbers a manual edit.
-	const [toolkitNameEdited, setToolkitNameEdited] = useState(false);
-	const [credentialId, setCredentialId] = useState<string | null>(null);
-	const [credentialType, setCredentialType] = useState<string | null>(null);
-	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
+	const [toolkitNameEdited, setToolkitNameEdited] = useState(
+		() => wizardDrafts.get(request.id)?.toolkitNameEdited ?? false,
+	);
+	const [credentialId, setCredentialId] = useState<string | null>(
+		() => wizardDrafts.get(request.id)?.credentialId ?? null,
+	);
+	const [credentialType, setCredentialType] = useState<string | null>(
+		() => wizardDrafts.get(request.id)?.credentialType ?? null,
+	);
+	const [rules, setRules] = useState<PermissionRuleInput[]>(
+		() => wizardDrafts.get(request.id)?.rules ?? proposedRules,
+	);
 	const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -206,19 +248,53 @@ export function ProvisioningRequestDialog({
 		};
 	}, [open, request.id]);
 
-	// Seed name + rules once per request id (not on every open flip).
+	// Re-seed when the request id CHANGES while mounted (list-page reuse). The
+	// initial mount is already seeded by the lazy `useState` initializers.
+	const lastSeededId = useRef(request.id);
 	useEffect(() => {
-		setStep('toolkit');
-		setToolkitId(null);
-		setCredentialId(null);
-		setCredentialType(null);
-		setToolkitNameEdited(false);
-		setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
-		setRules(proposedRules);
+		if (lastSeededId.current === request.id) return;
+		lastSeededId.current = request.id;
+		const draft = wizardDrafts.get(request.id);
+		setStep(draft?.step ?? 'toolkit');
+		setToolkitId(draft?.toolkitId ?? null);
+		setCredentialId(draft?.credentialId ?? null);
+		setCredentialType(draft?.credentialType ?? null);
+		setToolkitNameEdited(draft?.toolkitNameEdited ?? false);
+		setToolkitName(
+			draft?.toolkitName ?? suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name),
+		);
+		setRules(draft?.rules ?? proposedRules);
 		setOutcome(null);
 		setFreshStatus(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [request.id]);
+
+	// Persist the draft on every change so "Keep & finish later" genuinely
+	// keeps progress across an unmount (see `wizardDrafts`). A terminal
+	// outcome (granted OR denied) means the request was decided — stop
+	// saving; the submit path already deleted the draft.
+	useEffect(() => {
+		if (outcome !== null) return;
+		wizardDrafts.set(request.id, {
+			step: step === 'done' ? 'review' : step,
+			toolkitId,
+			toolkitName,
+			toolkitNameEdited,
+			credentialId,
+			credentialType,
+			rules,
+		});
+	}, [
+		request.id,
+		step,
+		toolkitId,
+		toolkitName,
+		toolkitNameEdited,
+		credentialId,
+		credentialType,
+		rules,
+		outcome,
+	]);
 
 	// The actor directory resolves asynchronously, so the requester's name often
 	// lands AFTER the seed above. Upgrade the suggested name when it does — but
@@ -316,6 +392,7 @@ export function ProvisioningRequestDialog({
 		} finally {
 			// Reset the draft so a reopen doesn't reference the deleted objects
 			// (the draft otherwise persists across dismissals by design).
+			wizardDrafts.delete(request.id);
 			setCredentialId(null);
 			setCredentialType(null);
 			setToolkitId(null);
@@ -326,7 +403,7 @@ export function ProvisioningRequestDialog({
 			setConfirmDiscard(false);
 			onClose();
 		}
-	}, [toolkitId, credentialId, onClose, agentName, apiRef]);
+	}, [toolkitId, credentialId, onClose, agentName, apiRef, request.id]);
 
 	const handleSubmit = useCallback(async () => {
 		if (!bindItem || !toolkitId || !apiRef) return;
@@ -373,6 +450,7 @@ export function ProvisioningRequestDialog({
 				// Nothing left to decide — the request was already decided elsewhere
 				// (e.g. a stale snapshot). Reflect the current server truth instead
 				// of POSTing an empty decision.
+				wizardDrafts.delete(request.id);
 				const alreadyGranted = isPlanGranted(fresh);
 				setOutcome(alreadyGranted ? 'granted' : 'error');
 				if (!alreadyGranted) {
@@ -388,6 +466,8 @@ export function ProvisioningRequestDialog({
 			// agent still can't call the API, so surface it as an error with the
 			// denied item's reason rather than a misleading "Access granted".
 			const granted = isPlanGranted(decided);
+			// Decided either way — there is no draft left to resume.
+			wizardDrafts.delete(request.id);
 			setOutcome(granted ? 'granted' : 'error');
 			if (!granted) {
 				setError(planDenialReason(decided) ?? 'The request could not be fully approved.');

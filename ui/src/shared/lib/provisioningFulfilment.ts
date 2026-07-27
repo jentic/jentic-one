@@ -74,10 +74,17 @@ export async function createNoAuthCredential(
  * number of attempts to avoid an unbounded retry loop.
  */
 const _MAX_NAME_ATTEMPTS = 20;
+/** Server-side toolkit name cap (control/web/schemas/toolkits.py). */
+const _TOOLKIT_NAME_MAX = 255;
 
 export async function createPlanToolkit(name: string): Promise<CreatedPlanToolkit> {
 	for (let attempt = 1; attempt <= _MAX_NAME_ATTEMPTS; attempt++) {
-		const candidate = attempt === 1 ? name : `${name}-${attempt}`;
+		// Clamp the base so a suffixed candidate never exceeds the server cap:
+		// a manually-entered name near 255 chars that collides would otherwise
+		// retry as `${name}-2` > 255 and surface a confusing 422 instead of the
+		// collision being resolved.
+		const suffix = attempt === 1 ? '' : `-${attempt}`;
+		const candidate = `${name.slice(0, _TOOLKIT_NAME_MAX - suffix.length)}${suffix}`;
 		try {
 			const res = await ToolkitsService.createToolkit({
 				requestBody: { name: candidate },

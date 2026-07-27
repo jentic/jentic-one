@@ -3,7 +3,10 @@ import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
-import { ProvisioningRequestDialog } from '@/shared/app/rail/ProvisioningRequestDialog';
+import {
+	ProvisioningRequestDialog,
+	resetProvisioningWizardDrafts,
+} from '@/shared/app/rail/ProvisioningRequestDialog';
 import type { AccessRequest } from '@/shared/lib/accessRequests';
 
 /**
@@ -88,7 +91,11 @@ function stubDirectoryAndRequest(request: AccessRequest) {
 
 describe('ProvisioningRequestDialog — toolkit-name lifecycle', () => {
 	// The actor directory query is gated on holding a bearer token.
-	beforeEach(() => setToken('test-token'));
+	beforeEach(() => {
+		setToken('test-token');
+		// Drafts are module-scoped by design; tests share request fixtures.
+		resetProvisioningWizardDrafts();
+	});
 	afterEach(() => clearToken());
 
 	it('upgrades the suggested name once the actor directory resolves', async () => {
@@ -153,7 +160,10 @@ describe('ProvisioningRequestDialog — toolkit-name lifecycle', () => {
 });
 
 describe('ProvisioningRequestDialog — cancel with orphans', () => {
-	beforeEach(() => setToken('test-token'));
+	beforeEach(() => {
+		setToken('test-token');
+		resetProvisioningWizardDrafts();
+	});
 	afterEach(() => clearToken());
 
 	it('asks in-dialog (never window.confirm) and discards the created toolkit', async () => {
@@ -232,5 +242,43 @@ describe('ProvisioningRequestDialog — cancel with orphans', () => {
 		await user.click(await screen.findByRole('button', { name: /Keep & finish later/ }));
 		await waitFor(() => expect(closed).toBe(true));
 		expect(deleteCalls).toBe(0);
+	});
+
+	it('resumes the kept draft on reopen instead of creating a second toolkit', async () => {
+		stubDirectoryAndRequest(planRequest());
+		let createCalls = 0;
+		worker.use(
+			http.post('/toolkits', () => {
+				createCalls += 1;
+				return HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_resume', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				});
+			}),
+		);
+		const user = userEvent.setup();
+
+		// First session: create the toolkit, then "Keep & finish later". The
+		// production mount path (AccessRequestDecisionDialog) UNMOUNTS the
+		// wizard on close, so we simulate that with a full unmount.
+		const first = renderWithProviders(
+			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+		);
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByRole('button', { name: /^Review/ });
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		await user.click(await screen.findByRole('button', { name: /Keep & finish later/ }));
+		first.unmount();
+
+		// Second session for the SAME request: the draft must restore the rules
+		// step with the existing toolkit — never re-run the create step, which
+		// would strand tk_resume and accumulate a second toolkit.
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={planRequest()} onClose={() => {}} />,
+		);
+		expect(await screen.findByRole('button', { name: /^Review/ })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Create toolkit/i })).not.toBeInTheDocument();
+		expect(createCalls).toBe(1);
 	});
 });

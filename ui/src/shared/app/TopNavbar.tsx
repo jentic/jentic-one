@@ -1,33 +1,29 @@
-import { useLocation } from 'react-router-dom';
 import { BookText } from 'lucide-react';
 import { NavTabs } from '@/shared/app/NavTabs';
 import { ROUTES } from '@/shared/app/routes';
 import { UserMenu } from '@/shared/app/UserMenu';
 import { AppLink } from '@/shared/ui/AppLink';
 import { JenticLogo } from '@/shared/ui/Logo';
-import { cn } from '@/shared/lib/utils';
 
 /**
  * Standalone docs entry — reference material, not a product destination, so it
  * lives apart from the primary tabs, next to the user menu. Icon-only with a
  * text label from `md` up; visible at every breakpoint (the mobile BottomNavbar
  * deliberately omits it).
+ *
+ * No active-state styling on purpose: /docs is a public route OUTSIDE the app
+ * shell (it renders its own DocsTopNav), so this navbar is never mounted while
+ * the docs portal is open — an `isActive` branch here would be dead code.
  */
 function DocsLink() {
-	const { pathname } = useLocation();
-	const isActive = pathname === ROUTES.docs || pathname.startsWith(`${ROUTES.docs}/`);
 	return (
 		<AppLink
 			href={ROUTES.docs}
-			aria-label="API Reference"
-			title="API Reference"
-			aria-current={isActive ? 'page' : undefined}
-			className={cn(
-				'flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150',
-				isActive
-					? 'bg-muted text-foreground'
-					: 'text-muted-foreground hover:bg-muted hover:text-foreground',
-			)}
+			// Accessible name starts with the visible label (WCAG 2.5.3 "Label
+			// in Name") so voice-control users saying "click Docs" match it.
+			aria-label="Docs — API reference"
+			title="Docs — API reference"
+			className="text-muted-foreground hover:bg-muted hover:text-foreground flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors duration-150"
 		>
 			<BookText className="h-4 w-4 shrink-0" aria-hidden="true" />
 			<span className="hidden md:inline">Docs</span>

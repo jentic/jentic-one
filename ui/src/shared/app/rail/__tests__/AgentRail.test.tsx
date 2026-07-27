@@ -359,6 +359,25 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		});
 		expect(req).toBe('access_request:access_request.filed:arq_1');
 	});
+
+	it('buildGroupKey separates two requests filed by the SAME agent', () => {
+		// Real `access_request.filed` events carry BOTH tokens: request_id from
+		// the data payload and agent_id from the top-level actor. The request
+		// id must win, or a CLI agent filing several requests in one burst
+		// collapses them into one row and the extras hide behind the group head.
+		const first = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_1', agent_id: 'agt_same' },
+		});
+		const second = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_2', agent_id: 'agt_same' },
+		});
+		expect(first).toBe('access_request:access_request.filed:arq_1');
+		expect(second).toBe('access_request:access_request.filed:arq_2');
+	});
 });
 
 describe('AgentRail — shell-mounted live surface', () => {

@@ -178,10 +178,13 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 		t.tokens.operation_id ??
 		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
-		// Without these, two agents registering (or two requests filed) within
-		// the grouping window collapse into one row and the second one hides.
-		t.tokens.agent_id ??
+		// The request id must outrank the agent id: real `access_request.*`
+		// events carry BOTH (the requesting agent is the top-level actor), and
+		// keying on the agent would collapse two requests filed by the same
+		// agent in one burst — the normal CLI provisioning case — into one row.
 		t.tokens.access_request_id ??
+		// Distinct registering agents still get distinct rows.
+		t.tokens.agent_id ??
 		t.tokens.trace_id ??
 		'';
 	return `${t.kind}:${t.type}:${token}`;
@@ -434,7 +437,10 @@ export function AgentStreamProvider({
 		// past the boundary (and the server re-queries an overlap window), so a
 		// re-delivered event must RECONCILE list state (upsert is authoritative)
 		// but must NOT re-fire the toast/audio cue or the invalidation fan-out.
+		// Bounded FIFO: the server prunes its dedup map to the overlap horizon;
+		// mirror that discipline so a very long-lived tab can't grow unbounded.
 		const deliveredIds = new Set<string>();
+		const DELIVERED_IDS_MAX = 5000;
 		const unsubscribe = streamEvents(
 			{},
 			{
@@ -442,8 +448,60 @@ export function AgentStreamProvider({
 				onEvent: (wire) => {
 					const ev = adaptEvent(wire);
 					const firstDelivery = !deliveredIds.has(ev.id);
-					deliveredIds.add(ev.id);
+					if (firstDelivery) {
+						deliveredIds.add(ev.id);
+						if (deliveredIds.size > DELIVERED_IDS_MAX) {
+							// Set iterates in insertion order — drop the oldest.
+							const oldest = deliveredIds.values().next().value;
+							if (oldest !== undefined) deliveredIds.delete(oldest);
+						}
+					}
 					upsert([ev], true);
+					// Settlement mirrors run on EVERY delivery, not just the
+					// first: they're idempotent (only unacknowledged matching
+					// rows flip), and in the late-commit race the actionable
+					// row can land AFTER its decision event was first seen —
+					// a re-delivered decision must still be able to settle it.
+					if (
+						ev.kind === 'agent' &&
+						(ev.type === 'agent.registration_approved' ||
+							ev.type === 'agent.registration_denied') &&
+						ev.tokens.agent_id
+					) {
+						// The backend acknowledges the registration alert in the
+						// decision transaction; mirror on local rows so the live
+						// session drops the stale actionable row immediately.
+						setEvents((prev) =>
+							prev.map((row) =>
+								row.type === 'agent.self_registered' &&
+								row.tokens.agent_id === ev.tokens.agent_id &&
+								!row.acknowledged
+									? markResolved(row)
+									: row,
+							),
+						);
+					}
+					if (
+						ev.kind === 'access_request' &&
+						(ev.type === 'access_request.approved' ||
+							ev.type === 'access_request.denied' ||
+							ev.type === 'access_request.withdrawn') &&
+						ev.tokens.access_request_id
+					) {
+						// Same for the filed alert: the decision settles it
+						// server-side; without this mirror a re-delivered filed
+						// event (reconnect overlap) could resurrect View/Deny
+						// buttons for an already-decided request.
+						setEvents((prev) =>
+							prev.map((row) =>
+								row.type === 'access_request.filed' &&
+								row.tokens.access_request_id === ev.tokens.access_request_id &&
+								!row.acknowledged
+									? markResolved(row)
+									: row,
+							),
+						);
+					}
 					if (!firstDelivery) return;
 					setLatest(ev);
 					// Bridge: a filed/decided access request changes the durable
@@ -456,26 +514,6 @@ export function AgentStreamProvider({
 						invalidateApprovalSurfaces();
 					} else if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
-						// A decision settles the registration alert server-side
-						// (the backend acknowledges it in the same transaction).
-						// Mirror that on rows already in local state so the live
-						// session doesn't keep a stale actionable row around
-						// until the next backlog fetch.
-						if (
-							(ev.type === 'agent.registration_approved' ||
-								ev.type === 'agent.registration_denied') &&
-							ev.tokens.agent_id
-						) {
-							setEvents((prev) =>
-								prev.map((row) =>
-									row.type === 'agent.self_registered' &&
-									row.tokens.agent_id === ev.tokens.agent_id &&
-									!row.acknowledged
-										? markResolved(row)
-										: row,
-								),
-							);
-						}
 					}
 				},
 				onError: () => setStatus('error'),
