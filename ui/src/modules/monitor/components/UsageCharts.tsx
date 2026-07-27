@@ -16,7 +16,7 @@
  * matching the bubble chart and Breakdown, so an entity keeps one color
  * across all three charts.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
 import { SegmentedToggle } from '@/shared/ui';
@@ -153,9 +153,27 @@ interface UsageChartsProps {
 }
 
 export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageChartsProps) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const [width, setWidth] = useState(700);
 	const [lens, setLens] = useState<UsageLens>('apis');
 	const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 	const [hoveredSegKey, setHoveredSegKey] = useState<string | null>(null);
+
+	// Mini's approach: draw the SVG at native pixel size (measured via
+	// ResizeObserver) rather than stretching a fixed viewBox — a scaled
+	// viewBox inflates axis text and bar geometry with the container width.
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+		const observer = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				const next = Math.max(300, entry.contentRect.width);
+				setWidth((prev) => (prev === next ? prev : next));
+			}
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
 
 	const rows = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
 	const palette = lensPalette(lens);
@@ -180,14 +198,12 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 	const rawMax = Math.max(...bars.map((b) => b.total), 1);
 	const maxTotal = Math.ceil(rawMax * 1.15);
 
-	// Fixed virtual width; the SVG scales to the card via viewBox so no
-	// ResizeObserver is needed (tooltip x is translated to % of width).
-	const WIDTH = 760;
-	const PADDING = { top: 12, bottom: 36, left: 36, right: 8 };
-	const BAR_HEIGHT = 220;
+	// Mini's exact geometry: 320px plot area, same paddings, 20px min bar width.
+	const PADDING = { top: 16, bottom: 40, left: 40, right: 16 };
+	const BAR_HEIGHT = 320;
 	const svgH = PADDING.top + BAR_HEIGHT + PADDING.bottom;
-	const chartW = WIDTH - PADDING.left - PADDING.right;
-	const barW = Math.max(12, chartW / bars.length - 8);
+	const chartW = width - PADDING.left - PADDING.right;
+	const barW = Math.max(20, chartW / bars.length - 8);
 	const gap = bars.length > 1 ? (chartW - barW * bars.length) / (bars.length - 1) : 0;
 	const toY = (count: number) => PADDING.top + BAR_HEIGHT - (count / maxTotal) * BAR_HEIGHT;
 	const yTickStep = Math.max(1, Math.ceil(maxTotal / 4));
@@ -198,6 +214,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 
 	return (
 		<div
+			ref={containerRef}
 			className={cn(
 				'border-border bg-card relative min-w-0 overflow-hidden rounded-xl border',
 				className,
@@ -229,8 +246,9 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 			) : (
 				<>
 					<svg
-						viewBox={`0 0 ${WIDTH} ${svgH}`}
-						className="block w-full"
+						width={width}
+						height={svgH}
+						viewBox={`0 0 ${width} ${svgH}`}
 						role="img"
 						aria-label={`Execution volume stacked by ${LENS_NOUNS[lens]}`}
 					>
@@ -239,7 +257,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 								<line
 									x1={PADDING.left}
 									y1={toY(tick)}
-									x2={WIDTH - PADDING.right}
+									x2={width - PADDING.right}
 									y2={toY(tick)}
 									stroke="currentColor"
 									strokeOpacity={tick === 0 ? 0.12 : 0.05}
@@ -316,9 +334,9 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 
 											<text
 												x={bx + barW / 2}
-												y={PADDING.top + BAR_HEIGHT + 14}
+												y={PADDING.top + BAR_HEIGHT + 16}
 												textAnchor="middle"
-												fontSize={10}
+												fontSize={11}
 												fontWeight={500}
 												fill="currentColor"
 												opacity={0.6}
@@ -331,7 +349,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 											{bar.subLabel && (
 												<text
 													x={bx + barW / 2}
-													y={PADDING.top + BAR_HEIGHT + 27}
+													y={PADDING.top + BAR_HEIGHT + 30}
 													textAnchor="middle"
 													fontSize={9}
 													fill="currentColor"
@@ -388,7 +406,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 					</AnimatePresence>
 
 					{tooltipBar && tooltipBar.total > 0 && (
-						<BarTooltip bar={tooltipBar} xRatio={tooltip!.x / WIDTH} />
+						<BarTooltip bar={tooltipBar} x={tooltip!.x} containerWidth={width} />
 					)}
 				</>
 			)}
@@ -396,17 +414,13 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 	);
 }
 
-function BarTooltip({ bar, xRatio }: { bar: Bar; xRatio: number }) {
-	const isRight = xRatio > 0.6;
+function BarTooltip({ bar, x, containerWidth }: { bar: Bar; x: number; containerWidth: number }) {
+	const isRight = x > containerWidth * 0.6;
 
 	return (
 		<div
 			className="border-border bg-card pointer-events-none absolute top-14 z-30 w-52 rounded-lg border p-3 shadow-xl"
-			style={
-				isRight
-					? { right: `${Math.max(0, 100 - xRatio * 100)}%` }
-					: { left: `${xRatio * 100}%` }
-			}
+			style={{ left: isRight ? x - 220 : x + 20 }}
 		>
 			<div className="mb-2 flex items-center justify-between">
 				<span className="text-foreground text-xs font-medium">
