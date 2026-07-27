@@ -48,12 +48,48 @@ jentic run <agent> [path] [flags]
     picks a flagged-dangerous option (it declines instead).
   - `--agent-user <name>` — override the derived `<operator>-local-agent` user.
 
+### State lives in the operator's `jentic` config
+
+`jentic run` must not re-derive or re-prompt for the agent's identity every
+invocation — all of it is **persisted in the operator's own `jentic` CLI config**
+(the config that already lives in the operator's home and is read by every `jentic`
+command). This is the operator-side record of "which local agent(s) exist and where
+they live." Nothing secret goes here — it's paths and names, not keys — so it sits
+safely in the operator's config file.
+
+Proposed shape (one entry per configured local agent, keyed by the `<agent>`
+identifier the operator types):
+
+```yaml
+local_agents:
+  claude:
+    user: alice-local-agent          # the OS account jentic run becomes
+    home_dir: /Users/Shared/alice-local-agent
+    binary: claude                    # what to exec / probe
+    granted_dirs:                     # durable directory ACLs (see step 3)
+      - /Users/Shared/alice-local-agent/work/api
+      - /Users/alice/projects/scratch
+    created_at: 2026-07-27T15:45:00Z
+```
+
+- **`user` / `home_dir`** are written by `jentic agent-user setup` when it creates
+  the account, and read by every `jentic run` so the launcher never has to guess the
+  name or home (it also lets `--agent-user` overrides persist).
+- **`granted_dirs`** is the authoritative inventory backing `--list-grants`,
+  `jentic revoke-dir`, and the `jentic doctor` sprawl check (step 3). The ACL on disk
+  is the source of truth for *access*; this list is the record of *what jentic
+  granted*, so doctor can reconcile the two and flag drift.
+- Reading/writing this is a plain load-mutate-save of the existing operator config —
+  no new store, no new file, no new permissions.
+
 ### What it does, in order
 
-1. **Resolve the agent user** (`<operator>-local-agent` by default) and verify it
-   exists; if not, offer to create it (the `jentic agent-user setup` flow — see
+1. **Resolve the agent user** from `local_agents[<agent>]` in the operator's config
+   (or the `<operator>-local-agent` default), and verify the account exists; if not,
+   offer to create it (the `jentic agent-user setup` flow — see
    [below](#agent-creation-belongs-in-jentic-not-jenticctl)), which runs the
-   [`05`](05-agent-as-own-unix-user.md) recipe.
+   [`05`](05-agent-as-own-unix-user.md) recipe and records `user`/`home_dir` in the
+   config.
 2. **Ensure the agent's binary is installed** for that user — the provisioning flow
    (next section, added in a later commit).
 3. **Resolve the working directory** and its access — the directory-access flow
@@ -255,6 +291,57 @@ For the "open in home" path there's no `cd` — the login shell already starts i
 agent's home. This is exactly the launch line from [`05`](05-agent-as-own-unix-user.md),
 now with the user/dir/binary filled in by the preceding steps instead of by the
 operator's memory.
+
+## Porting an existing workspace into the setup
+
+A common ask: the operator already has a Claude workspace (a repo with `.claude/`,
+history, MCP config, working files) and wants the new agent user to just *use it*,
+rather than starting empty. The clean way to express that is **point the agent's
+home directory at the existing workspace** — then all the agent's per-`$HOME` state
+(`~/.claude`, `~/.claude.json`, the `jentic` identity) lands alongside the work
+that's already there. `jentic agent-user setup --home <existing-dir>` (or a
+`jentic agent-user adopt <dir>`) would set `home_dir` to that path instead of the
+default.
+
+The catch, and how to keep isolation:
+
+- **If the workspace is on a neutral/shared path** (e.g. already under
+  `/Users/Shared/...` or `/opt/...`): straightforward. `setup` sets the agent's home
+  there, `chown`s it to the agent, adds the operator's inherited ACL, and it works
+  like the default case. No isolation concern.
+
+- **If the workspace is *inside the operator's home*** (e.g.
+  `~/projects/my-app`) — the hard case, because `chmod 700 ~` (the isolation
+  guarantee from [`05`](05-agent-as-own-unix-user.md)) means the agent can't even
+  traverse `~` to reach it, and we must **not** loosen `~` to let it. Options, best
+  first:
+
+  1. **Move, don't share (recommended).** Relocate the workspace out of the
+     operator's home to a neutral path and set the agent's home there:
+     `mv ~/projects/my-app /Users/Shared/<agent>-home && ln -s` a convenience symlink
+     back if the operator still wants it at the old path. The workspace leaves the
+     protected tree entirely; nothing about `~` changes. `jentic agent-user adopt`
+     can do the move + `chown` + operator-ACL in one step. Git history, `.claude/`,
+     files — all preserved, just at a new path.
+  2. **Copy in (when the original must stay put).** Copy the workspace contents into
+     a fresh agent home on a neutral path (`cp -a`, then `chown` to the agent). The
+     operator keeps their original inside `~`; the agent gets an independent copy.
+     Downside: two diverging trees — fine for a one-off port, not for ongoing shared
+     editing.
+  3. **Traversal-only exposure (discouraged, must be explicit).** Technically you
+     can grant the agent `--x` on `~` plus an ACL on just the workspace subdir, so
+     the agent reaches `~/projects/my-app` without `~` being listable. But this
+     re-opens a *path* into the operator's home and leans on every sibling dotfile
+     being independently locked — exactly the fragility [`05`](05-agent-as-own-unix-user.md)
+     rejects. `jentic` should treat this like a step-3 denylist hit: refuse it by
+     default, and only allow it behind the typed-confirm danger prompt, never as the
+     `adopt` default.
+
+> **Rule of thumb the tool should enforce:** the agent's home must end up on a path
+> that is *not* under any human's `700` home. `adopt` moves or copies to satisfy
+> that; it never widens `~` to make an in-home workspace reachable. The port is a
+> one-time relocation, after which the ported workspace *is* the agent's home and the
+> operator reaches it via the inherited ACL like any other agent home.
 
 ## Agent creation belongs in `jentic`, not `jenticctl`
 
