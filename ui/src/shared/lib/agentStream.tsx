@@ -213,10 +213,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
 		// Precedence matters: explicit `data.agent_id` first, then the top-level
-		// actor when it IS an agent (guarded — e.g. DCR self-registration), and
-		// only then the free-form `data.actor_id`, which some emitters populate
-		// with a non-agent id (e.g. the deciding user).
-		agent_id: stringField(data, 'agent_id') ?? actorAgentId ?? stringField(data, 'actor_id'),
+		// actor when it IS an agent (guarded — e.g. DCR self-registration). No
+		// `data.actor_id` fallback: no current emitter populates it, and one
+		// that did could carry a NON-agent id (e.g. the deciding user), which
+		// would deep-link "View agent" to /agents/<user_id>.
+		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;

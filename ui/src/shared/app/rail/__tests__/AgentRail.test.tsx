@@ -244,6 +244,18 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			}),
 		);
 		expect(mixed.tokens.agent_id).toBe('agt_44');
+		// And with NO guarded source at all, `data.actor_id` is ignored entirely
+		// (no emitter populates it today; one that did could carry a user id).
+		const unguarded = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent4',
+				type: 'access_request.approved',
+				actor_id: 'usr_1',
+				actor_type: 'user',
+				data: { actor_id: 'usr_9' },
+			}),
+		);
+		expect(unguarded.tokens.agent_id).toBeUndefined();
 	});
 
 	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {

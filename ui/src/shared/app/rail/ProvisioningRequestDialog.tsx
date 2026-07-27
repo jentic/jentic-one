@@ -43,7 +43,7 @@ import { useActorDirectory } from '@/shared/hooks';
 import { CreateCredentialDialog } from '@/shared/credentials/components/CreateCredentialDialog';
 import type { CreatedCredentialInfo } from '@/shared/credentials/components/CreateCredentialDialog';
 import { CREDENTIAL_TYPE_LABELS, runConnectFlow } from '@/shared/credentials/api';
-import { CredentialType, AgentsService } from '@/shared/api';
+import { CredentialType, AgentsService, getToken, subscribeToken } from '@/shared/api';
 import {
 	amendAccessRequest,
 	decideAccessRequest,
@@ -92,6 +92,13 @@ interface WizardDraft {
  * reference server objects created this session and shouldn't outlive it.
  */
 const wizardDrafts = new Map<string, WizardDraft>();
+
+// Drafts must not outlive the operator session: on a shared workstation the
+// next sign-in would otherwise resume the previous operator's wizard (step,
+// rule edits, created-object ids). The token store is the session boundary.
+subscribeToken(() => {
+	if (getToken() === null) wizardDrafts.clear();
+});
 
 /** Test-only: drop all drafts so cases sharing request fixtures stay isolated. */
 export function resetProvisioningWizardDrafts(): void {
@@ -161,26 +168,31 @@ export function ProvisioningRequestDialog({
 	// Directory miss fallback: the directory is cached reference data, and the
 	// normal CLI flow registers the agent SECONDS before this dialog opens — a
 	// cached-before-registration directory misses it, which used to leave the
-	// raw `agnt_…` id in the header and an API-slug toolkit name. Fetch the
-	// agent directly by id once the directory has definitively missed.
-	const [fetchedAgentName, setFetchedAgentName] = useState<string | undefined>(undefined);
+	// raw `agnt_…` id in the header and an API-slug toolkit name. Only once the
+	// directory has loaded AND missed, fetch the agent directly by id (keyed to
+	// the id so a stale name can never leak across requests).
+	const [fetched, setFetched] = useState<{ id: string; name: string } | null>(null);
+	const fetchedAgentName = fetched?.id === request.actor_id ? fetched.name : undefined;
 	useEffect(() => {
-		setFetchedAgentName(undefined);
+		if (directoryName !== undefined || directory.isLoading) return;
 		if (!request.actor_id.startsWith('agnt_')) return;
+		if (fetched?.id === request.actor_id) return;
 		let cancelled = false;
 		void AgentsService.getAgent({ agentId: request.actor_id })
 			.then((agent) => {
-				if (!cancelled && agent.name) setFetchedAgentName(agent.name);
+				if (!cancelled && agent.name) {
+					setFetched({ id: request.actor_id, name: agent.name });
+				}
 			})
 			.catch(() => {
 				// Best-effort: the directory (or its invalidation on the live
 				// agent event) remains the primary path; a failed lookup just
-				// keeps the id fallback.
+				// keeps the id fallback. No state write, so no retry loop.
 			});
 		return () => {
 			cancelled = true;
 		};
-	}, [request.actor_id]);
+	}, [request.actor_id, directoryName, directory.isLoading, fetched]);
 
 	const agentName = directoryName ?? fetchedAgentName;
 
@@ -298,9 +310,23 @@ export function ProvisioningRequestDialog({
 	// Persist the draft on every change so "Keep & finish later" genuinely
 	// keeps progress across an unmount (see `wizardDrafts`). A terminal
 	// outcome (granted OR denied) means the request was decided — stop
-	// saving; the submit path already deleted the draft.
+	// saving; the submit path already deleted the draft. A PRISTINE state
+	// (nothing created, nothing edited, still on step 1) is not worth
+	// resuming — store nothing, so merely peeking at plans doesn't
+	// accumulate map entries for the rest of the session.
+	const effectiveStatus = freshStatus ?? request.status;
 	useEffect(() => {
-		if (outcome !== null) return;
+		if (outcome !== null || effectiveStatus !== 'pending') return;
+		const pristine =
+			step === 'toolkit' &&
+			toolkitId === null &&
+			credentialId === null &&
+			!toolkitNameEdited &&
+			rules === proposedRules;
+		if (pristine) {
+			wizardDrafts.delete(request.id);
+			return;
+		}
 		wizardDrafts.set(request.id, {
 			step: step === 'done' ? 'review' : step,
 			toolkitId,
@@ -320,7 +346,20 @@ export function ProvisioningRequestDialog({
 		credentialType,
 		rules,
 		outcome,
+		effectiveStatus,
+		proposedRules,
 	]);
+
+	// If the request was decided ELSEWHERE (another operator, the rail's Deny
+	// fast-path) while a draft existed, the draft can never be resumed — the
+	// terminal gate below renders the read-only summary from now on. Drop the
+	// entry so it doesn't sit in the map for the rest of the session. Any
+	// toolkit/credential created before the external decision stays (deleting
+	// server objects on a status we merely OBSERVED is too destructive);
+	// operators can remove them from the toolkits page.
+	useEffect(() => {
+		if (effectiveStatus !== 'pending') wizardDrafts.delete(request.id);
+	}, [effectiveStatus, request.id]);
 
 	// The actor directory resolves asynchronously, so the requester's name often
 	// lands AFTER the seed above. Upgrade the suggested name when it does — but
@@ -446,7 +485,12 @@ export function ProvisioningRequestDialog({
 			if (noAuth && !bindCredentialId) {
 				const created = await createNoAuthCredential(
 					{ vendor: apiRef.vendor, name: apiRef.name, version: apiRef.version },
-					`${toolkitName} (no-auth)`,
+					// Credential names share the 255-char DB cap but the create
+					// schema doesn't enforce it, so an over-long name surfaces as
+					// an opaque server error at the FINAL step. The toolkit name
+					// can legitimately be 255 (manual entry, 409-suffixed adopted
+					// name) — clamp it before deriving so the suffix always fits.
+					`${toolkitName.trim().slice(0, 240)} (no-auth)`,
 				);
 				bindCredentialId = created.credentialId;
 				setCredentialId(created.credentialId);
@@ -529,10 +573,9 @@ export function ProvisioningRequestDialog({
 	// expired / withdrawn) must NOT show the live create/approve wizard — that
 	// would let an operator re-fulfil a settled request (stranding orphan objects,
 	// then failing at decide). Show a read-only outcome summary instead. The
-	// wizard only drives PENDING plans. Prefer the freshly-fetched status over the
-	// (possibly stale) snapshot so a request decided since the list was loaded is
-	// caught before any create/amend runs.
-	const effectiveStatus = freshStatus ?? request.status;
+	// wizard only drives PENDING plans. `effectiveStatus` (computed above) prefers
+	// the freshly-fetched status over the (possibly stale) snapshot so a request
+	// decided since the list was loaded is caught before any create/amend runs.
 	if (effectiveStatus !== 'pending') {
 		return (
 			<TerminalSummaryDialog
@@ -554,15 +597,27 @@ export function ProvisioningRequestDialog({
 		toolkit: (
 			<>
 				<span />
-				<Button
-					variant="primary"
-					onClick={handleCreateToolkit}
-					loading={busy}
-					disabled={busy || !toolkitName.trim()}
-				>
-					Create toolkit
-					<ArrowRight className="h-4 w-4" />
-				</Button>
+				{toolkitId !== null ? (
+					// Resumed draft: the toolkit already exists. Re-showing "Create
+					// toolkit" here would mint a duplicate one click after a Back —
+					// continue with the one we have instead.
+					<Button
+						variant="primary"
+						onClick={() => setStep(noAuth ? 'rules' : 'credential')}
+					>
+						Continue <ArrowRight className="h-4 w-4" />
+					</Button>
+				) : (
+					<Button
+						variant="primary"
+						onClick={handleCreateToolkit}
+						loading={busy}
+						disabled={busy || !toolkitName.trim()}
+					>
+						Create toolkit
+						<ArrowRight className="h-4 w-4" />
+					</Button>
+				)}
 			</>
 		),
 		credential: (
@@ -625,6 +680,7 @@ export function ProvisioningRequestDialog({
 							/>
 							<ActorLabel
 								actorId={request.actor_id}
+								resolvedName={agentName}
 								className="text-foreground font-medium"
 							/>
 							access to
@@ -675,7 +731,21 @@ export function ProvisioningRequestDialog({
 											setToolkitName(e.target.value);
 										}}
 										placeholder="e.g. Claude Code toolkit"
+										disabled={toolkitId !== null}
 									/>
+									{toolkitId !== null && (
+										// Created already (resumed draft / Back from a later
+										// step). The field is locked because this state feeds
+										// the review summary and the no-auth credential name —
+										// editing it here would no longer rename the real
+										// toolkit.
+										<div className="border-success/30 bg-success/5 mt-3 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
+											<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
+											<span>
+												Toolkit created — continue to the next step.
+											</span>
+										</div>
+									)}
 								</div>
 							</StepBody>
 						)}
