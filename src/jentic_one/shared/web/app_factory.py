@@ -469,6 +469,13 @@ def create_combined_app(
         """
         return JSONResponse({"status": "ok", "version": __version__})
 
+    # Public, schema-hidden agent-discovery documents: the onboarding skill
+    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
+    # GET /.well-known/llms.txt) — see #651 / #809. Registered before the
+    # surfaces so no surface route can shadow them (same order as
+    # create_surface_app).
+    root.include_router(get_agent_discovery_router())
+
     for surface in apps:
         module_path = SURFACE_MODULES[surface]
         mod = importlib.import_module(module_path)
@@ -484,11 +491,6 @@ def create_combined_app(
     # instead of parsing the OpenAPI document). Registered after all surfaces so
     # the reference it builds covers every included route.
     root.include_router(get_reference_router())
-
-    # Public, schema-hidden agent-discovery documents: the onboarding skill
-    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
-    # GET /.well-known/llms.txt) — see #651 / #809.
-    root.include_router(get_agent_discovery_router())
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.

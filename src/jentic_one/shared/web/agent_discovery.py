@@ -46,7 +46,7 @@ def load_skill_markdown() -> str:
     return resource.read_text(encoding="utf-8")
 
 
-def render_llms_txt(base: str) -> str:
+def render_llms_txt(base: str, assertion_max_ttl_seconds: int) -> str:
     """Render the llms.txt document for a deployment base URL.
 
     Follows the llms.txt convention (H1 + blockquote summary + link sections)
@@ -85,8 +85,9 @@ sequence is:
 3. Get a token: `POST {base}/oauth/token` with a JSON body (not form-encoded):
    `{{"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
    "assertion": "<EdDSA-signed JWT>"}}`. Assertion claims: `iss` = your
-   `client_id`, `aud` = `{base}/oauth/token`, `exp` within 5 minutes, and a
-   unique `jti` (required — replayed or missing `jti` values are rejected).
+   `client_id`, `aud` = `{base}/oauth/token`, `exp` at most
+   {assertion_max_ttl_seconds} seconds in the future, and a unique `jti`
+   (required — replayed or missing `jti` values are rejected).
 4. Discover: `POST {base}/search` to search operations across APIs;
    `GET {base}/apis` to list registered APIs;
    `GET {base}/reference/endpoints.json` for the full endpoint + scope map.
@@ -123,6 +124,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
         base = deployment_base_url(ctx.config.auth, request)
-        return PlainTextResponse(render_llms_txt(base), media_type=MARKDOWN_MEDIA_TYPE)
+        body = render_llms_txt(base, ctx.config.auth.assertion_max_ttl_seconds)
+        return PlainTextResponse(body, media_type=MARKDOWN_MEDIA_TYPE)
 
     return router

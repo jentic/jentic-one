@@ -148,11 +148,13 @@ def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> Non
     assert "approved" not in body  # the status value is `active`, never `approved`
     assert "JSON body" in body
     assert "unique `jti`" in body
+    # The assertion-TTL bound is rendered from config, not hardcoded prose.
+    assert "300 seconds in the future" in body
 
 
 def test_render_llms_txt_stamps_base_everywhere() -> None:
     """No hardcoded host survives rendering; every link uses the given base."""
-    body = render_llms_txt("https://example.test")
+    body = render_llms_txt("https://example.test", assertion_max_ttl_seconds=300)
     assert "https://example.test/skills/jentic.md" in body
     assert "{base}" not in body
     assert "testserver" not in body
