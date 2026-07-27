@@ -151,3 +151,86 @@ describe('ProvisioningRequestDialog — toolkit-name lifecycle', () => {
 		expect(attempts).toBe(2);
 	});
 });
+
+describe('ProvisioningRequestDialog — cancel with orphans', () => {
+	beforeEach(() => setToken('test-token'));
+	afterEach(() => clearToken());
+
+	it('asks in-dialog (never window.confirm) and discards the created toolkit', async () => {
+		stubDirectoryAndRequest(planRequest());
+		let deleted: string | null = null;
+		worker.use(
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_orphan', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+			http.delete('/toolkits/:id', ({ params }) => {
+				deleted = String(params.id);
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+		let closed = false;
+		renderWithProviders(
+			<ProvisioningRequestDialog
+				open
+				request={planRequest()}
+				onClose={() => {
+					closed = true;
+				}}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByRole('button', { name: /^Review/ });
+
+		// Cancel the wizard mid-fulfilment → the in-dialog confirmation appears.
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		expect(await screen.findByText('Keep this setup for later?')).toBeInTheDocument();
+		expect(closed).toBe(false);
+
+		await user.click(screen.getByRole('button', { name: /Discard/ }));
+		await waitFor(() => expect(closed).toBe(true));
+		expect(deleted).toBe('tk_orphan');
+	});
+
+	it('"Keep & finish later" closes without deleting anything', async () => {
+		stubDirectoryAndRequest(planRequest());
+		let deleteCalls = 0;
+		worker.use(
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_keep', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+			http.delete('/toolkits/:id', () => {
+				deleteCalls += 1;
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+		let closed = false;
+		renderWithProviders(
+			<ProvisioningRequestDialog
+				open
+				request={planRequest()}
+				onClose={() => {
+					closed = true;
+				}}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByRole('button', { name: /^Review/ });
+
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		await user.click(await screen.findByRole('button', { name: /Keep & finish later/ }));
+		await waitFor(() => expect(closed).toBe(true));
+		expect(deleteCalls).toBe(0);
+	});
+});

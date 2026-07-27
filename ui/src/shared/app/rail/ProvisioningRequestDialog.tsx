@@ -27,6 +27,7 @@ import {
 	KeyRound,
 	MessageSquare,
 	ShieldCheck,
+	Trash2,
 	XCircle,
 } from 'lucide-react';
 import { Dialog } from '@/shared/ui/Dialog';
@@ -158,6 +159,10 @@ export function ProvisioningRequestDialog({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [outcome, setOutcome] = useState<Outcome | null>(null);
+	// In-dialog "discard orphaned toolkit/credential?" confirmation shown when
+	// cancelling a partially-fulfilled wizard (replaces a browser confirm()).
+	const [confirmDiscard, setConfirmDiscard] = useState(false);
+	const [discarding, setDiscarding] = useState(false);
 	// The request's status re-fetched on open. Callers pass a possibly-stale
 	// snapshot from the list query; before showing the LIVE create/approve
 	// controls we confirm the request is still pending, so an operator can't
@@ -285,21 +290,43 @@ export function ProvisioningRequestDialog({
 		}
 	}, []);
 
-	const handleCancel = useCallback(async () => {
+	const handleCancel = useCallback(() => {
 		// Orphan control: if we created a toolkit/credential but didn't approve,
-		// offer to discard them so an abandoned fulfilment doesn't strand objects.
+		// ask whether to discard them so an abandoned fulfilment doesn't strand
+		// objects. In-dialog (house style) — never a native browser confirm().
 		if ((toolkitId || credentialId) && outcome !== 'granted') {
-			const discard = window.confirm(
-				'Discard the toolkit and credential created for this request? ' +
-					'Choose Cancel to keep them and finish later.',
-			);
-			if (discard) {
-				if (credentialId) await discardPlanCredential(credentialId);
-				if (toolkitId) await discardPlanToolkit(toolkitId);
-			}
+			setConfirmDiscard(true);
+			return;
 		}
 		onClose();
 	}, [toolkitId, credentialId, outcome, onClose]);
+
+	/** "Keep & finish later" — close the wizard, leave the draft objects. */
+	const handleKeepAndClose = useCallback(() => {
+		setConfirmDiscard(false);
+		onClose();
+	}, [onClose]);
+
+	/** "Discard" — best-effort delete of session-created objects, then close. */
+	const handleDiscardAndClose = useCallback(async () => {
+		setDiscarding(true);
+		try {
+			if (credentialId) await discardPlanCredential(credentialId);
+			if (toolkitId) await discardPlanToolkit(toolkitId);
+		} finally {
+			// Reset the draft so a reopen doesn't reference the deleted objects
+			// (the draft otherwise persists across dismissals by design).
+			setCredentialId(null);
+			setCredentialType(null);
+			setToolkitId(null);
+			setToolkitNameEdited(false);
+			setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
+			setStep('toolkit');
+			setDiscarding(false);
+			setConfirmDiscard(false);
+			onClose();
+		}
+	}, [toolkitId, credentialId, onClose, agentName, apiRef]);
 
 	const handleSubmit = useCallback(async () => {
 		if (!bindItem || !toolkitId || !apiRef) return;
@@ -475,7 +502,7 @@ export function ProvisioningRequestDialog({
 	return (
 		<>
 			<Dialog
-				open={open && !credentialDialogOpen}
+				open={open && !credentialDialogOpen && !confirmDiscard}
 				onClose={handleCancel}
 				title="Set up access"
 				size="xl"
@@ -653,6 +680,50 @@ export function ProvisioningRequestDialog({
 				onCreated={handleCredentialCreated}
 				initialType={initialCredentialType}
 			/>
+
+			{/* Cancel-with-orphans confirmation — in-dialog, replacing the native
+			    browser confirm() this flow used to pop (jarring + unstyled). */}
+			<Dialog
+				open={confirmDiscard}
+				onClose={() => setConfirmDiscard(false)}
+				title="Keep this setup for later?"
+				size="md"
+				footer={
+					<div className="flex w-full items-center justify-end gap-2">
+						<Button variant="ghost" onClick={handleKeepAndClose} disabled={discarding}>
+							Keep &amp; finish later
+						</Button>
+						<Button
+							variant="danger"
+							onClick={handleDiscardAndClose}
+							loading={discarding}
+							disabled={discarding}
+						>
+							<Trash2 className="h-4 w-4" /> Discard
+						</Button>
+					</div>
+				}
+			>
+				<div className="space-y-3 text-sm">
+					<p className="text-foreground">
+						This setup already created{' '}
+						<span className="font-medium">
+							{toolkitId && credentialId
+								? 'a toolkit and a credential'
+								: toolkitId
+									? 'a toolkit'
+									: 'a credential'}
+						</span>{' '}
+						for this request, but access hasn&rsquo;t been granted yet.
+					</p>
+					<p className="text-muted-foreground">
+						<span className="text-foreground font-medium">Keep &amp; finish later</span>{' '}
+						leaves them in place so you can reopen this request and continue.{' '}
+						<span className="text-foreground font-medium">Discard</span> deletes them —
+						the request stays pending and you can start over any time.
+					</p>
+				</div>
+			</Dialog>
 		</>
 	);
 }
