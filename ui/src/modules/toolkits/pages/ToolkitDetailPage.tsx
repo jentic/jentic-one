@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { BackButton, PageHeader, PageShell } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
 import { ToolkitDetailBody } from '@/modules/toolkits/components/ToolkitDetailBody';

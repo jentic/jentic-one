@@ -9,7 +9,7 @@
  * swaps that single line there rather than spreading into `moduleRoutes`. See
  * STATUS.md (coord-with-shell note) + COLLABORATION.md §3.
  */
-import type { RouteObject } from 'react-router-dom';
+import type { RouteObject } from 'react-router';
 import DashboardPage from '@/modules/dashboard/pages/DashboardPage';
 import AccessRequestsPage from '@/modules/dashboard/pages/AccessRequestsPage';
 

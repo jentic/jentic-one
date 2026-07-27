@@ -21,7 +21,7 @@ export default defineConfig({
 	optimizeDeps: {
 		include: [
 			'@tanstack/react-query',
-			'react-router-dom',
+			'react-router',
 			'@testing-library/react',
 			'@testing-library/user-event',
 			'axe-core',

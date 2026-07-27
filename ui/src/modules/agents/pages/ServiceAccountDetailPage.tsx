@@ -16,7 +16,7 @@
  * plaintext via {@link ApiKeyDialog}.
  */
 import { useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { KeyRound } from 'lucide-react';
 import {
 	AgentBadge,

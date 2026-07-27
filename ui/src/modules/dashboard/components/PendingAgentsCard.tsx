@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Users, CheckCircle2 } from 'lucide-react';
 import {
 	Card,

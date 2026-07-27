@@ -1,5 +1,5 @@
 import type { AnchorHTMLAttributes } from 'react';
-import { Link, type LinkProps } from 'react-router-dom';
+import { Link, type LinkProps } from 'react-router';
 import { cn } from '@/shared/lib/utils';
 import {
 	buttonBase,

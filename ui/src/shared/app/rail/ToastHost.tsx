@@ -6,7 +6,7 @@
  * overlap. Mounted by the shell alongside `AgentRail`.
  */
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';

@@ -8,7 +8,7 @@
  * that `requires_action` and aren't acknowledged get an Acknowledge button.
  */
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Bell, Radio } from 'lucide-react';
 import {
 	Badge,

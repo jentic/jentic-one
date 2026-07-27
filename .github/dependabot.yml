@@ -64,7 +64,7 @@ updates:
           - "react-dom"
           - "@types/react"
           - "@types/react-dom"
-          - "react-router-dom"
+          - "react-router"
       testing:
         patterns:
           - "@testing-library/*"
