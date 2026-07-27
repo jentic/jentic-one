@@ -11,7 +11,7 @@ import { motion } from 'framer-motion';
 import { Check, AlertTriangle, XOctagon, Gauge } from 'lucide-react';
 import { cn } from '@/shared/lib/utils';
 import { formatLatency } from '@/modules/monitor/lib/format';
-import { API_PALETTE, getInitials } from '@/modules/monitor/lib/palette';
+import { API_PALETTE, getInitials, textColor } from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow, UsageOverview } from '@/modules/monitor/lib/usage';
 
 type HealthLevel = 'healthy' | 'degraded' | 'issues';
@@ -114,7 +114,11 @@ export function HealthStrip({
 	const speed = getSpeedLevel(overview.avgLatencyMs);
 	const sCfg = SPEED_CONFIG[speed];
 	const failures = overview.failureCount;
-	const activeApis = apis.filter((a) => a.totalExecutions > 0).slice(0, 6);
+	// Count active APIs before slicing — the slice is only for the avatar row,
+	// but the pill text must report the real count (with TOP_LIMIT 12, a
+	// post-slice count would cap at "6 APIs active" forever).
+	const activeApiRows = apis.filter((a) => a.totalExecutions > 0);
+	const activeApis = activeApiRows.slice(0, 6);
 
 	return (
 		<motion.div
@@ -173,7 +177,7 @@ export function HealthStrip({
 							<div className="flex items-center justify-between">
 								<span className="text-muted-foreground">Successful</span>
 								<span className="text-accent-green font-mono font-semibold">
-									{(overview.totalExecutions - failures).toLocaleString()}
+									{overview.successCount.toLocaleString()}
 								</span>
 							</div>
 							{failures > 0 && (
@@ -269,16 +273,19 @@ export function HealthStrip({
 						trigger={
 							<div className="border-border/60 bg-card flex min-h-9 items-center gap-2.5 rounded-full border px-3.5 py-1.5">
 								<span className="text-muted-foreground text-[11px] font-medium">
-									{activeApis.length} APIs active
+									{activeApiRows.length} APIs active
 								</span>
 								<div className="flex -space-x-1.5">
 									{activeApis.map((api, i) => (
 										<div
 											key={api.id}
-											className="border-background flex h-6 w-6 items-center justify-center rounded-full border-2 text-[7px] font-bold text-white"
+											className="border-background flex h-6 w-6 items-center justify-center rounded-full border-2 text-[7px] font-bold"
 											style={{
 												backgroundColor:
 													API_PALETTE[i % API_PALETTE.length],
+												color: textColor(
+													API_PALETTE[i % API_PALETTE.length],
+												),
 											}}
 											title={api.label}
 										>
@@ -291,16 +298,19 @@ export function HealthStrip({
 					>
 						<div className="space-y-3">
 							<p className="text-foreground text-sm font-semibold">
-								{activeApis.length} APIs active
+								{activeApiRows.length} APIs active
 							</p>
 							<div className="space-y-2">
 								{activeApis.map((api, i) => (
 									<div key={api.id} className="flex items-center gap-2.5">
 										<div
-											className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-[6px] font-bold text-white"
+											className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-[6px] font-bold"
 											style={{
 												backgroundColor:
 													API_PALETTE[i % API_PALETTE.length],
+												color: textColor(
+													API_PALETTE[i % API_PALETTE.length],
+												),
 											}}
 										>
 											{getInitials(api.label)}

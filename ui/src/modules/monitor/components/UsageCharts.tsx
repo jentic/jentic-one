@@ -43,7 +43,13 @@ function formatBucketLabel(b: UsageBucket, granularity: Granularity): string {
 	if (granularity === 'time') {
 		return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	}
-	return date.toLocaleDateString(undefined, { weekday: 'short' });
+	// Daily buckets are UTC-day aggregates (epoch floored to UTC midnight), so
+	// format them in UTC: in any zone west of UTC a local-time weekday would be
+	// off by one. Sub-day buckets are real instants — local time is right there.
+	return date.toLocaleDateString(undefined, {
+		weekday: 'short',
+		...(granularity === 'day' ? { timeZone: 'UTC' } : {}),
+	});
 }
 
 function formatBucketSubLabel(b: UsageBucket, granularity: Granularity): string {
@@ -53,7 +59,11 @@ function formatBucketSubLabel(b: UsageBucket, granularity: Granularity): string 
 	if (granularity === 'day-time') {
 		return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	}
-	return date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+	return date.toLocaleDateString(undefined, {
+		month: 'numeric',
+		day: 'numeric',
+		timeZone: 'UTC',
+	});
 }
 
 /**

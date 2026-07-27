@@ -11,6 +11,12 @@ import type { UsageResponse } from '@/modules/monitor/api';
 /** Overall window stats, UI vocabulary (rates in 0–100 percent). */
 export interface UsageOverview {
 	totalExecutions: number;
+	/**
+	 * Executions with status COMPLETED. Not derivable as `total - failures`:
+	 * backend `total` is count(*), so in-flight (pending/running) executions
+	 * are in `total` but neither success nor failed.
+	 */
+	successCount: number;
 	successRate: number;
 	failureCount: number;
 	avgLatencyMs: number;
@@ -34,6 +40,7 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
 	const failed = usage.stats.failed ?? 0;
 	return {
 		totalExecutions: total,
+		successCount: success,
 		successRate: total > 0 ? (success / total) * 100 : 100,
 		failureCount: failed,
 		avgLatencyMs: Math.round(usage.stats.avg_ms ?? 0),

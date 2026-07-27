@@ -163,6 +163,13 @@ describe('MonitorPage', () => {
 		// chart mounted.
 		await user.click(screen.getByRole('button', { name: '30d' }));
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
+
+		// The 24h window exercises the hourly-bucket path: the mock serves
+		// sub-day points inside the last 24h, so the chart renders bars (with
+		// an hourly cadence subtitle) instead of falling into the empty state.
+		await user.click(screen.getByRole('button', { name: '24h' }));
+		expect(await screen.findByText(/Hourly executions/)).toBeInTheDocument();
+		expect(screen.queryByText('No executions yet')).not.toBeInTheDocument();
 	});
 
 	it('switches to the Jobs tab', async () => {

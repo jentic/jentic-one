@@ -127,7 +127,11 @@ function packCircles(
 export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBubbleChartProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [dimensions, setDimensions] = useState({ width: 600, height: 420 });
-	const [hovered, setHovered] = useState<BubbleNode | null>(null);
+	// Store only the hovered entity id, not the node: background refetches
+	// rebuild `bubbles`, so a captured node would pin the tooltip to stale
+	// counts/position — or leave it stuck if the entity drops out of the top
+	// rows (the <g> unmounts without firing mouseleave).
+	const [hoveredId, setHoveredId] = useState<string | null>(null);
 	const [lens, setLens] = useState<UsageLens>('apis');
 
 	useEffect(() => {
@@ -137,7 +141,12 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 			for (const entry of entries) {
 				const { width } = entry.contentRect;
 				if (width === 0) continue;
-				setDimensions({ width, height: Math.max(340, Math.min(width * 0.7, 480)) });
+				const height = Math.max(340, Math.min(width * 0.7, 480));
+				// Bail on no-op ticks so a window drag doesn't re-run the circle
+				// packer once per observer callback.
+				setDimensions((prev) =>
+					prev.width === width && prev.height === height ? prev : { width, height },
+				);
 			}
 		});
 		observer.observe(el);
@@ -145,7 +154,7 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 	}, []);
 
 	useEffect(() => {
-		setHovered(null);
+		setHoveredId(null);
 	}, [lens]);
 
 	const items = lens === 'apis' ? apis : lens === 'toolkits' ? toolkits : agents;
@@ -172,8 +181,12 @@ export function UsageBubbleChart({ apis, toolkits, agents, className }: UsageBub
 		return packCircles(nodes, dimensions.width, dimensions.height);
 	}, [items, dimensions, lens]);
 
-	const handleMouseEnter = useCallback((bubble: BubbleNode) => setHovered(bubble), []);
-	const handleMouseLeave = useCallback(() => setHovered(null), []);
+	// Resolve the hovered node from the *current* pack so the tooltip always
+	// reflects live data (and vanishes if the entity left the top rows).
+	const hovered = hoveredId ? (bubbles.find((b) => b.item.id === hoveredId) ?? null) : null;
+
+	const handleMouseEnter = useCallback((bubble: BubbleNode) => setHoveredId(bubble.item.id), []);
+	const handleMouseLeave = useCallback(() => setHoveredId(null), []);
 
 	return (
 		<div

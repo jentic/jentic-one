@@ -18,7 +18,7 @@
  * - All-zero data swaps the page for an EmptyState with guidance. Mini
  *   rendered a (misleading) 100%-healthy strip over empty charts.
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { BarChart3 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
@@ -37,6 +37,29 @@ const WINDOW_OPTIONS = [
 ];
 
 const TOP_LIMIT = 12;
+
+// Window-edge resolution. 5 minutes balances freshness against cache churn:
+// each roll forward is a new query key (a full refetch of all three
+// groupings), while the backend's own usage cache TTL is 120s anyway.
+const WINDOW_STEP_MS = 300_000;
+
+/**
+ * Current unix-second time floored to `stepMs`. Ticks forward so a long-lived
+ * Overview keeps sliding: with a mount-time constant, staleTime/refocus
+ * refetches would keep re-fetching the same frozen window forever and
+ * executions newer than mount would never appear.
+ */
+function useCoarseNowSec(stepMs: number): number {
+	const [nowMs, setNowMs] = useState(() => Math.floor(Date.now() / stepMs) * stepMs);
+	useEffect(() => {
+		const id = setInterval(() => {
+			const next = Math.floor(Date.now() / stepMs) * stepMs;
+			setNowMs((prev) => (prev === next ? prev : next));
+		}, 30_000);
+		return () => clearInterval(id);
+	}, [stepMs]);
+	return nowMs / 1000;
+}
 
 // Mini's staggered chart entrance: children fade/rise in sequence, re-keyed
 // on the window so changing ranges replays the entrance.
@@ -69,16 +92,18 @@ export function OverviewTab() {
 			{ replace: true },
 		);
 
-	// Unix-second window bounds. Rounded to the minute so the query key stays
-	// stable across re-renders instead of busting the cache every tick. `until`
-	// is sent explicitly: the backend picks `bucket_seconds` from the window
-	// width (until - since), and letting the server default `until` to *its*
-	// now makes a 7d window nondeterministically overflow 604800s and flip
-	// between 6h and daily buckets.
-	const { since, until } = useMemo(() => {
-		const nowSec = Math.floor(Date.now() / 60_000) * 60;
-		return { since: nowSec - days * 86_400, until: nowSec };
-	}, [days]);
+	// Unix-second window bounds, floored to 5-minute steps so the query key
+	// stays stable across re-renders (no cache-busting every tick) yet still
+	// slides forward on long-lived tabs. `until` is sent explicitly: the
+	// backend picks `bucket_seconds` from the window width (until - since),
+	// and letting the server default `until` to *its* now makes a 7d window
+	// nondeterministically overflow 604800s and flip between 6h and daily
+	// buckets.
+	const nowSec = useCoarseNowSec(WINDOW_STEP_MS);
+	const { since, until } = useMemo(
+		() => ({ since: nowSec - days * 86_400, until: nowSec }),
+		[nowSec, days],
+	);
 
 	const apiUsage = useUsageStats({ since, until, groupBy: GroupBy.API, topLimit: TOP_LIMIT });
 	const toolkitUsage = useUsageStats({
@@ -98,10 +123,13 @@ export function OverviewTab() {
 	const firstError = [apiUsage, toolkitUsage, agentUsage].find((q) => q.isError);
 
 	const data = apiUsage.data;
-	const overview = data ? usageToOverview(data) : null;
-	const apis = usageToEntityRows(apiUsage.data);
-	const toolkits = usageToEntityRows(toolkitUsage.data);
-	const agents = usageToEntityRows(agentUsage.data);
+	// Memoized on the query data: fresh array identities every render would
+	// re-run UsageBubbleChart's O(n·10⁵) circle packer on each isFetching
+	// toggle or unrelated parent re-render.
+	const overview = useMemo(() => (data ? usageToOverview(data) : null), [data]);
+	const apis = useMemo(() => usageToEntityRows(apiUsage.data), [apiUsage.data]);
+	const toolkits = useMemo(() => usageToEntityRows(toolkitUsage.data), [toolkitUsage.data]);
+	const agents = useMemo(() => usageToEntityRows(agentUsage.data), [agentUsage.data]);
 	const isEmpty = !!overview && overview.totalExecutions === 0;
 
 	const retryAll = () => {
