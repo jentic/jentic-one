@@ -41,6 +41,9 @@ jobs:
               - 'pyproject.toml'
               - 'uv.lock'
               - 'Makefile'
+              # The skill-drift arch test pins this CLI file to the copy under
+              # src/ — a CLI-only edit must still run it.
+              - 'cli/internal/skillgen/content/jentic.md'
               # The arch suite drift-checks generated reference artifacts
               # (docs-SPA broker JSON, control spec, endpoint reference)
               # against their sources AND generators, so edits to any of them

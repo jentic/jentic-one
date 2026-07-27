@@ -6497,7 +6497,7 @@
         "type": "object"
       },
       "TokenRequest": {
-        "description": "Token endpoint request (form body).",
+        "description": "Token endpoint request (JSON body — not RFC 6749 form-encoded).",
         "properties": {
           "assertion": {
             "anyOf": [
