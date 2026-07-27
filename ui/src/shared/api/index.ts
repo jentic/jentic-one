@@ -203,13 +203,20 @@ export type { ServiceAccountScopesResponse } from '@/shared/api/generated/models
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
 
-// Monitor Overview: the aggregation endpoint (GET /monitoring/executions,
-// `MonitoringService.getExecutionStats`) added by jentic-one#386. Powers the
-// Overview usage charts + top-operations panel.
+// Monitor Overview parity: the enriched usage-aggregation endpoint
+// (GET /monitoring/usage, `MonitoringService.getUsageStats`) added by
+// jentic-one-internal#561; it superseded the coarser #386 stats endpoint
+// (GET /monitoring/executions), whose models are no longer consumed by the UI.
+// Powers the full jentic-mini Overview port — bubble chart, per-row sparkline
+// trends, latency pills, and the api/toolkit/agent grouping toggle. `GroupBy`
+// is exported as a *value* because callers pass the enum members as the
+// `group_by` query param.
 export { MonitoringService } from '@/shared/api/generated/services/MonitoringService';
-export type { ExecutionStatsResponse } from '@/shared/api/generated/models/ExecutionStatsResponse';
-export type { DailyExecutionBucket } from '@/shared/api/generated/models/DailyExecutionBucket';
-export type { TopOperation } from '@/shared/api/generated/models/TopOperation';
+export { GroupBy } from '@/shared/api/generated/models/GroupBy';
+export type { UsageResponse } from '@/shared/api/generated/models/UsageResponse';
+export type { UsageStatsBlock } from '@/shared/api/generated/models/UsageStatsBlock';
+export type { UsageBucket } from '@/shared/api/generated/models/UsageBucket';
+export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 
 // Monitor global filter bar: the actor directory (GET /actors,
 // `ActorsService.listActors`) hydrates the actor picker shared across the
