@@ -62,5 +62,73 @@ jentic run <agent> [path] [flags]
 
 Each of steps 2–4 is detailed in its own section below.
 
-<!-- Sections added incrementally: binary provisioning, directory access,
-     danger-flagging, and the wiring back into 05/jenticctl. -->
+## Step 2 — ensure the agent's binary is installed
+
+The agent account has its own `$HOME` and its own toolchain. A coding-agent binary
+the operator installed for themselves is **not** on the agent's `PATH` — and
+shouldn't be, since it may sit inside the now-`700`-locked operator home. So the
+first thing `jentic run` does after resolving the user is check whether `<agent>` is
+runnable *as the agent user*, and if not, offer to provision it.
+
+### Detection
+
+Probe as the agent, in a login shell, so the check sees exactly what the launch
+will:
+
+```bash
+sudo -u "$AGENT" -i bash -lc 'command -v <binary>'
+```
+
+If that resolves, skip to step 3. If it doesn't, `jentic run` knows the binary is
+missing (as opposed to a `PATH` problem — it distinguishes the two by also probing
+the well-known install location for that agent, e.g. `~<agent>/.local/bin/<binary>`;
+found-but-not-on-PATH prints the one-line `PATH` fix instead of re-installing).
+
+### Provisioning — copy vs. fresh install
+
+When the binary is genuinely absent, prompt the operator with two routes, defaulting
+to the one that's correct for that agent:
+
+```
+Agent 'claude' is not installed for user alice-local-agent.
+  [c] Copy the operator's binary  (/Users/alice/.local/bin/claude → the agent)   [default]
+  [i] Install a fresh copy as the agent  (curl … | bash)
+  [s] Skip — I'll set it up myself
+Choice [c]:
+```
+
+- **Copy** — for **self-contained, single-binary** agents (e.g. Claude Code's native
+  install at `~/.local/bin/claude`), the binary carries no credentials, so copying it
+  to the agent's `~/.local/bin` and `chown`-ing it to the agent is safe and instant.
+  This is the default when the operator already has a detectable single-file binary.
+  `jentic run` does the `mkdir -p`, `cp`, and `chown` for the operator.
+- **Install fresh** — for agents distributed via a package manager (npm global, etc.)
+  or when no operator binary is found, run the agent's documented installer *as the
+  agent user* so the toolchain lands in the agent's `$HOME`. This is the more
+  maintainable route (it can self-update), at the cost of needing the agent's
+  toolchain (node/npm, curl) reachable.
+- **Skip** — print the manual copy/install commands and exit, for operators who want
+  to do it by hand.
+
+> **Copy carries the binary, never the credentials.** Auth for these agents lives in
+> the agent user's own Keychain / `~/.claude.json`, which the copy does not touch —
+> so a copied binary still triggers the agent's own first-run login as the agent
+> user. That per-user auth is the boundary working as designed, not a bug to paper
+> over. `jentic run` should say so in one line rather than silently copying config.
+
+### The agent descriptor
+
+Each known `<agent>` is one small record so adding an agent is data, not code:
+
+| Field | Example (`claude`) | Purpose |
+| ----- | ------------------ | ------- |
+| `binary` | `claude` | what to exec and probe with `command -v` |
+| `probe_paths` | `~/.local/bin/claude` | distinguish missing vs. not-on-PATH |
+| `install` | `curl -fsSL https://claude.ai/install.sh \| bash` | the fresh-install command, run as the agent |
+| `single_binary` | `true` | whether **copy** is offered as the default route |
+
+`hermes`, `codex`, `cursor-agent`, … are additional rows. An unknown `<agent>`
+errors with the list of known identifiers.
+
+<!-- Sections added incrementally: directory access, danger-flagging, and the
+     wiring back into 05/jenticctl. -->
