@@ -1,5 +1,5 @@
 import { ChevronLeft } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { cn } from '@/shared/lib/utils';
 
 interface BackButtonProps {

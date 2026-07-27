@@ -13,7 +13,7 @@
  * state rather than issuing a bad request.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { FileJson, Trash2 } from 'lucide-react';
 import {
 	PageShell,

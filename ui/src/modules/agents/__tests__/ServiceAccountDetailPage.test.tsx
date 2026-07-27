@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import { renderWithProviders, screen, within, userEvent, checkA11y } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';

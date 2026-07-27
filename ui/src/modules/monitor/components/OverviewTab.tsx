@@ -10,7 +10,7 @@
  * endpoint — tracked in jentic-one#561. Those surfaces degrade gracefully here.
  */
 import { BarChart3 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { EmptyState, ErrorAlert, LoadingState, SegmentedToggle } from '@/shared/ui';
 import { useExecutionStats } from '@/modules/monitor/api';
 import { HealthStrip } from '@/modules/monitor/components/HealthStrip';

@@ -6,7 +6,7 @@
  * carries the Cancel action (org:admin only). Jobs carry no actor on the wire,
  * so detail resolves "who" from the audit log by `job_id`.
  */
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { ListChecks, CheckCircle2, XCircle, Loader2, Ban, Clock, Skull } from 'lucide-react';
 import { Button, EmptyState, ErrorAlert, RefreshButton, SegmentedToggle } from '@/shared/ui';
 import { useJobs, toJobStatus, type JobStatusUi } from '@/modules/monitor/api';
