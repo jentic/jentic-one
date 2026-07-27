@@ -1,0 +1,10 @@
+# Trivy ignore list — every entry needs a justification and an exit condition.
+# Docs: https://trivy.dev/docs/configuration/filtering/#trivyignore
+
+# react-router GHSA-qwww-vcr4-c8h2 (HIGH): CSRF bypass in RSC *server* mode —
+# `unstable_RSCRouteConfig` server actions execute before the origin check
+# 400s. Our UI is a static Vite SPA on declarative `<BrowserRouter>` (no data
+# routers, no route actions, no server runtime), so the vulnerable code path
+# cannot be reached. No 7.x patch exists (fix is only in the v8 major).
+# Remove when ui/ is migrated to react-router v8 (>= 8.3.0).
+GHSA-qwww-vcr4-c8h2
