@@ -18,7 +18,7 @@
  * lifecycle via the module hooks, and `pending|active|rejected|disabled|archived`
  * in place of mini's `pending|approved|denied|disabled`.
  */
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Bot, ChevronRight } from 'lucide-react';
 import { AgentBadge, Badge, Button, Card, ErrorAlert, LoadingState } from '@/shared/ui';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';

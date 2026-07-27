@@ -19,7 +19,7 @@
  * `/events` carries no actor filter (tracked: jentic/jentic-one#387).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { ChevronLeft } from 'lucide-react';

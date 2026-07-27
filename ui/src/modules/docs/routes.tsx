@@ -8,7 +8,7 @@
  * its own chunk that loads only when a user navigates to /app/docs.
  */
 import { Suspense, lazy } from 'react';
-import type { RouteObject } from 'react-router-dom';
+import type { RouteObject } from 'react-router';
 import { LoadingState, ErrorBoundary } from '@/shared/ui';
 
 const DocsPage = lazy(() => import('@/modules/docs/pages/DocsPage'));

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Bell, BellOff } from 'lucide-react';
 import {
 	Card,

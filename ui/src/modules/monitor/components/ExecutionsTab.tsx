@@ -7,7 +7,7 @@
  * neutral pill rather than a broken colour. Clicking a row opens the trace
  * detail sheet.
  */
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Activity, CheckCircle2, XCircle, Loader2, Ban, CircleDot } from 'lucide-react';
 import {
 	Button,
