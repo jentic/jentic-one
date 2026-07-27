@@ -57,4 +57,15 @@ export const sharedQueryKeys = {
 	 * once here so the badge and the module's list cache can't drift apart.
 	 */
 	agentsRoot: ['agents'] as const,
+	/**
+	 * The actor directory (`GET /actors`, `useActorDirectory`). Aggressively
+	 * cached reference data (5-minute staleTime), which goes stale at the worst
+	 * moment: a CLI agent registers and files a provisioning request within
+	 * seconds, and every surface resolving its `actor_id` (rail rows, the setup
+	 * wizard's header badge and agent-named toolkit suggestion) misses and
+	 * degrades to the raw `agnt_…` id until the cache expires. Live agent
+	 * lifecycle events invalidate this root so the directory refetches the
+	 * moment the fleet actually changes.
+	 */
+	actorDirectoryRoot: ['actor-directory'] as const,
 };

@@ -1,14 +1,5 @@
 import type { ComponentType } from 'react';
-import {
-	Compass,
-	Boxes,
-	Bot,
-	LayoutDashboard,
-	LayoutGrid,
-	KeyRound,
-	Activity,
-	BookText,
-} from 'lucide-react';
+import { Compass, Boxes, Bot, LayoutDashboard, LayoutGrid, KeyRound, Activity } from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -55,7 +46,9 @@ export const navItems: NavItem[] = [
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 60, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
-	{ id: 'docs', label: 'API Reference', to: '/docs', order: 80, icon: BookText },
+	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live
+	// in this registry. It's reference material, not a product destination, so
+	// the TopNavbar renders it as a standalone icon next to the user menu.
 ];
 
 /**

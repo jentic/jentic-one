@@ -123,13 +123,15 @@ export async function fetchAccessRequestsPage(params: {
 }
 
 /**
- * Actionable events via `GET /events?requires_action=true`. These are the
- * alerts that need a human — the card lists them and links into Monitor.
+ * Actionable events via `GET /events?requires_action=true&acknowledged=false`.
+ * These are the alerts that still need a human — acknowledged (or otherwise
+ * settled) alerts must not linger on the card.
  */
 export async function fetchActionableEvents(): Promise<AlertsOverview> {
 	try {
 		const res: EventListResponse = await EventsService.listEvents({
 			requiresAction: true,
+			acknowledged: false,
 			limit: OVERVIEW_PAGE_SIZE,
 		});
 		return { count: approxCountFromPage(res), events: res.data };

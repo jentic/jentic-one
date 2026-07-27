@@ -44,6 +44,15 @@ jobs:
               # The skill-drift arch test pins this CLI file to the copy under
               # src/ — a CLI-only edit must still run it.
               - 'cli/internal/skillgen/content/jentic.md'
+              # The arch suite drift-checks generated reference artifacts
+              # (docs-SPA broker JSON, control spec, endpoint reference)
+              # against their sources AND generators, so edits to any of them
+              # must run it.
+              - 'openapi/broker/**'
+              - 'openapi/control/**'
+              - 'ui/public/broker-openapi.json'
+              - 'tools/**'
+              - 'docs/reference/**'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -56,6 +65,9 @@ jobs:
               - 'src/jentic_one/migrations/**'
             cli:
               - 'cli/**'
+              # The cli job drift-checks the generated CLI reference the docs
+              # SPA renders, so hand-edits to the artifact must run it too.
+              - 'ui/public/cli-reference.json'
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
@@ -579,6 +591,21 @@ jobs:
 
       - name: Test (race)
         run: go test -race ./...
+
+      # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
+      # CLI") is generated from the cobra command tree by `make cli-reference`.
+      # Nothing else pins it, so a command/flag change without a regen would
+      # silently drift the published CLI docs.
+      - name: CLI reference up to date
+        run: |
+          go run ./cmd/clidocs -o ../ui/public/cli-reference.json
+          # `status --porcelain` (not `diff --exit-code`) so a deleted-then-
+          # regenerated artifact shows up as untracked instead of passing.
+          if [ -n "$(git status --porcelain -- ../ui/public/cli-reference.json)" ]; then
+            git --no-pager diff -- ../ui/public/cli-reference.json
+            echo '::error::ui/public/cli-reference.json is out of date. Run `make cli-reference` and commit.'
+            exit 1
+          fi
 
   installer:
     name: Installer script tests

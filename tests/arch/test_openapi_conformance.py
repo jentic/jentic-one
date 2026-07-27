@@ -4,7 +4,9 @@ The control-plane spec is *generated* from the FastAPI app (see
 ``tools/openapi_export``); the checked-in YAML is a build artefact. The drift
 test regenerates it in-process and asserts byte-equality with the committed
 file, so a route or model change that isn't accompanied by ``make openapi``
-fails CI. The broker spec is still hand-curated and only validity-checked.
+fails CI. The broker spec is hand-curated and validity-checked; its docs-SPA
+artifact (``ui/public/broker-openapi.json``, see ``tools/broker_reference``) is
+drift-checked against it here too.
 """
 
 from __future__ import annotations
@@ -16,6 +18,11 @@ from typing import Any
 import pytest
 import yaml
 from openapi_spec_validator import validate
+from tools.broker_reference import (
+    BROKER_SPEC_JSON,
+    dump_spec_json,
+    load_broker_spec,
+)
 from tools.openapi_export import (
     CONTROL_SPEC_PATH,
     UI_SPEC_PATH,
@@ -87,4 +94,25 @@ def test_ui_client_schema_matches_generated(generated_control_spec: dict[str, An
         _drift_failure(
             "ui/openapi.json is out of date with the FastAPI app. "
             "Regenerate it with `make openapi` (then `cd ui && npm run codegen`) and commit."
+        )
+
+
+@pytest.mark.arch
+def test_broker_reference_artifact_matches_source() -> None:
+    """The docs-SPA broker artifact must equal codegen from the broker YAML.
+
+    ``ui/public/broker-openapi.json`` (what the docs SPA's "Broker API" section
+    renders) is generated from the hand-curated
+    ``openapi/broker/broker.openapi.yaml`` by ``make broker-reference``. Nothing
+    pinned the two together before, which is exactly how the artifact went
+    stale — a spec edit without a regen silently shipped outdated docs.
+    """
+    assert BROKER_SPEC_JSON.exists(), f"missing artifact: {BROKER_SPEC_JSON}"
+    expected = dump_spec_json(load_broker_spec())
+    actual = BROKER_SPEC_JSON.read_text(encoding="utf-8")
+    if actual != expected:
+        _drift_failure(
+            "ui/public/broker-openapi.json is out of date with "
+            "openapi/broker/broker.openapi.yaml. Regenerate it with "
+            "`make broker-reference` and commit the result."
         )
