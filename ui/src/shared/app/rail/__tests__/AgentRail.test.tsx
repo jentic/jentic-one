@@ -231,6 +231,19 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			}),
 		);
 		expect(explicit.tokens.agent_id).toBe('agt_43');
+		// But an unguarded `data.actor_id` must NOT outrank the guarded actor:
+		// some emitters put the deciding USER's id in data.actor_id, and routing
+		// Review to /agents/<user_id> would 404.
+		const mixed = adaptEvent(
+			wireEvent({
+				event_id: 'evt_agent3',
+				type: 'agent.self_registered',
+				actor_id: 'agt_44',
+				actor_type: 'agent',
+				data: { actor_id: 'usr_9' },
+			}),
+		);
+		expect(mixed.tokens.agent_id).toBe('agt_44');
 	});
 
 	it('inlineActionsFor offers Review + Acknowledge for a self-registered agent', () => {
@@ -323,6 +336,28 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			tokens: { toolkit_id: 'tk_a', operation_id: 'op_a' },
 		});
 		expect(key).toBe('execution:execution.completed:op_a');
+	});
+
+	it('buildGroupKey separates distinct agents and access requests', () => {
+		// Two agents registering within the grouping window must NOT collapse
+		// into one row (the second registration would hide behind a group head).
+		const a = buildGroupKeyForTest({
+			kind: 'agent',
+			type: 'agent.self_registered',
+			tokens: { agent_id: 'agt_1' },
+		});
+		const b = buildGroupKeyForTest({
+			kind: 'agent',
+			type: 'agent.self_registered',
+			tokens: { agent_id: 'agt_2' },
+		});
+		expect(a).not.toBe(b);
+		const req = buildGroupKeyForTest({
+			kind: 'access_request',
+			type: 'access_request.filed',
+			tokens: { access_request_id: 'arq_1' },
+		});
+		expect(req).toBe('access_request:access_request.filed:arq_1');
 	});
 });
 

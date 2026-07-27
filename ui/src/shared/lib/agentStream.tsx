@@ -178,6 +178,10 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 		t.tokens.operation_id ??
 		t.tokens.toolkit_id ??
 		t.tokens.credential_id ??
+		// Without these, two agents registering (or two requests filed) within
+		// the grouping window collapse into one row and the second one hides.
+		t.tokens.agent_id ??
+		t.tokens.access_request_id ??
 		t.tokens.trace_id ??
 		'';
 	return `${t.kind}:${t.type}:${token}`;
@@ -205,7 +209,11 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		execution_id: stringField(data, 'execution_id'),
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
-		agent_id: stringField(data, 'agent_id') ?? stringField(data, 'actor_id') ?? actorAgentId,
+		// Precedence matters: explicit `data.agent_id` first, then the top-level
+		// actor when it IS an agent (guarded — e.g. DCR self-registration), and
+		// only then the free-form `data.actor_id`, which some emitters populate
+		// with a non-agent id (e.g. the deciding user).
+		agent_id: stringField(data, 'agent_id') ?? actorAgentId ?? stringField(data, 'actor_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
@@ -440,6 +448,26 @@ export function AgentStreamProvider({
 						invalidateApprovalSurfaces();
 					} else if (ev.kind === 'agent') {
 						invalidateAgentSurfaces();
+						// A decision settles the registration alert server-side
+						// (the backend acknowledges it in the same transaction).
+						// Mirror that on rows already in local state so the live
+						// session doesn't keep a stale actionable row around
+						// until the next backlog fetch.
+						if (
+							(ev.type === 'agent.registration_approved' ||
+								ev.type === 'agent.registration_denied') &&
+							ev.tokens.agent_id
+						) {
+							setEvents((prev) =>
+								prev.map((row) =>
+									row.type === 'agent.self_registered' &&
+									row.tokens.agent_id === ev.tokens.agent_id &&
+									!row.acknowledged
+										? markResolved(row)
+										: row,
+								),
+							);
+						}
 					}
 				},
 				onError: () => setStatus('error'),
@@ -447,7 +475,7 @@ export function AgentStreamProvider({
 			},
 		);
 		return unsubscribe;
-	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces]);
+	}, [live, upsert, invalidateApprovalSurfaces, invalidateAgentSurfaces, markResolved]);
 
 	const acknowledge = useCallback(
 		async (eventId: string) => {
