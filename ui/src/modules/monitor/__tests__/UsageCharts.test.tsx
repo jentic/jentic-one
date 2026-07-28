@@ -71,13 +71,16 @@ function renderChart(usage: UsageResponse) {
 
 /** The x-axis M/D sub-labels rendered under the bars (y-ticks are bare numbers). */
 function dateSubLabels(container: Element): string[] {
+	// SVG <text> has no implicit ARIA role and lives inside the role="img"
+	// chart, so testing-library role/text queries can't reach individual
+	// labels — raw DOM traversal is the pragmatic escape hatch here.
 	return [...container.querySelectorAll('svg[role="img"] text')]
 		.map((el) => el.textContent ?? '')
 		.filter((text) => /^\d{1,2}\/\d{1,2}$/.test(text));
 }
 
 describe('UsageCharts display buckets', () => {
-	it('renders exactly one bar per calendar day for the 7d window (#7d-overflow)', () => {
+	it('renders exactly one bar per calendar day for the 7d window', () => {
 		const { since, until } = dayAlignedWindow(7);
 		// Backend shape for a 7d window: 28 six-hour segments (4 per day).
 		const trend = Array.from({ length: 28 }, (_, i) => (i % 4 === 0 ? 2 : 1));
@@ -87,11 +90,13 @@ describe('UsageCharts display buckets', () => {
 
 		const dates = dateSubLabels(container);
 		expect(dates).toHaveLength(7);
-		// First bar is 6 days ago, last bar is today — never an 8th date.
+		// First bar starts at `since`, last bar covers the day before `until` —
+		// never an 8th date. Derive both from the captured window rather than a
+		// fresh Date so the test can't flake if midnight passes mid-run.
 		const first = new Date(since * 1000);
-		const today = new Date();
+		const last = new Date((until - 1) * 1000);
 		expect(dates[0]).toBe(`${first.getMonth() + 1}/${first.getDate()}`);
-		expect(dates[6]).toBe(`${today.getMonth() + 1}/${today.getDate()}`);
+		expect(dates[6]).toBe(`${last.getMonth() + 1}/${last.getDate()}`);
 	});
 
 	it('caps wider windows at six range bars so the axis fits narrow screens', () => {
@@ -101,15 +106,16 @@ describe('UsageCharts display buckets', () => {
 
 		expect(getByText(/Last 30 days, colored by/)).toBeInTheDocument();
 		// Six bars, each labelled with a start date and an –end date sub-label.
-		expect(dateSubLabels(container).length).toBeLessThanOrEqual(12);
+		expect(dateSubLabels(container)).toHaveLength(6);
 		const rangeSubs = [...container.querySelectorAll('svg[role="img"] text')]
 			.map((el) => el.textContent ?? '')
 			.filter((text) => /^–\d{1,2}\/\d{1,2}$/.test(text));
 		expect(rangeSubs).toHaveLength(6);
-		// Range sub-labels are inclusive: the last slice ends at midnight
-		// tomorrow (exclusive), so it must be labelled with today's date.
-		const today = new Date();
-		expect(rangeSubs[5]).toBe(`–${today.getMonth() + 1}/${today.getDate()}`);
+		// Range sub-labels are inclusive: the last slice ends at `until`
+		// (exclusive, midnight tomorrow), so it must be labelled with the
+		// window's final day — not the day after.
+		const last = new Date((until - 1) * 1000);
+		expect(rangeSubs[5]).toBe(`–${last.getMonth() + 1}/${last.getDate()}`);
 	});
 
 	it('re-buckets aggregate buckets and trends identically (no phantom "Other")', () => {

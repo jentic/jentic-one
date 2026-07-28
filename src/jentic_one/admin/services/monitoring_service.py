@@ -223,9 +223,11 @@ class MonitoringService:
         six-hour, 30d → 30 daily) instead of a fixed 12: equal twelfths of a
         multi-day window (e.g. 14h for 7d) can never line up with calendar
         days, which made the volume chart's day axis span more days than the
-        window. When the caller sends day-aligned bounds, these segments land
-        exactly on day boundaries. Capped so a pathologically wide window
-        can't inflate the payload.
+        window. When the window is an exact multiple of the bucket size,
+        day-aligned bounds put segments exactly on day boundaries; a
+        DST-stretched window drifts slightly but stays re-bucketable into
+        day bars client-side. Capped so a pathologically wide window can't
+        inflate the payload.
         """
         return max(1, min(60, round(window_seconds / bucket_seconds)))
 

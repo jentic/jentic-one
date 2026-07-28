@@ -149,8 +149,9 @@ def test_trend_points_follow_bucket_tier() -> None:
     assert MonitoringService._compute_trend_points(86400, 3600) == 24
     assert MonitoringService._compute_trend_points(604800, 21600) == 28
     assert MonitoringService._compute_trend_points(2592000, 86400) == 30
-    # A DST-stretched 7-day window (7d + 1h) stays on the 6h tier: one extra
-    # ~6h segment, still re-bucketable into 7 day bars client-side.
+    # A DST-stretched 7-day window (7d + 1h) stays on the 6h tier and still
+    # gets 28 segments — each slightly stretched (~6h2m), not an extra one —
+    # so it remains re-bucketable into 7 day bars client-side.
     assert MonitoringService._compute_trend_points(608400, 21600) == 28
     # Capped at 60 (1h window / 60s buckets, or pathologically wide windows).
     assert MonitoringService._compute_trend_points(3600, 60) == 60

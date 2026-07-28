@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Text, case, cast, func, literal, or_, select
+from sqlalchemy import Text, case, cast, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
@@ -109,10 +109,8 @@ class TimeBucketRow:
 
 @dataclass(slots=True, frozen=True)
 class GroupedTopRow:
-    # None for toolkit grouping when executions carry no toolkit attribution
-    # (api/agent keys are coalesced/concatenated and never NULL).
-    key: str | None
-    label: str | None
+    key: str
+    label: str
     total: int
     success: int
     failed: int
@@ -366,14 +364,14 @@ class MonitoringRepository:
         cutoff: datetime,
         until: datetime,
         group_by: str,
-        keys: list[str | None],
+        keys: list[str],
         num_points: int = 12,
         filters: UsageQueryFilters | None = None,
-    ) -> dict[str | None, list[int]]:
+    ) -> dict[str, list[int]]:
         if not keys:
             return {}
 
-        cutoff_epoch = cutoff.timestamp()
+        cutoff_epoch = int(cutoff.timestamp())
         until_epoch = until.timestamp()
         segment_seconds = (until_epoch - cutoff_epoch) / num_points
 
@@ -397,17 +395,6 @@ class MonitoringRepository:
             Text,
         ).label("seg")
 
-        # Toolkit keys are the raw nullable toolkit_id, and unattributed
-        # executions surface in grouped_top as a NULL-key row. `IN (NULL)`
-        # never matches, so match NULL explicitly — otherwise that row's
-        # trend would come back all zeros.
-        non_null_keys = [k for k in keys if k is not None]
-        key_clauses: list[ColumnElement[bool]] = []
-        if non_null_keys:
-            key_clauses.append(key_expr.in_(non_null_keys))
-        if len(non_null_keys) < len(keys):
-            key_clauses.append(key_expr.is_(None))
-
         stmt = (
             select(
                 key_expr.label("key"),
@@ -417,7 +404,7 @@ class MonitoringRepository:
             .where(
                 ExecutionRecord.started_at >= cutoff,
                 ExecutionRecord.started_at < until,
-                or_(*key_clauses),
+                key_expr.in_(keys),
             )
             .group_by(key_expr, segment_idx)
         )
@@ -425,7 +412,7 @@ class MonitoringRepository:
             stmt = stmt.where(*filters.to_clauses())
         result = await session.execute(stmt)
 
-        trends: dict[str | None, list[int]] = {k: [0] * num_points for k in keys}
+        trends: dict[str, list[int]] = {k: [0] * num_points for k in keys}
         for row in result.all():
             idx = int(float(row.seg))
             if 0 <= idx < num_points and row.key in trends:

@@ -29,9 +29,13 @@ import { getInitials, lensPalette, textColor, type UsageLens } from '@/modules/m
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
 const OTHER_COLOR = '#94a3b8';
+const DAY_SECONDS = 86_400;
 // A day-aligned 7d window can exceed 7·86400s across a DST change; anything up
 // to this bound still renders (and is captioned) as a per-day week view.
-const WEEK_WINDOW_MAX_SECONDS = 8 * 86_400;
+const WEEK_WINDOW_MAX_SECONDS = 8 * DAY_SECONDS;
+// Bar count for the range views (24h and 30d+). Mini's six slices keep every
+// x-axis label legible at 375px; the week view instead draws one bar per day.
+const RANGE_SLICES = 6;
 
 interface BarSegment {
 	key: string;
@@ -56,7 +60,7 @@ const LENS_NOUNS: Record<UsageLens, string> = {
 };
 
 function windowSubtitle(windowSeconds: number): string {
-	if (windowSeconds <= 86_400) return 'Last 24 hours';
+	if (windowSeconds <= DAY_SECONDS) return 'Last 24 hours';
 	if (windowSeconds <= WEEK_WINDOW_MAX_SECONDS) return 'Last 7 days';
 	return 'Last 30 days';
 }
@@ -85,14 +89,15 @@ function dateLabel(sec: number): string {
  * Mini's getBucketDefs, driven by the response window: six time-range slices
  * for a day, one bar per local calendar day for a week (exactly 7 for the
  * day-aligned 7d window the Overview requests), six date-range slices for
- * anything wider. Capping the bar count is what keeps the x-axis legible on
- * mobile — 12 raw trend segments at ≥20px each overflowed narrow screens.
+ * anything wider. Capping the bar count at RANGE_SLICES is what keeps the
+ * x-axis legible on mobile — 12 raw trend segments at ≥20px each overflowed
+ * narrow screens.
  */
 function buildBucketDefs(sinceSec: number, untilSec: number): BucketDef[] {
 	const windowSeconds = untilSec - sinceSec;
-	if (windowSeconds <= 86_400) {
-		const step = windowSeconds / 6;
-		return Array.from({ length: 6 }, (_, i) => {
+	if (windowSeconds <= DAY_SECONDS) {
+		const step = windowSeconds / RANGE_SLICES;
+		return Array.from({ length: RANGE_SLICES }, (_, i) => {
 			const start = sinceSec + i * step;
 			return {
 				startSec: start,
@@ -117,8 +122,8 @@ function buildBucketDefs(sinceSec: number, untilSec: number): BucketDef[] {
 		}
 		return defs;
 	}
-	const step = windowSeconds / 6;
-	return Array.from({ length: 6 }, (_, i) => {
+	const step = windowSeconds / RANGE_SLICES;
+	return Array.from({ length: RANGE_SLICES }, (_, i) => {
 		const start = sinceSec + i * step;
 		return {
 			startSec: start,
