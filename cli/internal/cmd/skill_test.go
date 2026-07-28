@@ -273,6 +273,42 @@ func TestSkillInitNonInteractiveDefaultsToDetectedProjectScope(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".codex", "AGENTS.md")); !os.IsNotExist(err) {
 		t.Error("user-scope codex AGENTS.md written despite project default")
 	}
+	if strings.Contains(out.String(), "git status") {
+		t.Errorf("no git repo here; the repo-pollution warning must not fire:\n%s", out.String())
+	}
+}
+
+// TestSkillInitDefaultedProjectScopeWarnsInsideGitRepo pins the repo-pollution
+// guard: a *defaulted* (nobody explicitly asked) project-scope write into a
+// git worktree must carry a real warning, since the new AGENTS.md will show up
+// in git status and could get swept into someone's next commit.
+func TestSkillInitDefaultedProjectScopeWarnsInsideGitRepo(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	stubDetect(t, app, home, cwd, "codex")
+	app.Out = out
+	app.Err = out
+	cmd := newSkillCmd(app)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"init", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --yes with detected codex: %v", err)
+	}
+	if !strings.Contains(out.String(), "git status") || !strings.Contains(out.String(), "--scope user") {
+		t.Errorf("defaulted project-scope write inside a git repo must warn and name --scope user:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "AGENTS.md")); err != nil {
+		t.Fatalf("the write itself must still happen (warning, not refusal): %v", err)
+	}
 }
 
 // TestSkillListPrettyShowsEveryInstall pins the human listing: detection and

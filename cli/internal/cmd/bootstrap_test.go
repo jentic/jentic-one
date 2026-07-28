@@ -195,6 +195,9 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	if !strings.Contains(err.Error(), "no operators") {
 		t.Errorf("error = %v, want a 'no operators' selection error", err)
 	}
+	if !strings.Contains(err.Error(), "--skip-skill") {
+		t.Errorf("bootstrap's error should name --skip-skill as the identity-only escape hatch: %v", err)
+	}
 	if n := registers.Load(); n != 0 {
 		t.Errorf("registered %d times before the selection error; want 0 (no side effects)", n)
 	}

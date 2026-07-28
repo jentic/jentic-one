@@ -137,6 +137,17 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		}
 		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
 		if err != nil {
+			// Same cancel idiom as promptBootstrap above: Esc in the skill
+			// picker means "never mind", not a failed bootstrap.
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+				return nil
+			}
+			// For bootstrap the natural escape hatch on a headless box with
+			// no detectable operator is identity-only provisioning — name it.
+			if errors.Is(err, errNothingDetected) {
+				return fmt.Errorf("%w — or pass --skip-skill to provision identity only", err)
+			}
 			return err
 		}
 		if len(targets) == 0 {

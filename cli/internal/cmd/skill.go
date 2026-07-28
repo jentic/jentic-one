@@ -21,6 +21,11 @@ import (
 // are mutually exclusive rather than silently letting --all win.
 var errOperatorAndAll = errors.New("--operator and --all are mutually exclusive; pass one or the other")
 
+// errNothingDetected is returned when a non-interactive run has no explicit
+// selection and detection finds nothing. A sentinel so callers with a better
+// escape hatch (bootstrap's --skip-skill) can append it to the message.
+var errNothingDetected = errors.New("no operators given and none detected")
+
 // skillOptions are shared across the skill subcommands.
 type skillOptions struct {
 	baseURL   string
@@ -227,8 +232,8 @@ func (a *App) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts
 		// scripts get a working install by default.
 		adapters = reg.Detected(env)
 		if len(adapters) == 0 {
-			return nil, errors.New("no operators given and none detected; pass --operator <names> or --all (supported: " +
-				strings.Join(reg.Names(), ", ") + ")")
+			return nil, fmt.Errorf("%w; pass --operator <names> or --all (supported: %s)",
+				errNothingDetected, strings.Join(reg.Names(), ", "))
 		}
 		targets := resolveTargets(adapters, flagScope)
 		a.echoDefaultedTargets(targets, env)
@@ -264,10 +269,33 @@ func resolveTargets(adapters []skillgen.Adapter, flagScope skillgen.Scope) []ski
 // echoDefaultedTargets announces an auto-defaulted selection (non-interactive,
 // nothing explicit) with each resolved scope+path *before* anything is
 // written, so a silent default can never place a file somewhere surprising.
+// A project-scope target inside a git worktree gets a real warning on top of
+// the echo: nobody explicitly asked for that write, and the file will show up
+// in `git status` — the #552 repo-pollution case.
 func (a *App) echoDefaultedTargets(targets []skillTarget, env skillgen.DetectEnv) {
 	fmt.Fprintln(a.Out, theme.Dim.Render("No --operator/--all given; defaulting to detected operators (--operator/--all overrides):"))
 	for _, t := range targets {
-		fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s -> %s (%s scope)", t.adapter.Operator(), prettyPath(t.adapter.Target(t.scope, env)), t.scope))
+		target := t.adapter.Target(t.scope, env)
+		fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s -> %s (%s scope)", t.adapter.Operator(), prettyPath(target), t.scope))
+		if t.scope == skillgen.ScopeProject && insideGitWorktree(filepath.Dir(target)) {
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s this file is inside a git repo and will appear in git status; pass --scope user to keep it out of the checkout", t.adapter.Operator()))
+		}
+	}
+}
+
+// insideGitWorktree reports whether dir sits under a git checkout, by walking
+// up to the first `.git` entry (a dir for a normal clone, a file for a
+// worktree/submodule).
+func insideGitWorktree(dir string) bool {
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
 	}
 }
 
@@ -362,6 +390,13 @@ func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
 
 	targets, err := a.chooseTargets(reg, env, opts)
 	if err != nil {
+		// Esc/Ctrl-C in a picker is "never mind", not a failure — same
+		// Cancelled./exit-0 idiom as every other wizard in the CLI (and the
+		// same outcome as confirming an empty selection).
+		if errors.Is(err, huh.ErrUserAborted) {
+			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+			return nil
+		}
 		return err
 	}
 	if len(targets) == 0 {
