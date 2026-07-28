@@ -210,6 +210,36 @@ zero-machinery posture regardless, and retain the current 700 + ACL grants as th
 defense-in-depth layer underneath. Treat #2/#3 as non-defaults, and consider #1
 dead for our purposes (no portable macOS bind mount).
 
+### Chosen division of labour — account + allow-ACL + sandbox
+
+> **Provisional, but settled enough to prototype against.** The three layers are
+> orthogonal and each does the one thing it is good at:
+
+- **The dedicated agent account is the floor.** The credential boundary
+  (`~/.jentic`, the DB, Keychain, the operator's browser/SSH) rests on Unix
+  *ownership* — unconditional, and independent of any sandbox profile being correct
+  or `sandbox-exec` surviving a future macOS. This stays.
+- **ACL grants stay *allow-only* and coarse.** The existing traverse-walk +
+  rwx-leaf grants open the one chosen path to the agent uid — that is all they do.
+  The macOS sandbox is **intersection-only** (a process reaches a file only if
+  *both* its uid's DAC check *and* the profile allow it; the sandbox can only ever
+  *subtract*, never grant a uid access its ownership denies), so a DAC grant is
+  still required to let the agent uid reach an operator-owned path under `~`, and
+  ACLs remain the least-invasive form of it. **We do not add default-deny,
+  inherited-deny, or per-sibling deny ACEs** — approaches #2/#3 are off the table;
+  the ACL layer stays exactly as simple as it is today.
+- **`sandbox-exec` closes the sibling leak on top.** A `(deny default)` profile
+  that allows only the granted subpath means that even though the coarse ACL grant
+  plus home traversal *could* expose a world-readable sibling `~/b`, the profile
+  denies the agent process any path it wasn't granted. The residual stops being an
+  ACL problem and becomes a profile the launcher writes per session — no tree
+  mutation, self-cleaning on exit.
+
+Net: **agent account (floor) + allow-only ACL grant (opens the path) +
+`sandbox-exec`/`bwrap` default-deny profile (trims to just the grant).** The
+sibling non-negotiable is met by the confinement layer, not by making the ACLs
+cleverer.
+
 ---
 
 ## Direction 2 — the operator reaching into the agent's home
