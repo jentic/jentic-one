@@ -8,6 +8,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
+import { sharedQueryKeys } from '@/shared/api';
 import type {
 	ToolkitCreateRequest,
 	ToolkitUpdateRequest,
@@ -74,10 +75,26 @@ export function useCreateToolkit() {
 export function useUpdateToolkit(toolkitId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (body: ToolkitUpdateRequest) => client.updateToolkit(toolkitId, body),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
+		mutationFn: (body: ToolkitUpdateRequest) => {
+			// Guard against a mutate fired before the route param resolved: the
+			// hook is instantiated with `toolkitId ?? ''` on the page, so an empty
+			// id here would PATCH `/toolkits/` (wrong toolkit / 404) instead of the
+			// intended one. Fail loudly rather than silently hitting the wrong URL
+			// (#10). Mirrors the same guard on `useUpdateAgent`'s call site.
+			if (!toolkitId) throw new Error('Cannot update a toolkit without an id.');
+			return client.updateToolkit(toolkitId, body);
+		},
+		onSuccess: (updatedToolkit) => {
+			// Seed the detail cache with the server response so the header/name
+			// updates instantly instead of flickering the stale name until the
+			// invalidation refetch lands — mirroring `useUpdateAgent` (#12).
+			queryClient.setQueryData(toolkitKeys.detail(toolkitId), updatedToolkit);
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
+			// A toolkit's name shows on the Dashboard's toolkit surfaces too, so
+			// refresh the shared dashboard root symmetrically with the other
+			// name-changing mutations (`useUpdateAgent`) instead of leaving those
+			// tiles stale until their own poll (#12).
+			queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
 		},
 	});
 }

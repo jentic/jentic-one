@@ -179,6 +179,17 @@ export async function createAgent(params: {
 	}
 }
 
+export async function updateAgent(
+	agentId: string,
+	patch: { name?: string | null; description?: string | null },
+): Promise<AgentEntity> {
+	try {
+		return agentToEntity(await AgentsService.updateAgent({ agentId, requestBody: patch }));
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to update the agent.');
+	}
+}
+
 export async function generateAgentApiKey(agentId: string): Promise<ApiKeyResult> {
 	try {
 		const res = await AgentsService.generateAgentApiKey({ agentId });

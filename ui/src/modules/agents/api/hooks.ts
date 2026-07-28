@@ -41,6 +41,7 @@ import {
 	replaceServiceAccountScopes,
 	revokeAgentApiKey,
 	fetchActorAccessRequests,
+	updateAgent,
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
@@ -271,6 +272,37 @@ export function useCreateAgent() {
 			});
 		},
 		onError: (e) => notifyError(e, 'Failed to create the agent.'),
+	});
+}
+
+/**
+ * Rename / re-describe an agent (`PATCH /agents/:id`), the write behind the
+ * "Edit agent" dialog on the detail page (#620). On success the returned row
+ * seeds the detail cache so the header updates instantly, and the lists +
+ * dashboard + nav badge refresh so the new name propagates everywhere. Errors
+ * are surfaced in the dialog (no toast), so this rethrows rather than swallowing
+ * them.
+ */
+export function useUpdateAgent(agentId: string) {
+	const qc = useQueryClient();
+	return useMutation<AgentEntity, Error, { name?: string | null; description?: string | null }>({
+		mutationFn: (patch) => {
+			// The hook is instantiated with `id ?? ''` on the detail page, before
+			// the not-found early-return can run. Guard here so a mutate against an
+			// empty id can't PATCH `/agents/` (wrong agent / 404) — fail loudly
+			// instead of silently hitting the wrong URL (#10).
+			if (!agentId) throw new Error('Cannot update an agent without an id.');
+			return updateAgent(agentId, patch);
+		},
+		onSuccess: (agent) => {
+			qc.setQueryData(agentsKeys.detail(agent.id), agent);
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
+			// The name shows on the roster, the dashboard's agent surfaces, and
+			// the nav badge — all keyed under the shared agents root — so refresh
+			// those too, matching the other agent mutations.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+		},
 	});
 }
 

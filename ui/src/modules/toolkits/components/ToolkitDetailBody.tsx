@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
 	AlertTriangle,
@@ -9,7 +9,6 @@ import {
 	Key,
 	Link as LinkIcon,
 	Plus,
-	Settings,
 	ShieldOff,
 	Trash2,
 	Unlink,
@@ -24,8 +23,6 @@ import {
 	Dialog,
 	ErrorAlert,
 	Input,
-	Label,
-	Textarea,
 } from '@/shared/ui';
 import type { CascadeDependentGroup } from '@/shared/ui';
 import {
@@ -40,7 +37,6 @@ import {
 	useToolkitKeys,
 	useUnbindCredential,
 	useUnbindToolkitFromAgent,
-	useUpdateToolkit,
 } from '@/modules/toolkits/api';
 import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
 import { OneTimeKeyDisplay } from '@/modules/toolkits/components/OneTimeKeyDisplay';
@@ -100,7 +96,6 @@ export function ToolkitDetailBody({
 	const { data: bindings = [], isError: bindingsError } = useToolkitBindings(toolkitId, { poll });
 	const { data: agents = [], isError: agentsError } = useToolkitAgents(toolkitId, { poll });
 
-	const updateToolkit = useUpdateToolkit(toolkitId);
 	const createKey = useCreateKey(toolkitId);
 	const revokeKey = useRevokeKey(toolkitId);
 	const bindCredential = useBindCredential(toolkitId);
@@ -112,22 +107,10 @@ export function ToolkitDetailBody({
 	const [showKeyCreate, setShowKeyCreate] = useState(false);
 	const [keyName, setKeyName] = useState('');
 	const [newKey, setNewKey] = useState<string | null>(null);
-	const [showSettings, setShowSettings] = useState(false);
-	const [editName, setEditName] = useState('');
-	const [editDesc, setEditDesc] = useState('');
 	const [editingPermForCred, setEditingPermForCred] = useState<string | null>(null);
 	const [bindOpen, setBindOpen] = useState(false);
 	const [linkAgentOpen, setLinkAgentOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
-
-	const prevShowSettings = useRef(false);
-	useEffect(() => {
-		if (showSettings && !prevShowSettings.current && toolkit) {
-			setEditName(toolkit.name);
-			setEditDesc(toolkit.description ?? '');
-		}
-		prevShowSettings.current = showSettings;
-	}, [toolkit, showSettings]);
 
 	if (isLoading)
 		return (
@@ -226,9 +209,6 @@ export function ToolkitDetailBody({
 					</span>
 					<div className="flex shrink-0 items-center gap-2">
 						<ToolkitKillSwitch toolkitId={toolkitId} active={toolkit.active} />
-						<Button variant="secondary" size="sm" onClick={() => setShowSettings(true)}>
-							<Settings className="h-4 w-4" /> Edit
-						</Button>
 						<Button
 							variant="danger"
 							size="sm"
@@ -250,9 +230,6 @@ export function ToolkitDetailBody({
 					)}
 					<div className="flex flex-wrap items-center gap-2">
 						<ToolkitKillSwitch toolkitId={toolkitId} active={toolkit.active} />
-						<Button variant="secondary" size="sm" onClick={() => setShowSettings(true)}>
-							<Settings className="h-4 w-4" /> Edit
-						</Button>
 						<Button
 							variant="danger"
 							size="sm"
@@ -471,14 +448,17 @@ export function ToolkitDetailBody({
 								const agentRules = (cred.permissions ?? []).filter(
 									(r) => !r._system,
 								);
-								// Compute the friendly title once — it's referenced by both
-								// the heading and the third-line guard, and the guard must
-								// compare against the *resolved* heading (which falls back to
-								// the label / id when the friendly name is empty) so a
-								// vendor-less binding doesn't print its label twice.
-								const friendly = toolkitCredDisplayName(cred);
-								const heading = friendly || cred.label || cred.credential_id;
-								const showLabel = !!cred.label && cred.label !== heading;
+								// Heading = the user's own credential label when set, so a
+								// renamed credential leads with that name (matching the
+								// credentials page). Fall back to the friendly API name,
+								// then the credential id, so the row never renders blank.
+								// We never show the derived API name as a *separate* line:
+								// the row is just the name (user's or derived) plus the mono
+								// vendor/name tuple beneath.
+								const heading =
+									cred.label ||
+									toolkitCredDisplayName(cred) ||
+									cred.credential_id;
 								return (
 									<motion.div
 										key={cred.credential_id}
@@ -495,12 +475,7 @@ export function ToolkitDetailBody({
 													<p className="text-muted-foreground truncate font-mono text-xs">
 														{cred.api_vendor && cred.api_name
 															? `${cred.api_vendor}/${cred.api_name}`
-															: (cred.api_vendor ?? cred.api_name)}
-													</p>
-												)}
-												{showLabel && (
-													<p className="text-foreground/70 truncate text-xs">
-														{cred.label}
+															: cred.api_vendor || cred.api_name}
 													</p>
 												)}
 												<p className="text-muted-foreground mt-0.5 flex items-center gap-1 text-xs">
@@ -685,63 +660,6 @@ export function ToolkitDetailBody({
 
 			{/* Activity — read-only toolkit-scoped slice of the org-wide audit log. */}
 			<ToolkitAuditPanel toolkitId={toolkitId} poll={poll} />
-
-			{/* Settings dialog */}
-			<Dialog
-				open={showSettings}
-				onClose={() => setShowSettings(false)}
-				title="Edit Toolkit"
-				size="sm"
-				footer={
-					<>
-						<Button variant="secondary" onClick={() => setShowSettings(false)}>
-							Cancel
-						</Button>
-						<Button
-							onClick={() =>
-								updateToolkit.mutate(
-									{ name: editName || null, description: editDesc || null },
-									{ onSuccess: () => setShowSettings(false) },
-								)
-							}
-							loading={updateToolkit.isPending}
-						>
-							{updateToolkit.isPending ? 'Saving...' : 'Save Changes'}
-						</Button>
-					</>
-				}
-			>
-				<div className="space-y-4">
-					<div>
-						<Label
-							htmlFor="tk-settings-name"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Name
-						</Label>
-						<Input
-							id="tk-settings-name"
-							type="text"
-							value={editName}
-							onChange={(e) => setEditName(e.target.value)}
-						/>
-					</div>
-					<div>
-						<Label
-							htmlFor="tk-settings-description"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Description
-						</Label>
-						<Textarea
-							id="tk-settings-description"
-							value={editDesc}
-							onChange={(e) => setEditDesc(e.target.value)}
-							rows={2}
-						/>
-					</div>
-				</div>
-			</Dialog>
 
 			{/* Bind-existing dialog */}
 			<Dialog

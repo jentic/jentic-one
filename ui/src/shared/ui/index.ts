@@ -55,6 +55,12 @@ export { Pagination } from '@/shared/ui/Pagination';
 
 export { Dialog } from '@/shared/ui/Dialog';
 
+export { EditNameDescriptionDialog } from '@/shared/ui/EditNameDescriptionDialog';
+export type {
+	EditNameDescriptionDialogProps,
+	NameDescriptionPatch,
+} from '@/shared/ui/EditNameDescriptionDialog';
+
 export { CascadeDeleteDialog } from '@/shared/ui/CascadeDeleteDialog';
 export type { CascadeEntityType, CascadeDependentGroup } from '@/shared/ui/CascadeDeleteDialog';
 

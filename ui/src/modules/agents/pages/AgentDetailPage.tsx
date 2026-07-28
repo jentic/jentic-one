@@ -27,6 +27,7 @@ import {
 	CardTitle,
 	CascadeDeleteDialog,
 	CopyButton,
+	EditNameDescriptionDialog,
 	ErrorAlert,
 	LoadingState,
 	PageHeader,
@@ -44,6 +45,7 @@ import {
 	useDisableAgent,
 	useEnableAgent,
 	useArchiveAgent,
+	useUpdateAgent,
 	useGenerateAgentApiKey,
 	useRevokeAgentApiKey,
 	STATUS_DOT,
@@ -94,11 +96,15 @@ export default function AgentDetailPage() {
 	const disable = useDisableAgent();
 	const enable = useEnableAgent();
 	const archive = useArchiveAgent();
+	const updateAgent = useUpdateAgent(id ?? '');
 	const generateApiKey = useGenerateAgentApiKey();
 	const revokeApiKey = useRevokeAgentApiKey();
 
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 	const [apiKey, setApiKey] = useState<string | null>(null);
+	// Edit-agent dialog: just an open flag now — the shared dialog owns the
+	// seeded draft, live validation, diff-vs-seeded patch, and all hardening.
+	const [editOpen, setEditOpen] = useState(false);
 
 	if (agentQuery.isPending) {
 		return (
@@ -123,6 +129,7 @@ export default function AgentDetailPage() {
 
 	const agent = agentQuery.data;
 	const actions = ACTIONS_FOR_STATUS[agent.status];
+	const desc = agent.description?.trim();
 	const actionPending =
 		approve.isPending ||
 		deny.isPending ||
@@ -167,7 +174,16 @@ export default function AgentDetailPage() {
 		<PageShell>
 			<PageHeader
 				title={agent.name}
-				subtitle="Identity, attribution, bound toolkits, and lifecycle for this agent."
+				subtitle={
+					desc
+						? desc
+						: 'Identity, attribution, bound toolkits, and lifecycle for this agent.'
+				}
+				onEdit={() => {
+					updateAgent.reset();
+					setEditOpen(true);
+				}}
+				editLabel="Rename agent"
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
@@ -207,14 +223,12 @@ export default function AgentDetailPage() {
 								</code>
 								<CopyButton value={agent.id} />
 							</div>
-							{agent.description && (
-								<p className="text-muted-foreground mt-2 text-sm">
-									{agent.description}
-								</p>
-							)}
 						</div>
 
-						{/* Lifecycle actions — gated by status, mirrors the list page. */}
+						{/* Actions — the lifecycle buttons below are gated by status;
+						    rename lives in the PageHeader pencil above. Guard the
+						    container so archived agents (no lifecycle actions, not
+						    active) don't render an empty div. */}
 						{(actions.length > 0 || agent.status === 'active') && (
 							<div className="flex shrink-0 flex-wrap gap-2">
 								{agent.status === 'active' && (
@@ -532,6 +546,30 @@ export default function AgentDetailPage() {
 			/>
 
 			<ApiKeyDialog open={apiKey != null} apiKey={apiKey} onClose={() => setApiKey(null)} />
+
+			{/* Edit dialog — rename + re-describe the agent (#620). The shared
+			    dialog owns the seeded draft, live validation (name 1..255,
+			    description ≤1024), the diff-vs-seeded patch, and the pending /
+			    empty-patch guards; the page just wires its mutation + title. */}
+			<EditNameDescriptionDialog
+				open={editOpen}
+				onClose={() => setEditOpen(false)}
+				title="Edit agent"
+				initialName={agent.name}
+				initialDescription={agent.description ?? null}
+				isPending={updateAgent.isPending}
+				error={updateAgent.isError ? (updateAgent.error as Error) : null}
+				entityMissing={editOpen && !agentQuery.data}
+				fieldIdPrefix="agent-edit"
+				onSave={(patch) => {
+					updateAgent.mutate(patch, {
+						onSuccess: () => {
+							setEditOpen(false);
+							updateAgent.reset();
+						},
+					});
+				}}
+			/>
 		</PageShell>
 	);
 }

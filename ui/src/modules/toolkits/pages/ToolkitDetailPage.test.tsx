@@ -482,4 +482,349 @@ describe('ToolkitDetailPage', () => {
 		await within(dialog).findByText(/cascade failed mid-flight/i);
 		expect(screen.queryByRole('dialog', { name: /delete toolkit/i })).toBeInTheDocument();
 	});
+
+	it('renames the toolkit through the Edit dialog (#635)', async () => {
+		// Drive rename against a local fixture so the mutation is observable
+		// (GET reflects the new name after PATCH) WITHOUT mutating the shared MSW
+		// store — the store persists across this file and has no per-test reset,
+		// so leaking "GitHub Suite" would break later load anchors.
+		let name = 'GitHub Tools';
+		const row = () => ({
+			toolkit_id: 'tk_demo_github',
+			name,
+			description: 'Issues, PRs, and repo automation for the support agent.',
+			active: true,
+			key_count: 2,
+			credential_count: 1,
+			permissions: [],
+			created_at: '2026-05-01T10:00:00Z',
+			updated_at: '2026-05-03T10:00:00Z',
+		});
+		worker.use(
+			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
+			http.patch('/toolkits/:toolkitId', async ({ request }) => {
+				const body = (await request.json()) as { name?: string };
+				if (body.name) name = body.name;
+				return HttpResponse.json(row());
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+		const nameInput = within(dialog).getByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Suite');
+		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+
+		// Dialog closes on success and the new name propagates to the PageHeader.
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
+		);
+		expect(await screen.findByRole('heading', { name: 'GitHub Suite' })).toBeInTheDocument();
+	});
+
+	it('blocks an empty name in the Edit dialog with a validation error (#635)', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+		await user.clear(within(dialog).getByLabelText('Name'));
+
+		expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled();
+		expect(await within(dialog).findByText("Name can't be empty.")).toBeInTheDocument();
+	});
+
+	it('surfaces a server error in the Edit dialog and keeps it open (#635)', async () => {
+		worker.use(
+			http.patch('/toolkits/:toolkitId', () =>
+				HttpResponse.json(
+					{ type: 'conflict', status: 409, detail: 'Name already in use.' },
+					{ status: 409 },
+				),
+			),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+		const nameInput = within(dialog).getByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'Taken name');
+		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+
+		expect(await within(dialog).findByText(/name already in use/i)).toBeInTheDocument();
+		expect(screen.getByRole('dialog', { name: 'Edit toolkit' })).toBeInTheDocument();
+	});
+
+	it('shows the bound-credential subtitle when only api_name is present (empty api_vendor)', async () => {
+		// Regression (#8): an empty-string `api_vendor` must fall through to
+		// `api_name` for the subtitle. The old `??` fallback only treated
+		// null/undefined as missing, so `api_vendor: ''` printed a blank subtitle
+		// even though `api_name` was set. Seed the bound-credentials override with
+		// exactly that shape and assert the non-empty field wins.
+		worker.use(
+			http.get('/toolkits/:toolkitId/credentials', () =>
+				HttpResponse.json({
+					data: [
+						{
+							toolkit_id: 'tk_demo_github',
+							credential_id: 'cred_empty_vendor',
+							label: 'Vendorless PAT',
+							api_name: 'foo',
+							api_vendor: '',
+							credential_type: 'api_key',
+							bound_at: '2026-05-01T10:10:00Z',
+							permissions: [],
+						},
+					],
+					has_more: false,
+				}),
+			),
+		);
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// The subtitle renders `foo` (not blank, and not `/foo`).
+		expect(await screen.findByText('foo')).toBeInTheDocument();
+		expect(screen.queryByText('/foo')).not.toBeInTheDocument();
+	});
+
+	it('always shows credential_id in the subtitle when no API identity exists (#9)', async () => {
+		// Two credentials share a name and carry no API identity (no `api` block,
+		// so vendor/apiName are null). The subtitle must fall back to the
+		// credential_id so the rows stay disambiguable instead of collapsing to
+		// two identical, subtitle-less rows.
+		worker.use(
+			http.get('/credentials', () =>
+				HttpResponse.json({
+					data: [
+						{
+							credential_id: 'cred_dup_a',
+							name: 'Shared name',
+							type: 'api_key',
+							provider: 'manual',
+							active: true,
+							created_at: '2026-05-01T10:00:00Z',
+							updated_at: null,
+						},
+						{
+							credential_id: 'cred_dup_b',
+							name: 'Shared name',
+							type: 'api_key',
+							provider: 'manual',
+							active: true,
+							created_at: '2026-05-01T10:00:00Z',
+							updated_at: null,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: /bind existing/i }));
+
+		// Both rows share the same title, so the credential_id subtitle is the
+		// only thing telling them apart — it must be visible on both.
+		expect(await screen.findByText('cred_dup_a')).toBeInTheDocument();
+		expect(await screen.findByText('cred_dup_b')).toBeInTheDocument();
+	});
+
+	it('seeds the Edit dialog even when it is opened before the toolkit finishes loading (#3)', async () => {
+		// Race: the PageHeader pencil is clickable before `useToolkit` resolves.
+		// Delay the GET so the dialog opens against an undefined toolkit, then let
+		// it resolve — the fields must seed from the real data, not stay empty.
+		const { delay } = await import('msw');
+		worker.use(
+			http.get('/toolkits/:toolkitId', async () => {
+				await delay(120);
+				return HttpResponse.json({
+					toolkit_id: 'tk_demo_github',
+					name: 'GitHub Tools',
+					description: 'Repo automation.',
+					active: true,
+					key_count: 2,
+					credential_count: 1,
+					permissions: [],
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: '2026-05-03T10:00:00Z',
+				});
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+
+		// Open the dialog immediately (the pencil renders before the query lands).
+		await user.click(await screen.findByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+
+		// Once the toolkit resolves, the fields fill from the real data instead of
+		// being stranded empty (which a naive prev-ref guard would leave them).
+		await waitFor(() =>
+			expect(within(dialog).getByLabelText('Name')).toHaveValue('GitHub Tools'),
+		);
+		expect(within(dialog).getByLabelText('Description')).toHaveValue('Repo automation.');
+	});
+
+	it('disables Cancel while a rename PATCH is in flight (#7)', async () => {
+		let name = 'GitHub Tools';
+		const row = () => ({
+			toolkit_id: 'tk_demo_github',
+			name,
+			description: 'Repo automation.',
+			active: true,
+			key_count: 2,
+			credential_count: 1,
+			permissions: [],
+			created_at: '2026-05-01T10:00:00Z',
+			updated_at: '2026-05-03T10:00:00Z',
+		});
+		const { delay } = await import('msw');
+		worker.use(
+			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
+			http.patch('/toolkits/:toolkitId', async ({ request }) => {
+				const body = (await request.json()) as { name?: string };
+				if (body.name) name = body.name;
+				await delay(150);
+				return HttpResponse.json(row());
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+		const nameInput = within(dialog).getByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Suite');
+		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+
+		// Cancel is disabled mid-flight so a close-and-reopen can't have the stale
+		// onSuccess slam the freshly reopened dialog shut.
+		await waitFor(() =>
+			expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled(),
+		);
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
+		);
+	});
+
+	it('does not render a subtitle for a whitespace-only toolkit description (#4)', async () => {
+		worker.use(
+			http.get('/toolkits/:toolkitId', () =>
+				HttpResponse.json({
+					toolkit_id: 'tk_demo_github',
+					name: 'GitHub Tools',
+					description: '   \t  ',
+					active: true,
+					key_count: 2,
+					credential_count: 1,
+					permissions: [],
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: '2026-05-03T10:00:00Z',
+				}),
+			),
+		);
+		const { container } = renderWithProviders(<ToolkitDetailPage />, {
+			route: ROUTE,
+			path: PATH,
+		});
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// The PageHeader subtitle band trims the description, so a whitespace-only
+		// value collapses to `undefined` — no subtitle `<p>` is rendered at all,
+		// and the raw padding never surfaces verbatim.
+		expect(container.textContent).not.toContain('   \t  ');
+		// The rename pencil still renders (proving the header itself mounted), so
+		// the assertion above isn't vacuously true on a missing header.
+		expect(screen.getByRole('button', { name: 'Rename toolkit' })).toBeInTheDocument();
+	});
+
+	it('keeps the Save button disabled until the draft actually changes (#8)', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+
+		// Freshly seeded, unedited draft → empty patch → Save disabled so an
+		// unchanged Save never round-trips a PATCH.
+		expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled();
+
+		// A real edit re-enables it…
+		const nameInput = within(dialog).getByLabelText('Name');
+		await user.type(nameInput, ' Suite');
+		await waitFor(() =>
+			expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeEnabled(),
+		);
+
+		// …and reverting the edit disables it again (diff-vs-seeded is empty).
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Tools');
+		await waitFor(() =>
+			expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled(),
+		);
+	});
+
+	it('does not close on Escape while a rename PATCH is in flight (#1)', async () => {
+		let name = 'GitHub Tools';
+		const row = () => ({
+			toolkit_id: 'tk_demo_github',
+			name,
+			description: 'Repo automation.',
+			active: true,
+			key_count: 2,
+			credential_count: 1,
+			permissions: [],
+			created_at: '2026-05-01T10:00:00Z',
+			updated_at: '2026-05-03T10:00:00Z',
+		});
+		const { delay } = await import('msw');
+		worker.use(
+			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
+			http.patch('/toolkits/:toolkitId', async ({ request }) => {
+				const body = (await request.json()) as { name?: string };
+				if (body.name) name = body.name;
+				await delay(150);
+				return HttpResponse.json(row());
+			}),
+		);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
+		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
+		const nameInput = within(dialog).getByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Suite');
+		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
+
+		// Escape while the Save is in flight must NOT close the dialog (the
+		// pending guard early-returns), so a stale in-flight success can't slam a
+		// freshly reopened dialog shut.
+		await waitFor(() =>
+			expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled(),
+		);
+		await user.keyboard('{Escape}');
+		expect(screen.getByRole('dialog', { name: 'Edit toolkit' })).toBeInTheDocument();
+
+		// It closes normally once the PATCH settles.
+		await waitFor(() =>
+			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
+		);
+	});
 });

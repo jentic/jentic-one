@@ -319,6 +319,13 @@ export function resetAgentsStore(): void {
 			denial_reason: 'Unverified publisher.',
 			denied_by: ADMIN,
 		}),
+		seedAgent({
+			id: 'agnt_archived_1',
+			name: 'retired-agent',
+			status: 'archived',
+			approved_by: ADMIN,
+			approved_at: now(-240),
+		}),
 	];
 	serviceAccounts = [
 		seedSa({ id: 'sva_pending_1', name: 'nightly-sync', status: 'pending' }),
@@ -444,6 +451,51 @@ export const agentsHandlers = [
 		});
 	}),
 	// Colon-verb lifecycle. MSW matches the literal `:verb` suffix.
+	http.patch('/agents/:id', async ({ params, request }) => {
+		const row = agents.find((a) => a.id === params.id);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json().catch(() => ({}))) as {
+			name?: string | null;
+			description?: string | null;
+		};
+		// Mirror the backend AgentPatchRequest constraints (name 1..255,
+		// description ≤1024) so the inline editor's error path is exercisable.
+		if (body.name !== undefined && body.name !== null) {
+			if (body.name.length < 1 || body.name.length > 255) {
+				return HttpResponse.json(
+					{
+						detail: [
+							{
+								loc: ['body', 'name'],
+								msg: 'String should have between 1 and 255 characters',
+								type: 'string_too_short',
+							},
+						],
+					},
+					{ status: 422 },
+				);
+			}
+			row.name = body.name;
+		}
+		if (body.description !== undefined) {
+			if (body.description !== null && body.description.length > 1024) {
+				return HttpResponse.json(
+					{
+						detail: [
+							{
+								loc: ['body', 'description'],
+								msg: 'String should have at most 1024 characters',
+								type: 'string_too_long',
+							},
+						],
+					},
+					{ status: 422 },
+				);
+			}
+			row.description = body.description;
+		}
+		return HttpResponse.json(row);
+	}),
 	http.post('/agents/:id\\:approve', ({ params }) => {
 		const row = agents.find((a) => a.id === params.id);
 		const res = transition(row, APPROVE);
