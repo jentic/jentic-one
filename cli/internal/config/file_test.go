@@ -220,12 +220,6 @@ func TestLocalAgentRoundTrip(t *testing.T) {
 	if cfg.AddGrantedDir("claude", "/Users/Shared/alice-local-agent/work") {
 		t.Fatal("expected duplicate AddGrantedDir to be idempotent")
 	}
-	if !cfg.MarkHomeDenied("claude") {
-		t.Fatal("expected MarkHomeDenied to report a change")
-	}
-	if cfg.MarkHomeDenied("claude") {
-		t.Fatal("expected repeat MarkHomeDenied to be idempotent")
-	}
 	if err := cfg.Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -240,9 +234,6 @@ func TestLocalAgentRoundTrip(t *testing.T) {
 	}
 	if agent.User != "alice-local-agent" || agent.Binary != "claude" {
 		t.Errorf("unexpected agent: %+v", agent)
-	}
-	if !agent.HomeDenied {
-		t.Error("expected HomeDenied to persist")
 	}
 	if len(agent.GrantedDirs) != 1 {
 		t.Fatalf("granted dirs = %v", agent.GrantedDirs)

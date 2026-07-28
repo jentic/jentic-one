@@ -126,52 +126,40 @@ func DirAccess(ctx context.Context, agentUser, dir string) bool {
 	return runAsAgent(ctx, agentUser, "test -r "+shellQuote(dir)+" -a -w "+shellQuote(dir)+" -a -x "+shellQuote(dir)) == nil
 }
 
-// The directory-access model implemented below is "agent-scoped default-deny on
-// the operator's home + traverse-walk + rwx-leaf". It lets the agent be granted
-// read/write to a specific directory *inside* the operator's home without ever
-// gaining default access to the home. It is built from three layers, all scoped
-// to the single agent user (they never touch the operator's own permissions):
+// The directory-access model implemented below is "700 home + traverse-walk +
+// rwx-leaf". It lets the agent be granted read/write to a specific directory
+// *inside* the operator's home without gaining access to the rest of the home,
+// and without ever walking or stamping the whole home tree. Two layers, both
+// scoped to the single agent user (they never touch the operator's own access):
 //
-//	Layer 1 — home-deny (EnsureHomeDenyCmd): a recursive, inheritable deny of
-//	  read/write/delete for the agent user across the whole operator home. This
-//	  is the machine-independent guarantee that the agent starts with nothing in
-//	  the home, existing files and future ones alike. One-time and expensive, so
-//	  the caller records it (config HomeDenied) and skips it thereafter.
-//	Layer 2 — traverse-walk (AncestorsNeedingTraverse + TraverseGrantCmd): an
+//	Layer 1 — traverse-walk (AncestorsNeedingTraverse + TraverseGrantCmd): an
 //	  execute-only (search, not list/read) grant on the home and each ancestor
 //	  down to the leaf's parent, so the agent can *pass through* to reach the
 //	  leaf. Dirs it can already traverse are skipped.
-//	Layer 3 — rwx-leaf (LeafGrantCmd): full read/write/execute on the workspace
+//	Layer 2 — rwx-leaf (LeafGrantCmd): full read/write/execute on the workspace
 //	  and everything created inside it (inherited).
 //
-// macOS ordering caveat: macOS evaluates ACL entries top-to-bottom, first-match.
-// The home-deny, applied recursively, stamps a deny entry onto the leaf subtree
-// too; the leaf allow must therefore be evaluated *before* that deny. We force
-// this by inserting the leaf allow at index 0 (`chmod +a# 0`) and applying it
-// recursively so every existing child is stamped allow-before-deny. Linux POSIX
-// ACLs pick the most-specific named-user entry per inode, so no ordering care is
-// needed there.
-
-// EnsureHomeDenyCmd returns the one-time command that applies the agent-scoped
-// default-deny across the operator's home (Layer 1). It denies the agent user
-// read/write/delete on every existing entry and, via inheritance, on future
-// ones — without altering the operator's own access. This is the expensive step
-// (it walks the whole home), so callers apply it once and record it.
-func EnsureHomeDenyCmd(agentUser, home string) *exec.Cmd {
-	if runtime.GOOS == "darwin" {
-		// -R stamps every existing entry (macOS inherit flags only affect future
-		// children, so a non-recursive set would miss what already exists); the
-		// inherit flags cover new children.
-		return exec.Command("sudo", "chmod", "-R", "+a", //nolint:gosec // agentUser is a config account name; home is os.UserHomeDir.
-			"user:"+agentUser+" deny read,write,delete,append,file_inherit,directory_inherit", home)
-	}
-	// Linux: a named-user entry of "---" grants the agent nothing and, being the
-	// most-specific match, overrides any group/other bits. Access ACL (recursive)
-	// covers existing entries; the default ACL covers future ones.
-	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":--- " + shellQuote(home) +
-		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":--- " + shellQuote(home)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; home is os.UserHomeDir.
-}
+// The default-deny is provided by the operator's home already being mode 0700
+// (the machine-independent isolation guarantee from doc 05): with `~` at 0700
+// the agent — like every other non-owner user — cannot even traverse it, so it
+// reaches *nothing* inside until we open a specific path. We deliberately do
+// NOT add a recursive agent-scoped `deny` ACL across `~`: an earlier design did,
+// and it was a mistake — walking the whole home is slow, races against churning
+// temp files, trips macOS TCC privacy prompts (e.g. Photos) when it descends
+// into protected bundles, and on macOS the inherited deny fights the leaf allow
+// on first-match ordering. Relying on the 0700 bits avoids all of that.
+//
+// Accepted residual (documented in doc 07): because Layer 1 grants execute on an
+// ancestor, if some directory *inside* `~` is world-readable (mode o+r, e.g. a
+// 0755 project dir) the agent could read it once it can traverse the path to it,
+// without an explicit leaf grant. The narrow-traverse mitigation (open execute
+// on only the exact ancestor chain, and optionally strip world bits on those
+// ancestors) is discussed in the docs; we currently accept the gap rather than
+// re-introduce a home-wide sweep.
+//
+// macOS ordering note: with no home-wide deny there is no inherited deny to beat,
+// so leaf-allow ordering is not load-bearing. We still insert the leaf allow at a
+// low index for robustness against any pre-existing deny ACEs on the subtree.
 
 // AncestorChain returns the directories that must be traversable for the agent
 // to reach leaf from home: home first, then each intermediate directory down to
@@ -212,7 +200,7 @@ func AncestorsNeedingTraverse(ctx context.Context, agentUser, home, leaf string)
 }
 
 // TraverseGrantCmd returns the command that grants the agent execute-only
-// (traverse/search — not list or read) on a single directory (Layer 2). It is
+// (traverse/search — not list or read) on a single directory (Layer 1). It is
 // non-recursive and non-inherited: it opens pass-through on exactly this dir.
 func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
@@ -223,10 +211,10 @@ func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 }
 
 // LeafGrantCmd returns the command that grants the agent full read/write/execute
-// on the leaf workspace and everything inside it, existing and future (Layer 3).
-// On macOS the allow is inserted at index 0 and applied recursively so it is
-// evaluated before the inherited home-deny on every node (see the ordering
-// caveat above); on Linux it is a recursive access + default ACL.
+// on the leaf workspace and everything inside it, existing and future (Layer 2).
+// On macOS the allow is inserted at a low index and applied recursively so it
+// wins over any pre-existing deny ACE on the subtree (see the ordering note
+// above); on Linux it is a recursive access + default ACL.
 func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return exec.Command("sudo", "chmod", "-R", "+a#", "0", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
@@ -238,8 +226,9 @@ func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 }
 
 // LeafRevokeCmd removes the agent's rwx-leaf allow from dir (and its subtree),
-// reversing LeafGrantCmd. The home-deny and any traverse grants stay in place —
-// dropping the leaf allow is enough for the deny to re-close the directory.
+// reversing LeafGrantCmd. Any ancestor traverse grants stay in place, but with
+// the leaf allow gone the agent can no longer read or write the directory — and
+// (unless the directory is world-readable) can no longer reach its contents.
 func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return exec.Command("sudo", "chmod", "-R", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.

@@ -69,7 +69,6 @@ local_agents:
     user: alice-local-agent          # the OS account jentic run becomes
     home_dir: /Users/Shared/alice-local-agent
     binary: claude                    # what to exec / probe
-    home_denied: true                 # the one-time agent-scoped deny on ~ is applied
     granted_dirs:                     # durable directory ACLs (see step 3)
       - /Users/Shared/alice-local-agent/work/api
       - /Users/alice/projects/scratch
@@ -79,9 +78,6 @@ local_agents:
 - **`user` / `home_dir`** are written by `jentic agent-user setup` when it creates
   the account, and read by every `jentic run` so the launcher never has to guess the
   name or home (it also lets `--agent-user` overrides persist).
-- **`home_denied`** records that the one-time agent-scoped default-deny across the
-  operator's home has been applied (step 3). It is expensive (a full walk of `~`), so
-  the flag lets `jentic run` do it once and skip it on every later in-home grant.
 - **`granted_dirs`** is the authoritative inventory backing `--list-grants`,
   `jentic revoke-dir`, and the `jentic doctor` sprawl check (step 3). The ACL on disk
   is the source of truth for *access*; this list is the record of *what jentic
@@ -102,7 +98,7 @@ local_agents:
 2b. **Optionally seed the operator's agent config** into the agent's home (opt-in,
    once) so the agent inherits the operator's settings.
 3. **Resolve the working directory** and its access — the directory-access flow,
-   including the in-home default-deny + traverse-walk + rwx-leaf model and
+   including the in-home 700-home + traverse-walk + rwx-leaf model and
    danger-flagging.
 4. **Launch** the agent as the agent user, in the resolved directory, via a login
    shell so no operator environment leaks.
@@ -267,7 +263,8 @@ Choice [h]:
 
   - **Outside the operator's home** (a neutral/shared path): a single inherited
     named-user ACL, the same mechanism [`05`](05-agent-as-own-unix-user.md) uses for
-    the operator (reversed direction):
+    the operator (reversed direction). No traverse walk is needed — the path is
+    already reachable — so this is just the rwx-leaf grant:
 
     ```bash
     # macOS
@@ -278,10 +275,10 @@ Choice [h]:
 
   - **Inside the operator's home** — the important case, because almost every
     directory the operator wants the agent to work in *is* under `~`, yet `~` must
-    stay closed by default. This is handled by the **agent-scoped default-deny +
-    traverse-walk + rwx-leaf** model described below. It lets the agent read/write
-    one chosen subtree of `~` **without** ever gaining default access to the rest of
-    the home — and without touching the operator's own permissions.
+    stay closed by default. This is handled by the **700-home + traverse-walk +
+    rwx-leaf** model described below. It lets the agent read/write one chosen subtree
+    of `~` without gaining access to the rest of the home — leaning on the home's
+    existing `700` mode for the default-deny rather than stamping the whole tree.
 
   Either way the grant is **scoped to that directory subtree only**. This is a
   system-level grant; **Claude Code (or whichever agent) still governs its own
@@ -291,30 +288,15 @@ Choice [h]:
 
   #### Granting a directory inside the operator's home
 
-  The whole model is **scoped to the single agent user** — every rule below is a
-  named-user ACL entry (`user:$AGENT ...` on macOS, `u:$AGENT:...` on Linux). None of
-  it changes the mode bits or the operator's own access; `~` stays `drwx------` to
-  every other user on the box. Three layers:
+  Every grant below is a named-user ACL entry (`user:$AGENT ...` on macOS,
+  `u:$AGENT:...` on Linux), scoped to the single agent user. **The default-deny is
+  the home's existing `chmod 700 ~`** — the machine-independent isolation guarantee
+  from [`05`](05-agent-as-own-unix-user.md). With `~` at `drwx------`, the agent (like
+  every other non-owner) cannot even *traverse* the home, so it reaches nothing inside
+  until we open a specific path. We add **no** ACL to `~` itself; we only open the
+  path to the chosen leaf. Two layers:
 
-  **Layer 1 — default-deny on `~` (one-time, agent-scoped, inherited).** The first
-  time an in-home directory is granted, deny the agent everything across the whole
-  home, existing files and future ones alike:
-
-  ```bash
-  # macOS — recursive so existing entries are stamped; inherit flags cover new ones
-  sudo chmod -R +a "user:$AGENT deny read,write,delete,append,file_inherit,directory_inherit" ~
-
-  # Linux — a "---" named-user entry is the most-specific match, so it wins over
-  # group/other; access ACL covers existing entries, default ACL covers new ones
-  sudo setfacl -R -m u:"$AGENT":--- ~ && sudo setfacl -R -d -m u:"$AGENT":--- ~
-  ```
-
-  This is the guarantee that the agent *starts with nothing* inside `~`, independent
-  of what mode bits any individual file happens to carry. It is the expensive step (it
-  walks the entire home), so `jentic run` does it once and records `home_denied: true`
-  against the agent in the config, skipping it on every later grant.
-
-  **Layer 2 — traverse-walk (execute-only, per ancestor).** For the agent to *reach*
+  **Layer 1 — traverse-walk (execute-only, per ancestor).** For the agent to *reach*
   the leaf, each directory on the path from `~` down to the leaf's parent must be
   traversable (search permission — **not** list, **not** read). Walk the ancestor
   chain and grant execute-only on each dir the agent can't already traverse (probed
@@ -332,38 +314,69 @@ Choice [h]:
   but cannot list its contents — it can traverse `~` to reach `~/projects/api` without
   being able to enumerate everything else in `~`.
 
-  **Layer 3 — rwx-leaf (inherited).** Finally, grant full read/write/execute on the
+  **Layer 2 — rwx-leaf (inherited).** Finally, grant full read/write/execute on the
   chosen workspace and everything created inside it:
 
   ```bash
-  # macOS — insert at index 0 (see the ordering caveat), applied recursively
+  # macOS — inserted at a low index, applied recursively
   sudo chmod -R +a# 0 "user:$AGENT allow read,write,execute,file_inherit,directory_inherit" "$DIR"
   # Linux
   sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
   ```
 
-  > **macOS ordering caveat (must be handled, not just noted).** macOS evaluates ACL
-  > entries **top-to-bottom, first-match-wins**. The Layer-1 deny, applied recursively,
-  > stamps a `deny` entry onto the leaf subtree too — and if that deny is evaluated
-  > *before* the leaf `allow`, it shadows it and the grant silently does nothing. So
-  > the leaf allow must be **inserted ahead of the inherited deny**: `chmod +a# 0`
-  > places it at index 0, and applying it recursively (`-R`) re-stamps every existing
-  > child allow-before-deny. Linux POSIX ACLs don't have this problem — they select
-  > the single most-specific named-user entry per inode, so the recursive rwX on the
-  > leaf simply overrides the `---` inherited from `~` with no ordering care needed.
+  **Revoking** an in-home grant drops the Layer-2 leaf allow (`chmod -R -a ...` /
+  `setfacl -R -x ...`); the Layer-1 ancestor traverse grants stay. With the leaf allow
+  gone the agent can no longer read or write the directory — and, unless the directory
+  is world-readable, can no longer reach its contents at all.
 
-  **Revoking** an in-home grant drops just the Layer-3 leaf allow (`chmod -R -a ...`
-  / `setfacl -R -x ...`); the Layer-1 deny and the Layer-2 traverse grants stay. With
-  the leaf allow gone, the still-present deny immediately re-closes the directory, so
-  one step fully reverses the grant.
+  > **Why not stamp `~` with an agent-scoped `deny` ACL?** An earlier iteration of
+  > this design added, as a first layer, a *recursive, inheritable* `deny` for the
+  > agent across the whole home
+  > (`chmod -R +a "user:$AGENT deny ..." ~` / `setfacl -R … ~`), so that even a
+  > world-readable dir inside `~` stayed closed to the agent. **We removed it — it was
+  > a mistake.** Walking all of `~` to stamp an ACL on every file is:
+  >
+  > - **slow** — minutes on a real home, run under `sudo` at launch time;
+  > - **race-prone** — it fights churning temp files (an agent's own runtime writes
+  >   and deletes hundreds of files), producing a flood of
+  >   `chmod: … No such file or directory` as entries vanish mid-walk;
+  > - **privacy-prompt-tripping on macOS** — descending into TCC-protected bundles
+  >   like `~/Pictures/*.photoslibrary` makes the terminal app pop a "wants to access
+  >   your Photos" prompt that has nothing to do with the directory being granted;
+  > - **fragile on macOS ordering** — a recursively-inherited `deny` lands on the leaf
+  >   subtree too and, under first-match evaluation, can shadow the leaf `allow` unless
+  >   the allow is forced ahead of it.
+  >
+  > The `700` home already provides the default-deny with none of these costs, so we
+  > rely on it and never touch `~`.
 
-  > **Residual caveat (honest).** This model is robust for read/write/list: the agent
-  > cannot read, write, or enumerate anything in `~` outside a granted leaf. It does
-  > **not** hide the *existence* of paths the agent already knows to probe — a `deny`
-  > returns "permission denied", not "no such file", so the agent can learn that, say,
-  > `~/.ssh` exists by testing the name. But it cannot read or write it. This is an
-  > information-only residue we accept; closing it would require per-path name hiding
-  > the OS doesn't offer through ACLs.
+  > **Accepted residual — world-readable dirs inside `~`.** The trade-off of dropping
+  > the home-wide deny: because Layer 1 grants **execute** on an ancestor (including
+  > `~`), any directory *inside* the home that is itself **world-readable** (mode
+  > `o+r` — e.g. a `0755` project dir, `~/go`, a cloned repo) becomes readable by the
+  > agent once it can traverse the path to it, **without an explicit leaf grant**. The
+  > agent still cannot read anything that is `0700`/`0750` (the sensitive dotfile dirs
+  > `~/.ssh`, `~/.aws`, `~/.jentic`, … are already mode-restricted, so they stay
+  > closed), and it cannot *list* `~` itself (execute ≠ read). But a world-readable
+  > tree under `~` is reachable. We **accept this gap**: the operator's genuinely
+  > sensitive material is not world-readable, and closing the gap is not worth
+  > re-introducing a home-wide sweep.
+  >
+  > **What "narrow traverse" would solve (not currently implemented).** The gap can be
+  > closed surgically, without any recursive walk, by tightening Layer 1: instead of
+  > granting execute on `~` broadly, grant it on **only the exact ancestor chain** to
+  > the leaf, and additionally strip the world bits (`chmod o-rwx`) on just those
+  > specific ancestor directories we open. That way traversing an ancestor exposes
+  > nothing to "other", and no world-readable sibling elsewhere in `~` is reachable —
+  > at the cost of a handful of `chmod`s on the path (still bounded by path depth, not
+  > home size). This is the recommended hardening if the world-readable-sibling gap
+  > ever matters for a given operator; the current implementation grants ancestor
+  > execute without the `o-rwx` step and accepts the residual.
+
+  > **Path-existence probing (minor, unchanged).** As with any permission model, a
+  > failed access tells the agent a path *exists* (permission-denied vs. no-such-file).
+  > The agent can't read or write what it can't access; this is information-only and we
+  > accept it.
 
 - **Open in home** (default) — skip the grant entirely and launch the session in the
   agent's own home, the always-accessible shared space. The safe default: it never
@@ -470,15 +483,15 @@ The catch, and how to keep isolation:
   like the default case. No isolation concern.
 
 - **If the workspace is *inside the operator's home*** (e.g. `~/projects/my-app`) —
-  the common case, and the one the **agent-scoped default-deny + traverse-walk +
-  rwx-leaf** model (see [step 3](#granting-a-directory-inside-the-operators-home))
-  exists to serve. `jentic run claude ~/projects/my-app` grants the agent read/write
-  on exactly that subtree — sealing it off from the rest of `~` on first use, walking
-  execute-only traverse down to it, and granting the rwx leaf — **without** moving the
-  workspace or loosening `~`. The operator keeps working in the same directory; the
-  agent gets scoped access to it and nothing else. This is a **non-negotiable
-  capability**: the operator must be able to grant specific subdirectories of `~`
-  without the agent gaining default access to the home.
+  the common case, and the one the **700-home + traverse-walk + rwx-leaf** model (see
+  [step 3](#granting-a-directory-inside-the-operators-home)) exists to serve.
+  `jentic run claude ~/projects/my-app` grants the agent read/write on exactly that
+  subtree — opening execute-only traverse down the ancestor path and granting the rwx
+  leaf — **without** moving the workspace or loosening `~`'s `700` mode. The operator
+  keeps working in the same directory; the agent gets scoped access to it (subject to
+  the accepted world-readable-sibling residual noted in step 3). This is a
+  **non-negotiable capability**: the operator must be able to grant specific
+  subdirectories of `~` without the agent gaining access to the rest of the home.
 
   Two alternatives remain available when the operator prefers them, but they are no
   longer required to reach an in-home workspace:
@@ -489,9 +502,9 @@ The catch, and how to keep isolation:
   2. **Copy in.** Copy the workspace into a fresh agent home on a neutral path. Gives
      the agent an independent tree; fine for a one-off, not for ongoing shared editing.
 
-> **What the tool enforces:** in-home grants always go through the three-layer model,
-> so `~` is never widened for other users and the operator's own access is never
-> touched. The operator-home **root** and sensitive dotfile dirs (`~/.ssh`,
+> **What the tool enforces:** in-home grants only open the ancestor path + leaf (never
+> a home-wide sweep), so `~` is never widened for other users and the operator's own
+> access is never touched. The operator-home **root** and sensitive dotfile dirs (`~/.ssh`,
 > `~/.jentic`, …) remain step-3 denylist hits — grantable only behind the typed-confirm
 > danger prompt — because granting *those* would re-open the credential boundary. A
 > normal project subdir under `~` grants with the plain prompt.

@@ -375,32 +375,19 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 	return abs, nil
 }
 
-// grantDir applies the "default-deny on ~ + traverse-walk + rwx-leaf" model so
-// the agent can read/write abs without gaining default access to the operator's
-// home. For a path under the home it (1) applies the one-time agent-scoped
-// home-deny, (2) opens execute-only traverse on each ancestor the agent can't
-// already pass through, then (3) grants the rwx leaf. For a path outside the
-// home the leaf grant alone suffices. All layers are scoped to the agent user
-// and never touch the operator's own permissions.
+// grantDir applies the "700 home + traverse-walk + rwx-leaf" model so the agent
+// can read/write abs without gaining access to the rest of the operator's home.
+// For a path under the home it (1) opens execute-only traverse on each ancestor
+// the agent can't already pass through, then (2) grants the rwx leaf. For a path
+// outside the home the leaf grant alone suffices. The default-deny is the home's
+// existing 0700 mode, not an ACL we add — see localagent's model comment for why
+// we deliberately avoid a home-wide deny sweep. All grants are scoped to the
+// agent user and never touch the operator's own permissions.
 func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, abs string) error {
 	home := localagent.OperatorHome()
-	inHome := home != "" && localagent.IsUnderHome(home, abs)
 
-	if inHome {
-		// Layer 1: one-time default-deny across the operator's home.
-		entry, _ := cfg.LocalAgent(agentID)
-		if !entry.HomeDenied {
-			fmt.Fprintln(a.Out, theme.Infof("Sealing %s off from %s (one-time, agent-scoped) ...", agentUser, home))
-			if err := a.runGrant(localagent.EnsureHomeDenyCmd(agentUser, home), "apply home default-deny"); err != nil {
-				return err
-			}
-			if cfg.MarkHomeDenied(agentID) {
-				if err := cfg.Save(a.Paths); err != nil {
-					return err
-				}
-			}
-		}
-		// Layer 2: open traverse on the ancestors the agent can't yet pass through.
+	if home != "" && localagent.IsUnderHome(home, abs) {
+		// Layer 1: open traverse on the ancestors the agent can't yet pass through.
 		for _, anc := range localagent.AncestorsNeedingTraverse(ctx, agentUser, home, abs) {
 			if err := a.runGrant(localagent.TraverseGrantCmd(agentUser, anc), "grant traverse on "+anc); err != nil {
 				return err
@@ -408,7 +395,7 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, age
 		}
 	}
 
-	// Layer 3: the rwx leaf.
+	// Layer 2: the rwx leaf.
 	fmt.Fprintln(a.Out, theme.Infof("Granting %s read/write to %s ...", agentUser, abs))
 	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
 		return err

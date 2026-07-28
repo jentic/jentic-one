@@ -65,7 +65,6 @@ func TestGrantAndRevokeCmdShape(t *testing.T) {
 		args   []string
 		target string
 	}{
-		{"home-deny", EnsureHomeDenyCmd("a-local-agent", home).Args, home},
 		{"traverse", TraverseGrantCmd("a-local-agent", home).Args, home},
 		{"leaf-grant", LeafGrantCmd("a-local-agent", dir).Args, dir},
 		{"leaf-revoke", LeafRevokeCmd("a-local-agent", dir).Args, dir},
