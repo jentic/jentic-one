@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { partialMatchKey } from '@tanstack/query-core';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
 
 /**
@@ -39,6 +40,43 @@ describe('sharedQueryKeys', () => {
 		// from drifting.
 		expect(sharedQueryKeys.toolkitsRoot).toEqual(['toolkits']);
 		expect(sharedQueryKeys.toolkitAgentsRoot).toEqual(['toolkits', 'agents']);
+	});
+
+	it('exposes the dedicated cross-module toolkit-name cache root', () => {
+		// The Agents module caches each bound toolkit's display name under
+		// `[...toolkitNameRoot, id]` (#607). It's its OWN top-level root — NOT
+		// under `agentsRoot` (so agent lifecycle invalidations don't churn it) and
+		// NOT under `toolkitsRoot` (so ordinary toolkit-side mutations that
+		// invalidate `['toolkits']` — key rotation, cred bind/unbind, active
+		// toggle, create/delete — don't needlessly refetch every bound-row name).
+		// Only a rename (`useUpdateToolkit`) invalidates it. Lock the literal so
+		// that invariant can't silently drift.
+		expect(sharedQueryKeys.toolkitNameRoot).toEqual(['toolkit-name']);
+	});
+
+	it('routes the agents-side toolkit-name cache invalidation correctly (#607)', () => {
+		// The exact key the Agents module builds for a bound toolkit's name read
+		// (`toolkitNameKey(id)` === `[...toolkitNameRoot, id]`). Using TanStack's
+		// own prefix matcher proves the routing without spinning up a QueryClient.
+		const nameKey = [...sharedQueryKeys.toolkitNameRoot, 'tk_github'] as const;
+
+		// (a) Agent lifecycle mutations invalidate `agentsRoot` (['agents']) —
+		// which must NOT reach the cosmetic per-row name cache.
+		expect(partialMatchKey(nameKey, sharedQueryKeys.agentsRoot)).toBe(false);
+
+		// (b) Finding #3 — the KEY invariant: the name cache is NOT under the
+		// toolkits root, so the many toolkit-side mutations that invalidate
+		// `toolkitsRoot` (`['toolkits']`) — key rotation, credential bind/unbind,
+		// active toggle, create/delete — do NOT ripple through the name cache.
+		expect(partialMatchKey(nameKey, sharedQueryKeys.toolkitsRoot)).toBe(false);
+
+		// (c) A rename DOES refresh it: `useUpdateToolkit` invalidates the shared
+		// name root (id-scoped), a prefix of the name key, so the renamed
+		// toolkit's cached label refreshes instantly.
+		expect(partialMatchKey(nameKey, sharedQueryKeys.toolkitNameRoot)).toBe(true);
+		expect(partialMatchKey(nameKey, [...sharedQueryKeys.toolkitNameRoot, 'tk_github'])).toBe(
+			true,
+		);
 	});
 
 	it('keeps every registered root a non-empty string array', () => {

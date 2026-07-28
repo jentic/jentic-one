@@ -221,18 +221,21 @@ export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
  * so each bound row reads its own name here instead of the whole workspace
  * catalogue paying a paginated sweep on every page load.
  *
- * A missing name must NOT blow up the row — a since-deleted or 404 toolkit is
- * expected (the binding can outlive a hard-deleted toolkit briefly), so we
- * return ``null`` on not-found and let the caller fall back to the id. Only
- * genuine, unexpected failures surface as an {@link AgentsApiError}.
+ * The name is BEST-EFFORT and purely cosmetic — the row always falls back to
+ * the id, and no caller surfaces an error. So any real failure (a since-deleted
+ * 404, a transient 5xx, or a network blip) simply returns ``null`` rather than
+ * pushing the query into an error state over a display nicety. The ONE
+ * exception is an ``AbortError``: React Query throws it to cancel an in-flight
+ * request on unmount or key change, so it's re-thrown (not swallowed into a
+ * spurious ``null`` result) to let cancellation propagate as intended.
  */
 export async function getToolkitName(toolkitId: string): Promise<string | null> {
 	try {
 		const res = await ToolkitsService.getToolkit({ toolkitId });
 		return res?.name ?? null;
-	} catch (error) {
-		if (error instanceof ApiError && error.status === 404) return null;
-		throw toAgentsError(error, 'Failed to load the toolkit name.');
+	} catch (e) {
+		if (e instanceof Error && e.name === 'AbortError') throw e;
+		return null;
 	}
 }
 

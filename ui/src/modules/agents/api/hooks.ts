@@ -11,6 +11,7 @@
  * force a refetch.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { toast } from '@/shared/ui';
 import {
 	approveAgent,
@@ -111,13 +112,21 @@ const linkableToolkitsKey = ['agents-linkable-toolkits'] as const;
  * resolution on the detail page's "Bound toolkits" card (#607): each row reads
  * `GET /toolkits/{id}` for just its own name instead of the whole workspace
  * paying `useLinkableToolkits`' paginated `GET /toolkits` sweep on every page
- * load (which would also defeat the picker dialog's `enabled` gate). Kept under
- * the agents root (the agents module is the only consumer) and NOT under the
- * picker's `linkableToolkitsKey`, so nothing subscribes to the picker's key
- * outside the open dialog.
+ * load (which would also defeat the picker dialog's `enabled` gate).
+ *
+ * Keyed under the shared `toolkitNameRoot` (`['toolkit-name',id]`) — its OWN
+ * top-level root, NOT under `agentsRoot` and NOT under `toolkitsRoot`. That
+ * isolation is deliberate: (a) agent lifecycle mutations (approve/deny/create)
+ * invalidate `sharedQueryKeys.agentsRoot` and must NOT refetch every visible
+ * bound toolkit's cosmetic name; and (b) ordinary toolkit-side mutations (key
+ * rotation, credential bind/unbind, active toggle, create/delete) invalidate
+ * `toolkitKeys.all` (`['toolkits']`) but leave a toolkit's NAME unchanged, so
+ * they must not ripple here either. The one event that changes a name — a
+ * rename via the Toolkits module's `useUpdateToolkit` — invalidates this shared
+ * root (id-scoped), so a renamed toolkit's cached label refreshes instantly.
  */
 const toolkitNameKey = (toolkitId: string) =>
-	[...agentsKeys.all, 'toolkit-name', toolkitId] as const;
+	[...sharedQueryKeys.toolkitNameRoot, toolkitId] as const;
 
 /**
  * Access requests filed BY an actor (#619), keyed by the actor's id + status.
@@ -220,11 +229,14 @@ export function useToolkitName(toolkitId: string | null) {
  */
 function useInvalidateAgentBindingSurfaces(agentId: string | null) {
 	const qc = useQueryClient();
-	return () => {
+	// Memoised on [agentId, qc] so the returned handle keeps a stable identity
+	// across renders — a caller can safely store it in a memoised child's props
+	// or an effect dependency list without re-running on every render.
+	return useCallback(() => {
 		if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
 		qc.invalidateQueries({ queryKey: linkableToolkitsKey });
 		qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitAgentsRoot });
-	};
+	}, [agentId, qc]);
 }
 
 /** Bind a toolkit to this agent (#607) — refreshes both the agent's bound

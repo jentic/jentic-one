@@ -141,9 +141,10 @@ describe('AgentDetailPage', () => {
 		// The bound toolkit id is `github`; the per-id name read 404s (no such
 		// toolkit in the workspace fixtures), so the row falls back to the id as
 		// the primary label and hides the redundant secondary id line (#4) —
-		// leaving exactly one `github` in the row.
+		// leaving the id rendered EXACTLY once in the row. Asserting `>= 1` would
+		// pass even on the regression where the id renders twice, so we pin it.
 		const row = await screen.findByTestId('bound-toolkit-row');
-		expect(within(row).getAllByText('github').length).toBeGreaterThanOrEqual(1);
+		await waitFor(() => expect(within(row).getAllByText('github')).toHaveLength(1));
 	});
 
 	it('shows the pending access requests this agent has filed (#619)', async () => {

@@ -81,6 +81,17 @@ export function useUpdateToolkit(toolkitId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
+			// A rename is the only toolkit-side change that alters a toolkit's
+			// display name, and the Agents module caches that name per bound row
+			// under the shared `toolkitNameRoot` (its own top-level root, not under
+			// `['toolkits']`). Invalidate it here — id-scoped so ONLY this toolkit's
+			// cached name refetches — so agent-side bound-row labels refresh
+			// instantly on rename instead of waiting out `useToolkitName`'s
+			// staleTime. (`useSetToolkitActive` toggles `active`, not `name`, so it
+			// deliberately does NOT touch this root.)
+			queryClient.invalidateQueries({
+				queryKey: [...sharedQueryKeys.toolkitNameRoot, toolkitId],
+			});
 		},
 	});
 }
