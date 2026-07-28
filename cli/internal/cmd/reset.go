@@ -10,9 +10,11 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +29,15 @@ import (
 type resetOptions struct {
 	deleteHome bool
 	force      bool
+	// includeConfig also wipes the OPERATOR's own jentic CLI config — every
+	// profile (keys, tokens, registration metadata) under ~/.jentic/profiles and
+	// the default_profile pointer — turning "reset" into a genuine clean slate
+	// rather than only decommissioning the agent user. It is deliberately opt-in
+	// and separately confirmed (typed "reset config"), because it destroys the
+	// operator's OWN identity, not the agent's. Scoped to the invoking account's
+	// ~/.jentic only — reset runs AS the operator, so it can never reach into
+	// another user's config.
+	includeConfig bool
 }
 
 func newResetCmd(app *App) *cobra.Command {
@@ -41,15 +52,21 @@ func newResetCmd(app *App) *cobra.Command {
 			"passwordless-launch sudoers drop-in, and the local_agents entry in your\n" +
 			"config. The agent's home is PRESERVED by default (re-owned to you); deleting\n" +
 			"it takes a separate, explicit confirmation.\n\n" +
+			"With --include-config it also wipes your OWN jentic CLI config — every\n" +
+			"profile (keys, tokens, registration) under ~/.jentic/profiles and the\n" +
+			"default profile — for a genuine clean slate. That destroys your own\n" +
+			"identity, not the agent's, so it takes its own separate confirmation and is\n" +
+			"scoped to the account you run reset from.\n\n" +
 			"Deleting an account and stripping ACLs are privileged, so reset requires\n" +
 			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
 			"password when it reaches the privileged steps. It shows the full plan before\n" +
 			"touching anything. With no [agent] it targets every configured local agent.\n" +
-			"It never reverts `chmod 700 ~` and never touches your own files.",
+			"It never reverts `chmod 700 ~` and never touches another user's files.",
 		Example: "  jentic reset\n" +
 			"  jentic reset claude\n" +
 			"  jentic reset claude --force               # non-interactive; keeps the home\n" +
-			"  jentic reset claude --force --delete-home # non-interactive; deletes the home",
+			"  jentic reset claude --force --delete-home # non-interactive; deletes the home\n" +
+			"  jentic reset --include-config             # also wipe your own profiles",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.resetE(cmd.Context(), opts, args)
@@ -59,6 +76,8 @@ func newResetCmd(app *App) *cobra.Command {
 		"skip the typed-name confirmation (the only non-interactive escape hatch; use with care)")
 	cmd.Flags().BoolVar(&opts.deleteHome, "delete-home", false,
 		"also delete the agent's home directory (non-interactive opt-in; pairs with --force)")
+	cmd.Flags().BoolVar(&opts.includeConfig, "include-config", false,
+		"also wipe your own jentic CLI config: all profiles (keys, tokens) and the default profile")
 	return cmd
 }
 
@@ -76,20 +95,172 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 
 	targets, err := resetTargets(cfg, args)
 	if err != nil {
-		return err
+		// With --include-config the operator may be wiping their own config with no
+		// local agents left to tear down; that is a valid clean-slate reset, so an
+		// empty-inventory error is not fatal here. Any other error (e.g. a named
+		// agent that doesn't exist) still stops the run.
+		if !(opts.includeConfig && len(args) == 0) {
+			return err
+		}
+		targets = nil
 	}
 
-	fmt.Fprintln(a.Out, theme.Dim.Render(
-		"Removing an agent's account and ACLs is privileged (requires sudo) — you'll be "+
-			"prompted for your password when reset reaches those steps."))
-
 	interactive := term.IsTerminal(os.Stdin.Fd())
-	for _, agentID := range targets {
-		if err := a.resetAgent(ctx, a.Paths, cfg, opts, interactive, operator, operatorHome, agentID); err != nil {
+
+	if len(targets) > 0 {
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"Removing an agent's account and ACLs is privileged (requires sudo) — you'll be "+
+				"prompted for your password when reset reaches those steps."))
+		for _, agentID := range targets {
+			if err := a.resetAgent(ctx, a.Paths, cfg, opts, interactive, operator, operatorHome, agentID); err != nil {
+				return err
+			}
+		}
+	}
+
+	// After the per-agent teardown, optionally wipe the operator's OWN jentic CLI
+	// config — profiles and default profile. This is last so a failure tearing
+	// down an agent never leaves the operator without the config that records what
+	// still needs cleaning.
+	if opts.includeConfig {
+		if err := a.resetOperatorConfig(ctx, opts, interactive); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// resetOperatorConfig wipes the operator's OWN jentic CLI identity: it best-effort
+// revokes and deletes every profile under ~/.jentic/profiles and clears the
+// default_profile pointer in config.yaml. It runs entirely as the operator (reset
+// is never launched under sudo), so it can only ever touch the invoking account's
+// ~/.jentic — never another user's. Because this destroys the operator's own
+// identity (not the agent's), it takes its own separate confirmation: a typed
+// "reset config", or --force to skip. It is a no-op with a friendly note when
+// there are no profiles to remove.
+func (a *App) resetOperatorConfig(ctx context.Context, opts *resetOptions, interactive bool) error {
+	names, err := profile.List(a.Paths)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 && cfg.DefaultProfile == "" {
+		fmt.Fprintln(a.Out, theme.Dim.Render("No jentic CLI config to reset (no profiles, no default set)."))
+		return nil
+	}
+
+	a.printConfigResetPlan(names, cfg.DefaultProfile)
+
+	// Separate typed confirmation — this is the operator's own identity, distinct
+	// from any per-agent teardown already confirmed above.
+	if !opts.force {
+		if !interactive {
+			return errors.New("refusing to wipe your config non-interactively without --force (--include-config destroys your own profiles)")
+		}
+		ok, err := a.confirmConfigReset()
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Fprintln(a.Out, theme.Dim.Render("Kept your jentic CLI config — profiles were not touched."))
+			return nil
+		}
+	}
+
+	for _, name := range names {
+		a.revokeProfileTokens(ctx, name, cfg.ResolvedBaseURL())
+		p, err := profile.Open(a.Paths, name)
+		if err != nil {
+			return err
+		}
+		if err := p.Delete(); err != nil {
+			return err
+		}
+		fmt.Fprintln(a.Out, theme.Infof("• removed profile %q", name))
+	}
+
+	// Clear the default_profile pointer so the config no longer references a
+	// profile that no longer exists.
+	if cfg.DefaultProfile != "" {
+		cfg.DefaultProfile = ""
+		if err := cfg.Save(a.Paths); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintln(a.Out, theme.Successf("Your jentic CLI config was reset (%d profile(s) removed).", len(names)))
+	return nil
+}
+
+// revokeProfileTokens best-effort revokes a profile's cached tokens server-side
+// before the profile is deleted, mirroring `jentic logout`. Every failure here is
+// non-fatal: the local wipe is what matters, and the profile may be offline,
+// unregistered, or already revoked.
+func (a *App) revokeProfileTokens(ctx context.Context, name, baseURL string) {
+	sess, err := agentauth.Open(a.Paths, name, baseURL)
+	if err != nil {
+		return
+	}
+	tokens, err := sess.Profile.LoadTokens()
+	if err != nil || tokens == nil || tokens.AccessToken == "" {
+		return
+	}
+	if revErr := sess.Client.Revoke(ctx, tokens.AccessToken, tokens.AccessToken); revErr != nil {
+		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("  (could not revoke %q server-side: %v)", name, revErr)))
+	}
+	if tokens.RefreshToken != "" {
+		_ = sess.Client.Revoke(ctx, tokens.AccessToken, tokens.RefreshToken)
+	}
+}
+
+// printConfigResetPlan shows exactly which profiles will be deleted and that the
+// default pointer will be cleared, before the separate confirmation.
+func (a *App) printConfigResetPlan(names []string, defaultProfile string) {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Error.Render("⚠  DANGER ZONE — --include-config will PERMANENTLY remove YOUR OWN jentic CLI "+
+		"identity from this account's ~/.jentic. This cannot be undone."))
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Warn.Render("  Profiles to delete (key, tokens, registration metadata):"))
+	if len(names) == 0 {
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - none"))
+	}
+	for _, name := range names {
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - "+name))
+	}
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Warn.Render("  Config to clear:"))
+	if defaultProfile != "" {
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - default_profile ('"+defaultProfile+"') in config.yaml"))
+	} else {
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - default_profile (already unset)"))
+	}
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Success.Render("  NOT touched:"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - another user's config — this only affects the account you ran reset from"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - installed skills, and Jentic One itself"))
+	fmt.Fprintln(a.Out)
+}
+
+// confirmConfigReset requires the operator to type "reset config" to wipe their
+// own profiles — a distinct acknowledgement from the per-agent typed name, since
+// this destroys the operator's own identity.
+func (a *App) confirmConfigReset() (bool, error) {
+	var typed string
+	if err := install.NewForm(huh.NewGroup(
+		install.Input().
+			Title("Type 'reset config' to wipe your own profiles, or anything else to keep them").
+			Value(&typed),
+	)).Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(typed) == "reset config", nil
 }
 
 // resetTargets resolves which agents to tear down: the single named one (which

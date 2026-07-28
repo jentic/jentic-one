@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
 func TestResetTargets(t *testing.T) {
@@ -191,6 +192,88 @@ func TestResetRunsAsOperator(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "requires sudo") {
 		t.Errorf("expected a (requires sudo) notice, got:\n%s", out.String())
+	}
+}
+
+// TestResetIncludeConfigWipesProfiles confirms --include-config --force removes
+// every profile and clears default_profile, even with no local agents configured.
+func TestResetIncludeConfigWipesProfiles(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
+	seedProfile(t, app, "default", "agnt_default")
+	seedProfile(t, app, "work", "agnt_work")
+	if err := config.SetDefaultProfile(app.Paths, "work"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+
+	// No agents configured + --include-config: this is a valid clean-slate reset.
+	err := app.resetE(context.Background(), &resetOptions{includeConfig: true, force: true}, nil)
+	if err != nil {
+		t.Fatalf("resetE: %v", err)
+	}
+
+	names, err := profile.List(app.Paths)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("expected all profiles removed, got %v", names)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.DefaultProfile != "" {
+		t.Errorf("default_profile should be cleared, got %q", cfg.DefaultProfile)
+	}
+}
+
+// TestResetWithoutIncludeConfigKeepsProfiles confirms a plain reset (no
+// --include-config) never touches the operator's own profiles.
+func TestResetWithoutIncludeConfigKeepsProfiles(t *testing.T) {
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	seedProfile(t, app, "default", "agnt_default")
+
+	// No agents, no --include-config: nothing to reset → error, profiles untouched.
+	_ = app.resetE(context.Background(), &resetOptions{}, nil)
+
+	names, err := profile.List(app.Paths)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(names) != 1 || names[0] != "default" {
+		t.Errorf("profiles must be untouched without --include-config, got %v", names)
+	}
+}
+
+// TestResetIncludeConfigRequiresForceNonInteractive confirms the operator's own
+// config is not wiped non-interactively without --force (its own safety gate,
+// separate from the per-agent one).
+func TestResetIncludeConfigRequiresForceNonInteractive(t *testing.T) {
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	seedProfile(t, app, "default", "agnt_default")
+
+	err := app.resetOperatorConfig(context.Background(), &resetOptions{includeConfig: true}, false)
+	if err == nil || !strings.Contains(err.Error(), "without --force") {
+		t.Fatalf("expected a non-interactive --force guard, got %v", err)
+	}
+	// Profile must survive the refusal.
+	names, _ := profile.List(app.Paths)
+	if len(names) != 1 {
+		t.Errorf("profile should survive the refusal, got %v", names)
+	}
+}
+
+// TestResetOperatorConfigNoProfiles is a friendly no-op when there's nothing to
+// remove.
+func TestResetOperatorConfigNoProfiles(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
+	if err := app.resetOperatorConfig(context.Background(), &resetOptions{includeConfig: true, force: true}, false); err != nil {
+		t.Fatalf("resetOperatorConfig: %v", err)
+	}
+	if !strings.Contains(out.String(), "No jentic CLI config to reset") {
+		t.Errorf("expected a no-op note, got:\n%s", out.String())
 	}
 }
 

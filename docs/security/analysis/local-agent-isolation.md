@@ -479,34 +479,47 @@ what remains. Note the account-deletion step (4) must be told *not* to remove th
 home — the default macOS/Linux "delete user" also wipes the home, which is exactly
 the data we're preserving unless the home deletion was explicitly accepted.
 
-### Not yet implemented — skill cleanup and operator-config reset
+### Resetting the operator's own config — `--include-config`
 
-Two further teardown responsibilities belong to `jentic reset` by design but are
-**not implemented yet**. They are documented here so the intended end-state is
-clear:
+By default `reset` only removes the `local_agents.<agent>` entry (and, for a
+self-user agent, that entry's `config_dir`/`home_dir` reference) — it decommissions
+the *agent*, not the operator. Passing **`--include-config`** additionally wipes the
+operator's **own** jentic CLI state so "start over" returns the machine to a genuine
+clean slate: every profile under `~/.jentic/profiles` (each profile's Ed25519 key,
+cached tokens, and registration metadata) is removed, and `default_profile` in
+`config.yaml` is cleared. Each profile's tokens are best-effort **revoked
+server-side first** (the same call `jentic logout` makes) before the local files are
+deleted.
 
-- **Remove the generated skill files.** `bootstrap`/`wizard` write the Jentic
-  CLI-usage skill into each operator's native layout; a full decommission should delete the managed
-  skill block/files it added for the agent, the inverse of the skill step, just as
-  reset already inverts the account/ACL/sudoers/config steps. Until this lands,
-  operators must remove skill files by hand (or re-run `jentic skill` tooling).
-- **Reset the operator's own jentic CLI config when run from the real user's
-  account.** Today reset only removes the `local_agents.<agent>` entry (and, for a
-  self-user agent, that entry's `config_dir`/`home_dir` reference). When invoked
-  from the **operator's own account**, reset should additionally be able to clear
-  the operator's own jentic CLI state — **profiles, tokens, default-profile, and
-  related config in `~/.jentic`** — so "start over" genuinely returns the machine
-  to a clean slate rather than only decommissioning the agent user. This is
-  intentionally scoped to the *invoking* account's config (the operator's own
-  `~/.jentic`); it must never reach across into another user's config. This is a
-  larger, separately-confirmed destructive action (it deletes the operator's own
-  identity, not just the agent's), so it will need its own explicit gate — likely a
-  distinct flag and typed confirmation — rather than being folded silently into the
-  per-agent teardown.
+Two properties keep this safe:
 
-Until both land, the **"NOT touched"** block above remains accurate: reset does
-not currently remove skill files and does not currently clear the operator's own
-profiles/identity — only the agent's `local_agents` entry.
+- **Scoped to the invoking account.** Because `reset` runs *as the operator* (never
+  `sudo jentic reset`), `--include-config` can only touch the account's own
+  `~/.jentic` — it can never reach across into another user's config. This is why
+  the responsibility lives here at all: the command already runs as exactly the user
+  whose config is being cleared.
+- **Its own separate confirmation.** Wiping the operator's own identity is a
+  distinct destructive act from tearing down an agent, so it has its own gate: a
+  typed **`reset config`** acknowledgement (not the per-agent name), shown after its
+  own danger-zone plan listing exactly which profiles will be deleted. `--force`
+  skips it for scripted use; without a TTY and without `--force` it refuses. It is a
+  friendly no-op when there are no profiles and no default to clear.
+
+`--include-config` composes with the per-agent teardown (it runs **last**, after
+any agents are torn down, so a failure mid-agent never removes the config that
+records what still needs cleaning) and also works on its own — `jentic reset
+--include-config` with no configured agents is a valid config-only clean slate.
+
+### Not yet implemented — skill cleanup
+
+One further teardown responsibility belongs to `jentic reset` by design but is
+**not implemented yet**: removing the generated skill files. `bootstrap`/`wizard`
+write the Jentic CLI-usage skill into each operator's native layout; a full
+decommission should delete the managed skill block/files it added for the agent, the
+inverse of the skill step, just as reset already inverts the account/ACL/sudoers/
+config steps. Until this lands, operators must remove skill files by hand (or re-run
+`jentic skill` tooling). The **"NOT touched"** block above remains accurate on this
+one point: reset does not currently remove skill files.
 
 ## GUI IDEs (Cursor / VS Code)
 
