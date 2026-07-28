@@ -149,7 +149,8 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 // createAgentAccount runs the privileged account-creation recipe (idempotently),
 // locks the operator's own home, and seeds config/provider per the field toggles.
 func (a *App) createAgentAccount(ctx context.Context, operator string, fields agentUserFields, desc localagent.Descriptor) error {
-	if localagent.UserExists(ctx, fields.name) {
+	reused := localagent.UserExists(ctx, fields.name)
+	if reused {
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("Account %q already exists — reusing it.", fields.name)))
 	} else {
 		fmt.Fprintln(a.Out, theme.Infof("Creating agent account %q (home %s) ...", fields.name, fields.homeDir))
@@ -176,6 +177,20 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		if err := reclaim.Run(); err != nil {
 			fmt.Fprintln(a.Out, theme.Dim.Render(
 				"  (some protected system files in the home couldn't be re-owned to the agent — that's expected; continuing)"))
+		}
+
+		// On the reuse path CreateAccountCmds did NOT run, so the operator's inherited
+		// grant on the agent home is whatever it was before — possibly a stale, too-
+		// narrow ACE (an older build granted the macOS "write" shorthand, which on a
+		// directory omits add_subdirectory, so the operator can create files but not
+		// `mkdir <home>/.jentic` when writing the identity below). Re-apply the correct
+		// grant idempotently; it is additive, so widening never removes anything.
+		if reused {
+			grant := localagent.GrantOperatorHomeCmd(operator, fields.homeDir)
+			grant.Stdout, grant.Stderr = a.Out, a.Err
+			if err := grant.Run(); err != nil {
+				return fmt.Errorf("grant the operator read/write into the agent's home: %w", err)
+			}
 		}
 	}
 

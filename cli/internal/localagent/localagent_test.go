@@ -83,8 +83,37 @@ func TestCreateAccountCmds(t *testing.T) {
 		if !strings.Contains(all, "file_inherit") || !strings.Contains(all, "directory_inherit") {
 			t.Error("macOS operator grant must be inherited (file_inherit/directory_inherit)")
 		}
+		// The operator grant must carry add_subdirectory: bootstrap writes the agent
+		// identity by `mkdir <home>/.jentic` as the operator, and the macOS "write"
+		// shorthand omits add_subdirectory on a directory (files ok, mkdir EACCES).
+		if !strings.Contains(all, "add_subdirectory") {
+			t.Error("macOS operator grant must include add_subdirectory or mkdir <home>/.jentic fails")
+		}
 	} else if !strings.Contains(all, "-d -m") && !strings.Contains(all, "-d") {
 		t.Error("Linux operator grant must include a default ACL for future contents")
+	}
+}
+
+// TestGrantOperatorHomeCmd guards the standalone operator-grant builder used on
+// the account-reuse path: sudo-fronted, names the operator + home, inherited, and
+// (on macOS) carries the directory-mutation bits so `mkdir <home>/.jentic` works.
+func TestGrantOperatorHomeCmd(t *testing.T) {
+	homeDir := "/Users/Shared/alice-local-agent"
+	joined := strings.Join(GrantOperatorHomeCmd("alice", homeDir).Args, " ")
+	if !strings.HasPrefix(joined, "sudo ") {
+		t.Errorf("operator grant must be sudo-fronted: %s", joined)
+	}
+	if !strings.Contains(joined, "alice") || !strings.Contains(joined, homeDir) {
+		t.Errorf("operator grant must name the operator and home: %s", joined)
+	}
+	if runtime.GOOS == "darwin" {
+		for _, bit := range []string{"add_subdirectory", "file_inherit", "directory_inherit"} {
+			if !strings.Contains(joined, bit) {
+				t.Errorf("macOS operator grant missing %q bit: %s", bit, joined)
+			}
+		}
+	} else if !strings.Contains(joined, "-d") {
+		t.Errorf("Linux operator grant must include a default ACL: %s", joined)
 	}
 }
 

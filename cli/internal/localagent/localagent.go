@@ -157,14 +157,10 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 			},
 			{
 				What: "grant the operator read/write into the agent's home",
-				//nolint:gosec // operator is the current login user; homeDir is a resolved path.
-				Cmd: exec.Command("sudo", "chmod", "+a",
-					"user:"+operator+" allow read,write,execute,file_inherit,directory_inherit", homeDir),
+				Cmd:  GrantOperatorHomeCmd(operator, homeDir),
 			},
 		}
 	}
-	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
-		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
 	return []AccountStep{
 		{
 			What: "create the agent account",
@@ -172,9 +168,33 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 		},
 		{
 			What: "grant the operator read/write into the agent's home",
-			Cmd:  exec.Command("sudo", "sh", "-c", setfacl), //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
+			Cmd:  GrantOperatorHomeCmd(operator, homeDir),
 		},
 	}
+}
+
+// GrantOperatorHomeCmd gives the operator inherited read/write on the agent's
+// home, so the operator can seed config and — critically — write the agent's
+// jentic identity (mkdir <home>/.jentic) before handing it to the agent. It is
+// part of CreateAccountCmds and is ALSO re-applied when reusing an existing
+// account, because the agent home may be owned by the agent (after reclaim) with
+// only a stale, too-narrow operator ACL.
+//
+// On macOS the permission set is spelled out explicitly (macLeafACE) rather than
+// the "read,write,execute" shorthand: on a *directory* that shorthand expands to
+// only list,add_file,search — WITHOUT add_subdirectory — so the operator can
+// create files but not directories, and `mkdir <home>/.jentic` fails with EACCES.
+// The explicit set carries the directory-mutation bits and the inherit flags. The
+// grant is additive (a duplicate/narrower ACE is harmless — allow ACEs union), so
+// re-applying on reuse simply widens access to the correct set. Runs as root.
+func GrantOperatorHomeCmd(operator, homeDir string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("sudo", "chmod", "+a", //nolint:gosec // operator is the current login user; homeDir is a resolved path.
+			"user:"+operator+" allow "+macLeafACE, homeDir)
+	}
+	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
+		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
+	return exec.Command("sudo", "sh", "-c", setfacl) //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
 }
 
 // LockOperatorHomeCmd returns the `chmod 700 <operatorHome>` that is the
