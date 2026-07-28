@@ -423,11 +423,17 @@ func RemoveSudoersCmd(agentUser string) *exec.Cmd {
 
 // DeleteAccountCmd deletes the agent's Unix account WITHOUT removing its home —
 // the home is settled separately (re-owned or deleted) before this runs, so the
-// account-delete must not touch it. macOS `sysadminctl -deleteUser -keepHome`
-// and Linux `userdel` (no -r) both leave the home in place. Runs as root.
+// account-delete must not touch it. On macOS we delete the DirectoryService
+// record directly with `dscl . -delete /Users/<user>`: it removes only the
+// account record and never touches the filesystem, so the home survives. We
+// deliberately avoid `sysadminctl -deleteUser -keepHome` — `-keepHome` is listed
+// in the man page but is rejected at runtime on recent macOS ("'-keepHome'
+// options is not available on this system"), and `-deleteUser` without it would
+// delete the home. Linux `userdel` (no -r) likewise leaves the home in place.
+// Runs as root.
 func DeleteAccountCmd(agentUser string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "sysadminctl", "-deleteUser", agentUser, "-keepHome") //nolint:gosec // agentUser is a config account name.
+		return exec.Command("sudo", "dscl", ".", "-delete", "/Users/"+agentUser) //nolint:gosec // agentUser is a config account name.
 	}
 	return exec.Command("sudo", "userdel", agentUser) //nolint:gosec // agentUser is a config account name.
 }

@@ -194,11 +194,17 @@ func TestTeardownCmdShape(t *testing.T) {
 	}
 
 	// DeleteAccountCmd must keep the home (the home is settled separately): it must
-	// NOT carry a home-removing flag (-r on Linux; -deleteUser without -keepHome on macOS).
+	// NOT carry a home-removing flag. On macOS we delete the DirectoryService
+	// record with `dscl . -delete` (no filesystem side-effect) rather than
+	// `sysadminctl -deleteUser`, whose `-keepHome` flag is rejected at runtime on
+	// recent macOS; on Linux we use `userdel` without -r.
 	del := strings.Join(DeleteAccountCmd("alice-local-agent").Args, " ")
 	if runtime.GOOS == "darwin" {
-		if !strings.Contains(del, "-keepHome") {
-			t.Errorf("macOS account delete must pass -keepHome so the home survives: %s", del)
+		if !strings.Contains(del, "dscl") || !strings.Contains(del, "-delete") {
+			t.Errorf("macOS account delete must use `dscl . -delete` so the home survives: %s", del)
+		}
+		if strings.Contains(del, "sysadminctl") {
+			t.Errorf("macOS account delete must not use sysadminctl (-keepHome unsupported on recent macOS): %s", del)
 		}
 	} else if strings.Contains(del, " -r") || strings.HasSuffix(del, "-r") {
 		t.Errorf("Linux account delete must NOT pass -r (home is settled separately): %s", del)
