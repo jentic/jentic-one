@@ -183,11 +183,14 @@ actually reach within them.
 
 **Open risks to resolve before committing.**
 
-- **macOS deprecation.** `sandbox-exec` is the load-bearing piece and Apple has
-  deprecated it. Need to confirm it still works on current macOS (26.x), gauge the
-  odds of removal, and check whether there's any supported alternative (the App
+- **macOS deprecation (open, but de-risked).** `sandbox-exec` is the load-bearing
+  piece and Apple marks it deprecated. It is, however, **confirmed still functional
+  on current macOS**, and it is the same Seatbelt machinery the App Sandbox itself
+  runs on — so it is not going away quietly. The residual risk is a *future* macOS
+  removing the CLI wrapper; there is no supported alternative for our case (the App
   Sandbox proper requires an entitled, signed app — not applicable to wrapping a
-  third-party agent binary we don't control).
+  third-party agent binary we don't control). Verdict: **sandbox-exec might be
+  viable to build on**, with a fallback to the ACL model if a future OS drops it.
 - **Linux userns availability.** Unprivileged user namespaces are disabled by
   default on some hardened distros; need a detection + fallback story (Landlock,
   or the ACL model, when unavailable).
@@ -198,14 +201,14 @@ actually reach within them.
   paths (`/opt/homebrew/bin`, the agent's own `~/.aws`) must be allowed in the
   profile/binds too.
 
-**Current leaning** (provisional, to be revisited): treat **process confinement**
-as the most promising route to the non-negotiable and the next thing to
-prototype — `bwrap` on Linux (mature, unprivileged, self-cleaning) and a
-`sandbox-exec` SBPL profile on macOS (pending the deprecation check). Keep **#4**
-(workspaces outside `~`) as the recommended zero-machinery posture regardless, and
-retain the current 700 + ACL grants as the defense-in-depth layer underneath.
-Treat #2/#3 as non-defaults, and consider #1 dead for our purposes (no portable
-macOS bind mount).
+**Current leaning** (provisional, to be revisited): **process confinement** is the
+most promising route to the non-negotiable and the next thing to prototype —
+`bwrap` on Linux (mature, unprivileged, self-cleaning) and a `sandbox-exec` SBPL
+profile on macOS (confirmed still functional; deprecation is a manageable future
+risk, not a blocker). Keep **#4** (workspaces outside `~`) as the recommended
+zero-machinery posture regardless, and retain the current 700 + ACL grants as the
+defense-in-depth layer underneath. Treat #2/#3 as non-defaults, and consider #1
+dead for our purposes (no portable macOS bind mount).
 
 ---
 
