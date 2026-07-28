@@ -26,6 +26,17 @@ var errOperatorAndAll = errors.New("--operator and --all are mutually exclusive;
 // escape hatch (bootstrap's --skip-skill) can append it to the message.
 var errNothingDetected = errors.New("no operators given and none detected")
 
+// promptable reports whether the huh pickers can actually run interactively.
+// A TTY alone is not enough: on TERM=dumb (emacs shells, many agent
+// harnesses) huh silently falls back to its "accessible" numbered prompts,
+// which loop on stdin without honoring Esc, Ctrl-C, or the signal-cancelled
+// command context — an inescapable picker (jentic-one#841). Those sessions
+// are exactly the ones the #755 defaulting path is for, so treat them as
+// non-interactive instead.
+func promptable() bool {
+	return term.IsTerminal(os.Stdin.Fd()) && os.Getenv("TERM") != "dumb"
+}
+
 // skillOptions are shared across the skill subcommands.
 type skillOptions struct {
 	baseURL   string
@@ -201,11 +212,11 @@ type skillTarget struct {
 // flags + detection + the interactive pickers. A nil, error-free return means
 // the user dismissed the picker with nothing selected.
 //
-// Non-interactive runs (--yes or stdin is not a terminal — pipes, CI, agent
-// sessions) with no explicit --operator/--all fall back to the *detected*
-// operators instead of erroring (#755); the resolved targets are echoed before
-// anything is written. When nothing is detected either, the error spells out
-// the flags to pass.
+// Non-interactive runs (--yes or stdin is not promptable — pipes, CI, agent
+// sessions, dumb terminals) with no explicit --operator/--all fall back to the
+// *detected* operators instead of erroring (#755); the resolved targets are
+// echoed before anything is written. When nothing is detected either, the
+// error spells out the flags to pass.
 func (a *App) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts *skillOptions) ([]skillTarget, error) {
 	flagScope, err := resolveScope(opts.scope)
 	if err != nil {
@@ -226,7 +237,7 @@ func (a *App) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts
 				strings.Join(unknown, ", "), strings.Join(reg.Names(), ", "))
 		}
 		adapters = resolved
-	case opts.yes || !term.IsTerminal(os.Stdin.Fd()):
+	case opts.yes || !promptable():
 		// #755: no selection and no way (or wish) to prompt — degrade to the
 		// detected operators rather than aborting, so agent sessions and
 		// scripts get a working install by default.
