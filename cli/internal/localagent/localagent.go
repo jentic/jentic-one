@@ -333,6 +333,86 @@ func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
 }
 
+// TraverseRevokeCmd removes the agent's execute-only traverse ACL from a single
+// directory, reversing TraverseGrantCmd (Layer 1). It is the teardown counterpart
+// used by `jentic reset`: where `--revoke` intentionally leaves ancestor traverse
+// grants in place for the next grant, a full reset walks the ancestor chain and
+// drops them too. Non-recursive, matching the grant.
+func TraverseRevokeCmd(agentUser, dir string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("sudo", "chmod", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+			"user:"+agentUser+" allow execute", dir)
+	}
+	// -x removes the named-user entry entirely; on an ancestor that only ever
+	// carried the execute-only traverse ACE this reverses TraverseGrantCmd exactly.
+	return exec.Command("sudo", "setfacl", "-x", "u:"+agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+}
+
+// AgentACLPresent reports whether dir currently carries any ACL entry for the
+// agent user. `jentic reset` uses it to (a) show a truthful teardown plan —
+// listing only the grants that actually exist on disk and flagging config
+// entries whose ACL has already drifted away — and (b) skip revoking an ACE that
+// is already gone (so macOS `chmod -a` never errors on a missing entry). It runs
+// as whatever user invokes reset (root), reading the ACL, never modifying it.
+func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		cmd = exec.CommandContext(ctx, "ls", "-lde", dir) //nolint:gosec // dir is a config-recorded path.
+	} else {
+		cmd = exec.CommandContext(ctx, "getfacl", "-pc", dir) //nolint:gosec // dir is a config-recorded path.
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	// macOS prints "N: user:<name> allow …"; Linux getfacl prints "user:<name>:…"
+	// (and "default:user:<name>:…"). Both contain the "user:<name>" needle.
+	return strings.Contains(string(out), "user:"+agentUser)
+}
+
+// ReownHomeCmd changes ownership of the agent's home tree to the operator, so
+// after the agent account is deleted the operator can still read the agent's
+// work. It is the default `jentic reset` disposition for the home (preserve, not
+// delete). Runs as root.
+func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
+	return exec.Command("sudo", "chown", "-R", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
+}
+
+// DeleteHomeCmd permanently removes the agent's home tree. `jentic reset` runs it
+// ONLY when the operator has separately and explicitly accepted home deletion
+// (the second runtime confirmation, or --delete-home paired with --force) — never
+// by default. Runs as root.
+func DeleteHomeCmd(homeDir string) *exec.Cmd {
+	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
+}
+
+// RemoveSudoersCmd drops the agent user's passwordless-launch lines from the
+// shared /etc/sudoers.d/jentic-agent drop-in, deleting the file if it becomes
+// empty. It edits through a temp file validated with `visudo -c` before install,
+// so a malformed result can never brick sudo, and is a no-op when the file is
+// absent (the passwordless drop-in is optional). Runs as root.
+func RemoveSudoersCmd(agentUser string) *exec.Cmd {
+	q := shellQuote(agentUser)
+	script := `f=/etc/sudoers.d/jentic-agent; [ -f "$f" ] || exit 0; ` +
+		`tmp="$(mktemp)"; grep -v ` + q + ` "$f" > "$tmp" || true; ` +
+		`if [ -s "$tmp" ]; then ` +
+		`  if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +
+		`else rm -f "$f"; fi; ` +
+		`rm -f "$tmp"`
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is shell-quoted; the script edits a fixed sudoers path.
+}
+
+// DeleteAccountCmd deletes the agent's Unix account WITHOUT removing its home —
+// the home is settled separately (re-owned or deleted) before this runs, so the
+// account-delete must not touch it. macOS `sysadminctl -deleteUser -keepHome`
+// and Linux `userdel` (no -r) both leave the home in place. Runs as root.
+func DeleteAccountCmd(agentUser string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("sudo", "sysadminctl", "-deleteUser", agentUser, "-keepHome") //nolint:gosec // agentUser is a config account name.
+	}
+	return exec.Command("sudo", "userdel", agentUser) //nolint:gosec // agentUser is a config account name.
+}
+
 // IsUnderHome reports whether dir is the operator's home or a descendant of it.
 func IsUnderHome(home, dir string) bool {
 	home = filepath.Clean(home)

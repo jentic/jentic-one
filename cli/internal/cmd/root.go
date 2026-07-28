@@ -124,6 +124,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	addGrouped(root, "agent", newAccessCmd(app))
 	addGrouped(root, "agent", newSkillCmd(app))
 	addGrouped(root, "agent", newRunCmd(app))
+	addGrouped(root, "agent", newResetCmd(app))
 	addGrouped(root, "admin", newAdminCmd(app))
 
 	return root

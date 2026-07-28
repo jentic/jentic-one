@@ -293,11 +293,7 @@ Two details from live testing, both baked into `jentic run`:
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
-## `jentic reset` — tear down an agent (documented, not yet implemented)
-
-> **Status: proposal only — this command is not implemented yet.** The sections
-> above describe shipped behaviour; this one describes intended behaviour so the
-> teardown story is designed before it's built.
+## `jentic reset` — tear down an agent
 
 Onboarding (`bootstrap`/`wizard`) and `jentic run` accumulate real system state on
 the operator's machine: a Unix account and its home, a copied/installed agent binary,

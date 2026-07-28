@@ -155,6 +155,83 @@ func TestGrantAndRevokeCmdShape(t *testing.T) {
 	}
 }
 
+// TestTeardownCmdShape guards the reset primitives: every one is sudo-fronted and
+// names the agent user (and, where relevant, the target path) so a reset can't
+// silently no-op. TraverseRevokeCmd must mirror TraverseGrantCmd's target.
+func TestTeardownCmdShape(t *testing.T) {
+	home := filepath.Clean("/Users/alice")
+	homeDir := "/Users/Shared/alice-local-agent"
+	cases := []struct {
+		name       string
+		args       []string
+		wantTarget string // "" = don't assert a path, just the user
+		wantUser   bool
+	}{
+		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
+		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
+		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
+		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
+		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.args[0] != "sudo" {
+				t.Errorf("%s: expected sudo-fronted command, got %v", tc.name, tc.args)
+			}
+			joined := strings.Join(tc.args, " ")
+			if tc.wantUser && !strings.Contains(joined, "alice-local-agent") {
+				t.Errorf("%s: args do not name the agent user: %v", tc.name, tc.args)
+			}
+			if tc.wantTarget != "" && !strings.Contains(joined, tc.wantTarget) {
+				t.Errorf("%s: args do not name target %q: %v", tc.name, tc.wantTarget, tc.args)
+			}
+		})
+	}
+
+	// TraverseRevokeCmd reverses TraverseGrantCmd on the same target.
+	if g, r := TraverseGrantCmd("a-local-agent", home).Args, TraverseRevokeCmd("a-local-agent", home).Args; strings.Join(g, " ") == strings.Join(r, " ") {
+		t.Error("traverse grant and revoke must not be identical commands")
+	}
+
+	// DeleteAccountCmd must keep the home (the home is settled separately): it must
+	// NOT carry a home-removing flag (-r on Linux; -deleteUser without -keepHome on macOS).
+	del := strings.Join(DeleteAccountCmd("alice-local-agent").Args, " ")
+	if runtime.GOOS == "darwin" {
+		if !strings.Contains(del, "-keepHome") {
+			t.Errorf("macOS account delete must pass -keepHome so the home survives: %s", del)
+		}
+	} else if strings.Contains(del, " -r") || strings.HasSuffix(del, "-r") {
+		t.Errorf("Linux account delete must NOT pass -r (home is settled separately): %s", del)
+	}
+}
+
+// TestMacTraverseRevokeMatchesGrant guards the macOS ACE-match requirement: the
+// traverse revoke must name the same "allow execute" permission string as the
+// grant, or `chmod -a` won't find the entry to drop.
+func TestMacTraverseRevokeMatchesGrant(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-specific ACL permission set")
+	}
+	grant := strings.Join(TraverseGrantCmd("a-local-agent", "/Users/alice").Args, " ")
+	revoke := strings.Join(TraverseRevokeCmd("a-local-agent", "/Users/alice").Args, " ")
+	if !strings.Contains(grant, "allow execute") || !strings.Contains(revoke, "allow execute") {
+		t.Errorf("traverse grant/revoke must both name `allow execute`: grant=%q revoke=%q", grant, revoke)
+	}
+}
+
+// TestRemoveSudoersIsSafe guards two properties of the sudoers teardown: it edits
+// the fixed jentic-agent drop-in and validates with visudo before installing, so
+// a malformed result can never brick sudo.
+func TestRemoveSudoersIsSafe(t *testing.T) {
+	joined := strings.Join(RemoveSudoersCmd("alice-local-agent").Args, " ")
+	if !strings.Contains(joined, "/etc/sudoers.d/jentic-agent") {
+		t.Errorf("sudoers removal must target the jentic-agent drop-in: %s", joined)
+	}
+	if !strings.Contains(joined, "visudo") {
+		t.Errorf("sudoers removal must validate with visudo before installing: %s", joined)
+	}
+}
+
 // TestMacLeafGrantIncludesDeleteBits guards against the macOS shorthand bug: a
 // "write" grant on a directory expands to add_file only, so the agent could
 // create but not delete/rename files (breaking write-to-temp-then-rename and
