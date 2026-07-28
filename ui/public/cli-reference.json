@@ -1684,7 +1684,7 @@
           "path": "jenticctl update",
           "use": "update",
           "short": "Update the jentic CLIs (and check the stack) to the latest release",
-          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.\n\nA Homebrew-installed CLI is never swapped in place: update it with\n`brew upgrade jentic` (a combined update then refreshes only the stack,\nand --cli-only fails).",
+          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.\n\nA Homebrew-installed CLI is never swapped in place: the CLI half runs\n`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n(--ref cannot pin a Homebrew-managed CLI).",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
