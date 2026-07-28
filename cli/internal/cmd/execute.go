@@ -106,7 +106,7 @@ func (a *App) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 
 	// Resolve the broker target with precedence defaults < config.yaml < flags,
 	// mirroring `jentic run`. Without this, execute always targets the built-in
-	// default (broker.jentic.ai); a local install can point at its own broker via
+	// default (https://127.0.0.1:8100); an install can point at its own broker via
 	// ~/.jentic/config.yaml (broker.scheme/host) instead of passing flags on
 	// every call.
 	fileCfg, err := config.Load(a.Paths)
