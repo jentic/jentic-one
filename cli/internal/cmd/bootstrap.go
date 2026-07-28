@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -159,6 +161,28 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 
 	if opts.dryRun {
 		return a.bootstrapDryRun(profileName, baseURL, targets, env, opts)
+	}
+
+	// After the operator is chosen, offer to isolate it behind a dedicated Unix
+	// user (the true credential boundary). This is asked BEFORE any registration
+	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
+	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
+	// it through this same bootstrap flow.
+	if !opts.skipSkill {
+		// Interactivity for the sudo gate matches the skill picker's own rule
+		// (!yes && a real TTY), not opts.interactive — the wizard deliberately
+		// leaves opts.interactive false (it owns the profile prompts) while the
+		// user is very much at a terminal.
+		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+		if err := a.setupAgentUser(ctx, operatorNames(adapters), agentInteractive); err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(a.Out, theme.Dim.Render("Agent-user setup cancelled."))
+			} else {
+				// Isolation is best-effort: a failure here must not block the
+				// identity/skill provisioning the operator came for.
+				fmt.Fprintln(a.Out, theme.Warnf("agent-user setup skipped: %v", err))
+			}
+		}
 	}
 
 	// Step 1+2: register (DCR) and wait for human approval, reusing the exact

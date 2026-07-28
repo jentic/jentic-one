@@ -4,10 +4,10 @@
 // the command layer (internal/cmd) stays a thin orchestrator over these.
 //
 // The security model this implements is documented in
-// docs/security/analysis/agent-as-unix-user/ (docs 05 and 07): the agent runs
-// as its own unprivileged Unix user, the operator's home is locked 700, and the
-// agent is granted access to individual working directories via inherited ACLs
-// rather than by widening any human's home.
+// docs/security/analysis/local-agent-isolation.md: the agent runs as its own
+// unprivileged Unix user, the operator's home is locked 700, and the agent is
+// granted access to individual working directories via inherited ACLs rather
+// than by widening any human's home.
 package localagent
 
 import (
@@ -88,6 +88,85 @@ func DefaultUserName(operator string) string { return operator + "-local-agent" 
 // to `id -u <user>`, which is portable across macOS and Linux.
 func UserExists(ctx context.Context, user string) bool {
 	return exec.CommandContext(ctx, "id", "-u", user).Run() == nil //nolint:gosec // user is a config-derived account name.
+}
+
+// DefaultHomeDir returns the default home directory for a freshly-created agent
+// account: a subdirectory of an existing shared parent that the operator can be
+// granted into without touching any human's home. macOS uses /Users/Shared,
+// Linux uses /opt — both are world-traversable roots owned by root, matching the
+// setup recipe in docs/security/analysis/local-agent-isolation.md.
+func DefaultHomeDir(agentUser string) string {
+	if runtime.GOOS == "darwin" {
+		return "/Users/Shared/" + agentUser
+	}
+	return "/opt/" + agentUser
+}
+
+// AccountStep is one privileged step in creating the agent account, paired with
+// a human description for progress output and error wrapping. Callers run the
+// steps in order and stop on the first failure.
+type AccountStep struct {
+	// What describes the step for progress/error messages ("create the account").
+	What string
+	// Cmd is the command to run; it is sudo-fronted where elevation is required.
+	Cmd *exec.Cmd
+}
+
+// CreateAccountCmds returns the ordered, platform-specific steps that create the
+// agent's Unix account, materialise its home, and grant the operator inherited
+// read/write into that home — the privileged half of the setup recipe in
+// docs/security/analysis/local-agent-isolation.md. It does NOT lock the
+// operator's own home (that is LockOperatorHomeCmd, which runs unprivileged as
+// the operator) so the two concerns stay separable.
+//
+// macOS: `sysadminctl -addUser` provisions a password-less account and only
+// *records* the home path, so `createhomedir -c -u` is needed to actually create
+// the directory; the operator ACL is an inherited `chmod +a` allow. Linux:
+// `useradd -m` creates the home in one step, then two `setfacl` calls lay down
+// the operator's access ACL and a matching default ACL for future contents.
+func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
+	if runtime.GOOS == "darwin" {
+		return []AccountStep{
+			{
+				What: "create the agent account",
+				//nolint:gosec // operator/agentUser/homeDir are config-derived account names and a resolved path.
+				Cmd: exec.Command("sudo", "sysadminctl", "-addUser", agentUser,
+					"-fullName", operator+" Local Agent", "-home", homeDir, "-password", "-"),
+			},
+			{
+				What: "create the agent's home directory",
+				Cmd:  exec.Command("sudo", "createhomedir", "-c", "-u", agentUser), //nolint:gosec // agentUser is a config-derived account name.
+			},
+			{
+				What: "grant the operator read/write into the agent's home",
+				//nolint:gosec // operator is the current login user; homeDir is a resolved path.
+				Cmd: exec.Command("sudo", "chmod", "+a",
+					"user:"+operator+" allow read,write,execute,file_inherit,directory_inherit", homeDir),
+			},
+		}
+	}
+	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
+		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
+	return []AccountStep{
+		{
+			What: "create the agent account",
+			Cmd:  exec.Command("sudo", "useradd", "-m", "-d", homeDir, "-s", "/bin/bash", agentUser), //nolint:gosec // agentUser is a config-derived account name; homeDir is a resolved path.
+		},
+		{
+			What: "grant the operator read/write into the agent's home",
+			Cmd:  exec.Command("sudo", "sh", "-c", setfacl), //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
+		},
+	}
+}
+
+// LockOperatorHomeCmd returns the `chmod 700 <operatorHome>` that is the
+// machine-independent isolation guarantee: with the operator's home at
+// drwx------ no other account — the agent included — can traverse or read it.
+// It runs unprivileged (the operator owns their own home), so it is kept
+// separate from the sudo-fronted CreateAccountCmds and is safe to run every
+// time as an idempotent backstop.
+func LockOperatorHomeCmd(operatorHome string) *exec.Cmd {
+	return exec.Command("chmod", "700", operatorHome) //nolint:gosec // operatorHome is os.UserHomeDir.
 }
 
 // BinaryStatus is the outcome of probing whether an agent's binary is runnable

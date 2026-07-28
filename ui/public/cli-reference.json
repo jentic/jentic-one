@@ -1312,7 +1312,7 @@
           "path": "jentic run",
           "use": "run \u003cagent\u003e [path]",
           "short": "Launch a coding agent as its own isolated Unix user",
-          "long": "run launches a coding agent (claude, ...) under a dedicated, unprivileged\nOS account distinct from the operator's login user, so a compromised or\nprompt-injected agent cannot read the operator's keys, browser session, or\nthe jentic-one credential store. It provisions the agent's binary for that\naccount if missing, resolves filesystem access to the working directory\n(granting a scoped ACL only when the operator confirms), and starts the\nsession in a login shell so no operator environment leaks.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis under\ndocs/security/analysis/agent-as-unix-user/ for the full rationale.",
+          "long": "run launches a coding agent (claude, ...) under a dedicated, unprivileged\nOS account distinct from the operator's login user, so a compromised or\nprompt-injected agent cannot read the operator's keys, browser session, or\nthe jentic-one credential store. It provisions the agent's binary for that\naccount if missing, resolves filesystem access to the working directory\n(granting a scoped ACL only when the operator confirms), and starts the\nsession in a login shell so no operator environment leaks.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis in\ndocs/security/analysis/local-agent-isolation.md for the full rationale.",
           "group_title": "Find and run operations",
           "flags": [
             {

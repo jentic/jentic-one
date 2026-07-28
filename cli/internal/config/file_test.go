@@ -210,9 +210,10 @@ func TestLocalAgentRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	cfg.SetLocalAgent("claude", LocalAgent{
-		User:    "alice-local-agent",
-		HomeDir: "/Users/Shared/alice-local-agent",
-		Binary:  "claude",
+		User:           "alice-local-agent",
+		AccountCreated: true,
+		HomeDir:        "/Users/Shared/alice-local-agent",
+		Binary:         "claude",
 	})
 	if !cfg.AddGrantedDir("claude", "/Users/Shared/alice-local-agent/work") {
 		t.Fatal("expected AddGrantedDir to report a new grant")
@@ -234,6 +235,9 @@ func TestLocalAgentRoundTrip(t *testing.T) {
 	}
 	if agent.User != "alice-local-agent" || agent.Binary != "claude" {
 		t.Errorf("unexpected agent: %+v", agent)
+	}
+	if !agent.AccountCreated {
+		t.Error("expected AccountCreated to round-trip as true")
 	}
 	if len(agent.GrantedDirs) != 1 {
 		t.Fatalf("granted dirs = %v", agent.GrantedDirs)

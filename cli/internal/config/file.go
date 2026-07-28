@@ -55,6 +55,12 @@ type FileConfig struct {
 type LocalAgent struct {
 	// User is the OS account name `jentic run` sudo's to.
 	User string `yaml:"user"`
+	// AccountCreated records whether jentic provisioned a dedicated Unix account
+	// for this agent (the true credential boundary), as opposed to the operator
+	// declining and running the agent same-user. It gates later behaviour — e.g.
+	// `jentic run` only enforces the isolated posture when an account exists, and
+	// setup/teardown paths key off it — so it is recorded even when false.
+	AccountCreated bool `yaml:"account_created,omitempty"`
 	// HomeDir is that account's home directory (the always-accessible
 	// working space; the session opens here unless a directory is granted).
 	HomeDir string `yaml:"home_dir,omitempty"`

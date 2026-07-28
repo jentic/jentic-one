@@ -27,6 +27,80 @@ func TestDefaultUserName(t *testing.T) {
 	}
 }
 
+func TestDefaultHomeDir(t *testing.T) {
+	got := DefaultHomeDir("alice-local-agent")
+	// The home must live under a shared, world-traversable parent — never under
+	// any human's home — so the operator can be granted in without widening a home.
+	var wantPrefix string
+	if runtime.GOOS == "darwin" {
+		wantPrefix = "/Users/Shared/"
+	} else {
+		wantPrefix = "/opt/"
+	}
+	if !strings.HasPrefix(got, wantPrefix) || !strings.HasSuffix(got, "alice-local-agent") {
+		t.Fatalf("DefaultHomeDir = %q, want %s…alice-local-agent", got, wantPrefix)
+	}
+	if strings.HasPrefix(got, "/Users/alice") || strings.HasPrefix(got, "/home/") {
+		t.Fatalf("DefaultHomeDir = %q must not sit under a human home", got)
+	}
+}
+
+// TestCreateAccountCmds guards the privileged account-creation recipe: every
+// step must be sudo-fronted and name the agent account, the ordered steps must
+// culminate in an inherited operator grant on the agent's home, and the operator
+// grant must carry the inheritance flags (without them the operator loses access
+// to whatever the agent creates later).
+func TestCreateAccountCmds(t *testing.T) {
+	steps := CreateAccountCmds("alice", "alice-local-agent", DefaultHomeDir("alice-local-agent"))
+	if len(steps) == 0 {
+		t.Fatal("expected at least one account-creation step")
+	}
+	for _, s := range steps {
+		if s.Cmd.Args[0] != "sudo" {
+			t.Errorf("step %q: expected sudo-fronted command, got %v", s.What, s.Cmd.Args)
+		}
+		if !strings.Contains(strings.Join(s.Cmd.Args, " "), "alice-local-agent") {
+			t.Errorf("step %q: args do not name the agent account: %v", s.What, s.Cmd.Args)
+		}
+	}
+	// The first step creates the account; a later step grants the operator in.
+	joined := strings.Join(steps[0].Cmd.Args, " ")
+	if runtime.GOOS == "darwin" {
+		if !strings.Contains(joined, "sysadminctl") || !strings.Contains(joined, "-addUser") {
+			t.Errorf("first macOS step should be sysadminctl -addUser: %v", steps[0].Cmd.Args)
+		}
+	} else if !strings.Contains(joined, "useradd") {
+		t.Errorf("first Linux step should be useradd: %v", steps[0].Cmd.Args)
+	}
+	all := ""
+	for _, s := range steps {
+		all += strings.Join(s.Cmd.Args, " ") + "\n"
+	}
+	if !strings.Contains(all, "alice") {
+		t.Error("expected the operator to be granted access somewhere in the recipe")
+	}
+	if runtime.GOOS == "darwin" {
+		if !strings.Contains(all, "file_inherit") || !strings.Contains(all, "directory_inherit") {
+			t.Error("macOS operator grant must be inherited (file_inherit/directory_inherit)")
+		}
+	} else if !strings.Contains(all, "-d -m") && !strings.Contains(all, "-d") {
+		t.Error("Linux operator grant must include a default ACL for future contents")
+	}
+}
+
+func TestLockOperatorHomeCmd(t *testing.T) {
+	c := LockOperatorHomeCmd("/Users/alice")
+	joined := strings.Join(c.Args, " ")
+	// It must NOT be sudo-fronted (the operator owns their own home) and must be a
+	// 700 lock of exactly the given path.
+	if c.Args[0] == "sudo" {
+		t.Errorf("locking the operator's own home should not need sudo: %v", c.Args)
+	}
+	if !strings.Contains(joined, "chmod") || !strings.Contains(joined, "700") || !strings.Contains(joined, "/Users/alice") {
+		t.Errorf("expected `chmod 700 /Users/alice`, got %v", c.Args)
+	}
+}
+
 func TestDangerReason(t *testing.T) {
 	home := "/Users/alice"
 	cases := []struct {
