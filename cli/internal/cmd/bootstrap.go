@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -244,7 +245,52 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	a.bootstrapSummary(profileName, tokens)
+
+	// If we created a dedicated agent account, offer to start a session in the
+	// agent's home right now — the operator has just seen the profile summary and
+	// the natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
+	// declining leaves the printed command for later. Only when interactive and a
+	// real account exists.
+	agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+	if setup.created && setup.agentUser != "" && agentInteractive {
+		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
+	}
 	return nil
+}
+
+// offerAgentSession asks whether to start a session in the freshly-isolated
+// agent's home and, on yes, launches it (equivalent to `cd <home>; jentic run
+// <agent>`). The launch runs the agent under its own user in a login shell, so
+// the operator lands straight in the isolated session. Declining is a no-op — the
+// copy-paste command was already printed by the agent-user setup step.
+func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
+	homeDir := setup.homeDir
+	launch := fmt.Sprintf("cd %s; jentic run %s", homeDir, setup.agentID)
+
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("Start a session in the agent's home now? This runs:"))
+	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(launch))
+
+	start := true
+	if err := install.RunConfirm(huh.NewConfirm().
+		Title("Start a session in the agent's home now?").
+		Description("Launches the agent as its own user, in " + homeDir + ".").
+		Affirmative("Yes, start it").
+		Negative("Not now").
+		Value(&start)); err != nil {
+		return err
+	}
+	if !start {
+		fmt.Fprintln(a.Out, theme.Dim.Render("Not started. Run the command above whenever you're ready."))
+		return nil
+	}
+
+	// Launch in the agent's own home (dir "" → login shell starts in $HOME).
+	desc, _ := localagent.Lookup(setup.agentID)
+	binary := desc.Binary
+	return a.launchAgent(ctx, setup.agentUser, binary, "")
 }
 
 // bootstrapIdentity registers the agent if needed and resolves a token pair. It
