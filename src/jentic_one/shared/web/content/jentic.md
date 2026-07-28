@@ -95,9 +95,11 @@ yet on your token (see the stale-scope note it prints).
 
 **File once, richly — never thrash.** Work out the full access end-state up
 front — from `whoami`, the catalog, and the task — instead of discovering
-gaps one denied call at a time. If the job needs several APIs, file the
-missing plans in one pass (one `--provision` per API, each complete: auth,
-rules, reason) rather than interleaving requests with failing executes. Never
+gaps one denied call at a time. A request's provisioning plan covers **one
+API**, so a job needing several APIs means several requests: file them all
+in one pass (one `--provision` per API, each complete: auth, rules, reason)
+rather than interleaving requests with failing executes — filed together,
+they read as one plan to the human approving them. Never
 file duplicate or per-operation requests for the same API, and don't
 file-withdraw-refile to tweak a proposal — approval is a human trust action,
 so once a request is filed, tell your operator an approval is waiting and
