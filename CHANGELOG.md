@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.21.0](https://github.com/jentic/jentic-one/compare/v0.20.0...v0.21.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** delegate Homebrew-managed CLI updates to `brew upgrade` ([#855](https://github.com/jentic/jentic-one/issues/855)) ([a6cdd4e](https://github.com/jentic/jentic-one/commit/a6cdd4ea886fe2233a2c1cb73bbfbc1b71251a04))
+* **cli:** refuse self-update of Homebrew-managed installs ([#854](https://github.com/jentic/jentic-one/issues/854)) ([c9375ca](https://github.com/jentic/jentic-one/commit/c9375cafe19a6bd9ea9b323733187626ce10bb79))
+* **ui:** reorder toolkit hierarchy and enable two-way agent↔toolkit binding ([#797](https://github.com/jentic/jentic-one/issues/797)) ([ccd9441](https://github.com/jentic/jentic-one/commit/ccd944174d4d28f75891d2d6cdd21caee3f50896)), closes [#636](https://github.com/jentic/jentic-one/issues/636) [#637](https://github.com/jentic/jentic-one/issues/637) [#607](https://github.com/jentic/jentic-one/issues/607) [#591](https://github.com/jentic/jentic-one/issues/591)
+
+
+### Bug Fixes
+
+* **cli:** skill-install funnel — honest list, non-TTY default, ratified scopes ([#824](https://github.com/jentic/jentic-one/issues/824)) ([a4fdedb](https://github.com/jentic/jentic-one/commit/a4fdedb8872c750619bc1a5367606a17ce6f4937))
+* **monitor:** show exact day-aligned windows in the Execution Volume chart ([f8963e3](https://github.com/jentic/jentic-one/commit/f8963e3735d7b192c60c1609096b6c3cdf853232))
+
+
+### Documentation
+
+* **monitor:** correct stale trend-length and NULL-key comments ([0a60457](https://github.com/jentic/jentic-one/commit/0a6045776acd64c64cc620583921d9bcf2fc5332))
+* **onboarding:** disambiguate self-hosted Jentic One from the Jentic cloud platform ([#851](https://github.com/jentic/jentic-one/issues/851)) ([2a5ccfd](https://github.com/jentic/jentic-one/commit/2a5ccfdeed8ebd2e6dcc6df785e9aee46aedfd85))
+* **skill:** stopped-instance branch, backend-identity check, honest rule proposals ([#843](https://github.com/jentic/jentic-one/issues/843)) ([45444f3](https://github.com/jentic/jentic-one/commit/45444f3846782731adb85335188319545b4bc59e))
+
 ## [0.20.0](https://github.com/jentic/jentic-one/compare/v0.19.0...v0.20.0) (2026-07-27)
 
 
