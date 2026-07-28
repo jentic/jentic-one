@@ -162,6 +162,23 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		}
 	}
 
+	// Make sure the agent owns its whole home. This is a no-op on a freshly created
+	// home (createhomedir already made the agent the owner) but is load-bearing when
+	// the home ALREADY EXISTS: a prior `jentic reset` that kept the home re-owned it
+	// to the operator, and reusing that home would otherwise leave .claude/.aws/etc.
+	// operator-owned — readable but not writable by the agent, which surfaces as
+	// fresh-config screens, provider token-cache failures, and EACCES transcript
+	// writes. Best-effort: a macOS home carries SIP/TCC-protected files nobody can
+	// chown, so a residual non-zero exit is expected and must not fail setup.
+	if fields.homeDir != "" {
+		reclaim := localagent.ReclaimAgentHomeCmd(fields.name, fields.homeDir)
+		reclaim.Stdout, reclaim.Stderr = a.Out, a.Err
+		if err := reclaim.Run(); err != nil {
+			fmt.Fprintln(a.Out, theme.Dim.Render(
+				"  (some protected system files in the home couldn't be re-owned to the agent — that's expected; continuing)"))
+		}
+	}
+
 	// Lock the operator's own home — the machine-independent isolation guarantee.
 	// It is unprivileged (the operator owns it) and idempotent, so run it always.
 	if home := localagent.OperatorHome(); home != "" {

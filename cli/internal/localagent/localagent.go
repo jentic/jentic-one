@@ -399,6 +399,22 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "chown", "-Rf", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
 }
 
+// ReclaimAgentHomeCmd (re-)establishes the agent as the owner of its whole home
+// tree. It is run when setting up the agent account, and matters most when the
+// home ALREADY EXISTS: a prior `jentic reset` that kept the home re-owned it to
+// the operator (ReownHomeCmd), and `createhomedir` only creates missing files —
+// it never reclaims ownership of existing content. Without this, a re-bootstrap
+// over that home leaves .claude/.aws/etc. operator-owned, so the agent can read
+// but not WRITE them (fresh-config screens, provider token-cache failures,
+// EACCES transcript writes). It mirrors ReownHomeCmd's `-Rf`: a macOS home carries
+// SIP/TCC-protected template files nobody can chown, so it re-owns everything it
+// can and the caller treats the residual non-zero exit as best-effort. Extended
+// ACLs (the operator's inherited read/write grant) survive chown on both macOS and
+// Linux, so this doesn't cost the operator access. Runs as root.
+func ReclaimAgentHomeCmd(agentUser, homeDir string) *exec.Cmd {
+	return exec.Command("sudo", "chown", "-Rf", agentUser, homeDir) //nolint:gosec // agentUser is a config account name; homeDir is a resolved path.
+}
+
 // ChownToAgentCmd gives the agent ownership of dir (recursively). It is used after
 // the operator writes the agent's jentic identity into the agent's ~/.jentic:
 // files the operator creates there are operator-owned, but the agent's 0600 key

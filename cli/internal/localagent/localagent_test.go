@@ -204,6 +204,20 @@ func TestTeardownCmdShape(t *testing.T) {
 		t.Errorf("re-own must use `chown -Rf` to survive un-chownable protected files: %s", reown)
 	}
 
+	// ReclaimAgentHomeCmd is the inverse: it re-owns the home to the AGENT (used when
+	// reusing a home a prior reset handed back to the operator). It must be
+	// sudo-fronted, name the agent user + home, and use `-Rf` for the same reason.
+	reclaim := strings.Join(ReclaimAgentHomeCmd("alice-local-agent", homeDir).Args, " ")
+	if !strings.Contains(reclaim, "chown -Rf ") {
+		t.Errorf("reclaim must use `chown -Rf`: %s", reclaim)
+	}
+	if !strings.Contains(reclaim, "alice-local-agent") || !strings.Contains(reclaim, homeDir) {
+		t.Errorf("reclaim must name the agent user and home: %s", reclaim)
+	}
+	if !strings.HasPrefix(reclaim, "sudo ") {
+		t.Errorf("reclaim must be sudo-fronted: %s", reclaim)
+	}
+
 	// DeleteAccountCmd must keep the home (the home is settled separately): it must
 	// NOT carry a home-removing flag. On macOS we delete the DirectoryService
 	// record with `dscl . -delete` (no filesystem side-effect) rather than
