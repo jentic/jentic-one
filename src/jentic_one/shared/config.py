@@ -182,13 +182,25 @@ class AdminAuthConfig(BaseModel):
     """Admin authentication settings."""
 
     jwt_secret: SecretStr = SecretStr(_DEFAULT_SECRET_PLACEHOLDER)
-    jwt_ttl_seconds: int = 3600
+    jwt_ttl_seconds: int = Field(default=3600, gt=0)
+    # Absolute cap on a web session: `POST /auth/refresh` re-mints the login
+    # JWT (sliding session) only while `now - auth_time` stays inside this
+    # window, so a leaked token cannot be kept alive indefinitely.
+    session_ttl_seconds: int = Field(default=43200, gt=0)
     failed_login_lockout_threshold: int = 5
     failed_login_lockout_seconds: int = 900
 
     @model_validator(mode="after")
     def _reject_default_secret_in_production(self) -> AdminAuthConfig:
         _require_production_secret(self.jwt_secret, field_path="admin.auth.jwt_secret")
+        return self
+
+    @model_validator(mode="after")
+    def _session_window_covers_jwt_ttl(self) -> AdminAuthConfig:
+        # A session window shorter than one JWT would make every refresh fail
+        # while the first token is still valid — always a misconfiguration.
+        if self.session_ttl_seconds < self.jwt_ttl_seconds:
+            raise ValueError("admin.auth.session_ttl_seconds must be >= admin.auth.jwt_ttl_seconds")
         return self
 
 

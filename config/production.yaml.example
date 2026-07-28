@@ -51,3 +51,15 @@ apps:
   - registry
   - admin
   - control
+
+admin:
+  auth:
+    # Secret for signing web-session JWTs. REQUIRED in production — supply via
+    # JENTIC__ADMIN__AUTH__JWT_SECRET rather than committing it here.
+    # jwt_secret: CHANGE_ME
+    # Lifetime of a single login JWT. The web UI silently re-mints the token
+    # via POST /auth/refresh before it expires (sliding session).
+    jwt_ttl_seconds: 3600
+    # Absolute cap on a web session: refresh is refused once the original
+    # login is older than this window, forcing a fresh sign-in.
+    session_ttl_seconds: 43200

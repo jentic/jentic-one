@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +15,7 @@ from jentic_one.admin.core.schema.setup_sentinel import SetupSentinel
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.services._support.tokens import decode_jwt, issue_jwt
 from jentic_one.shared.context import Context
 
 from .conftest import ADMIN_EMAIL, ADMIN_PASSWORD
@@ -134,6 +137,127 @@ def test_redeem_invite_password_min_length(unauthed_client: TestClient) -> None:
         json={"invite_token": "fake-token", "password": "short"},
     )
     assert resp.status_code == 422
+
+
+# ── Session refresh (POST /auth/refresh, sliding session) ───────────────────
+
+
+def _mint_login_jwt(
+    web_context: Context,
+    *,
+    sub: str,
+    email: str = ADMIN_EMAIL,
+    actor_type: str = "user",
+    auth_time: int | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
+    """Mint a login-shaped JWT directly, bypassing the login endpoint."""
+    config = web_context.config.admin.auth
+    claims: dict[str, Any] = {
+        "sub": sub,
+        "email": email,
+        "actor_type": actor_type,
+        "permissions": ["org:admin"],
+        "must_change_password": False,
+    }
+    if auth_time is not None:
+        claims["auth_time"] = auth_time
+    return issue_jwt(
+        claims,
+        config.jwt_secret.get_secret_value(),
+        config.jwt_ttl_seconds if ttl_seconds is None else ttl_seconds,
+    )
+
+
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_login_token_carries_auth_time(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """Login JWTs record the original authentication instant for the refresh window."""
+    resp = unauthed_client.post(
+        "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    )
+    assert resp.status_code == 200
+    secret = web_context.config.admin.auth.jwt_secret.get_secret_value()
+    claims = decode_jwt(resp.json()["access_token"], secret)
+    assert claims["auth_time"] == pytest.approx(claims["iat"], abs=5)
+
+
+def test_refresh_success_remints_working_token(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """Refresh returns a usable token that preserves the original auth_time."""
+    login = unauthed_client.post(
+        "/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    )
+    assert login.status_code == 200
+    old_token = login.json()["access_token"]
+
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(old_token))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["token_type"] == "bearer"
+    assert data["expires_in"] > 0
+    assert data["must_change_password"] is False
+
+    secret = web_context.config.admin.auth.jwt_secret.get_secret_value()
+    old_claims = decode_jwt(old_token, secret)
+    new_claims = decode_jwt(data["access_token"], secret)
+    # The absolute session window anchors on the *original* login, not the re-mint.
+    assert new_claims["auth_time"] == old_claims["auth_time"]
+
+    me = unauthed_client.get("/users/me", headers=_bearer(data["access_token"]))
+    assert me.status_code == 200
+    assert me.json()["email"] == ADMIN_EMAIL
+
+
+def test_refresh_unauthenticated(unauthed_client: TestClient) -> None:
+    resp = unauthed_client.post("/auth/refresh")
+    assert resp.status_code == 401
+
+
+def test_refresh_expired_token_rejected(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """A JWT past its own exp cannot be refreshed — the auth gate rejects it."""
+    token = _mint_login_jwt(web_context, sub=admin_user_id, ttl_seconds=-10)
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
+    assert resp.status_code == 401
+
+
+def test_refresh_past_absolute_window_rejected(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """A still-valid JWT whose original login is too old gets 401 session_expired."""
+    session_ttl = web_context.config.admin.auth.session_ttl_seconds
+    stale = int(datetime.now(UTC).timestamp()) - session_ttl - 60
+    token = _mint_login_jwt(web_context, sub=admin_user_id, auth_time=stale)
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "session_expired"
+
+
+def test_refresh_unknown_user_rejected(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """A token whose subject no longer exists cannot be refreshed."""
+    token = _mint_login_jwt(web_context, sub="usr_00000000000000000000000000")
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "invalid_credentials"
+
+
+def test_refresh_non_user_token_rejected(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """Only user login JWTs are refreshable — agent tokens are refused."""
+    token = _mint_login_jwt(web_context, sub=admin_user_id, actor_type="agent")
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "invalid_credentials"
 
 
 # ── First-run create-admin (one-time, unauthenticated setup) ───────────────

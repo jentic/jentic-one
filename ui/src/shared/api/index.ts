@@ -229,3 +229,12 @@ export { ActorsService } from '@/shared/api/generated/services/ActorsService';
 export { ActorType } from '@/shared/api/generated/models/ActorType';
 export type { ActorListResponse } from '@/shared/api/generated/models/ActorListResponse';
 export type { ActorSummaryResponse } from '@/shared/api/generated/models/ActorSummaryResponse';
+
+// Session lifecycle (#610/#608): expiry-aware token adoption + proactive
+// refresh scheduling + the one-shot "session expired" login notice.
+export {
+	setSession,
+	getSessionExpiresAt,
+	consumeSessionExpiredNotice,
+} from '@/shared/api/token-store';
+export type { ClearTokenReason } from '@/shared/api/token-store';

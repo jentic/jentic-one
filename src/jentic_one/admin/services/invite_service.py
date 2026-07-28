@@ -175,6 +175,9 @@ class InviteService:
             "email": user.email,
             "permissions": perms_view.effective,
             "must_change_password": False,
+            # Redeeming an invite sets the password — a fresh credential proof,
+            # so the absolute session window (see AuthService.refresh) starts now.
+            "auth_time": int(datetime.now(UTC).timestamp()),
         }
         jwt_token = issue_jwt(
             claims, config.auth.jwt_secret.get_secret_value(), config.auth.jwt_ttl_seconds

@@ -5182,10 +5182,13 @@ info:
     token) except `GET /health`, `POST /auth/login`,
     `POST /users:create-admin`, and `POST /users:redeem-invite`.
     Human tokens are issued by `POST /auth/login` with a fixed 1-hour
-    TTL; agents and service accounts obtain tokens from
-    `POST /oauth/token` (see `BearerAuth`). The `permissions` claim on a
-    token is a snapshot at issue time; permission changes take effect at
-    the next re-issue (≤ 1 hour with the default TTL).
+    TTL and can be re-minted before expiry via `POST /auth/refresh`
+    (sliding session, bounded by an absolute window —
+    `admin.auth.session_ttl_seconds`, 12 hours by default); agents and
+    service accounts obtain tokens from `POST /oauth/token` (see
+    `BearerAuth`). The `permissions` claim on a token is a snapshot at
+    issue time; permission changes take effect at the next re-issue —
+    the next refresh or re-login (≤ 1 hour with the default TTL).
 
     The platform ships **no default credentials**. On a fresh
     install the users table is empty, so `GET /health` returns
@@ -9471,6 +9474,72 @@ paths:
           description: Service Unavailable
       security: []
       summary: Log in
+      tags:
+      - Users
+  /auth/refresh:
+    post:
+      description: |-
+        Re-mint the caller's login JWT before it expires (sliding session).
+
+        Only user login JWTs are refreshable; permissions and the
+        ``must_change_password`` gate are re-read from the database at re-mint.
+        Refusal modes: 401 ``session_expired`` once the original authentication is
+        older than the absolute window (``admin.auth.session_ttl_seconds``), 401
+        ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
+        (non-JWT) credentials. Clients should then send the user back to login.
+      operationId: refreshSession
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Refresh session token
       tags:
       - Users
   /authorize:
@@ -16151,7 +16220,9 @@ tags:
 
     **Authentication.** Today only local (username + password) identity ships. The `User` schema carries `auth_provider: local | external` and an `external_subject_id` field reserved for future SSO integrations (Okta, Cognito, Azure AD); when SSO arrives, those users will be created via a separate provider-specific router. The on-the-wire token contract — `Authorization: Bearer <jwt>` — is unchanged either way.
 
-    **Disabling and revocation.** `:disable` flips `active=false` and rejects subsequent `POST /auth/login`. **Existing JWTs keep working until they expire** (≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; sub-minute revocation would require a server-side session table.
+    **Disabling and revocation.** `:disable` flips `active=false` and rejects subsequent `POST /auth/login` **and** `POST /auth/refresh`. **Existing JWTs keep working until they expire** (≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; sub-minute revocation would require a server-side session table.
+
+    **Session lifetime.** Login JWTs carry a 1-hour TTL. The UI keeps an active session alive by calling `POST /auth/refresh` before expiry (sliding session); refresh re-reads permissions and the `must_change_password` gate from the database and is refused with 401 `session_expired` once the original authentication is older than the absolute window (`admin.auth.session_ttl_seconds`, 12 hours by default), forcing a fresh login.
   name: Users
 - description: |-
     Part of the **Admin / Audit** bounded context — the catalogue of grantable permission strings. Permissions are namespaced `resource:action` strings (`users:write`, `capabilities:execute`, `credentials:read`, …) gating every other surface in the API. The set is platform-defined and small; `GET /permissions` returns it in full, with each entry describing what it does, what it implies (the static implication map; e.g. `capabilities:execute` implies `apis:read` and `executions:read`), and whether the calling user is authorised to grant it.

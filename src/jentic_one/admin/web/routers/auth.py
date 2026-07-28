@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from jentic_one.admin.services.auth_service import AuthService
 from jentic_one.admin.services.invite_service import InviteService
@@ -26,6 +26,7 @@ from jentic_one.admin.web.schemas.auth import (
 )
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web.auth import extract_credential
 from jentic_one.shared.web.openapi_responses import PUBLIC_ERROR_RESPONSES, gone
 
 router = APIRouter()
@@ -38,6 +39,31 @@ async def login(
 ) -> LoginResponse:
     """Authenticate and return a JWT token bundle."""
     bundle = await auth_svc.login(LoginPayload(email=body.email, password=body.password))
+    return LoginResponse(
+        access_token=bundle.access_token,
+        token_type=bundle.token_type,
+        expires_in=bundle.expires_in,
+        must_change_password=bundle.must_change_password,
+    )
+
+
+@router.post("/auth/refresh", summary="Refresh session token")
+async def refresh_session(
+    request: Request,
+    identity: Identity = get_current_identity(allow_expired_password=True),
+    auth_svc: AuthService = Depends(get_auth_service),
+) -> LoginResponse:
+    """Re-mint the caller's login JWT before it expires (sliding session).
+
+    Only user login JWTs are refreshable; permissions and the
+    ``must_change_password`` gate are re-read from the database at re-mint.
+    Refusal modes: 401 ``session_expired`` once the original authentication is
+    older than the absolute window (``admin.auth.session_ttl_seconds``), 401
+    ``invalid_credentials`` for deactivated users, non-user tokens, or opaque
+    (non-JWT) credentials. Clients should then send the user back to login.
+    """
+    _ = identity  # Auth gate only; the service re-derives everything it needs.
+    bundle = await auth_svc.refresh(extract_credential(request))
     return LoginResponse(
         access_token=bundle.access_token,
         token_type=bundle.token_type,

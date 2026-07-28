@@ -204,6 +204,11 @@ def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     # subpaths (always SPA routes in practice).
     app.frontend(SPA_MOUNT_PATH, directory=str(static_dir), fallback="auto")
 
+    # Flag consumed by the shared 401 handler (app_factory): only when an SPA
+    # is actually mounted does an anonymous HTML navigation that 401s get
+    # redirected into the app instead of receiving raw problem+json (#813).
+    app.state.spa_mounted = True
+
     _logger.info(
         "spa_mounted",
         static_dir=str(static_dir),

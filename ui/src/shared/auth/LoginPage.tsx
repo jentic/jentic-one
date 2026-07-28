@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/shared/auth/AuthContext';
-import { ApiError } from '@/shared/api';
+import { ApiError, consumeSessionExpiredNotice } from '@/shared/api';
 import { ROUTES } from '@/shared/app/routes';
 import { Input } from '@/shared/ui/Input';
 import { Label } from '@/shared/ui/Label';
@@ -26,10 +26,21 @@ export function LoginPage() {
 	const [password, setPassword] = useState('');
 	const [error, setError] = useState<string | null>(null);
 	const [submitting, setSubmitting] = useState(false);
+	// One-shot notice recorded when a rejected/expired token was cleared —
+	// tells the user *why* they're back on the login form (#608). Consumed in
+	// an effect (not a lazy initializer): consuming mutates sessionStorage, and
+	// StrictMode's double-invoked initializer would eat the flag before the
+	// surviving render sees it. The effect only ever raises the state, so the
+	// StrictMode re-mount (flag already consumed) leaves it intact.
+	const [sessionExpired, setSessionExpired] = useState(false);
+	useEffect(() => {
+		if (consumeSessionExpiredNotice()) setSessionExpired(true);
+	}, []);
 
 	const handleSubmit = async (event: React.FormEvent) => {
 		event.preventDefault();
 		setError(null);
+		setSessionExpired(false);
 		setSubmitting(true);
 		try {
 			await login({ email, password });
@@ -57,6 +68,15 @@ export function LoginPage() {
 					Sign in to Jentic One
 				</h1>
 				<p className="text-muted-foreground mt-1 text-sm">Admin console</p>
+
+				{sessionExpired && (
+					<p
+						role="status"
+						className="border-border bg-muted/60 text-muted-foreground mt-4 rounded-lg border px-4 py-3 text-sm"
+					>
+						Your session expired — please sign in again.
+					</p>
+				)}
 
 				<div className="mt-6 space-y-4">
 					<div className="space-y-1">
