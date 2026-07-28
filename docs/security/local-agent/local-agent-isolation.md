@@ -1,6 +1,6 @@
 # Design: run the agent as its own Unix user, wrapped by `jentic`
 
-> Builds on [`README.md`](README.md). The structural fix is: run a CLI coding
+> Builds on the [analysis](analysis.md). The structural fix is: run a CLI coding
 > agent (Claude Code is the worked example) under a **dedicated, unprivileged OS
 > user** distinct from the operator's login user, so it cannot read the
 > operator's `~/.jentic` keyset, DB, browser profile, or Keychain. It reaches

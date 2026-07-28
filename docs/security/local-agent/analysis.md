@@ -1,6 +1,9 @@
-# Securing the credential boundary for locally-run agents
+# Analysis: the credential boundary for locally-run agents
 
-> **Status:** analysis / design exploration. Not yet a committed plan.
+> **Status:** analysis / design exploration. Not yet a committed plan. This
+> captures the *problem* — the state before the local-agent isolation work. The
+> design that responds to it lives in the sibling docs (see the
+> [directory README](README.md)).
 
 ## The problem in one sentence
 
@@ -51,17 +54,7 @@ The rest of this analysis is defense-in-depth (key out of config, subset-bound
 scopes, short least-privilege tokens, DPoP, posture banner, reveal-never arch
 test). All worth doing; none closes a structural gap on its own.
 
-## The design
-
-[**`local-agent-isolation.md`**](local-agent-isolation.md) is the concrete
-design: run a CLI coding agent (Claude Code as the worked example) as a
-dedicated, unprivileged OS user, wrapped by a `jentic` CLI command set (account
-creation folded into `jentic bootstrap` / `jenticctl wizard`, then
-`jentic run <agent>`, directory grants, and `jentic reset`) so operators get the
-isolated posture by default instead of by discipline.
-
-[**`filesystem-access-model.md`**](filesystem-access-model.md) is the reference
-for the permission mechanics underneath that design: how the agent's and
-operator's Unix accounts reach — and are kept out of — each other's files
-(700-home, traverse-walk + rwx-leaf ACLs, the inherited operator grant, and the
-grant/revoke/reset lifecycle).
+The concrete design that responds to this analysis —
+[`local-agent-isolation.md`](local-agent-isolation.md) and
+[`filesystem-access-model.md`](filesystem-access-model.md) — lives alongside this
+file; the [directory README](README.md) indexes all three.

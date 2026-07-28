@@ -45,7 +45,7 @@ func newRunCmd(app *App) *cobra.Command {
 			"session in a login shell so no operator environment leaks.\n\n" +
 			"The agent account, its home, and the directories it has been granted are\n" +
 			"recorded in ~/.jentic/config.yaml. See the security analysis in\n" +
-			"docs/security/analysis/local-agent-isolation.md for the full rationale.",
+			"docs/security/local-agent/local-agent-isolation.md for the full rationale.",
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.runE(cmd, opts, args)
@@ -109,7 +109,7 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	if !localagent.UserExists(ctx, agentUser) {
 		return fmt.Errorf("agent account %q does not exist — create it first with "+
 			"`jentic bootstrap` or `jenticctl wizard` (see "+
-			"docs/security/analysis/local-agent-isolation.md), then re-run", agentUser)
+			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser)
 	}
 
 	// Record/refresh the entry so subsequent runs never re-derive the account.
