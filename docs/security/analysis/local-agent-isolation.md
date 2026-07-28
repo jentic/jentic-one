@@ -323,17 +323,21 @@ preserved or deleted:
   Account to delete:
     - Unix user  alice-local-agent  (uid 502)
 
-  PRESERVED (not deleted — this run was not given --delete-home):
+  Agent home (asked about separately after you confirm below):
     - agent home directory   /Users/Shared/alice-local-agent
       Contains the agent's real work + seeded config (~/.aws, ~/.claude).
-      Left on disk and re-owned to you (alice). Re-run with --delete-home to
-      remove it — that asks for a second, separate confirmation.
+      Default: KEPT on disk and re-owned to you (alice). You'll be asked
+      whether to delete it after confirming the rest.
 
   NOT touched:
     - your own home (/Users/alice) stays chmod 700 — reset does not revert it
     - your own files, config, keys, and Jentic One itself
 
-Type the agent name ('claude') to confirm, or anything else to abort:
+Type the agent name ('claude') to confirm, or anything else to abort: claude
+
+  The agent's home /Users/Shared/alice-local-agent will be KEPT and re-owned to
+  you. To PERMANENTLY DELETE it and everything in it instead, type 'delete home'
+  (anything else keeps it):
 ```
 
 Design requirements baked into that plan:
@@ -353,13 +357,17 @@ Design requirements baked into that plan:
   tearing down the *plumbing* (account, ACLs, sudoers, config entry). By default
   `reset` **keeps the home directory on disk and re-owns it to the operator**
   (`chown -R <operator>`) so nothing is lost and the operator can still read it
-  after the agent account is gone. Deleting the home requires the operator to pass
-  **`--delete-home`**, and that path prompts a **second confirmation of its own**
-  (a separate typed acknowledgement after the main plan is confirmed) — it is never
-  bundled into the single agent-name confirm, and `--force` alone does not imply
-  it (`--force --delete-home` must both be present for non-interactive home
-  deletion). Without `--delete-home`, the plan shows the home under a **PRESERVED**
-  heading, not a delete list.
+  after the agent account is gone. The gate for deleting it is a **second, separate
+  confirmation asked during the run** — after the main plan is confirmed, `reset`
+  prompts specifically about the home (naming its path and that it holds the agent's
+  work) with **preserve as the default**; deleting requires a distinct typed
+  acknowledgement there. It is **not** gated behind a `--delete-home` flag — asking
+  the operator to re-run with a flag would be worse, since after a preserve run they
+  may no longer know where the home lives. The flag exists **only** as the
+  non-interactive escape hatch: `--delete-home` (paired with `--force`) is how a
+  scripted teardown opts into deletion when there's no prompt to answer. Without
+  that flag and without answering the home prompt affirmatively, the home is shown
+  under a **PRESERVED** heading and left on disk.
 - **The ancestor traverse ACLs are removed too**, not just the leaf grants — reset
   is a full teardown, so it walks the recorded ancestor chains and drops the
   execute-only entries it added. (Contrast `--revoke`, which intentionally leaves
@@ -372,17 +380,17 @@ Design requirements baked into that plan:
 
 Remove access before removing the account, so a failure part-way never leaves a
 live account with dangling grants: (1) drop leaf + traverse ACLs; (2) settle the
-agent home — **re-own it to the operator** by default, or delete it *only* if
-`--delete-home` was given and separately confirmed; (3) remove the `sudoers`
-drop-in; (4) delete the Unix account (`sysadminctl -deleteUser` **without**
-`-secure`/`-keepHome` deleting the record only / `userdel` **without** `-r` so the
-account goes but the home stays); (5) remove the `local_agents` entry from the
-operator's config last, so a re-run after a mid-way failure still has the record of
-what to finish cleaning. Each step reports success/failure; a failure stops the run
-with what's already been done and what remains. Note the account-deletion step (4)
-must be told *not* to remove the home — the default macOS/Linux "delete user" also
-wipes the home, which is exactly the data we're preserving unless `--delete-home`
-is set.
+agent home — **re-own it to the operator** by default, or delete it *only* when the
+separate home confirmation was answered affirmatively (or `--delete-home --force`
+in non-interactive use); (3) remove the `sudoers` drop-in; (4) delete the Unix
+account (`sysadminctl -deleteUser` **without** `-secure`/`-keepHome` deleting the
+record only / `userdel` **without** `-r` so the account goes but the home stays);
+(5) remove the `local_agents` entry from the operator's config last, so a re-run
+after a mid-way failure still has the record of what to finish cleaning. Each step
+reports success/failure; a failure stops the run with what's already been done and
+what remains. Note the account-deletion step (4) must be told *not* to remove the
+home — the default macOS/Linux "delete user" also wipes the home, which is exactly
+the data we're preserving unless the home deletion was explicitly accepted.
 
 ## GUI IDEs (Cursor / VS Code)
 
