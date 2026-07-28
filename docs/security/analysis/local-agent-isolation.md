@@ -515,6 +515,20 @@ The config wipe runs **last**, after every agent is torn down, so a failure
 mid-agent never removes the config that records what still needs cleaning — and a
 bare `jentic reset` with no configured agents is a valid config-only clean slate.
 
+#### What a full reset deliberately leaves behind
+
+"Clean slate" means agent + identity, not bare metal. Four things are left intact
+by design:
+
+- **Skills** — the generated skill files (see [below](#not-yet-implemented--skill-cleanup)).
+- **`chmod 700 ~`** — never reverted; the operator's home stays locked down.
+- **Agent homes** — preserved and re-owned to the operator by default (the agent's
+  work survives); deleting a home is the separate, explicit per-agent confirmation.
+- **The rest of `config.yaml`** — the wipe clears `default_profile` and empties
+  `local_agents`, but leaves other settings (`base_url`, `broker`, telemetry
+  consent) and the file itself in place. It resets your *identity and agents*, not
+  every preference.
+
 ### Not yet implemented — skill cleanup
 
 One further teardown responsibility belongs to `jentic reset` by design but is
