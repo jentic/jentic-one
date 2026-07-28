@@ -287,7 +287,7 @@ agent (or start over) without hand-reversing each `chmod`/`sysadminctl`.
 ### It only runs as root
 
 ```bash
-sudo jentic reset [<agent>]
+sudo jentic reset [<agent>] [--delete-home] [--force]
 ```
 
 Deleting a user account, removing another user's home, and stripping ACLs all
@@ -299,10 +299,12 @@ that agent.
 
 ### It shows the full plan before touching anything
 
-`reset` is destructive and largely irreversible (a deleted account and its home
-don't come back), so it runs in two distinct phases: **survey, then confirm, then
-act**. Nothing is changed during the survey. It prints exactly what it will do,
-resolved to concrete paths and the specific ACL entries it will drop:
+`reset` is destructive and largely irreversible (a deleted account doesn't come
+back, and with `--delete-home` neither does the agent's work), so it runs in two
+distinct phases: **survey, then confirm, then act**. Nothing is changed during the
+survey. It prints exactly what it will do, resolved to concrete paths and the
+specific ACL entries it will drop, and states plainly whether the home is being
+preserved or deleted:
 
 ```
 ⚠  DANGER ZONE — jentic reset will PERMANENTLY remove the following for agent 'claude'
@@ -315,12 +317,17 @@ resolved to concrete paths and the specific ACL entries it will drop:
     - traverse     user:alice-local-agent  /Users/alice/projects
 
   Files & config to delete:
-    - agent home directory   /Users/Shared/alice-local-agent   (incl. seeded ~/.aws, ~/.claude)
     - sudoers drop-in        /etc/sudoers.d/jentic-agent
     - local_agents['claude'] entry in ~/.jentic/config.yaml
 
   Account to delete:
     - Unix user  alice-local-agent  (uid 502)
+
+  PRESERVED (not deleted — this run was not given --delete-home):
+    - agent home directory   /Users/Shared/alice-local-agent
+      Contains the agent's real work + seeded config (~/.aws, ~/.claude).
+      Left on disk and re-owned to you (alice). Re-run with --delete-home to
+      remove it — that asks for a second, separate confirmation.
 
   NOT touched:
     - your own home (/Users/alice) stays chmod 700 — reset does not revert it
@@ -340,6 +347,19 @@ Design requirements baked into that plan:
   dangerous directory grant. `--yes` does **not** skip it (there is no safe default
   for destruction); a separate explicit `--force` is the only non-interactive
   escape hatch, intended for scripted teardown.
+- **The agent home is preserved by default and needs a separate, explicit
+  acceptance to delete.** The home holds the agent's real work (edited repos,
+  history, seeded config), so removing it is a distinct destructive act from
+  tearing down the *plumbing* (account, ACLs, sudoers, config entry). By default
+  `reset` **keeps the home directory on disk and re-owns it to the operator**
+  (`chown -R <operator>`) so nothing is lost and the operator can still read it
+  after the agent account is gone. Deleting the home requires the operator to pass
+  **`--delete-home`**, and that path prompts a **second confirmation of its own**
+  (a separate typed acknowledgement after the main plan is confirmed) — it is never
+  bundled into the single agent-name confirm, and `--force` alone does not imply
+  it (`--force --delete-home` must both be present for non-interactive home
+  deletion). Without `--delete-home`, the plan shows the home under a **PRESERVED**
+  heading, not a delete list.
 - **The ancestor traverse ACLs are removed too**, not just the leaf grants — reset
   is a full teardown, so it walks the recorded ancestor chains and drops the
   execute-only entries it added. (Contrast `--revoke`, which intentionally leaves
@@ -351,12 +371,18 @@ Design requirements baked into that plan:
 ### Order of operations
 
 Remove access before removing the account, so a failure part-way never leaves a
-live account with dangling grants: (1) drop leaf + traverse ACLs; (2) delete the
-agent home; (3) remove the `sudoers` drop-in; (4) delete the Unix account
-(`sysadminctl -deleteUser` / `userdel -r`); (5) remove the `local_agents` entry
-from the operator's config last, so a re-run after a mid-way failure still has the
-record of what to finish cleaning. Each step reports success/failure; a failure
-stops the run with what's already been done and what remains.
+live account with dangling grants: (1) drop leaf + traverse ACLs; (2) settle the
+agent home — **re-own it to the operator** by default, or delete it *only* if
+`--delete-home` was given and separately confirmed; (3) remove the `sudoers`
+drop-in; (4) delete the Unix account (`sysadminctl -deleteUser` **without**
+`-secure`/`-keepHome` deleting the record only / `userdel` **without** `-r` so the
+account goes but the home stays); (5) remove the `local_agents` entry from the
+operator's config last, so a re-run after a mid-way failure still has the record of
+what to finish cleaning. Each step reports success/failure; a failure stops the run
+with what's already been done and what remains. Note the account-deletion step (4)
+must be told *not* to remove the home — the default macOS/Linux "delete user" also
+wipes the home, which is exactly the data we're preserving unless `--delete-home`
+is set.
 
 ## GUI IDEs (Cursor / VS Code)
 
