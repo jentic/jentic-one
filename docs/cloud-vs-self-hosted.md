@@ -1,7 +1,7 @@
-# Jentic Cloud vs Self-Hosted Jentic One
+# The Jentic cloud platform vs self-hosted Jentic One
 
-Jentic offers two distinct products that are easy to conflate — especially for
-an AI agent (or its operator) that has used both:
+Jentic offers two distinct products that are easy to conflate —
+especially for an AI agent (or its operator) that has used both:
 
 |  | Jentic cloud platform | Jentic One (this repo) |
 | --- | --- | --- |
@@ -9,17 +9,20 @@ an AI agent (or its operator) that has used both:
 | How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill** (or the raw HTTP flow) — see below |
 | Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic bootstrap`) |
 | Dashboard | `app.jentic.com` | The bundled UI on your deployment (`/app`) |
-| Data | Jentic-hosted workspace | Stays on your infrastructure; credentials never leave your Broker |
+| Data | Jentic-hosted workspace | Stays on your infrastructure; stored secrets are decrypted only inside your Broker at execution time |
 
 They do not share state: an API imported or a credential stored in one is
 invisible to the other.
 
 ## Self-hosted Jentic One exposes no MCP endpoint
 
-There is **no `/mcp` endpoint** on a Jentic One deployment — not on the
-control plane (`:8000/mcp`, `/v1/mcp`, `/api/mcp`, `/sse`) and not on the
-broker (`:8100/mcp`). Probing them returns 404. Do not configure an MCP server
-entry pointing at your self-hosted host; it cannot work.
+There is **no `/mcp` endpoint** on a Jentic One deployment. Probing the
+control plane (`:8000/mcp`, `/v1/mcp`, `/api/mcp`, `/sse`) returns 404. The
+broker (`:8100`) answers 401 to an unauthenticated `/mcp` probe — that is
+**not** a hidden MCP server behind auth; it is the broker's credential-injecting
+forward proxy rejecting the request, like it would any other unauthenticated
+path. Do not configure an MCP server entry pointing at your self-hosted host;
+it cannot work.
 
 The supported integration paths for agents are:
 
@@ -34,7 +37,7 @@ The supported integration paths for agents are:
 
 ## Running both side by side (coexistence)
 
-Anyone who used the cloud platform first and later installed Jentic One ends
+If you used the cloud platform first and later installed Jentic One, you end
 up with a **dual setup**: the agent runtime's MCP tools (`search_apis`,
 `list_credentials`, `execute`, …) still point at the cloud workspace, while
 the `jentic` CLI points at the local install. Nothing in any tool response
@@ -62,7 +65,7 @@ half the tools are talking to a different product.
 **Rule of thumb:** pick one surface per task and stay on it. If you work
 against the self-hosted install, use the `jentic` CLI for everything, and
 consider removing (or disabling) the stale cloud MCP entry so an agent can't
-half-answer from the wrong backend.
+answer from the wrong backend.
 
 ## Migrating from the cloud MCP to a self-hosted install
 
