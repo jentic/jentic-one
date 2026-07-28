@@ -479,24 +479,30 @@ what remains. Note the account-deletion step (4) must be told *not* to remove th
 home — the default macOS/Linux "delete user" also wipes the home, which is exactly
 the data we're preserving unless the home deletion was explicitly accepted.
 
-### Resetting the operator's own config — `--include-config`
+### Scope follows the argument — named agent vs. full clean slate
 
-By default `reset` only removes the `local_agents.<agent>` entry (and, for a
-self-user agent, that entry's `config_dir`/`home_dir` reference) — it decommissions
-the *agent*, not the operator. Passing **`--include-config`** additionally wipes the
-operator's **own** jentic CLI state so "start over" returns the machine to a genuine
-clean slate: every profile under `~/.jentic/profiles` (each profile's Ed25519 key,
-cached tokens, and registration metadata) is removed, and `default_profile` in
-`config.yaml` is cleared. Each profile's tokens are best-effort **revoked
-server-side first** (the same call `jentic logout` makes) before the local files are
-deleted.
+Reset's blast radius is decided by whether an agent is named, not by a flag:
 
-Two properties keep this safe:
+- **`jentic reset <agent>`** tears down just that agent and removes **only that
+  agent's links** from the operator's config — the `local_agents.<agent>` entry
+  (and, for a self-user agent, that entry's `config_dir`/`home_dir` reference). It
+  never touches the operator's own identity or any other agent.
+- **`jentic reset`** (no agent) is a full clean slate: it tears down **every**
+  configured local agent and then also wipes the operator's **own** jentic CLI
+  state, so "start over" genuinely returns the machine to zero. Every profile under
+  `~/.jentic/profiles` (each profile's Ed25519 key, cached tokens, and registration
+  metadata) is removed, and `default_profile` in `config.yaml` is cleared. Each
+  profile's tokens are best-effort **revoked server-side first** (the same call
+  `jentic logout` makes) before the local files are deleted.
+
+This is intuitive — resetting one agent cleans up that agent; resetting everything
+cleans up everything, including yourself — and needs no extra flag. Two properties
+keep the config wipe safe:
 
 - **Scoped to the invoking account.** Because `reset` runs *as the operator* (never
-  `sudo jentic reset`), `--include-config` can only touch the account's own
-  `~/.jentic` — it can never reach across into another user's config. This is why
-  the responsibility lives here at all: the command already runs as exactly the user
+  `sudo jentic reset`), the config wipe can only touch the account's own `~/.jentic`
+  — it can never reach across into another user's config. This is why the
+  responsibility lives here at all: the command already runs as exactly the user
   whose config is being cleared.
 - **Its own separate confirmation.** Wiping the operator's own identity is a
   distinct destructive act from tearing down an agent, so it has its own gate: a
@@ -505,10 +511,9 @@ Two properties keep this safe:
   skips it for scripted use; without a TTY and without `--force` it refuses. It is a
   friendly no-op when there are no profiles and no default to clear.
 
-`--include-config` composes with the per-agent teardown (it runs **last**, after
-any agents are torn down, so a failure mid-agent never removes the config that
-records what still needs cleaning) and also works on its own — `jentic reset
---include-config` with no configured agents is a valid config-only clean slate.
+The config wipe runs **last**, after every agent is torn down, so a failure
+mid-agent never removes the config that records what still needs cleaning — and a
+bare `jentic reset` with no configured agents is a valid config-only clean slate.
 
 ### Not yet implemented — skill cleanup
 

@@ -1380,8 +1380,8 @@
           "path": "jentic reset",
           "use": "reset [agent]",
           "short": "Tear down a local agent: account, home, ACLs, sudoers, and config entry",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`:\nit removes the system state a local agent accumulated — the dedicated Unix\naccount, the named-user ACLs stamped across the operator's home (both the\nleaf read/write grants and the execute-only ancestor traverse grants), the\npasswordless-launch sudoers drop-in, and the local_agents entry in your\nconfig. The agent's home is PRESERVED by default (re-owned to you); deleting\nit takes a separate, explicit confirmation.\n\nWith --include-config it also wipes your OWN jentic CLI config — every\nprofile (keys, tokens, registration) under ~/.jentic/profiles and the\ndefault profile — for a genuine clean slate. That destroys your own\nidentity, not the agent's, so it takes its own separate confirmation and is\nscoped to the account you run reset from.\n\nDeleting an account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. With no [agent] it targets every configured local agent.\nIt never reverts `chmod 700 ~` and never touches another user's files.",
-          "example": "  jentic reset\n  jentic reset claude\n  jentic reset claude --force               # non-interactive; keeps the home\n  jentic reset claude --force --delete-home # non-interactive; deletes the home\n  jentic reset --include-config             # also wipe your own profiles",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`:\nit removes the system state a local agent accumulated — the dedicated Unix\naccount, the named-user ACLs stamped across the operator's home (both the\nleaf read/write grants and the execute-only ancestor traverse grants), the\npasswordless-launch sudoers drop-in, and the local_agents entry in your\nconfig. The agent's home is PRESERVED by default (re-owned to you); deleting\nit takes a separate, explicit confirmation.\n\nScope follows the argument. `jentic reset \u003cagent\u003e` tears down just that\nagent and removes only its links from your config. `jentic reset` with no\nagent is a full clean slate: it tears down EVERY configured local agent and\nthen also wipes your OWN jentic CLI config — every profile (keys, tokens,\nregistration) under ~/.jentic/profiles and the default profile. That last\npart destroys your own identity, so it takes its own separate confirmation\nand is scoped to the account you run reset from.\n\nDeleting an account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It never reverts `chmod 700 ~` and never touches another\nuser's files.",
+          "example": "  jentic reset                              # full clean slate: every agent + your own config\n  jentic reset claude                       # just this agent and its config links\n  jentic reset claude --force               # non-interactive; keeps the home\n  jentic reset claude --force --delete-home # non-interactive; deletes the home",
           "group_title": "Find and run operations",
           "flags": [
             {
@@ -1395,12 +1395,6 @@
               "type": "bool",
               "default": "false",
               "usage": "skip the typed-name confirmation (the only non-interactive escape hatch; use with care)"
-            },
-            {
-              "name": "include-config",
-              "type": "bool",
-              "default": "false",
-              "usage": "also wipe your own jentic CLI config: all profiles (keys, tokens) and the default profile"
             }
           ]
         },

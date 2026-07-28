@@ -195,9 +195,10 @@ func TestResetRunsAsOperator(t *testing.T) {
 	}
 }
 
-// TestResetIncludeConfigWipesProfiles confirms --include-config --force removes
-// every profile and clears default_profile, even with no local agents configured.
-func TestResetIncludeConfigWipesProfiles(t *testing.T) {
+// TestResetFullWipesProfiles confirms a bare `jentic reset --force` (no agent) is
+// a clean slate: it removes every profile and clears default_profile, even when no
+// local agents are configured.
+func TestResetFullWipesProfiles(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
 	seedProfile(t, app, "default", "agnt_default")
@@ -206,8 +207,8 @@ func TestResetIncludeConfigWipesProfiles(t *testing.T) {
 		t.Fatalf("set default: %v", err)
 	}
 
-	// No agents configured + --include-config: this is a valid clean-slate reset.
-	err := app.resetE(context.Background(), &resetOptions{includeConfig: true, force: true}, nil)
+	// No agents configured + no agent arg: a valid config-only clean slate.
+	err := app.resetE(context.Background(), &resetOptions{force: true}, nil)
 	if err != nil {
 		t.Fatalf("resetE: %v", err)
 	}
@@ -228,32 +229,39 @@ func TestResetIncludeConfigWipesProfiles(t *testing.T) {
 	}
 }
 
-// TestResetWithoutIncludeConfigKeepsProfiles confirms a plain reset (no
-// --include-config) never touches the operator's own profiles.
-func TestResetWithoutIncludeConfigKeepsProfiles(t *testing.T) {
+// TestResetNamedAgentKeepsProfiles confirms a named `jentic reset <agent>` never
+// touches the operator's own profiles — only that agent's config links.
+func TestResetNamedAgentKeepsProfiles(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	seedProfile(t, app, "default", "agnt_default")
+	cfg := &config.FileConfig{LocalAgents: map[string]config.LocalAgent{
+		"claude": {User: "alice-local-agent"},
+	}}
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
 
-	// No agents, no --include-config: nothing to reset → error, profiles untouched.
-	_ = app.resetE(context.Background(), &resetOptions{}, nil)
+	// Named agent, non-interactive without --force stops at the per-agent gate; the
+	// point is that the config wipe is never even reached for a named reset.
+	_ = app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
 
 	names, err := profile.List(app.Paths)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(names) != 1 || names[0] != "default" {
-		t.Errorf("profiles must be untouched without --include-config, got %v", names)
+		t.Errorf("a named reset must not touch the operator's profiles, got %v", names)
 	}
 }
 
-// TestResetIncludeConfigRequiresForceNonInteractive confirms the operator's own
-// config is not wiped non-interactively without --force (its own safety gate,
-// separate from the per-agent one).
-func TestResetIncludeConfigRequiresForceNonInteractive(t *testing.T) {
+// TestResetConfigRequiresForceNonInteractive confirms the operator's own config is
+// not wiped non-interactively without --force (its own safety gate, separate from
+// the per-agent one).
+func TestResetConfigRequiresForceNonInteractive(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	seedProfile(t, app, "default", "agnt_default")
 
-	err := app.resetOperatorConfig(context.Background(), &resetOptions{includeConfig: true}, false)
+	err := app.resetOperatorConfig(context.Background(), &resetOptions{}, false)
 	if err == nil || !strings.Contains(err.Error(), "without --force") {
 		t.Fatalf("expected a non-interactive --force guard, got %v", err)
 	}
@@ -269,7 +277,7 @@ func TestResetIncludeConfigRequiresForceNonInteractive(t *testing.T) {
 func TestResetOperatorConfigNoProfiles(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
-	if err := app.resetOperatorConfig(context.Background(), &resetOptions{includeConfig: true, force: true}, false); err != nil {
+	if err := app.resetOperatorConfig(context.Background(), &resetOptions{force: true}, false); err != nil {
 		t.Fatalf("resetOperatorConfig: %v", err)
 	}
 	if !strings.Contains(out.String(), "No jentic CLI config to reset") {

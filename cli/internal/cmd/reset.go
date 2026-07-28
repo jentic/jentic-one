@@ -29,15 +29,6 @@ import (
 type resetOptions struct {
 	deleteHome bool
 	force      bool
-	// includeConfig also wipes the OPERATOR's own jentic CLI config — every
-	// profile (keys, tokens, registration metadata) under ~/.jentic/profiles and
-	// the default_profile pointer — turning "reset" into a genuine clean slate
-	// rather than only decommissioning the agent user. It is deliberately opt-in
-	// and separately confirmed (typed "reset config"), because it destroys the
-	// operator's OWN identity, not the agent's. Scoped to the invoking account's
-	// ~/.jentic only — reset runs AS the operator, so it can never reach into
-	// another user's config.
-	includeConfig bool
 }
 
 func newResetCmd(app *App) *cobra.Command {
@@ -52,21 +43,22 @@ func newResetCmd(app *App) *cobra.Command {
 			"passwordless-launch sudoers drop-in, and the local_agents entry in your\n" +
 			"config. The agent's home is PRESERVED by default (re-owned to you); deleting\n" +
 			"it takes a separate, explicit confirmation.\n\n" +
-			"With --include-config it also wipes your OWN jentic CLI config — every\n" +
-			"profile (keys, tokens, registration) under ~/.jentic/profiles and the\n" +
-			"default profile — for a genuine clean slate. That destroys your own\n" +
-			"identity, not the agent's, so it takes its own separate confirmation and is\n" +
-			"scoped to the account you run reset from.\n\n" +
+			"Scope follows the argument. `jentic reset <agent>` tears down just that\n" +
+			"agent and removes only its links from your config. `jentic reset` with no\n" +
+			"agent is a full clean slate: it tears down EVERY configured local agent and\n" +
+			"then also wipes your OWN jentic CLI config — every profile (keys, tokens,\n" +
+			"registration) under ~/.jentic/profiles and the default profile. That last\n" +
+			"part destroys your own identity, so it takes its own separate confirmation\n" +
+			"and is scoped to the account you run reset from.\n\n" +
 			"Deleting an account and stripping ACLs are privileged, so reset requires\n" +
 			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
 			"password when it reaches the privileged steps. It shows the full plan before\n" +
-			"touching anything. With no [agent] it targets every configured local agent.\n" +
-			"It never reverts `chmod 700 ~` and never touches another user's files.",
-		Example: "  jentic reset\n" +
-			"  jentic reset claude\n" +
+			"touching anything. It never reverts `chmod 700 ~` and never touches another\n" +
+			"user's files.",
+		Example: "  jentic reset                              # full clean slate: every agent + your own config\n" +
+			"  jentic reset claude                       # just this agent and its config links\n" +
 			"  jentic reset claude --force               # non-interactive; keeps the home\n" +
-			"  jentic reset claude --force --delete-home # non-interactive; deletes the home\n" +
-			"  jentic reset --include-config             # also wipe your own profiles",
+			"  jentic reset claude --force --delete-home # non-interactive; deletes the home",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.resetE(cmd.Context(), opts, args)
@@ -76,8 +68,6 @@ func newResetCmd(app *App) *cobra.Command {
 		"skip the typed-name confirmation (the only non-interactive escape hatch; use with care)")
 	cmd.Flags().BoolVar(&opts.deleteHome, "delete-home", false,
 		"also delete the agent's home directory (non-interactive opt-in; pairs with --force)")
-	cmd.Flags().BoolVar(&opts.includeConfig, "include-config", false,
-		"also wipe your own jentic CLI config: all profiles (keys, tokens) and the default profile")
 	return cmd
 }
 
@@ -93,13 +83,18 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 		return err
 	}
 
+	// Scope follows the argument. A named `jentic reset <agent>` tears down just
+	// that agent and touches only its config links. A bare `jentic reset` is a full
+	// clean slate: it tears down every configured agent AND wipes the operator's own
+	// jentic CLI config afterwards.
+	fullReset := len(args) == 0
+
 	targets, err := resetTargets(cfg, args)
 	if err != nil {
-		// With --include-config the operator may be wiping their own config with no
-		// local agents left to tear down; that is a valid clean-slate reset, so an
-		// empty-inventory error is not fatal here. Any other error (e.g. a named
-		// agent that doesn't exist) still stops the run.
-		if !(opts.includeConfig && len(args) == 0) {
+		// A full reset with no configured agents is still valid — the operator may be
+		// wiping only their own config. Any other error (e.g. a named agent that
+		// doesn't exist) still stops the run.
+		if !fullReset {
 			return err
 		}
 		targets = nil
@@ -118,11 +113,10 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 		}
 	}
 
-	// After the per-agent teardown, optionally wipe the operator's OWN jentic CLI
-	// config — profiles and default profile. This is last so a failure tearing
-	// down an agent never leaves the operator without the config that records what
-	// still needs cleaning.
-	if opts.includeConfig {
+	// On a full reset, wipe the operator's OWN jentic CLI config — profiles and
+	// default profile — last, so a failure tearing down an agent never leaves the
+	// operator without the config that records what still needs cleaning.
+	if fullReset {
 		if err := a.resetOperatorConfig(ctx, opts, interactive); err != nil {
 			return err
 		}
@@ -132,12 +126,12 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 
 // resetOperatorConfig wipes the operator's OWN jentic CLI identity: it best-effort
 // revokes and deletes every profile under ~/.jentic/profiles and clears the
-// default_profile pointer in config.yaml. It runs entirely as the operator (reset
-// is never launched under sudo), so it can only ever touch the invoking account's
-// ~/.jentic — never another user's. Because this destroys the operator's own
-// identity (not the agent's), it takes its own separate confirmation: a typed
-// "reset config", or --force to skip. It is a no-op with a friendly note when
-// there are no profiles to remove.
+// default_profile pointer in config.yaml. It runs only on a full `jentic reset`
+// (no named agent), and entirely as the operator (reset is never launched under
+// sudo), so it can only ever touch the invoking account's ~/.jentic — never another
+// user's. Because this destroys the operator's own identity (not the agent's), it
+// takes its own separate confirmation: a typed "reset config", or --force to skip.
+// It is a no-op with a friendly note when there are no profiles to remove.
 func (a *App) resetOperatorConfig(ctx context.Context, opts *resetOptions, interactive bool) error {
 	names, err := profile.List(a.Paths)
 	if err != nil {
@@ -159,7 +153,7 @@ func (a *App) resetOperatorConfig(ctx context.Context, opts *resetOptions, inter
 	// from any per-agent teardown already confirmed above.
 	if !opts.force {
 		if !interactive {
-			return errors.New("refusing to wipe your config non-interactively without --force (--include-config destroys your own profiles)")
+			return errors.New("refusing to wipe your config non-interactively without --force (a full `jentic reset` destroys your own profiles)")
 		}
 		ok, err := a.confirmConfigReset()
 		if err != nil {
