@@ -77,9 +77,16 @@ running same-user" shapes later behaviour.
 Opting in shows an editable, prefilled dialog — account name, home directory, and
 two toggles for whether to copy the operator's agent config and LLM-provider
 config into the agent's home (the same seeding, with the same warnings, described
-under [Step 3](#step-3--config-seeding-opt-in-once-never-clobbers)). On confirm it
-runs, idempotently and with platform detection, what is otherwise a short manual
-recipe, then prints the next step: `cd <agent home>; jentic run <agent>`. For a
+under [Step 3](#step-3--config-seeding-opt-in-once-never-clobbers)). Because those
+sources are already resolved from the operator's home before the dialog is shown,
+each toggle **names the exact files it would copy** ("Will copy: ~/.claude,
+~/.claude.json") and the provider toggle names the detected provider; a toggle
+defaults to Yes only when there is actually something to copy (otherwise it offers
+"No" with a *none found* note). On confirm it runs, idempotently and with platform
+detection, what is otherwise a short manual recipe. After registration completes
+and the profile summary is shown, `bootstrap` then **offers to start a session in
+the agent's home right there** — displaying `cd <agent home>; jentic run <agent>`
+and, on yes, launching it; declining leaves the command printed for later. For a
 single-user machine that recipe is:
 
 ```bash
@@ -481,6 +488,16 @@ not remove the home — the obvious macOS tool, `sysadminctl -deleteUser`, delet
 unless passed `-keepHome`, but that flag is rejected at runtime on recent macOS, so
 `dscl . -delete` is used instead; it removes only the account record and preserves
 the already-settled home.
+
+Step (2) is **best-effort**, unlike the others. A macOS home materialised by
+`createhomedir` carries SIP/TCC-protected template entries (`Library/Mail`,
+`Library/Containers`, `ContainerManager`, …) that *nobody* — not even root — can
+`chown` or remove. The re-own runs `chown -Rf` (re-owns everything it can, quietly
+skipping those) and the delete likewise can't remove them, so both legitimately
+exit non-zero after handling the agent's actual work. reset reports that and
+continues to the account deletion rather than aborting — otherwise those
+unavoidable files would strand the teardown exactly the way the `-keepHome` bug
+did.
 
 ### Scope follows the argument — named agent vs. full clean slate
 
