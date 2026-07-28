@@ -30,7 +30,8 @@ func (a *App) promptAgentUserFields(fields *agentUserFields, configSrcs []string
 			Validate(notEmptyField("account name")),
 		install.Input().
 			Title("Agent home directory").
-			Description("Lives under a shared parent so you can be granted in without widening your home.").
+			Description("Lives under a shared parent so you can be granted in without widening your home.\n"+
+				"This directory will be owned by the agent's Unix account ("+fields.name+").").
 			Value(&fields.homeDir).
 			Validate(notEmptyField("home directory")),
 		portSelect(
@@ -61,20 +62,28 @@ func providerToggleTitle(providerName string) string {
 // source paths that would be copied. With nothing to copy it degrades to a
 // No-only select with a "none found" note, so the operator is never offered a
 // copy of an empty set.
+//
+// The chain order matters: .Value() is set BEFORE .Options(). huh's .Options()
+// sets both the selected index AND the viewport scroll offset from whatever the
+// accessor currently holds; .Value() (chained after) fixes up the selected index
+// but NOT the offset. So with Value-after-Options a Yes default lands with the
+// viewport scrolled one line down — the cursor is on "Yes" but the widget renders
+// "No" at the top with "Yes" hidden above it, until an arrow key resyncs the
+// offset. Setting Value first makes .Options() compute both from the real default.
 func portSelect(title, why string, srcs []string, value *bool) *huh.Select[bool] {
 	if len(srcs) == 0 {
 		*value = false
 		return huh.NewSelect[bool]().
 			Title(title).
 			Description("None found in your home — nothing to copy.").
-			Options(huh.NewOption("No", false)).
-			Value(value)
+			Value(value).
+			Options(huh.NewOption("No", false))
 	}
 	return huh.NewSelect[bool]().
 		Title(title).
 		Description(why+"\nWill copy: "+strings.Join(srcs, ", ")).
-		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
-		Value(value)
+		Value(value).
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false))
 }
 
 // printAgentRunInstructions closes the setup with the copy-paste launch command
