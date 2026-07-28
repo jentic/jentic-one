@@ -565,6 +565,71 @@ done`
 	return agentCmd(agentUser, snippet)
 }
 
+// candidateSharedBinDirs are the well-known, world-traversable directories where
+// operators install CLI tools OUTSIDE any human's home. Sharing these with the
+// agent is safe precisely because they are readable+traversable by every user —
+// unlike home-local bin dirs (~/.local/bin, ~/.cargo/bin, ~/go/bin), which sit
+// under the operator's 700 home and are therefore unreachable by the agent no
+// matter how they are referenced (a symlink resolves with the AGENT's
+// credentials and dangles with EACCES at the home boundary). Those home-local
+// dirs are deliberately NOT shared; see docs/security/analysis/
+// local-agent-isolation.md ("Sharing the operator's installed CLI tools").
+//
+// /usr/bin, /bin, /usr/sbin, /sbin, and /usr/local/bin are already on the
+// default login PATH (via /etc/paths), so they are omitted here — the only gap
+// on a typical macOS box is Homebrew's /opt/homebrew/bin, which Homebrew adds to
+// the operator's shell profile but a fresh agent login shell does not inherit.
+var candidateSharedBinDirs = func() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"}
+	}
+	return []string{"/usr/local/bin", "/opt/homebrew/bin", "/snap/bin"}
+}()
+
+// SharedBinPaths returns the world-traversable operator binary directories that
+// exist on this machine and are safe to add to the agent's PATH. It filters out
+// anything under the operator's (700) home — such a dir would be unreachable by
+// the agent, so adding it to PATH would be a dead entry rather than a share.
+func SharedBinPaths(operatorHome string) []string {
+	var out []string
+	for _, d := range candidateSharedBinDirs {
+		info, err := os.Stat(d)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		// Never add a path under the operator's home: it is shadowed by the 700
+		// lock and the agent could not traverse into it.
+		if operatorHome != "" && IsUnderHome(operatorHome, d) {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// EnsureSharedBinsOnPathCmd makes the operator's world-readable CLI tool dirs
+// (e.g. Homebrew's /opt/homebrew/bin) resolvable for the agent by appending an
+// idempotent export to the agent's login profiles — the same mechanism as
+// EnsureLocalBinOnPathCmd. The dirs are appended AFTER $PATH so an agent-owned
+// tool (in ~/.local/bin, which EnsureLocalBinOnPathCmd prepends) always wins
+// over the operator's copy. Returns nil when there is nothing safe to add, so
+// callers can skip running it.
+func EnsureSharedBinsOnPathCmd(agentUser string, dirs []string) *exec.Cmd {
+	if len(dirs) == 0 {
+		return nil
+	}
+	// The dirs come from a fixed candidate allowlist of absolute system paths (no
+	// shell metacharacters), so they interpolate directly into the export line.
+	snippet := `line='export PATH="$PATH:` + strings.Join(dirs, ":") + `"'
+marker='# added by jentic run (share operator CLI tool dirs)'
+for f in "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zprofile"; do
+  if ! grep -qF "$marker" "$f" 2>/dev/null; then
+    printf '\n%s\n%s\n' "$marker" "$line" >> "$f"
+  fi
+done`
+	return agentCmd(agentUser, snippet)
+}
+
 // OperatorBinaryPath resolves the operator's own copy of binary via `command
 // -v`, returning "" if the operator doesn't have it either. Used to offer the
 // copy route.

@@ -131,6 +131,14 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return err
 	}
 
+	// 2a. Share the operator's world-readable CLI tool dirs (e.g. Homebrew's
+	// /opt/homebrew/bin) on the agent's PATH so agent sessions can use tools the
+	// operator has installed there. Home-local dirs (~/.local/bin, ~/.cargo/bin)
+	// are intentionally excluded — see SharedBinPaths.
+	if err := a.ensureSharedBinsOnPath(agentUser); err != nil {
+		return err
+	}
+
 	// 2b. Offer to seed the operator's agent config into the agent's home (once).
 	prefs := opts.seedPrefs(cmd)
 	if err := a.ensureAgentConfig(ctx, prefs, agentUser, desc); err != nil {
@@ -197,6 +205,23 @@ func (a *App) ensureLocalBinOnPath(agentUser string) error {
 	c.Stdout, c.Stderr = a.Out, a.Err
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("add ~/.local/bin to the agent's PATH: %w", err)
+	}
+	return nil
+}
+
+// ensureSharedBinsOnPath appends the operator's world-readable CLI tool dirs to
+// the agent's login PATH (idempotent). It is best-effort convenience, not a
+// security boundary: on failure it warns and continues rather than blocking the
+// launch, and it no-ops when there is nothing safe to share.
+func (a *App) ensureSharedBinsOnPath(agentUser string) error {
+	dirs := localagent.SharedBinPaths(localagent.OperatorHome())
+	c := localagent.EnsureSharedBinsOnPathCmd(agentUser, dirs)
+	if c == nil {
+		return nil
+	}
+	c.Stdout, c.Stderr = a.Out, a.Err
+	if err := c.Run(); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("could not add operator CLI tool dirs to the agent's PATH: %v", err))
 	}
 	return nil
 }

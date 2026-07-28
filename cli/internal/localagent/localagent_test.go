@@ -314,6 +314,72 @@ func TestMacLeafGrantIncludesDeleteBits(t *testing.T) {
 	}
 }
 
+// TestSharedBinPathsExcludesOperatorHome guards the core isolation invariant of
+// the CLI-tool sharing feature: only world-traversable dirs OUTSIDE the
+// operator's 700 home may be shared. A candidate under the operator home is
+// unreachable by the agent, so it must never be added to the agent's PATH.
+func TestSharedBinPathsExcludesOperatorHome(t *testing.T) {
+	// Use the operator's real home as the guard boundary; every returned dir must
+	// exist, be a directory, and sit outside that home.
+	home := OperatorHome()
+	for _, d := range SharedBinPaths(home) {
+		if home != "" && IsUnderHome(home, d) {
+			t.Errorf("SharedBinPaths returned %q under the operator home %q — the agent cannot traverse a 700 home", d, home)
+		}
+		info, err := os.Stat(d)
+		if err != nil || !info.IsDir() {
+			t.Errorf("SharedBinPaths returned non-existent/non-dir %q", d)
+		}
+	}
+
+	// A candidate that lives under the given home is filtered even when it exists:
+	// pretend the operator home is a parent of a real candidate dir and assert none
+	// of that candidate's descendants come back.
+	if runtime.GOOS == "darwin" {
+		for _, d := range SharedBinPaths("/opt") {
+			if IsUnderHome("/opt", d) {
+				t.Errorf("SharedBinPaths(\"/opt\") leaked %q under the home boundary", d)
+			}
+		}
+	}
+}
+
+// TestEnsureSharedBinsOnPathCmd guards the PATH-append builder: it no-ops on an
+// empty dir list, and when given dirs it produces a sudo/agent-fronted, marker-
+// guarded profile append that names each dir and appends AFTER $PATH (so an
+// agent-owned tool still shadows the operator's copy).
+func TestEnsureSharedBinsOnPathCmd(t *testing.T) {
+	if EnsureSharedBinsOnPathCmd("alice-local-agent", nil) != nil {
+		t.Error("expected nil command when there is nothing to share")
+	}
+	dirs := []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	c := EnsureSharedBinsOnPathCmd("alice-local-agent", dirs)
+	if c == nil {
+		t.Fatal("expected a command when dirs are given")
+	}
+	joined := strings.Join(c.Args, " ")
+	if c.Args[0] != "sudo" {
+		t.Errorf("expected sudo-fronted command (runs as the agent user): %v", c.Args)
+	}
+	if !strings.Contains(joined, "alice-local-agent") {
+		t.Errorf("command does not name the agent user: %v", c.Args)
+	}
+	for _, d := range dirs {
+		if !strings.Contains(joined, d) {
+			t.Errorf("command does not name shared dir %q: %v", d, c.Args)
+		}
+	}
+	// Appended after $PATH so agent-owned tools (in the prepended ~/.local/bin)
+	// win over the operator's copies.
+	if !strings.Contains(joined, `PATH="$PATH:`) {
+		t.Errorf("shared dirs must be appended after $PATH, not prepended: %v", c.Args)
+	}
+	// Marker-guarded so re-running is a no-op.
+	if !strings.Contains(joined, "marker=") || !strings.Contains(joined, "grep -qF") {
+		t.Errorf("append must be marker-guarded for idempotency: %v", c.Args)
+	}
+}
+
 func TestAncestorChain(t *testing.T) {
 	home := "/Users/alice"
 	got := AncestorChain(home, "/Users/alice/projects/api")

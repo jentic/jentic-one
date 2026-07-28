@@ -241,6 +241,40 @@ as the agent and, if the binary is genuinely absent, offers:
 > user's own Keychain / `~/.claude.json`, which the copy doesn't touch — so a
 > copied binary still triggers the agent's own first-run login as the agent user.
 
+### Step 2a — sharing the operator's installed CLI tools
+
+The agent binary is only one tool; a real session also wants `git`, `jq`, `rg`,
+`node`, and whatever else the operator has installed. Rather than reinstall the
+world in the agent account, `jentic run` puts the operator's **world-readable**
+tool directories on the agent's `PATH`. It appends an idempotent, marker-guarded
+`export PATH="$PATH:…"` line to the agent's login profiles — the same mechanism
+that adds `~/.local/bin` — so agent sessions resolve those binaries directly. It
+is appended *after* `$PATH`, so an agent-owned tool (in the prepended
+`~/.local/bin`) always shadows the operator's copy.
+
+**Only world-traversable dirs outside the operator's home qualify.** On macOS
+that gap is Homebrew's `/opt/homebrew/bin` (+ `sbin`): world-readable, but not on
+a fresh login shell's default `PATH`. `/usr/bin`, `/bin`, `/usr/local/bin`, etc.
+are already on the default `PATH` (`/etc/paths`), so they need nothing. On Linux
+the candidates are `/usr/local/bin`, `/opt/homebrew/bin`, `/snap/bin`.
+
+**Home-local tool dirs are deliberately NOT shared** — `~/.local/bin`,
+`~/.cargo/bin`, `~/go/bin`, npm-global, pyenv/rbenv shims, and anything else under
+the operator's home. They sit beneath the `700` lock, and that lock is the whole
+isolation guarantee: the agent cannot traverse into the operator's home, so a
+symlink or `PATH` entry pointing there resolves with the *agent's* credentials
+and dangles with `EACCES` at the home boundary. There is no way to share those
+without punching a traversal hole through the 700 home — which would reopen the
+exact surface this design closes. If the agent needs such a tool, install it in
+the agent account (`brew`, `pipx`, the tool's own installer run as the agent) or,
+for a self-contained binary, use the Step 2 copy route. Sharing home-local tools
+via a curated copy is a possible future addition, but is out of scope today.
+
+> **This is convenience, not a boundary.** `PATH` sharing is best-effort: a
+> failure warns and the launch continues. It exposes only already-world-readable
+> executables — it grants no new filesystem reach, and the credential boundary is
+> unchanged.
+
 ### Step 3 — config seeding (opt-in, once, never clobbers)
 
 Provisioning gives a runnable tool but not the operator's *settings*. After the
