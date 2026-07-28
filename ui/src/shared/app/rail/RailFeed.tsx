@@ -10,6 +10,7 @@
  */
 import { useMemo, useState } from 'react';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
+import { formatStreamDayLabel, streamDayKey } from '@/shared/lib/agentStream';
 import type { InlineActionSpec, StreamEvent } from '@/shared/lib/agentStream';
 
 const GROUP_WINDOW_MS = 10_000;
@@ -30,7 +31,45 @@ export type RailFeedProps = {
 
 type FeedRow =
 	| { kind: 'single'; ev: StreamEvent }
-	| { kind: 'group'; head: StreamEvent; members: StreamEvent[] };
+	| { kind: 'group'; head: StreamEvent; members: StreamEvent[] }
+	| { kind: 'day'; dayKey: string; tsMs: number };
+
+/** The representative event of a content row (used for day-boundary detection). */
+function rowHeadEvent(row: FeedRow): StreamEvent | null {
+	if (row.kind === 'single') return row.ev;
+	if (row.kind === 'group') return row.head;
+	return null;
+}
+
+/**
+ * Insert day-separator rows between content rows whenever the local calendar day
+ * changes. Only applied when the feed spans more than one day, so a same-day
+ * feed is visually unchanged (issue #705). Rows arrive newest-first, so the
+ * first content row's day leads the feed.
+ */
+function withDaySeparators(rows: FeedRow[]): FeedRow[] {
+	const days = new Set<string>();
+	for (const row of rows) {
+		const head = rowHeadEvent(row);
+		if (head) days.add(streamDayKey(head.tsMs));
+	}
+	if (days.size < 2) return rows;
+
+	const out: FeedRow[] = [];
+	let prevDay: string | null = null;
+	for (const row of rows) {
+		const head = rowHeadEvent(row);
+		if (head) {
+			const day = streamDayKey(head.tsMs);
+			if (day !== prevDay) {
+				out.push({ kind: 'day', dayKey: day, tsMs: head.tsMs });
+				prevDay = day;
+			}
+		}
+		out.push(row);
+	}
+	return out;
+}
 
 function passesFilters(ev: StreamEvent, f: RailFeedFilters): boolean {
 	if (f.severities.size > 0 && !f.severities.has(ev.severity)) return false;
@@ -98,7 +137,7 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 		() => events.filter((ev) => passesFilters(ev, filters)),
 		[events, filters],
 	);
-	const rows = useMemo(() => buildRows(filtered), [filtered]);
+	const rows = useMemo(() => withDaySeparators(buildRows(filtered)), [filtered]);
 	const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
 	function toggle(id: string) {
@@ -127,6 +166,19 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 	return (
 		<div className="space-y-1">
 			{rows.map((row) => {
+				if (row.kind === 'day') {
+					return (
+						<div
+							key={`day-${row.dayKey}`}
+							className="text-muted-foreground flex items-center gap-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider uppercase"
+							role="separator"
+							aria-label={formatStreamDayLabel(row.tsMs)}
+						>
+							<span className="shrink-0">{formatStreamDayLabel(row.tsMs)}</span>
+							<span className="bg-border h-px flex-1" />
+						</div>
+					);
+				}
 				if (row.kind === 'single') {
 					return (
 						<RailEventRow

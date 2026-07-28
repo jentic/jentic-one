@@ -687,6 +687,76 @@ export function formatStreamTime(tsMs: number): string {
 	return `${hh}:${mm}:${ss}`;
 }
 
+/**
+ * Absolute local datetime for a timestamp tooltip, e.g. "16 Jul 2026, 14:04:31".
+ * Surfaced as the `title` on each rail timestamp so the full date is always
+ * discoverable even inside a single day (issue #705).
+ */
+export function formatStreamDateTime(tsMs: number): string {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return '';
+	return d.toLocaleString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
+}
+
+/**
+ * Absolute local datetime split into a date line and a time line, so a tooltip
+ * can render it as two clean rows ("28 Jul 2026" / "13:02:01") instead of one
+ * string that wraps awkwardly into three (issue #705 tooltip polish).
+ */
+export function formatStreamDateTimeParts(tsMs: number): { date: string; time: string } {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+	const date = d.toLocaleDateString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+	});
+	const time = d.toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
+	return { date, time };
+}
+
+/**
+ * Stable **local** `YYYY-MM-DD` key for detecting calendar-day boundaries in the
+ * feed. Built from local date parts (not `toISOString`, which is UTC and would
+ * mis-bucket events around midnight for non-UTC operators — the #705 reporter is
+ * UTC+1).
+ */
+export function streamDayKey(tsMs: number): string {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return '';
+	const y = d.getFullYear();
+	const m = (d.getMonth() + 1).toString().padStart(2, '0');
+	const day = d.getDate().toString().padStart(2, '0');
+	return `${y}-${m}-${day}`;
+}
+
+/**
+ * Human day-separator label for the rail feed: "Today" / "Yesterday" / else a
+ * compact weekday+date like "Thu 16 Jul". `now` is injectable for tests.
+ */
+export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): string {
+	const key = streamDayKey(tsMs);
+	if (!key) return '';
+	if (key === streamDayKey(now)) return 'Today';
+	if (key === streamDayKey(now - 86_400_000)) return 'Yesterday';
+	return new Date(tsMs).toLocaleDateString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+	});
+}
+
 /* ------------------------------------------------------------------ */
 /* Inline actions + navigation                                         */
 /* ------------------------------------------------------------------ */

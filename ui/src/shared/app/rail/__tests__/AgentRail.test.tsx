@@ -11,11 +11,14 @@ import {
 	adaptEvent,
 	buildGroupKeyForTest,
 	buildTraceBundle,
+	formatStreamDateTime,
+	formatStreamDayLabel,
 	inlineActionsFor,
 	kindForType,
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
+	streamDayKey,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	type StreamEvent,
@@ -154,6 +157,39 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(matchesToastScope('info', 'warning')).toBe(false);
 		expect(matchesToastScope('critical', 'critical')).toBe(true);
 		expect(matchesToastScope('warning', 'critical')).toBe(false);
+	});
+
+	describe('timestamp date helpers (#705)', () => {
+		it('streamDayKey buckets by local calendar day, not UTC', () => {
+			const a = new Date(2026, 6, 16, 9, 0, 0).getTime(); // 16 Jul, local
+			const b = new Date(2026, 6, 16, 23, 30, 0).getTime(); // same local day
+			const c = new Date(2026, 6, 17, 0, 30, 0).getTime(); // next local day
+			expect(streamDayKey(a)).toBe('2026-07-16');
+			expect(streamDayKey(a)).toBe(streamDayKey(b));
+			expect(streamDayKey(a)).not.toBe(streamDayKey(c));
+			expect(streamDayKey(NaN)).toBe('');
+		});
+
+		it('formatStreamDayLabel resolves Today / Yesterday / dated', () => {
+			const now = new Date(2026, 6, 17, 12, 0, 0).getTime();
+			const today = new Date(2026, 6, 17, 8, 0, 0).getTime();
+			const yesterday = new Date(2026, 6, 16, 8, 0, 0).getTime();
+			const older = new Date(2026, 6, 13, 8, 0, 0).getTime();
+			expect(formatStreamDayLabel(today, now)).toBe('Today');
+			expect(formatStreamDayLabel(yesterday, now)).toBe('Yesterday');
+			// Older days fall through to a compact weekday+date label.
+			expect(formatStreamDayLabel(older, now)).not.toBe('Today');
+			expect(formatStreamDayLabel(older, now)).not.toBe('Yesterday');
+			expect(formatStreamDayLabel(older, now)).toMatch(/Jul/);
+		});
+
+		it('formatStreamDateTime returns an absolute datetime (with year)', () => {
+			const ts = new Date(2026, 6, 16, 14, 4, 31).getTime();
+			const out = formatStreamDateTime(ts);
+			expect(out).toMatch(/2026/);
+			expect(out).toMatch(/Jul/);
+			expect(formatStreamDateTime(NaN)).toBe('');
+		});
 	});
 
 	it('inlineActionsFor offers View + Deny for a filed access request, gated on action + ack', () => {

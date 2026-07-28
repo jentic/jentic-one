@@ -26,10 +26,12 @@ import type React from 'react';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
+import { Tooltip } from '@/shared/ui/Tooltip';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {
 	formatStreamTime,
+	formatStreamDateTimeParts,
 	inlineActionsFor,
 	primaryDestinationFor,
 	severityStripeClass,
@@ -50,6 +52,17 @@ export type RailEventRowProps = {
 };
 
 const KIND_LABEL = STREAM_KIND_LABEL;
+
+/** Two-line tooltip body: date on top, time below (issue #705 polish). */
+function TimeTooltipContent({ tsMs }: { tsMs: number }) {
+	const { date, time } = formatStreamDateTimeParts(tsMs);
+	return (
+		<span className="flex flex-col gap-0.5 text-center leading-tight">
+			<span className="text-muted-foreground text-[11px] font-medium">{date}</span>
+			<span className="text-foreground font-mono text-xs">{time}</span>
+		</span>
+	);
+}
 
 function isCompactSeverity(ev: StreamEvent): boolean {
 	if (ev.acknowledged) return true;
@@ -125,9 +138,11 @@ export function RailEventRow({
 						Acked
 					</span>
 				)}
-				<span className="text-muted-foreground shrink-0 font-mono text-[10px]">
-					{formatStreamTime(ev.tsMs)}
-				</span>
+				<Tooltip content={<TimeTooltipContent tsMs={ev.tsMs} />}>
+					<span className="text-muted-foreground shrink-0 font-mono text-[10px]">
+						{formatStreamTime(ev.tsMs)}
+					</span>
+				</Tooltip>
 			</div>
 		);
 	}
@@ -163,9 +178,14 @@ export function RailEventRow({
 							)}
 						</button>
 					)}
-					<span className="text-muted-foreground ml-auto shrink-0 font-mono text-[10px]">
-						{formatStreamTime(ev.tsMs)}
-					</span>
+					<Tooltip
+						content={<TimeTooltipContent tsMs={ev.tsMs} />}
+						className="ml-auto shrink-0"
+					>
+						<span className="text-muted-foreground font-mono text-[10px]">
+							{formatStreamTime(ev.tsMs)}
+						</span>
+					</Tooltip>
 				</div>
 				<div className="mt-0.5 flex items-center gap-1.5">
 					<span className="text-muted-foreground truncate text-[11px]">{ev.title}</span>
