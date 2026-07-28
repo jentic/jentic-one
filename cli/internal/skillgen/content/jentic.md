@@ -94,15 +94,12 @@ after an approved `scope:grant` **and** only if `whoami` flags the scope as not
 yet on your token (see the stale-scope note it prints).
 
 **File once, richly — never thrash.** Work out the full access end-state up
-front — from `whoami`, the catalog, and the task — instead of discovering
-gaps one denied call at a time. A request's provisioning plan covers **one
-API**, so a job needing several APIs means several requests: file them all
-in one pass (one `--provision` per API, each complete: auth, rules, reason)
-rather than interleaving requests with failing executes — filed together,
-they read as one plan to the human approving them. Never
-file duplicate or per-operation requests for the same API, and don't
-file-withdraw-refile to tweak a proposal — approval is a human trust action,
-so once a request is filed, tell your operator an approval is waiting and
+front — from `whoami`, the catalog, and the task. A provisioning plan covers
+**one API**, so a job needing several APIs means several requests: file them
+all in one pass (one `--provision` per API, each complete: auth, rules,
+reason) — filed together they read as one plan to the approving human. Never
+file duplicate or per-operation requests, and don't withdraw-and-refile to
+tweak a proposal; once filed, tell your operator an approval is waiting and
 hand back (or `--wait`).
 
 If you'd rather be reactive, the broker also guides you: when `execute` is denied
@@ -308,17 +305,19 @@ jentic execute <operation_id> --query limit=10
 jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range} --path id=ABC --path range=A1:Z10
 ```
 
-**An `execute` failure splits three ways — check before you diagnose.** Only
-a broker **denial** (exit **2**, with an `agent_directive`) is an access
-problem. Exit **1** means the request never reached a broker at all, and that
-transport failure has two distinct causes with different recoveries:
+**Diagnose an `execute` failure by its symptom, not the exit code alone.** A
+broker **denial** prints an `agent_directive` on stderr (exit **2**). An
+error naming DNS, TLS, timeout, or connection refused is a **transport
+failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
+`operation_id` lookup hits an unreachable control plane — with two causes:
 
-- **Wrong target (DNS error).** The built-in default broker host is
-  `broker.jentic.ai`, which is unreachable on a local deployment — a DNS
-  error like `lookup broker.jentic.ai: no such host` means the broker target
-  is wrong, **not** an access problem. Point `execute` at the local broker
-  via `~/.jentic/config.yaml` (`broker.scheme` / `broker.host`) or per-call
-  flags:
+- **Wrong target (DNS or TLS error).** The broker target resolves as
+  built-in default (`https://127.0.0.1:8100`) < `~/.jentic/config.yaml`
+  (`broker.scheme` / `broker.host`, recorded by `jenticctl install`) <
+  flags. `lookup broker.jentic.ai: no such host` means the config points at
+  the hosted broker from a local install; a TLS error against a local
+  target usually means `broker.scheme` should be `http`. Fix the config, or
+  override per call:
 
 ```
 jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
@@ -363,8 +362,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
-  deployment (use when a **local** broker/control target refuses connections
-  before diagnosing anything else).
+  deployment; check this first when a local target refuses connections.
 - Add `--json` to force machine-readable output on a terminal.
 
 ## Pitfalls
@@ -388,16 +386,15 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
   missing or broken, check where each surface points — `jentic profile list`
-  shows this CLI's `base_url` — and prefer this CLI for everything in one
-  deployment rather than mixing surfaces mid-task.
-- An `execute` failure is not always an access problem — exit **1** is a
-  transport failure, and its cause decides the recovery (see step 5): a DNS
-  error (`lookup broker.jentic.ai: no such host`) means the **broker target**
-  is wrong (point a local install at the local broker); connection refused on
-  a **local** target usually means the instance is **stopped** — run
-  `jenticctl status` to check, and if it's down tell the user to
+  shows this CLI's `base_url`; ask your operator which backend the MCP
+  server was configured against — and stick to one surface for the whole
+  task.
+- An `execute` failure is not always an access problem. A DNS or TLS error
+  means the **broker target** is misconfigured (see step 5); connection
+  refused on a **local** target usually means the instance is **stopped** —
+  run `jenticctl status`, and if it's down tell the user to
   `jenticctl start`, then retry rather than abandoning the task. Only a
-  broker **denial** (exit **2**, with an `agent_directive` on stderr) is an
+  broker **denial** (an `agent_directive` on stderr, exit **2**) is an
   access/credential issue:
   - **403 `no_toolkit_binding`** → check the directive's
     `parameters.toolkit_serves_api`. If `true`, a toolkit already serves the API
