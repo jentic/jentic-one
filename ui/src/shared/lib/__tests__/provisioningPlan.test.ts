@@ -33,6 +33,8 @@ function plan(items: AccessRequestItem[]): AccessRequest {
 		actor_id: 'agnt_1',
 		status: 'pending',
 		requested_by: 'agnt_1',
+		created_by: 'agnt_1',
+		approve_url: 'https://app.example.test/access-requests/areq_1',
 		items,
 	};
 }

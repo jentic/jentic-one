@@ -6,7 +6,7 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -166,6 +166,32 @@ class AccessRequestRepository:
         stmt = stmt.limit(limit + 1)
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def count(
+        session: AsyncSession,
+        *,
+        actor_id: str | None = None,
+        status: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> int:
+        """Count requests matching the same predicates as :meth:`list_all`.
+
+        A bare ``COUNT(*)`` — no item hydration, no ordering, no pagination —
+        so badge/segment consumers don't pay for a full page just to count it.
+        ``status`` compares the **stored** column, exactly like ``list_all``
+        (the derived ``expired`` presentation status is computed at view time
+        and cannot be counted here).
+        """
+        stmt = select(func.count()).select_from(AccessRequest)
+        if actor_id is not None:
+            stmt = stmt.where(AccessRequest.actor_id == actor_id)
+        if status is not None:
+            stmt = stmt.where(AccessRequest.status == status)
+        for f in filters or ():
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return int(result.scalar_one())
 
     @staticmethod
     async def withdraw(

@@ -12,9 +12,11 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
 from jentic_one.control.services.access_requests.service import AccessRequestService
 from jentic_one.control.web.deps import get_access_request_service
 from jentic_one.control.web.schemas.access_requests import (
+    AccessRequestCountResponse,
     AccessRequestFileRequest,
     AccessRequestItemResponse,
     AccessRequestListResponse,
+    AccessRequestOwnerResponse,
     AccessRequestResponse,
     AmendRequest,
     DecideRequest,
@@ -62,6 +64,13 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
     evaluation = None
     if view.evaluation is not None:
         evaluation = _to_evaluation_response(view.evaluation)
+    filer_owner = None
+    if view.filer_owner is not None:
+        filer_owner = AccessRequestOwnerResponse(
+            id=view.filer_owner.id,
+            email=view.filer_owner.email,
+            display_name=view.filer_owner.display_name,
+        )
     return AccessRequestResponse(
         id=view.id,
         actor_id=view.actor_id,
@@ -73,6 +82,7 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
         expires_at=view.expires_at,
         created_by=view.created_by,
         filer_owner_id=view.filer_owner_id,
+        filer_owner=filer_owner,
         items=[_to_item_response(i) for i in view.items],
         evaluation=evaluation,
     )
@@ -117,6 +127,27 @@ async def list_access_requests(
         has_more=page.has_more,
         next_cursor=page.next_cursor,
     )
+
+
+@router.get("/access-requests/count", summary="Count access requests")
+async def count_access_requests(
+    identity: Identity = get_current_identity(),
+    svc: AccessRequestService = Depends(get_access_request_service),
+    actor_id: str | None = None,
+    status: str | None = None,
+) -> AccessRequestCountResponse:
+    """Count access requests without hydrating a page.
+
+    The cheap companion to the list endpoint for badge and per-segment
+    consumers: the same visibility filter (caller-scoped for members,
+    org-wide for ``org:admin``) and the same ``actor_id``/``status``
+    predicates, but a single ``COUNT(*)`` — no items, no pagination, no
+    page-size cap on the number. ``status`` matches the stored value, like
+    the list filter: a pending request past its expiry (presented as the
+    derived ``expired`` status) still counts as ``pending``.
+    """
+    count = await svc.count(identity=identity, actor_id=actor_id, status=status)
+    return AccessRequestCountResponse(count=count)
 
 
 @router.get("/access-requests/{request_id}", summary="Get access request", responses=not_found())

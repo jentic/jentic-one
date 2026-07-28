@@ -156,6 +156,22 @@ class EvaluationResponse(BaseModel):
     checks: list[EvaluationCheckResponse]
 
 
+class AccessRequestOwnerResponse(BaseModel):
+    """Display info for the filer's human owner (labelling only, not authorization).
+
+    Server-resolved from ``filer_owner_id`` so consumers don't need
+    ``users:read`` (or a roster fetch) just to label a row. Absent when the
+    id doesn't resolve to a user (service-account filers, purged rows) or on
+    mutation responses, which skip the enrichment.
+    """
+
+    id: str = Field(description="The owner's user id (same value as filer_owner_id).")
+    email: str = Field(description="The owner's email address.")
+    display_name: str | None = Field(
+        default=None, description="The owner's full name, when set on the profile."
+    )
+
+
 class AccessRequestResponse(BaseModel):
     """Response model for an access request envelope."""
 
@@ -169,8 +185,15 @@ class AccessRequestResponse(BaseModel):
     expires_at: dt.datetime
     created_by: str
     filer_owner_id: str | None = None
+    filer_owner: AccessRequestOwnerResponse | None = None
     items: list[AccessRequestItemResponse]
     evaluation: EvaluationResponse | None = None
+
+
+class AccessRequestCountResponse(BaseModel):
+    """Count of access requests visible to the caller."""
+
+    count: int = Field(description="Number of matching requests, after visibility filtering.")
 
 
 class AccessRequestListResponse(BaseModel):

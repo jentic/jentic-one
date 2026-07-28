@@ -19,9 +19,9 @@ const NAV_SPRING = { type: 'spring' as const, stiffness: 500, damping: 35 };
  * `xl`. Renders nothing when the queue is empty.
  */
 function PendingRequestsBadge() {
-	const { count, atLeast } = usePendingAccessRequestCount();
+	const { count } = usePendingAccessRequestCount();
 	if (count <= 0) return null;
-	const label = atLeast ? `${count}+` : `${count}`;
+	const label = `${count}`;
 	return (
 		<span
 			className="bg-warning/15 text-warning ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums"

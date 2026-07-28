@@ -27,7 +27,7 @@ Every API endpoint grouped by its **typical caller**, then by surface, annotated
 
 > The grouping and the _Typical caller_ column are an **advisory hint** at who usually calls a route, inferred from the scope family. They are **not** an enforced restriction: access is gated by the **scope**, not the actor kind, so any actor holding the required scope can call the endpoint.
 
-_Total endpoints: **151**._
+_Total endpoints: **152**._
 
 
 ## Agent-facing (typically agent / service-account / toolkit) (31)
@@ -200,7 +200,7 @@ _Total endpoints: **151**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (60)
+## Any authenticated actor (61)
 
 
 ### `access-requests`
@@ -209,6 +209,7 @@ _Total endpoints: **151**._
 |---|---|---|---|---|
 | GET | `/access-requests` | _any authenticated_ | any | List access requests |
 | POST | `/access-requests` | _any authenticated_ | any | File access request |
+| GET | `/access-requests/count` | _any authenticated_ | any | Count access requests |
 | GET | `/access-requests/{request_id}` | _any authenticated_ | any | Get access request |
 | POST | `/access-requests/{request_id}:amend` | _any authenticated_ | any | Amend access request |
 | POST | `/access-requests/{request_id}:withdraw` | _any authenticated_ | any | Withdraw access request |

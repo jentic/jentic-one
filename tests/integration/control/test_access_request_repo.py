@@ -187,6 +187,45 @@ async def test_list_all_filters_by_actor_id(
         await session.commit()
 
 
+async def test_count_matches_list_predicates(
+    control_db: DatabaseSession,
+    clean_access_requests: None,
+    expires_at: dt.datetime,
+) -> None:
+    """count applies the same actor/status/filter predicates as list_all, sans pagination."""
+    async with control_db.session() as session:
+        for i, actor in enumerate(("actor_a", "actor_a", "actor_b")):
+            await AccessRequestRepository.create(
+                session,
+                actor_id=actor,
+                reason=None,
+                requested_by="user@example.com",
+                approve_url="https://example.com/approve",
+                expires_at=expires_at,
+                items=[
+                    {
+                        "resource_type": "api",
+                        "action": "invoke",
+                        "resource_id": f"res_count_{i}",
+                        "to_type": "toolkit",
+                        "to_id": "tk_abc",
+                    }
+                ],
+                created_by="user_1",
+            )
+        assert await AccessRequestRepository.count(session) == 3
+        assert await AccessRequestRepository.count(session, actor_id="actor_a") == 2
+        assert await AccessRequestRepository.count(session, status="pending") == 3
+        assert await AccessRequestRepository.count(session, status="approved") == 0
+        assert (
+            await AccessRequestRepository.count(
+                session, filters=[AccessRequest.created_by == "nobody"]
+            )
+            == 0
+        )
+        await session.commit()
+
+
 async def test_withdraw_sets_status(
     control_db: DatabaseSession,
     clean_access_requests: None,

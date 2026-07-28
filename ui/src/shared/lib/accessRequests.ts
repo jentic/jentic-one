@@ -25,6 +25,7 @@
  */
 import { OpenAPI, apiRequest } from '@/shared/api';
 import { toRailError } from '@/shared/lib/railEvents';
+import type { BadgeVariant } from '@/shared/ui';
 
 /**
  * A single line item on an access request.
@@ -97,6 +98,14 @@ export interface AccessRequest {
 	reason?: string | null;
 	/** The human/principal that filed the request (NOT the agent — that's `actor_id`). */
 	requested_by: string;
+	/** The principal that created the row (the agent itself for self-filed requests). */
+	created_by: string;
+	/** The filer's human owner (null for ownerless actors, e.g. service accounts). */
+	filer_owner_id?: string | null;
+	/** Server-resolved display info for `filer_owner_id` (absent when it isn't a user). */
+	filer_owner?: AccessRequestOwner | null;
+	/** Deep link into the webapp's decision surface (stamped at file time). */
+	approve_url: string;
 	/** ISO timestamp the request was filed (present on list/get responses). */
 	filed_at?: string | null;
 	/** ISO timestamp the request expires. */
@@ -104,6 +113,13 @@ export interface AccessRequest {
 	items: AccessRequestItem[];
 	/** Whether the caller can fulfill the request, and the blocking checks if not. */
 	evaluation?: AccessRequestEvaluation | null;
+}
+
+/** Display info for the filer's human owner — labelling only, never authorization. */
+export interface AccessRequestOwner {
+	id: string;
+	email: string;
+	display_name?: string | null;
 }
 
 /** A cursor page of access requests (`GET /access-requests`). */
@@ -161,6 +177,30 @@ export async function listAccessRequests(
 		});
 	} catch (error) {
 		throw toRailError(error, 'Failed to load access requests.');
+	}
+}
+
+/**
+ * Exact count of access requests (`GET /access-requests/count`) — the cheap
+ * companion to the list for badge/segment consumers. Same visibility filter
+ * and `status` semantics as the list, but a single server-side COUNT with no
+ * page-size cap, so the number is exact (no "N+" flooring).
+ */
+export async function countAccessRequests(
+	params: Pick<ListAccessRequestsParams, 'status' | 'actorId'> = {},
+): Promise<number> {
+	const query: Record<string, unknown> = {};
+	if (params.status != null) query.status = params.status;
+	if (params.actorId != null) query.actor_id = params.actorId;
+	try {
+		const res = await apiRequest<{ count: number }>(OpenAPI, {
+			method: 'GET',
+			url: '/access-requests/count',
+			query,
+		});
+		return res.count;
+	} catch (error) {
+		throw toRailError(error, 'Failed to count access requests.');
 	}
 }
 
@@ -288,6 +328,34 @@ export function isScopeGrant(item: AccessRequestItem): boolean {
 export function scopeLabel(item: AccessRequestItem): string {
 	return item.resource_id ?? item.resource_type;
 }
+
+/**
+ * One-line queue-row summary of a request's items: "toolkit · bind +2 more".
+ * The single copy of the presentation every queue surface (dashboard queue
+ * page, per-actor card, downstream consoles) previously hand-rolled.
+ */
+export function summarizeAccessRequest(request: AccessRequest): string {
+	const n = request.items.length;
+	const head = request.items[0];
+	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
+	return n > 1 ? `${label} +${n - 1} more` : label;
+}
+
+/**
+ * Wire status → Badge variant, covering every aggregate status including the
+ * view-time derived `expired`. Canonical tones: the half-decided and lapsed
+ * states (`partially_approved`, `expired`) read as warnings — they usually
+ * need a human to re-look — while a deliberate `withdrawn` is neutral.
+ * Consumers should fall back to `'default'` for unknown statuses.
+ */
+export const ACCESS_REQUEST_STATUS_VARIANT: Record<string, BadgeVariant> = {
+	pending: 'pending',
+	approved: 'success',
+	denied: 'danger',
+	partially_approved: 'warning',
+	expired: 'warning',
+	withdrawn: 'default',
+};
 
 /**
  * True when an item's permission `rules` will ACTUALLY be enforced on approval.

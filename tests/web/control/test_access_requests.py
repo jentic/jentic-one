@@ -175,6 +175,87 @@ def test_list_respects_limit(filer_client: TestClient) -> None:
     assert resp.status_code == 200
 
 
+# --- Count ---
+
+
+def test_count_matches_list_visibility(filer_client: TestClient) -> None:
+    _file_request(filer_client)
+    resp = filer_client.get("/access-requests/count")
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 1}
+
+
+def test_count_filters_by_status_and_actor(filer_client: TestClient) -> None:
+    _file_request(filer_client)
+    assert filer_client.get("/access-requests/count?status=pending").json()["count"] == 1
+    assert filer_client.get("/access-requests/count?status=approved").json()["count"] == 0
+    assert filer_client.get(f"/access-requests/count?actor_id={FILER_SUB}").json()["count"] == 1
+    assert filer_client.get("/access-requests/count?actor_id=unknown_actor").json()["count"] == 0
+
+
+def test_count_is_caller_scoped(filer_client: TestClient, unrelated_client: TestClient) -> None:
+    """An unrelated member sees 0 — the count applies the same visibility filter as list."""
+    _file_request(filer_client)
+    resp = unrelated_client.get("/access-requests/count")
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0}
+
+
+def test_count_admin_sees_all(filer_client: TestClient, admin_client: TestClient) -> None:
+    _file_request(filer_client)
+    resp = admin_client.get("/access-requests/count")
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_count_missing_token_returns_401(unauthed_client: TestClient) -> None:
+    resp = unauthed_client.get("/access-requests/count")
+    assert resp.status_code == 401
+
+
+# --- Filer-owner enrichment ---
+
+
+@pytest.fixture()
+async def seed_owner_user(web_context: Context) -> AsyncGenerator[None, None]:
+    """Seed the filer's owner (OWNER_SUB) as a real admin-DB user for enrichment."""
+    async with web_context.admin_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, email, first_name, last_name) "
+                "VALUES (:id, :email, :first, :last) ON CONFLICT DO NOTHING"
+            ),
+            {"id": OWNER_SUB, "email": "owner@test.local", "first": "Olive", "last": "Owner"},
+        )
+        await session.commit()
+    yield
+    async with web_context.admin_db.session() as session:
+        await session.execute(text("DELETE FROM users WHERE id = :id"), {"id": OWNER_SUB})
+        await session.commit()
+
+
+def test_list_and_get_enrich_filer_owner(filer_client: TestClient, seed_owner_user: None) -> None:
+    """When filer_owner_id resolves to a user, list/get carry its display info."""
+    data = _file_request(filer_client)
+    listed = filer_client.get("/access-requests").json()["data"][0]
+    assert listed["filer_owner_id"] == OWNER_SUB
+    assert listed["filer_owner"] == {
+        "id": OWNER_SUB,
+        "email": "owner@test.local",
+        "display_name": "Olive Owner",
+    }
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["filer_owner"] == listed["filer_owner"]
+
+
+def test_filer_owner_absent_when_id_does_not_resolve(filer_client: TestClient) -> None:
+    """No admin-DB user behind filer_owner_id → the optional field stays null."""
+    data = _file_request(filer_client)
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["filer_owner_id"] == OWNER_SUB
+    assert got["filer_owner"] is None
+
+
 # --- Get ---
 
 

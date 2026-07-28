@@ -24,6 +24,15 @@ class BoundAgentRow(NamedTuple):
     bound_at: datetime
 
 
+class UserDisplayRow(NamedTuple):
+    """Display fields for a user, resolved cross-DB for labelling only."""
+
+    user_id: str
+    email: str
+    first_name: str | None
+    last_name: str | None
+
+
 class PrerequisiteRepository:
     """Checks existence of bindings in the admin database without admin imports."""
 
@@ -40,6 +49,30 @@ class PrerequisiteRepository:
             {"user_id": user_id},
         )
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def get_user_displays(
+        session: AsyncSession, *, user_ids: list[str]
+    ) -> dict[str, UserDisplayRow]:
+        """Batch-resolve user display info by id (admin DB), keyed by user id.
+
+        Labelling only — never authorization. Ids that don't resolve (agents,
+        service accounts, deleted rows) are simply absent from the result, so
+        callers degrade to showing the raw id. Deactivated users ARE returned:
+        a decided request whose owner was later offboarded should still show
+        who owned it.
+        """
+        if not user_ids:
+            return {}
+        placeholders = ", ".join(f":uid_{i}" for i in range(len(user_ids)))
+        params: dict[str, object] = {f"uid_{i}": uid for i, uid in enumerate(user_ids)}
+        result = await session.execute(
+            text(
+                f"SELECT id, email, first_name, last_name FROM users WHERE id IN ({placeholders})"
+            ),
+            params,
+        )
+        return {row[0]: UserDisplayRow(*row) for row in result.fetchall()}
 
     @staticmethod
     async def agent_toolkit_binding_exists(

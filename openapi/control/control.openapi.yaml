@@ -39,6 +39,17 @@ components:
       - vendor
       title: APIReferenceRequest
       type: object
+    AccessRequestCountResponse:
+      description: Count of access requests visible to the caller.
+      properties:
+        count:
+          description: Number of matching requests, after visibility filtering.
+          title: Count
+          type: integer
+      required:
+      - count
+      title: AccessRequestCountResponse
+      type: object
     AccessRequestFileRequest:
       description: Request body for filing an access request.
       properties:
@@ -221,6 +232,34 @@ components:
       - has_more
       title: AccessRequestListResponse
       type: object
+    AccessRequestOwnerResponse:
+      description: |-
+        Display info for the filer's human owner (labelling only, not authorization).
+
+        Server-resolved from ``filer_owner_id`` so consumers don't need
+        ``users:read`` (or a roster fetch) just to label a row. Absent when the
+        id doesn't resolve to a user (service-account filers, purged rows) or on
+        mutation responses, which skip the enrichment.
+      properties:
+        display_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The owner's full name, when set on the profile.
+          title: Display Name
+        email:
+          description: The owner's email address.
+          title: Email
+          type: string
+        id:
+          description: The owner's user id (same value as filer_owner_id).
+          title: Id
+          type: string
+      required:
+      - id
+      - email
+      title: AccessRequestOwnerResponse
+      type: object
     AccessRequestResponse:
       description: Response model for an access request envelope.
       properties:
@@ -245,6 +284,10 @@ components:
           format: date-time
           title: Filed At
           type: string
+        filer_owner:
+          anyOf:
+          - $ref: '#/components/schemas/AccessRequestOwnerResponse'
+          - type: 'null'
         filer_owner_id:
           anyOf:
           - type: string
@@ -5580,6 +5623,90 @@ paths:
       security:
       - BearerAuth: []
       summary: File access request
+      tags:
+      - Access Requests
+  /access-requests/count:
+    get:
+      description: |-
+        Count access requests without hydrating a page.
+
+        The cheap companion to the list endpoint for badge and per-segment
+        consumers: the same visibility filter (caller-scoped for members,
+        org-wide for ``org:admin``) and the same ``actor_id``/``status``
+        predicates, but a single ``COUNT(*)`` — no items, no pagination, no
+        page-size cap on the number. ``status`` matches the stored value, like
+        the list filter: a pending request past its expiry (presented as the
+        derived ``expired`` status) still counts as ``pending``.
+      operationId: countAccessRequests
+      parameters:
+      - in: query
+        name: actor_id
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Actor Id
+      - in: query
+        name: status
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestCountResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Count access requests
       tags:
       - Access Requests
   /access-requests/{request_id}:

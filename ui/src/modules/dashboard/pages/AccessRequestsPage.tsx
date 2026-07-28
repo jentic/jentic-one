@@ -16,12 +16,12 @@ import {
 	SegmentedToggle,
 	ActorLabel,
 	AgentBadge,
-	type BadgeVariant,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
 import { AccessRequestDecisionDialog } from '@/shared/app';
 import { useAccessRequestsQueue, dashboardKeys, type AccessRequest } from '@/modules/dashboard/api';
 import { ROUTES } from '@/shared/app/routes';
+import { ACCESS_REQUEST_STATUS_VARIANT, summarizeAccessRequest } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
 
 type StatusFilter = 'pending' | 'approved' | 'denied' | 'all';
@@ -33,24 +33,11 @@ const STATUS_OPTIONS: SegmentedToggleOption<StatusFilter>[] = [
 	{ value: 'all', label: 'All' },
 ];
 
-const STATUS_VARIANT: Record<string, BadgeVariant> = {
-	pending: 'pending',
-	approved: 'success',
-	denied: 'danger',
-};
-
 /** A decision moves a row between status filters and changes the dashboard
  * surfaces + nav badge. Both roots come from this module's own factory (the
  * access-request root is re-exposed there from the shared registry so views
  * don't reach into `@/shared/api` directly). */
 const ACCESS_REQUESTS_ROOT_KEY = dashboardKeys.accessRequestsRoot;
-
-function summarize(request: AccessRequest): string {
-	const n = request.items.length;
-	const head = request.items[0];
-	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
-	return n > 1 ? `${label} +${n - 1} more` : label;
-}
 
 /**
  * Full access-request queue (`ROUTES.accessRequests`) — the "View all" target of
@@ -142,7 +129,7 @@ export default function AccessRequestsPage() {
 											/>
 											<div className="min-w-0">
 												<p className="text-foreground truncate font-medium">
-													{summarize(request)}
+													{summarizeAccessRequest(request)}
 												</p>
 												<p className="text-muted-foreground truncate text-xs">
 													by <ActorLabel actorId={request.actor_id} />
@@ -163,7 +150,8 @@ export default function AccessRequestsPage() {
 											)}
 											<Badge
 												variant={
-													STATUS_VARIANT[request.status] ?? 'default'
+													ACCESS_REQUEST_STATUS_VARIANT[request.status] ??
+													'default'
 												}
 												dot
 											>

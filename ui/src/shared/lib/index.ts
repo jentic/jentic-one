@@ -11,6 +11,7 @@
  */
 export {
 	listAccessRequests,
+	countAccessRequests,
 	getAccessRequest,
 	decideAccessRequest,
 	decideAllPending,
@@ -19,11 +20,14 @@ export {
 	isSpecificResource,
 	isScopeGrant,
 	scopeLabel,
+	summarizeAccessRequest,
+	ACCESS_REQUEST_STATUS_VARIANT,
 	rulesAreEnforceable,
 	parseItemRules,
 	ruleSummary,
 	isUnrestrictedAllow,
 	type AccessRequest,
+	type AccessRequestOwner,
 	type AccessRequestItem,
 	type AccessRequestEvaluation,
 	type AccessRequestEvaluationCheck,

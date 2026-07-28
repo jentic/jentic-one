@@ -49,6 +49,21 @@
         "title": "APIReferenceRequest",
         "type": "object"
       },
+      "AccessRequestCountResponse": {
+        "description": "Count of access requests visible to the caller.",
+        "properties": {
+          "count": {
+            "description": "Number of matching requests, after visibility filtering.",
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "AccessRequestCountResponse",
+        "type": "object"
+      },
       "AccessRequestFileRequest": {
         "description": "Request body for filing an access request.",
         "properties": {
@@ -358,6 +373,39 @@
         "title": "AccessRequestListResponse",
         "type": "object"
       },
+      "AccessRequestOwnerResponse": {
+        "description": "Display info for the filer's human owner (labelling only, not authorization).\n\nServer-resolved from ``filer_owner_id`` so consumers don't need\n``users:read`` (or a roster fetch) just to label a row. Absent when the\nid doesn't resolve to a user (service-account filers, purged rows) or on\nmutation responses, which skip the enrichment.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The owner's full name, when set on the profile.",
+            "title": "Display Name"
+          },
+          "email": {
+            "description": "The owner's email address.",
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "description": "The owner's user id (same value as filer_owner_id).",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "title": "AccessRequestOwnerResponse",
+        "type": "object"
+      },
       "AccessRequestResponse": {
         "description": "Response model for an access request envelope.",
         "properties": {
@@ -392,6 +440,16 @@
             "format": "date-time",
             "title": "Filed At",
             "type": "string"
+          },
+          "filer_owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessRequestOwnerResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "filer_owner_id": {
             "anyOf": [
@@ -8559,6 +8617,175 @@
           }
         ],
         "summary": "File access request",
+        "tags": [
+          "Access Requests"
+        ]
+      }
+    },
+    "/access-requests/count": {
+      "get": {
+        "description": "Count access requests without hydrating a page.\n\nThe cheap companion to the list endpoint for badge and per-segment\nconsumers: the same visibility filter (caller-scoped for members,\norg-wide for ``org:admin``) and the same ``actor_id``/``status``\npredicates, but a single ``COUNT(*)`` — no items, no pagination, no\npage-size cap on the number. ``status`` matches the stored value, like\nthe list filter: a pending request past its expiry (presented as the\nderived ``expired`` status) still counts as ``pending``.",
+        "operationId": "countAccessRequests",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "actor_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessRequestCountResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Count access requests",
         "tags": [
           "Access Requests"
         ]

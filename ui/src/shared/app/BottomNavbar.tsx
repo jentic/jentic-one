@@ -21,9 +21,9 @@ const TILE_LIMIT = 5;
  * to the tile's top-right; renders nothing when the queue is empty.
  */
 function TilePendingBadge() {
-	const { count, atLeast } = usePendingAccessRequestCount();
+	const { count } = usePendingAccessRequestCount();
 	if (count <= 0) return null;
-	const label = atLeast ? `${count}+` : `${count}`;
+	const label = `${count}`;
 	return (
 		<span
 			className="bg-warning text-background absolute top-1.5 right-1/2 z-20 inline-flex h-4 min-w-4 translate-x-4 items-center justify-center rounded-full px-1 text-[9px] font-bold tabular-nums"

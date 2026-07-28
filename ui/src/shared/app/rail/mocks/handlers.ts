@@ -381,6 +381,18 @@ export const railEventsHandlers = [
 			next_cursor: sorted.length > limit ? slice[slice.length - 1]?.id : null,
 		});
 	}),
+	// Access-request COUNT — the nav badge's cheap companion to the list. Same
+	// filters, but just the number. Registered before `GET /access-requests/:id`
+	// so `/access-requests/count` never matches as an id.
+	http.get('/access-requests/count', ({ request }) => {
+		const url = new URL(request.url);
+		const status = url.searchParams.get('status');
+		const actorId = url.searchParams.get('actor_id');
+		const count = accessRequests.filter(
+			(r) => (!status || r.status === status) && (!actorId || r.actor_id === actorId),
+		).length;
+		return HttpResponse.json({ count });
+	}),
 	// Access-request decision flow (the rail's real "feed the agent back" path).
 	// The `:decide` verb shares its prefix with the bare GET, so match it first
 	// with a regex (MSW would otherwise treat `ar_1:decide` as the `:id` param).

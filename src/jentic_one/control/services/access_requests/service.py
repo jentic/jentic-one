@@ -46,6 +46,7 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
     CollectedResourceIds,
     Evaluation,
     EvaluationCheck,
+    FilerOwnerView,
     ResolvedNames,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -312,7 +313,8 @@ class AccessRequestService:
             names = await self._resolve_names(session, [request])
             view = self._to_view(request, names=names)
             view.evaluation = self._compute_evaluation(request, identity)
-            return view
+        await self._resolve_filer_owners([view])
+        return view
 
     async def list_all(
         self,
@@ -352,7 +354,62 @@ class AccessRequestService:
                 last = rows[-1]
                 next_cursor = encode_cursor(last.filed_at, last.id)
 
+        await self._resolve_filer_owners(data)
         return AccessRequestPage(data=data, has_more=has_more, next_cursor=next_cursor)
+
+    async def count(
+        self,
+        *,
+        identity: Identity,
+        actor_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        """Count access requests visible to the caller (no row hydration).
+
+        The cheap companion to ``list_all`` for badge/segment consumers: same
+        visibility filter (``build_access_filters`` — caller-scoped for
+        members, org-wide for ``org:admin``) and the same ``actor_id``/
+        ``status`` predicates, but a single ``COUNT(*)`` instead of a page of
+        envelopes. ``status`` matches the stored column, exactly like the
+        list filter — a stored-pending request past its ``expires_at`` (shown
+        as the derived ``expired`` status) still counts as ``pending``.
+        """
+        access_filters = build_access_filters(identity, AccessRequest)
+        async with self._ctx.control_db.session() as session:
+            return await AccessRequestRepository.count(
+                session,
+                actor_id=actor_id,
+                status=status,
+                filters=access_filters,
+            )
+
+    async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
+        """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
+
+        ``filer_owner_id`` is a bare string (no cross-DB FK to the admin
+        ``users`` table), so consumers historically had to join it against a
+        separately-fetched roster client-side — which requires ``users:read``
+        just to label a row. Resolving here (one batched admin-DB lookup per
+        page, mirroring ``_resolve_names``) lets any viewer see the owner
+        label for requests they can already read. Ids that aren't users
+        (service-account filers) or no longer resolve stay ``None`` — the
+        wire field is optional by design.
+        """
+        owner_ids = sorted({v.filer_owner_id for v in views if v.filer_owner_id})
+        if not owner_ids:
+            return
+        async with self._ctx.admin_db.session() as session:
+            displays = await PrerequisiteRepository.get_user_displays(session, user_ids=owner_ids)
+        for view in views:
+            row = displays.get(view.filer_owner_id or "")
+            if row is None:
+                continue
+            name = " ".join(part for part in (row.first_name, row.last_name) if part).strip()
+            view.filer_owner = FilerOwnerView(
+                id=row.user_id,
+                email=row.email,
+                display_name=name or None,
+            )
 
     async def decide(
         self,
