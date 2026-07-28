@@ -1,6 +1,9 @@
 package update
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,24 @@ import (
 // BrewUpgradeCommand is the user-facing command that updates a Homebrew-managed
 // install of the CLIs (both binaries ship in the `jentic` cask).
 const BrewUpgradeCommand = "brew upgrade jentic"
+
+// BrewUpgrade runs `brew upgrade jentic`, streaming its output, to refresh a
+// Homebrew-managed install. It is the CLI half of `jenticctl update` for
+// brew-managed binaries (flyctl-style delegation): brew performs the swap so
+// its bookkeeping stays consistent.
+func BrewUpgrade(ctx context.Context, out, errW io.Writer) error {
+	brew, err := exec.LookPath("brew")
+	if err != nil {
+		return fmt.Errorf("brew not found on PATH; update the CLI with `%s` from a brew-enabled shell", BrewUpgradeCommand)
+	}
+	cmd := exec.CommandContext(ctx, brew, "upgrade", "jentic") //nolint:gosec // brew resolved via LookPath with fixed args; delegating the upgrade to brew is the point.
+	cmd.Stdout = out
+	cmd.Stderr = errW
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("`%s` failed: %w", BrewUpgradeCommand, err)
+	}
+	return nil
+}
 
 // BrewManaged reports whether the binary at target is managed by Homebrew.
 //

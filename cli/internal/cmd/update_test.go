@@ -98,3 +98,30 @@ func TestResolveCtlTargetFallsBackToExecutable(t *testing.T) {
 		t.Error("resolveCtlTarget returned empty path for executable fallback")
 	}
 }
+
+// TestApplyPromptTitle: the confirm prompt must not promise repo@ref for a
+// brew-managed CLI half (brew ships only its latest cask), while non-brew
+// wording is unchanged.
+func TestApplyPromptTitle(t *testing.T) {
+	const repo, ref = "jentic/jentic-one", "v0.21.0"
+	tests := []struct {
+		name                 string
+		doCLI, doStack, brew bool
+		want                 string
+	}{
+		{"source combined", true, true, false, "Update the CLI and the stack to jentic/jentic-one@v0.21.0?"},
+		{"source cli-only", true, false, false, "Update the CLI to jentic/jentic-one@v0.21.0?"},
+		{"stack-only", false, true, false, "Update the stack to jentic/jentic-one@v0.21.0?"},
+		{"brew combined", true, true, true, "Update the CLI (via `brew upgrade jentic`) and the stack (from jentic/jentic-one@v0.21.0)?"},
+		{"brew cli-only", true, false, true, "Update the CLI via `brew upgrade jentic`?"},
+		{"brew stack-only unaffected", false, true, true, "Update the stack to jentic/jentic-one@v0.21.0?"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := applyPromptTitle(tt.doCLI, tt.doStack, tt.brew, repo, ref)
+			if got != tt.want {
+				t.Errorf("applyPromptTitle(%v, %v, %v) = %q, want %q", tt.doCLI, tt.doStack, tt.brew, got, tt.want)
+			}
+		})
+	}
+}
