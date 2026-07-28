@@ -92,18 +92,29 @@ export function OverviewTab() {
 			{ replace: true },
 		);
 
-	// Unix-second window bounds, floored to 5-minute steps so the query key
-	// stays stable across re-renders (no cache-busting every tick) yet still
-	// slides forward on long-lived tabs. `until` is sent explicitly: the
-	// backend picks `bucket_seconds` from the window width (until - since),
-	// and letting the server default `until` to *its* now makes a 7d window
-	// nondeterministically overflow 604800s and flip between 6h and daily
-	// buckets.
+	// Unix-second window bounds. The 24h window rolls with "now" (floored to
+	// 5-minute steps so the query key stays stable across re-renders yet still
+	// slides forward on long-lived tabs). The multi-day windows are aligned to
+	// local calendar days — midnight (days-1) days ago through the end of
+	// today — matching jentic-mini's day-bucketed volume chart: a rolling
+	// now-7d bound straddles 8 calendar dates, so the day axis showed "more
+	// than 7 days". Day alignment also makes the window an exact multiple of
+	// the backend's bucket tier, so the per-entity trend segments land on day
+	// boundaries. `until` is sent explicitly: the backend picks
+	// `bucket_seconds` from the window width (until - since), and letting the
+	// server default `until` to *its* now would shift the window
+	// nondeterministically.
 	const nowSec = useCoarseNowSec(WINDOW_STEP_MS);
-	const { since, until } = useMemo(
-		() => ({ since: nowSec - days * 86_400, until: nowSec }),
-		[nowSec, days],
-	);
+	const { since, until } = useMemo(() => {
+		if (days === 1) return { since: nowSec - 86_400, until: nowSec };
+		const startOfToday = new Date(nowSec * 1000);
+		startOfToday.setHours(0, 0, 0, 0);
+		const sinceDate = new Date(startOfToday);
+		sinceDate.setDate(sinceDate.getDate() - (days - 1));
+		const untilDate = new Date(startOfToday);
+		untilDate.setDate(untilDate.getDate() + 1);
+		return { since: sinceDate.getTime() / 1000, until: untilDate.getTime() / 1000 };
+	}, [nowSec, days]);
 
 	const apiUsage = useUsageStats({ since, until, groupBy: GroupBy.API, topLimit: TOP_LIMIT });
 	const toolkitUsage = useUsageStats({

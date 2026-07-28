@@ -207,9 +207,27 @@ class MonitoringService:
             return 60
         if window_seconds <= 86400:
             return 3600
-        if window_seconds <= 604800:
+        # Up to 8 days still gets the 6h tier: a day-aligned "7d" window
+        # crossing a fall-back DST change is 7d + 1h, which must not drop to
+        # daily buckets (that would leave the week view with ~7 coarse
+        # segments misaligned from its 7 day bars).
+        if window_seconds <= 8 * 86400:
             return 21600
         return 86400
+
+    @staticmethod
+    def _compute_trend_points(window_seconds: int, bucket_seconds: int) -> int:
+        """Number of per-entity trend segments for a window.
+
+        One segment per aggregate bucket tier (24h → 24 hourly, 7d → 28
+        six-hour, 30d → 30 daily) instead of a fixed 12: equal twelfths of a
+        multi-day window (e.g. 14h for 7d) can never line up with calendar
+        days, which made the volume chart's day axis span more days than the
+        window. When the caller sends day-aligned bounds, these segments land
+        exactly on day boundaries. Capped so a pathologically wide window
+        can't inflate the payload.
+        """
+        return max(1, min(60, round(window_seconds / bucket_seconds)))
 
     @staticmethod
     def _build_repo_filters(filters: UsageFilters | None) -> UsageQueryFilters | None:
@@ -258,7 +276,13 @@ class MonitoringService:
             )
             top_keys = [r.key for r in top_rows]
             trends = await MonitoringRepository.grouped_trend(
-                session, cutoff, until_dt, group_by.value, top_keys, filters=repo_filters
+                session,
+                cutoff,
+                until_dt,
+                group_by.value,
+                top_keys,
+                num_points=self._compute_trend_points(window_seconds, bucket_seconds),
+                filters=repo_filters,
             )
 
         return UsageStats(

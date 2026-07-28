@@ -5,12 +5,16 @@
  * interactive legend (hovering a chip or segment dims the rest), y-axis
  * gridlines, and a per-segment hover tooltip.
  *
- * Mini bucketed raw TimelinePoints client-side. Here the per-entity series
- * comes from the endpoint's `top[].trend` — 12 equal segments spanning
- * exactly [since, until) — so each of the 12 bars stacks one segment per top
- * entity. Executions outside the top rows (or unattributed) appear as a
- * muted "Other" remainder derived from the aggregate `buckets`, so bar
- * heights always add up to the real totals.
+ * Mini bucketed raw TimelinePoints client-side into a handful of display
+ * buckets (six 4h slices for 24h, one bar per calendar day for 7d, six range
+ * slices for 30d). Here the per-entity series comes from the endpoint's
+ * `top[].trend` — equal segments spanning exactly [since, until), one per
+ * aggregate bucket tier — so buildBars re-buckets those segments into the
+ * same mini-style display buckets. Rendering the raw segments directly (the
+ * old approach) drew 12 bars whose 7d labels straddled 8 calendar dates and
+ * crammed the x-axis on mobile. Executions outside the top rows (or
+ * unattributed) appear as a muted "Other" remainder derived from the
+ * aggregate `buckets`, so bar heights always add up to the real totals.
  *
  * Colors reuse the shared lens palettes indexed by busiest-first row order,
  * matching the bubble chart and Breakdown, so an entity keeps one color
@@ -24,8 +28,10 @@ import type { UsageResponse } from '@/modules/monitor/api';
 import { getInitials, lensPalette, textColor, type UsageLens } from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
 
-const TREND_POINTS = 12;
 const OTHER_COLOR = '#94a3b8';
+// A day-aligned 7d window can exceed 7·86400s across a DST change; anything up
+// to this bound still renders (and is captioned) as a per-day week view.
+const WEEK_WINDOW_MAX_SECONDS = 8 * 86_400;
 
 interface BarSegment {
 	key: string;
@@ -51,67 +57,130 @@ const LENS_NOUNS: Record<UsageLens, string> = {
 
 function windowSubtitle(windowSeconds: number): string {
 	if (windowSeconds <= 86_400) return 'Last 24 hours';
-	if (windowSeconds <= 7 * 86_400) return 'Last 7 days';
+	if (windowSeconds <= WEEK_WINDOW_MAX_SECONDS) return 'Last 7 days';
 	return 'Last 30 days';
 }
 
-/**
- * Label a trend segment by its start instant. Unlike the backend's UTC-floored
- * daily buckets, trend segments are real instants (since + i·step), so local
- * time is always the right formatting.
- */
-function segmentLabels(startSec: number, windowSeconds: number): { label: string; sub: string } {
-	const date = new Date(startSec * 1000);
-	if (Number.isNaN(date.getTime())) return { label: '', sub: '' };
-	if (windowSeconds <= 86_400) {
-		return {
-			label: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-			sub: '',
-		};
-	}
-	if (windowSeconds <= 7 * 86_400) {
-		return {
-			label: date.toLocaleDateString(undefined, { weekday: 'short' }),
-			sub: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-		};
-	}
-	return {
-		label: date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' }),
-		sub: '',
-	};
+/** Display bucket: the x-axis slot a bar renders into. */
+interface BucketDef {
+	startSec: number;
+	endSec: number;
+	label: string;
+	subLabel: string;
+}
+
+// Mini's compact 24-hour "H:MM" — locale hour formats ("03:30 PM") are wide
+// enough that six of them collide on a 375px viewport.
+function timeLabel(sec: number): string {
+	const d = new Date(sec * 1000);
+	return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function dateLabel(sec: number): string {
+	const d = new Date(sec * 1000);
+	return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 /**
- * Build the 12 stacked bars for a lens: per-entity counts from `top[].trend`,
- * plus a muted "Other" remainder so the bar reaches the aggregate total.
- * Aggregate buckets are re-bucketed into the same 12 segments by flooring
- * (ts - since) / segmentSeconds — same arithmetic the backend used to build
- * the trends, so the two series line up.
+ * Mini's getBucketDefs, driven by the response window: six time-range slices
+ * for a day, one bar per local calendar day for a week (exactly 7 for the
+ * day-aligned 7d window the Overview requests), six date-range slices for
+ * anything wider. Capping the bar count is what keeps the x-axis legible on
+ * mobile — 12 raw trend segments at ≥20px each overflowed narrow screens.
+ */
+function buildBucketDefs(sinceSec: number, untilSec: number): BucketDef[] {
+	const windowSeconds = untilSec - sinceSec;
+	if (windowSeconds <= 86_400) {
+		const step = windowSeconds / 6;
+		return Array.from({ length: 6 }, (_, i) => {
+			const start = sinceSec + i * step;
+			return {
+				startSec: start,
+				endSec: start + step,
+				label: timeLabel(start),
+				subLabel: `–${timeLabel(start + step)}`,
+			};
+		});
+	}
+	if (windowSeconds <= WEEK_WINDOW_MAX_SECONDS) {
+		const defs: BucketDef[] = [];
+		// Walk local calendar days via Date arithmetic (DST-safe) from the day
+		// containing `since` until the window is covered.
+		const day = new Date(sinceSec * 1000);
+		day.setHours(0, 0, 0, 0);
+		while (day.getTime() / 1000 < untilSec) {
+			const start = day.getTime() / 1000;
+			const label = day.toLocaleDateString(undefined, { weekday: 'short' });
+			const sub = dateLabel(start);
+			day.setDate(day.getDate() + 1);
+			defs.push({ startSec: start, endSec: day.getTime() / 1000, label, subLabel: sub });
+		}
+		return defs;
+	}
+	const step = windowSeconds / 6;
+	return Array.from({ length: 6 }, (_, i) => {
+		const start = sinceSec + i * step;
+		return {
+			startSec: start,
+			endSec: start + step,
+			label: dateLabel(start),
+			// Inclusive end date — the exclusive boundary is midnight of the
+			// next day, so labelling it would show a date outside the window
+			// (the last slice would read "–tomorrow").
+			subLabel: `–${dateLabel(start + step - 1)}`,
+		};
+	});
+}
+
+/**
+ * Display bucket owning the instant `sec`. Attribution is by start instant,
+ * clamped into range, so totals stay conserved even when a source bucket
+ * straddles a display boundary (e.g. UTC-floored aggregate buckets vs local
+ * calendar days).
+ */
+function defIndexFor(sec: number, defs: BucketDef[]): number {
+	for (let i = 0; i < defs.length; i++) {
+		if (sec < defs[i].endSec) return i;
+	}
+	return defs.length - 1;
+}
+
+/**
+ * Build the stacked bars for a lens: per-entity counts from `top[].trend`,
+ * plus a muted "Other" remainder so each bar reaches the aggregate total.
+ * Both series are re-bucketed into the display buckets by the start instant
+ * of each source segment — the same conserving arithmetic the backend used
+ * to build them, so the two series line up.
  */
 function buildBars(usage: UsageResponse, rows: EntityUsageRow[], palette: string[]): Bar[] {
 	const windowSeconds = usage.until - usage.since;
 	if (windowSeconds <= 0) return [];
-	const num = Math.max(1, rows.find((r) => r.trend.length > 0)?.trend.length ?? TREND_POINTS);
-	const segmentSeconds = windowSeconds / num;
+	const defs = buildBucketDefs(usage.since, usage.until);
 
-	const aggregate = new Array<number>(num).fill(0);
+	const aggregate = new Array<number>(defs.length).fill(0);
 	for (const b of usage.buckets) {
-		// A bucket's span can straddle a segment boundary (6h buckets vs 14h
-		// segments); attributing by start instant keeps totals conserved.
-		const idx = Math.min(
-			num - 1,
-			Math.max(0, Math.floor((b.ts - usage.since) / segmentSeconds)),
-		);
-		aggregate[idx] += b.total;
+		aggregate[defIndexFor(b.ts, defs)] += b.total;
 	}
 
-	return Array.from({ length: num }, (_, i) => {
-		const startSec = usage.since + i * segmentSeconds;
-		const { label, sub } = segmentLabels(startSec, windowSeconds);
+	// Per-display-bucket entity counts. Trend segments are equal divisions of
+	// [since, until); segment i starts at since + i·(window / trend.length).
+	const perDef = defs.map(() => new Map<string, number>());
+	for (const row of rows) {
+		const num = row.trend.length;
+		if (num === 0) continue;
+		const segmentSeconds = windowSeconds / num;
+		row.trend.forEach((count, i) => {
+			if (count <= 0) return;
+			const bucket = perDef[defIndexFor(usage.since + i * segmentSeconds, defs)];
+			bucket.set(row.id, (bucket.get(row.id) ?? 0) + count);
+		});
+	}
+
+	return defs.map((def, i) => {
 		const segments: BarSegment[] = [];
 		let entityTotal = 0;
 		rows.forEach((row, rowIdx) => {
-			const count = row.trend[i] ?? 0;
+			const count = perDef[i].get(row.id) ?? 0;
 			if (count <= 0) return;
 			entityTotal += count;
 			const color = palette[rowIdx % palette.length];
@@ -134,7 +203,13 @@ function buildBars(usage: UsageResponse, rows: EntityUsageRow[], palette: string
 			});
 		}
 		segments.sort((a, b) => b.count - a.count);
-		return { startSec, label, subLabel: sub, total: entityTotal + other, segments };
+		return {
+			startSec: def.startSec,
+			label: def.label,
+			subLabel: def.subLabel,
+			total: entityTotal + other,
+			segments,
+		};
 	});
 }
 
@@ -220,7 +295,7 @@ export function UsageCharts({ usage, apis, toolkits, agents, className }: UsageC
 				className,
 			)}
 		>
-			<div className="flex items-start justify-between gap-2 px-4 pt-3 pb-0">
+			<div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5 px-4 pt-3 pb-0">
 				<div>
 					<h2 className="text-foreground text-sm font-semibold">Execution Volume</h2>
 					<p className="text-muted-foreground text-xs">

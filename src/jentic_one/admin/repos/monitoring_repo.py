@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Text, case, cast, func, literal, select
+from sqlalchemy import Text, case, cast, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.expression import ColumnElement, SQLColumnExpression
 
@@ -109,8 +109,10 @@ class TimeBucketRow:
 
 @dataclass(slots=True, frozen=True)
 class GroupedTopRow:
-    key: str
-    label: str
+    # None for toolkit grouping when executions carry no toolkit attribution
+    # (api/agent keys are coalesced/concatenated and never NULL).
+    key: str | None
+    label: str | None
     total: int
     success: int
     failed: int
@@ -247,9 +249,17 @@ class MonitoringRepository:
         filters: UsageQueryFilters | None = None,
     ) -> list[TimeBucketRow]:
         epoch_expr = _epoch_seconds(session)
-        bucket_ts = (func.floor(epoch_expr / bucket_seconds) * literal(bucket_seconds)).label(
-            "bucket_ts"
-        )
+        # Anchor the bucket grid at `cutoff` (like grouped_trend's segments)
+        # rather than the UTC epoch: a UTC-aligned grid straddles the caller's
+        # day-aligned bounds in non-UTC timezones, so aggregate buckets and
+        # per-entity trend segments would disagree about which day a count
+        # belongs to.
+        cutoff_epoch = int(cutoff.timestamp())
+        bucket_ts = (
+            func.floor((epoch_expr - literal(cutoff_epoch)) / bucket_seconds)
+            * literal(bucket_seconds)
+            + literal(cutoff_epoch)
+        ).label("bucket_ts")
         stmt = (
             select(
                 cast(bucket_ts, Text).label("bucket_ts_text"),
@@ -356,10 +366,10 @@ class MonitoringRepository:
         cutoff: datetime,
         until: datetime,
         group_by: str,
-        keys: list[str],
+        keys: list[str | None],
         num_points: int = 12,
         filters: UsageQueryFilters | None = None,
-    ) -> dict[str, list[int]]:
+    ) -> dict[str | None, list[int]]:
         if not keys:
             return {}
 
@@ -387,6 +397,17 @@ class MonitoringRepository:
             Text,
         ).label("seg")
 
+        # Toolkit keys are the raw nullable toolkit_id, and unattributed
+        # executions surface in grouped_top as a NULL-key row. `IN (NULL)`
+        # never matches, so match NULL explicitly — otherwise that row's
+        # trend would come back all zeros.
+        non_null_keys = [k for k in keys if k is not None]
+        key_clauses: list[ColumnElement[bool]] = []
+        if non_null_keys:
+            key_clauses.append(key_expr.in_(non_null_keys))
+        if len(non_null_keys) < len(keys):
+            key_clauses.append(key_expr.is_(None))
+
         stmt = (
             select(
                 key_expr.label("key"),
@@ -396,7 +417,7 @@ class MonitoringRepository:
             .where(
                 ExecutionRecord.started_at >= cutoff,
                 ExecutionRecord.started_at < until,
-                key_expr.in_(keys),
+                or_(*key_clauses),
             )
             .group_by(key_expr, segment_idx)
         )
@@ -404,7 +425,7 @@ class MonitoringRepository:
             stmt = stmt.where(*filters.to_clauses())
         result = await session.execute(stmt)
 
-        trends: dict[str, list[int]] = {k: [0] * num_points for k in keys}
+        trends: dict[str | None, list[int]] = {k: [0] * num_points for k in keys}
         for row in result.all():
             idx = int(float(row.seg))
             if 0 <= idx < num_points and row.key in trends:

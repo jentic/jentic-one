@@ -207,3 +207,32 @@ async def test_grouped_trend_returns_empty_dict_for_no_keys() -> None:
 
     result = await MonitoringRepository.grouped_trend(session, cutoff, until, "api", [])
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_grouped_trend_matches_null_keys() -> None:
+    # grouped_top's toolkit key is the raw nullable toolkit_id, so an
+    # unattributed row hands a None key back to grouped_trend. `IN (NULL)`
+    # never matches — the NULL key must be matched with IS NULL and its
+    # counts folded into the None entry (regression: all-zero trends).
+    row = MagicMock()
+    row.key = None
+    row.seg = "2"
+    row.cnt = 4
+
+    session = _mock_session_with_result([row])
+    cutoff = datetime(2026, 6, 1, tzinfo=UTC)
+    until = datetime(2026, 6, 2, tzinfo=UTC)
+
+    result = await MonitoringRepository.grouped_trend(
+        session,
+        cutoff,
+        until,
+        "toolkit",
+        [None],
+        num_points=12,
+    )
+    trend = result[None]
+    assert len(trend) == 12
+    assert trend[2] == 4
+    assert sum(trend) == 4
