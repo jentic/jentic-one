@@ -470,14 +470,17 @@ live account with dangling grants: (1) drop leaf + traverse ACLs; (2) settle the
 agent home — **re-own it to the operator** by default, or delete it *only* when the
 separate home confirmation was answered affirmatively (or `--delete-home --force`
 in non-interactive use); (3) remove the `sudoers` drop-in; (4) delete the Unix
-account (`sysadminctl -deleteUser -keepHome` / `userdel` **without** `-r` — both
-leave the home in place, so the account goes but the already-settled home stays);
-(5) remove the `local_agents` entry from the operator's config last, so a re-run
-after a mid-way failure still has the record of what to finish cleaning. Each step
-reports success/failure; a failure stops the run with what's already been done and
-what remains. Note the account-deletion step (4) must be told *not* to remove the
-home — the default macOS/Linux "delete user" also wipes the home, which is exactly
-the data we're preserving unless the home deletion was explicitly accepted.
+account — on macOS by deleting the DirectoryService record with `dscl . -delete
+/Users/<user>` (which has no filesystem side-effect), on Linux with `userdel`
+**without** `-r` — both leave the home in place, so the account goes but the
+already-settled home stays; (5) remove the `local_agents` entry from the operator's
+config last, so a re-run after a mid-way failure still has the record of what to
+finish cleaning. Each step reports success/failure; a failure stops the run with
+what's already been done and what remains. Note the account-deletion step (4) must
+not remove the home — the obvious macOS tool, `sysadminctl -deleteUser`, deletes it
+unless passed `-keepHome`, but that flag is rejected at runtime on recent macOS, so
+`dscl . -delete` is used instead; it removes only the account record and preserves
+the already-settled home.
 
 ### Scope follows the argument — named agent vs. full clean slate
 
@@ -491,9 +494,10 @@ Reset's blast radius is decided by whether an agent is named, not by a flag:
   configured local agent and then also wipes the operator's **own** jentic CLI
   state, so "start over" genuinely returns the machine to zero. Every profile under
   `~/.jentic/profiles` (each profile's Ed25519 key, cached tokens, and registration
-  metadata) is removed, and `default_profile` in `config.yaml` is cleared. Each
-  profile's tokens are best-effort **revoked server-side first** (the same call
-  `jentic logout` makes) before the local files are deleted.
+  metadata) is removed, and `default_profile` in `config.yaml` is cleared. The wipe
+  is purely local — deleting the key and tokens already severs this machine's
+  access, so `reset` does **not** attempt to revoke tokens server-side (the cached
+  tokens are typically expired, so a revoke call would only add `http 401` noise).
 
 This is intuitive — resetting one agent cleans up that agent; resetting everything
 cleans up everything, including yourself — and needs no extra flag. Two properties
@@ -504,12 +508,16 @@ keep the config wipe safe:
   — it can never reach across into another user's config. This is why the
   responsibility lives here at all: the command already runs as exactly the user
   whose config is being cleared.
-- **Its own separate confirmation.** Wiping the operator's own identity is a
-  distinct destructive act from tearing down an agent, so it has its own gate: a
-  typed **`reset config`** acknowledgement (not the per-agent name), shown after its
-  own danger-zone plan listing exactly which profiles will be deleted. `--force`
-  skips it for scripted use; without a TTY and without `--force` it refuses. It is a
-  friendly no-op when there are no profiles and no default to clear.
+- **One whole-slate confirmation.** A full reset previews **everything up front** —
+  every agent's teardown plan *and* the operator's own config wipe (its danger-zone
+  plan lists exactly which profiles will be deleted) — then takes a **single** typed
+  **`reset`** acknowledgement to proceed. It deliberately does not ask the operator
+  to type each agent's name in turn and then a separate config confirmation: having
+  seen the complete blast radius once, one confirmation covers it. (The named
+  `jentic reset <agent>` flow is unchanged — it still confirms with the typed agent
+  name.) `--force` skips the prompt for scripted use; without a TTY and without
+  `--force` it refuses. A bare `jentic reset` with nothing to remove — no agents and
+  no config — is a friendly no-op.
 
 The config wipe runs **last**, after every agent is torn down, so a failure
 mid-agent never removes the config that records what still needs cleaning — and a
