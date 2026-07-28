@@ -93,6 +93,16 @@ bindings take effect live, and a plan grants no new token scope. Only refresh
 after an approved `scope:grant` **and** only if `whoami` flags the scope as not
 yet on your token (see the stale-scope note it prints).
 
+**File once, richly — never thrash.** Work out the full access end-state up
+front — from `whoami`, the catalog, and the task — instead of discovering
+gaps one denied call at a time. If the job needs several APIs, file the
+missing plans in one pass (one `--provision` per API, each complete: auth,
+rules, reason) rather than interleaving requests with failing executes. Never
+file duplicate or per-operation requests for the same API, and don't
+file-withdraw-refile to tweak a proposal — approval is a human trust action,
+so once a request is filed, tell your operator an approval is waiting and
+hand back (or `--wait`).
+
 If you'd rather be reactive, the broker also guides you: when `execute` is denied
 it prints a recovery line on stderr (the `agent_directive`) and **exits 2**, so
 you can branch on the exit code instead of mistaking the 4xx body for success.
@@ -161,6 +171,18 @@ approving. Do the work up front:
    `[{"effect":"allow","methods":["GET"],"path":".*"},
      {"effect":"allow","methods":["POST","PUT"],"path":"/boards/prod/.*"}]`.
    An `allow` rule must constrain at least one of `methods`/`path`/`operations`.
+   **Be honest at the enforcement seam.** The broker matches a rule against the
+   request's HTTP method, URL path, and OpenAPI operation id — **never the
+   request body**. An intent that hinges on a body field ("only allow messages
+   to the #general channel" when the channel is a POST-body field) **cannot be
+   enforced** by these rules. Don't propose a rule that silently won't fire —
+   say so, and offer the real choices: allow the operation broadly (the human
+   accepts the wider grant), deny the operation entirely, or allow it and
+   record the constraint as instructions you follow yourself (unenforced).
+   Also sanity-check your proposal before filing: rules evaluate
+   first-match-wins, so an early broad `allow` shadows every rule after it,
+   and a rule set that contradicts the intent you stated in `--reason` will
+   confuse the human reviewing it.
 4. You never enter the credential secret and you never approve — the human fills
    the secret in the dashboard and grants the plan. You propose; they decide.
 
@@ -284,15 +306,32 @@ jentic execute <operation_id> --query limit=10
 jentic execute GET:https://sheets.googleapis.com/v4/spreadsheets/{id}/values/{range} --path id=ABC --path range=A1:Z10
 ```
 
-**Local installs target a local broker.** The built-in default broker host is
-`broker.jentic.ai`, which is unreachable on a local deployment — a DNS error
-like `lookup broker.jentic.ai: no such host` means the broker target is wrong,
-**not** an access problem. Point `execute` at the local broker via
-`~/.jentic/config.yaml` (`broker.scheme` / `broker.host`) or per-call flags:
+**An `execute` failure splits three ways — check before you diagnose.** Only
+a broker **denial** (exit **2**, with an `agent_directive`) is an access
+problem. Exit **1** means the request never reached a broker at all, and that
+transport failure has two distinct causes with different recoveries:
+
+- **Wrong target (DNS error).** The built-in default broker host is
+  `broker.jentic.ai`, which is unreachable on a local deployment — a DNS
+  error like `lookup broker.jentic.ai: no such host` means the broker target
+  is wrong, **not** an access problem. Point `execute` at the local broker
+  via `~/.jentic/config.yaml` (`broker.scheme` / `broker.host`) or per-call
+  flags:
 
 ```
 jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
+
+- **Stopped instance (connection refused on a local target).** If the target
+  is already local (`127.0.0.1` / `localhost`) and the connection is
+  *refused*, the target is right and the instance is probably **not
+  running** (rebooted machine, Docker not started). Health-check before
+  concluding anything: `jenticctl status` reports whether the control-plane
+  server and broker are reachable. If they're down, do not retry, guess, or
+  quietly give up — tell the user plainly, e.g. *"Your Jentic One instance
+  appears to be stopped, which is why I can't reach {API}. Restart it with
+  `jenticctl start` (then `jenticctl status` to confirm), and I'll retry."*
+  After the restart, retry the original call and continue the task.
 
 ## Quick Reference
 
@@ -321,6 +360,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   forward proxy, not a path router).
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
+- `jenticctl status` / `jenticctl start` — health-check and restart the local
+  deployment (use when a **local** broker/control target refuses connections
+  before diagnosing anything else).
 - Add `--json` to force machine-readable output on a terminal.
 
 ## Pitfalls
@@ -335,11 +377,26 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `catalog:import` by default. (Importing arbitrary URL/inline specs via `POST
   /apis` is the only import path that needs `apis:write`.) Don't invent other
   "catalog read" scopes; they're rejected.
-- An `execute` failure is not always an access problem. A DNS/transport error
-  (`lookup broker.jentic.ai: no such host`, connection refused — exit **1**)
-  means the **broker target** is wrong; on a local install point at the local
-  broker. Only a broker **denial** (exit **2**, with an `agent_directive` on
-  stderr) is an access/credential issue:
+- **Verify which backend you're talking to before diagnosing "missing" APIs
+  or credentials.** If your session also has Jentic **MCP tools**
+  (`search_apis`, `list_credentials`, `execute`, …), they may be bound to a
+  **different backend** than this CLI — typically the hosted cloud workspace
+  vs the local install — and nothing in their responses says which one
+  replied. The symptom is *silent wrong answers*, not errors: an API the user
+  just imported "doesn't exist", credentials "disappeared", or operation ids
+  from one surface don't resolve on the other. Before concluding anything is
+  missing or broken, check where each surface points — `jentic profile list`
+  shows this CLI's `base_url` — and prefer this CLI for everything in one
+  deployment rather than mixing surfaces mid-task.
+- An `execute` failure is not always an access problem — exit **1** is a
+  transport failure, and its cause decides the recovery (see step 5): a DNS
+  error (`lookup broker.jentic.ai: no such host`) means the **broker target**
+  is wrong (point a local install at the local broker); connection refused on
+  a **local** target usually means the instance is **stopped** — run
+  `jenticctl status` to check, and if it's down tell the user to
+  `jenticctl start`, then retry rather than abandoning the task. Only a
+  broker **denial** (exit **2**, with an `agent_directive` on stderr) is an
+  access/credential issue:
   - **403 `no_toolkit_binding`** → check the directive's
     `parameters.toolkit_serves_api`. If `true`, a toolkit already serves the API
     and you just aren't bound — run the `jentic access request --toolkit …` it
