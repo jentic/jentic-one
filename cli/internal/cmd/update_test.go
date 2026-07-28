@@ -9,6 +9,36 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
+// TestUpdateNeeded covers the per-half gating: the stack half must be gated on
+// its own recorded ref, not the CLI binary's version (a brew-managed CLI is
+// refreshed out-of-band while the stack lags).
+func TestUpdateNeeded(t *testing.T) {
+	tests := []struct {
+		name                             string
+		doCLI, doStack                   bool
+		cliVersion, stackVersion, latest string
+		want                             bool
+	}{
+		{"lockstep source install up to date", true, true, "0.16.0", "v0.16.0", "v0.16.0", false},
+		{"lockstep source install behind", true, true, "0.15.0", "v0.15.0", "v0.16.0", true},
+		{"brew degrade: fresh CLI, stale stack", false, true, "0.16.0", "v0.15.0", "v0.16.0", true},
+		{"brew degrade: fresh CLI, fresh stack", false, true, "0.16.0", "v0.16.0", "v0.16.0", false},
+		{"brew degrade: no stack manifest falls back to cli version", false, true, "0.16.0", "0.16.0", "v0.16.0", false},
+		{"cli-only behind", true, false, "0.15.0", "v0.16.0", "v0.16.0", true},
+		{"cli-only current, stack stale but not requested", true, false, "0.16.0", "v0.15.0", "v0.16.0", false},
+		{"unparseable stack ref (branch install) always offers rebuild", false, true, "0.16.0", "main", "v0.16.0", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := updateNeeded(tt.doCLI, tt.doStack, tt.cliVersion, tt.stackVersion, tt.latest)
+			if got != tt.want {
+				t.Errorf("updateNeeded(%v, %v, %q, %q, %q) = %v, want %v",
+					tt.doCLI, tt.doStack, tt.cliVersion, tt.stackVersion, tt.latest, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestResolveCtlTargetResolvesManifestSymlink covers the manifest branch: a
 // recorded BinaryPath that is a PATH symlink (what `jenticctl install` records
 // under a linked install) must resolve to the real file so the update swaps

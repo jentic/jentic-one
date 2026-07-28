@@ -9,70 +9,80 @@ import (
 
 func TestBrewManaged(t *testing.T) {
 	tests := []struct {
-		name     string
-		resolved string
-		brewBin  string
-		want     bool
+		name          string
+		resolved      string
+		prefix        string
+		caskInstalled bool
+		want          bool
 	}{
 		{
 			name:     "cask install resolved into Caskroom",
 			resolved: "/opt/homebrew/Caskroom/jentic/0.16.0/jenticctl",
-			brewBin:  "/opt/homebrew/bin",
+			prefix:   "/opt/homebrew",
 			want:     true,
 		},
 		{
 			name:     "formula install resolved into Cellar",
 			resolved: "/usr/local/Cellar/jentic/0.16.0/bin/jenticctl",
-			brewBin:  "/usr/local/bin",
+			prefix:   "/usr/local",
 			want:     true,
 		},
 		{
 			name:     "Caskroom detected even without brew on PATH",
 			resolved: "/opt/homebrew/Caskroom/jentic/0.16.0/jenticctl",
-			brewBin:  "",
+			prefix:   "",
 			want:     true,
 		},
 		{
-			name:     "regular file directly in brew bin",
-			resolved: "/opt/homebrew/bin/jenticctl",
-			brewBin:  "/opt/homebrew/bin",
-			want:     true,
+			name:          "regular file in brew bin with the cask installed (overwritten link)",
+			resolved:      "/opt/homebrew/bin/jenticctl",
+			prefix:        "/opt/homebrew",
+			caskInstalled: true,
+			want:          true,
+		},
+		{
+			name:     "regular file in brew bin without the cask (deliberate /usr/local/bin source install)",
+			resolved: "/usr/local/bin/jenticctl",
+			prefix:   "/usr/local",
+			want:     false,
 		},
 		{
 			name:     "source install under ~/.jentic/bin",
 			resolved: "/home/u/.jentic/bin/jenticctl",
-			brewBin:  "/home/linuxbrew/.linuxbrew/bin",
+			prefix:   "/home/linuxbrew/.linuxbrew",
 			want:     false,
 		},
 		{
-			name:     "source install resolved out of the brew prefix",
-			resolved: "/Users/u/.jentic/bin/jenticctl",
-			brewBin:  "/usr/local/bin",
-			want:     false,
+			name:          "source install resolved out of the brew prefix",
+			resolved:      "/Users/u/.jentic/bin/jenticctl",
+			prefix:        "/usr/local",
+			caskInstalled: true,
+			want:          false,
 		},
 		{
 			name:     "no brew installed, generic path",
 			resolved: "/usr/local/bin/jenticctl",
-			brewBin:  "",
+			prefix:   "",
 			want:     false,
 		},
 		{
-			name:     "nested under brew bin but not directly in it",
-			resolved: "/opt/homebrew/bin/sub/jenticctl",
-			brewBin:  "/opt/homebrew/bin",
-			want:     false,
+			name:          "nested under brew bin but not directly in it",
+			resolved:      "/opt/homebrew/bin/sub/jenticctl",
+			prefix:        "/opt/homebrew",
+			caskInstalled: true,
+			want:          false,
 		},
 		{
 			name:     "Cellar as a filename component, not a segment",
 			resolved: "/data/myCellar/bin/jenticctl",
-			brewBin:  "",
+			prefix:   "",
 			want:     false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := brewManaged(tt.resolved, tt.brewBin); got != tt.want {
-				t.Errorf("brewManaged(%q, %q) = %v, want %v", tt.resolved, tt.brewBin, got, tt.want)
+			if got := brewManaged(tt.resolved, tt.prefix, tt.caskInstalled); got != tt.want {
+				t.Errorf("brewManaged(%q, %q, %v) = %v, want %v", tt.resolved, tt.prefix, tt.caskInstalled, got, tt.want)
 			}
 		})
 	}

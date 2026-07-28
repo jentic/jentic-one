@@ -274,6 +274,12 @@ func (a *App) recordManifest(draft *install.Draft) {
 	}
 	if m.BinaryPath == "" {
 		if exe, err := os.Executable(); err == nil {
+			// Record the real file, not a PATH symlink to it (e.g. Homebrew's
+			// bin link), so later consumers of BinaryPath see the actual
+			// install location.
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = resolved
+			}
 			m.BinaryPath = exe
 		}
 	}

@@ -37,7 +37,10 @@ func newUpdateCmd(app *App) *cobra.Command {
 			"installed version against the latest release tag on GitHub, and (unless\n" +
 			"--check) rebuilds and replaces the jenticctl and jentic binaries in place,\n" +
 			"then rebuilds the installed stack. Use --cli-only or --stack-only to update\n" +
-			"just one half.",
+			"just one half.\n\n" +
+			"A Homebrew-installed CLI is never swapped in place: update it with\n" +
+			"`brew upgrade jentic` (a combined update then refreshes only the stack,\n" +
+			"and --cli-only fails).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.updateE(cmd.Context(), opts)
@@ -117,17 +120,28 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 			return fmt.Errorf("this CLI is managed by Homebrew; update it with `%s`", update.BrewUpgradeCommand)
 		}
 		doCLI = false
-		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Warnf("CLI is managed by Homebrew — skipping the CLI update; run `%s` instead.", update.BrewUpgradeCommand))
 	}
 
-	// When the latest release is not newer than what's installed there's nothing
-	// to rebuild. A --ref override always proceeds (the user asked for a specific
-	// build); re-run with --ref to force a rebuild at a pinned version.
-	if !pinned && latestKnown && !update.NewerAvailable(cliVersion, latest) {
+	// When the latest release is not newer than what's installed there's
+	// nothing to rebuild. Each requested half is gated on its own recorded
+	// version (see updateNeeded): they normally move in lockstep, but a
+	// brew-managed CLI is refreshed out-of-band by `brew upgrade` while the
+	// stack may lag behind, so the stack half must not key off the CLI binary.
+	// A --ref override always proceeds (the user asked for a specific build);
+	// re-run with --ref to force a rebuild at a pinned version.
+	stackVersion := firstNonEmpty(manifest.Ref, cliVersion)
+	if !pinned && latestKnown && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
 		return nil
+	}
+
+	// Announce the brew degrade only when something will actually run; a
+	// brew-managed install that is already up to date returns above without a
+	// spurious "skipping" warning.
+	if brewManaged && !opts.stackOnly {
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Warnf("CLI is managed by Homebrew — skipping the CLI update; run `%s` instead.", update.BrewUpgradeCommand))
 	}
 
 	if !opts.yes {
@@ -152,6 +166,16 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	return nil
+}
+
+// updateNeeded reports whether any requested update half is behind latest.
+// Each half is compared against its own recorded version: cliVersion is what
+// the installed binary reports, stackVersion is the ref the stack was last
+// built from (the two normally match, but a Homebrew-managed CLI is updated
+// out-of-band while the stack in ~/.jentic may lag behind).
+func updateNeeded(doCLI, doStack bool, cliVersion, stackVersion, latest string) bool {
+	return (doCLI && update.NewerAvailable(cliVersion, latest)) ||
+		(doStack && update.NewerAvailable(stackVersion, latest))
 }
 
 // resolveCtlTarget locates the installed jenticctl binary that an update would
