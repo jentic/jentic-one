@@ -16,12 +16,25 @@ import { encodeApiId } from '@/modules/workspace/api';
 import type { WorkspaceApi } from '@/modules/workspace/api';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 
+/**
+ * The card's heading. `apiRefDisplayName` can return `''` when a workspace API
+ * has no display name and only generic/empty identity fields (e.g. `vendor:''`,
+ * `name:'main'`) — which would render a blank `<h3>` and an empty aria-label /
+ * VendorIcon name. Chain a guaranteed non-empty fallback off the API's own
+ * identity so the card is always titled.
+ */
 function titleFor(api: WorkspaceApi): string {
-	return apiRefDisplayName({
-		displayName: api.displayName,
-		vendor: api.api.vendor,
-		name: api.api.name,
-	});
+	return (
+		apiRefDisplayName({
+			displayName: api.displayName,
+			vendor: api.api.vendor,
+			name: api.api.name,
+		}) ||
+		api.api.vendor ||
+		api.api.name ||
+		encodeApiId(api.api) ||
+		'Untitled API'
+	);
 }
 
 export function ApiCard({ api }: { api: WorkspaceApi }) {

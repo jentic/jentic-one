@@ -38,12 +38,16 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 	const managed = isManagedProvider(cred.provider);
 	const connected = isOAuth && !!cred.provider_account_ref;
 	const vendor = cred.api.vendor ?? cred.name;
-	// Heading = the friendly API name (so the card leads with a human-readable
-	// title even when the user never set a custom `cred.name`). The raw
-	// `vendor/name@version` tuple stays beneath as the copyable mono subtitle.
-	// Fall back to the user's `cred.name` when we can't derive a friendly name.
-	const apiTitle =
-		apiRefDisplayName({ vendor: cred.api.vendor, name: cred.api.name }) || cred.name;
+	// Heading = the user's own `cred.name` when they've set one, so renaming a
+	// credential updates the card's title (matching the edit sheet's intent).
+	// Fall back to the friendly API name (`Article Search`, `Posthog.Com`) —
+	// then the raw tuple — so the card never leads with a blank line. We never
+	// render the derived API name as a *separate* line: the card shows just the
+	// name (user's or derived) plus the copyable mono tuple beneath.
+	const title =
+		cred.name ||
+		apiRefDisplayName({ vendor: cred.api.vendor, name: cred.api.name }) ||
+		formatApiReference(cred.api);
 
 	const subtitle =
 		cred.type === CredentialType.API_KEY && details.field_name
@@ -83,7 +87,7 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2">
 						<h3 className="font-heading text-foreground min-w-0 flex-1 truncate text-sm font-semibold">
-							{apiTitle}
+							{title}
 						</h3>
 						{connected && (
 							<Badge variant="success" className="shrink-0">
@@ -95,9 +99,6 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
 						{formatApiReference(cred.api)}
 					</p>
-					{cred.name && cred.name !== apiTitle && (
-						<p className="text-foreground/70 mt-0.5 truncate text-xs">{cred.name}</p>
-					)}
 				</div>
 			</div>
 

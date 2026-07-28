@@ -71,18 +71,29 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	// Row label: the friendly title, via the same shared helper the workspace
 	// rows use — so the same API can't read `github.com` in the catalog
 	// section and `Github.Com` in the "in your workspace" section of this one
-	// picker. We feed the helper the identity straight off the `api_id` slug
-	// (`domain[/sub-api]`), which is the richest field the catalog carries:
-	// the sub-API segment promotes to `Article Search`, and a bare domain
-	// falls through to the TLD-aware vendor humanise (`github.com` →
-	// `Github.Com`). The create-credential dialog's Name field pre-fills from
-	// this label.
+	// picker. The label is derived from the SAME `vendor`/`name` the row
+	// stores as its identity, so the displayed title and the vendor/name tuple
+	// (and thus the credential's default saved name) can never drift.
+	//
+	// `vendor`/`name` resolve from the server-supplied `entry.vendor` first (the
+	// canonical, dedup-stable field), then off the `api_id` slug
+	// (`domain[/sub-api]`) and the `path` segments as fallbacks. A bare vendor
+	// like `github` renders through the shared humanise helper (`github` →
+	// `Github`); a sub-API segment promotes to `Article Search`. The
+	// create-credential dialog's Name field pre-fills from this label.
+	// `vendor` prefers the server-supplied `entry.vendor` (canonical, and what
+	// the workspace rows dedup against — an entry `{api_id:'github.com',
+	// vendor:'github'}` must resolve to `github`, not `github.com`, so it dedups
+	// against a workspace `github/main` row and doesn't drift the persisted
+	// vendor). It falls back to the `api_id` slug parts, then the `path`
+	// segments, and finally the raw slug. `name` promotes a sub-API segment when
+	// present, else `main`.
 	const slug = entry.api_id;
-	const parts = (entry.path ?? slug).split('/').filter(Boolean);
-	const vendor = entry.vendor ?? parts[0] ?? slug;
-	const name = parts[1] ?? 'main';
-	const version = parts[2] ?? '1.0.0';
 	const slugParts = slug.split('/').filter(Boolean);
+	const pathParts = (entry.path ?? slug).split('/').filter(Boolean);
+	const vendor = entry.vendor ?? slugParts[0] ?? pathParts[0] ?? slug;
+	const name = slugParts[1] ?? pathParts[1] ?? 'main';
+	const version = pathParts[2] ?? '1.0.0';
 	return {
 		source: 'catalog',
 		vendor,
@@ -91,7 +102,7 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 		apiId: slug,
 		specUrl: entry.spec_url ?? undefined,
 		registered: entry.registered,
-		label: apiRefDisplayName({ vendor: slugParts[0] ?? slug, name: slugParts[1] ?? 'main' }),
+		label: apiRefDisplayName({ vendor, name }),
 	};
 }
 

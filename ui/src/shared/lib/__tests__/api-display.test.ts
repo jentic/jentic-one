@@ -1,54 +1,95 @@
 import { describe, expect, it } from 'vitest';
 import {
 	apiRefDisplayName,
-	humanizeSegment,
-	humanizeVendor,
+	humanizeDomainSlug,
+	humanizeName,
 	titleFromApiId,
 	toolkitCredDisplayName,
 } from '../api-display';
 
 /**
- * These tests pin the single humanising rule (`humanizeSegment`) applied
- * everywhere an API's machine identity needs to render as a friendly primary
- * line. Discover consumed the same rule before it moved here; its own adapter
- * tests still exist as a guardrail that this extraction didn't shift Discover
- * behaviour.
+ * These tests pin the two humanising rules (`humanizeDomainSlug` for a
+ * `<vendor>` identity, `humanizeName` for a conservative product / sub-API
+ * name) applied everywhere an API's machine identity needs to render as a
+ * friendly primary line. Discover consumed the same rule before it moved here;
+ * its own adapter tests still exist as a guardrail that this extraction didn't
+ * shift Discover behaviour.
  *
  * See `docs/plans/issue-631-friendly-api-names.md` for the worked examples
  * across the four consuming surfaces.
  */
 
-describe('humanizeSegment', () => {
+describe('humanizeDomainSlug', () => {
 	it('title-cases underscore/hyphen/dot separated tokens', () => {
-		expect(humanizeSegment('article_search')).toBe('Article Search');
-		expect(humanizeSegment('top-stories')).toBe('Top Stories');
-		expect(humanizeSegment('v2')).toBe('V2');
+		expect(humanizeDomainSlug('article_search')).toBe('Article Search');
+		expect(humanizeDomainSlug('top-stories')).toBe('Top Stories');
+		expect(humanizeDomainSlug('v2')).toBe('V2');
 	});
 
-	it('preserves a common TLD suffix as a dot join', () => {
-		expect(humanizeSegment('posthog-com')).toBe('Posthog.Com');
-		expect(humanizeSegment('foo-bar-com')).toBe('Foo Bar.Com');
-		expect(humanizeSegment('nytimes-com')).toBe('Nytimes.Com');
+	it('preserves a real dotted TLD suffix as a dot join', () => {
+		// A raw dotted domain keeps its dot: `posthog.com` reads `Posthog.Com`.
+		expect(humanizeDomainSlug('posthog.com')).toBe('Posthog.Com');
+		expect(humanizeDomainSlug('foo.bar.com')).toBe('Foo Bar.Com');
+		expect(humanizeDomainSlug('nytimes.com')).toBe('Nytimes.Com');
 	});
 
-	it('rejoins each allowlist suffix with a dot', () => {
+	it('dot-joins a 2-token hyphenated domain slug (real vendor data is hyphenated) (#631/#11)', () => {
+		// Real vendor slugs in this app are hyphenated (`posthog-com`), not
+		// dotted. A 2-token `<vendor>-<tld>` slug is a domain, so it dot-joins by
+		// default — restoring the original #631 requirement.
+		expect(humanizeDomainSlug('posthog-com')).toBe('Posthog.Com');
+		expect(humanizeDomainSlug('github-com')).toBe('Github.Com');
+		expect(humanizeDomainSlug('nytimes-com')).toBe('Nytimes.Com');
+	});
+
+	it('does NOT dot-join a 3+-token hyphenated product slug whose last token looks like a TLD (#11)', () => {
+		// 3+ tokens is a product name, not a domain, so it stays space-joined —
+		// killing the `stable-diffusion-ai` → `Stable Diffusion.Ai` false positive.
+		expect(humanizeDomainSlug('stable-diffusion-ai')).toBe('Stable Diffusion Ai');
+		expect(humanizeDomainSlug('foo-bar-io')).toBe('Foo Bar Io');
+	});
+
+	it('rejoins each allowlist suffix with a dot for a 2-token slug and for dotted input', () => {
 		for (const suffix of ['com', 'org', 'net', 'io', 'dev', 'ai', 'app', 'co', 'xyz']) {
-			expect(humanizeSegment(`acme-${suffix}`)).toBe(`Acme.${capitalize(suffix)}`);
+			expect(humanizeDomainSlug(`acme.${suffix}`)).toBe(`Acme.${capitalize(suffix)}`);
+			// A 2-token hyphenated slug dot-joins by default (domain-slug shape).
+			expect(humanizeDomainSlug(`acme-${suffix}`)).toBe(`Acme.${capitalize(suffix)}`);
 		}
 	});
 
 	it('leaves a non-allowlist trailing token space-joined', () => {
-		// "biz" is not on the allowlist, so it stays space-joined.
-		expect(humanizeSegment('acme-biz')).toBe('Acme Biz');
+		// "biz" is not on the allowlist, so it stays space-joined even when dotted.
+		expect(humanizeDomainSlug('acme.biz')).toBe('Acme Biz');
 	});
 
 	it('returns single-token input title-cased with no separators', () => {
-		expect(humanizeSegment('github')).toBe('Github');
+		expect(humanizeDomainSlug('github')).toBe('Github');
 	});
 
 	it('handles empty/all-separator input without crashing', () => {
-		expect(humanizeSegment('')).toBe('');
-		expect(humanizeSegment('---')).toBe('');
+		expect(humanizeDomainSlug('')).toBe('');
+		expect(humanizeDomainSlug('---')).toBe('');
+	});
+});
+
+describe('humanizeName', () => {
+	it('stays conservative (dot only on a literal dot) — a hyphenated slug never dot-joins (#13)', () => {
+		// The sub-API path (`titleFromApiId`) uses this conservative rule, so a
+		// 2-token hyphenated endpoint name stays space-joined; only a genuinely
+		// dotted input keeps its dot.
+		expect(humanizeName('posthog-com')).toBe('Posthog Com');
+		expect(humanizeName('bar-io')).toBe('Bar Io');
+		expect(humanizeName('posthog.com')).toBe('Posthog.Com');
+	});
+
+	it('title-cases underscore/hyphen separated tokens', () => {
+		expect(humanizeName('article_search')).toBe('Article Search');
+		expect(humanizeName('stable-diffusion-ai')).toBe('Stable Diffusion Ai');
+	});
+
+	it('handles empty/all-separator input without crashing', () => {
+		expect(humanizeName('')).toBe('');
+		expect(humanizeName('---')).toBe('');
 	});
 });
 
@@ -59,7 +100,7 @@ describe('titleFromApiId', () => {
 	});
 
 	it('returns the api_id unchanged for a bare-domain input', () => {
-		// The bare-domain fallback fires BEFORE humanizeSegment runs, so the TLD
+		// The bare-domain fallback fires BEFORE the humaniser runs, so the TLD
 		// suffix rule cannot upgrade `stripe.com` to `Stripe.Com` — that would be
 		// a behaviour change vs. Discover today, which we explicitly do not want.
 		expect(titleFromApiId('stripe.com')).toBe('stripe.com');
@@ -70,12 +111,21 @@ describe('titleFromApiId', () => {
 	it('title-cases hyphen/underscore mixes in the sub-segment', () => {
 		expect(titleFromApiId('foo.com/bar-baz_qux')).toBe('Bar Baz Qux');
 	});
-});
 
-describe('humanizeVendor', () => {
-	it('is an alias of humanizeSegment', () => {
-		expect(humanizeVendor('posthog-com')).toBe('Posthog.Com');
-		expect(humanizeVendor('github')).toBe('Github');
+	it('does NOT dot-join a hyphenated sub-API segment whose token looks like a TLD (#11)', () => {
+		// Sub-API segments are endpoint/product names, not domain slugs, so
+		// `titleFromApiId` runs `humanizeName` (the conservative rule): a
+		// trailing allowlist TLD only rejoins with a dot when the raw segment
+		// carried a real dot. A hyphenated sub-segment (`bar-io`, even 2-token)
+		// stays space-joined.
+		expect(titleFromApiId('acme.com/bar-io')).toBe('Bar Io');
+		expect(titleFromApiId('acme.com/foo-com')).toBe('Foo Com');
+		expect(titleFromApiId('acme.com/foo-bar-io')).toBe('Foo Bar Io');
+	});
+
+	it('leaves a non-allowlist trailing token in the sub-segment space-joined', () => {
+		// `biz` is not on the TLD allowlist, so no dot-rejoin — stays a space.
+		expect(titleFromApiId('acme.com/foo-biz')).toBe('Foo Biz');
 	});
 });
 
@@ -140,6 +190,25 @@ describe('apiRefDisplayName', () => {
 		).toBe('GitHub REST API');
 	});
 
+	it('returns a padded displayName trimmed, not verbatim (#4)', () => {
+		// The gate trims, so the *return* must be trimmed too — otherwise padded
+		// labels leak into headings and the seeded credential name.
+		expect(
+			apiRefDisplayName({ displayName: '  GitHub REST API  ', vendor: 'github.com' }),
+		).toBe('GitHub REST API');
+	});
+
+	it('treats a whitespace-only displayName as absent and falls through', () => {
+		// A whitespace-only string is truthy, so a naive `if (displayName)`
+		// guard would render a blank primary line. The trim-guard skips it and
+		// falls through to the vendor humanisation instead. Real vendor slugs
+		// are hyphenated, so the 2-token domain-slug rule dot-joins them.
+		expect(apiRefDisplayName({ displayName: '   ', vendor: 'github-com' })).toBe('Github.Com');
+		expect(apiRefDisplayName({ displayName: '\t\n ', vendor: 'nytimes-com' })).toBe(
+			'Nytimes.Com',
+		);
+	});
+
 	it('strips a repeated vendor prefix from name so it matches Discover output', () => {
 		// The whole point of the strip: workspace tiles for umbrella sub-APIs
 		// now agree with Discover's `titleFromApiId` on the same API.
@@ -150,6 +219,25 @@ describe('apiRefDisplayName', () => {
 				name: 'nytimes-com-article-search',
 			}),
 		).toBe('Article Search');
+	});
+
+	it('strips a space/colon/pipe-separated vendor prefix so the vendor is not double-rendered (#7)', () => {
+		// The separator after the vendor prefix isn't always a hyphen/dot — a
+		// space (and colon / pipe) must also be treated as a separator, else the
+		// prefix escapes the strip and the vendor renders twice.
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'posthog',
+				name: 'posthog com posthog-api',
+			}),
+		).toBe('Com Posthog Api');
+		expect(
+			apiRefDisplayName({ displayName: null, vendor: 'stripe', name: 'stripe:payments-api' }),
+		).toBe('Payments Api');
+		expect(
+			apiRefDisplayName({ displayName: null, vendor: 'slack', name: 'slack|events-api' }),
+		).toBe('Events Api');
 	});
 
 	it('falls back to a humanised vendor when name is a generic placeholder', () => {

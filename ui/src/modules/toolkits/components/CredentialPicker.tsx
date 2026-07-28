@@ -147,27 +147,29 @@ function CredentialRow({
 	onSelect: (credentialId: string) => void;
 	disabled?: boolean;
 }) {
-	// The API's friendly name is the primary line so a user with three
-	// PostHog credentials sees the API up front. `apiRefDisplayName` strips a
-	// repeated vendor prefix off the sub-API `name`, so an NYT Article Search
-	// credential leads with `Article Search` rather than the vendor
-	// `Nytimes.Com`. Fall back through provider / credential_id when no API
-	// identity is present — never render blank.
+	// Title = the user's own credential name when they've set one, so a renamed
+	// credential leads with that name (matching the credentials page). Fall back
+	// to the friendly API name — `apiRefDisplayName` strips a repeated vendor
+	// prefix so an NYT Article Search credential reads `Article Search` rather
+	// than `Nytimes.Com` — then provider / credential_id so we never render
+	// blank. We never show the derived API name as a *separate* line: the row is
+	// just the name (user's or derived) plus the mono vendor/name tuple.
 	const title =
+		cred.name ||
 		apiRefDisplayName({ vendor: cred.vendor, name: cred.apiName }) ||
 		cred.provider ||
 		cred.credential_id;
-	// Muted technical subtitle: the raw vendor/name tuple. Empty (and hidden)
-	// when there's no API identity — we never fall back to `cred.name` here,
-	// because that's the third line's job and would otherwise duplicate it.
-	const subtitle =
+	// Muted technical subtitle: the raw vendor/name tuple when an API identity
+	// exists (using `||` so an empty-string vendor falls through to apiName
+	// rather than printing blank — #2), else a guaranteed technical identifier
+	// (`credential_id`) so two identically-named creds with no API identity stay
+	// disambiguable (#9). The title chain never promotes `credential_id`, so the
+	// subtitle is the row's last resort for telling rows apart.
+	const apiTuple =
 		cred.vendor && cred.apiName
 			? `${cred.vendor}/${cred.apiName}`
-			: (cred.vendor ?? cred.apiName ?? '');
-	// The user's own credential label, kept as a small third line so a user
-	// with several credentials for the same API can still disambiguate.
-	// Hidden when it would just repeat the title or the subtitle.
-	const showLabel = !!cred.name && cred.name !== title && cred.name !== subtitle;
+			: cred.vendor || cred.apiName || '';
+	const subtitle = apiTuple || cred.credential_id;
 	return (
 		<button
 			type="button"
@@ -185,9 +187,6 @@ function CredentialRow({
 					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
 						{subtitle}
 					</p>
-				)}
-				{showLabel && (
-					<p className="text-foreground/70 mt-0.5 truncate text-xs">{cred.name}</p>
 				)}
 			</div>
 			<Badge variant="default" className="shrink-0 text-[10px]">

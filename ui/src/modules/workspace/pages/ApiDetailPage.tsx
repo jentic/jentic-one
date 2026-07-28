@@ -32,6 +32,7 @@ import { RevisionsSection } from '@/modules/workspace/components/RevisionsSectio
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
 import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@/modules/workspace/api';
 import type { ApiKey } from '@/modules/workspace/api';
+import { apiRefDisplayName } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
 
 /** Build the identity triple from route params, decoding each segment. */
@@ -72,7 +73,21 @@ export default function ApiDetailPage() {
 	}
 
 	const api = query.data;
-	const title = api?.displayName ?? `${apiKey.vendor}/${apiKey.name}`;
+	// Route the title through the shared friendly-name rule so a draft-only API
+	// (no user-set display_name) reads as its humanised sub-API/vendor name
+	// instead of the raw `vendor/name` tuple, matching the workspace tile (#6).
+	// `apiRefDisplayName` can return '' for generic/empty identity fields, so
+	// chain the same guaranteed non-empty fallback `ApiCard.titleFor` uses. The
+	// early return above guarantees `apiKey.vendor` is a non-empty string (a
+	// blank vendor makes `keyFromParams` return null), so it's the final
+	// fallback — the title also feeds the VendorIcon name + the Remove/aria
+	// labels, so it must never be blank.
+	const title =
+		apiRefDisplayName({
+			displayName: api?.displayName,
+			vendor: apiKey.vendor,
+			name: apiKey.name,
+		}) || apiKey.vendor;
 
 	return (
 		<PageShell>

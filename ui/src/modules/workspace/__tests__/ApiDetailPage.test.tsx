@@ -160,6 +160,23 @@ describe('ApiDetailPage', () => {
 		expect(screen.getByText('/v1/resource/0')).toBeInTheDocument();
 	});
 
+	it('titles a draft-only sub-API through the shared friendly-name rule, matching the tile (#6)', async () => {
+		// The Adyen sub-API has no user-set display_name, so the header must
+		// route the raw `vendor`/`name` through `apiRefDisplayName` — the same
+		// rule the workspace tile uses — instead of rendering the raw
+		// `vendor/name` tuple. `pos-terminal-management-api` → `Pos Terminal
+		// Management Api` (the vendor prefix doesn't match, so nothing is stripped).
+		renderAt('/workspace/adyen/pos-terminal-management-api/1');
+
+		expect(
+			await screen.findByRole('heading', { name: 'Pos Terminal Management Api' }),
+		).toBeInTheDocument();
+		// The raw tuple must not leak into the heading.
+		expect(
+			screen.queryByRole('heading', { name: 'adyen/pos-terminal-management-api' }),
+		).not.toBeInTheDocument();
+	});
+
 	it('removes the API through the cascade dialog (generic-warning mode)', async () => {
 		// Per-test DELETE handler so we record the call without mutating the
 		// shared APIS fixture (other tests rely on its presence).

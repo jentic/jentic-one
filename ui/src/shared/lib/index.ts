@@ -76,8 +76,8 @@ export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 // (`titleFromApiId`); moved here so Discover, the credential picker, and the
 // toolkit surfaces all share the same rule.
 export {
-	humanizeSegment,
-	humanizeVendor,
+	humanizeDomainSlug,
+	humanizeName,
 	titleFromApiId,
 	toolkitCredDisplayName,
 	apiRefDisplayName,

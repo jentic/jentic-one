@@ -3,8 +3,8 @@
  * a machine identity (`api_id`, `api_vendor`, `api_name`) needs to render as a
  * primary line for a human.
  *
- * The rule (`humanizeSegment`) is originally from the Discover module's
- * catalog adapter; it lives here so every surface — Discover, the
+ * The rule (`humanizeDomainSlug` / `humanizeName`) is originally from the
+ * Discover module's catalog adapter; it lives here so every surface — Discover,
  * credential picker's catalog rows, the toolkit "Bound Credentials" row, the
  * toolkit "Bind API" picker — reads the same "friendly name" from whichever
  * identity field its DTO happens to carry.
@@ -14,30 +14,72 @@
  */
 
 /**
- * Domain suffixes we preserve with a `.` join instead of expanding to a space.
- * Keeps `posthog-com` rendering as `Posthog.Com` rather than `Posthog Com`.
- * Kept intentionally short — grow the allowlist as we spot new cases in the
- * wild.
+ * Domain suffixes we preserve with a `.` join instead of expanding to a space,
+ * so a real dotted domain like `posthog.com` renders as `Posthog.Com` rather
+ * than `Posthog Com`. Kept intentionally short — grow the allowlist as we spot
+ * new cases in the wild.
  */
 const TLD_SUFFIXES = new Set(['com', 'org', 'net', 'io', 'dev', 'ai', 'app', 'co', 'xyz']);
 
 /**
- * Title-case a slug-ish segment for display: `article_search` → `Article Search`,
- * `top-stories` → `Top Stories`, `v2` → `V2`. When the last token is a common
- * domain suffix (see `TLD_SUFFIXES`), rejoin it with a dot instead of a space:
- * `posthog-com` → `Posthog.Com`, `foo-bar-com` → `Foo Bar.Com`.
+ * Shared core of the two humanisers below. Title-case a slug-ish segment for
+ * display (`article_search` → `Article Search`), with the TLD dot-join rule
+ * (#631/#11) gated by `domainSlug`.
+ *
+ * TLD dot-join rule. We rejoin a trailing domain suffix (see `TLD_SUFFIXES`)
+ * with a dot instead of a space when it's a real domain slug rather than a
+ * product name. Because the real vendor data in this app is *hyphenated*
+ * (`posthog-com`, `github-com`), not dotted, a strict "only-if-a-literal-dot"
+ * gate would wrongly space-join the real vendor slugs. So the trailing suffix
+ * dot-joins when:
+ *   - the raw input already contained a literal `.` (a genuinely dotted domain,
+ *     e.g. `posthog.com`), OR
+ *   - `domainSlug` is on AND there are exactly 2 tokens — the shape of a real
+ *     `<vendor>-<tld>` domain slug (`posthog-com` → `Posthog.Com`).
+ *
+ * The "exactly 2 tokens" allowance means 3+-token hyphenated product names like
+ * `stable-diffusion-ai` always stay space-joined (`Stable Diffusion Ai`,
+ * killing the #11 false positive).
  */
-export function humanizeSegment(segment: string): string {
+function humanize(segment: string, domainSlug: boolean): string {
+	// A segment that already carried a real dot is a genuinely dotted domain.
+	const hadDot = segment.includes('.');
 	const parts = segment
-		.split(/[_\-.]+/)
+		.split(/[_\-.\s]+/)
 		.filter(Boolean)
 		.map((word) => word.charAt(0).toUpperCase() + word.slice(1));
 	if (parts.length < 2) return parts.join(' ');
 	const last = parts[parts.length - 1];
-	if (TLD_SUFFIXES.has(last.toLowerCase())) {
+	// Dot-join the trailing TLD for a genuinely-dotted input, or — on the domain
+	// slug path — for a 2-token `<vendor>-<tld>` slug. 3+ tokens are a product
+	// name, so they always space-join.
+	const dotJoin = hadDot || (domainSlug && parts.length === 2);
+	if (dotJoin && TLD_SUFFIXES.has(last.toLowerCase())) {
 		return parts.slice(0, -1).join(' ') + '.' + last;
 	}
 	return parts.join(' ');
+}
+
+/**
+ * Humanise a **domain slug** — a `<vendor>` / `<vendor>-<tld>` identity where a
+ * trailing allowlist TLD reads as a real domain. A 2-token hyphenated slug
+ * dot-joins (`posthog-com` → `Posthog.Com`, `github-com` → `Github.Com`);
+ * genuinely dotted input keeps its dot (`posthog.com` → `Posthog.Com`); 3+-token
+ * product names stay space-joined (`stable-diffusion-ai` → `Stable Diffusion
+ * Ai`). Use for the `vendor` field.
+ */
+export function humanizeDomainSlug(segment: string): string {
+	return humanize(segment, true);
+}
+
+/**
+ * Humanise a **product / sub-API name** conservatively — a trailing allowlist
+ * TLD only rejoins with a dot when the raw segment carried a *real* dot, so a
+ * hyphenated endpoint name like `bar-io` reads `Bar Io` (not `Bar.Io`) and
+ * `posthog-com` reads `Posthog Com`. Use for sub-API `name` segments.
+ */
+export function humanizeName(segment: string): string {
+	return humanize(segment, false);
 }
 
 /**
@@ -59,15 +101,11 @@ export function titleFromApiId(apiId: string): string {
 		return apiId;
 	}
 	const sub = apiId.slice(slash + 1);
-	return sub ? humanizeSegment(sub) : apiId;
+	// A sub-API segment is an endpoint/product name, not a domain slug, so it
+	// uses the conservative name humaniser: `bar-io` → `Bar Io`, not `Bar.Io`.
+	// Only a genuinely-dotted sub-segment keeps its dot.
+	return sub ? humanizeName(sub) : apiId;
 }
-
-/**
- * Friendly display for a bare `api_vendor` slug (no `/`), e.g. `posthog-com` →
- * `Posthog.Com`. Alias of `humanizeSegment` — a separate name so call sites
- * read honestly about what shape of input they're passing.
- */
-export const humanizeVendor = (vendor: string): string => humanizeSegment(vendor);
 
 /**
  * Names that carry no distinguishing information — a placeholder rather than a
@@ -92,9 +130,11 @@ function stripVendorPrefix(name: string, vendor: string): string {
 	const rest = name.slice(vendor.length);
 	// Require a separator after the prefix so `posthog` doesn't strip out of
 	// `posthograph`. An immediately-following alphanumeric means the vendor
-	// slug isn't actually a prefix, so leave the name alone.
-	if (rest.length === 0) return name;
-	if (/^[-_./]/.test(rest)) return rest.replace(/^[-_./]+/, '');
+	// slug isn't actually a prefix, so leave the name alone. Real payloads
+	// separate the prefix with a hyphen/dot/underscore/slash, but also
+	// sometimes a space / colon / pipe (`posthog com posthog-api`), so treat
+	// all of those as separators too (#7).
+	if (/^[-_.:/\s|]/.test(rest)) return rest.replace(/^[-_.:/\s|]+/, '');
 	return name;
 }
 
@@ -123,13 +163,13 @@ export function toolkitCredDisplayName(input: {
 	const tailAfterSlash = rawName.includes('/') ? (rawName.split('/').pop() ?? rawName) : rawName;
 	const stripped = vendor ? stripVendorPrefix(tailAfterSlash, vendor) : tailAfterSlash;
 	if (stripped && !GENERIC_NAMES.has(stripped.toLowerCase())) {
-		return humanizeSegment(stripped);
+		return humanizeName(stripped);
 	}
-	if (vendor) return humanizeVendor(vendor);
+	if (vendor) return humanizeDomainSlug(vendor);
 	// Only humanise a bare `api_name` when it isn't a generic placeholder,
 	// so a vendor-less `main` / `default` binding doesn't render as `Main`.
 	if (rawName && !GENERIC_NAMES.has(tailAfterSlash.toLowerCase()))
-		return humanizeSegment(tailAfterSlash);
+		return humanizeName(tailAfterSlash);
 	return '';
 }
 
@@ -141,7 +181,9 @@ export function toolkitCredDisplayName(input: {
  * isn't set — which for a freshly-imported API is the common case, and
  * reads as the raw `posthog-com/posthog-com-posthog-api` tuple. So we route
  * that fallback through the same rule the toolkit surface uses:
- *   1. Explicit `displayName` wins verbatim (user-set label).
+ *   1. Explicit `displayName` wins verbatim (user-set label) — but only when
+ *      it carries non-whitespace content; a whitespace-only string is treated
+ *      as absent so it can't render as a blank primary line.
  *   2. `name` humanised, minus a repeated vendor prefix — so
  *      `vendor='nytimes-com', name='nytimes-com-article-search'` reads as
  *      `Article Search`, matching Discover. Generic names (`main`,
@@ -154,16 +196,21 @@ export function apiRefDisplayName(input: {
 	vendor?: string | null;
 	name?: string | null;
 }): string {
-	if (input.displayName) return input.displayName;
+	// A user-set label wins verbatim, but only when it carries non-whitespace
+	// content. Return the *trimmed* value so padded labels can't leak into
+	// headings (or the seeded credential name) — a whitespace-only string is
+	// treated as absent and falls through.
+	const dn = input.displayName?.trim();
+	if (dn) return dn;
 	const vendor = input.vendor ?? '';
 	const name = input.name ?? '';
 	const stripped = vendor && name ? stripVendorPrefix(name, vendor) : name;
 	if (stripped && !GENERIC_NAMES.has(stripped.toLowerCase())) {
-		return humanizeSegment(stripped);
+		return humanizeName(stripped);
 	}
-	if (vendor) return humanizeVendor(vendor);
+	if (vendor) return humanizeDomainSlug(vendor);
 	// Only humanise a bare `name` when it carries real information — a generic
 	// placeholder (`main`, `default`) must not surface as `Main` / `Default`.
-	if (name && !GENERIC_NAMES.has(name.toLowerCase())) return humanizeSegment(name);
+	if (name && !GENERIC_NAMES.has(name.toLowerCase())) return humanizeName(name);
 	return '';
 }
