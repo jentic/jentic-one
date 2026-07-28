@@ -1,11 +1,15 @@
 # Release pipeline — runs on a vX.Y.Z tag (created by merging the release-please
-# Release PR). Two gated stages:
+# Release PR). Three gated stages:
 #
 #   1. gate   — build the app + run every migration on a FRESH ephemeral SQLite
 #               DB (no Postgres, no real secrets — the bundled local-dev key) and
 #               assert /health serves the tag version. Nothing publishes if this
 #               fails.
-#   2. release — GoReleaser builds the signed, checksummed jenticctl + jentic
+#   2. smoke  — the full Helm smoke matrix (combined / parts / broker / +obs) on
+#               a kind cluster, reusing smoke-helm.yml. The same matrix runs
+#               post-merge on main, but that run doesn't block anything — this
+#               one does: a release cannot ship while any deployment mode is red.
+#   3. release — GoReleaser builds the signed, checksummed jenticctl + jentic
 #               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
 #               Homebrew cask. This is the install (see docs/releasing.md).
 #
@@ -111,9 +115,15 @@ jobs:
             exit 1
           fi
 
+  smoke:
+    name: Helm smoke matrix
+    permissions:
+      contents: read
+    uses: ./.github/workflows/smoke-helm.yml
+
   release:
     name: GoReleaser (signed CLI binaries)
-    needs: gate
+    needs: [gate, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release

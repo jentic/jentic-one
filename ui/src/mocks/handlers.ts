@@ -4,7 +4,7 @@ import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
 import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
-import { credentialsHandlers, credentialsE2eHooks } from '@/modules/credentials/mocks/handlers';
+import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
 

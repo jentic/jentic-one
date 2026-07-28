@@ -19,7 +19,7 @@ import {
 	type BadgeVariant,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app';
+import { AccessRequestDecisionDialog } from '@/shared/app';
 import { useAccessRequestsQueue, dashboardKeys, type AccessRequest } from '@/modules/dashboard/api';
 import { ROUTES } from '@/shared/app/routes';
 import { timeAgo } from '@/shared/lib/utils';
@@ -198,9 +198,8 @@ export default function AccessRequestsPage() {
 				</div>
 			)}
 
-			<AccessRequestDialog
-				open={active !== null}
-				requestId={active?.id ?? null}
+			<AccessRequestDecisionDialog
+				request={active}
 				onClose={() => setActive(null)}
 				onDecided={onDecided}
 			/>

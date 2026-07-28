@@ -28,8 +28,9 @@ from jentic_one.broker.adapters.runners.base import (
 )
 from jentic_one.broker.core.exceptions import (
     ActionDeniedError,
-    AgentDirective,
     AmbiguousMatchError,
+    BrokerError,
+    CredentialIdentityMismatchError,
     IdempotencyConflictError,
     IdempotencyInProgressError,
     OperationNotFoundError,
@@ -38,6 +39,7 @@ from jentic_one.broker.core.exceptions import (
     UpstreamUrlNotAllowedError,
     action_denied_directive,
     ambiguous_toolkit_directive,
+    credential_identity_mismatch_directive,
     no_toolkit_binding_directive,
     switch_toolkit_directive,
 )
@@ -87,6 +89,7 @@ from jentic_one.shared.broker.protocols import (
     RegistryResolverProtocol,
     ResolveResult,
     RuleEvaluatorProtocol,
+    ToolkitDerivation,
     ToolkitDeriverProtocol,
 )
 from jentic_one.shared.config import UpstreamClientConfig
@@ -254,23 +257,38 @@ def _context_from_discovery(
     )
 
 
-async def _no_toolkit_binding_directive(
-    deriver: ToolkitDeriverProtocol, api: APIReference
-) -> AgentDirective:
-    """Build the ``no_toolkit_binding`` directive with the right recovery step.
+def _empty_derivation_denial(
+    d: ToolkitDerivation, api: APIReference, *, instance: str
+) -> BrokerError:
+    """Pick the right denial for an empty toolkit derivation (#683 + #747/#748).
 
-    The caller is bound to no toolkit serving ``api``. Whether the right recovery
-    is "provision a credential first" or "file a toolkit binding" depends on
-    whether a toolkit serves the API *at all* — a state the broker can read
-    (independent of the caller's bindings). Consulted only on this denial path,
-    never on the success path, so the extra read costs nothing in the common
-    case. See issue #683.
+    Two cases, distinguished by the structured derivation result — each with its
+    own ``detail`` so the problem+json ``type`` and ``detail`` never tell
+    different stories (e.g. a ``credential_identity_mismatch`` must not carry a
+    "not bound to toolkit" detail):
+
+    - Bound + a bound credential is a near-miss for the API → the credential's
+      identity does not cover the operation (#747/#748). Fix the *credential*,
+      never file an access request (that auto-denies).
+    - Otherwise → ``no_toolkit_binding``, whose recovery (file a bind request vs.
+      provision a credential first) is chosen by ``no_toolkit_binding_directive``
+      from whether any toolkit serves the API at all (#683).
     """
-    serves = await deriver.any_toolkit_serves_api(
-        vendor=api.vendor, name=api.name, version=api.version
-    )
-    return no_toolkit_binding_directive(
-        vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
+    serves = bool(d.api_served_toolkits)
+    if d.agent_bound_any and not serves and d.identity_mismatch is not None:
+        return CredentialIdentityMismatchError(
+            "A bound credential's identity does not cover this API",
+            type="credential_identity_mismatch",
+            instance=instance,
+            directive=credential_identity_mismatch_directive(mismatch=d.identity_mismatch),
+        )
+    return ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=instance,
+        directive=no_toolkit_binding_directive(
+            vendor=api.vendor, name=api.name, version=api.version, toolkit_serves_api=serves
+        ),
     )
 
 
@@ -284,9 +302,10 @@ async def select_toolkit(
 ) -> str:
     """Derive the toolkit for this execution from the caller's bindings (§03).
 
-    ``0 → 403`` (no binding), ``1 → use it``, ``N → 409`` (caller must disambiguate
-    with ``Jentic-Toolkit-Id``). A supplied header is validated against the derived
-    candidates; never silently honoured or silently picked.
+    ``0 → 403`` (no binding / credential identity mismatch), ``1 → use it``,
+    ``N → 409`` (caller must disambiguate with ``Jentic-Toolkit-Id``). A supplied
+    header is validated against the derived candidates; never silently honoured or
+    silently picked.
 
     Non-agent actors (service accounts, users) currently follow the **same**
     derivation rule — there is no implicit bypass. Broadening this for service
@@ -310,19 +329,29 @@ async def select_toolkit(
             )
         return identity.sub
 
-    candidates = await deriver.derive_toolkits(
+    # Invariant: the API identity here is the *discovered* spec identity, which is
+    # always concrete (vendor/name/version all set) — the registry never yields a
+    # wildcard. Derivation and the nearest-miss diagnostic (#748) rely on this
+    # (they slugify and compare each axis), so assert it at the boundary rather
+    # than silently deriving against a blank axis.
+    assert api.vendor and api.name and api.version, (
+        "select_toolkit requires a concrete discovered API identity"
+    )
+
+    derivation = await deriver.derive_toolkits(
         agent_id=identity.sub,
         vendor=api.vendor,
         name=api.name,
         version=api.version,
     )
+    candidates = list(derivation.toolkits)
 
     if header_toolkit:
         if header_toolkit not in candidates:
             # Recoverable: the agent named a toolkit it isn't bound to. Carry the
             # agent-recovery contract like every other broker denial — point it at
             # the toolkits it *is* bound to (switch_toolkit) or, if it has none,
-            # at the correct provisioning/binding step (prompt_human). A bare
+            # at the correct provisioning/binding/credential-fix step. A bare
             # Forbidden here would be a dead-end 403 with no directive (§03 invariant).
             if candidates:
                 raise ActionDeniedError(
@@ -331,21 +360,11 @@ async def select_toolkit(
                     instance=instance,
                     directive=ambiguous_toolkit_directive(candidates),
                 )
-            raise ActionDeniedError(
-                f"Not bound to toolkit '{header_toolkit}' for this API",
-                type="no_toolkit_binding",
-                instance=instance,
-                directive=await _no_toolkit_binding_directive(deriver, api),
-            )
+            raise _empty_derivation_denial(derivation, api, instance=instance)
         return header_toolkit
 
     if not candidates:
-        raise ActionDeniedError(
-            "No toolkit binding for this API",
-            type="no_toolkit_binding",
-            instance=instance,
-            directive=await _no_toolkit_binding_directive(deriver, api),
-        )
+        raise _empty_derivation_denial(derivation, api, instance=instance)
     if len(candidates) > 1:
         raise AmbiguousMatchError(
             "Multiple toolkits match this API; resend with the Jentic-Toolkit-Id header.",
@@ -523,23 +542,42 @@ async def _handle(
     )
 
     # Evaluate toolkit permission rules — default-deny when no rule matches.
-    # Unconditional: even if toolkit_id were empty the evaluator returns False
-    # (no rules → deny), preserving the secure-by-default posture.
-    allowed = await rule_evaluator.evaluate(
+    # Unconditional: even if toolkit_id were empty the evaluator returns a
+    # zero-rules-loaded denial, preserving the secure-by-default posture.
+    evaluation = await rule_evaluator.evaluate(
         toolkit_id=ctx_req.toolkit_id,
         method=method,
         path=urlparse(upstream_url).path,
         operation_id=resolved.operation_id,
         api_vendor=resolved.api.vendor,
     )
-    if not allowed:
+    if not evaluation.allowed:
+        # #578: distinguish the two deny paths in the caller-visible detail.
+        # ``rules_loaded == 0`` means the vendor-pooled rule set is empty —
+        # nothing to match (wrong vendor, empty binding, misconfigured store);
+        # otherwise we loaded rules but none matched the request shape. Both
+        # branches emit ``PBAC_DENIED`` telemetry with the corresponding
+        # summary so operators can grep for the branch.
+        no_rules = evaluation.rules_loaded == 0
+        summary = (
+            "Operation denied by toolkit permission rule (no rules loaded for this vendor)"
+            if no_rules
+            else "Operation denied by toolkit permission rule (no rule matched)"
+        )
+        detail = (
+            "The requested operation is denied — this toolkit has no permission rules "
+            "loaded for the target API's vendor. Attach rules to the vendor's binding "
+            "under PUT /toolkits/{toolkit_id}/credentials/{credential_id}/permissions."
+            if no_rules
+            else "The requested operation is denied by a toolkit permission rule."
+        )
         try:
             async with ctx.admin_db.transaction() as session:
                 await emit_event_best_effort(
                     session,
                     type=EventType.PBAC_DENIED,
                     severity=EventSeverity.WARNING,
-                    summary="Operation denied by toolkit permission rule",
+                    summary=summary,
                     created_by=identity.sub,
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
@@ -547,7 +585,7 @@ async def _handle(
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=EventType.PBAC_DENIED, exc_info=True)
         raise ActionDeniedError(
-            detail="The requested operation is denied by a toolkit permission rule.",
+            detail=detail,
             type="action_denied",
             instance=request.url.path,
             directive=action_denied_directive(),

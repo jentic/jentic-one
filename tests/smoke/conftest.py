@@ -229,6 +229,10 @@ def test_user(base_url: str, admin_token: str) -> Generator[SmokeUser]:
         "events:read",
         "credentials:read",
         "apis:read",
+        # URL/inline import via POST /apis requires apis:write (apis:read only
+        # covers listing/inspection) — the import_and_wait tests file imports
+        # as this user.
+        "apis:write",
         "executions:read",
     ]
     perm_body, perm_status = authed_request(
@@ -439,6 +443,30 @@ def agent_token_exchange(base_url: str, agent_id: str, private_key: Ed25519Priva
     return access_token
 
 
+def grant_agent_scope(base_url: str, agent_id: str, admin_token: str, scope: str) -> None:
+    """Grant an extra scope on top of the agent's current grants.
+
+    Scopes are minted into the access token at exchange time, so call this
+    *before* ``agent_token_exchange`` for the grant to take effect.
+    """
+    scopes_body, status = authed_request(
+        f"{base_url}/agents/{agent_id}/scopes",
+        token=admin_token,
+    )
+    assert status == 200, f"Reading agent scopes failed: {status} {scopes_body}"
+    assert isinstance(scopes_body, dict)
+    scopes = list(scopes_body["scopes"])
+    if scope not in scopes:
+        scopes.append(scope)
+    _, put_status = authed_request(
+        f"{base_url}/agents/{agent_id}/scopes",
+        method="PUT",
+        token=admin_token,
+        body={"scopes": scopes},
+    )
+    assert put_status == 200, f"Granting {scope} failed: {put_status}"
+
+
 @pytest.fixture()
 def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
     """Register, approve, and token-exchange an agent; archive on teardown."""
@@ -447,6 +475,10 @@ def test_agent(base_url: str, admin_token: str) -> Generator[SmokeAgent]:
 
     agent_id, rat = register_agent(base_url, client_name, jwks)
     approve_agent(base_url, agent_id, admin_token)
+    # URL/inline import (POST /apis) needs apis:write, which is deliberately
+    # not in DEFAULT_AGENT_SCOPES — an owner must approve the elevation. The
+    # smoke agent imports specs directly, so simulate that owner approval here.
+    grant_agent_scope(base_url, agent_id, admin_token, "apis:write")
     access_token = agent_token_exchange(base_url, agent_id, private_key)
 
     yield SmokeAgent(
@@ -522,6 +554,26 @@ def upstream_incluster_url() -> str:
     return os.environ.get("UPSTREAM_INCLUSTER_URL", "http://jentic-smoke-upstream:8084")
 
 
+@pytest.fixture(scope="session")
+def upstream_direct_url() -> str:
+    """The harness URL as the test runner sees it (kind host port)."""
+    return os.environ.get("UPSTREAM_DIRECT_URL", "http://localhost:8084")
+
+
+@pytest.fixture(scope="session")
+def _harness_deployed(upstream_direct_url: str) -> bool:
+    """Probe the harness once per session from the test-runner side.
+
+    Probes the live-spec path itself (the harness serves no /health): if the
+    spec isn't fetchable, ingest cannot succeed either.
+    """
+    try:
+        with urlopen(f"{upstream_direct_url}{SMOKE_UPSTREAM_SPEC_PATH}", timeout=3) as resp:
+            return bool(200 <= resp.status < 300)
+    except (URLError, OSError):
+        return False
+
+
 @pytest.fixture()
 def broker_upstream_timeout_s() -> float:
     """The broker's configured upstream timeout (BrokerResilienceConfig default 30s).
@@ -569,6 +621,7 @@ def harness_api(
     base_url: str,
     test_agent: SmokeAgent,
     upstream_incluster_url: str,
+    _harness_deployed: bool,
 ) -> HarnessApi:
     """Ingest the harness live spec as the agent; return its API identity.
 
@@ -576,7 +629,15 @@ def harness_api(
     uq_api_revisions_api_id_spec_digest collision). The same vendor is returned
     so credential provisioning can reuse it — broker credential resolution is
     keyed on (vendor, name, version).
+
+    Every harness-dependent smoke test funnels through this fixture, so the
+    deployment probe here gates them all: the smoke-upstream harness is not yet
+    built/deployed by the CI flow (tools.deploy ci-smoke), and without it every
+    ingest job dead-letters on DNS resolution after ~60s. Skipping keeps the
+    matrix honest until the harness ships as a deployable image.
     """
+    if not _harness_deployed:
+        pytest.skip("smoke-upstream harness not deployed (no live spec at UPSTREAM_DIRECT_URL)")
     vendor = unique_vendor("smoke-upstream")
     job = ingest_harness(base_url, test_agent.access_token, upstream_incluster_url, vendor=vendor)
 

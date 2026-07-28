@@ -272,7 +272,9 @@ def test_amend_returns_200(filer_client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     amended_item = next(i for i in body["items"] if i["id"] == item_id)
-    assert amended_item["rules"] == new_rules
+    assert amended_item["rules"] == [
+        {"effect": "allow", "methods": ["GET", "POST"], "match_mode": "regex"}
+    ]
 
 
 @pytest.fixture()

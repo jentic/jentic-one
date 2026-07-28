@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.20.0](https://github.com/jentic/jentic-one/compare/v0.19.0...v0.20.0) (2026-07-27)
+
+
+### Features
+
+* **ui:** live agent-registration surfaces, agent-named toolkits, generated reference docs ([#807](https://github.com/jentic/jentic-one/issues/807)) ([cb0a20a](https://github.com/jentic/jentic-one/commit/cb0a20ace99d8562b80b4b2a977af2f289a978a5))
+* **ui:** port the jentic-mini Monitor Overview onto GET /monitoring/usage ([#808](https://github.com/jentic/jentic-one/issues/808)) ([ba30d1f](https://github.com/jentic/jentic-one/commit/ba30d1fce715faa5a6334f8654a459e9c70eafc0)), closes [#386](https://github.com/jentic/jentic-one/issues/386)
+* **web:** serve the onboarding skill and llms.txt from the deployment ([#810](https://github.com/jentic/jentic-one/issues/810)) ([463d583](https://github.com/jentic/jentic-one/commit/463d58366a47da96ec0a0d4b06f1c4cc0585fdc1))
+
+
+### Bug Fixes
+
+* **deploy,app,tests:** make the Helm smoke matrix green and gate releases on it ([#793](https://github.com/jentic/jentic-one/issues/793)) ([72df0f3](https://github.com/jentic/jentic-one/commit/72df0f3f46c3aac4a0bbe6af1e1d607aaea780b3))
+* **smoke:** skip harness tests when smoke-upstream is not deployed ([77554a4](https://github.com/jentic/jentic-one/commit/77554a4a1129ce9557d3b747622c27eaae51bd33))
+* **ui:** upgrade react-router to v8 ([#811](https://github.com/jentic/jentic-one/issues/811)) ([af6fd24](https://github.com/jentic/jentic-one/commit/af6fd24bb560f0f521973dd0197d1bf38ace8210))
+* **web:** sync the served onboarding skill with the CLI embed ([#822](https://github.com/jentic/jentic-one/issues/822)) ([7fb89f6](https://github.com/jentic/jentic-one/commit/7fb89f629442ee386c25d8a932a25730f1c87c60))
+
+## [0.19.0](https://github.com/jentic/jentic-one/compare/v0.18.0...v0.19.0) (2026-07-24)
+
+
+### Features
+
+* **control:** generic access-filter seam for extension read scoping ([#769](https://github.com/jentic/jentic-one/issues/769)) ([8ca6267](https://github.com/jentic/jentic-one/commit/8ca62671b4788db039cebdd05a02723d13ba9676))
+
+## [0.18.0](https://github.com/jentic/jentic-one/compare/v0.17.0...v0.18.0) (2026-07-24)
+
+
+### Features
+
+* **access-requests:** provisioning-plan access request ([#757](https://github.com/jentic/jentic-one/issues/757)) ([138cb42](https://github.com/jentic/jentic-one/commit/138cb4262fc5f570930ae632c7213e86bd355298))
+
+
+### Bug Fixes
+
+* **credentials:** canonical identity matching across broker/control ([#775](https://github.com/jentic/jentic-one/issues/775), [#746](https://github.com/jentic/jentic-one/issues/746), [#747](https://github.com/jentic/jentic-one/issues/747), [#748](https://github.com/jentic/jentic-one/issues/748)) ([#784](https://github.com/jentic/jentic-one/issues/784)) ([71c5a04](https://github.com/jentic/jentic-one/commit/71c5a048e1b4cfb3e2a99487cb7895f0433c749c))
+* **permissions:** overhaul rule authoring, storage, and enforcement ([#655](https://github.com/jentic/jentic-one/issues/655), [#751](https://github.com/jentic/jentic-one/issues/751), [#750](https://github.com/jentic/jentic-one/issues/750), [#578](https://github.com/jentic/jentic-one/issues/578)) ([#786](https://github.com/jentic/jentic-one/issues/786)) ([2967dc2](https://github.com/jentic/jentic-one/commit/2967dc255f37074ce4a28e5d684d2e42dcc26ad8))
+
 ## [0.17.0](https://github.com/jentic/jentic-one/compare/v0.16.0...v0.17.0) (2026-07-24)
 
 

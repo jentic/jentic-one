@@ -359,7 +359,7 @@ func (a *App) catalogImport(ctx context.Context, ident *identityOptions, o *cata
 	if !o.json {
 		fmt.Fprintln(a.Out, theme.Infof("Importing %s …", apiID))
 	}
-	job, err := pollImportJob(ctx, client, token, jobID, o.timeout)
+	job, err := a.pollImportJob(ctx, client, token, jobID, o.timeout)
 	if err != nil {
 		return err
 	}
@@ -390,24 +390,52 @@ func (a *App) catalogImport(ctx context.Context, ident *identityOptions, o *cata
 }
 
 // pollImportJob polls the import job until it reaches a terminal state, the
-// deadline passes, or the context is cancelled.
-func pollImportJob(ctx context.Context, client *catalogclient.Client, token, jobID string, timeout time.Duration) (*catalogclient.Job, error) {
+// deadline passes, or the context is cancelled. It emits a periodic heartbeat
+// on stderr once the import runs longer than a couple of seconds, so a slow
+// import (cold control plane, large spec, slow upstream fetch) reads as
+// "still working" rather than a frozen hang — the silent wait is what made a
+// slow import look stuck and get killed. Heartbeats go to stderr so they never
+// corrupt the JSON stdout the agent parses.
+func (a *App) pollImportJob(
+	ctx context.Context, client *catalogclient.Client, token, jobID string, timeout time.Duration,
+) (*catalogclient.Job, error) {
+	return pollImportJobProgress(ctx, client, token, jobID, timeout, a.Err)
+}
+
+// pollImportJobProgress polls with an optional progress sink. When `progress` is
+// non-nil it emits a heartbeat there once the import runs past a couple of
+// seconds; pass nil for a silent poll (the TUI browser, which owns the screen).
+func pollImportJobProgress(
+	ctx context.Context,
+	client *catalogclient.Client,
+	token, jobID string,
+	timeout time.Duration,
+	progress io.Writer,
+) (*catalogclient.Job, error) {
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := start.Add(timeout)
 	delay := time.Second
+	const heartbeatAfter = 2 * time.Second
+	nextHeartbeat := start.Add(heartbeatAfter)
 	for {
 		job, err := client.Job(ctx, token, jobID)
 		if err != nil {
 			return nil, err
 		}
 		switch job.Status {
-		case catalogclient.JobCompleted, catalogclient.JobFailed, catalogclient.JobCancelled:
+		case catalogclient.JobCompleted, catalogclient.JobFailed,
+			catalogclient.JobCancelled, catalogclient.JobDeadLetter:
 			return job, nil
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("timed out after %s waiting for import job %s", timeout, jobID)
+		}
+		if now := time.Now(); progress != nil && now.After(nextHeartbeat) {
+			fmt.Fprintln(progress, theme.Dimf("  still importing (%ds elapsed) …", int(now.Sub(start).Seconds())))
+			nextHeartbeat = now.Add(3 * time.Second)
 		}
 		select {
 		case <-ctx.Done():

@@ -12,6 +12,7 @@ from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.core.schema.security_schemes import SecurityScheme
 from jentic_one.registry.core.schema.servers import Server
 from jentic_one.registry.core.schema.spec_files import SpecFile
+from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
 from jentic_one.shared.context import Context
@@ -155,3 +156,43 @@ async def test_ingest_idempotent_reingest(
 
         revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(revisions) == 2
+
+
+async def test_reimport_same_active_spec_raises_duplicate_not_hang(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """Re-importing an identical spec whose revision is still ACTIVE surfaces a
+    clean DuplicateRevisionError — it neither inserts a duplicate nor hangs.
+
+    Regression: a catalog re-import re-fetches the identical spec (same digest).
+    Inserting a second row with the same (api_id, spec_digest) violated the unique
+    constraint; the failure retried to the worker's dead-letter, which the CLI
+    poller didn't recognise as terminal — so `jentic catalog import` looked like
+    it hung until its 2-minute timeout. Now a live revision with the same content
+    is treated as a genuine conflict and raised legibly (the CLI treats a
+    dead-letter/duplicate as terminal), instead of silently overwriting or hanging.
+    """
+    spec = _build_spec(sha="same_digest_xyz")
+    spec.origin = "catalog"
+
+    ingestor = Ingestor(ingest_context)
+    await ingestor.ingest(spec, created_by="usr_test")
+
+    # Second import of the identical, still-active spec must raise, not duplicate.
+    with pytest.raises(IngestPipelineError, match="identical content"):
+        await ingestor.ingest(_reimport_spec(), created_by="usr_test")
+
+    async with registry_db.session() as session:
+        apis = (await session.execute(select(Api))).unique().scalars().all()
+        assert len(apis) == 1
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert len(revisions) == 1, "no duplicate revision should be created on re-import"
+        assert revisions[0].state == "imported"
+
+
+def _reimport_spec() -> IngestSpecification:
+    spec = _build_spec(sha="same_digest_xyz")
+    spec.origin = "catalog"
+    return spec

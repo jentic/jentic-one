@@ -41,6 +41,7 @@ class StaticProvider:
             CredentialType.API_KEY,
             CredentialType.BASIC,
             CredentialType.OAUTH2,
+            CredentialType.NO_AUTH,
         )
 
     async def begin_connect(

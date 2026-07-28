@@ -176,7 +176,7 @@ def test_toolkit_delete_with_credential_binding(base_url: str, test_agent: Smoke
     if cred_status != 201:
         pytest.skip("credential creation not available")
     assert isinstance(cred_body, dict)
-    credential_id: str = cred_body["credential_id"]
+    credential_id: str = cred_body["credential"]["credential_id"]
 
     authed_request(
         f"{base_url}/toolkits/{toolkit_id}/credentials",

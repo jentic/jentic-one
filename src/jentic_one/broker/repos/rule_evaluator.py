@@ -5,6 +5,11 @@ cannot import control ORM) and evaluates the ordered rule list against the
 inbound request. A first-match-wins policy terminates on the first matching
 rule's effect; an exhausted rule list defaults to DENY (secure-by-default).
 
+Path matching (``regex``/``prefix``/``exact``) is delegated to the shared
+``shared.permissions.matching`` seam so authoring surfaces and this enforcer
+cannot disagree; a stored pattern that fails to compile at load time is
+fail-closed (never matches) rather than the pre-#751 silent-wildcard.
+
 Performance: the rule list per (toolkit, credential) pair is short-TTL cached
 (LRU + single-flight) so the hot-path DB hit is amortised across requests.
 """
@@ -12,7 +17,6 @@ Performance: the rule list per (toolkit, credential) pair is short-TTL cached
 from __future__ import annotations
 
 import json
-import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -21,14 +25,14 @@ import structlog
 from sqlalchemy import text
 
 from jentic_one.broker.core.singleflight import SingleFlight
+from jentic_one.shared.broker.protocols import RuleEvaluation
 from jentic_one.shared.db import DatabaseSession
+from jentic_one.shared.permissions.matching import PathMatcher, compile_matcher
 
 _logger = structlog.get_logger(__name__)
 
-_MAX_PATTERN_LENGTH = 1000
-
 _RULES_QUERY = text(
-    "SELECT tpr.effect, tpr.methods, tpr.path, tpr.operations "
+    "SELECT tpr.effect, tpr.methods, tpr.path, tpr.operations, tpr.match_mode "
     "FROM toolkit_permission_rules tpr "
     "JOIN toolkit_credential_bindings tcb "
     "  ON tcb.toolkit_id = tpr.toolkit_id AND tcb.credential_id = tpr.credential_id "
@@ -48,20 +52,29 @@ class PermissionRule:
 
     effect: str
     methods: frozenset[str] | None
-    path: re.Pattern[str] | None
+    path: PathMatcher | None
     operations: tuple[str, ...] | None
 
 
-def _compile_path(raw: str | None) -> re.Pattern[str] | None:
-    """Pre-compile a path pattern, returning None for invalid/oversized patterns."""
-    if raw is None:
-        return None
-    if len(raw) > _MAX_PATTERN_LENGTH:
-        return None
-    try:
-        return re.compile(raw)
-    except re.error:
-        return None
+def _compile_path_for_rule(raw: str | None, mode: str, *, toolkit_id: str) -> PathMatcher | None:
+    """Compile a stored path pattern; log-once on a fail-closed row.
+
+    Delegates to the shared seam and warns when a stored pattern was
+    unparseable (a legacy row that predates save-time validation). The
+    resulting matcher never matches — the opposite of the pre-#751 silent
+    wildcard — and the warning identifies the misconfigured toolkit so an
+    operator can fix the offending row.
+    """
+    matcher = compile_matcher(raw, mode)
+    if matcher is not None and matcher.never:
+        _logger.warning(
+            "Ignoring toolkit permission rule with an invalid stored path pattern "
+            "(fail-closed — the rule never matches); fix the pattern to restore intent",
+            toolkit_id=toolkit_id,
+            path=raw,
+            match_mode=mode,
+        )
+    return matcher
 
 
 def _coerce_json_list(value: object) -> list[str] | None:
@@ -105,7 +118,7 @@ def _rule_matches(
     """Return True if ALL defined criteria in the rule match the request."""
     if rule.methods is not None and method.upper() not in rule.methods:
         return False
-    if rule.path is not None and not rule.path.match(path):
+    if rule.path is not None and not rule.path.matches(path):
         return False
     if rule.operations is not None:
         return operation_id is not None and operation_id in rule.operations
@@ -182,18 +195,25 @@ class RuleEvaluator:
         path: str,
         operation_id: str | None,
         api_vendor: str = "",
-    ) -> bool:
-        """Evaluate permission rules for the toolkit. Returns True if allowed."""
+    ) -> RuleEvaluation:
+        """Evaluate permission rules for the toolkit.
+
+        Returns a :class:`RuleEvaluation` — ``allowed`` plus the vendor-pooled
+        rule count so the router can distinguish "no rules loaded for this
+        vendor" (rules_loaded == 0) from "loaded but nothing matched" in the
+        deny problem detail (#578).
+        """
         rules = await self._get_rules(toolkit_id, api_vendor)
         if not rules:
-            return False
-        return evaluate_rules(
+            return RuleEvaluation(allowed=False, rules_loaded=0)
+        allowed = evaluate_rules(
             rules,
             method=method,
             path=path,
             operation_id=operation_id,
             toolkit_id=toolkit_id,
         )
+        return RuleEvaluation(allowed=allowed, rules_loaded=len(rules))
 
     async def _get_rules(self, toolkit_id: str, api_vendor: str) -> list[PermissionRule]:
         """Fetch rules from cache or DB (single-flighted)."""
@@ -223,7 +243,7 @@ class RuleEvaluator:
             PermissionRule(
                 effect=row[0],
                 methods=_normalize_methods(_coerce_json_list(row[1])),
-                path=_compile_path(row[2]),
+                path=_compile_path_for_rule(row[2], str(row[4] or "regex"), toolkit_id=toolkit_id),
                 operations=(tuple(ops) if (ops := _coerce_json_list(row[3])) is not None else None),
             )
             for row in rows

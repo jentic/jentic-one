@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route } from 'react-router';
 import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import {

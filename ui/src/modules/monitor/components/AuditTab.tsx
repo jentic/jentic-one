@@ -13,7 +13,7 @@
  * loop in both directions.
  */
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { ArrowUpRight, ShieldAlert, ShieldX, User } from 'lucide-react';
 import { AppLink, Badge, EmptyState, ErrorAlert, RefreshButton, ActorLabel } from '@/shared/ui';
 import {

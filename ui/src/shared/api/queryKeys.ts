@@ -100,4 +100,15 @@ export const sharedQueryKeys = {
 	 * confines name refetches to the one event that matters: a rename.
 	 */
 	toolkitNameRoot: ['toolkit-name'] as const,
+	/**
+	 * The actor directory (`GET /actors`, `useActorDirectory`). Aggressively
+	 * cached reference data (5-minute staleTime), which goes stale at the worst
+	 * moment: a CLI agent registers and files a provisioning request within
+	 * seconds, and every surface resolving its `actor_id` (rail rows, the setup
+	 * wizard's header badge and agent-named toolkit suggestion) misses and
+	 * degrades to the raw `agnt_…` id until the cache expires. Live agent
+	 * lifecycle events invalidate this root so the directory refetches the
+	 * moment the fleet actually changes.
+	 */
+	actorDirectoryRoot: ['actor-directory'] as const,
 };

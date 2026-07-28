@@ -14,7 +14,7 @@ import {
 	ActorLabel,
 	AgentBadge,
 } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app';
+import { AccessRequestDecisionDialog } from '@/shared/app';
 import {
 	usePendingAccessRequests,
 	formatApproxCount,
@@ -134,9 +134,8 @@ export function PendingAccessRequestsCard() {
 				</CardBody>
 			</Card>
 
-			<AccessRequestDialog
-				open={active !== null}
-				requestId={active?.id ?? null}
+			<AccessRequestDecisionDialog
+				request={active}
 				onClose={() => setActive(null)}
 				onDecided={() => {
 					queryClient.invalidateQueries({ queryKey: dashboardKeys.all });

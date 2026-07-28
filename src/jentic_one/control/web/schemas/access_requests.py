@@ -5,32 +5,17 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
+
+from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
 
 # --- Request models ---
 
 
-class PermissionRuleSchema(BaseModel):
+class PermissionRuleSchema(BasePermissionRuleSchema):
     """Permission rule for an access request item."""
 
-    model_config = ConfigDict(extra="forbid")
-
     effect: Literal["allow", "deny", "require-approval"]
-    methods: list[str] | None = None
-    path: str | None = None
-    operations: list[str] | None = None
-
-    @model_validator(mode="after")
-    def _reject_condition_less_allow(self) -> PermissionRuleSchema:
-        # A condition-less `allow` (no methods, path, or operations) matches every
-        # request under the broker's first-match-wins evaluation — i.e. an
-        # unrestricted grant. Reject it so an approver can never grant blanket
-        # access by accident. A condition-less `deny`/`require-approval` stays
-        # valid: a catch-all deny is a legitimate default-deny construct.
-        if self.effect == "allow" and not (self.methods or self.path or self.operations):
-            msg = "An 'allow' rule must constrain at least one of methods, path, or operations"
-            raise ValueError(msg)
-        return self
 
 
 class CredentialSpecSchema(BaseModel):
@@ -52,7 +37,7 @@ class AccessRequestItemRequest(BaseModel):
     """
 
     resource_type: Literal["credential", "toolkit", "scope"]
-    action: Literal["bind", "grant"]
+    action: Literal["bind", "grant", "create", "provision"]
     resource_id: str | None = None
     resource_reference: dict[str, Any] | None = None
     to_type: str | None = None
@@ -73,10 +58,22 @@ class AccessRequestItemRequest(BaseModel):
         if has_id and has_ref:
             msg = "Provide exactly one of resource_id or resource_reference, not both"
             raise ValueError(msg)
-        # Only the (resource_type, action) pairs the effect applicator dispatches on
-        # are meaningful; reject combinations that would silently no-op (e.g.
-        # ("scope", "bind")) so a filer gets immediate feedback.
-        valid = {("credential", "bind"), ("toolkit", "bind"), ("scope", "grant")}
+        # Only the (resource_type, action) pairs the system understands are
+        # meaningful. Two families:
+        #   * enforced effects — the applicator dispatches on them at approval
+        #     (credential:bind, toolkit:bind, scope:grant).
+        #   * fulfilment intents — placeholders in a provisioning plan that a
+        #     human fulfils via the existing create endpoints; the applicator
+        #     never executes them (toolkit:create, credential:provision).
+        # Reject anything else (e.g. ("scope", "bind")) so a filer gets immediate
+        # feedback instead of a silent no-op.
+        valid = {
+            ("credential", "bind"),
+            ("toolkit", "bind"),
+            ("scope", "grant"),
+            ("toolkit", "create"),
+            ("credential", "provision"),
+        }
         if (self.resource_type, self.action) not in valid:
             msg = (
                 f"Unsupported resource_type/action combination: {self.resource_type}/{self.action}"
@@ -112,6 +109,7 @@ class AmendItemSchema(BaseModel):
     item_id: str
     rules: list[PermissionRuleSchema] | None = None
     resource_id: str | None = None
+    to_id: str | None = None
 
 
 class AmendRequest(BaseModel):

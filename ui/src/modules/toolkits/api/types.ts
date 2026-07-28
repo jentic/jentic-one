@@ -13,7 +13,6 @@ import type {
 	ToolkitCredentialBindingResponse,
 	ToolkitCredentialListResponse,
 	PermissionRuleReadSchema,
-	PermissionRuleSchema,
 	ToolkitBindingResponse,
 	AuditResponse,
 } from '@/shared/api';
@@ -36,15 +35,15 @@ export type ToolkitCredentialList = ToolkitCredentialListResponse;
 export type PermissionRule = PermissionRuleReadSchema;
 
 /** Write shape for a permission rule (allow/deny + methods/path/operations). */
-export type PermissionRuleInput = PermissionRuleSchema;
+export type { PermissionRuleInput } from '@/shared/ui';
 
 /**
  * Rule effect values, as plain string literals matching the backend enum
- * (`allow` / `deny`). Defined here so views/editors don't import the generated
- * enum *value* (which the layering ESLint rule forbids outside `api/client.ts`).
+ * (`allow` / `deny`). Re-exported from the shared `PermissionRuleEditor` home so
+ * the editor and the toolkits module share one definition.
  */
-export const PERMISSION_EFFECTS = ['allow', 'deny'] as const;
-export type PermissionEffect = (typeof PERMISSION_EFFECTS)[number];
+export { PERMISSION_EFFECTS } from '@/shared/ui';
+export type { PermissionEffect } from '@/shared/ui';
 
 /** An agent binding (from `GET /agents/{id}/toolkits` — agent side). */
 export type AgentToolkitBinding = ToolkitBindingResponse;

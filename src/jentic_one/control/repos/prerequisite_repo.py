@@ -28,6 +28,20 @@ class PrerequisiteRepository:
     """Checks existence of bindings in the admin database without admin imports."""
 
     @staticmethod
+    async def active_user_exists(session: AsyncSession, *, user_id: str) -> bool:
+        """Return True if an active user with this id exists (admin DB).
+
+        A cross-DB existence check that lets a control-side caller validate a
+        user id without importing admin ORM models (e.g. before recording a
+        reference to a user). Returns False for unknown or deactivated users.
+        """
+        result = await session.execute(
+            text("SELECT 1 FROM users WHERE id = :user_id AND active = true LIMIT 1"),
+            {"user_id": user_id},
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def agent_toolkit_binding_exists(
         session: AsyncSession, *, agent_id: str, toolkit_id: str
     ) -> bool:

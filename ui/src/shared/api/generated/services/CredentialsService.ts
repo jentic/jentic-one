@@ -13,6 +13,7 @@ import type { ConnectRequestBody } from '../models/ConnectRequestBody';
 import type { CredentialCreateResponse } from '../models/CredentialCreateResponse';
 import type { CredentialListResponse } from '../models/CredentialListResponse';
 import type { CredentialRedactedResponse } from '../models/CredentialRedactedResponse';
+import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
 import type { ProviderDiscoveryResponse } from '../models/ProviderDiscoveryResponse';
@@ -62,7 +63,7 @@ export class CredentialsService {
     public static createCredential({
         requestBody,
     }: {
-        requestBody: (BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest),
+        requestBody: (BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest | NoAuthCreateRequest),
     }): CancelablePromise<CredentialCreateResponse> {
         return __request(OpenAPI, {
             method: 'POST',

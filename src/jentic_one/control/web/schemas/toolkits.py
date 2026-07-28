@@ -8,10 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
+from jentic_one.shared.permissions.matching import MatchMode
+
 # --- Request models ---
 
 
-class PermissionRuleSchema(BaseModel):
+class PermissionRuleSchema(BasePermissionRuleSchema):
     """Permission rule for a toolkit-credential binding.
 
     Rules are evaluated first-match-wins. If no rule matches, the request is
@@ -19,31 +22,9 @@ class PermissionRuleSchema(BaseModel):
     operations — users must explicitly add at least one allow rule.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     effect: Literal["allow", "deny"] = Field(
         description="Whether this rule allows or denies the matched request."
     )
-    methods: list[str] | None = Field(
-        default=None, description="HTTP methods to match (case-insensitive). None matches all."
-    )
-    path: str | None = Field(
-        default=None, description="Regex pattern for the request path. None matches all paths."
-    )
-    operations: list[str] | None = Field(
-        default=None, description="OpenAPI operation IDs to match. None matches all operations."
-    )
-
-    @model_validator(mode="after")
-    def _reject_condition_less_allow(self) -> PermissionRuleSchema:
-        # A condition-less `allow` matches every request under the broker's
-        # first-match-wins evaluation — an unrestricted grant. Reject it so a
-        # binding can never grant blanket access by accident. A condition-less
-        # `deny` stays valid as a legitimate catch-all default-deny.
-        if self.effect == "allow" and not (self.methods or self.path or self.operations):
-            msg = "An 'allow' rule must constrain at least one of methods, path, or operations"
-            raise ValueError(msg)
-        return self
 
 
 class ToolkitCreateRequest(BaseModel):
@@ -53,7 +34,6 @@ class ToolkitCreateRequest(BaseModel):
     description: str | None = None
     active: bool = True
     credential_ids: list[str] | None = None
-    permissions: list[PermissionRuleSchema] | None = None
 
 
 class ToolkitUpdateRequest(BaseModel):
@@ -103,8 +83,27 @@ class ToolkitKeyUpdateRequest(BaseModel):
 class ToolkitCredentialBindRequest(BaseModel):
     """Bind a credential to a toolkit."""
 
+    model_config = ConfigDict(extra="forbid")
+
     credential_id: str
     permissions: list[PermissionRuleSchema] | None = None
+    allow_all: bool = Field(
+        default=False,
+        description=(
+            "Convenience flag: bind with a single `allow` rule that matches every "
+            "request for this binding's vendor. Mutually exclusive with `permissions`."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _allow_all_conflicts_with_permissions(self) -> ToolkitCredentialBindRequest:
+        # ``allow_all=True`` sets a specific rule under the hood; combining it
+        # with an authored ``permissions`` list is ambiguous — reject at the
+        # boundary so the caller has to pick one intent.
+        if self.allow_all and self.permissions:
+            msg = "allow_all and permissions are mutually exclusive"
+            raise ValueError(msg)
+        return self
 
 
 class PermissionRuleReadSchema(BaseModel):
@@ -113,6 +112,7 @@ class PermissionRuleReadSchema(BaseModel):
     effect: Literal["allow", "deny"]
     methods: list[str] | None = None
     path: str | None = None
+    match_mode: MatchMode = "regex"
     operations: list[str] | None = None
     is_system: bool = Field(alias="_system", default=False)
     comment: str | None = Field(alias="_comment", default=None)
@@ -137,7 +137,6 @@ class ToolkitResponse(BaseModel):
     name: str
     description: str | None = None
     active: bool
-    permissions: list[dict[str, object]]
     key_count: int
     credential_count: int
     created_by: str | None = None
@@ -145,11 +144,29 @@ class ToolkitResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class BindingWarningSchema(BaseModel):
+    """A non-fatal signal about a bind (or create-time inline bind)."""
+
+    code: str = Field(description="Stable machine-readable warning code.")
+    message: str = Field(description="Human-readable explanation with a recovery pointer.")
+    credential_id: str | None = Field(
+        default=None,
+        description="Credential the warning applies to; null when the whole binding is meant.",
+    )
+
+
 class ToolkitCreateResponse(BaseModel):
     """Create response: toolkit + api_key shown once."""
 
     toolkit: ToolkitResponse
     api_key: str
+    warnings: list[BindingWarningSchema] = Field(
+        default_factory=list,
+        description=(
+            "Non-fatal signals about the create — e.g. inline-bound credentials "
+            "that landed with zero permission rules (broker denies by default)."
+        ),
+    )
 
 
 class ToolkitListResponse(BaseModel):
@@ -199,6 +216,13 @@ class ToolkitCredentialBindingResponse(BaseModel):
     label: str | None = None
     bound_at: datetime
     permissions: list[PermissionRuleReadSchema] = Field(default_factory=list)
+    warnings: list[BindingWarningSchema] = Field(
+        default_factory=list,
+        description=(
+            "Non-fatal bind-time signals — e.g. a binding that landed with zero "
+            "permission rules (broker denies by default until rules are added)."
+        ),
+    )
 
 
 class ToolkitCredentialListResponse(BaseModel):
@@ -230,3 +254,50 @@ class PermissionRuleListResponse(BaseModel):
     """List of permission rules."""
 
     data: list[PermissionRuleReadSchema]
+
+
+class PermissionTestRequest(BaseModel):
+    """Request body for :test — dry-run a request shape against pooled rules."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = Field(
+        description="HTTP method of the hypothetical request (case-insensitive).",
+    )
+    path: str = Field(
+        description="Path of the hypothetical request as the broker would see it.",
+    )
+    operation_id: str | None = Field(
+        default=None,
+        description="Optional OpenAPI operation id resolved from the request URL.",
+    )
+
+
+class PermissionTestResponse(BaseModel):
+    """Dry-run result matching :class:`PermissionTestResult`."""
+
+    allowed: bool = Field(
+        description="Whether the broker would allow this request under the pooled rules."
+    )
+    matched: bool = Field(
+        description="Whether any rule matched; when false, the outcome is default-deny."
+    )
+    effect: str | None = Field(
+        default=None,
+        description="Effect of the matching rule (`allow`/`deny`); null when no match.",
+    )
+    rule_index: int | None = Field(
+        default=None,
+        description="Zero-based index in the vendor-pooled rule list; null when no match.",
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description=(
+            "Which binding contributed the matching rule — vendor pooling means "
+            "this may not equal the credential in the request URL."
+        ),
+    )
+    is_system: bool | None = Field(
+        default=None,
+        description="True when the matching rule was written by the system; null when no match.",
+    )

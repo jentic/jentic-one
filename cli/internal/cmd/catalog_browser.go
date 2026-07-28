@@ -168,7 +168,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 		if err != nil {
 			return catImportMsg{apiID: apiID, err: err}
 		}
-		job, err := pollImportJob(ctx, client, token, jobID, 2*time.Minute)
+		job, err := pollImportJobProgress(ctx, client, token, jobID, 2*time.Minute, nil)
 		if err != nil {
 			return catImportMsg{apiID: apiID, err: err}
 		}

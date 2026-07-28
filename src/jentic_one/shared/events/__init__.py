@@ -143,6 +143,65 @@ async def emit_event_best_effort(
         logger.warning("emit_event_best_effort_failed", type=type)
 
 
+async def settle_actionable_events(
+    session: AsyncSession,
+    *,
+    event_type: str,
+    acknowledged_by: str,
+    acknowledgement_note: str,
+    actor_id: str | None = None,
+    actor_type: str | None = None,
+    data_match: dict[str, str] | None = None,
+) -> int:
+    """Acknowledge outstanding actionable events once their action is taken.
+
+    Actionable events (``requires_action=True``) prompt operators to review
+    something; when the review happens elsewhere (approving an agent, deciding
+    an access request), the prompt must be settled or it stays live on the
+    rail/dashboard forever with a working-but-pointless action button.
+
+    Matches on type + optional actor scoping via SQL, then on exact-equality
+    ``data_match`` pairs in Python (event ``data`` is unindexed JSON). Returns
+    the number of events acknowledged. Raises on DB errors — callers decide
+    whether settlement may fail the surrounding operation (it usually must
+    not; wrap in try/except + savepoint).
+    """
+    pending = await EventRepository.list_all(
+        session,
+        event_type=[event_type],
+        requires_action=True,
+        acknowledged=False,
+        actor_id=actor_id,
+        actor_type=actor_type,
+        # Alerts are per-entity (one per registration/request), so a page of
+        # 1000 is effectively "all" — generous rather than silently partial.
+        limit=1000,
+    )
+    if len(pending) >= 1000:
+        # The page IS partial after all — an older matching alert may sit
+        # beyond it and stay live. Loud so operators can spot the backlog;
+        # the fleet reaching 1000 outstanding actionable alerts is itself
+        # the anomaly worth investigating.
+        logger.warning(
+            "settle_actionable_events_page_full",
+            event_type=event_type,
+            actor_id=actor_id,
+        )
+    settled = 0
+    for event in pending:
+        data = event.data or {}
+        if data_match and any(data.get(k) != v for k, v in data_match.items()):
+            continue
+        await EventRepository.acknowledge(
+            session,
+            event.id,
+            acknowledged_by=acknowledged_by,
+            acknowledgement_note=acknowledgement_note,
+        )
+        settled += 1
+    return settled
+
+
 async def emit_credential_access(
     session: AsyncSession,
     *,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from jentic_one.control.services.credentials.mapping import is_refreshable, to_stored, to_wire
 from jentic_one.shared.models.credentials import CredentialType, StoredCredentialType
 
@@ -66,9 +64,18 @@ def test_to_wire_oauth2_implicit() -> None:
     assert to_wire(StoredCredentialType.OAUTH2_IMPLICIT) == CredentialType.OAUTH2
 
 
-def test_to_wire_no_auth_raises() -> None:
-    with pytest.raises(ValueError, match="Unsupported stored type"):
-        to_wire(StoredCredentialType.NO_AUTH)
+def test_to_wire_no_auth() -> None:
+    # NO_AUTH is now a supported wire type (#603): a no-auth credential is a
+    # marker that the API needs no secret. It must round-trip, not raise.
+    assert to_wire(StoredCredentialType.NO_AUTH) == CredentialType.NO_AUTH
+
+
+def test_to_stored_no_auth() -> None:
+    assert to_stored(CredentialType.NO_AUTH) == StoredCredentialType.NO_AUTH
+
+
+def test_is_refreshable_no_auth() -> None:
+    assert is_refreshable(StoredCredentialType.NO_AUTH) is False
 
 
 def test_is_refreshable_oauth2_client_credentials() -> None:

@@ -147,3 +147,26 @@ def test_injection_result_dataclass() -> None:
     assert result.headers == {"A": "B"}
     assert result.query_params == {"c": "d"}
     assert result.cookies == {"e": "f"}
+
+
+def test_inject_no_auth_injects_nothing() -> None:
+    # A no-auth credential carries no secret — injection is a no-op (#603).
+    resolved = ResolvedCredential(
+        credential_id="cred_noauth",
+        wire_type=CredentialType.NO_AUTH,
+        stored_type=StoredCredentialType.NO_AUTH,
+        provider="static",
+    )
+    result = inject_auth(resolved, ctx=MagicMock())
+    assert result.headers == {}
+    assert result.query_params == {}
+    assert result.cookies == {}
+
+
+def test_inject_unknown_wire_type_raises() -> None:
+    # An unknown wire type must fail loudly, not silently inject nothing — a quiet
+    # empty injection would send an unauthenticated request (B4 / Ren review).
+    resolved = MagicMock()
+    resolved.wire_type = "totally-unknown-type"
+    with pytest.raises(ValueError, match="Unsupported credential wire_type"):
+        inject_auth(resolved, ctx=MagicMock())

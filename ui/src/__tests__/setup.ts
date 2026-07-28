@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { worker } from '@/mocks/browser';
 import { resetAgentsStore } from '@/modules/agents/mocks/handlers';
 import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
@@ -7,6 +7,13 @@ import { resetRailEventsStore } from '@/shared/app/rail/mocks/handlers';
 // `body { @apply bg-background }`). Without it, axe colour-contrast checks see
 // white-on-white because the theme background is missing.
 import '@/index.css';
+
+// All test files run in parallel inside a single Chromium, so on a loaded CI
+// runner an async settle (backlog fetch → React commit) can outlast
+// testing-library's 1s default and fail every retry of the same loaded run
+// (e.g. the AgentRail feed assertions). Passing queries are unaffected — they
+// resolve as soon as the element appears; only genuine failures wait longer.
+configure({ asyncUtilTimeout: 5_000 });
 
 beforeAll(async () => {
 	await worker.start({ onUnhandledRequest: 'warn' });

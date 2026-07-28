@@ -18,6 +18,7 @@ app:
     # specs from in-cluster ClusterIPs (kind service CIDR is in 10/8).
     JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
     JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: 10.0.0.0/8
+  resources:
     requests:
       cpu: 250m
       memory: 1Gi

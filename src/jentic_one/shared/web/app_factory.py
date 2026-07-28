@@ -34,6 +34,7 @@ from jentic_one.shared.telemetry.instance_id import resolve_instance_id
 from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
 from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
+from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -387,6 +388,13 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
+    # Public, schema-hidden agent-discovery documents (onboarding skill +
+    # llms.txt). Mounted on every standalone surface so split deployments
+    # (gateway proxying to per-surface backends) serve them too. Registered
+    # *before* the surface routers and the container extension seam so neither
+    # the broker's /{upstream_url:path} catch-all nor an injected extra router
+    # can shadow these four literal paths.
+    app.include_router(get_agent_discovery_router())
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
@@ -460,6 +468,13 @@ def create_combined_app(
         have a stable target. Returns ``{"status": "ok"}`` when the process is up.
         """
         return JSONResponse({"status": "ok", "version": __version__})
+
+    # Public, schema-hidden agent-discovery documents: the onboarding skill
+    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
+    # GET /.well-known/llms.txt) — see #651 / #809. Registered before the
+    # surfaces so no surface route can shadow them (same order as
+    # create_surface_app).
+    root.include_router(get_agent_discovery_router())
 
     for surface in apps:
         module_path = SURFACE_MODULES[surface]

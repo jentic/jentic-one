@@ -144,6 +144,51 @@ func TestCatalogImportAutoPromotes(t *testing.T) {
 	}
 }
 
+func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
+	// A dead-lettered job is terminal: the poller must stop immediately and
+	// return an error, not spin until the --timeout (the re-import "infinite
+	// loop" symptom). We give a generous timeout but the job is dead_letter from
+	// the first poll, so the call must return well before it.
+	var jobPolls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":import"):
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"job_id":"job_1"}`))
+		case strings.HasPrefix(r.URL.Path, "/jobs/"):
+			jobPolls++
+			_, _ = w.Write([]byte(`{"job_id":"job_1","status":"dead_letter","error":"all import source(s) failed"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	ident := &identityOptions{baseURL: srv.URL}
+	opts := &catalogImportOptions{timeout: 30 * time.Second}
+	start := time.Now()
+	err := app.catalogImport(context.Background(), ident, opts, "stripe.com")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for a dead-lettered import job")
+	}
+	if !strings.Contains(err.Error(), "dead_letter") {
+		t.Errorf("error should name the dead_letter status, got: %v", err)
+	}
+	// Must fail fast — the first poll is terminal, so it returns in well under
+	// the 30s timeout (and never reaches the timeout branch).
+	if elapsed > 5*time.Second {
+		t.Errorf("dead_letter should stop immediately, took %s", elapsed)
+	}
+	if jobPolls == 0 {
+		t.Error("expected at least one job poll")
+	}
+}
+
 func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 	var promoteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

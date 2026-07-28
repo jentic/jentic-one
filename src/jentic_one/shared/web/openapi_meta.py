@@ -273,9 +273,9 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "`allow` — the strictest matching rule wins. Absence of a matching rule is an "
             "implicit deny. System rules (`_system: true`) participate in the same priority "
             "pool as user rules.\n\n"
-            "The coarse JWT-embedded scope tier on `Toolkit.permissions` "
-            "(`capabilities:execute`, `apis:read`) is checked separately and composes with "
-            "these rules — both must allow."
+            "Toolkits have no separate scope tier of their own: a toolkit API key is minted "
+            "with the fixed broker-execute scope (`capabilities:execute`), and every gated "
+            "operation is decided by these per-binding rules."
         ),
     },
     {
@@ -544,10 +544,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "(full deployment-wide access, granted via direct DB action). It is not enumerated "
             "to non-holders by `GET /permissions`, and is rejected by `PUT "
             "/users/{user_id}/permissions` from any caller who doesn't already hold it.\n\n"
-            "The same vocabulary is used for `User.permissions` and for `Toolkit.permissions` "
-            "— coarse JWT-embedded scopes — so the one catalogue covers both. Per-binding "
-            "fine-grained `PermissionRule[]` (the inner PBAC tier) lives separately under the "
-            "`Toolkit Permissions` tag."
+            "The same vocabulary is used for `User.permissions` — coarse JWT-embedded scopes — "
+            "so the catalogue below covers user assignment. Toolkits have no separate scope tier "
+            "of their own: a toolkit API key is minted with the fixed broker-execute scope, and "
+            "the per-binding fine-grained `PermissionRule[]` (the inner PBAC tier) lives "
+            "separately under the `Toolkit Permissions` tag."
         ),
     },
     {
