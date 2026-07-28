@@ -473,10 +473,20 @@ Design requirements baked into that plan:
 ### Order of operations
 
 Remove access before removing the account, so a failure part-way never leaves a
-live account with dangling grants: (1) drop leaf + traverse ACLs; (2) settle the
+live account with dangling grants: (1) drop leaf + traverse ACLs; (1c) remove the
+agent's **own** jentic identity dir — its `~/.jentic` (`config_dir`), holding the
+registration, cached tokens, and Ed25519 key. This is torn down **even when the
+home is kept**, because that directory — not the operator's config — is the
+reference-model home of the agent's platform identity; leaving it behind lets a
+later `jentic bootstrap` that reuses the same home resurrect a torn-down
+(now-archived) registration. (When the home is being deleted, step (2)'s recursive
+`rm` already covers it, so this step is skipped.) (2) settle the
 agent home — **re-own it to the operator** by default, or delete it *only* when the
 separate home confirmation was answered affirmatively (or `--delete-home --force`
-in non-interactive use); (3) remove the `sudoers` drop-in; (4) delete the Unix
+in non-interactive use) — this home confirmation is asked **per agent in both
+flows**, the named `jentic reset <agent>` *and* the full clean slate, so a bare
+`jentic reset` still preserves each home unless you explicitly opt into deleting it;
+(3) remove the `sudoers` drop-in; (4) delete the Unix
 account — on macOS by deleting the DirectoryService record with `dscl . -delete
 /Users/<user>` (which has no filesystem side-effect), on Linux with `userdel`
 **without** `-r` — both leave the home in place, so the account goes but the
@@ -548,7 +558,11 @@ by design:
 - **Skills** — the generated skill files (see [below](#not-yet-implemented--skill-cleanup)).
 - **`chmod 700 ~`** — never reverted; the operator's home stays locked down.
 - **Agent homes** — preserved and re-owned to the operator by default (the agent's
-  work survives); deleting a home is the separate, explicit per-agent confirmation.
+  work survives); deleting a home is the separate, explicit per-agent confirmation,
+  offered in the full clean slate too, not only the named flow. The agent's *identity*
+  inside that home (`~/.jentic`) is **not** left behind, though — it is torn down
+  regardless of the home disposition (see step (1c) above) so a re-bootstrap starts
+  genuinely fresh.
 - **The rest of `config.yaml`** — the wipe clears `default_profile` and empties
   `local_agents`, but leaves other settings (`base_url`, `broker`, telemetry
   consent) and the file itself in place. It resets your *identity and agents*, not

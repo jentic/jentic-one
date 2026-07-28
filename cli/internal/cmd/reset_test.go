@@ -101,10 +101,11 @@ func TestSurveyResetDefaultsUser(t *testing.T) {
 // delete flag. Only present ACLs become steps.
 func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	plan := resetPlan{
-		agentID:  "claude",
-		user:     "alice-local-agent",
-		homeDir:  "/Users/Shared/alice-local-agent",
-		operator: "alice",
+		agentID:   "claude",
+		user:      "alice-local-agent",
+		homeDir:   "/Users/Shared/alice-local-agent",
+		configDir: "/Users/Shared/alice-local-agent/.jentic",
+		operator:  "alice",
 		acls: []aclRemoval{
 			{traverse: false, dir: "/Users/alice/projects/api", present: true},
 			{traverse: true, dir: "/Users/alice", present: true},
@@ -126,15 +127,21 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 		t.Errorf("drifted-off-disk ACL should be skipped, got steps:\n%s", joined)
 	}
 
-	// Ordering: leaf-revoke before traverse-revoke before home before sudoers before account.
+	// Ordering: leaf-revoke → traverse-revoke → identity dir → home → sudoers → account.
+	// The agent's own ~/.jentic is torn down before the home is settled and always
+	// (when the home is kept) so a re-bootstrap can't resurrect a torn-down agent.
 	idxLeaf := indexOfContains(whats, "read/write grant on /Users/alice/projects/api")
 	idxTraverse := indexOfContains(whats, "traverse grant on /Users/alice")
+	idxIdentity := indexOfContains(whats, "remove the agent's jentic identity")
 	idxHome := indexOfContains(whats, "re-own the agent's home")
 	idxSudoers := indexOfContains(whats, "sudoers drop-in")
 	idxAccount := indexOfContains(whats, "delete the Unix account")
-	if !(idxLeaf >= 0 && idxLeaf < idxTraverse && idxTraverse < idxHome && idxHome < idxSudoers && idxSudoers < idxAccount) {
-		t.Fatalf("steps out of order: leaf=%d traverse=%d home=%d sudoers=%d account=%d (%v)",
-			idxLeaf, idxTraverse, idxHome, idxSudoers, idxAccount, whats)
+	if idxIdentity < 0 || !strings.Contains(joined, "/Users/Shared/alice-local-agent/.jentic") {
+		t.Errorf("expected the agent identity dir to be torn down, got:\n%s", joined)
+	}
+	if !(idxLeaf >= 0 && idxLeaf < idxTraverse && idxTraverse < idxIdentity && idxIdentity < idxHome && idxHome < idxSudoers && idxSudoers < idxAccount) {
+		t.Fatalf("steps out of order: leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
+			idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
 	}
 
 	// The home step is best-effort (a macOS home has SIP/TCC-protected files that
@@ -158,6 +165,11 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	}
 	if strings.Contains(delJoined, "re-own the agent's home") {
 		t.Errorf("delete-home run must not also re-own the home, got:\n%s", delJoined)
+	}
+	// When the home is being deleted, the recursive rm already removes the agent's
+	// ~/.jentic, so no separate identity-removal step is emitted.
+	if strings.Contains(delJoined, "remove the agent's jentic identity") {
+		t.Errorf("delete-home run must not emit a separate identity step (the home rm covers it), got:\n%s", delJoined)
 	}
 }
 

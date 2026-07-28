@@ -170,6 +170,7 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
 		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
+		{"remove-identity", RemoveAgentIdentityCmd(homeDir + "/.jentic").Args, homeDir + "/.jentic", false},
 		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
 		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
 	}

@@ -416,6 +416,17 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
 }
 
+// RemoveAgentIdentityCmd permanently removes the agent's own jentic config dir
+// (its ~/.jentic — the reference-model home of the agent's platform identity: the
+// registration, tokens, and signing key). `jentic reset` runs it even when the
+// agent's home is KEPT, so a later `jentic bootstrap` that reuses the same home
+// can't resurrect a torn-down (now-archived) agent registration from a stale
+// ~/.jentic. It is a no-op when the dir is absent. Runs as root because the dir is
+// owned by the agent account (and is settled before the home re-own/delete step).
+func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
+	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
+}
+
 // RemoveSudoersCmd drops the agent user's passwordless-launch lines from the
 // shared /etc/sudoers.d/jentic-agent drop-in, deleting the file if it becomes
 // empty. It edits through a temp file validated with `visudo -c` before install,

@@ -167,9 +167,20 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 
 	// Execute: tear down each agent, then wipe the operator's own config LAST so a
 	// failure tearing down an agent never leaves the operator without the config
-	// that records what still needs cleaning.
+	// that records what still needs cleaning. The whole-slate "reset" confirmation
+	// authorises the teardown, but NOT home deletion — that stays a separate, opt-in
+	// decision per agent (the same bar as a named reset), so a full reset preserves
+	// every agent home unless the operator explicitly asks otherwise.
 	for _, plan := range plans {
-		if err := a.execAgentReset(a.Paths, cfg, plan, opts.deleteHome); err != nil {
+		deleteHome := opts.deleteHome
+		if !opts.force && interactive && plan.homeDir != "" {
+			accepted, err := a.confirmDeleteHome(plan.homeDir)
+			if err != nil {
+				return err
+			}
+			deleteHome = accepted
+		}
+		if err := a.execAgentReset(a.Paths, cfg, plan, deleteHome); err != nil {
 			return err
 		}
 	}
@@ -378,10 +389,14 @@ type aclRemoval struct {
 // resetPlan is the fully-resolved teardown for one agent, built by surveyReset
 // and rendered/executed without further disk probing of the config.
 type resetPlan struct {
-	agentID       string
-	user          string
-	homeDir       string
-	operator      string
+	agentID  string
+	user     string
+	homeDir  string
+	operator string
+	// configDir is the agent's own ~/.jentic (the reference-model home of its
+	// platform identity). Removed during teardown even when the home is kept, so a
+	// later re-bootstrap can't resurrect a torn-down registration from it.
+	configDir     string
 	acls          []aclRemoval
 	accountExists bool
 }
@@ -429,6 +444,7 @@ func surveyReset(ctx context.Context, operator, operatorHome, agentID string, en
 		user:          agentUser,
 		homeDir:       entry.HomeDir,
 		operator:      operator,
+		configDir:     entry.ConfigDir,
 		acls:          acls,
 		accountExists: localagent.UserExists(ctx, agentUser),
 	}
@@ -464,6 +480,20 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		steps = append(steps, localagent.AccountStep{
 			What: "remove traverse grant on " + acl.dir,
 			Cmd:  localagent.TraverseRevokeCmd(plan.user, acl.dir),
+		})
+	}
+
+	// (1c) Remove the agent's OWN jentic identity dir (its ~/.jentic) before the
+	// home is settled. This is the reference-model home of the agent's platform
+	// identity — registration, tokens, signing key. It must go even when the home
+	// is KEPT, or a later `jentic bootstrap` that reuses the same home would find
+	// the torn-down (now-archived) registration and try to re-use it. When the home
+	// is being deleted the rm below covers it too, but running it here is harmless
+	// and keeps the "identity gone" guarantee independent of the home disposition.
+	if plan.configDir != "" && !deleteHome {
+		steps = append(steps, localagent.AccountStep{
+			What: "remove the agent's jentic identity " + plan.configDir,
+			Cmd:  localagent.RemoveAgentIdentityCmd(plan.configDir),
 		})
 	}
 
@@ -540,6 +570,9 @@ func (a *App) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Files & config to remove:"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - sudoers drop-in        /etc/sudoers.d/jentic-agent (if present)"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - local_agents['"+plan.agentID+"'] entry in your config"))
+	if plan.configDir != "" {
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+plan.configDir+" (its registration, tokens, key)"))
+	}
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Account to delete:"))
