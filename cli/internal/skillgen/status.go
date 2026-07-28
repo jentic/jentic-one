@@ -19,6 +19,11 @@ type InstallState struct {
 // errors are treated as "not installed": list is a status probe, not a write
 // path, so a permission problem should degrade to a false rather than fail
 // the whole listing.
+//
+// Operators can share a target (codex and generic both splice into the
+// project AGENTS.md): a block written via either is reported as installed for
+// both. That is deliberate — "installed" describes the artifact on disk, which
+// both runtimes genuinely load, not which operator name wrote it.
 func InstallStates(a Adapter, env DetectEnv) []InstallState {
 	states := make([]InstallState, 0, 2)
 	seen := map[string]bool{}
@@ -39,17 +44,6 @@ func InstallStates(a Adapter, env DetectEnv) []InstallState {
 		states = append(states, st)
 	}
 	return states
-}
-
-// Installed reports whether any placement scope of the adapter holds a managed
-// block, returning the first installed state when so.
-func Installed(a Adapter, env DetectEnv) (InstallState, bool) {
-	for _, st := range InstallStates(a, env) {
-		if st.Installed {
-			return st, true
-		}
-	}
-	return InstallState{}, false
 }
 
 // otherScope returns the opposite placement scope.

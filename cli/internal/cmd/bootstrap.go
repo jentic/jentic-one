@@ -88,7 +88,7 @@ func newBootstrapCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.all, "all", false, "target every supported operator")
 	cmd.Flags().StringVar(&opts.scope, "scope", "", "skill placement scope: user or project (default: per-operator)")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "show what would happen without registering or writing")
-	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "non-interactive: use flags + defaults, no prompts")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "non-interactive: no prompts; with no --operator/--all, the skill targets the detected operators")
 
 	return cmd
 }
@@ -112,6 +112,13 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		return err
 	}
 
+	// Flag validation happens before anything else, even for paths a flag
+	// doesn't apply to: `--skip-skill --scope typo` should error, not be
+	// silently ignored (a typo the user meant to matter must never pass).
+	if _, err := resolveScope(opts.scope); err != nil {
+		return err
+	}
+
 	// Resolve the skill targets (operators + placement scope) up front, before
 	// any registration or activation. Identity provisioning has irreversible
 	// side effects (a registered agent, an activated profile); a selection
@@ -124,7 +131,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	)
 	if !opts.skipSkill {
 		reg := skillgen.DefaultRegistry()
-		env, err = detectEnv()
+		env, err = a.detectEnv()
 		if err != nil {
 			return err
 		}

@@ -224,7 +224,8 @@ func (a agentsAdapter) Aliases() []string  { return a.aliases }
 // file, and codex only auto-loads a user-global copy from ~/.codex. Ratified
 // in #552 alongside the dir-skill user default; TestDefaultScopePolicy
 // tripwires any change. Interactive runs confirm placement via the scope
-// prompt; non-interactive runs echo the resolved target before writing.
+// prompt; defaulted non-interactive runs echo the resolved target before
+// writing (explicit --operator/--all runs already chose; --dry-run previews).
 func (a agentsAdapter) DefaultScope() Scope { return ScopeProject }
 
 func (a agentsAdapter) Target(scope Scope, env DetectEnv) string {

@@ -64,6 +64,9 @@ func newSkillInitCmd(app *App) *cobra.Command {
 		Long: "init detects which agent runtimes you have, lets you pick the targets\n" +
 			"and placement (or pass --operator/--scope), and writes the Jentic\n" +
 			"CLI-usage skill into each one's native layout.\n\n" +
+			"Passing --operator or --all skips every prompt, including the placement\n" +
+			"one: each operator uses its default scope unless --scope is given\n" +
+			"(preview with --dry-run).\n\n" +
 			"Non-interactively (--yes, pipes, agent sessions) it defaults to the\n" +
 			"detected operators, echoing each resolved path before writing.",
 		Example: "  jentic skill init\n" +
@@ -113,20 +116,22 @@ func newSkillRemoveCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to clean up (repeatable or comma-separated)")
-	cmd.Flags().StringVar(&opts.scope, "scope", "", "placement scope: user or project (default: per-operator)")
+	cmd.Flags().StringVar(&opts.scope, "scope", "", "placement scope to remove from: user or project (default: every scope where the skill is installed)")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "remove from every supported operator")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "remove even a managed block you have manually edited")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print what would be removed without deleting anything")
 	return cmd
 }
 
-// detectEnv builds the detection environment from the real OS, with PATH and
-// filesystem probes wired to the standard library. It errors if home or working
-// directory cannot be resolved, since every target path is rooted at one of
-// them and proceeding with empty bases would write files to surprising places.
-// It is a package variable so command tests can stub detection (the real probe
-// consults PATH, which varies by machine).
-var detectEnv = func() (skillgen.DetectEnv, error) {
+// detectEnv resolves the skill detection environment: the injected probe when
+// set (tests), otherwise the real OS — PATH and filesystem probes wired to the
+// standard library. The real probe errors if home or working directory cannot
+// be resolved, since every target path is rooted at one of them and proceeding
+// with empty bases would write files to surprising places.
+func (a *App) detectEnv() (skillgen.DetectEnv, error) {
+	if a.DetectEnv != nil {
+		return a.DetectEnv()
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return skillgen.DetectEnv{}, fmt.Errorf("resolve home directory: %w", err)
@@ -350,7 +355,7 @@ func scopeLabel(ad skillgen.Adapter, scope, def skillgen.Scope, env skillgen.Det
 
 func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
-	env, err := detectEnv()
+	env, err := a.detectEnv()
 	if err != nil {
 		return err
 	}
@@ -429,7 +434,7 @@ func (a *App) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun b
 
 func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
-	env, err := detectEnv()
+	env, err := a.detectEnv()
 	if err != nil {
 		return err
 	}
@@ -441,9 +446,13 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 	if jsonOrPretty(cmd, opts.json) {
 		return a.skillListJSON(reg, env, detected)
 	}
+	return a.skillListPretty(reg, env, detected)
+}
 
-	// "Detected" (the runtime looks present) and "installed" (a managed skill
-	// block actually exists on disk) are reported separately — #752.
+// skillListPretty renders the human listing. "Detected" (the runtime looks
+// present) and "installed" (a managed skill block actually exists on disk)
+// are reported separately — #752.
+func (a *App) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Supported operators"))
 	for _, ad := range reg.Adapters() {
 		glyph := theme.Dim.Render(theme.SelectOff)
@@ -454,16 +463,25 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 		}
 		fmt.Fprintln(a.Out, glyph+" "+theme.Accent.Render(string(ad.Operator()))+tag)
 
-		if st, ok := skillgen.Installed(ad, env); ok {
+		// Print every scope that actually holds a managed block: user and
+		// project installs can coexist, and hiding the second would make
+		// `skill list` lie by omission (the same conflation #752 fixed).
+		var shown int
+		for _, st := range skillgen.InstallStates(ad, env) {
+			if !st.Installed {
+				continue
+			}
 			line := theme.Field("installed", fmt.Sprintf("%s (%s scope)", prettyPath(st.Path), st.Scope))
 			if st.UserEdits {
 				line += " " + theme.Warn.Render("(manually edited)")
 			}
 			fmt.Fprintln(a.Out, "    "+line)
-			continue
+			shown++
 		}
-		fmt.Fprintln(a.Out, "    "+theme.Field("installed", "no"))
-		fmt.Fprintln(a.Out, "    "+theme.Field("target", prettyPath(ad.Target(ad.DefaultScope(), env))))
+		if shown == 0 {
+			fmt.Fprintln(a.Out, "    "+theme.Field("installed", "no"))
+			fmt.Fprintln(a.Out, "    "+theme.Field("target", prettyPath(ad.Target(ad.DefaultScope(), env))))
+		}
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Dim.Render("Install with: jentic skill init [--operator <names>]"))
@@ -519,7 +537,7 @@ func (a *App) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 		return err
 	}
 	reg := skillgen.DefaultRegistry()
-	env, err := detectEnv()
+	env, err := a.detectEnv()
 	if err != nil {
 		return err
 	}
@@ -544,23 +562,42 @@ func (a *App) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Remove Jentic skill"))
 	var blocked int
 	for _, ad := range adapters {
-		out, rerr := skillgen.Remove(ad, env, skillgen.RemoveOptions{
-			Scope:  scope,
-			Force:  opts.force,
-			DryRun: opts.dryRun,
-		})
-		switch {
-		case rerr != nil:
-			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s %v", ad.Operator(), rerr))
-		case out.UserEdits:
-			blocked++
-			fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s %s — manual edits detected; re-run with --force to remove", ad.Operator(), prettyPath(out.Path)))
-		case out.Missing:
-			fmt.Fprintln(a.Out, "  "+theme.Dimf("%-8s nothing to remove (%s)", ad.Operator(), prettyPath(out.Path)))
-		case opts.dryRun:
-			fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would remove from %s", ad.Operator(), prettyPath(out.Path)))
-		case out.Removed:
-			fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s removed from %s", ad.Operator(), prettyPath(out.Path)))
+		// No --scope means "remove my install", not "remove at the default
+		// placement": probe both scopes and strip every managed block found,
+		// so an install made with --scope project (or via the interactive
+		// scope prompt) is removable without the user re-deriving its scope.
+		scopes := []skillgen.Scope{scope}
+		if scope == "" {
+			scopes = scopes[:0]
+			for _, st := range skillgen.InstallStates(ad, env) {
+				if st.Installed {
+					scopes = append(scopes, st.Scope)
+				}
+			}
+			if len(scopes) == 0 {
+				fmt.Fprintln(a.Out, "  "+theme.Dimf("%-8s nothing to remove (%s)", ad.Operator(), prettyPath(ad.Target(ad.DefaultScope(), env))))
+				continue
+			}
+		}
+		for _, sc := range scopes {
+			out, rerr := skillgen.Remove(ad, env, skillgen.RemoveOptions{
+				Scope:  sc,
+				Force:  opts.force,
+				DryRun: opts.dryRun,
+			})
+			switch {
+			case rerr != nil:
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s %v", ad.Operator(), rerr))
+			case out.UserEdits:
+				blocked++
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s %s — manual edits detected; re-run with --force to remove", ad.Operator(), prettyPath(out.Path)))
+			case out.Missing:
+				fmt.Fprintln(a.Out, "  "+theme.Dimf("%-8s nothing to remove (%s)", ad.Operator(), prettyPath(out.Path)))
+			case opts.dryRun:
+				fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would remove from %s", ad.Operator(), prettyPath(out.Path)))
+			case out.Removed:
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s removed from %s", ad.Operator(), prettyPath(out.Path)))
+			}
 		}
 	}
 	if opts.dryRun {

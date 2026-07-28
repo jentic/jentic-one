@@ -171,10 +171,10 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	stubDetect(t, home, t.TempDir()) // nothing detected
 	srv, registers := bootstrapServer(t, 0)
 
 	app := testApp(t)
+	stubDetect(t, app, home, t.TempDir()) // nothing detected
 	app.Out = new(bytes.Buffer)
 
 	root := newAPIRootCmd(app)
@@ -204,6 +204,36 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	cfg, _ := config.Load(app.Paths)
 	if cfg.DefaultProfile == "demo" {
 		t.Errorf("profile must not be activated when selection fails up front")
+	}
+}
+
+// TestBootstrapSkipSkillRejectsInvalidScope pins that flag validation is not
+// silently skipped on paths a flag doesn't apply to: `--skip-skill` with a
+// mistyped --scope must error before any registration side effect.
+func TestBootstrapSkipSkillRejectsInvalidScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	srv, registers := bootstrapServer(t, 0)
+
+	app := testApp(t)
+	app.Out = new(bytes.Buffer)
+	root := newAPIRootCmd(app)
+	root.SetOut(app.Out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"bootstrap",
+		"--profile", "demo",
+		"--base-url", srv.URL,
+		"--skip-skill",
+		"--scope", "everywhere",
+		"--yes",
+	})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid --scope") {
+		t.Fatalf("expected an invalid --scope error, got %v", err)
+	}
+	if n := registers.Load(); n != 0 {
+		t.Errorf("registered %d times despite an invalid flag; want 0", n)
 	}
 }
 

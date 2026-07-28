@@ -88,18 +88,16 @@ func TestSkillInitUnknownOperatorErrors(t *testing.T) {
 	}
 }
 
-// stubDetect replaces detectEnv for one test with a deterministic environment:
-// detection fires only for the named operators (via PATH lookup), never via
-// the real machine's state.
-func stubDetect(t *testing.T, home, cwd string, detected ...string) {
+// stubDetect injects a deterministic detection environment into one test's
+// App: detection fires only for the named operators (via PATH lookup), never
+// via the real machine's state.
+func stubDetect(t *testing.T, app *App, home, cwd string, detected ...string) {
 	t.Helper()
-	old := detectEnv
-	t.Cleanup(func() { detectEnv = old })
 	byName := map[string]bool{}
 	for _, d := range detected {
 		byName[d] = true
 	}
-	detectEnv = func() (skillgen.DetectEnv, error) {
+	app.DetectEnv = func() (skillgen.DetectEnv, error) {
 		return skillgen.DetectEnv{
 			Home:   home,
 			Cwd:    cwd,
@@ -113,8 +111,8 @@ func TestSkillInitNoOperatorNonInteractiveErrorsWhenNothingDetected(t *testing.T
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 	t.Chdir(tmp)
-	stubDetect(t, tmp, tmp) // nothing detected
 	app := testApp(t)
+	stubDetect(t, app, tmp, tmp) // nothing detected
 	app.Out = new(bytes.Buffer)
 	cmd := newSkillCmd(app)
 	cmd.SetOut(app.Out)
@@ -136,10 +134,10 @@ func TestSkillInitNoOperatorNonInteractiveDefaultsToDetected(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Chdir(cwd)
-	stubDetect(t, home, cwd, "claude")
 
 	out := new(bytes.Buffer)
 	app := testApp(t)
+	stubDetect(t, app, home, cwd, "claude")
 	app.Out = out
 	app.Err = out
 	cmd := newSkillCmd(app)
@@ -197,11 +195,11 @@ func TestSkillListJSONReportsInstalledAfterInit(t *testing.T) {
 	cwd := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Chdir(cwd)
-	stubDetect(t, home, cwd)
 
 	run := func(args ...string) string {
 		out := new(bytes.Buffer)
 		app := testApp(t)
+		stubDetect(t, app, home, cwd)
 		app.Out = out
 		app.Err = out
 		cmd := newSkillCmd(app)
@@ -227,14 +225,136 @@ func TestSkillListJSONReportsInstalledAfterInit(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatalf("list --json not valid JSON: %v\n%s", err, out)
 	}
+	// Guard against a vacuous pass: the assertions below run per operator, so
+	// an empty (or claude-less) payload must fail loudly, not silently.
+	if len(payload.Operators) < 5 {
+		t.Fatalf("expected >=5 operators, got %d", len(payload.Operators))
+	}
+	var sawClaude bool
 	for _, op := range payload.Operators {
 		want := op.Operator == "claude"
+		sawClaude = sawClaude || want
 		if op.Installed != want {
 			t.Errorf("%s installed = %v, want %v", op.Operator, op.Installed, want)
 		}
 		if want && op.InstalledPath != filepath.Join(home, ".claude", "skills", "jentic", "SKILL.md") {
 			t.Errorf("claude installed_path = %q", op.InstalledPath)
 		}
+	}
+	if !sawClaude {
+		t.Error("claude missing from list output")
+	}
+}
+
+// TestSkillInitNonInteractiveDefaultsToDetectedProjectScope covers the #755
+// fallback for a project-scoped operator: a detected codex must default into
+// the *project* AGENTS.md (the #552-ratified default), not the user scope.
+func TestSkillInitNonInteractiveDefaultsToDetectedProjectScope(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	stubDetect(t, app, home, cwd, "codex")
+	app.Out = out
+	app.Err = out
+	cmd := newSkillCmd(app)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"init", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init --yes with detected codex: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, "AGENTS.md")); err != nil {
+		t.Fatalf("codex default is project scope; AGENTS.md not in cwd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "AGENTS.md")); !os.IsNotExist(err) {
+		t.Error("user-scope codex AGENTS.md written despite project default")
+	}
+}
+
+// TestSkillListPrettyShowsEveryInstall pins the human listing: detection and
+// install state are separate lines (#752), and *both* coexisting installs of
+// one operator are shown — hiding the second would lie by omission.
+func TestSkillListPrettyShowsEveryInstall(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	env := skillgen.DetectEnv{
+		Home:   home,
+		Cwd:    cwd,
+		Lookup: func(name string) bool { return name == "claude" },
+		Stat:   func(p string) bool { _, err := os.Stat(p); return err == nil },
+	}
+	reg := skillgen.DefaultRegistry()
+	ad, _ := reg.Resolve("claude")
+	content, err := skillgen.Bundled("http://example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []skillgen.Scope{skillgen.ScopeUser, skillgen.ScopeProject} {
+		if _, err := skillgen.Apply(ad, content, env, skillgen.ApplyOptions{Scope: scope}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	app.Out = out
+	detected := map[skillgen.Operator]bool{ad.Operator(): true}
+	if err := app.skillListPretty(reg, env, detected); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "(detected)") {
+		t.Errorf("detected tag missing:\n%s", got)
+	}
+	if !strings.Contains(got, "(user scope)") || !strings.Contains(got, "(project scope)") {
+		t.Errorf("both coexisting installs must be listed:\n%s", got)
+	}
+	if !strings.Contains(got, "installed: no") {
+		t.Errorf("uninstalled operators must say so:\n%s", got)
+	}
+}
+
+// TestSkillRemoveFindsNonDefaultScope proves `skill remove` without --scope
+// removes the install where it actually is: a --scope project install of a
+// user-default operator must still be found and stripped.
+func TestSkillRemoveFindsNonDefaultScope(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	run := func(args ...string) string {
+		out := new(bytes.Buffer)
+		app := testApp(t)
+		stubDetect(t, app, home, cwd)
+		app.Out = out
+		app.Err = out
+		cmd := newSkillCmd(app)
+		cmd.SetOut(out)
+		cmd.SetErr(out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("skill %v: %v", args, err)
+		}
+		return out.String()
+	}
+
+	run("init", "--operator", "cursor", "--scope", "project", "--yes")
+	projSkill := filepath.Join(cwd, ".cursor", "skills", "jentic", "SKILL.md")
+	if _, err := os.Stat(projSkill); err != nil {
+		t.Fatalf("project-scoped install missing: %v", err)
+	}
+
+	out := run("remove", "--operator", "cursor")
+	if !strings.Contains(out, "removed from") {
+		t.Errorf("expected a removal, got:\n%s", out)
+	}
+	if _, err := os.Stat(projSkill); !os.IsNotExist(err) {
+		t.Error("project-scoped skill still present after remove without --scope")
 	}
 }
 
