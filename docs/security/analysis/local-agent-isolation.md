@@ -315,62 +315,28 @@ permission errors. It tests whether the agent can read/write/execute the target;
 if not, it offers **Allow** / **Open in agent's home** (default) / **Cancel**.
 
 Granting a directory **inside the operator's home** — the important case, since
-`~` must stay closed by default — uses two layers of **named-user ACLs** (scoped
-to the single agent user; the operator's own access is never touched):
+`~` must stay closed by default — uses **named-user ACLs** (scoped to the single
+agent user; the operator's own access is never touched) in three layers:
 
-- **Layer 0 — the default-deny is the existing `chmod 700 ~`.** With `~` at
-  `drwx------` the agent can't even traverse the home until we open a specific
-  path. We add **no** ACL to `~` itself.
-- **Layer 1 — traverse-walk (execute-only, per ancestor).** For each dir on the
-  path from `~` down to the leaf's parent that the agent can't already traverse,
-  grant execute-only — search, not list, not read. The agent can pass *through* to
-  a known path but can't enumerate the directory.
+- **Layer 0** — the default-deny is the existing `chmod 700 ~`; we add **no** ACL
+  to `~` itself.
+- **Layer 1 — traverse-walk** — execute-only (search, not list, not read) on each
+  ancestor from `~` down to the leaf's parent, so the agent can pass *through* to a
+  known path without enumerating it.
+- **Layer 2 — rwx-leaf** — full, **recursive**, inherited read/write/execute on the
+  chosen workspace and everything already in it or created later.
 
-  ```bash
-  sudo chmod +a "user:$AGENT allow execute" "$ANCESTOR"          # macOS
-  sudo setfacl -m u:"$AGENT":--x "$ANCESTOR"                     # Linux
-  ```
-
-- **Layer 2 — rwx-leaf (inherited).** Full read/write/execute on the chosen
-  workspace and everything created inside it. **On macOS the permission set must be
-  spelled out in full** — `chmod +a "…allow write…"` on a *directory* silently
-  expands `write` to `list,add_file,search` only, so the agent could create but not
-  delete or rename (breaking write-to-temp-then-rename, and leaving `test -w` false
-  so `jentic run` re-prompted every launch). The explicit set carries the
-  directory-mutation bits (`delete`, `delete_child`, `add_subdirectory`), and grant
-  and revoke share the identical string so macOS can drop the ACE by exact match:
-
-  ```bash
-  # macOS — inserted at index 0 (first-match ordering), applied recursively
-  sudo chmod -R +a# 0 "user:$AGENT allow list,add_file,add_subdirectory,search,delete,delete_child,read,write,execute,append,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit" "$DIR"
-  # Linux
-  sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
-  ```
-
-Revoking drops the Layer-2 leaf allow; the Layer-1 traverse grants stay. With the
-leaf gone the agent can no longer read or write the directory (and, unless it's
-world-readable, can't reach its contents at all). Grants **persist across
-sessions** by design — a project the agent works on isn't a per-session decision —
+Before offering **Allow**, `jentic run` classifies the target: the operator's home
+root, its sensitive dotfile dirs, other users' homes, and system trees all trip a
+warning — **Allow** requires a *typed* confirmation and `--yes` declines. Revoke
+drops the leaf allow (ancestor traverse stays); a full `jentic reset` walks the
+ancestor chain and drops those too. Grants **persist across sessions** by design,
 so `--list-grants` exists to keep access from quietly sprawling.
 
-> **Accepted residual.** Because Layer 1 grants execute on an ancestor, a
-> directory inside `~` that is itself **world-readable** (mode `o+r`, e.g. a `0755`
-> project) becomes reachable once the path to it is traversable, without an
-> explicit leaf grant. Genuinely sensitive material (`~/.ssh`, `~/.aws`,
-> `~/.jentic`, …) is `0700`/`0750` and stays closed; the agent still can't *list*
-> `~` itself. We accept this rather than re-introduce a home-wide sweep. It could
-> be closed surgically ("narrow traverse": grant execute on only the exact ancestor
-> chain and `chmod o-rwx` those ancestors) if it ever matters — not currently
-> implemented.
-
-> **Dangerous grants are never the path of least resistance.** Before offering
-> **Allow**, `jentic run` classifies the target. The operator's home **root**, its
-> dotfile dirs (`~/.ssh`, `~/.jentic`, `~/.aws`, `~/.config`, `~/.gnupg`, Keychain
-> paths, browser profiles), any other user's home, and system trees (`/etc`,
-> `/usr`, `/var`, `/System`, `/Library`, `/`) all trip a warning: the safe options
-> come first, **Allow** requires a *typed* confirmation, and `--yes` declines
-> rather than granting. Granting *those* would re-open the boundary `chmod 700 ~`
-> exists to close.
+> The exact ACL commands, the macOS `write`-shorthand gotcha (why the permission
+> set is spelled out in full), the recursive-over-existing-contents consequence,
+> the world-readable-ancestor residual, and the full grant/revoke/reset lifecycle
+> are documented in [**`filesystem-access-model.md`**](filesystem-access-model.md).
 
 ### Step 5 — launch
 

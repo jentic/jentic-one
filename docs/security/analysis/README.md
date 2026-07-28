@@ -59,3 +59,9 @@ dedicated, unprivileged OS user, wrapped by a `jentic` CLI command set (account
 creation folded into `jentic bootstrap` / `jenticctl wizard`, then
 `jentic run <agent>`, directory grants, and `jentic reset`) so operators get the
 isolated posture by default instead of by discipline.
+
+[**`filesystem-access-model.md`**](filesystem-access-model.md) is the reference
+for the permission mechanics underneath that design: how the agent's and
+operator's Unix accounts reach — and are kept out of — each other's files
+(700-home, traverse-walk + rwx-leaf ACLs, the inherited operator grant, and the
+grant/revoke/reset lifecycle).
