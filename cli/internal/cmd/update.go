@@ -62,11 +62,20 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	installed := firstNonEmpty(manifest.Commit, commit)
 	cliVersion := firstNonEmpty(manifest.CLIVersion, version)
 
+	ctlTarget, err := resolveCtlTarget(manifest)
+	if err != nil {
+		return err
+	}
+	brewManaged := update.BrewManaged(ctlTarget)
+
 	fmt.Fprint(a.Out, a.brandHeader(opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
+	}
+	if brewManaged {
+		fmt.Fprintln(a.Out, theme.Field("managed by", "Homebrew — update the CLI with `"+update.BrewUpgradeCommand+"`"))
 	}
 
 	// Resolve the update target. By default we track the latest release tag; an
@@ -99,6 +108,19 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	doCLI := !opts.stackOnly
 	doStack := !opts.cliOnly
 
+	// A brew-managed CLI is never swapped by us: brew's bookkeeping would
+	// desync and the next `brew upgrade` would clobber the swapped binaries.
+	// The stack (in ~/.jentic) is ours regardless of how the CLI arrived, so a
+	// combined update degrades to stack-only rather than failing.
+	if brewManaged && doCLI {
+		if opts.cliOnly {
+			return fmt.Errorf("this CLI is managed by Homebrew; update it with `%s`", update.BrewUpgradeCommand)
+		}
+		doCLI = false
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Warnf("CLI is managed by Homebrew — skipping the CLI update; run `%s` instead.", update.BrewUpgradeCommand))
+	}
+
 	// When the latest release is not newer than what's installed there's nothing
 	// to rebuild. A --ref override always proceeds (the user asked for a specific
 	// build); re-run with --ref to force a rebuild at a pinned version.
@@ -120,7 +142,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 
 	if doCLI {
-		if err := a.updateCLI(ctx, manifest, repo, ref); err != nil {
+		if err := a.updateCLI(ctx, repo, ref, ctlTarget); err != nil {
 			return err
 		}
 	}
@@ -132,23 +154,37 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	return nil
 }
 
+// resolveCtlTarget locates the installed jenticctl binary that an update would
+// replace: the manifest's recorded path when present, else the running
+// executable. Symlinks are resolved in both cases so the swap replaces the real
+// file rather than a PATH symlink pointing at it (e.g. Homebrew's bin link or
+// the link tools/install.sh drops into /usr/local/bin) — renaming over the
+// symlink would orphan the real install.
+func resolveCtlTarget(manifest *config.Manifest) (string, error) {
+	target := manifest.BinaryPath
+	if target == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("locate current binary: %w", err)
+		}
+		target = exe
+	}
+	// A dangling/missing path fails EvalSymlinks; keep it verbatim and let the
+	// swap create it fresh.
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		target = resolved
+	}
+	return target, nil
+}
+
 // updateCLI rebuilds and replaces both CLI binaries (jenticctl and jentic) by
 // delegating the build to tools/install.sh (single source of truth) into a
 // staging dir, then atomically swapping each into place with a .bak rollback
 // copy. jenticctl update is the sole updater for both binaries; they are
-// assumed co-located (install.sh installs both into the same dir).
-func (a *App) updateCLI(ctx context.Context, manifest *config.Manifest, repo, ref string) error {
-	ctlTarget := manifest.BinaryPath
-	if ctlTarget == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("locate current binary: %w", err)
-		}
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = resolved
-		}
-		ctlTarget = exe
-	}
+// assumed co-located (install.sh installs both into the same dir). ctlTarget
+// is the symlink-resolved jenticctl location (see resolveCtlTarget); callers
+// must have already ruled out package-manager-owned locations.
+func (a *App) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error {
 	// The sibling jentic binary lives next to jenticctl (install.sh co-locates
 	// both in JENTIC_INSTALL_DIR).
 	installDir := filepath.Dir(ctlTarget)
