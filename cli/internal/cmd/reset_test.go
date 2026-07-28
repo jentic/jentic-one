@@ -254,14 +254,14 @@ func TestResetNamedAgentKeepsProfiles(t *testing.T) {
 	}
 }
 
-// TestResetConfigRequiresForceNonInteractive confirms the operator's own config is
-// not wiped non-interactively without --force (its own safety gate, separate from
-// the per-agent one).
+// TestResetConfigRequiresForceNonInteractive confirms a full reset is not run
+// non-interactively without --force. Tests run with a non-terminal stdin, so a
+// bare `jentic reset` with profiles present must hit the single whole-slate guard.
 func TestResetConfigRequiresForceNonInteractive(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	seedProfile(t, app, "default", "agnt_default")
 
-	err := app.resetOperatorConfig(context.Background(), &resetOptions{}, false)
+	err := app.resetE(context.Background(), &resetOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "without --force") {
 		t.Fatalf("expected a non-interactive --force guard, got %v", err)
 	}
@@ -272,15 +272,15 @@ func TestResetConfigRequiresForceNonInteractive(t *testing.T) {
 	}
 }
 
-// TestResetOperatorConfigNoProfiles is a friendly no-op when there's nothing to
-// remove.
-func TestResetOperatorConfigNoProfiles(t *testing.T) {
+// TestResetNothingToDo is a friendly no-op when there are no agents and no config
+// to remove.
+func TestResetNothingToDo(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
-	if err := app.resetOperatorConfig(context.Background(), &resetOptions{force: true}, false); err != nil {
-		t.Fatalf("resetOperatorConfig: %v", err)
+	if err := app.resetE(context.Background(), &resetOptions{force: true}, nil); err != nil {
+		t.Fatalf("resetE: %v", err)
 	}
-	if !strings.Contains(out.String(), "No jentic CLI config to reset") {
+	if !strings.Contains(out.String(), "Nothing to reset") {
 		t.Errorf("expected a no-op note, got:\n%s", out.String())
 	}
 }
