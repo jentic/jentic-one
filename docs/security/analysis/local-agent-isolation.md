@@ -270,6 +270,94 @@ Two details from live testing, both baked into `jentic run`:
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
+## `jentic reset` — tear down an agent (documented, not yet implemented)
+
+> **Status: proposal only — this command is not implemented yet.** The sections
+> above describe shipped behaviour; this one describes intended behaviour so the
+> teardown story is designed before it's built.
+
+`jentic run` and `jentic agent-user setup` accumulate real system state on the
+operator's machine: a Unix account and its home, a copied/installed agent binary,
+seeded config and provider credentials, named-user ACLs stamped across the
+operator's home (traverse grants + leaf grants), a `sudoers` drop-in, and the
+`local_agents` entry in the operator's `jentic` config. `jentic reset` removes
+that state — the inverse of setup — so an operator can cleanly decommission an
+agent (or start over) without hand-reversing each `chmod`/`sysadminctl`.
+
+### It only runs as root
+
+```bash
+sudo jentic reset [<agent>]
+```
+
+Deleting a user account, removing another user's home, and stripping ACLs all
+require root. `jentic reset` **refuses to run without `sudo`** (checks `EUID == 0`
+and exits with an explanatory error otherwise) rather than prompting per-action —
+the whole operation is privileged, so it asks for the elevation once, up front.
+With no `<agent>` argument it targets every configured local agent; with one, just
+that agent.
+
+### It shows the full plan before touching anything
+
+`reset` is destructive and largely irreversible (a deleted account and its home
+don't come back), so it runs in two distinct phases: **survey, then confirm, then
+act**. Nothing is changed during the survey. It prints exactly what it will do,
+resolved to concrete paths and the specific ACL entries it will drop:
+
+```
+⚠  DANGER ZONE — jentic reset will PERMANENTLY remove the following for agent 'claude'
+   (user alice-local-agent). This cannot be undone.
+
+  Directory ACLs to remove (agent access granted by jentic run):
+    - leaf grant   user:alice-local-agent  /Users/alice/projects/api
+    - leaf grant   user:alice-local-agent  /Users/Shared/alice-local-agent/work
+    - traverse     user:alice-local-agent  /Users/alice        (execute-only)
+    - traverse     user:alice-local-agent  /Users/alice/projects
+
+  Files & config to delete:
+    - agent home directory   /Users/Shared/alice-local-agent   (incl. seeded ~/.aws, ~/.claude)
+    - sudoers drop-in        /etc/sudoers.d/jentic-agent
+    - local_agents['claude'] entry in ~/.jentic/config.yaml
+
+  Account to delete:
+    - Unix user  alice-local-agent  (uid 502)
+
+  NOT touched:
+    - your own home (/Users/alice) stays chmod 700 — reset does not revert it
+    - your own files, config, keys, and Jentic One itself
+
+Type the agent name ('claude') to confirm, or anything else to abort:
+```
+
+Design requirements baked into that plan:
+
+- **Everything is listed before the confirm**, resolved from two sources: the
+  `local_agents` config entry (user, home, granted dirs) *and* a live re-scan of
+  the on-disk ACLs, so grants that drifted from the config are still caught and
+  shown. If the two disagree, `reset` shows both and flags the drift.
+- **A "danger zone"-style banner** headlines the irreversible nature, and
+  confirmation is a **typed agent name**, not a keypress — the same bar as a
+  dangerous directory grant. `--yes` does **not** skip it (there is no safe default
+  for destruction); a separate explicit `--force` is the only non-interactive
+  escape hatch, intended for scripted teardown.
+- **The ancestor traverse ACLs are removed too**, not just the leaf grants — reset
+  is a full teardown, so it walks the recorded ancestor chains and drops the
+  execute-only entries it added. (Contrast `--revoke`, which intentionally leaves
+  traverse grants in place for the next grant.)
+- **It never reverts `chmod 700 ~`** and never touches the operator's own files —
+  the "NOT touched" block states this explicitly so the operator can see the
+  blast radius stops at the agent.
+
+### Order of operations
+
+Remove access before removing the account, so a failure part-way never leaves a
+live account with dangling grants: (1) drop leaf + traverse ACLs; (2) delete the
+agent home; (3) remove the `sudoers` drop-in; (4) delete the Unix account
+(`sysadminctl -deleteUser` / `userdel -r`); (5) remove the `local_agents` entry
+from the operator's config last, so a re-run after a mid-way failure still has the
+record of what to finish cleaning. Each step reports success/failure; a failure
+stops the run with what's already been done and what remains.
+
 ## GUI IDEs (Cursor / VS Code)
 
 Don't launch the IDE *GUI* as a different macOS user in the operator's login
