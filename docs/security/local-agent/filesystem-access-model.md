@@ -88,16 +88,59 @@ options are listed first, **Allow** requires a *typed* confirmation, and `--yes`
 **declines** rather than grants. Granting those would re-open the very boundary
 `chmod 700 ~` exists to close.
 
-### Accepted residual — world-readable dirs under `~`
+### Open problem — the sibling-traversal residual
 
-Because Layer 1 grants *execute* on an ancestor, a directory inside `~` that is
-itself **world-readable** (mode `o+r`, e.g. a `0755` project) becomes reachable
-once the path to it is traversable, without an explicit leaf grant. Genuinely
-sensitive material (`~/.ssh`, `~/.aws`, `~/.jentic`, …) is `0700`/`0750` and stays
-closed, and the agent still cannot *list* `~` itself. We accept this rather than
-re-introduce a home-wide sweep. It could be closed surgically ("narrow traverse":
-grant execute on the exact ancestor chain and `chmod o-rwx` those ancestors) if
-it ever matters — not currently implemented.
+> **Provisional — under active investigation.** This section states the problem
+> and the candidate fixes; the chosen direction is not yet settled and nothing
+> here beyond the status quo is implemented.
+
+**Symptom.** With `~` closed, the agent can touch nothing under it. Grant `~/a`
+and the agent can now also reach `~/b` — a sibling it was never granted. Concretely
+it can `ls ~/b` (and read its contents) when `~/b` happens to be world-readable.
+
+**Root cause — directory execute is not per-entry.** To reach `~/a`, the kernel
+checks *execute (search)* on every path component: `/` → `/Users` → `~` → `~/a`.
+So the grant **must** add `user:agent allow execute` to `~` itself. But the search
+bit on a directory is a single bit authorizing traversal to *any* child by name —
+there is no Unix/POSIX-ACL primitive for "may traverse into `a` but not `b`". Once
+the agent can search `~`:
+
+- it still **cannot `ls ~`** — enumerating siblings needs *read* on `~`, which we
+  never grant — so it can't discover names it doesn't already know; but
+- it **can reach any sibling it can name**, and whether it can then read/list that
+  sibling falls entirely to *that sibling's own mode*:
+  - `~/b` at `0700`/`0750` → stays closed (the common case for real secrets). ✅
+  - `~/b` at `0755` (world-readable — e.g. a checked-out repo, a `Public` dir) →
+    the agent reads it as the "other" class. ❌ **This is the leak.**
+
+**Blast radius.** Bounded to *world-readable* siblings — material any local user
+could already read. Genuinely sensitive dirs (`~/.ssh`, `~/.aws`, `~/.jentic`, …)
+are `0700`/`0750` and unaffected. The concern is precisely that the isolated agent
+is meant to be *less* trusted than a normal local user, so "any local user could
+read it" is not the bar we want.
+
+**The hard constraint.** Any *in-place* access to `~/a` requires execute on `~`.
+The only way to leave `~` untouched is to make the agent's path to the content
+**not pass through `~`** at all.
+
+**Candidate recourse** (no free lunch — closing it in place means either mutating
+the operator's own files or a non-`~` path):
+
+| # | Approach | Closes leak? | Cost / caveat |
+|---|----------|:---:|---|
+| 1 | **Bind-mount outside `~`** — expose `~/a` at e.g. `/Users/Shared/agent-grants/<agent>/a`, grant there, add **no** ACL to `~` | fully | The clean fix. Linux `mount --bind`; **macOS has no native bind mount** → needs macFUSE/`bindfs` (kernel-ext dep). Stateful: persist + tear down on revoke/reset/reboot. Root. |
+| 2 | **Neutralize the world bit** — `chmod o-rwx` the operator's world-readable dirs under `~` at grant time (record + restore on reset) | existing siblings | Mutates the operator's *own* files; may break their tools; TOCTOU — dirs created after the grant leak again. |
+| 3 | **Explicit deny ACEs** — add `deny read` for the agent on each sibling | existing siblings | macOS-only (POSIX ACLs have no deny); same enumerate-at-grant / new-sibling-leaks churn as #2; N siblings = N ACEs. |
+| 4 | **Keep workspaces out of `~`** — steer agent-shared projects to `/Users/Shared/…`; `~` is never traversed | fully (by avoidance) | Cheapest, no new machinery; requires the workflow change that agent-touched code doesn't live under `~`. |
+| 5 | **Status quo** — accept the residual; rely on the danger-classifier + real secrets being `0700` | bounded | Already implemented + documented (here). |
+
+**Current leaning** (provisional): favour **#4** as the recommended posture (it
+sidesteps the whole class for free and matches the agent-home-under-`/Users/Shared`
+design), with **#1** as an opt-in "strict" mode where in-`~` access is unavoidable
+and the residual matters — real on Linux, gated behind macFUSE (or unsupported)
+on macOS. Lean *away* from #2/#3 as defaults: mutating the operator's own tree or
+per-sibling ACE churn buys only partial protection at real fragility. To be
+revisited.
 
 ---
 
