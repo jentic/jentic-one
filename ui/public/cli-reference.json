@@ -1171,7 +1171,7 @@
               "path": "jentic skill init",
               "use": "init",
               "short": "Generate the Jentic skill for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\n(or pass --operator), and writes the Jentic CLI-usage skill into each\none's native layout.",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic\nCLI-usage skill into each one's native layout.\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
               "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
@@ -1212,7 +1212,7 @@
                   "name": "yes",
                   "type": "bool",
                   "default": "false",
-                  "usage": "skip the interactive picker (use --operator/--all)"
+                  "usage": "non-interactive: no pickers; with no --operator/--all, target the detected operators"
                 }
               ]
             },
@@ -1220,7 +1220,7 @@
               "name": "list",
               "path": "jentic skill list",
               "use": "list",
-              "short": "Show supported operators and which are detected in this environment",
+              "short": "Show supported operators: which are detected and where the skill is installed",
               "flags": [
                 {
                   "name": "json",

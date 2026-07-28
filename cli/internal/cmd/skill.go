@@ -62,8 +62,10 @@ func newSkillInitCmd(app *App) *cobra.Command {
 		Use:   "init",
 		Short: "Generate the Jentic skill for one or more operators",
 		Long: "init detects which agent runtimes you have, lets you pick the targets\n" +
-			"(or pass --operator), and writes the Jentic CLI-usage skill into each\n" +
-			"one's native layout.",
+			"and placement (or pass --operator/--scope), and writes the Jentic\n" +
+			"CLI-usage skill into each one's native layout.\n\n" +
+			"Non-interactively (--yes, pipes, agent sessions) it defaults to the\n" +
+			"detected operators, echoing each resolved path before writing.",
 		Example: "  jentic skill init\n" +
 			"  jentic skill init --operator claude,cursor\n" +
 			"  jentic skill init --all --yes\n" +
@@ -76,7 +78,7 @@ func newSkillInitCmd(app *App) *cobra.Command {
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to target (repeatable or comma-separated)")
 	cmd.Flags().StringVar(&opts.scope, "scope", "", "placement scope: user or project (default: per-operator)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite a managed block you have manually edited")
-	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the interactive picker (use --operator/--all)")
+	cmd.Flags().BoolVar(&opts.yes, "yes", false, "non-interactive: no pickers; with no --operator/--all, target the detected operators")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print target paths without writing")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "target every supported operator")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
@@ -87,7 +89,7 @@ func newSkillListCmd(app *App) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "Show supported operators and which are detected in this environment",
+		Short: "Show supported operators: which are detected and where the skill is installed",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.skillList(cmd, opts)
@@ -122,7 +124,9 @@ func newSkillRemoveCmd(app *App) *cobra.Command {
 // filesystem probes wired to the standard library. It errors if home or working
 // directory cannot be resolved, since every target path is rooted at one of
 // them and proceeding with empty bases would write files to surprising places.
-func detectEnv() (skillgen.DetectEnv, error) {
+// It is a package variable so command tests can stub detection (the real probe
+// consults PATH, which varies by machine).
+var detectEnv = func() (skillgen.DetectEnv, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return skillgen.DetectEnv{}, fmt.Errorf("resolve home directory: %w", err)
@@ -161,7 +165,9 @@ func resolveScope(flag string) (skillgen.Scope, error) {
 }
 
 // canonicalContent loads the bundled skill, stamped with the resolved base URL.
-// The hosted (#277) source is wired here later; for now it always uses bundled.
+// The deployment also serves this same canonical content at /skills/jentic.md
+// (#651); a hosted-fetch source can be wired here later. For now it always
+// uses the bundled copy.
 func (a *App) canonicalContent(baseURLFlag string) (skillgen.Canonical, error) {
 	cfg, err := config.Load(a.Paths)
 	baseURL := config.DefaultBaseURL
@@ -173,29 +179,91 @@ func (a *App) canonicalContent(baseURLFlag string) (skillgen.Canonical, error) {
 	return skillgen.Bundled(baseURL)
 }
 
-// chooseAdapters resolves the target adapters from flags + detection + an
-// interactive picker. It returns the selected adapters or an error.
-func (a *App) chooseAdapters(reg *skillgen.Registry, env skillgen.DetectEnv, opts *skillOptions) ([]skillgen.Adapter, error) {
+// skillTarget pairs an adapter with the concrete placement scope resolved for
+// it (flag > interactive choice > adapter default), so the write path never
+// has to re-derive placement.
+type skillTarget struct {
+	adapter skillgen.Adapter
+	scope   skillgen.Scope
+}
+
+// chooseTargets resolves which operators to write and at which scope, from
+// flags + detection + the interactive pickers. A nil, error-free return means
+// the user dismissed the picker with nothing selected.
+//
+// Non-interactive runs (--yes or stdin is not a terminal — pipes, CI, agent
+// sessions) with no explicit --operator/--all fall back to the *detected*
+// operators instead of erroring (#755); the resolved targets are echoed before
+// anything is written. When nothing is detected either, the error spells out
+// the flags to pass.
+func (a *App) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts *skillOptions) ([]skillTarget, error) {
+	flagScope, err := resolveScope(opts.scope)
+	if err != nil {
+		return nil, err
+	}
 	if opts.all && len(opts.operators) > 0 {
 		return nil, errOperatorAndAll
 	}
-	if opts.all {
-		return reg.Adapters(), nil
-	}
-	if len(opts.operators) > 0 {
+
+	var adapters []skillgen.Adapter
+	switch {
+	case opts.all:
+		adapters = reg.Adapters()
+	case len(opts.operators) > 0:
 		resolved, unknown := reg.ResolveAll(opts.operators)
 		if len(unknown) > 0 {
 			return nil, fmt.Errorf("unknown operator(s): %s (supported: %s)",
 				strings.Join(unknown, ", "), strings.Join(reg.Names(), ", "))
 		}
-		return resolved, nil
+		adapters = resolved
+	case opts.yes || !term.IsTerminal(os.Stdin.Fd()):
+		// #755: no selection and no way (or wish) to prompt — degrade to the
+		// detected operators rather than aborting, so agent sessions and
+		// scripts get a working install by default.
+		adapters = reg.Detected(env)
+		if len(adapters) == 0 {
+			return nil, errors.New("no operators given and none detected; pass --operator <names> or --all (supported: " +
+				strings.Join(reg.Names(), ", ") + ")")
+		}
+		targets := resolveTargets(adapters, flagScope)
+		a.echoDefaultedTargets(targets, env)
+		return targets, nil
+	default:
+		adapters, err = a.pickOperators(reg, env)
+		if err != nil || len(adapters) == 0 {
+			return nil, err
+		}
+		if flagScope == "" {
+			// #552: placement is a real choice (user-global vs this repo), so
+			// ask instead of deciding silently when we're interactive anyway.
+			return a.pickScopes(adapters, env)
+		}
 	}
+	return resolveTargets(adapters, flagScope), nil
+}
 
-	// No explicit selection. On a non-TTY (or --yes) we cannot prompt.
-	if opts.yes || !term.IsTerminal(os.Stdin.Fd()) {
-		return nil, errors.New("no operators given; pass --operator <names> or --all (no terminal to prompt)")
+// resolveTargets pairs adapters with flagScope, or their per-operator default
+// (the #552-ratified policy) when no --scope was given.
+func resolveTargets(adapters []skillgen.Adapter, flagScope skillgen.Scope) []skillTarget {
+	targets := make([]skillTarget, 0, len(adapters))
+	for _, ad := range adapters {
+		scope := flagScope
+		if scope == "" {
+			scope = ad.DefaultScope()
+		}
+		targets = append(targets, skillTarget{adapter: ad, scope: scope})
 	}
-	return a.pickOperators(reg, env)
+	return targets
+}
+
+// echoDefaultedTargets announces an auto-defaulted selection (non-interactive,
+// nothing explicit) with each resolved scope+path *before* anything is
+// written, so a silent default can never place a file somewhere surprising.
+func (a *App) echoDefaultedTargets(targets []skillTarget, env skillgen.DetectEnv) {
+	fmt.Fprintln(a.Out, theme.Dim.Render("No --operator/--all given; defaulting to detected operators (--operator/--all overrides):"))
+	for _, t := range targets {
+		fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s -> %s (%s scope)", t.adapter.Operator(), prettyPath(t.adapter.Target(t.scope, env)), t.scope))
+	}
 }
 
 // pickOperators runs the interactive multi-select with detected operators
@@ -236,33 +304,73 @@ func (a *App) pickOperators(reg *skillgen.Registry, env skillgen.DetectEnv) ([]s
 	return resolved, nil
 }
 
-func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
-	scope, err := resolveScope(opts.scope)
-	if err != nil {
-		return err
+// pickScopes asks, per selected operator, whether the skill goes user-global
+// or into the current project, showing the exact resolved path for each
+// choice. The #552-ratified per-operator default is pre-selected, so Enter
+// through keeps today's behavior — but the placement is now a visible choice.
+func (a *App) pickScopes(adapters []skillgen.Adapter, env skillgen.DetectEnv) ([]skillTarget, error) {
+	values := make([]string, len(adapters))
+	fields := make([]huh.Field, 0, len(adapters))
+	for i, ad := range adapters {
+		def := ad.DefaultScope()
+		values[i] = string(def)
+
+		userOpt := huh.NewOption(scopeLabel(ad, skillgen.ScopeUser, def, env), string(skillgen.ScopeUser))
+		projOpt := huh.NewOption(scopeLabel(ad, skillgen.ScopeProject, def, env), string(skillgen.ScopeProject))
+		ordered := []huh.Option[string]{userOpt, projOpt}
+		if def == skillgen.ScopeProject {
+			ordered = []huh.Option[string]{projOpt, userOpt}
+		}
+
+		fields = append(fields, huh.NewSelect[string]().
+			Title(fmt.Sprintf("Where should the %s skill go?", ad.Operator())).
+			Options(ordered...).
+			Value(&values[i]))
 	}
+
+	if err := install.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+		return nil, err
+	}
+
+	targets := make([]skillTarget, len(adapters))
+	for i, ad := range adapters {
+		targets[i] = skillTarget{adapter: ad, scope: skillgen.Scope(values[i])}
+	}
+	return targets, nil
+}
+
+// scopeLabel renders one scope choice with its resolved path and a default tag.
+func scopeLabel(ad skillgen.Adapter, scope, def skillgen.Scope, env skillgen.DetectEnv) string {
+	label := fmt.Sprintf("%s — %s", scope, prettyPath(ad.Target(scope, env)))
+	if scope == def {
+		label += " (default)"
+	}
+	return label
+}
+
+func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := detectEnv()
 	if err != nil {
 		return err
 	}
 
-	adapters, err := a.chooseAdapters(reg, env, opts)
+	targets, err := a.chooseTargets(reg, env, opts)
 	if err != nil {
 		return err
 	}
-	if len(adapters) == 0 {
+	if len(targets) == 0 {
 		return nil
 	}
 
-	return a.writeSkill(adapters, env, scope, opts)
+	return a.writeSkill(targets, env, opts)
 }
 
-// writeSkill renders the canonical skill into each adapter and prints the
+// writeSkill renders the canonical skill into each target and prints the
 // per-operator outcome plus a closing hint. It is the shared body of
-// `skill init` and `bootstrap` so both report writes identically. Adapters are
+// `skill init` and `bootstrap` so both report writes identically. Targets are
 // resolved by the caller (so selection errors surface before any side effects).
-func (a *App) writeSkill(adapters []skillgen.Adapter, env skillgen.DetectEnv, scope skillgen.Scope, opts *skillOptions) error {
+func (a *App) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) error {
 	content, err := a.canonicalContent(opts.baseURL)
 	if err != nil {
 		return err
@@ -270,17 +378,17 @@ func (a *App) writeSkill(adapters []skillgen.Adapter, env skillgen.DetectEnv, sc
 	fmt.Fprintln(a.Out, theme.Heading.Render("Jentic skill"))
 
 	var wrote int
-	for _, ad := range adapters {
-		out, aerr := skillgen.Apply(ad, content, env, skillgen.ApplyOptions{
-			Scope:  scope,
+	for _, t := range targets {
+		out, aerr := skillgen.Apply(t.adapter, content, env, skillgen.ApplyOptions{
+			Scope:  t.scope,
 			Force:  opts.force,
 			DryRun: opts.dryRun,
 		})
 		if aerr != nil {
-			fmt.Fprintln(a.Out, "  "+theme.Warnf("%s: %v", ad.Operator(), aerr))
+			fmt.Fprintln(a.Out, "  "+theme.Warnf("%s: %v", t.adapter.Operator(), aerr))
 			continue
 		}
-		a.reportOutcome(out, opts.dryRun)
+		a.reportOutcome(out, t.scope, opts.dryRun)
 		if out.Changed && !opts.dryRun {
 			wrote++
 		}
@@ -297,9 +405,10 @@ func (a *App) writeSkill(adapters []skillgen.Adapter, env skillgen.DetectEnv, sc
 	return nil
 }
 
-// reportOutcome prints a single adapter's result line.
-func (a *App) reportOutcome(out skillgen.Outcome, dryRun bool) {
-	rel := prettyPath(out.Path)
+// reportOutcome prints a single adapter's result line, tagged with the scope
+// the write resolved to so placement is always visible in the output.
+func (a *App) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun bool) {
+	rel := fmt.Sprintf("%s (%s scope)", prettyPath(out.Path), scope)
 	switch {
 	case out.UserEdits:
 		fmt.Fprintln(a.Out, "  "+theme.Warnf("%-8s %s — manual edits detected; re-run with --force to overwrite", out.Operator, rel))
@@ -333,6 +442,8 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 		return a.skillListJSON(reg, env, detected)
 	}
 
+	// "Detected" (the runtime looks present) and "installed" (a managed skill
+	// block actually exists on disk) are reported separately — #752.
 	fmt.Fprintln(a.Out, theme.Heading.Render("Supported operators"))
 	for _, ad := range reg.Adapters() {
 		glyph := theme.Dim.Render(theme.SelectOff)
@@ -342,26 +453,62 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 			tag = " " + theme.Dim.Render("(detected)")
 		}
 		fmt.Fprintln(a.Out, glyph+" "+theme.Accent.Render(string(ad.Operator()))+tag)
+
+		if st, ok := skillgen.Installed(ad, env); ok {
+			line := theme.Field("installed", fmt.Sprintf("%s (%s scope)", prettyPath(st.Path), st.Scope))
+			if st.UserEdits {
+				line += " " + theme.Warn.Render("(manually edited)")
+			}
+			fmt.Fprintln(a.Out, "    "+line)
+			continue
+		}
+		fmt.Fprintln(a.Out, "    "+theme.Field("installed", "no"))
 		fmt.Fprintln(a.Out, "    "+theme.Field("target", prettyPath(ad.Target(ad.DefaultScope(), env))))
 	}
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("Install with: jentic skill init [--operator <names>]"))
 	return nil
 }
 
 func (a *App) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
+	type installRow struct {
+		Scope     string `json:"scope"`
+		Path      string `json:"path"`
+		Installed bool   `json:"installed"`
+		UserEdits bool   `json:"user_edits"`
+	}
 	type row struct {
 		Operator string `json:"operator"`
 		Detected bool   `json:"detected"`
-		Target   string `json:"target"`
-		Scope    string `json:"scope"`
+		// Installed reports whether a managed skill block exists at any scope
+		// — detection alone never implies it (#752).
+		Installed     bool         `json:"installed"`
+		InstalledPath string       `json:"installed_path,omitempty"`
+		Target        string       `json:"target"`
+		Scope         string       `json:"scope"`
+		Installs      []installRow `json:"installs"`
 	}
 	rows := make([]row, 0, len(reg.Adapters()))
 	for _, ad := range reg.Adapters() {
-		rows = append(rows, row{
+		r := row{
 			Operator: string(ad.Operator()),
 			Detected: detected[ad.Operator()],
 			Target:   ad.Target(ad.DefaultScope(), env),
 			Scope:    string(ad.DefaultScope()),
-		})
+		}
+		for _, st := range skillgen.InstallStates(ad, env) {
+			r.Installs = append(r.Installs, installRow{
+				Scope:     string(st.Scope),
+				Path:      st.Path,
+				Installed: st.Installed,
+				UserEdits: st.UserEdits,
+			})
+			if st.Installed && !r.Installed {
+				r.Installed = true
+				r.InstalledPath = st.Path
+			}
+		}
+		rows = append(rows, r)
 	}
 	return writeJSON(a.Out, map[string]any{"operators": rows})
 }

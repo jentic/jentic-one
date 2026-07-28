@@ -164,11 +164,14 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 }
 
 // TestBootstrapSelectionErrorBeforeRegister proves operator selection is
-// validated before any irreversible side effect: a non-interactive run with no
-// operators must fail without registering an agent or activating a profile.
+// validated before any irreversible side effect: a non-interactive run where
+// no operators are given AND none are detected must fail without registering
+// an agent or activating a profile. (With detected operators, the run
+// degrades to them instead — #755.)
 func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stubDetect(t, home, t.TempDir()) // nothing detected
 	srv, registers := bootstrapServer(t, 0)
 
 	app := testApp(t)

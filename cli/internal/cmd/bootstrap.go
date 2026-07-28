@@ -112,18 +112,15 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		return err
 	}
 
-	// Resolve the skill scope and target adapters up front, before any
-	// registration or activation. Identity provisioning has irreversible side
-	// effects (a registered agent, an activated profile); a selection error
-	// (e.g. no operators on a non-interactive shell) must surface here so we
-	// never half-complete the flow and then fail at the skill step.
-	scope, err := resolveScope(opts.scope)
-	if err != nil {
-		return err
-	}
+	// Resolve the skill targets (operators + placement scope) up front, before
+	// any registration or activation. Identity provisioning has irreversible
+	// side effects (a registered agent, an activated profile); a selection
+	// error (e.g. no operators resolvable on a non-interactive shell) must
+	// surface here so we never half-complete the flow and then fail at the
+	// skill step.
 	var (
-		adapters []skillgen.Adapter
-		env      skillgen.DetectEnv
+		targets []skillTarget
+		env     skillgen.DetectEnv
 	)
 	if !opts.skipSkill {
 		reg := skillgen.DefaultRegistry()
@@ -131,11 +128,11 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		if err != nil {
 			return err
 		}
-		adapters, err = a.chooseAdapters(reg, env, opts.skillOptions())
+		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
 		if err != nil {
 			return err
 		}
-		if len(adapters) == 0 {
+		if len(targets) == 0 {
 			// Interactive picker dismissed with nothing selected: treat as a
 			// no-skill run rather than registering for no reason.
 			opts.skipSkill = true
@@ -143,7 +140,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	if opts.dryRun {
-		return a.bootstrapDryRun(profileName, baseURL, adapters, env, scope, opts)
+		return a.bootstrapDryRun(profileName, baseURL, targets, env, opts)
 	}
 
 	// Step 1+2: register (DCR) and wait for human approval, reusing the exact
@@ -166,7 +163,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	// not fatal: the identity is already provisioned.
 	if !opts.skipSkill {
 		fmt.Fprintln(a.Out)
-		if err := a.writeSkill(adapters, env, scope, opts.skillOptions()); err != nil {
+		if err := a.writeSkill(targets, env, opts.skillOptions()); err != nil {
 			// Identity is already provisioned, so a skill-content failure is
 			// reported but not fatal — the agent can re-run `jentic skill init`.
 			fmt.Fprintln(a.Out, theme.Warnf("skill generation failed: %v", err))
@@ -199,7 +196,7 @@ func (a *App) bootstrapIdentity(ctx context.Context, profileName, baseURL string
 }
 
 // bootstrapDryRun describes the steps without registering or writing anything.
-func (a *App) bootstrapDryRun(profileName, baseURL string, adapters []skillgen.Adapter, env skillgen.DetectEnv, scope skillgen.Scope, opts *bootstrapOptions) error {
+func (a *App) bootstrapDryRun(profileName, baseURL string, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
 	fmt.Fprintln(a.Out, theme.Infof("would register agent for profile %q at %s (or reuse an existing registration)", profileName, baseURL))
 	fmt.Fprintln(a.Out, theme.Infof("would wait up to %s for human approval if the agent is still pending, then mint tokens", opts.timeout))
 	if !opts.noActive {
@@ -211,7 +208,7 @@ func (a *App) bootstrapDryRun(profileName, baseURL string, adapters []skillgen.A
 		fmt.Fprintln(a.Out)
 		dry := opts.skillOptions()
 		dry.dryRun = true
-		if err := a.writeSkill(adapters, env, scope, dry); err != nil {
+		if err := a.writeSkill(targets, env, dry); err != nil {
 			return err
 		}
 	}
