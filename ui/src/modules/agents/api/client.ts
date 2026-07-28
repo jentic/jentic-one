@@ -214,6 +214,28 @@ export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
 	}
 }
 
+/**
+ * Resolve a single toolkit's human name (`GET /toolkits/{id}`). Powers the
+ * per-row name lookup on the agent detail page's "Bound toolkits" card: the
+ * binding response (`GET /agents/{id}/toolkits`) carries only the toolkit id,
+ * so each bound row reads its own name here instead of the whole workspace
+ * catalogue paying a paginated sweep on every page load.
+ *
+ * A missing name must NOT blow up the row — a since-deleted or 404 toolkit is
+ * expected (the binding can outlive a hard-deleted toolkit briefly), so we
+ * return ``null`` on not-found and let the caller fall back to the id. Only
+ * genuine, unexpected failures surface as an {@link AgentsApiError}.
+ */
+export async function getToolkitName(toolkitId: string): Promise<string | null> {
+	try {
+		const res = await ToolkitsService.getToolkit({ toolkitId });
+		return res?.name ?? null;
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 404) return null;
+		throw toAgentsError(error, 'Failed to load the toolkit name.');
+	}
+}
+
 /** Bind a toolkit to an agent (`POST /agents/{id}/toolkits`) — the agent-side
  * mirror of the toolkit page's "Link agent" (#607). */
 export async function bindToolkitToAgent(agentId: string, toolkitId: string): Promise<void> {

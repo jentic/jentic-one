@@ -32,7 +32,7 @@ export const toolkitKeys = {
 	bindings: (id: string) => [...toolkitKeys.all, 'bindings', id] as const,
 	permissions: (id: string, credentialId: string) =>
 		[...toolkitKeys.all, 'permissions', id, credentialId] as const,
-	agents: (id: string) => [...toolkitKeys.all, 'agents', id] as const,
+	agents: (id: string) => [...sharedQueryKeys.toolkitAgentsRoot, id] as const,
 	audit: (id: string) => [...toolkitKeys.all, 'audit', id] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,

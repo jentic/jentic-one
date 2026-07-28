@@ -9,6 +9,7 @@ export {
 	useAgent,
 	useAgentToolkits,
 	useLinkableToolkits,
+	useToolkitName,
 	useBindToolkitToAgent,
 	useUnbindToolkitFromAgent,
 	useAgentApiKeyInfo,

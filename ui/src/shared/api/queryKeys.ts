@@ -68,4 +68,14 @@ export const sharedQueryKeys = {
 	 * the module's cache can't drift apart.
 	 */
 	toolkitsRoot: ['toolkits'] as const,
+	/**
+	 * The agent↔toolkit binding sub-root (`GET /toolkits/{id}/agents`). Owned by
+	 * the Toolkits module (`toolkitKeys.agents(id)` derives from this), but the
+	 * Agents module's agent-side bind/unbind mutations (#607) need to refresh the
+	 * toolkit-side "Bound Agents" card after a binding changes. Narrower than
+	 * `toolkitsRoot`: invalidating this prefix refreshes only the reverse-lookup
+	 * slices, not every mounted toolkits query (list, detail, keys, bindings, …).
+	 * Defined once here so the shared prefix and the module factory can't drift.
+	 */
+	toolkitAgentsRoot: ['toolkits', 'agents'] as const,
 };

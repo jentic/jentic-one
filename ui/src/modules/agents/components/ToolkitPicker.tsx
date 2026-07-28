@@ -140,27 +140,29 @@ function ToolkitRow({
 	// visible is more debuggable than silently hiding it — the operator can
 	// see *why* it's not offered.
 	//
-	// A11y: a suspended row uses ``aria-disabled`` rather than the native
-	// ``disabled`` attribute so it stays in the tab order and screen readers can
-	// still reach it and read the reason (surfaced in an sr-only span, not just
-	// a hover-only ``title``). The click is no-op'd in JS instead. The native
-	// ``disabled`` is kept only for the mutation-in-flight (``pending``) case,
-	// which is transient and doesn't need an explanation.
+	// A11y: both the suspended and the mutation-in-flight (``disabled`` prop)
+	// cases use ``aria-disabled`` rather than the native ``disabled`` attribute,
+	// so the row stays in the tab order and screen readers can still reach it —
+	// and, for a suspended toolkit, read the reason (surfaced in an sr-only span,
+	// not just a hover-only ``title``). Using native ``disabled`` for the pending
+	// case would have left a suspended row selectable mid-mutation; unifying on
+	// ``aria-disabled`` closes that gap. The click is no-op'd in JS when either
+	// is true.
 	const isSuspended = !toolkit.active;
+	const inactive = isSuspended || Boolean(disabled);
 	const rationale = 'Suspended toolkits cannot be bound — restore the kill switch first.';
 	return (
 		<button
 			type="button"
-			disabled={disabled && !isSuspended}
-			aria-disabled={isSuspended || undefined}
+			aria-disabled={inactive || undefined}
 			title={isSuspended ? rationale : undefined}
 			onClick={() => {
-				if (isSuspended || disabled) return;
+				if (inactive) return;
 				onSelect(toolkit.toolkitId);
 			}}
 			data-testid="toolkit-picker-row"
 			data-suspended={isSuspended || undefined}
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
 		>
 			<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 				<Shield className="h-4 w-4" />

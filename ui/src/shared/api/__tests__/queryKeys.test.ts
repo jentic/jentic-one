@@ -31,6 +31,16 @@ describe('sharedQueryKeys', () => {
 		expect(sharedQueryKeys.accessRequestsRoot).toEqual(['access-requests']);
 	});
 
+	it('exposes the toolkits root and the narrower agent-bindings sub-root', () => {
+		// `toolkitsRoot` is the toolkits module's whole-cache prefix
+		// (`toolkitKeys.all` derives from it); `toolkitAgentsRoot` is the narrow
+		// reverse-lookup slice the Agents module's bind/unbind invalidates (#607).
+		// Locking both literals keeps the shared prefix and `toolkitKeys.agents`
+		// from drifting.
+		expect(sharedQueryKeys.toolkitsRoot).toEqual(['toolkits']);
+		expect(sharedQueryKeys.toolkitAgentsRoot).toEqual(['toolkits', 'agents']);
+	});
+
 	it('keeps every registered root a non-empty string array', () => {
 		for (const [name, key] of Object.entries(sharedQueryKeys)) {
 			expect(Array.isArray(key), `${name} must be an array`).toBe(true);

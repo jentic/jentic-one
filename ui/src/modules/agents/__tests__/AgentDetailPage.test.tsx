@@ -59,6 +59,26 @@ function seedToolkitBindings(opts: {
 			}
 			return HttpResponse.json({ data: bound, has_more: false, next_cursor: null });
 		}),
+		// Per-id name resolution for each bound row (#607): the "Bound toolkits"
+		// card reads `GET /toolkits/{id}` for just its own name rather than the
+		// whole `GET /toolkits` catalogue. Backed by the same `workspace` seed so
+		// a bound toolkit resolves to its human name; unknown ids 404 → the row
+		// falls back to the id.
+		http.get('/toolkits/:toolkitId', ({ params }) => {
+			const t = opts.workspace.find((w) => w.toolkit_id === params.toolkitId);
+			if (!t) return new HttpResponse(null, { status: 404 });
+			return HttpResponse.json({
+				toolkit_id: t.toolkit_id,
+				name: t.name,
+				description: null,
+				active: t.active ?? true,
+				key_count: 0,
+				credential_count: 0,
+				permissions: [],
+				created_at: '2026-04-01T09:00:00Z',
+				updated_at: null,
+			});
+		}),
 		http.get('/toolkits', () =>
 			HttpResponse.json({
 				data: opts.workspace.map((t) => ({
@@ -118,8 +138,10 @@ describe('AgentDetailPage', () => {
 	it('lists bound toolkits for the agent', async () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
-		// The bound toolkit id is `github`; with no catalogue name for it the id
-		// is shown as both the (fallback) name label and the secondary mono line.
+		// The bound toolkit id is `github`; the per-id name read 404s (no such
+		// toolkit in the workspace fixtures), so the row falls back to the id as
+		// the primary label and hides the redundant secondary id line (#4) —
+		// leaving exactly one `github` in the row.
 		const row = await screen.findByTestId('bound-toolkit-row');
 		expect(within(row).getAllByText('github').length).toBeGreaterThanOrEqual(1);
 	});
@@ -230,11 +252,11 @@ describe('AgentDetailPage', () => {
 
 		// POST fired → the mock store carries the new binding, dialog closes, and
 		// the bound list refreshes with the newly bound toolkit, showing its human
-		// NAME as the primary label (resolved from the catalogue) and the id below.
+		// NAME as the primary label (resolved via the per-id read) and the id below.
 		await waitFor(() => expect(bound.some((b) => b.toolkit_id === 'tk_stripe')).toBe(true));
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 		const row = await screen.findByTestId('bound-toolkit-row');
-		expect(within(row).getByText('Stripe Tools')).toBeInTheDocument();
+		expect(await within(row).findByText('Stripe Tools')).toBeInTheDocument();
 		expect(within(row).getByText('tk_stripe')).toBeInTheDocument();
 	});
 
@@ -261,6 +283,23 @@ describe('AgentDetailPage', () => {
 		).toBeInTheDocument();
 	});
 
+	it('hides the secondary id line when the name is unresolved (falls back to id) (#4)', async () => {
+		// `tk_ghost` is bound but not present in the workspace, so the per-id name
+		// read 404s → the row shows the id as the primary label. The redundant
+		// secondary `<code>` id line must be hidden so the id isn't rendered twice.
+		seedToolkitBindings({
+			agentId: 'agnt_active_1',
+			bound: [{ toolkit_id: 'tk_ghost', name: 'ignored' }],
+			workspace: [],
+		});
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		const row = await screen.findByTestId('bound-toolkit-row');
+		// The id shows exactly once (as the primary fallback label), never twice.
+		await waitFor(() => expect(within(row).getAllByText('tk_ghost')).toHaveLength(1));
+	});
+
 	it('unbinds a bound toolkit through the inline row confirm', async () => {
 		const bound = seedToolkitBindings({
 			agentId: 'agnt_active_1',
@@ -271,7 +310,7 @@ describe('AgentDetailPage', () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		// The bound row renders the human NAME (resolved from the catalogue) and
+		// The bound row renders the human NAME (resolved via the per-id read) and
 		// still shows the id as a secondary line + an Unbind control.
 		const row = await screen.findByTestId('bound-toolkit-row');
 		expect(await within(row).findByText('GitHub Tools')).toBeInTheDocument();
