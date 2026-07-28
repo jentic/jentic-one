@@ -16,19 +16,25 @@
 ## The operator's whole workflow — three commands
 
 ```bash
-# 1. One-time: create the dedicated agent user + its home, and lock your own home.
-jentic agent-user setup
+# 1. One-time: onboard. Right after picking your operator, bootstrap/wizard offers
+#    to create the dedicated agent user + its home, and lock your own home.
+jentic bootstrap                         # (or: jenticctl wizard — same flow)
 
 # 2. Every session: launch the agent, isolated, in the directory you name.
 jentic run claude ~/projects/my-app
 
 # 3. When you're done with an agent entirely: tear down what was created locally.
-sudo jentic reset            # (documented below; not yet implemented)
+sudo jentic reset
 ```
 
-Everything else — provisioning the agent's binary, seeding config, granting a
-working directory, launching in a fresh login shell — is handled inside
-`jentic run` as guided prompts. Management shortcuts:
+The agent-user account is **created as part of onboarding** — there is no
+separate `agent-user setup` command. After you choose an operator (Claude,
+Cursor, …), `jentic bootstrap` and `jenticctl wizard` both offer to isolate it
+behind a dedicated Unix user; the account-creation step is shared between the two
+the same way the skill step is (see below). Everything else — provisioning the
+agent's binary, seeding config, granting a working directory, launching in a
+fresh login shell — is handled inside `jentic run` as guided prompts. Management
+shortcuts:
 
 ```bash
 jentic run claude --list-grants          # show every directory the agent can reach
@@ -53,10 +59,26 @@ sharing the *agent's* home outward to the operator is safe (the operator is
 trusted and will want to read the agent's outputs); the thing we never do is the
 reverse — expose the operator's home/keys/browser to the agent.
 
-## `jentic agent-user setup` — create the account
+## Creating the account — folded into `bootstrap` / `wizard`
 
-The command runs, idempotently and with platform detection, what is otherwise a
-short manual recipe. For a single-user machine that recipe is:
+Account creation is not a standalone command. Right after the operator picks
+their agent, `jentic bootstrap` and `jenticctl wizard` share one step (the same
+way they share the skill step: the wizard delegates to bootstrap, so the step
+lives in the bootstrap flow and both reach it) that offers to isolate the agent
+behind a dedicated Unix user. The step is deliberately **sudo-last**: it asks
+*"Create a dedicated user account for your local agent? (requires sudo)"* **before
+any privileged command runs**, so an operator who declines never triggers a
+password prompt and no half-provisioned state is left behind. The choice is
+recorded either way (`local_agents.<agent>.account_created`), because "declined,
+running same-user" shapes later behaviour.
+
+Opting in shows an editable, prefilled dialog — account name, home directory, and
+two toggles for whether to copy the operator's agent config and LLM-provider
+config into the agent's home (the same seeding, with the same warnings, described
+under [Step 3](#step-3--config-seeding-opt-in-once-never-clobbers)). On confirm it
+runs, idempotently and with platform detection, what is otherwise a short manual
+recipe, then prints the next step: `cd <agent home>; jentic run <agent>`. For a
+single-user machine that recipe is:
 
 ```bash
 # macOS
@@ -131,7 +153,8 @@ never has to re-derive or re-prompt for the agent's identity.
 What it does, in order:
 
 1. **Resolve the agent user** from config (or the `<operator>-local-agent`
-   default); if the account doesn't exist, offer the `agent-user setup` flow.
+   default); if the account doesn't exist, offer to create it — the same account
+   step `bootstrap`/`wizard` run, for operators who skipped it during onboarding.
 2. **Ensure the binary is installed** for that user (below).
 3. **Optionally seed config** — the agent's own settings, then the LLM-provider
    config (below).
@@ -276,8 +299,8 @@ Two details from live testing, both baked into `jentic run`:
 > above describe shipped behaviour; this one describes intended behaviour so the
 > teardown story is designed before it's built.
 
-`jentic run` and `jentic agent-user setup` accumulate real system state on the
-operator's machine: a Unix account and its home, a copied/installed agent binary,
+Onboarding (`bootstrap`/`wizard`) and `jentic run` accumulate real system state on
+the operator's machine: a Unix account and its home, a copied/installed agent binary,
 seeded config and provider credentials, named-user ACLs stamped across the
 operator's home (traverse grants + leaf grants), a `sudoers` drop-in, and the
 `local_agents` entry in the operator's `jentic` config. `jentic reset` removes

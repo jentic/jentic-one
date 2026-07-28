@@ -55,7 +55,7 @@ test). All worth doing; none closes a structural gap on its own.
 
 [**`local-agent-isolation.md`**](local-agent-isolation.md) is the concrete
 design: run a CLI coding agent (Claude Code as the worked example) as a
-dedicated, unprivileged OS user, wrapped by a `jentic` CLI command set
-(`jentic agent-user setup`, `jentic run <agent>`, directory grants,
-`jentic reset`) so operators get the isolated posture by default instead of by
-discipline.
+dedicated, unprivileged OS user, wrapped by a `jentic` CLI command set (account
+creation folded into `jentic bootstrap` / `jenticctl wizard`, then
+`jentic run <agent>`, directory grants, and `jentic reset`) so operators get the
+isolated posture by default instead of by discipline.
