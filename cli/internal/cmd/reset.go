@@ -333,11 +333,20 @@ func (a *App) resetAgent(ctx context.Context, paths config.Paths, cfg *config.Fi
 func (a *App) execAgentReset(paths config.Paths, cfg *config.FileConfig, plan resetPlan, deleteHome bool) error {
 	// Act. Steps run in a fixed order (ACLs → home → sudoers → account); a failure
 	// stops the run with the config entry still recorded so a re-run can finish.
+	// A best-effort step (settling the agent home) is the exception: a macOS home
+	// carries SIP/TCC-protected template files that nobody can chown or remove, so
+	// its re-own/delete legitimately exits non-zero after handling everything else.
+	// We report that and press on to the account deletion rather than abort.
 	for _, step := range buildResetSteps(plan, deleteHome) {
 		fmt.Fprintln(a.Out, theme.Infof("• %s", step.What))
 		c := step.Cmd
 		c.Stdout, c.Stderr = a.Out, a.Err
 		if err := c.Run(); err != nil {
+			if step.BestEffort {
+				fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
+					"  (%s: some protected system files couldn't be changed — that's expected; continuing)", step.What)))
+				continue
+			}
 			return fmt.Errorf("%s: %w", step.What, err)
 		}
 	}
@@ -463,13 +472,15 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	if plan.homeDir != "" {
 		if deleteHome {
 			steps = append(steps, localagent.AccountStep{
-				What: "delete the agent's home " + plan.homeDir,
-				Cmd:  localagent.DeleteHomeCmd(plan.homeDir),
+				What:       "delete the agent's home " + plan.homeDir,
+				Cmd:        localagent.DeleteHomeCmd(plan.homeDir),
+				BestEffort: true,
 			})
 		} else {
 			steps = append(steps, localagent.AccountStep{
-				What: "re-own the agent's home to " + plan.operator,
-				Cmd:  localagent.ReownHomeCmd(plan.operator, plan.homeDir),
+				What:       "re-own the agent's home to " + plan.operator,
+				Cmd:        localagent.ReownHomeCmd(plan.operator, plan.homeDir),
+				BestEffort: true,
 			})
 		}
 	}

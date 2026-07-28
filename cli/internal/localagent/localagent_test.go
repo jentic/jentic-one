@@ -193,6 +193,16 @@ func TestTeardownCmdShape(t *testing.T) {
 		t.Error("traverse grant and revoke must not be identical commands")
 	}
 
+	// ReownHomeCmd must use `chown -Rf`: -R to re-own the whole tree, -f to
+	// suppress per-file errors on the SIP/TCC-protected template files a macOS home
+	// carries (which nobody can chown) so the command still processes everything
+	// else. reset marks this step best-effort, so a residual non-zero exit is
+	// reported, not fatal.
+	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
+	if !strings.Contains(reown, "chown -Rf ") {
+		t.Errorf("re-own must use `chown -Rf` to survive un-chownable protected files: %s", reown)
+	}
+
 	// DeleteAccountCmd must keep the home (the home is settled separately): it must
 	// NOT carry a home-removing flag. On macOS we delete the DirectoryService
 	// record with `dscl . -delete` (no filesystem side-effect) rather than

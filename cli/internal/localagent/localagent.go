@@ -120,6 +120,14 @@ type AccountStep struct {
 	What string
 	// Cmd is the command to run; it is sudo-fronted where elevation is required.
 	Cmd *exec.Cmd
+	// BestEffort marks a step whose non-zero exit should be reported but not abort
+	// the run. Used by reset for re-owning/deleting the agent home: a macOS home
+	// materialised by createhomedir contains SIP/TCC-protected template files (e.g.
+	// Library/Mail, Library/Containers) that NOBODY — not even root — can chown or
+	// remove, so the operation processes everything it can and then exits non-zero
+	// on those. That is expected and harmless (the agent's actual work is re-owned),
+	// so it must not stop the teardown before the account is deleted.
+	BestEffort bool
 }
 
 // CreateAccountCmds returns the ordered, platform-specific steps that create the
@@ -383,9 +391,12 @@ func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
 // ReownHomeCmd changes ownership of the agent's home tree to the operator, so
 // after the agent account is deleted the operator can still read the agent's
 // work. It is the default `jentic reset` disposition for the home (preserve, not
-// delete). Runs as root.
+// delete). The `-f` suppresses per-file errors on the SIP/TCC-protected template
+// files a macOS home carries (Library/Mail, Library/Containers, …) that nobody
+// can chown; the command still re-owns everything it can, and reset treats it as
+// best-effort so those unavoidable entries don't abort the teardown. Runs as root.
 func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-R", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
+	return exec.Command("sudo", "chown", "-Rf", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
 }
 
 // ChownToAgentCmd gives the agent ownership of dir (recursively). It is used after

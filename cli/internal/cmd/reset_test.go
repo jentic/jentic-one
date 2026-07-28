@@ -137,6 +137,16 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 			idxLeaf, idxTraverse, idxHome, idxSudoers, idxAccount, whats)
 	}
 
+	// The home step is best-effort (a macOS home has SIP/TCC-protected files that
+	// nobody can chown/remove, so its non-zero exit must not abort the teardown);
+	// no other step is.
+	for _, s := range steps {
+		wantBestEffort := strings.Contains(s.What, "the agent's home")
+		if s.BestEffort != wantBestEffort {
+			t.Errorf("step %q BestEffort=%v, want %v", s.What, s.BestEffort, wantBestEffort)
+		}
+	}
+
 	// Delete: the home step deletes instead of re-owning.
 	delSteps := buildResetSteps(plan, true)
 	delJoined := ""
