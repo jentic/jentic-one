@@ -211,6 +211,19 @@ func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 	return exec.Command("sudo", "setfacl", "-m", "u:"+agentUser+":--x", dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
 }
 
+// macLeafACE is the macOS ACL permission set granted on the rwx-leaf. It must be
+// spelled out explicitly rather than using the "read,write,execute" shorthand:
+// on a *directory* macOS expands that shorthand to only `list,add_file,search`,
+// which lets the agent create a file but NOT delete or rename one — so a common
+// write-to-temp-then-rename (e.g. an editor or `Write` tool) fails with EACCES,
+// and `test -w` on the dir returns false (which made `jentic run` re-prompt for
+// the same directory on every launch). We therefore include the directory-
+// mutation bits (add_subdirectory, delete, delete_child) and the file bits, all
+// inheritable, so the leaf and everything created inside it is fully read/write.
+const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," +
+	"read,write,execute,append,readattr,writeattr,readextattr,writeextattr," +
+	"readsecurity,file_inherit,directory_inherit"
+
 // LeafGrantCmd returns the command that grants the agent full read/write/execute
 // on the leaf workspace and everything inside it, existing and future (Layer 2).
 // On macOS the allow is inserted at a low index and applied recursively so it
@@ -219,7 +232,7 @@ func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return exec.Command("sudo", "chmod", "-R", "+a#", "0", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"user:"+agentUser+" allow read,write,execute,file_inherit,directory_inherit", dir)
+			"user:"+agentUser+" allow "+macLeafACE, dir)
 	}
 	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
 		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
@@ -229,11 +242,12 @@ func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 // LeafRevokeCmd removes the agent's rwx-leaf allow from dir (and its subtree),
 // reversing LeafGrantCmd. Any ancestor traverse grants stay in place, but with
 // the leaf allow gone the agent can no longer read or write the directory — and
-// (unless the directory is world-readable) can no longer reach its contents.
+// (unless the directory is world-readable) can no longer reach its contents. The
+// permission string must match LeafGrantCmd's exactly so macOS removes the ACE.
 func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return exec.Command("sudo", "chmod", "-R", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"user:"+agentUser+" allow read,write,execute,file_inherit,directory_inherit", dir)
+			"user:"+agentUser+" allow "+macLeafACE, dir)
 	}
 	script := "setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
 		" && setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)

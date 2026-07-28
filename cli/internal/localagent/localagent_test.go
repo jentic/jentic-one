@@ -3,6 +3,7 @@ package localagent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -77,6 +78,28 @@ func TestGrantAndRevokeCmdShape(t *testing.T) {
 		if !strings.Contains(joined, "a-local-agent") || !strings.Contains(joined, c.target) {
 			t.Errorf("%s: args missing user or target: %v", c.name, c.args)
 		}
+	}
+}
+
+// TestMacLeafGrantIncludesDeleteBits guards against the macOS shorthand bug: a
+// "write" grant on a directory expands to add_file only, so the agent could
+// create but not delete/rename files (breaking write-to-temp-then-rename and
+// leaving `test -w` false, which re-prompted on every launch). The explicit set
+// must carry the directory-mutation bits and be symmetric between grant/revoke.
+func TestMacLeafGrantIncludesDeleteBits(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-specific ACL permission set")
+	}
+	grant := strings.Join(LeafGrantCmd("a-local-agent", "/Users/Shared/x/work").Args, " ")
+	for _, bit := range []string{"delete", "delete_child", "add_subdirectory"} {
+		if !strings.Contains(grant, bit) {
+			t.Errorf("leaf grant missing %q bit (dir writes would fail): %s", bit, grant)
+		}
+	}
+	// Revoke must name the identical permission string so macOS can drop the ACE.
+	revoke := strings.Join(LeafRevokeCmd("a-local-agent", "/Users/Shared/x/work").Args, " ")
+	if !strings.Contains(revoke, macLeafACE) || !strings.Contains(grant, macLeafACE) {
+		t.Errorf("grant/revoke permission strings must match macLeafACE")
 	}
 }
 
