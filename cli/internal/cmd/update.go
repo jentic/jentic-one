@@ -155,7 +155,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 
 	if doCLI {
 		if brewManaged {
-			if err := a.brewUpgradeCLI(ctx); err != nil {
+			if err := a.brewUpgradeCLI(ctx, latest, latestKnown); err != nil {
 				return err
 			}
 		} else if err := a.updateCLI(ctx, repo, ref, ctlTarget); err != nil {
@@ -173,12 +173,21 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 // brewUpgradeCLI refreshes a Homebrew-managed CLI by delegating to
 // `brew upgrade jentic`, streaming brew's output. brew swaps both binaries
 // (they ship in one cask) and its bookkeeping stays consistent.
-func (a *App) brewUpgradeCLI(ctx context.Context) error {
+//
+// brew can only install what the cask currently ships, and the cask bump lags
+// the GitHub release tag by a bit; inside that window `brew upgrade` is a
+// clean no-op, so success is only claimed after verifying the installed cask
+// actually reached latest.
+func (a *App) brewUpgradeCLI(ctx context.Context, latest string, latestKnown bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Heading.Render("Updating CLI via Homebrew"))
 	fmt.Fprintln(a.Out, theme.Dimf("  running: %s", update.BrewUpgradeCommand))
 	if err := update.BrewUpgrade(ctx, a.Out, a.Err); err != nil {
 		return err
+	}
+	if caskVersion := update.BrewCaskVersion(ctx); latestKnown && caskVersion != "" && update.NewerAvailable(caskVersion, latest) {
+		fmt.Fprintln(a.Out, theme.Warnf("Homebrew's jentic cask is still at %s (release %s not yet published to the tap) — re-run `%s` in a while.", caskVersion, latest, update.BrewUpgradeCommand))
+		return nil
 	}
 	fmt.Fprintln(a.Out, theme.Successf("CLI updated via Homebrew."))
 	return nil

@@ -32,13 +32,36 @@ func BrewUpgrade(ctx context.Context, out, errW io.Writer) error {
 	return nil
 }
 
+// BrewCaskVersion returns the installed version of the jentic cask as reported
+// by brew (`brew list --cask --versions jentic`), or "" when it cannot be
+// determined. Callers use it to verify that an upgrade actually moved the
+// cask: brew can only install what the cask ships, and the cask bump lags the
+// GitHub release tag, so a `brew upgrade` inside that window is a no-op.
+func BrewCaskVersion(ctx context.Context) string {
+	brew, err := exec.LookPath("brew")
+	if err != nil {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, brew, "list", "--cask", "--versions", "jentic").Output() //nolint:gosec // brew resolved via LookPath with fixed args.
+	if err != nil {
+		return ""
+	}
+	// Output is "jentic <version> [<version>...]"; brew lists oldest first, so
+	// the last field is the newest installed version.
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 || fields[0] != "jentic" {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
 // BrewManaged reports whether the binary at target is managed by Homebrew.
 //
 // Self-updating a brew-managed binary desyncs brew's bookkeeping (`brew
 // outdated` keeps reporting the old version and the next `brew upgrade`
-// clobbers the swapped binary), so `update` refuses the CLI swap and points at
-// BrewUpgradeCommand instead — the policy family flyctl, gh, and friends use:
-// hint at brew rather than swapping behind its back.
+// clobbers the swapped binary), so `update` never swaps the CLI in place and
+// instead delegates the CLI half to BrewUpgrade — the policy family flyctl,
+// gh, and friends use: let brew do the swap rather than going behind its back.
 //
 // Two signals mark a brew-managed install:
 //
