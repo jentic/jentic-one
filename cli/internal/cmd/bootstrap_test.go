@@ -164,14 +164,17 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 }
 
 // TestBootstrapSelectionErrorBeforeRegister proves operator selection is
-// validated before any irreversible side effect: a non-interactive run with no
-// operators must fail without registering an agent or activating a profile.
+// validated before any irreversible side effect: a non-interactive run where
+// no operators are given AND none are detected must fail without registering
+// an agent or activating a profile. (With detected operators, the run
+// degrades to them instead — #755.)
 func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	srv, registers := bootstrapServer(t, 0)
 
 	app := testApp(t)
+	stubDetect(t, app, home, t.TempDir()) // nothing detected
 	app.Out = new(bytes.Buffer)
 
 	root := newAPIRootCmd(app)
@@ -192,6 +195,9 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	if !strings.Contains(err.Error(), "no operators") {
 		t.Errorf("error = %v, want a 'no operators' selection error", err)
 	}
+	if !strings.Contains(err.Error(), "--skip-skill") {
+		t.Errorf("bootstrap's error should name --skip-skill as the identity-only escape hatch: %v", err)
+	}
 	if n := registers.Load(); n != 0 {
 		t.Errorf("registered %d times before the selection error; want 0 (no side effects)", n)
 	}
@@ -201,6 +207,36 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	cfg, _ := config.Load(app.Paths)
 	if cfg.DefaultProfile == "demo" {
 		t.Errorf("profile must not be activated when selection fails up front")
+	}
+}
+
+// TestBootstrapSkipSkillRejectsInvalidScope pins that flag validation is not
+// silently skipped on paths a flag doesn't apply to: `--skip-skill` with a
+// mistyped --scope must error before any registration side effect.
+func TestBootstrapSkipSkillRejectsInvalidScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	srv, registers := bootstrapServer(t, 0)
+
+	app := testApp(t)
+	app.Out = new(bytes.Buffer)
+	root := newAPIRootCmd(app)
+	root.SetOut(app.Out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"bootstrap",
+		"--profile", "demo",
+		"--base-url", srv.URL,
+		"--skip-skill",
+		"--scope", "everywhere",
+		"--yes",
+	})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "invalid --scope") {
+		t.Fatalf("expected an invalid --scope error, got %v", err)
+	}
+	if n := registers.Load(); n != 0 {
+		t.Errorf("registered %d times despite an invalid flag; want 0", n)
 	}
 }
 
