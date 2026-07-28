@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
@@ -21,10 +22,12 @@ type runOptions struct {
 	home       bool
 	allowDir   bool
 	noAllowDir bool
-	yes        bool
-	agentUser  string
-	listGrants bool
-	revoke     string
+	yes          bool
+	agentUser    string
+	listGrants   bool
+	revoke       string
+	seedConfig   bool
+	noSeedConfig bool
 }
 
 func newRunCmd(app *App) *cobra.Command {
@@ -61,6 +64,10 @@ func newRunCmd(app *App) *cobra.Command {
 		"list the directories the agent has been granted, then exit")
 	cmd.Flags().StringVar(&opts.revoke, "revoke", "",
 		"revoke the agent's access to the given directory, then exit")
+	cmd.Flags().BoolVar(&opts.seedConfig, "seed-config", false,
+		"copy the operator's agent config into the agent's home without prompting")
+	cmd.Flags().BoolVar(&opts.noSeedConfig, "no-seed-config", false,
+		"never copy the operator's agent config into the agent's home")
 	return cmd
 }
 
@@ -112,6 +119,11 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 
 	// 2. Ensure the agent's binary is installed for that user.
 	if err := a.ensureAgentBinary(ctx, cmd, opts, agentUser, desc); err != nil {
+		return err
+	}
+
+	// 2b. Offer to seed the operator's agent config into the agent's home (once).
+	if err := a.ensureAgentConfig(ctx, cmd, opts, agentUser, desc); err != nil {
 		return err
 	}
 
@@ -256,6 +268,66 @@ func (a *App) pickProvisionRoute(desc localagent.Descriptor, agentUser, opBin st
 	return choice, nil
 }
 
+// ── step 2b: config seeding ──────────────────────────────────────────────────
+
+// ensureAgentConfig offers to copy the operator's agent configuration (e.g.
+// ~/.claude, ~/.claude.json) into the agent's home, so the agent inherits the
+// operator's settings. It only acts when the operator has such config, the
+// agent doesn't already have its own, and the operator opts in — a compromised
+// agent must not be able to trick a re-run into overwriting its state, and the
+// operator must consciously accept that these files can carry provider secrets.
+func (a *App) ensureAgentConfig(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
+	if opts.noSeedConfig || len(desc.ConfigPaths) == 0 {
+		return nil
+	}
+	home := localagent.OperatorHome()
+	srcs := localagent.ExistingConfigPaths(home, desc)
+	if len(srcs) == 0 {
+		return nil // operator has nothing to seed
+	}
+	if localagent.AgentHasConfig(ctx, agentUser, desc) {
+		return nil // agent already has its own config — don't clobber it
+	}
+
+	if !a.decideSeedConfig(cmd, opts, srcs) {
+		return nil
+	}
+
+	fmt.Fprintln(a.Out, theme.Infof("Seeding %s's %s config into %s ...", desc.ID, desc.Binary, agentUser))
+	c := localagent.CopyConfigCmd(agentUser, home, srcs)
+	c.Stdout, c.Stderr = a.Out, a.Err
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("seed agent config: %w", err)
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render("  These are the operator's settings; the agent still authenticates as itself on first launch."))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  Note: provider config may carry API keys — longer-term these move behind jentic-one's broker."))
+	return nil
+}
+
+// decideSeedConfig returns whether to copy the operator's config, honouring the
+// flags and otherwise prompting. The safe default (--yes, non-interactive) is
+// NOT to copy, since the files can contain provider secrets.
+func (a *App) decideSeedConfig(cmd *cobra.Command, opts *runOptions, srcs []string) bool {
+	if opts.seedConfig {
+		return true
+	}
+	if opts.yes || !wantsInteractive(cmd, opts.yes) {
+		return false
+	}
+	fmt.Fprintln(a.Out, theme.Warnf("Found the operator's agent config: %s", strings.Join(srcs, ", ")))
+	confirm := false
+	err := install.RunConfirm(
+		huh.NewConfirm().
+			Title("Copy the operator's config into the agent's home?").
+			Description("Gives the agent your settings. May include provider API keys stored locally.").
+			Value(&confirm),
+	)
+	if err != nil {
+		return false
+	}
+	return confirm
+}
+
 // ── step 3: working directory + access ───────────────────────────────────────
 
 func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
@@ -295,20 +367,67 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 		return "", nil
 	}
 
-	fmt.Fprintln(a.Out, theme.Infof("Granting %s read/write to %s ...", agentUser, abs))
-	g := localagent.GrantDirCmd(agentUser, abs)
-	g.Stdout, g.Stderr = a.Out, a.Err
-	if err := g.Run(); err != nil {
-		return "", fmt.Errorf("grant directory access: %w", err)
-	}
-	if cfg.AddGrantedDir(agentID, abs) {
-		if err := cfg.Save(a.Paths); err != nil {
-			return "", err
-		}
+	if err := a.grantDir(ctx, cfg, agentID, agentUser, abs); err != nil {
+		return "", err
 	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("  Granted (persists across sessions; `jentic run "+agentID+" --list-grants` to review)."))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  This is OS-level access only — the agent still runs its own workspace-trust prompt."))
 	return abs, nil
+}
+
+// grantDir applies the "default-deny on ~ + traverse-walk + rwx-leaf" model so
+// the agent can read/write abs without gaining default access to the operator's
+// home. For a path under the home it (1) applies the one-time agent-scoped
+// home-deny, (2) opens execute-only traverse on each ancestor the agent can't
+// already pass through, then (3) grants the rwx leaf. For a path outside the
+// home the leaf grant alone suffices. All layers are scoped to the agent user
+// and never touch the operator's own permissions.
+func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, abs string) error {
+	home := localagent.OperatorHome()
+	inHome := home != "" && localagent.IsUnderHome(home, abs)
+
+	if inHome {
+		// Layer 1: one-time default-deny across the operator's home.
+		entry, _ := cfg.LocalAgent(agentID)
+		if !entry.HomeDenied {
+			fmt.Fprintln(a.Out, theme.Infof("Sealing %s off from %s (one-time, agent-scoped) ...", agentUser, home))
+			if err := a.runGrant(localagent.EnsureHomeDenyCmd(agentUser, home), "apply home default-deny"); err != nil {
+				return err
+			}
+			if cfg.MarkHomeDenied(agentID) {
+				if err := cfg.Save(a.Paths); err != nil {
+					return err
+				}
+			}
+		}
+		// Layer 2: open traverse on the ancestors the agent can't yet pass through.
+		for _, anc := range localagent.AncestorsNeedingTraverse(ctx, agentUser, home, abs) {
+			if err := a.runGrant(localagent.TraverseGrantCmd(agentUser, anc), "grant traverse on "+anc); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Layer 3: the rwx leaf.
+	fmt.Fprintln(a.Out, theme.Infof("Granting %s read/write to %s ...", agentUser, abs))
+	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
+		return err
+	}
+	if cfg.AddGrantedDir(agentID, abs) {
+		if err := cfg.Save(a.Paths); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runGrant runs one ACL command, wiring output and wrapping any failure.
+func (a *App) runGrant(c *exec.Cmd, what string) error {
+	c.Stdout, c.Stderr = a.Out, a.Err
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	return nil
 }
 
 // decideDirGrant returns whether to grant the agent access to dir, honouring the
@@ -467,7 +586,7 @@ func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentID, ag
 	abs = filepath.Clean(abs)
 
 	fmt.Fprintln(a.Out, theme.Infof("Revoking %s access to %s ...", agentUser, abs))
-	r := localagent.RevokeDirCmd(agentUser, abs)
+	r := localagent.LeafRevokeCmd(agentUser, abs)
 	r.Stdout, r.Stderr = a.Out, a.Err
 	if err := r.Run(); err != nil {
 		return fmt.Errorf("revoke directory access: %w", err)

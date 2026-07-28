@@ -44,9 +44,12 @@ jentic run <agent> [path] [flags]
   stays a copy-paste for newcomers and scriptable for power users):
   - `--home` — skip the current dir; open the session in the agent's own home.
   - `--allow-dir` / `--no-allow-dir` — pre-answer the directory-access prompt.
+  - `--seed-config` / `--no-seed-config` — pre-answer the config-seeding prompt.
   - `--yes` — assume the safe default for every prompt (non-interactive); never
     picks a flagged-dangerous option (it declines instead).
   - `--agent-user <name>` — override the derived `<operator>-local-agent` user.
+  - `--list-grants` / `--revoke <path>` — review or reverse directory grants, then
+    exit.
 
 ### State lives in the operator's `jentic` config
 
@@ -66,6 +69,7 @@ local_agents:
     user: alice-local-agent          # the OS account jentic run becomes
     home_dir: /Users/Shared/alice-local-agent
     binary: claude                    # what to exec / probe
+    home_denied: true                 # the one-time agent-scoped deny on ~ is applied
     granted_dirs:                     # durable directory ACLs (see step 3)
       - /Users/Shared/alice-local-agent/work/api
       - /Users/alice/projects/scratch
@@ -75,6 +79,9 @@ local_agents:
 - **`user` / `home_dir`** are written by `jentic agent-user setup` when it creates
   the account, and read by every `jentic run` so the launcher never has to guess the
   name or home (it also lets `--agent-user` overrides persist).
+- **`home_denied`** records that the one-time agent-scoped default-deny across the
+  operator's home has been applied (step 3). It is expensive (a full walk of `~`), so
+  the flag lets `jentic run` do it once and skip it on every later in-home grant.
 - **`granted_dirs`** is the authoritative inventory backing `--list-grants`,
   `jentic revoke-dir`, and the `jentic doctor` sprawl check (step 3). The ACL on disk
   is the source of truth for *access*; this list is the record of *what jentic
@@ -91,9 +98,12 @@ local_agents:
    [`05`](05-agent-as-own-unix-user.md) recipe and records `user`/`home_dir` in the
    config.
 2. **Ensure the agent's binary is installed** for that user — the provisioning flow
-   (next section, added in a later commit).
-3. **Resolve the working directory** and its access — the directory-access flow
-   (added in a later commit), including danger-flagging.
+   (copy vs. fresh install).
+2b. **Optionally seed the operator's agent config** into the agent's home (opt-in,
+   once) so the agent inherits the operator's settings.
+3. **Resolve the working directory** and its access — the directory-access flow,
+   including the in-home default-deny + traverse-walk + rwx-leaf model and
+   danger-flagging.
 4. **Launch** the agent as the agent user, in the resolved directory, via a login
    shell so no operator environment leaks.
 
@@ -139,6 +149,18 @@ Choice [c]:
   to the agent's `~/.local/bin` and `chown`-ing it to the agent is safe and instant.
   This is the default when the operator already has a detectable single-file binary.
   `jentic run` does the `mkdir -p`, `cp`, and `chown` for the operator.
+
+  > **Copy vs. symlink for larger SDKs/toolchains.** Copying is simplest for a single
+  > file, but for a larger toolchain (an SDK tree, an npm global, a multi-file
+  > runtime) we may not want to duplicate it into every agent home. An alternative
+  > worth exploring: leave the operator's copy in place, grant the **agent user
+  > read/execute** on just that toolchain directory via a named-user ACL (the same
+  > scoped mechanism used for workspaces), and **symlink** it into the agent's
+  > `~/.local/bin` (or `~/.local/lib`) rather than copying. The agent runs the
+  > operator's binary in place without a second copy to keep updated, and the ACL
+  > keeps the exposure to exactly the toolchain path. This only works for
+  > credential-free toolchains — anything that reads secrets from its own directory
+  > must still be provisioned per-agent, not shared.
 - **Install fresh** — for agents distributed via a package manager (npm global, etc.)
   or when no operator binary is found, run the agent's documented installer *as the
   agent user* so the toolchain lands in the agent's `$HOME`. This is the more
@@ -163,9 +185,52 @@ Each known `<agent>` is one small record so adding an agent is data, not code:
 | `probe_paths` | `~/.local/bin/claude` | distinguish missing vs. not-on-PATH |
 | `install` | `curl -fsSL https://claude.ai/install.sh \| bash` | the fresh-install command, run as the agent |
 | `single_binary` | `true` | whether **copy** is offered as the default route |
+| `config_paths` | `~/.claude`, `~/.claude.json` | the agent's non-secret settings under the operator's home, offered for seeding (see below) |
 
 `hermes`, `codex`, `cursor-agent`, … are additional rows. An unknown `<agent>`
 errors with the list of known identifiers.
+
+### Seeding the operator's agent config into the agent account
+
+Provisioning the binary gives the agent a *runnable* tool, but not the operator's
+*settings* — for Claude Code that's `~/.claude/` (settings, custom agents, slash
+commands, MCP config) and `~/.claude.json`. So the agent starts with a stock
+configuration rather than the operator's tuned setup. After the binary step,
+`jentic run` offers (once, opt-in) to copy the descriptor's `config_paths` from the
+operator's home into the agent's home at the same relative location, `chown`-ing them
+to the agent:
+
+```
+Found the operator's agent config: /Users/alice/.claude, /Users/alice/.claude.json
+  Copy the operator's config into the agent's home? [y/N]
+```
+
+Guards, because this is the one place the operator's own files cross into the agent
+account:
+
+- **It only runs when the agent has no config of its own yet** — a re-run never
+  clobbers the agent's evolved settings, and a compromised agent can't trick a
+  subsequent launch into overwriting its state.
+- **It is opt-in and off by default** (`--seed-config` to accept non-interactively,
+  `--no-seed-config` to refuse; `--yes` **declines**).
+
+> **Caveat — these files may carry provider-specific secrets.** Agent config like
+> `~/.claude.json` can contain provider API keys or MCP-server credentials the
+> operator stored locally. Seeding them hands the agent a **copy** of those secrets —
+> which is deliberate (the agent inherits the operator's working setup), but it *is* a
+> credential crossing the boundary, so it is surfaced and confirmed, never silent. The
+> longer-term direction is to migrate those provider credentials **behind
+> jentic-one's broker**, so the agent's config carries no secrets at all and this copy
+> becomes settings-only. Until then, treat seeded config as sensitive and seed only
+> what the agent genuinely needs.
+
+> **This is the payoff of the separate-identity design.** Because the agent runs as
+> its own Unix user with its own `$HOME`, the operator can stay logged into the
+> `jentic` CLI as **admin in their own operator account**, while the agent operates
+> under its **own jentic agent identity** (its own Ed25519 keypair and tokens in the
+> agent's home), governed by the operator's config. The agent is driven by — but has
+> no access to — the operator's credentials: two distinct principals on one machine,
+> which is exactly what the credential boundary requires.
 
 ## Step 3 — resolve the working directory and its access
 
@@ -197,23 +262,108 @@ Agent alice-local-agent has no access to /Users/alice/projects/api.
 Choice [h]:
 ```
 
-- **Allow** — grant the agent access to *just this directory* via an inherited ACL,
-  the same named-user mechanism [`05`](05-agent-as-own-unix-user.md) uses for the
-  operator (reversed direction):
+- **Allow** — grant the agent access to *just this directory*. How that grant is
+  built depends on where the directory lives:
 
-  ```bash
-  # macOS
-  sudo chmod +a "user:$AGENT allow read,write,execute,file_inherit,directory_inherit" "$DIR"
-  # Linux
-  sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
-  ```
+  - **Outside the operator's home** (a neutral/shared path): a single inherited
+    named-user ACL, the same mechanism [`05`](05-agent-as-own-unix-user.md) uses for
+    the operator (reversed direction):
 
-  The grant is **scoped to that directory subtree only** — it does not open the
-  operator's home generally, only the one path the operator chose. This is a
+    ```bash
+    # macOS
+    sudo chmod -R +a# 0 "user:$AGENT allow read,write,execute,file_inherit,directory_inherit" "$DIR"
+    # Linux
+    sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
+    ```
+
+  - **Inside the operator's home** — the important case, because almost every
+    directory the operator wants the agent to work in *is* under `~`, yet `~` must
+    stay closed by default. This is handled by the **agent-scoped default-deny +
+    traverse-walk + rwx-leaf** model described below. It lets the agent read/write
+    one chosen subtree of `~` **without** ever gaining default access to the rest of
+    the home — and without touching the operator's own permissions.
+
+  Either way the grant is **scoped to that directory subtree only**. This is a
   system-level grant; **Claude Code (or whichever agent) still governs its own
   workspace-trust prompt** on top, so the operator confirms twice for two different
   things (OS access vs. the agent's own trust model). `jentic run` says which is
   which so the two prompts aren't confused.
+
+  #### Granting a directory inside the operator's home
+
+  The whole model is **scoped to the single agent user** — every rule below is a
+  named-user ACL entry (`user:$AGENT ...` on macOS, `u:$AGENT:...` on Linux). None of
+  it changes the mode bits or the operator's own access; `~` stays `drwx------` to
+  every other user on the box. Three layers:
+
+  **Layer 1 — default-deny on `~` (one-time, agent-scoped, inherited).** The first
+  time an in-home directory is granted, deny the agent everything across the whole
+  home, existing files and future ones alike:
+
+  ```bash
+  # macOS — recursive so existing entries are stamped; inherit flags cover new ones
+  sudo chmod -R +a "user:$AGENT deny read,write,delete,append,file_inherit,directory_inherit" ~
+
+  # Linux — a "---" named-user entry is the most-specific match, so it wins over
+  # group/other; access ACL covers existing entries, default ACL covers new ones
+  sudo setfacl -R -m u:"$AGENT":--- ~ && sudo setfacl -R -d -m u:"$AGENT":--- ~
+  ```
+
+  This is the guarantee that the agent *starts with nothing* inside `~`, independent
+  of what mode bits any individual file happens to carry. It is the expensive step (it
+  walks the entire home), so `jentic run` does it once and records `home_denied: true`
+  against the agent in the config, skipping it on every later grant.
+
+  **Layer 2 — traverse-walk (execute-only, per ancestor).** For the agent to *reach*
+  the leaf, each directory on the path from `~` down to the leaf's parent must be
+  traversable (search permission — **not** list, **not** read). Walk the ancestor
+  chain and grant execute-only on each dir the agent can't already traverse (probed
+  with `sudo -u "$AGENT" test -x <dir>`, so a re-run after an earlier grant skips the
+  ones already opened — in the common layout this is usually just `~` itself):
+
+  ```bash
+  # macOS
+  sudo chmod +a "user:$AGENT allow execute" "$ANCESTOR"
+  # Linux (non-recursive, no default: this dir only)
+  sudo setfacl -m u:"$AGENT":--x "$ANCESTOR"
+  ```
+
+  Execute-without-read means the agent can pass *through* a directory to a known path
+  but cannot list its contents — it can traverse `~` to reach `~/projects/api` without
+  being able to enumerate everything else in `~`.
+
+  **Layer 3 — rwx-leaf (inherited).** Finally, grant full read/write/execute on the
+  chosen workspace and everything created inside it:
+
+  ```bash
+  # macOS — insert at index 0 (see the ordering caveat), applied recursively
+  sudo chmod -R +a# 0 "user:$AGENT allow read,write,execute,file_inherit,directory_inherit" "$DIR"
+  # Linux
+  sudo setfacl -R -m u:"$AGENT":rwX "$DIR" && sudo setfacl -R -d -m u:"$AGENT":rwX "$DIR"
+  ```
+
+  > **macOS ordering caveat (must be handled, not just noted).** macOS evaluates ACL
+  > entries **top-to-bottom, first-match-wins**. The Layer-1 deny, applied recursively,
+  > stamps a `deny` entry onto the leaf subtree too — and if that deny is evaluated
+  > *before* the leaf `allow`, it shadows it and the grant silently does nothing. So
+  > the leaf allow must be **inserted ahead of the inherited deny**: `chmod +a# 0`
+  > places it at index 0, and applying it recursively (`-R`) re-stamps every existing
+  > child allow-before-deny. Linux POSIX ACLs don't have this problem — they select
+  > the single most-specific named-user entry per inode, so the recursive rwX on the
+  > leaf simply overrides the `---` inherited from `~` with no ordering care needed.
+
+  **Revoking** an in-home grant drops just the Layer-3 leaf allow (`chmod -R -a ...`
+  / `setfacl -R -x ...`); the Layer-1 deny and the Layer-2 traverse grants stay. With
+  the leaf allow gone, the still-present deny immediately re-closes the directory, so
+  one step fully reverses the grant.
+
+  > **Residual caveat (honest).** This model is robust for read/write/list: the agent
+  > cannot read, write, or enumerate anything in `~` outside a granted leaf. It does
+  > **not** hide the *existence* of paths the agent already knows to probe — a `deny`
+  > returns "permission denied", not "no such file", so the agent can learn that, say,
+  > `~/.ssh` exists by testing the name. But it cannot read or write it. This is an
+  > information-only residue we accept; closing it would require per-path name hiding
+  > the OS doesn't offer through ACLs.
 
 - **Open in home** (default) — skip the grant entirely and launch the session in the
   agent's own home, the always-accessible shared space. The safe default: it never
@@ -284,13 +434,22 @@ shell** (fresh environment, so no operator tokens/vars leak) in the resolved
 directory:
 
 ```bash
-sudo -u "$AGENT" -i bash -lc 'cd "$DIR" && exec <binary>'
+sudo -u "$AGENT" -H bash -lc 'cd "$DIR" && exec <binary>'
 ```
 
-For the "open in home" path there's no `cd` — the login shell already starts in the
-agent's home. This is exactly the launch line from [`05`](05-agent-as-own-unix-user.md),
-now with the user/dir/binary filled in by the preceding steps instead of by the
-operator's memory.
+For the "open in home" path the `cd` targets `$HOME` instead. Two implementation
+notes learned from live testing, both baked into `jentic run`:
+
+- **Use `-H bash -lc`, not `sudo -i`.** `sudo -i` re-serializes the command through
+  the login shell, mangling any multi-token/multi-line snippet; plain `sudo -u … -H
+  bash -lc` passes argv straight through. `-H` points `HOME` at the agent's home and
+  `bash -l` still sources the agent's login profiles (so a PATH export added there is
+  honoured). Because `-H` doesn't `cd`, the snippet cd's explicitly.
+- **Pin the parent process's working directory to `/`.** The operator's shell cwd is
+  typically inside the now-`700` home, which the agent user can't read; if the `sudo`
+  child inherits it, bash emits `getcwd: Permission denied` noise before the snippet
+  even runs. `jentic run` sets the child's dir to `/` (traversable by everyone) for
+  every agent-user invocation.
 
 ## Porting an existing workspace into the setup
 
@@ -310,38 +469,32 @@ The catch, and how to keep isolation:
   there, `chown`s it to the agent, adds the operator's inherited ACL, and it works
   like the default case. No isolation concern.
 
-- **If the workspace is *inside the operator's home*** (e.g.
-  `~/projects/my-app`) — the hard case, because `chmod 700 ~` (the isolation
-  guarantee from [`05`](05-agent-as-own-unix-user.md)) means the agent can't even
-  traverse `~` to reach it, and we must **not** loosen `~` to let it. Options, best
-  first:
+- **If the workspace is *inside the operator's home*** (e.g. `~/projects/my-app`) —
+  the common case, and the one the **agent-scoped default-deny + traverse-walk +
+  rwx-leaf** model (see [step 3](#granting-a-directory-inside-the-operators-home))
+  exists to serve. `jentic run claude ~/projects/my-app` grants the agent read/write
+  on exactly that subtree — sealing it off from the rest of `~` on first use, walking
+  execute-only traverse down to it, and granting the rwx leaf — **without** moving the
+  workspace or loosening `~`. The operator keeps working in the same directory; the
+  agent gets scoped access to it and nothing else. This is a **non-negotiable
+  capability**: the operator must be able to grant specific subdirectories of `~`
+  without the agent gaining default access to the home.
 
-  1. **Move, don't share (recommended).** Relocate the workspace out of the
-     operator's home to a neutral path and set the agent's home there:
-     `mv ~/projects/my-app /Users/Shared/<agent>-home && ln -s` a convenience symlink
-     back if the operator still wants it at the old path. The workspace leaves the
-     protected tree entirely; nothing about `~` changes. `jentic agent-user adopt`
-     can do the move + `chown` + operator-ACL in one step. Git history, `.claude/`,
-     files — all preserved, just at a new path.
-  2. **Copy in (when the original must stay put).** Copy the workspace contents into
-     a fresh agent home on a neutral path (`cp -a`, then `chown` to the agent). The
-     operator keeps their original inside `~`; the agent gets an independent copy.
-     Downside: two diverging trees — fine for a one-off port, not for ongoing shared
-     editing.
-  3. **Traversal-only exposure (discouraged, must be explicit).** Technically you
-     can grant the agent `--x` on `~` plus an ACL on just the workspace subdir, so
-     the agent reaches `~/projects/my-app` without `~` being listable. But this
-     re-opens a *path* into the operator's home and leans on every sibling dotfile
-     being independently locked — exactly the fragility [`05`](05-agent-as-own-unix-user.md)
-     rejects. `jentic` should treat this like a step-3 denylist hit: refuse it by
-     default, and only allow it behind the typed-confirm danger prompt, never as the
-     `adopt` default.
+  Two alternatives remain available when the operator prefers them, but they are no
+  longer required to reach an in-home workspace:
 
-> **Rule of thumb the tool should enforce:** the agent's home must end up on a path
-> that is *not* under any human's `700` home. `adopt` moves or copies to satisfy
-> that; it never widens `~` to make an in-home workspace reachable. The port is a
-> one-time relocation, after which the ported workspace *is* the agent's home and the
-> operator reaches it via the inherited ACL like any other agent home.
+  1. **Move to a neutral path.** Relocate the workspace out of `~` to a shared path
+     and set the agent's home there (`/Users/Shared/...`, `/opt/...`). Useful when the
+     workspace is *only* ever the agent's and the operator doesn't need it inside `~`.
+  2. **Copy in.** Copy the workspace into a fresh agent home on a neutral path. Gives
+     the agent an independent tree; fine for a one-off, not for ongoing shared editing.
+
+> **What the tool enforces:** in-home grants always go through the three-layer model,
+> so `~` is never widened for other users and the operator's own access is never
+> touched. The operator-home **root** and sensitive dotfile dirs (`~/.ssh`,
+> `~/.jentic`, …) remain step-3 denylist hits — grantable only behind the typed-confirm
+> danger prompt — because granting *those* would re-open the credential boundary. A
+> normal project subdir under `~` grants with the plain prompt.
 
 ## Agent creation belongs in `jentic`, not `jenticctl`
 

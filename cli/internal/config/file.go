@@ -64,6 +64,12 @@ type LocalAgent struct {
 	// read/write access to (durable ACLs on disk). This is the record of what
 	// jentic granted; the on-disk ACL is the source of truth for access.
 	GrantedDirs []string `yaml:"granted_dirs,omitempty"`
+	// HomeDenied records that the agent-scoped default-deny has been applied
+	// across the operator's home (the recursive, inheritable deny that makes an
+	// in-home grant safe — see the traverse-walk model in doc 07). It is a
+	// one-time, expensive operation, so this flag lets `jentic run` skip it on
+	// every subsequent in-home grant.
+	HomeDenied bool `yaml:"home_denied,omitempty"`
 	// CreatedAt is when this entry was first recorded (RFC3339).
 	CreatedAt string `yaml:"created_at,omitempty"`
 }
@@ -225,6 +231,18 @@ func (c *FileConfig) SetLocalAgent(id string, agent LocalAgent) {
 		c.LocalAgents = map[string]LocalAgent{}
 	}
 	c.LocalAgents[id] = agent
+}
+
+// MarkHomeDenied sets the HomeDenied flag on the local agent id and returns true
+// if it changed (i.e. it was not already set). Callers Save afterwards.
+func (c *FileConfig) MarkHomeDenied(id string) bool {
+	agent, ok := c.LocalAgents[id]
+	if !ok || agent.HomeDenied {
+		return false
+	}
+	agent.HomeDenied = true
+	c.LocalAgents[id] = agent
+	return true
 }
 
 // AddGrantedDir records dir against the local agent id (idempotently) and

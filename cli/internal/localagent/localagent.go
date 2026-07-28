@@ -34,6 +34,12 @@ type Descriptor struct {
 	// SingleBinary reports whether the agent is a self-contained single file,
 	// so copying the operator's binary is offered as the default provision route.
 	SingleBinary bool
+	// ConfigPaths are the agent's non-secret configuration files/dirs under the
+	// operator's home (tilde-relative, e.g. "~/.claude.json"), which `jentic
+	// run` can seed into the agent's home so the agent inherits the operator's
+	// settings. They may include provider-specific credentials the operator has
+	// stored locally — see CopyConfigCmd's caveat.
+	ConfigPaths []string
 }
 
 // Registry is the set of known agents. New agents are added as rows here.
@@ -44,6 +50,11 @@ var Registry = map[string]Descriptor{
 		ProbePaths:   []string{"~/.local/bin/claude"},
 		Install:      "curl -fsSL https://claude.ai/install.sh | bash",
 		SingleBinary: true,
+		// Claude Code keeps its user settings in ~/.claude/ (settings, agents,
+		// commands) and ~/.claude.json (the top-level config). Seeding these
+		// gives the agent account the operator's Claude Code setup; the operator
+		// still authenticates separately on first launch.
+		ConfigPaths: []string{"~/.claude", "~/.claude.json"},
 	},
 }
 
@@ -115,31 +126,138 @@ func DirAccess(ctx context.Context, agentUser, dir string) bool {
 	return runAsAgent(ctx, agentUser, "test -r "+shellQuote(dir)+" -a -w "+shellQuote(dir)+" -a -x "+shellQuote(dir)) == nil
 }
 
-// GrantDirCmd returns the platform command that grants agentUser inherited
-// read/write/execute access to dir (and its future children), without touching
-// any other path. macOS uses an ACL; Linux uses setfacl access + default ACLs.
-func GrantDirCmd(agentUser, dir string) *exec.Cmd {
+// The directory-access model implemented below is "agent-scoped default-deny on
+// the operator's home + traverse-walk + rwx-leaf". It lets the agent be granted
+// read/write to a specific directory *inside* the operator's home without ever
+// gaining default access to the home. It is built from three layers, all scoped
+// to the single agent user (they never touch the operator's own permissions):
+//
+//	Layer 1 — home-deny (EnsureHomeDenyCmd): a recursive, inheritable deny of
+//	  read/write/delete for the agent user across the whole operator home. This
+//	  is the machine-independent guarantee that the agent starts with nothing in
+//	  the home, existing files and future ones alike. One-time and expensive, so
+//	  the caller records it (config HomeDenied) and skips it thereafter.
+//	Layer 2 — traverse-walk (AncestorsNeedingTraverse + TraverseGrantCmd): an
+//	  execute-only (search, not list/read) grant on the home and each ancestor
+//	  down to the leaf's parent, so the agent can *pass through* to reach the
+//	  leaf. Dirs it can already traverse are skipped.
+//	Layer 3 — rwx-leaf (LeafGrantCmd): full read/write/execute on the workspace
+//	  and everything created inside it (inherited).
+//
+// macOS ordering caveat: macOS evaluates ACL entries top-to-bottom, first-match.
+// The home-deny, applied recursively, stamps a deny entry onto the leaf subtree
+// too; the leaf allow must therefore be evaluated *before* that deny. We force
+// this by inserting the leaf allow at index 0 (`chmod +a# 0`) and applying it
+// recursively so every existing child is stamped allow-before-deny. Linux POSIX
+// ACLs pick the most-specific named-user entry per inode, so no ordering care is
+// needed there.
+
+// EnsureHomeDenyCmd returns the one-time command that applies the agent-scoped
+// default-deny across the operator's home (Layer 1). It denies the agent user
+// read/write/delete on every existing entry and, via inheritance, on future
+// ones — without altering the operator's own access. This is the expensive step
+// (it walks the whole home), so callers apply it once and record it.
+func EnsureHomeDenyCmd(agentUser, home string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "+a", //nolint:gosec // args are a config account name + resolved path.
-			"user:"+agentUser+" allow read,write,execute,file_inherit,directory_inherit", dir)
+		// -R stamps every existing entry (macOS inherit flags only affect future
+		// children, so a non-recursive set would miss what already exists); the
+		// inherit flags cover new children.
+		return exec.Command("sudo", "chmod", "-R", "+a", //nolint:gosec // agentUser is a config account name; home is os.UserHomeDir.
+			"user:"+agentUser+" deny read,write,delete,append,file_inherit,directory_inherit", home)
 	}
-	// Linux: apply both the access ACL (recursive) and the default ACL so new
-	// files inherit. Two invocations wrapped in a single sh -c.
-	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
-		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // args are a config account name + resolved path.
+	// Linux: a named-user entry of "---" grants the agent nothing and, being the
+	// most-specific match, overrides any group/other bits. Access ACL (recursive)
+	// covers existing entries; the default ACL covers future ones.
+	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":--- " + shellQuote(home) +
+		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":--- " + shellQuote(home)
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; home is os.UserHomeDir.
 }
 
-// RevokeDirCmd returns the platform command that removes agentUser's ACL entry
-// from dir, reversing GrantDirCmd.
-func RevokeDirCmd(agentUser, dir string) *exec.Cmd {
+// AncestorChain returns the directories that must be traversable for the agent
+// to reach leaf from home: home first, then each intermediate directory down to
+// (but not including) leaf. Returns nil if leaf is not under home.
+func AncestorChain(home, leaf string) []string {
+	home = filepath.Clean(home)
+	leaf = filepath.Clean(leaf)
+	if !IsUnderHome(home, leaf) {
+		return nil
+	}
+	var chain []string
+	for d := filepath.Dir(leaf); ; d = filepath.Dir(d) {
+		chain = append(chain, d)
+		if d == home || d == filepath.Dir(d) {
+			break
+		}
+	}
+	// Reverse to home-first order.
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain
+}
+
+// AncestorsNeedingTraverse returns the subset of the home→leaf ancestor chain
+// that the agent cannot already traverse, by probing `test -x` as the agent. In
+// the common layout (home 700, nothing else granted) this is just the home and
+// the untouched intermediate dirs; a re-run after an earlier grant skips the
+// ones already opened.
+func AncestorsNeedingTraverse(ctx context.Context, agentUser, home, leaf string) []string {
+	var need []string
+	for _, d := range AncestorChain(home, leaf) {
+		if runAsAgent(ctx, agentUser, "test -x "+shellQuote(d)) != nil {
+			need = append(need, d)
+		}
+	}
+	return need
+}
+
+// TraverseGrantCmd returns the command that grants the agent execute-only
+// (traverse/search — not list or read) on a single directory (Layer 2). It is
+// non-recursive and non-inherited: it opens pass-through on exactly this dir.
+func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "-a", //nolint:gosec // args are a config account name + resolved path.
+		return exec.Command("sudo", "chmod", "+a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+			"user:"+agentUser+" allow execute", dir)
+	}
+	return exec.Command("sudo", "setfacl", "-m", "u:"+agentUser+":--x", dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+}
+
+// LeafGrantCmd returns the command that grants the agent full read/write/execute
+// on the leaf workspace and everything inside it, existing and future (Layer 3).
+// On macOS the allow is inserted at index 0 and applied recursively so it is
+// evaluated before the inherited home-deny on every node (see the ordering
+// caveat above); on Linux it is a recursive access + default ACL.
+func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("sudo", "chmod", "-R", "+a#", "0", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+			"user:"+agentUser+" allow read,write,execute,file_inherit,directory_inherit", dir)
+	}
+	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
+		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+}
+
+// LeafRevokeCmd removes the agent's rwx-leaf allow from dir (and its subtree),
+// reversing LeafGrantCmd. The home-deny and any traverse grants stay in place —
+// dropping the leaf allow is enough for the deny to re-close the directory.
+func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("sudo", "chmod", "-R", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
 			"user:"+agentUser+" allow read,write,execute,file_inherit,directory_inherit", dir)
 	}
 	script := "setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
 		" && setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // args are a config account name + resolved path.
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+}
+
+// IsUnderHome reports whether dir is the operator's home or a descendant of it.
+func IsUnderHome(home, dir string) bool {
+	home = filepath.Clean(home)
+	dir = filepath.Clean(dir)
+	if home == "" {
+		return false
+	}
+	return dir == home || strings.HasPrefix(dir, home+string(filepath.Separator))
 }
 
 // LaunchCmd builds the interactive launch: become the agent user in a login
@@ -158,13 +276,31 @@ func LaunchCmd(ctx context.Context, agentUser, binary, dir string) *exec.Cmd {
 		cd = "cd " + shellQuote(dir)
 	}
 	inner := cd + " && exec " + shellQuote(binary)
-	return exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, inner)...) //nolint:gosec // agentUser/binary/dir are config-derived, shell-quoted.
+	return agentCmdContext(ctx, agentUser, inner)
 }
 
 // agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
 // bash (see LaunchCmd for why not `sudo -i`). Shared by every agent invocation.
 func agentBashArgs(agentUser, snippet string) []string {
 	return []string{"-u", agentUser, "-H", "bash", "-lc", snippet}
+}
+
+// agentCmd builds `sudo -u <user> -H bash -lc <snippet>` with the working
+// directory pinned to "/". Pinning is essential: the parent process's cwd is
+// typically inside the operator's now-700 home, which the agent user cannot
+// read — inheriting it makes bash spew `getcwd: Permission denied` before the
+// snippet even runs. "/" is traversable by everyone.
+func agentCmd(agentUser, snippet string) *exec.Cmd {
+	cmd := exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted / a fixed literal.
+	cmd.Dir = "/"
+	return cmd
+}
+
+// agentCmdContext is agentCmd with a cancellation context (for the launch).
+func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
+	cmd.Dir = "/"
+	return cmd
 }
 
 // EnsureLocalBinOnPathCmd makes ~/.local/bin resolvable for the agent user by
@@ -180,7 +316,7 @@ for f in "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zprofile"; do
     printf '\n%s\n%s\n' "$marker" "$line" >> "$f"
   fi
 done`
-	return exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is a fixed literal.
+	return agentCmd(agentUser, snippet)
 }
 
 // OperatorBinaryPath resolves the operator's own copy of binary via `command
@@ -208,13 +344,81 @@ func CopyBinaryCmd(agentUser, src, binary string) *exec.Cmd {
 // InstallBinaryCmd runs an agent's documented fresh-install command as the
 // agent user in a login shell, so the toolchain lands in the agent's home.
 func InstallBinaryCmd(agentUser, installCmd string) *exec.Cmd {
-	return exec.Command("sudo", agentBashArgs(agentUser, installCmd)...) //nolint:gosec // agentUser is a config account name; installCmd is a fixed descriptor value.
+	return agentCmd(agentUser, installCmd)
+}
+
+// AgentHasConfig reports whether the agent user already has any of the
+// descriptor's config paths in its own home, so the caller only offers to seed
+// them once (a re-run won't clobber the agent's evolved config).
+func AgentHasConfig(ctx context.Context, agentUser string, desc Descriptor) bool {
+	for _, p := range desc.ConfigPaths {
+		if runAsAgent(ctx, agentUser, "test -e "+quoteProbePath(p)) == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// ExistingConfigPaths expands the descriptor's tilde-relative ConfigPaths
+// against operatorHome and returns those that actually exist on disk, so the
+// caller only offers to copy what's there.
+func ExistingConfigPaths(operatorHome string, desc Descriptor) []string {
+	var found []string
+	for _, p := range desc.ConfigPaths {
+		abs := expandTilde(p, operatorHome)
+		if abs == "" {
+			continue
+		}
+		if _, err := os.Stat(abs); err == nil {
+			found = append(found, abs)
+		}
+	}
+	return found
+}
+
+// CopyConfigCmd copies the operator's agent config paths (already expanded to
+// absolute paths under the operator's home) into the agent user's home at the
+// same tilde-relative location, then chowns them to the agent. It runs as root
+// so it can read out of the operator's 700 home and write into the agent's.
+//
+// CAUTION: these files may carry provider-specific secrets (e.g. an API key the
+// operator saved in the agent's own config). This deliberately hands the agent
+// a copy of those; it is the operator's settings the agent is meant to inherit.
+// Longer-term those provider credentials should move behind jentic-one's broker
+// so nothing sensitive is copied at all.
+func CopyConfigCmd(agentUser, operatorHome string, srcs []string) *exec.Cmd {
+	agentHome := "$(eval echo ~" + agentUser + ")"
+	var b strings.Builder
+	for _, src := range srcs {
+		rel := strings.TrimPrefix(src, filepath.Clean(operatorHome)+string(filepath.Separator))
+		dest := agentHome + "/" + shellQuote(rel)
+		// Recreate the parent dir, copy recursively (dir or file), then chown.
+		b.WriteString("mkdir -p \"$(dirname " + dest + ")\" && ")
+		b.WriteString("cp -R " + shellQuote(src) + " " + dest + " && ")
+		b.WriteString("chown -R " + shellQuote(agentUser) + ": " + dest + " && ")
+	}
+	script := strings.TrimSuffix(b.String(), " && ")
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived, shell-quoted.
+}
+
+// expandTilde resolves a leading "~/" (or bare "~") in p against home.
+func expandTilde(p, home string) string {
+	if home == "" {
+		return ""
+	}
+	if p == "~" {
+		return home
+	}
+	if rest, ok := strings.CutPrefix(p, "~/"); ok {
+		return filepath.Join(home, rest)
+	}
+	return p
 }
 
 // runAsAgent runs a shell snippet as the agent user in a login shell and returns
 // its error (nil on exit 0). Output is discarded; callers only need the verdict.
 func runAsAgent(ctx context.Context, agentUser, snippet string) error {
-	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is built from shell-quoted values.
+	cmd := agentCmdContext(ctx, agentUser, snippet)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run()

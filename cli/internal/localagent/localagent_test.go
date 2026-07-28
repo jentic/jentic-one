@@ -55,22 +55,66 @@ func TestDangerReason(t *testing.T) {
 }
 
 func TestGrantAndRevokeCmdShape(t *testing.T) {
-	// The exact args are platform-specific; assert the command is sudo-fronted
-	// and names the agent user + a resolved path so it can't silently no-op.
+	// The exact args are platform-specific; assert each layer's command is
+	// sudo-fronted and names the agent user + its target path so it can't
+	// silently no-op.
 	dir := filepath.Clean("/Users/Shared/x/work")
+	home := filepath.Clean("/Users/alice")
 	for _, c := range []struct {
-		name string
-		args []string
+		name   string
+		args   []string
+		target string
 	}{
-		{"grant", GrantDirCmd("a-local-agent", dir).Args},
-		{"revoke", RevokeDirCmd("a-local-agent", dir).Args},
+		{"home-deny", EnsureHomeDenyCmd("a-local-agent", home).Args, home},
+		{"traverse", TraverseGrantCmd("a-local-agent", home).Args, home},
+		{"leaf-grant", LeafGrantCmd("a-local-agent", dir).Args, dir},
+		{"leaf-revoke", LeafRevokeCmd("a-local-agent", dir).Args, dir},
 	} {
 		if c.args[0] != "sudo" {
 			t.Errorf("%s: expected sudo-fronted command, got %v", c.name, c.args)
 		}
 		joined := strings.Join(c.args, " ")
-		if !strings.Contains(joined, "a-local-agent") || !strings.Contains(joined, dir) {
-			t.Errorf("%s: args missing user or dir: %v", c.name, c.args)
+		if !strings.Contains(joined, "a-local-agent") || !strings.Contains(joined, c.target) {
+			t.Errorf("%s: args missing user or target: %v", c.name, c.args)
 		}
+	}
+}
+
+func TestAncestorChain(t *testing.T) {
+	home := "/Users/alice"
+	got := AncestorChain(home, "/Users/alice/projects/api")
+	want := []string{"/Users/alice", "/Users/alice/projects"}
+	if len(got) != len(want) {
+		t.Fatalf("AncestorChain = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("AncestorChain = %v, want %v", got, want)
+		}
+	}
+	// A path outside the home has no chain.
+	if c := AncestorChain(home, "/Users/Shared/x/work"); c != nil {
+		t.Fatalf("expected nil chain for out-of-home path, got %v", c)
+	}
+	// The home itself (a grant at the home root) has just the home's parent? No —
+	// leaf==home means the leaf is the home; chain walks from Dir(home).
+	if c := AncestorChain(home, home); len(c) == 0 {
+		t.Fatalf("expected non-empty chain for home leaf, got %v", c)
+	}
+}
+
+func TestIsUnderHome(t *testing.T) {
+	home := "/Users/alice"
+	if !IsUnderHome(home, "/Users/alice/projects/api") {
+		t.Error("expected in-home path to be under home")
+	}
+	if !IsUnderHome(home, home) {
+		t.Error("expected home itself to be under home")
+	}
+	if IsUnderHome(home, "/Users/Shared/x") {
+		t.Error("did not expect shared path to be under home")
+	}
+	if IsUnderHome(home, "/Users/alice-other") {
+		t.Error("did not expect sibling-prefix path to be under home")
 	}
 }

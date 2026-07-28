@@ -1345,9 +1345,21 @@
               "usage": "never grant directory access; open in the agent's home instead"
             },
             {
+              "name": "no-seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "never copy the operator's agent config into the agent's home"
+            },
+            {
               "name": "revoke",
               "type": "string",
               "usage": "revoke the agent's access to the given directory, then exit"
+            },
+            {
+              "name": "seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "copy the operator's agent config into the agent's home without prompting"
             },
             {
               "name": "yes",
