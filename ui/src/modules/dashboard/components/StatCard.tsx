@@ -66,7 +66,7 @@ export function StatCard({
 	const clickable = Boolean(href) && !isLoading && !error;
 
 	const body = (
-		<div className="relative flex flex-col gap-2.5 p-4 sm:p-5">
+		<div className="relative flex flex-col gap-2 p-4">
 			<div className="flex items-start justify-between gap-2">
 				<span className="text-muted-foreground font-mono text-[11px] leading-none font-medium tracking-wider uppercase">
 					{label}
@@ -74,7 +74,7 @@ export function StatCard({
 				{icon && (
 					<span
 						className={cn(
-							'-mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1',
+							'-mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
 							ACCENT_MEDALLION[accent],
 						)}
 					>
@@ -84,7 +84,7 @@ export function StatCard({
 			</div>
 
 			{isLoading ? (
-				<Skeleton className="h-9 w-20" />
+				<Skeleton className="h-8 w-20" />
 			) : error ? (
 				<div role="alert" className="text-danger flex items-center gap-1.5 text-sm">
 					<AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -97,7 +97,7 @@ export function StatCard({
 						initial={prefersReducedMotion ? false : { y: 6 }}
 						animate={{ y: 0 }}
 						transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-						className="font-heading text-foreground text-3xl leading-none font-bold tabular-nums"
+						className="font-heading text-foreground text-2xl leading-none font-bold tabular-nums"
 					>
 						{value}
 					</motion.span>
@@ -111,7 +111,7 @@ export function StatCard({
 			    eye travels icon → arrow without crowding the label row. */}
 			{clickable && (
 				<ArrowUpRight
-					className="text-muted-foreground absolute right-4 bottom-4 h-4 w-4 shrink-0 opacity-0 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100 sm:right-5 sm:bottom-5"
+					className="text-muted-foreground absolute right-4 bottom-4 h-4 w-4 shrink-0 opacity-0 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:opacity-100"
 					aria-hidden="true"
 				/>
 			)}

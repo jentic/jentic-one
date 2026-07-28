@@ -31,15 +31,15 @@ export const sharedQueryKeys = {
 	 * The Dashboard's query root (`dashboardKeys.all` derives from this). The
 	 * Dashboard composes its overview from sibling endpoints, so several
 	 * sibling-module mutations legitimately need to refresh it — e.g. approving
-	 * or denying a pending agent (Agents module) changes the "Awaiting approval"
-	 * tile + PendingAgentsCard. Those modules can't import `dashboardKeys`
+	 * or denying a pending agent (Agents module) changes the dashboard's
+	 * action inbox. Those modules can't import `dashboardKeys`
 	 * across the boundary, so they invalidate this shared root instead.
 	 */
 	dashboardRoot: ['dashboard'] as const,
 	/**
 	 * The access-request root (`GET /access-requests`). No single module owns it:
 	 * the durable approval queue (Dashboard's AccessRequestsPage), the dashboard
-	 * PendingAccessRequestsCard, and the persistent nav badge
+	 * action inbox, and the persistent nav badge
 	 * (`usePendingAccessRequestCount`) all read slices off this prefix. Every
 	 * decision path — the Agent Rail dialog + its Deny fast-path, the dashboard
 	 * card, and the queue page — invalidates this root so all three surfaces stay

@@ -173,7 +173,7 @@ export function useApproveAgent() {
 			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Approving removes the agent from the pending pool the Dashboard's
-			// "Awaiting approval" tile + PendingAgentsCard read, and the persistent
+			// action inbox (`ActionInboxBell`) reads, and the persistent
 			// nav badge (`usePendingAgentsCount`, keyed under the shared agents
 			// root). Refresh both shared roots so those surfaces update instantly
 			// instead of waiting for their fallback poll.

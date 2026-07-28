@@ -1,7 +1,11 @@
 /**
- * SparklineChart — tiny inline trend line, ported 1:1 from jentic-mini
- * (`ui/src/components/monitor/shared/SparklineChart.tsx`). Renders the
- * 12-point `trend` arrays the usage endpoint returns per top row.
+ * SparklineChart — tiny inline trend line. Promoted from
+ * `modules/monitor/components/SparklineChart` (itself a 1:1 port of
+ * jentic-mini's) so both Monitor and Dashboard can render the 12-point
+ * `trend` arrays the usage endpoint returns per top row.
+ *
+ * Purely presentational: no axes, no labels. Decorative by default
+ * (`aria-hidden`) — pair it with visible numbers in the consuming row.
  */
 import { useMemo } from 'react';
 import { cn } from '@/shared/lib/utils';

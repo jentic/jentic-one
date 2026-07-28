@@ -24,7 +24,7 @@ describe('sharedQueryKeys', () => {
 	});
 
 	it('exposes the access-request root', () => {
-		// The durable queue, the dashboard PendingAccessRequestsCard, and the
+		// The durable queue, the dashboard action inbox (`ActionInboxBell`), and the
 		// nav badge (`pendingAccessRequestCountKey` derives from this) all sit
 		// under this prefix; every decision path invalidates it. Lock the literal
 		// so a drift can't silently break the cross-surface refresh.

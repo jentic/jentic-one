@@ -12,11 +12,10 @@
 import { useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { cn } from '@/shared/lib/utils';
-import { SegmentedToggle } from '@/shared/ui';
+import { SegmentedToggle, SparklineChart } from '@/shared/ui';
 import { formatLatency, formatPercent } from '@/modules/monitor/lib/format';
 import { getInitials, lensPalette, type UsageLens } from '@/modules/monitor/lib/palette';
 import type { EntityUsageRow } from '@/modules/monitor/lib/usage';
-import { SparklineChart } from '@/modules/monitor/components/SparklineChart';
 
 interface UsageBreakdownProps {
 	apis: EntityUsageRow[];
