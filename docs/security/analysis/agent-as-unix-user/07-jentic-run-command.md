@@ -49,8 +49,9 @@ jentic run <agent> [path] [flags]
   - `--yes` — assume the safe default for every prompt (non-interactive); never
     picks a flagged-dangerous option (it declines instead).
   - `--agent-user <name>` — override the derived `<operator>-local-agent` user.
-  - `--list-grants` / `--revoke <path>` — review or reverse directory grants, then
-    exit.
+  - `--list-grants` / `--grant <path>` / `--revoke <path>` — review, add, or
+    reverse directory grants, then exit (without launching). `--grant` applies the
+    same scoped ACL and danger-confirmation as an in-launch grant.
 
 ### State lives in the operator's `jentic` config
 

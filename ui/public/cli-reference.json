@@ -1327,6 +1327,11 @@
               "usage": "grant the agent access to the working directory without prompting"
             },
             {
+              "name": "grant",
+              "type": "string",
+              "usage": "grant the agent access to the given directory, then exit (without launching)"
+            },
+            {
               "name": "home",
               "type": "bool",
               "default": "false",

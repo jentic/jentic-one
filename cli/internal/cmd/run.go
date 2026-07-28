@@ -25,6 +25,7 @@ type runOptions struct {
 	yes          bool
 	agentUser    string
 	listGrants   bool
+	grant        string
 	revoke       string
 	seedConfig   bool
 	noSeedConfig bool
@@ -62,6 +63,8 @@ func newRunCmd(app *App) *cobra.Command {
 		"override the derived <operator>-local-agent account")
 	cmd.Flags().BoolVar(&opts.listGrants, "list-grants", false,
 		"list the directories the agent has been granted, then exit")
+	cmd.Flags().StringVar(&opts.grant, "grant", "",
+		"grant the agent access to the given directory, then exit (without launching)")
 	cmd.Flags().StringVar(&opts.revoke, "revoke", "",
 		"revoke the agent's access to the given directory, then exit")
 	cmd.Flags().BoolVar(&opts.seedConfig, "seed-config", false,
@@ -115,6 +118,12 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		if saveErr := cfg.Save(a.Paths); saveErr != nil {
 			return saveErr
 		}
+	}
+
+	// Management shortcut: grant a directory and exit (mirrors --revoke). It
+	// applies the same scoped ACL and danger-confirmation as an in-launch grant.
+	if opts.grant != "" {
+		return a.runGrantDir(ctx, cmd, cfg, opts, agentID, agentUser, opts.grant)
 	}
 
 	// 2. Ensure the agent's binary is installed for that user.
@@ -643,6 +652,43 @@ func (a *App) runListGrants(agentID, agentUser string, entry config.LocalAgent, 
 		}
 		fmt.Fprintln(a.Out, line)
 	}
+	return nil
+}
+
+// runGrantDir grants the agent access to dir and exits without launching — the
+// standalone counterpart to --revoke. It reuses the in-launch access flow: if
+// the agent already reaches dir it is a no-op; otherwise it applies the same
+// danger-confirmation and scoped-ACL grant (grantDir) as `jentic run <agent>
+// <path>` would, and records it.
+func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser, dir string) error {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	abs = filepath.Clean(abs)
+
+	if localagent.DirAccess(ctx, agentUser, abs) {
+		fmt.Fprintln(a.Out, theme.Dim.Render(agentUser+" already has access to "+abs+"."))
+		return nil
+	}
+
+	danger := localagent.DangerReason(abs, localagent.OperatorHome())
+	grant, err := a.decideDirGrant(cmd, opts, agentUser, abs, danger)
+	if err != nil {
+		if errors.Is(err, errCancelled) {
+			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+			return nil
+		}
+		return err
+	}
+	if !grant {
+		fmt.Fprintln(a.Out, theme.Dim.Render("Not granted."))
+		return nil
+	}
+	if err := a.grantDir(ctx, cfg, agentID, agentUser, abs); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Granted (persists across sessions; `jentic run %s --list-grants` to review).", agentID))
 	return nil
 }
 
