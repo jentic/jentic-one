@@ -8,6 +8,36 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
+func TestPortSelect(t *testing.T) {
+	// With sources present the default value is left as-is (the caller pre-sets it
+	// to Yes), so the affirmative option stays selected for the common case.
+	val := true
+	_ = portSelect("Copy config?", "why", []string{"/Users/alice/.claude", "/Users/alice/.claude.json"}, &val)
+	if !val {
+		t.Error("portSelect must not flip a Yes default when there is something to copy")
+	}
+
+	// With no sources the select forces the value to false (nothing to copy) so the
+	// operator is never offered a copy of an empty set.
+	val = true
+	portSelect("Copy config?", "why", nil, &val)
+	if val {
+		t.Error("portSelect must force the value to false when there is nothing to copy")
+	}
+}
+
+func TestProviderToggleTitle(t *testing.T) {
+	if got := providerToggleTitle("aws"); got != "Copy your aws provider config into the agent's home?" {
+		t.Errorf("named provider title = %q", got)
+	}
+	// The Anthropic default (no separate provider config) gets the generic title.
+	for _, name := range []string{"", "anthropic"} {
+		if got := providerToggleTitle(name); got != "Copy your LLM provider config into the agent's home?" {
+			t.Errorf("providerToggleTitle(%q) = %q, want generic", name, got)
+		}
+	}
+}
+
 func TestFirstKnownAgent(t *testing.T) {
 	// A launchable local agent among the selected operators resolves.
 	id, desc, ok := firstKnownAgent([]string{"cursor", "claude", "generic"})

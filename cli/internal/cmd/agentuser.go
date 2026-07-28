@@ -32,9 +32,15 @@ type agentUserFields struct {
 type agentSetup struct {
 	// created reports whether a dedicated Unix account now backs the agent.
 	created bool
+	// agentID is the operator identifier (e.g. "claude"), so the caller can offer
+	// `jentic run <agentID>` without re-deriving it.
+	agentID string
 	// agentUser is the OS account name (set whether or not created — it is the
 	// derived default when the operator declined).
 	agentUser string
+	// homeDir is the created agent's home directory (empty unless created), used to
+	// offer starting a session there.
+	homeDir string
 	// configDir is the agent's ~/.jentic, where its identity is written and owned.
 	// Empty unless created.
 	configDir string
@@ -72,7 +78,7 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Skipping agent-user isolation (non-interactive). Create it later with `jentic run %s`.", agentID)))
-		return agentSetup{agentUser: defaultName}, nil
+		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
 	}
 
 	fmt.Fprintln(a.Out)
@@ -97,17 +103,27 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Keeping same-user. You can isolate later with `jentic run %s`.", agentID)))
-		return agentSetup{agentUser: defaultName}, nil
+		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
 	}
+
+	// Resolve WHICH operator files each toggle would port, so the dialog can show
+	// the operator exactly what will be copied instead of a generic prompt. Both
+	// are resolved from the operator's home up front (the same sources the seeding
+	// step uses). A toggle defaults to Yes only when there is actually something to
+	// port — an empty list defaults to No and says "none found".
+	operatorHome := localagent.OperatorHome()
+	configSrcs := localagent.ExistingConfigPaths(operatorHome, desc)
+	provider := localagent.DetectProvider(operatorHome)
+	providerSrcs := localagent.ProviderConfigPaths(operatorHome, provider)
 
 	// Editable, prefilled dialog: account name, home, and the two port toggles.
 	fields := agentUserFields{
 		name:         defaultName,
 		homeDir:      localagent.DefaultHomeDir(defaultName),
-		portConfig:   true,
-		portProvider: true,
+		portConfig:   len(configSrcs) > 0,
+		portProvider: len(providerSrcs) > 0,
 	}
-	if err := a.promptAgentUserFields(&fields); err != nil {
+	if err := a.promptAgentUserFields(&fields, configSrcs, provider.Name, providerSrcs); err != nil {
 		return agentSetup{}, err
 	}
 
@@ -121,7 +137,13 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	configDir := localagent.AgentConfigDir(fields.homeDir)
 	a.recordAgentAccount(agentID, fields.name, desc.Binary, fields.homeDir, configDir, true)
 	a.printAgentRunInstructions(agentID, fields.homeDir)
-	return agentSetup{created: true, agentUser: fields.name, configDir: configDir}, nil
+	return agentSetup{
+		created:   true,
+		agentID:   agentID,
+		agentUser: fields.name,
+		homeDir:   fields.homeDir,
+		configDir: configDir,
+	}, nil
 }
 
 // createAgentAccount runs the privileged account-creation recipe (idempotently),

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/install"
@@ -13,7 +14,14 @@ import (
 // two port toggles are bool selects (not confirms) so the whole thing is one
 // multi-field form the operator can review at once. It has no huh.NewConfirm, so
 // it may call .Run() directly (the confirm-run guard is file-scoped).
-func (a *App) promptAgentUserFields(fields *agentUserFields) error {
+//
+// configSrcs and providerSrcs are the ACTUAL operator files each toggle would
+// copy (already resolved to existing paths by the caller), so the dialog names
+// them rather than asking abstractly. When a list is empty the toggle offers only
+// "No" with a "none found" note, so the operator isn't offered a copy of nothing.
+// Each toggle's default (set by the caller) is Yes when there is something to
+// copy, so the affirmative option is focused for the common case.
+func (a *App) promptAgentUserFields(fields *agentUserFields, configSrcs []string, providerName string, providerSrcs []string) error {
 	return install.NewForm(huh.NewGroup(
 		install.Input().
 			Title("Agent account name").
@@ -25,17 +33,48 @@ func (a *App) promptAgentUserFields(fields *agentUserFields) error {
 			Description("Lives under a shared parent so you can be granted in without widening your home.").
 			Value(&fields.homeDir).
 			Validate(notEmptyField("home directory")),
-		huh.NewSelect[bool]().
-			Title("Copy your operator config into the agent's home?").
-			Description("Gives the agent your settings. May include provider API keys stored locally.").
-			Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
-			Value(&fields.portConfig),
-		huh.NewSelect[bool]().
-			Title("Copy your LLM provider config into the agent's home?").
-			Description("Lets the agent reach the same provider. May include long-lived credentials.").
-			Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
-			Value(&fields.portProvider),
+		portSelect(
+			"Copy your operator config into the agent's home?",
+			"Gives the agent your settings. May include provider API keys stored locally.",
+			configSrcs,
+			&fields.portConfig,
+		),
+		portSelect(
+			providerToggleTitle(providerName),
+			"Lets the agent reach the same provider. May include long-lived credentials.",
+			providerSrcs,
+			&fields.portProvider,
+		),
 	)).WithShowHelp(true).Run()
+}
+
+// providerToggleTitle names the detected provider in the toggle title when known,
+// so the operator sees what "provider config" means for their setup.
+func providerToggleTitle(providerName string) string {
+	if providerName == "" || providerName == "anthropic" {
+		return "Copy your LLM provider config into the agent's home?"
+	}
+	return fmt.Sprintf("Copy your %s provider config into the agent's home?", providerName)
+}
+
+// portSelect builds a Yes/No bool select whose Description lists the concrete
+// source paths that would be copied. With nothing to copy it degrades to a
+// No-only select with a "none found" note, so the operator is never offered a
+// copy of an empty set.
+func portSelect(title, why string, srcs []string, value *bool) *huh.Select[bool] {
+	if len(srcs) == 0 {
+		*value = false
+		return huh.NewSelect[bool]().
+			Title(title).
+			Description("None found in your home — nothing to copy.").
+			Options(huh.NewOption("No", false)).
+			Value(value)
+	}
+	return huh.NewSelect[bool]().
+		Title(title).
+		Description(why+"\nWill copy: "+strings.Join(srcs, ", ")).
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false)).
+		Value(value)
 }
 
 // printAgentRunInstructions closes the setup with the copy-paste launch command
