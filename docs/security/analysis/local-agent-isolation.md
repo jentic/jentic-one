@@ -479,6 +479,35 @@ what remains. Note the account-deletion step (4) must be told *not* to remove th
 home — the default macOS/Linux "delete user" also wipes the home, which is exactly
 the data we're preserving unless the home deletion was explicitly accepted.
 
+### Not yet implemented — skill cleanup and operator-config reset
+
+Two further teardown responsibilities belong to `jentic reset` by design but are
+**not implemented yet**. They are documented here so the intended end-state is
+clear:
+
+- **Remove the generated skill files.** `bootstrap`/`wizard` write the Jentic
+  CLI-usage skill into each operator's native layout; a full decommission should delete the managed
+  skill block/files it added for the agent, the inverse of the skill step, just as
+  reset already inverts the account/ACL/sudoers/config steps. Until this lands,
+  operators must remove skill files by hand (or re-run `jentic skill` tooling).
+- **Reset the operator's own jentic CLI config when run from the real user's
+  account.** Today reset only removes the `local_agents.<agent>` entry (and, for a
+  self-user agent, that entry's `config_dir`/`home_dir` reference). When invoked
+  from the **operator's own account**, reset should additionally be able to clear
+  the operator's own jentic CLI state — **profiles, tokens, default-profile, and
+  related config in `~/.jentic`** — so "start over" genuinely returns the machine
+  to a clean slate rather than only decommissioning the agent user. This is
+  intentionally scoped to the *invoking* account's config (the operator's own
+  `~/.jentic`); it must never reach across into another user's config. This is a
+  larger, separately-confirmed destructive action (it deletes the operator's own
+  identity, not just the agent's), so it will need its own explicit gate — likely a
+  distinct flag and typed confirmation — rather than being folded silently into the
+  per-agent teardown.
+
+Until both land, the **"NOT touched"** block above remains accurate: reset does
+not currently remove skill files and does not currently clear the operator's own
+profiles/identity — only the agent's `local_agents` entry.
+
 ## GUI IDEs (Cursor / VS Code)
 
 Don't launch the IDE *GUI* as a different macOS user in the operator's login
