@@ -1,7 +1,9 @@
 /**
  * SparklineChart — tiny inline trend line, ported 1:1 from jentic-mini
  * (`ui/src/components/monitor/shared/SparklineChart.tsx`). Renders the
- * 12-point `trend` arrays the usage endpoint returns per top row.
+ * `trend` arrays the usage endpoint returns per top row (one point per
+ * aggregate bucket — 24/28/30 for the standard windows); the path scales
+ * to any length ≥ 2.
  */
 import { useMemo } from 'react';
 import { cn } from '@/shared/lib/utils';
