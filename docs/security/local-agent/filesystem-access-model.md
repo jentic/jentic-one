@@ -134,13 +134,78 @@ the operator's own files or a non-`~` path):
 | 4 | **Keep workspaces out of `~`** — steer agent-shared projects to `/Users/Shared/…`; `~` is never traversed | fully (by avoidance) | Cheapest, no new machinery; requires the workflow change that agent-touched code doesn't live under `~`. |
 | 5 | **Status quo** — accept the residual; rely on the danger-classifier + real secrets being `0700` | bounded | Already implemented + documented (here). |
 
-**Current leaning** (provisional): favour **#4** as the recommended posture (it
-sidesteps the whole class for free and matches the agent-home-under-`/Users/Shared`
-design), with **#1** as an opt-in "strict" mode where in-`~` access is unavoidable
-and the residual matters — real on Linux, gated behind macFUSE (or unsupported)
-on macOS. Lean *away* from #2/#3 as defaults: mutating the operator's own tree or
-per-sibling ACE churn buys only partial protection at real fragility. To be
-revisited.
+Why none of #1–#3 is a clean answer to the non-negotiable ("grant `~/a` without
+implicitly exposing `~/b`"):
+
+- **The ACL/mode approaches (#2, #3) fight per-directory search semantics and are
+  asymmetric across platforms.** The exposure is only ever *world-readable*
+  siblings, so the set to neutralize is the top-level *children* of each traversed
+  ancestor — dozens, not the tree — which makes them far lighter than a recursive
+  inherited-deny. But **Linux POSIX ACLs have no `deny` primitive at all**, so #3
+  is macOS-only; on Linux the sole lever is stripping the operator's own world bit
+  (#2), which mutates their files and can break their tooling. Both are stateful
+  (record + restore) and TOCTOU-prone (a sibling created after the grant leaks
+  until re-scanned).
+- **The clean structural fix (#1) is not portable.** A bind mount gives a
+  genuinely non-`~` path, but macOS has no native bind mount — it needs a
+  third-party kernel extension (macFUSE/`bindfs`), which we've ruled out.
+
+This is why the honest conclusion is that **ACLing the shared tree cannot satisfy
+the non-negotiable portably** — every in-place variant either can't express deny
+on Linux or has to mutate the operator's own files. That pushes the search toward
+a different axis entirely: instead of controlling *the tree*, control *the
+process's view of the tree*.
+
+### A different axis — confine the process, not the tree
+
+The primitives above all answer "who may touch this inode?" The alternative is to
+answer "what can *this process* see?" — launch the agent into a restricted view
+where only the granted paths exist (or are reachable) and everything else in `~`
+is simply absent or denied, regardless of its mode. This is per-*process*, not
+per-*inode*, so it gives true per-entry control (grant `~/a`, `~/b` is invisible)
+**without stamping or mutating anything on disk**, and it tears down when the
+session process exits. There is no single cross-platform API, but each OS has a
+native mechanism with the same shape:
+
+| OS | Primitive | How it confines | Privilege | Teardown | Maturity / caveat |
+|----|-----------|-----------------|-----------|----------|-------------------|
+| **Linux** | **Mount namespace** (`unshare`/`clone` `CLONE_NEWNS`) + user namespace, or **`bwrap`** (bubblewrap) | New empty mount ns; `--ro-bind`/`--bind` only the granted dirs in — everything else on the host is *invisible*, `~` never appears | **Unprivileged** via user namespaces (no root/setuid) | **Automatic** — ns + its mounts are destroyed when the last member process exits | Mature (Flatpak uses bwrap). Needs `CONFIG_USER_NS` + unprivileged userns enabled (some distros gate it) |
+| **Linux (alt)** | **Landlock LSM** | Process restricts *itself* to a ruleset of allowed path FDs; unlisted paths denied. Doesn't hide, but denies — `~/b` unreadable even if `0755` | **Unprivileged** (needs `no_new_privs`) | Automatic — dies with the process; cannot be relaxed, inherited by children | Linux **5.13+** only; ABI is versioned/best-effort. Complements, doesn't replace, the namespace |
+| **macOS** | **Seatbelt** sandbox profile via **`sandbox-exec -f profile.sb`** (SBPL) | `(deny default)` then `(allow file-read* (subpath "~/a"))` — a default-deny profile that only permits the granted subpaths; `~/b` reads denied by the kernel | **Unprivileged** (wraps the launched command) | Automatic — policy is per-process, gone when it exits | ⚠ **`sandbox-exec`/SBPL is deprecated and undocumented by Apple** (still functional, and is how the App Sandbox works under the hood). Depending on an undocumented interface is the central risk |
+
+**Why this is the promising axis.** It's the only family that (a) satisfies the
+per-entry non-negotiable exactly, (b) needs no root, (c) writes nothing to disk
+and self-cleans on exit, and (d) has a real native mechanism on *both* OSes — so
+"works on Linux and macOS" is met by a thin per-OS launcher shim rather than one
+portable call. It also composes with the existing model: the 700 home + ACL grants
+stay as defense-in-depth, and confinement narrows what the agent process can
+actually reach within them.
+
+**Open risks to resolve before committing.**
+
+- **macOS deprecation.** `sandbox-exec` is the load-bearing piece and Apple has
+  deprecated it. Need to confirm it still works on current macOS (26.x), gauge the
+  odds of removal, and check whether there's any supported alternative (the App
+  Sandbox proper requires an entitled, signed app — not applicable to wrapping a
+  third-party agent binary we don't control).
+- **Linux userns availability.** Unprivileged user namespaces are disabled by
+  default on some hardened distros; need a detection + fallback story (Landlock,
+  or the ACL model, when unavailable).
+- **SBPL profile authoring.** Getting a default-deny profile that allows *just*
+  the granted subpaths while still letting the agent binary, its dylibs, its own
+  home, and the loopback socket to Jentic One work is fiddly and version-sensitive.
+- **Interaction with the CLI-tool PATH sharing and provider config** — those
+  paths (`/opt/homebrew/bin`, the agent's own `~/.aws`) must be allowed in the
+  profile/binds too.
+
+**Current leaning** (provisional, to be revisited): treat **process confinement**
+as the most promising route to the non-negotiable and the next thing to
+prototype — `bwrap` on Linux (mature, unprivileged, self-cleaning) and a
+`sandbox-exec` SBPL profile on macOS (pending the deprecation check). Keep **#4**
+(workspaces outside `~`) as the recommended zero-machinery posture regardless, and
+retain the current 700 + ACL grants as the defense-in-depth layer underneath.
+Treat #2/#3 as non-defaults, and consider #1 dead for our purposes (no portable
+macOS bind mount).
 
 ---
 
