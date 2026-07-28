@@ -102,6 +102,16 @@ func DefaultHomeDir(agentUser string) string {
 	return "/opt/" + agentUser
 }
 
+// AgentConfigDir returns the agent's own jentic config directory (~/.jentic
+// inside the agent's home). This is the single source of truth for a self-user
+// agent's platform identity — the operator's config only references it (see
+// config.LocalAgent.ConfigDir). It matches the default JENTIC_HOME layout
+// (<home>/.jentic) so the agent, running as itself, finds its identity with no
+// extra configuration.
+func AgentConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, ".jentic")
+}
+
 // AccountStep is one privileged step in creating the agent account, paired with
 // a human description for progress output and error wrapping. Callers run the
 // steps in order and stop on the first failure.
@@ -376,6 +386,15 @@ func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
 // delete). Runs as root.
 func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "chown", "-R", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
+}
+
+// ChownToAgentCmd gives the agent ownership of dir (recursively). It is used after
+// the operator writes the agent's jentic identity into the agent's ~/.jentic:
+// files the operator creates there are operator-owned, but the agent's 0600 key
+// and tokens must be readable by the agent when it later runs as itself, so we
+// hand the whole config dir to the agent. Runs as root.
+func ChownToAgentCmd(agentUser, dir string) *exec.Cmd {
+	return exec.Command("sudo", "chown", "-R", agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path under the agent's home.
 }
 
 // DeleteHomeCmd permanently removes the agent's home tree. `jentic reset` runs it

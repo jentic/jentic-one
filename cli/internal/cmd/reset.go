@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -42,13 +41,15 @@ func newResetCmd(app *App) *cobra.Command {
 			"passwordless-launch sudoers drop-in, and the local_agents entry in your\n" +
 			"config. The agent's home is PRESERVED by default (re-owned to you); deleting\n" +
 			"it takes a separate, explicit confirmation.\n\n" +
-			"It only runs as root (re-run with sudo) and shows the full plan before\n" +
+			"Deleting an account and stripping ACLs are privileged, so reset requires\n" +
+			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
+			"password when it reaches the privileged steps. It shows the full plan before\n" +
 			"touching anything. With no [agent] it targets every configured local agent.\n" +
 			"It never reverts `chmod 700 ~` and never touches your own files.",
-		Example: "  sudo jentic reset\n" +
-			"  sudo jentic reset claude\n" +
-			"  sudo jentic reset claude --force               # non-interactive; keeps the home\n" +
-			"  sudo jentic reset claude --force --delete-home # non-interactive; deletes the home",
+		Example: "  jentic reset\n" +
+			"  jentic reset claude\n" +
+			"  jentic reset claude --force               # non-interactive; keeps the home\n" +
+			"  jentic reset claude --force --delete-home # non-interactive; deletes the home",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.resetE(cmd.Context(), opts, args)
@@ -62,15 +63,13 @@ func newResetCmd(app *App) *cobra.Command {
 }
 
 func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) error {
-	if os.Geteuid() != 0 {
-		return errors.New("jentic reset must run as root: deleting an account and stripping ACLs are " +
-			"privileged operations. Re-run with `sudo jentic reset` (see " +
-			"docs/security/analysis/local-agent-isolation.md)")
-	}
-
+	// reset runs as the operator (not `sudo jentic reset`): it reads the operator's
+	// own config and only the teardown STEPS are privileged (each is sudo-fronted),
+	// so a single password prompt is triggered when it reaches them — the same
+	// sudo-last posture as agent-user creation. We flag that up front so the
+	// prompt isn't a surprise, mirroring the "(requires sudo)" account gate.
 	operator, operatorHome := resetOperator()
-	paths := a.resetPaths(operatorHome)
-	cfg, err := config.Load(paths)
+	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		return err
 	}
@@ -80,9 +79,13 @@ func (a *App) resetE(ctx context.Context, opts *resetOptions, args []string) err
 		return err
 	}
 
+	fmt.Fprintln(a.Out, theme.Dim.Render(
+		"Removing an agent's account and ACLs is privileged (requires sudo) — you'll be "+
+			"prompted for your password when reset reaches those steps."))
+
 	interactive := term.IsTerminal(os.Stdin.Fd())
 	for _, agentID := range targets {
-		if err := a.resetAgent(ctx, paths, cfg, opts, interactive, operator, operatorHome, agentID); err != nil {
+		if err := a.resetAgent(ctx, a.Paths, cfg, opts, interactive, operator, operatorHome, agentID); err != nil {
 			return err
 		}
 	}
@@ -407,29 +410,12 @@ func (a *App) confirmDeleteHome(homeDir string) (bool, error) {
 }
 
 // resetOperator resolves the human operator whose config we act on and whose home
-// receives the re-owned agent home. Under `sudo` the process runs as root, so we
-// prefer SUDO_USER (the invoking human) over the effective root identity.
+// receives the re-owned agent home. reset runs as the operator (not under sudo —
+// only its individual steps are sudo-fronted), so the current user IS the operator;
+// there is no root/SUDO_USER indirection to unwind.
 func resetOperator() (name, home string) {
-	if su := os.Getenv("SUDO_USER"); su != "" && su != "root" {
-		if u, err := user.Lookup(su); err == nil {
-			return u.Username, u.HomeDir
-		}
-		return su, ""
-	}
 	if u, err := user.Current(); err == nil && u.Username != "" {
 		return u.Username, u.HomeDir
 	}
 	return "user", localagent.OperatorHome()
-}
-
-// resetPaths resolves which ~/.jentic config the reset loads. When run under sudo
-// the process's own home is root's, not the operator's, so we re-root at the
-// operator's home. A test-injected Paths (JENTIC_HOME / an explicit Root) is
-// respected: we only override when running under sudo with a resolvable operator
-// home.
-func (a *App) resetPaths(operatorHome string) config.Paths {
-	if os.Getenv("SUDO_USER") != "" && operatorHome != "" {
-		return config.Paths{Root: filepath.Join(operatorHome, ".jentic")}
-	}
-	return a.Paths
 }

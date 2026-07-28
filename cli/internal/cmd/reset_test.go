@@ -166,14 +166,31 @@ func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 	}
 }
 
-// TestResetRequiresRoot ensures the command refuses to run without EUID 0. Tests
-// don't run as root, so resetE should return the root-required error before it
-// touches any config.
-func TestResetRequiresRoot(t *testing.T) {
-	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+// TestResetRunsAsOperator confirms reset no longer refuses to run without EUID 0:
+// it runs as the operator (only its individual steps are sudo-fronted). With a
+// configured agent it surfaces the "(requires sudo)" notice and proceeds to the
+// plan; the non-interactive-without-force guard then stops it — proving it got
+// past any (removed) root gate. There must be NO "must run as root" error.
+func TestResetRunsAsOperator(t *testing.T) {
+	out := &bytes.Buffer{}
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
+	cfg := &config.FileConfig{LocalAgents: map[string]config.LocalAgent{
+		"claude": {User: "alice-local-agent"},
+	}}
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
 	err := app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
-	if err == nil || !strings.Contains(err.Error(), "must run as root") {
-		t.Fatalf("expected a root-required error, got %v", err)
+	if err != nil && strings.Contains(err.Error(), "must run as root") {
+		t.Fatalf("reset must not require root, got %v", err)
+	}
+	// Non-interactive without --force is the stopping point, not a root check.
+	if err == nil || !strings.Contains(err.Error(), "without --force") {
+		t.Fatalf("expected the non-interactive --force guard, got %v", err)
+	}
+	if !strings.Contains(out.String(), "requires sudo") {
+		t.Errorf("expected a (requires sudo) notice, got:\n%s", out.String())
 	}
 }
 

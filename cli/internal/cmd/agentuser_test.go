@@ -49,8 +49,8 @@ func TestOperatorNames(t *testing.T) {
 func TestRecordAgentAccount(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 
-	// Declined: recorded as not created, no home.
-	app.recordAgentAccount("claude", "alice-local-agent", "claude", "", false)
+	// Declined: recorded as not created, no home, no config-dir reference.
+	app.recordAgentAccount("claude", "alice-local-agent", "claude", "", "", false)
 	cfg, err := config.Load(app.Paths)
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -59,13 +59,17 @@ func TestRecordAgentAccount(t *testing.T) {
 	if !ok || entry.AccountCreated || entry.User != "alice-local-agent" {
 		t.Fatalf("declined entry = %+v (ok=%v)", entry, ok)
 	}
+	if entry.ConfigDir != "" {
+		t.Errorf("declined entry should have no config-dir reference, got %q", entry.ConfigDir)
+	}
 	if entry.CreatedAt == "" {
 		t.Fatal("expected CreatedAt to be stamped")
 	}
 	firstStamp := entry.CreatedAt
 
-	// Later opting in: create flag flips, home is set, stamp is preserved.
-	app.recordAgentAccount("claude", "alice-local-agent", "claude", "/Users/Shared/alice-local-agent", true)
+	// Later opting in: create flag flips, home + config-dir reference are set,
+	// stamp is preserved.
+	app.recordAgentAccount("claude", "alice-local-agent", "claude", "/Users/Shared/alice-local-agent", "/Users/Shared/alice-local-agent/.jentic", true)
 	cfg, err = config.Load(app.Paths)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
@@ -76,6 +80,9 @@ func TestRecordAgentAccount(t *testing.T) {
 	}
 	if entry.HomeDir != "/Users/Shared/alice-local-agent" {
 		t.Errorf("home = %q", entry.HomeDir)
+	}
+	if entry.ConfigDir != "/Users/Shared/alice-local-agent/.jentic" {
+		t.Errorf("config_dir = %q, want the agent's ~/.jentic", entry.ConfigDir)
 	}
 	if entry.CreatedAt != firstStamp {
 		t.Errorf("CreatedAt changed on re-record: %q → %q", firstStamp, entry.CreatedAt)

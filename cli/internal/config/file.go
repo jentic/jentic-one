@@ -64,6 +64,15 @@ type LocalAgent struct {
 	// HomeDir is that account's home directory (the always-accessible
 	// working space; the session opens here unless a directory is granted).
 	HomeDir string `yaml:"home_dir,omitempty"`
+	// ConfigDir is a REFERENCE to where this agent's own jentic identity lives —
+	// the agent user's ~/.jentic (typically <HomeDir>/.jentic). For a self-user
+	// agent the identity (Ed25519 key, agent ID, tokens) is written and owned
+	// there, not in the operator's config; the operator's config keeps only this
+	// pointer plus HomeDir. This is how the "which config gets written" problem is
+	// solved — by reference to a single source of truth, not by dual-writing. It
+	// is empty for a same-user (declined-isolation) agent, whose identity lives in
+	// the operator's own config as usual.
+	ConfigDir string `yaml:"config_dir,omitempty"`
 	// Binary is the agent executable to probe and exec (e.g. "claude").
 	Binary string `yaml:"binary,omitempty"`
 	// GrantedDirs is the inventory of directories the agent has been granted

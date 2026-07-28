@@ -24,6 +24,22 @@ type agentUserFields struct {
 	portProvider bool
 }
 
+// agentSetup is the outcome of the agent-user step, returned to the caller
+// (bootstrapE) so it can target the platform registration correctly. When an
+// account was created, the agent's jentic identity must be written into the
+// agent's own config dir (the single source of truth) rather than the operator's,
+// so the caller redirects bootstrapIdentity there and hands the dir to the agent.
+type agentSetup struct {
+	// created reports whether a dedicated Unix account now backs the agent.
+	created bool
+	// agentUser is the OS account name (set whether or not created — it is the
+	// derived default when the operator declined).
+	agentUser string
+	// configDir is the agent's ~/.jentic, where its identity is written and owned.
+	// Empty unless created.
+	configDir string
+}
+
 // setupAgentUser is the shared agent-user-account step folded into both
 // `jenticctl wizard` and `jentic bootstrap`, right after the operator is
 // selected. It mirrors how skills are shared (bootstrap → chooseAdapters):
@@ -39,12 +55,12 @@ type agentUserFields struct {
 //
 // operators is the list of selected operator names (from chooseAdapters); we act
 // on the first one that maps to a known local coding agent (today: claude).
-func (a *App) setupAgentUser(ctx context.Context, operators []string, interactive bool) error {
+func (a *App) setupAgentUser(ctx context.Context, operators []string, interactive bool) (agentSetup, error) {
 	agentID, desc, ok := firstKnownAgent(operators)
 	if !ok {
 		// None of the selected operators is a launchable local agent (e.g. only
 		// generic/codex skills) — nothing to isolate here.
-		return nil
+		return agentSetup{}, nil
 	}
 
 	operator := currentOperator()
@@ -53,10 +69,10 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// Non-interactive (--yes / no TTY): never trigger sudo unattended. Skip, but
 	// leave a discoverable pointer and record that no account was created.
 	if !interactive {
-		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", false)
+		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Skipping agent-user isolation (non-interactive). Create it later with `jentic run %s`.", agentID)))
-		return nil
+		return agentSetup{agentUser: defaultName}, nil
 	}
 
 	fmt.Fprintln(a.Out)
@@ -75,13 +91,13 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		Affirmative("Yes, isolate it").
 		Negative("Not now").
 		Value(&create)); err != nil {
-		return err
+		return agentSetup{}, err
 	}
 	if !create {
-		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", false)
+		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Keeping same-user. You can isolate later with `jentic run %s`.", agentID)))
-		return nil
+		return agentSetup{agentUser: defaultName}, nil
 	}
 
 	// Editable, prefilled dialog: account name, home, and the two port toggles.
@@ -92,16 +108,20 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		portProvider: true,
 	}
 	if err := a.promptAgentUserFields(&fields); err != nil {
-		return err
+		return agentSetup{}, err
 	}
 
 	if err := a.createAgentAccount(ctx, operator, fields, desc); err != nil {
-		return err
+		return agentSetup{}, err
 	}
 
-	a.recordAgentAccount(agentID, fields.name, desc.Binary, fields.homeDir, true)
+	// The agent's own jentic config lives in its home — this is where the platform
+	// identity is written and owned (see agentSetup / ConfigDir), so the operator's
+	// config need only reference it.
+	configDir := localagent.AgentConfigDir(fields.homeDir)
+	a.recordAgentAccount(agentID, fields.name, desc.Binary, fields.homeDir, configDir, true)
 	a.printAgentRunInstructions(agentID, fields.homeDir)
-	return nil
+	return agentSetup{created: true, agentUser: fields.name, configDir: configDir}, nil
 }
 
 // createAgentAccount runs the privileged account-creation recipe (idempotently),
@@ -144,7 +164,7 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 // recordAgentAccount persists the local-agent entry, including the AccountCreated
 // boolean the rest of the CLI keys off. A fresh entry is stamped with CreatedAt;
 // an existing one keeps its original stamp.
-func (a *App) recordAgentAccount(agentID, userName, binary, homeDir string, created bool) {
+func (a *App) recordAgentAccount(agentID, userName, binary, homeDir, configDir string, created bool) {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not record the agent account: %v", err))
@@ -156,6 +176,9 @@ func (a *App) recordAgentAccount(agentID, userName, binary, homeDir string, crea
 	entry.AccountCreated = created
 	if homeDir != "" {
 		entry.HomeDir = homeDir
+	}
+	if configDir != "" {
+		entry.ConfigDir = configDir
 	}
 	if !existed || entry.CreatedAt == "" {
 		entry.CreatedAt = time.Now().UTC().Format(time.RFC3339)

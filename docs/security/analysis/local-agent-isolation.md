@@ -24,7 +24,9 @@ jentic bootstrap                         # (or: jenticctl wizard — same flow)
 jentic run claude ~/projects/my-app
 
 # 3. When you're done with an agent entirely: tear down what was created locally.
-sudo jentic reset
+#    Run it as yourself — reset prompts for your password when it hits the
+#    privileged steps (requires sudo to complete). NOT `sudo jentic reset`.
+jentic reset
 ```
 
 The agent-user account is **created as part of onboarding** — there is no
@@ -115,6 +117,59 @@ Three things worth calling out, because they're the load-bearing parts:
   Keychain, and its own `jentic` identity (Ed25519 key under `~/.jentic`). The
   agent authenticates its own tools once, as itself — it can't ride the operator's
   sessions, which is the boundary working as designed.
+
+### Where the platform identity is written — registration after the user decision
+
+The agent-user question is asked **before** the platform registration (DCR) so that
+by the time we mint and persist a jentic identity we already know *which config it
+belongs in*. Registration is deliberately sequenced after the isolation decision,
+not before it.
+
+The consequence is a small but important targeting rule for **every** command that
+writes an agent profile (bootstrap today; any create/update later):
+
+- **Self-user agent (isolation accepted).** The agent's jentic identity — its
+  Ed25519 key, agent ID, and tokens — is written **once, into the agent's own
+  `~/.jentic`** (`<agent home>/.jentic`), which then belongs to the agent. That
+  directory is the **single source of truth** for the agent's identity. The
+  operator's config keeps only a **reference** to it: `local_agents.<agent>` records
+  `config_dir` (a pointer to the agent's `~/.jentic`) and `home_dir` (the agent's
+  home). There is **no dual-write** — the operator's config never holds a second
+  copy of the identity, only the pointer and the home metadata needed to find and
+  manage it.
+- **Same-user agent (isolation declined).** Nothing changes: the identity lives in
+  the operator's own `~/.jentic` as usual, and `config_dir` stays empty.
+
+Mechanically, bootstrap targets the write by re-rooting the config paths at the
+agent's `~/.jentic` for the identity + default-profile write, then `chown -R`s that
+directory to the agent so it owns its own `0600` key and tokens (the operator
+created the files, so they start operator-owned and must be handed over). This
+"reference, not copy" model is what keeps the multi-config problem simple: one
+writer, one source of truth, one pointer.
+
+> **Future improvement — dual-write / propagation.** If a later need arises to keep
+> a *projection* of agent state in the operator's config (e.g. so operator-side
+> tooling can list agents without reading each agent's `~/.jentic`), that is a
+> deliberate follow-up, not the current behaviour. For now, operator commands that
+> touch a self-user agent write **only** to that agent's config and update the
+> operator-side reference/metadata — never a second identity copy.
+
+> **Future improvement — default agent home under the operator's home.** Today the
+> agent home lives under a shared parent (`/Users/Shared/<agent>`, `/opt/<agent>`).
+> A nicer default would be `~/jentic-agents/<agent-name>` — discoverable, clearly
+> owned by the operator's account tree, and self-documenting. The open question is
+> purely how it interacts with the isolation paradigm: the operator's home is
+> `chmod 700`, so an agent running as its own user **cannot traverse into `~` at
+> all** — which is the whole point of the 700 guarantee. Putting the agent home
+> under `~` would require granting the agent an **execute-only traverse** grant on
+> the operator's home (the same Layer-1 mechanism [Step 4](#step-4--directory-access-700-home--traverse-walk--rwx-leaf)
+> already uses for granted working directories) so it can reach `~/jentic-agents/<agent>`
+> without being able to *read* anything else in `~`. That is believed to be a small
+> change (reuse the existing traverse-grant path, point the default home there), but
+> it is **documented here and deferred** — we'll follow up with the implementation
+> once the traverse-into-`~` interaction is confirmed safe. Note it does **not**
+> weaken the 700 guarantee: execute-without-read still blocks directory listing and
+> file reads of `~`; it only opens the single named path.
 
 ### Optional: passwordless launch
 
@@ -303,16 +358,29 @@ operator's home (traverse grants + leaf grants), a `sudoers` drop-in, and the
 that state — the inverse of setup — so an operator can cleanly decommission an
 agent (or start over) without hand-reversing each `chmod`/`sysadminctl`.
 
-### It only runs as root
+### It requires sudo to complete — but you don't launch it with `sudo`
 
 ```bash
-sudo jentic reset [<agent>] [--delete-home] [--force]
+jentic reset [<agent>] [--delete-home] [--force]
 ```
 
 Deleting a user account, removing another user's home, and stripping ACLs all
-require root. `jentic reset` **refuses to run without `sudo`** (checks `EUID == 0`
-and exits with an explanatory error otherwise) rather than prompting per-action —
-the whole operation is privileged, so it asks for the elevation once, up front.
+require root — but `jentic reset` is **run as the operator, not as
+`sudo jentic reset`**. This mirrors the sudo-last posture of account *creation*:
+the command reads the operator's own `jentic` config and does all its non-privileged
+work (survey, confirmation) as the operator, and only the individual teardown
+**steps** are privileged — each is a `sudo`-fronted command (`sudo chmod -a…`,
+`sudo sysadminctl -deleteUser`, …). So reset **requires sudo to complete** and
+you'll be prompted for your password when it reaches those steps, but it never runs
+its config-reading or its prompts as root. Up front it prints a
+*"Removing an agent's account and ACLs is privileged (requires sudo)"* notice — the
+same `(requires sudo)` signal the account-creation gate shows — so the later
+password prompt is never a surprise.
+
+Running as the operator (rather than under `sudo`) also removes a whole class of
+bugs: there is no `SUDO_USER` indirection to unwind and no risk of reading root's
+`~/.jentic` instead of the operator's — the current user simply *is* the operator.
+
 With no `<agent>` argument it targets every configured local agent; with one, just
 that agent.
 
@@ -402,8 +470,8 @@ live account with dangling grants: (1) drop leaf + traverse ACLs; (2) settle the
 agent home — **re-own it to the operator** by default, or delete it *only* when the
 separate home confirmation was answered affirmatively (or `--delete-home --force`
 in non-interactive use); (3) remove the `sudoers` drop-in; (4) delete the Unix
-account (`sysadminctl -deleteUser` **without** `-secure`/`-keepHome` deleting the
-record only / `userdel` **without** `-r` so the account goes but the home stays);
+account (`sysadminctl -deleteUser -keepHome` / `userdel` **without** `-r` — both
+leave the home in place, so the account goes but the already-settled home stays);
 (5) remove the `local_agents` entry from the operator's config last, so a re-run
 after a mid-way failure still has the record of what to finish cleaning. Each step
 reports success/failure; a failure stops the run with what's already been done and

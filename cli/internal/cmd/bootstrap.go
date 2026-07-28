@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -168,13 +169,18 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
 	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
 	// it through this same bootstrap flow.
+	// setup carries the agent-user decision so the identity write below can be
+	// TARGETED correctly: a self-user agent's platform identity belongs in the
+	// agent's own config dir (single source of truth), not the operator's.
+	var setup agentSetup
 	if !opts.skipSkill {
 		// Interactivity for the sudo gate matches the skill picker's own rule
 		// (!yes && a real TTY), not opts.interactive — the wizard deliberately
 		// leaves opts.interactive false (it owns the profile prompts) while the
 		// user is very much at a terminal.
 		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
-		if err := a.setupAgentUser(ctx, operatorNames(adapters), agentInteractive); err != nil {
+		s, err := a.setupAgentUser(ctx, operatorNames(adapters), agentInteractive)
+		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Agent-user setup cancelled."))
 			} else {
@@ -183,21 +189,46 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 				fmt.Fprintln(a.Out, theme.Warnf("agent-user setup skipped: %v", err))
 			}
 		}
+		setup = s
+	}
+
+	// Registration is deliberately AFTER the agent-user decision: only now do we
+	// know WHERE to write the identity. For a freshly-created self-user agent it
+	// goes into the agent's own ~/.jentic (owned by the agent); otherwise into the
+	// operator's config as usual.
+	idPaths := a.Paths
+	if setup.created && setup.configDir != "" {
+		idPaths = config.Paths{Root: setup.configDir}
 	}
 
 	// Step 1+2: register (DCR) and wait for human approval, reusing the exact
 	// register plumbing so behaviour stays identical.
-	tokens, err := a.bootstrapIdentity(ctx, profileName, baseURL, opts)
+	tokens, err := a.bootstrapIdentity(ctx, idPaths, profileName, baseURL, opts)
 	if err != nil {
 		return err
 	}
 
-	// Step 3: make this the active profile so bare `jentic` commands use it.
+	// Step 3: make this the active profile so bare `jentic` commands use it — in
+	// the same config the identity was written to.
 	if !opts.noActive {
-		if err := config.SetDefaultProfile(a.Paths, profileName); err != nil {
+		if err := config.SetDefaultProfile(idPaths, profileName); err != nil {
 			return fmt.Errorf("set default profile: %w", err)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Active profile set to %q", profileName))
+	}
+
+	// Hand the just-written identity to the agent: files the operator created in
+	// the agent's config dir are operator-owned, but the agent's 0600 key and
+	// tokens must be readable when it runs as itself. Best-effort — a chown failure
+	// is reported, not fatal (the identity is already provisioned).
+	if setup.created && setup.configDir != "" {
+		chown := localagent.ChownToAgentCmd(setup.agentUser, setup.configDir)
+		chown.Stdout, chown.Stderr = a.Out, a.Err
+		if err := chown.Run(); err != nil {
+			fmt.Fprintln(a.Out, theme.Warnf("could not hand the agent config to %s: %v", setup.agentUser, err))
+		} else {
+			fmt.Fprintln(a.Out, theme.Dim.Render("Agent identity written to its own config: "+setup.configDir))
+		}
 	}
 
 	// Step 4: write the skill into the operator's native layout, reusing the
@@ -221,8 +252,8 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 // skip the approval banner and wait loop entirely. Only when the first mint is
 // pending do we print the approval link and poll until approval (or timeout /
 // Ctrl-C).
-func (a *App) bootstrapIdentity(ctx context.Context, profileName, baseURL string, opts *bootstrapOptions) (*tokensView, error) {
-	sess, err := agentauth.Open(a.Paths, profileName, baseURL)
+func (a *App) bootstrapIdentity(ctx context.Context, paths config.Paths, profileName, baseURL string, opts *bootstrapOptions) (*tokensView, error) {
+	sess, err := agentauth.Open(paths, profileName, baseURL)
 	if err != nil {
 		return nil, err
 	}
