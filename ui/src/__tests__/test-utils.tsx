@@ -1,4 +1,5 @@
 import type { ReactElement, ReactNode } from 'react';
+import { StrictMode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router';
 import { render, type RenderOptions } from '@testing-library/react';
@@ -16,6 +17,10 @@ interface Options extends Omit<RenderOptions, 'wrapper'> {
  * QueryClient (retries off so error states render immediately) and a
  * MemoryRouter. Returns the testing-library result plus the `queryClient`.
  *
+ * Wraps in `<StrictMode>` to match the app root (src/main.tsx), so effects run
+ * with the same double-invocation semantics prod dev uses — mount-guarded
+ * effects that aren't StrictMode-safe fail here instead of only in the browser.
+ *
  * MSW is started globally in src/__tests__/setup.ts; override per-test with
  * `worker.use(createErrorHandler(...))`.
  */
@@ -31,17 +36,19 @@ export function renderWithProviders(ui: ReactElement, options: Options = {}) {
 
 	function Wrapper({ children }: { children: ReactNode }) {
 		return (
-			<QueryClientProvider client={queryClient}>
-				<MemoryRouter initialEntries={[route]}>
-					{path ? (
-						<Routes>
-							<Route path={path} element={children} />
-						</Routes>
-					) : (
-						children
-					)}
-				</MemoryRouter>
-			</QueryClientProvider>
+			<StrictMode>
+				<QueryClientProvider client={queryClient}>
+					<MemoryRouter initialEntries={[route]}>
+						{path ? (
+							<Routes>
+								<Route path={path} element={children} />
+							</Routes>
+						) : (
+							children
+						)}
+					</MemoryRouter>
+				</QueryClientProvider>
+			</StrictMode>
 		);
 	}
 
