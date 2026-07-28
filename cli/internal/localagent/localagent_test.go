@@ -1,6 +1,7 @@
 package localagent
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,6 +100,67 @@ func TestAncestorChain(t *testing.T) {
 	// leaf==home means the leaf is the home; chain walks from Dir(home).
 	if c := AncestorChain(home, home); len(c) == 0 {
 		t.Fatalf("expected non-empty chain for home leaf, got %v", c)
+	}
+}
+
+func TestDetectProvider(t *testing.T) {
+	writeSettings := func(t *testing.T, env string) string {
+		t.Helper()
+		home := t.TempDir()
+		dir := filepath.Join(home, ".claude")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		body := `{"env": {` + env + `}}`
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return home
+	}
+
+	t.Run("bedrock -> aws with ~/.aws", func(t *testing.T) {
+		home := writeSettings(t, `"CLAUDE_CODE_USE_BEDROCK": "1"`)
+		pc := DetectProvider(home)
+		if pc.Name != "aws" || len(pc.ConfigPaths) != 1 || pc.ConfigPaths[0] != "~/.aws" {
+			t.Fatalf("DetectProvider = %+v", pc)
+		}
+	})
+
+	t.Run("vertex -> gcloud plus explicit creds", func(t *testing.T) {
+		home := writeSettings(t, `"CLAUDE_CODE_USE_VERTEX": "true", "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/key.json"`)
+		pc := DetectProvider(home)
+		if pc.Name != "vertex" {
+			t.Fatalf("DetectProvider = %+v", pc)
+		}
+		if len(pc.ConfigPaths) != 2 || pc.ConfigPaths[0] != "~/.config/gcloud" || pc.ConfigPaths[1] != "/tmp/key.json" {
+			t.Fatalf("vertex paths = %v", pc.ConfigPaths)
+		}
+	})
+
+	t.Run("disabled flag falls through to anthropic", func(t *testing.T) {
+		home := writeSettings(t, `"CLAUDE_CODE_USE_BEDROCK": "0"`)
+		pc := DetectProvider(home)
+		if pc.Name != "anthropic" || len(pc.ConfigPaths) != 0 {
+			t.Fatalf("DetectProvider = %+v", pc)
+		}
+	})
+
+	t.Run("missing settings -> anthropic default", func(t *testing.T) {
+		pc := DetectProvider(t.TempDir())
+		if pc.Name != "anthropic" || len(pc.ConfigPaths) != 0 {
+			t.Fatalf("DetectProvider = %+v", pc)
+		}
+	})
+}
+
+func TestProviderConfigPaths(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got := ProviderConfigPaths(home, ProviderConfig{Name: "aws", ConfigPaths: []string{"~/.aws", "~/.config/gcloud"}})
+	if len(got) != 1 || got[0] != filepath.Join(home, ".aws") {
+		t.Fatalf("ProviderConfigPaths = %v (only the existing path should be returned)", got)
 	}
 }
 

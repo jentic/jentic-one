@@ -44,7 +44,8 @@ jentic run <agent> [path] [flags]
   stays a copy-paste for newcomers and scriptable for power users):
   - `--home` — skip the current dir; open the session in the agent's own home.
   - `--allow-dir` / `--no-allow-dir` — pre-answer the directory-access prompt.
-  - `--seed-config` / `--no-seed-config` — pre-answer the config-seeding prompt.
+  - `--seed-config` / `--no-seed-config` — pre-answer both the agent-config and
+    provider-config seeding prompts.
   - `--yes` — assume the safe default for every prompt (non-interactive); never
     picks a flagged-dangerous option (it declines instead).
   - `--agent-user <name>` — override the derived `<operator>-local-agent` user.
@@ -97,6 +98,9 @@ local_agents:
    (copy vs. fresh install).
 2b. **Optionally seed the operator's agent config** into the agent's home (opt-in,
    once) so the agent inherits the operator's settings.
+2c. **Optionally seed the operator's LLM-provider config** (e.g. `~/.aws` for
+   Bedrock), detected from the operator's Claude Code settings, so the agent can
+   authenticate to the same provider (opt-in, once).
 3. **Resolve the working directory** and its access — the directory-access flow,
    including the in-home 700-home + traverse-walk + rwx-leaf model and
    danger-flagging.
@@ -214,11 +218,53 @@ account:
 > `~/.claude.json` can contain provider API keys or MCP-server credentials the
 > operator stored locally. Seeding them hands the agent a **copy** of those secrets —
 > which is deliberate (the agent inherits the operator's working setup), but it *is* a
-> credential crossing the boundary, so it is surfaced and confirmed, never silent. The
-> longer-term direction is to migrate those provider credentials **behind
-> jentic-one's broker**, so the agent's config carries no secrets at all and this copy
-> becomes settings-only. Until then, treat seeded config as sensitive and seed only
-> what the agent genuinely needs.
+> credential crossing the boundary, so it is surfaced and confirmed, never silent. Treat
+> seeded config as sensitive and seed only what the agent genuinely needs.
+
+### Seeding the operator's LLM-provider config (provider-aware)
+
+Copying the agent config is not always enough to make LLM calls work. Claude Code
+can be pointed at a **cloud provider** instead of the Anthropic API, and that
+provider's credentials live in a *separate* location that the agent config
+references but does not contain. If we seed only `~/.claude` and the operator uses
+Bedrock, the agent launches, reads its settings, tries to load the `<your-profile>`
+profile, and fails with `The config profile (<your-profile>) could not be found` —
+because `~/.aws` was never copied.
+
+So `jentic run` is **provider-aware**: it reads the `env` block of the operator's
+`~/.claude/settings.json` to detect which provider Claude Code will authenticate
+against, and offers to seed *that provider's* config (and only that provider's):
+
+| `settings.json` env | provider | config seeded |
+| ------------------- | -------- | ------------- |
+| `CLAUDE_CODE_USE_BEDROCK=1` | AWS Bedrock | `~/.aws` (profiles + SSO session) |
+| `CLAUDE_CODE_USE_VERTEX=1` | Google Vertex | `~/.config/gcloud` (+ any `GOOGLE_APPLICATION_CREDENTIALS` file) |
+| neither | Anthropic API | nothing extra — the key (if any) is already in the seeded agent config |
+
+```
+Your Claude Code uses the aws provider; found its config: /Users/alice/.aws
+  Copy your aws provider config into the agent's home? [y/N]
+```
+
+The same guards as the agent-config step apply (once-only, never clobbers the
+agent's own config, opt-in, `--yes` declines, `--no-seed-config` refuses). Two
+provider-specific points:
+
+- **Config only — never the login token.** For SSO-backed providers (AWS SSO,
+  `gcloud`) we copy the *configuration* (profiles, SSO-session definitions) but
+  deliberately **exclude the cached SSO/session token**. Claude Code performs the
+  provider login **programmatically** on first launch using the copied config, so
+  the agent gets its own fresh session rather than riding the operator's cached
+  one — one less live credential crossing the boundary.
+
+> **Warning — until you front the provider with an LLM proxy, its credentials live
+> in the agent's environment.** Seeding `~/.aws` (or `~/.config/gcloud`) gives the
+> agent account standing access to the provider — for SSO that's the ability to
+> initiate logins as the configured profile; for a static key it's the key itself.
+> The clean fix is an **LLM proxy** (e.g. [LiteLLM](https://docs.litellm.ai/)): the
+> agent points at the proxy, the proxy holds the provider credentials, and nothing
+> sensitive lands in the agent account at all. This same warning is shown at both
+> the agent-config and provider-config prompts.
 
 > **This is the payoff of the separate-identity design.** Because the agent runs as
 > its own Unix user with its own `$HOME`, the operator can stay logged into the
