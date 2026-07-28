@@ -47,6 +47,7 @@ import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	useAgent,
 	useAgentToolkits,
+	useLinkableToolkits,
 	useBindToolkitToAgent,
 	useUnbindToolkitFromAgent,
 	useAgentApiKeyInfo,
@@ -99,6 +100,11 @@ export default function AgentDetailPage() {
 
 	const agentQuery = useAgent(id);
 	const toolkits = useAgentToolkits(id);
+	// Names for bound toolkits. The binding response (GET /agents/{id}/toolkits)
+	// carries only the toolkit id, so resolve the human name from the org-wide
+	// toolkit catalogue and fall back to the id until it loads. This shares the
+	// picker's cache key, so opening the Bind dialog reuses the same fetch.
+	const linkableToolkits = useLinkableToolkits();
 	const bindToolkit = useBindToolkitToAgent(id);
 	const unbindToolkit = useUnbindToolkitFromAgent(id);
 	const apiKeyInfo = useAgentApiKeyInfo(id);
@@ -119,12 +125,21 @@ export default function AgentDetailPage() {
 
 	// Memoised so ToolkitPicker's internal useMemos (available list, candidate
 	// count) don't invalidate on every parent re-render — a fresh ``new Set`` on
-	// each render would force a filter over the whole toolkit list every time
-	// (rev-1 review #6).
+	// each render would force a filter over the whole toolkit list every time.
 	const boundToolkitIds = useMemo(
 		() => new Set((toolkits.data ?? []).map((t) => t.toolkitId)),
 		[toolkits.data],
 	);
+
+	// toolkitId → human name from the org-wide catalogue. Used to show a
+	// friendly, truncated label for each bound toolkit; the id remains the
+	// fallback until (or unless) the catalogue resolves a name.
+	const toolkitNameById = useMemo(
+		() => new Map((linkableToolkits.data ?? []).map((t) => [t.toolkitId, t.name])),
+		[linkableToolkits.data],
+	);
+	const displayName = (toolkitId: string): string =>
+		toolkitNameById.get(toolkitId)?.trim() || toolkitId;
 
 	if (agentQuery.isPending) {
 		return (
@@ -457,39 +472,94 @@ export default function AgentDetailPage() {
 							APIs.
 						</div>
 					) : (
-						toolkits.data.map((t) => (
-							<div
-								key={t.id}
-								data-testid="bound-toolkit-row"
-								className="group border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2"
-							>
-								<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-								<AppLink
-									href={ROUTE_PATHS.toolkit(t.toolkitId)}
-									className="hover:text-primary flex min-w-0 flex-1 items-center gap-2 transition-colors"
+						toolkits.data.map((t) => {
+							const name = displayName(t.toolkitId);
+							return (
+								<div
+									key={t.id}
+									data-testid="bound-toolkit-row"
+									className="group border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2"
 								>
-									<code className="text-foreground flex-1 truncate font-mono text-xs">
-										{t.toolkitId}
-									</code>
-									<span
-										className="text-muted-foreground/70 shrink-0 text-[11px]"
-										title={formatTimestamp(t.boundAt)}
+									<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+									<AppLink
+										href={ROUTE_PATHS.toolkit(t.toolkitId)}
+										className="hover:text-primary flex min-w-0 flex-1 items-center gap-2 transition-colors"
 									>
-										{timeAgo(t.boundAt)}
-									</span>
-									<ArrowRight className="text-muted-foreground/40 group-hover:text-primary h-3.5 w-3.5 shrink-0 transition-colors" />
-								</AppLink>
-								<Button
-									variant="danger"
-									size="sm"
-									className="ml-1 inline-flex shrink-0 items-center gap-1 px-2 py-1 text-xs"
-									onClick={() => setUnlinkToolkitId(t.toolkitId)}
-									aria-label={`Unbind toolkit ${t.toolkitId}`}
-								>
-									<Unlink className="h-3 w-3" /> Unlink
-								</Button>
-							</div>
-						))
+										<span className="flex min-w-0 flex-1 flex-col">
+											<span
+												className="text-foreground truncate text-sm font-medium"
+												title={name}
+											>
+												{name}
+											</span>
+											<code
+												className="text-muted-foreground/80 truncate font-mono text-[11px]"
+												title={t.toolkitId}
+											>
+												{t.toolkitId}
+											</code>
+										</span>
+										<span
+											className="text-muted-foreground/70 shrink-0 text-[11px]"
+											title={formatTimestamp(t.boundAt)}
+										>
+											{timeAgo(t.boundAt)}
+										</span>
+										<ArrowRight className="text-muted-foreground/40 group-hover:text-primary h-3.5 w-3.5 shrink-0 transition-colors" />
+									</AppLink>
+									{unlinkToolkitId === t.toolkitId ? (
+										<span
+											role="group"
+											aria-label={`Unbind ${name} for the agent?`}
+											className="border-danger/30 bg-danger/5 ml-1 inline-flex shrink-0 items-center gap-2 rounded-md border px-2 py-1"
+										>
+											<span className="text-muted-foreground text-xs">
+												Unbind this toolkit?
+											</span>
+											<Button
+												variant="danger"
+												size="sm"
+												className="px-2 py-0.5 text-xs"
+												disabled={unbindToolkit.isPending}
+												onClick={async () => {
+													try {
+														await unbindToolkit.mutateAsync(
+															t.toolkitId,
+														);
+														setUnlinkToolkitId(null);
+													} catch {
+														// onError toasts; keep the row in the
+														// confirming state so the user can retry.
+													}
+												}}
+												aria-label={`Unbind toolkit ${name}`}
+											>
+												Unbind
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												className="px-2 py-0.5 text-xs"
+												disabled={unbindToolkit.isPending}
+												onClick={() => setUnlinkToolkitId(null)}
+											>
+												Cancel
+											</Button>
+										</span>
+									) : (
+										<Button
+											variant="danger"
+											size="sm"
+											className="ml-1 inline-flex shrink-0 items-center gap-1 px-2 py-1 text-xs"
+											onClick={() => setUnlinkToolkitId(t.toolkitId)}
+											aria-label={`Unbind toolkit ${name}`}
+										>
+											<Unlink className="h-3 w-3" /> Unbind
+										</Button>
+									)}
+								</div>
+							);
+						})
 					)}
 				</CardBody>
 			</Card>
@@ -585,7 +655,7 @@ export default function AgentDetailPage() {
 				onClose={() => {
 					// Don't let a mid-flight bind be Esc/backdrop-dismissed — if it then
 					// fails the error toast fires but the dialog is gone, leaving the
-					// user unable to retry in place (rev-1 review #8).
+					// user unable to retry in place.
 					if (bindToolkit.isPending) return;
 					setBindToolkitOpen(false);
 				}}
@@ -619,7 +689,7 @@ export default function AgentDetailPage() {
 							} catch {
 								// onError toasts; keep the dialog open so the user can retry
 								// (matches the unlink flow below and every other confirm dialog
-								// on this page — rev-1 review #10).
+								// on this page).
 							}
 						}}
 						pending={bindToolkit.isPending}
@@ -627,29 +697,6 @@ export default function AgentDetailPage() {
 					/>
 				</div>
 			</Dialog>
-
-			<ConfirmDialog
-				open={unlinkToolkitId != null}
-				title="Unbind toolkit"
-				body="Revoke this toolkit for the agent? The agent will no longer be able to call the toolkit's APIs. You can bind it again later."
-				confirmLabel="Unlink"
-				pending={unbindToolkit.isPending}
-				onConfirm={async () => {
-					if (!unlinkToolkitId) return;
-					try {
-						await unbindToolkit.mutateAsync(unlinkToolkitId);
-						setUnlinkToolkitId(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => {
-					// Same as the Bind dialog: don't allow Esc/backdrop-dismissal while
-					// the DELETE is in flight (rev-1 review #8).
-					if (unbindToolkit.isPending) return;
-					setUnlinkToolkitId(null);
-				}}
-			/>
 		</PageShell>
 	);
 }

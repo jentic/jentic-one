@@ -135,24 +135,32 @@ function ToolkitRow({
 	disabled?: boolean;
 }) {
 	// A kill-switched toolkit is listed with a badge, but the row is not
-	// clickable: binding one would create a relationship that immediately
-	// ``403 toolkit_suspended``s on every call (rev-1 review #4). Keeping it
+	// selectable: binding one would create a relationship that immediately
+	// ``403 toolkit_suspended``s on every call. Keeping it
 	// visible is more debuggable than silently hiding it — the operator can
 	// see *why* it's not offered.
+	//
+	// A11y: a suspended row uses ``aria-disabled`` rather than the native
+	// ``disabled`` attribute so it stays in the tab order and screen readers can
+	// still reach it and read the reason (surfaced in an sr-only span, not just
+	// a hover-only ``title``). The click is no-op'd in JS instead. The native
+	// ``disabled`` is kept only for the mutation-in-flight (``pending``) case,
+	// which is transient and doesn't need an explanation.
 	const isSuspended = !toolkit.active;
-	const isDisabled = disabled || isSuspended;
-	const title = isSuspended
-		? 'Suspended toolkits cannot be bound — restore the kill switch first.'
-		: undefined;
+	const rationale = 'Suspended toolkits cannot be bound — restore the kill switch first.';
 	return (
 		<button
 			type="button"
-			disabled={isDisabled}
-			title={title}
-			onClick={() => onSelect(toolkit.toolkitId)}
+			disabled={disabled && !isSuspended}
+			aria-disabled={isSuspended || undefined}
+			title={isSuspended ? rationale : undefined}
+			onClick={() => {
+				if (isSuspended || disabled) return;
+				onSelect(toolkit.toolkitId);
+			}}
 			data-testid="toolkit-picker-row"
 			data-suspended={isSuspended || undefined}
-			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
 		>
 			<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 				<Shield className="h-4 w-4" />
@@ -166,9 +174,12 @@ function ToolkitRow({
 				</p>
 			</div>
 			{isSuspended && (
-				<Badge variant="danger" className="shrink-0 text-[10px]">
-					suspended
-				</Badge>
+				<>
+					<span className="sr-only">{rationale}</span>
+					<Badge variant="danger" className="shrink-0 text-[10px]">
+						suspended
+					</Badge>
+				</>
 			)}
 			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
 		</button>

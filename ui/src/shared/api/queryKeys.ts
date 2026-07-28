@@ -57,4 +57,15 @@ export const sharedQueryKeys = {
 	 * once here so the badge and the module's list cache can't drift apart.
 	 */
 	agentsRoot: ['agents'] as const,
+	/**
+	 * The toolkits root (`GET /toolkits`). Owned by the Toolkits module
+	 * (`toolkitKeys.all` derives from this), but the Agents module's agent-side
+	 * bind/unbind mutations (#607) legitimately need to invalidate it: binding a
+	 * toolkit to an agent changes the toolkit-side "Bound Agents" card, which
+	 * lives under this prefix. The Agents module can't import `toolkitKeys`
+	 * across the sibling-module boundary, so it invalidates this shared root
+	 * instead. Defined once here so the toolkit detail's bound-agents view and
+	 * the module's cache can't drift apart.
+	 */
+	toolkitsRoot: ['toolkits'] as const,
 };

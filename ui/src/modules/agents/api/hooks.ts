@@ -99,7 +99,7 @@ const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
  * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Kept
  * under **its own root** (not ``agentsKeys.all``) so a broad
  * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
- * doesn't pointlessly refetch ``GET /toolkits`` (rev-1 review #7). Mirrors the
+ * doesn't pointlessly refetch ``GET /toolkits``. Mirrors the
  * toolkits module keeping its ``linkableAgents`` cache under its own toolkits
  * root for the same reason.
  */
@@ -165,7 +165,7 @@ export function useAgentToolkits(id: string | null) {
  * of the detail page. Keyed under its own root (``linkableToolkitsKey``) rather
  * than ``agentsKeys.all`` so a broad ``sharedQueryKeys.agentsRoot``
  * invalidation (used by approve/deny/create) does not pointlessly refetch
- * ``GET /toolkits`` (rev-1 review #7).
+ * ``GET /toolkits``.
  */
 export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = {}) {
 	return useQuery<LinkableToolkit[]>({
@@ -179,7 +179,7 @@ export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = 
  * toolkits list and the picker's candidates list on success. Mirrors the
  * toolkit page's "Link agent". Accepts a nullable agent id and refuses to fire
  * without one so a stray call before the agent has resolved cannot POST to
- * ``/agents//toolkits`` (rev-1 review #5). */
+ * ``/agents//toolkits``. */
 export function useBindToolkitToAgent(agentId: string | null) {
 	const qc = useQueryClient();
 	return useMutation<void, Error, string>({
@@ -193,8 +193,13 @@ export function useBindToolkitToAgent(agentId: string | null) {
 			if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
 			// Candidates change when the just-bound toolkit becomes ineligible for
 			// this agent; the toolkit-side sibling invalidates its own
-			// ``linkableAgents`` on bind/unbind for the same reason (rev-1 review #3).
+			// ``linkableAgents`` on bind/unbind for the same reason.
 			qc.invalidateQueries({ queryKey: linkableToolkitsKey });
+			// The binding is bidirectional: the toolkit detail page's "Bound
+			// Agents" card reads the reverse lookup, so refresh the whole toolkits
+			// root (owned by the toolkits module, referenced here via the shared
+			// registry) or it goes stale until its fallback poll.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitsRoot });
 			toast({ title: 'Toolkit bound', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to bind the toolkit.'),
@@ -215,6 +220,9 @@ export function useUnbindToolkitFromAgent(agentId: string | null) {
 		onSuccess: () => {
 			if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
 			qc.invalidateQueries({ queryKey: linkableToolkitsKey });
+			// Refresh the toolkit-side "Bound Agents" card too (see
+			// {@link useBindToolkitToAgent}) — unbinding removes this agent from it.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitsRoot });
 			toast({ title: 'Toolkit unbound', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),

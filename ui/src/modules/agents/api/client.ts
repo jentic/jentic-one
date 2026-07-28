@@ -175,25 +175,37 @@ export async function listAgentToolkits(agentId: string): Promise<ToolkitBinding
  *
  * Paginates via ``cursor``/``has_more`` so a workspace with more than one page
  * of toolkits (default page size 50) still lists everything — a hardcoded
- * ``limit`` would silently drop the tail (rev-1 review #1). A hard page cap
+ * ``limit`` would silently drop the tail. A hard page cap
  * keeps a runaway/misconfigured backend from looping forever. Kill-switched
  * toolkits are *included* here (``active`` is carried through); the picker
- * itself refuses to select them so a broken binding can't be created (rev-1
- * review #4) — but keeping them in the list lets callers show them as a
+ * itself refuses to select them so a broken binding can't be created — but
+ * keeping them in the list lets callers show them as a
  * disabled row with a "suspended" affordance, which is easier to reason about
  * than a silently-missing toolkit.
+ *
+ * Defensive against a misbehaving backend: we break if a cursor repeats (a
+ * pagination loop) and dedupe the accumulated rows by ``toolkitId`` so a page
+ * that re-emits an earlier row can't produce duplicate picker entries.
  */
 export async function listLinkableToolkits(): Promise<LinkableToolkit[]> {
 	try {
 		const out: LinkableToolkit[] = [];
+		const seenToolkitIds = new Set<string>();
+		const seenCursors = new Set<string>();
 		let cursor: string | null = null;
 		const MAX_PAGES = 20;
 		for (let page = 0; page < MAX_PAGES; page += 1) {
 			const res = await ToolkitsService.listToolkits({ cursor, limit: 100 });
 			for (const t of res.data) {
+				if (seenToolkitIds.has(t.toolkit_id)) continue;
+				seenToolkitIds.add(t.toolkit_id);
 				out.push({ toolkitId: t.toolkit_id, name: t.name, active: t.active });
 			}
 			if (!res.has_more || !res.next_cursor) break;
+			// A repeated cursor means the backend is looping — stop rather than
+			// re-fetch the same page until MAX_PAGES.
+			if (seenCursors.has(res.next_cursor)) break;
+			seenCursors.add(res.next_cursor);
 			cursor = res.next_cursor;
 		}
 		return out;
