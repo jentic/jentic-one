@@ -31,6 +31,8 @@ function planRequest(): AccessRequest {
 		actor_id: AGENT_ID,
 		status: 'pending',
 		requested_by: AGENT_ID,
+		created_by: AGENT_ID,
+		approve_url: 'https://app.example.test/access-requests/arq_plan_naming',
 		reason: 'need weather data',
 		filed_at: new Date().toISOString(),
 		expires_at: new Date(Date.now() + 3_600_000).toISOString(),

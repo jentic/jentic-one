@@ -15,6 +15,7 @@ from jentic_one.control.web.schemas.access_requests import (
     AccessRequestFileRequest,
     AccessRequestItemResponse,
     AccessRequestListResponse,
+    AccessRequestOwnerResponse,
     AccessRequestResponse,
     AmendRequest,
     DecideRequest,
@@ -62,6 +63,13 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
     evaluation = None
     if view.evaluation is not None:
         evaluation = _to_evaluation_response(view.evaluation)
+    filer_owner = None
+    if view.filer_owner is not None:
+        filer_owner = AccessRequestOwnerResponse(
+            id=view.filer_owner.id,
+            email=view.filer_owner.email,
+            display_name=view.filer_owner.display_name,
+        )
     return AccessRequestResponse(
         id=view.id,
         actor_id=view.actor_id,
@@ -73,6 +81,7 @@ def _to_response(view: AccessRequestView) -> AccessRequestResponse:
         expires_at=view.expires_at,
         created_by=view.created_by,
         filer_owner_id=view.filer_owner_id,
+        filer_owner=filer_owner,
         items=[_to_item_response(i) for i in view.items],
         evaluation=evaluation,
     )

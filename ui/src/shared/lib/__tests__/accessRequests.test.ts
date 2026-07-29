@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	ACCESS_REQUEST_STATUS_VARIANT,
 	isScopeGrant,
 	isSpecificResource,
 	isUnrestrictedAllow,
@@ -7,6 +8,8 @@ import {
 	parseItemRules,
 	ruleSummary,
 	scopeLabel,
+	summarizeAccessRequest,
+	type AccessRequest,
 	type AccessRequestItem,
 	type PermissionRule,
 } from '../accessRequests';
@@ -19,6 +22,21 @@ function item(overrides: Partial<AccessRequestItem> = {}): AccessRequestItem {
 		action: 'bind',
 		status: 'pending',
 		...overrides,
+	};
+}
+
+/** Minimal envelope factory for the queue-summary helper. */
+function request(items: AccessRequestItem[]): AccessRequest {
+	return {
+		id: 'areq_x',
+		actor_id: 'agnt_x',
+		status: 'pending',
+		requested_by: 'agnt_x',
+		created_by: 'agnt_x',
+		approve_url: 'https://app.example.test/access-requests/areq_x',
+		filed_at: '2026-07-23T09:00:00Z',
+		expires_at: '2026-07-30T09:00:00Z',
+		items,
 	};
 }
 
@@ -221,5 +239,44 @@ describe('ruleSummary', () => {
 				{ effect: 'deny', methods: null, operations: null, path: null },
 			]),
 		).toBe('Blocks all requests; Allows GET.');
+	});
+});
+
+describe('summarizeAccessRequest', () => {
+	it('renders "type · action" for a single item', () => {
+		expect(summarizeAccessRequest(request([item()]))).toBe('credential · bind');
+	});
+
+	it('appends "+N more" for multi-item requests', () => {
+		expect(
+			summarizeAccessRequest(
+				request([
+					item({ resource_type: 'toolkit', action: 'create' }),
+					item({ id: 'ari_2' }),
+					item({ id: 'ari_3' }),
+				]),
+			),
+		).toBe('toolkit · create +2 more');
+	});
+
+	it('falls back to "access" for an empty item list', () => {
+		expect(summarizeAccessRequest(request([]))).toBe('access');
+	});
+});
+
+describe('ACCESS_REQUEST_STATUS_VARIANT', () => {
+	it('covers every backend status, including the view-time derived "expired"', () => {
+		expect(ACCESS_REQUEST_STATUS_VARIANT).toEqual({
+			pending: 'pending',
+			approved: 'success',
+			denied: 'danger',
+			partially_approved: 'warning',
+			expired: 'warning',
+			withdrawn: 'default',
+		});
+	});
+
+	it('lets consumers fall back to "default" for unknown statuses', () => {
+		expect(ACCESS_REQUEST_STATUS_VARIANT['bogus'] ?? 'default').toBe('default');
 	});
 });
