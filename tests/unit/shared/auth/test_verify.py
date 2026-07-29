@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from jentic_one.shared.auth.tokens import issue_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, issue_jwt
 from jentic_one.shared.auth.verify import verify_token
 
 
@@ -95,6 +95,7 @@ async def test_jwt_with_permissions_and_scopes_merges_both(
     claims = {
         "sub": "usr_4",
         "email": "user@example.com",
+        "actor_type": "user",
         "permissions": ["direct:perm"],
         "scopes": ["scope:a"],
     }
@@ -105,3 +106,34 @@ async def test_jwt_with_permissions_and_scopes_merges_both(
     assert "direct:perm" in identity.permissions
     assert "scope:a" in identity.permissions
     mock_resolve.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_jwt_without_actor_type_rejected(mock_ctx: MagicMock) -> None:
+    """Fail closed (#862): a validly-signed JWT with no actor_type claim is refused."""
+    secret = "a" * 32
+    claims = {
+        "sub": "usr_5",
+        "email": "user@example.com",
+        "permissions": ["org:admin"],
+    }
+    token = issue_jwt(claims=claims, secret=secret, ttl_seconds=3600)
+
+    with pytest.raises(InvalidTokenError):
+        await verify_token(token, secret=secret, ctx=mock_ctx)
+
+
+@pytest.mark.asyncio
+async def test_jwt_with_unknown_actor_type_rejected(mock_ctx: MagicMock) -> None:
+    """An unrecognised actor_type raises InvalidTokenError (mapped to 401), not ValueError."""
+    secret = "a" * 32
+    claims = {
+        "sub": "usr_6",
+        "email": "user@example.com",
+        "actor_type": "definitely-not-a-real-actor",
+        "permissions": ["org:admin"],
+    }
+    token = issue_jwt(claims=claims, secret=secret, ttl_seconds=3600)
+
+    with pytest.raises(InvalidTokenError):
+        await verify_token(token, secret=secret, ctx=mock_ctx)

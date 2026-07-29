@@ -5,7 +5,7 @@ from __future__ import annotations
 import structlog
 
 from jentic_one.shared.auth.identity import Identity
-from jentic_one.shared.auth.tokens import decode_jwt
+from jentic_one.shared.auth.tokens import InvalidTokenError, decode_jwt
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 
@@ -51,12 +51,25 @@ async def resolve_permissions_for_actor(
 async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     """Decode and verify a JWT, returning the Identity.
 
-    When the JWT already embeds ``permissions`` in its claims (e.g. login JWTs),
-    those are trusted directly — no DB lookup. Otherwise falls back to the
-    database-resolved permission path for backwards compatibility.
+    Fail-closed on the actor type (#862): every JWT we mint carries an
+    explicit ``actor_type`` claim, so a validly-signed token without one —
+    or with a value we don't recognise — is refused rather than assumed to
+    be a USER (the most-privileged interpretation). Raises the same
+    ``InvalidTokenError`` as a bad signature; the web layer maps it to 401.
+
+    When the JWT already embeds ``permissions`` in its claims (e.g. login
+    JWTs), those are trusted directly — no DB lookup. Otherwise falls back
+    to the database-resolved permission path for backwards compatibility.
     """
     claims = decode_jwt(token, secret)
-    actor_type = ActorType(claims.get("actor_type", ActorType.USER))
+    actor_type_claim = claims.get("actor_type")
+    if actor_type_claim is None:
+        raise InvalidTokenError("Token does not declare an actor_type")
+    try:
+        actor_type = ActorType(actor_type_claim)
+    except ValueError as exc:
+        # Unknown value: refuse cleanly (401) instead of leaking a 500.
+        raise InvalidTokenError("Token declares an unknown actor_type") from exc
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")
 
