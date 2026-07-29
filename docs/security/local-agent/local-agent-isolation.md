@@ -168,20 +168,14 @@ writer, one source of truth, one pointer.
 > **Future improvement — default agent home under the operator's home.** Today the
 > agent home lives under a shared parent (`/Users/Shared/<agent>`, `/opt/<agent>`).
 > A nicer default would be `~/jentic-agents/<agent-name>` — discoverable, clearly
-> owned by the operator's account tree, and self-documenting. The open question is
-> purely how it interacts with the isolation paradigm: on stock macOS the operator's
-> home is `0700` by OS default, so an agent running as its own user **cannot traverse
-> into `~` at all** without a grant. Putting the agent home under `~` would require
-> granting the agent an **execute-only traverse** grant on
-> the operator's home (the same Layer-1 mechanism [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement)
-> already uses for granted working directories) so it can reach `~/jentic-agents/<agent>`
-> without being able to *read* anything else in `~`. That is believed to be a small
-> change (reuse the existing traverse-grant path, point the default home there), but
-> it is **documented here and deferred** — we'll follow up with the implementation
-> once the traverse-into-`~` interaction is confirmed safe. Note it does **not**
-> weaken the boundary: execute-without-read still blocks directory listing and file
-> reads of `~`, and the confinement profile still denies everything but the granted
-> path; it only opens the single named path.
+> owned by the operator's account tree, and self-documenting. It would require
+> granting the agent an **execute-only traverse** on the operator's home (the same
+> Layer-1 mechanism [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement)
+> uses for working dirs) so it can reach `~/jentic-agents/<agent>` without *reading*
+> anything else in `~`. The tradeoff — a **persistent** execute ACE on `~`, and the
+> open questions around it — is worked through in
+> [`agent-home-under-operator-home-plan.md`](agent-home-under-operator-home-plan.md).
+> **Documented and deferred; not implemented.**
 
 ### Optional: passwordless launch
 
