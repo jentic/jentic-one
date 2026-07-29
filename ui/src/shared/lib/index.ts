@@ -36,6 +36,7 @@ export {
 	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
+	type PermissionRuleMatchMode,
 } from '@/shared/lib/accessRequests';
 
 // Provisioning-plan classification/shape helpers — used by the fulfilment

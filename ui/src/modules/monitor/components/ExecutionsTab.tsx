@@ -93,12 +93,14 @@ export function ExecutionsTab() {
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
+		toolkitId: filters.toolkitId,
 	});
 	const pager = useCursorStack(filterKey);
 	const query = useExecutions({
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
+		toolkitId: filters.toolkitId,
 		cursor: pager.cursor,
 	});
 	const rows = query.data?.data ?? [];
