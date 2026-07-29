@@ -284,6 +284,7 @@ async def test_decryption_error_during_oauth_refresh_also_maps(
     """
     oauth_cred = ResolvedCredential(
         credential_id="cred_oauth",
+        name="google-oauth",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider="google",
