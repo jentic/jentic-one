@@ -5,9 +5,11 @@ import { Button, CopyButton, SegmentedToggle } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
 import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
 import { OverviewTab } from '@/modules/toolkits/components/detail/OverviewTab';
+import { ActivityTab } from '@/modules/toolkits/components/detail/ActivityTab';
 import { AccessTab } from '@/modules/toolkits/components/detail/AccessTab';
 import { KeysTab } from '@/modules/toolkits/components/detail/KeysTab';
 import { SettingsTab } from '@/modules/toolkits/components/detail/SettingsTab';
+import { UsageStrip } from '@/modules/toolkits/components/detail/UsageStrip';
 import { RowSkeleton } from '@/modules/toolkits/components/detail/shared';
 
 /**
@@ -19,6 +21,7 @@ import { RowSkeleton } from '@/modules/toolkits/components/detail/shared';
  * in four tabs, one component each:
  *
  *   - Overview  bound agents (safety-first ordering, #636) + audit slice
+ *   - Activity  7d usage chart + recent executions (admin-gated, Monitor link)
  *   - Access    credential bindings + per-binding permission rules
  *   - Keys      static API keys (create / one-time reveal / revoke)
  *   - Settings  identity editing + danger zone (cascade delete)
@@ -29,11 +32,12 @@ import { RowSkeleton } from '@/modules/toolkits/components/detail/shared';
  * `toolkitKeys`, so tab switches hit the cache rather than refetching.
  */
 
-const TOOLKIT_TABS = ['overview', 'access', 'keys', 'settings'] as const;
+const TOOLKIT_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type ToolkitTab = (typeof TOOLKIT_TABS)[number];
 
 const TAB_LABELS: Record<ToolkitTab, string> = {
 	overview: 'Overview',
+	activity: 'Activity',
 	access: 'Access',
 	keys: 'Keys',
 	settings: 'Settings',
@@ -146,6 +150,8 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				)}
 			</AnimatePresence>
 
+			<UsageStrip toolkit={toolkit} />
+
 			<SegmentedToggle
 				as="tabs"
 				ariaLabel="Toolkit sections"
@@ -164,6 +170,7 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				className="focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && <OverviewTab toolkitId={toolkitId} />}
+				{activeTab === 'activity' && <ActivityTab toolkitId={toolkitId} />}
 				{activeTab === 'access' && <AccessTab toolkitId={toolkitId} />}
 				{activeTab === 'keys' && <KeysTab toolkitId={toolkitId} suspended={suspended} />}
 				{activeTab === 'settings' && (

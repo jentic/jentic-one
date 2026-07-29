@@ -59,6 +59,9 @@ export type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema 
 export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
 export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
 export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
+export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';
+export type { PermissionTestResponse } from '@/shared/api/generated/models/PermissionTestResponse';
+export type { BindingWarningSchema } from '@/shared/api/generated/models/BindingWarningSchema';
 export type { ToolkitBindingResponse } from '@/shared/api/generated/models/ToolkitBindingResponse';
 export type { ToolkitBindingListResponse } from '@/shared/api/generated/models/ToolkitBindingListResponse';
 export type { ToolkitBindRequest } from '@/shared/api/generated/models/ToolkitBindRequest';

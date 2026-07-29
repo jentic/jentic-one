@@ -104,7 +104,7 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.getByText('tk_demo_github')).toBeInTheDocument();
 
 		// Overview is the landing tab: audit slice renders without a click.
-		expect(await screen.findByRole('heading', { name: /activity/i })).toBeInTheDocument();
+		expect(await screen.findByRole('heading', { name: /recent changes/i })).toBeInTheDocument();
 		expect(await screen.findByText(/suspended pending review/i)).toBeInTheDocument();
 
 		// Keys tab lists the seeded key.
@@ -124,6 +124,63 @@ describe('ToolkitDetailPage', () => {
 		expect(await screen.findByText('CI runner')).toBeInTheDocument();
 		// …and the Keys tab is the selected one.
 		expect(screen.getByRole('tab', { name: 'Keys' })).toHaveAttribute('aria-selected', 'true');
+	});
+
+	it('shows the 7-day KPI strip from the toolkit-scoped usage aggregation', async () => {
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+
+		const strip = await screen.findByTestId('usage-strip');
+		// Sum of the seeded daily trend (64+88+71+120+104+141+126).
+		expect(within(strip).getByText('714')).toBeInTheDocument();
+		expect(within(strip).getByText(/executions · 7d/i)).toBeInTheDocument();
+		expect(within(strip).getByText('97.6%')).toBeInTheDocument();
+		expect(within(strip).getByText('412ms')).toBeInTheDocument();
+		// Agents / creds / keys roll-up: 1 bound agent, 1 credential, 2 keys.
+		expect(within(strip).getByText('1 / 1 / 2')).toBeInTheDocument();
+	});
+
+	it('renders the Activity tab: volume chart, executions feed, Monitor deep-link', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		// Volume chart (from /monitoring/usage?toolkit_id=…).
+		expect(
+			await screen.findByRole('img', { name: /execution volume for this toolkit/i }),
+		).toBeInTheDocument();
+
+		// Executions feed (from /executions?toolkit_id=…), including the denial.
+		expect(await screen.findByText(/github\.create_issue/)).toBeInTheDocument();
+		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();
+
+		// Deep-link into Monitor carries the toolkit filter.
+		const link = screen.getByRole('link', { name: /open in monitor/i });
+		expect(link).toHaveAttribute(
+			'href',
+			expect.stringContaining('tab=executions&toolkit_id=tk_demo_github'),
+		);
+	});
+
+	it('hides the KPI strip and degrades the Activity tab for non-admins (403)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/monitoring/usage', () => new HttpResponse(null, { status: 403 })),
+			http.get('/executions', () => new HttpResponse(null, { status: 403 })),
+		);
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Strip resolves to hidden (no error splash).
+		await waitFor(() =>
+			expect(screen.queryByTestId('usage-strip-loading')).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByTestId('usage-strip')).not.toBeInTheDocument();
+
+		// Activity tab explains the gate instead of erroring.
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+		expect(await screen.findByText(/admin-only/i)).toBeInTheDocument();
 	});
 
 	it('reuses the shared PageHeader pattern like /agents/:id', async () => {

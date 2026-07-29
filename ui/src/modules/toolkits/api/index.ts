@@ -15,6 +15,7 @@ import type {
 	ToolkitKeyUpdateRequest,
 	ToolkitCredentialBindRequest,
 	PermissionRuleSchema,
+	PermissionTestRequest,
 } from '@/shared/api';
 import * as client from '@/modules/toolkits/api/client';
 import type { CreatedToolkit } from '@/modules/toolkits/api/types';
@@ -34,6 +35,8 @@ export const toolkitKeys = {
 		[...toolkitKeys.all, 'permissions', id, credentialId] as const,
 	agents: (id: string) => [...sharedQueryKeys.toolkitAgentsRoot, id] as const,
 	audit: (id: string) => [...toolkitKeys.all, 'audit', id] as const,
+	usage: (id: string) => [...toolkitKeys.all, 'usage', id] as const,
+	executions: (id: string) => [...toolkitKeys.all, 'executions', id] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,
 	linkableAgents: () => [...toolkitKeys.all, 'linkable-agents'] as const,
@@ -357,6 +360,47 @@ export function useToolkitAudit(toolkitId: string | null, opts: { poll?: boolean
 		queryFn: () => client.listToolkitAudit(toolkitId as string),
 		enabled: toolkitId != null,
 		refetchInterval: opts.poll === false ? false : STALE_POLL_MS,
+	});
+}
+
+// --- Observability (admin monitoring, toolkit-scoped lens) -----------------
+
+/**
+ * Per-toolkit usage aggregation for the KPI strip + Activity chart. `data` is
+ * `null` for non-admins (the repository maps 401/403), so callers hide the
+ * surface rather than render an error.
+ */
+export function useToolkitUsage(toolkitId: string | null, opts: { sinceDays?: number } = {}) {
+	return useQuery({
+		queryKey: toolkitKeys.usage(toolkitId ?? ''),
+		queryFn: () => client.getToolkitUsage(toolkitId as string, opts),
+		enabled: toolkitId != null,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+/** Recent executions for the Activity feed (same `null`-for-non-admin gating). */
+export function useToolkitExecutions(toolkitId: string | null, opts: { limit?: number } = {}) {
+	return useQuery({
+		queryKey: toolkitKeys.executions(toolkitId ?? ''),
+		queryFn: () => client.listToolkitExecutions(toolkitId as string, opts),
+		enabled: toolkitId != null,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+// --- Permission dry-run (broker verdict without calling upstream) ----------
+
+/**
+ * `POST …/permissions:test` — evaluate a hypothetical request against the
+ * toolkit's vendor-pooled rules. A mutation (not a query): every invocation is
+ * an explicit user action and the verdict must reflect the rules as of *now*,
+ * never a cache.
+ */
+export function useTestPermissions(toolkitId: string, credentialId: string) {
+	return useMutation({
+		mutationFn: (body: PermissionTestRequest) =>
+			client.testPermissions(toolkitId, credentialId, body),
 	});
 }
 

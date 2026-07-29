@@ -70,6 +70,7 @@ const bindingsByToolkit: Record<string, Array<Record<string, unknown>>> = {
 			api_vendor: 'github',
 			credential_type: 'api_key',
 			bound_at: '2026-05-01T10:10:00Z',
+			warnings: [],
 			permissions: [
 				{ effect: 'allow', methods: ['GET'], path: '/repos/.*', _system: false },
 				{
@@ -127,25 +128,133 @@ const agents: Array<Record<string, unknown>> = [
 
 const find = (id: string) => toolkits.find((t) => t.toolkit_id === id);
 
+/**
+ * Zero-rules bind warning — mirrors the backend's `BindingWarningSchema`
+ * emitted when a binding lands with no permission rules (the broker denies by
+ * default until rules are added).
+ */
+const zeroRulesWarning = (credentialId: string) => ({
+	code: 'no_permission_rules',
+	credential_id: credentialId,
+	message:
+		'This binding has no permission rules — the broker denies every request by default. Add allow rules to open access.',
+});
+
+/**
+ * Per-toolkit observability fixtures for the detail page's KPI strip +
+ * Activity tab. The github toolkit is busy; the suspended billing toolkit is
+ * quiet (zero executions), which exercises the empty chart/feed states.
+ */
+const usageTrendByToolkit: Record<string, number[]> = {
+	tk_demo_github: [64, 88, 71, 120, 104, 141, 126],
+	tk_demo_billing: [],
+};
+
+const executionsByToolkit: Record<string, Array<Record<string, unknown>>> = {
+	tk_demo_github: [
+		{
+			execution_id: 'tkexec_1',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_1',
+			status: 'completed',
+			operation_id: 'github.create_issue',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 201,
+			duration_ms: 310,
+			error: null,
+			origin: 'agent',
+			started_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_1' },
+		},
+		{
+			execution_id: 'tkexec_2',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_2',
+			status: 'failed',
+			operation_id: 'github.delete_repo',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 403,
+			duration_ms: 22,
+			error: 'Denied by permission rule (deny /admin/.*).',
+			origin: 'agent',
+			started_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_2' },
+		},
+		{
+			execution_id: 'tkexec_3',
+			toolkit_id: 'tk_demo_github',
+			trace_id: 'trace_tk_3',
+			status: 'completed',
+			operation_id: 'github.list_prs',
+			api: { vendor: 'github', name: 'github-api' },
+			actor_id: 'agt_support_bot',
+			actor_type: 'agent',
+			http_status: 200,
+			duration_ms: 180,
+			error: null,
+			origin: 'agent',
+			started_at: new Date(Date.now() - 22 * 60_000).toISOString(),
+			created_at: new Date(Date.now() - 22 * 60_000).toISOString(),
+			_links: { self: '/executions/tkexec_3' },
+		},
+	],
+};
+
 export const toolkitsHandlers = [
-	http.get('/toolkits', () =>
-		HttpResponse.json({ data: toolkits, has_more: false, next_cursor: null }),
-	),
+	http.get('/toolkits', ({ request }) => {
+		const url = new URL(request.url);
+		const limit = Math.max(1, Number(url.searchParams.get('limit') ?? 50));
+		const cursor = url.searchParams.get('cursor');
+		const start = cursor ? Number(cursor) : 0;
+		const page = toolkits.slice(start, start + limit);
+		const nextStart = start + limit;
+		const hasMore = nextStart < toolkits.length;
+		return HttpResponse.json({
+			data: page,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(nextStart) : null,
+		});
+	}),
 
 	http.post('/toolkits', async ({ request }) => {
-		const body = (await request.json()) as { name: string; description?: string | null };
+		const body = (await request.json()) as {
+			name: string;
+			description?: string | null;
+			credential_ids?: string[] | null;
+		};
+		const credentialIds = body.credential_ids ?? [];
 		const toolkit: MockToolkit = {
 			toolkit_id: `tk_${Math.random().toString(36).slice(2, 8)}`,
 			name: body.name,
 			description: body.description ?? null,
 			active: true,
 			key_count: 1,
-			credential_count: 0,
+			credential_count: credentialIds.length,
 			permissions: [],
 			created_at: now(),
 			updated_at: null,
 		};
 		toolkits.unshift(toolkit);
+		// Inline binds land with zero rules — mirror the backend's warning.
+		if (credentialIds.length > 0) {
+			bindingsByToolkit[toolkit.toolkit_id] = credentialIds.map((credentialId) => ({
+				toolkit_id: toolkit.toolkit_id,
+				credential_id: credentialId,
+				label: credentialId,
+				api_name: null,
+				api_vendor: null,
+				credential_type: null,
+				bound_at: now(),
+				warnings: [zeroRulesWarning(credentialId)],
+				permissions: [],
+			}));
+		}
 		return HttpResponse.json({ toolkit, api_key: 'jntc_live_mockplaintextkey_show_once' });
 	}),
 
@@ -188,14 +297,17 @@ export const toolkitsHandlers = [
 
 	http.post('/toolkits/:toolkitId/keys', async ({ params, request }) => {
 		const toolkitId = params.toolkitId as string;
-		const body = (await request.json()) as { label?: string | null };
+		const body = (await request.json()) as {
+			label?: string | null;
+			allowed_ips?: string[] | null;
+		};
 		const key = {
 			key_id: `key_${Math.random().toString(36).slice(2, 8)}`,
 			toolkit_id: toolkitId,
 			label: body.label ?? null,
 			key_preview: 'jntc_live_new…',
 			revoked: false,
-			allowed_ips: null,
+			allowed_ips: body.allowed_ips?.length ? body.allowed_ips : null,
 			last_used_at: null,
 			created_at: now(),
 		};
@@ -207,9 +319,15 @@ export const toolkitsHandlers = [
 		const list = keysByToolkit[params.toolkitId as string] ?? [];
 		const key = list.find((k) => k.key_id === params.keyId);
 		if (!key) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json()) as { revoked?: boolean | null; label?: string | null };
+		const body = (await request.json()) as {
+			revoked?: boolean | null;
+			label?: string | null;
+			allowed_ips?: string[] | null;
+		};
 		if (body.revoked != null) key.revoked = body.revoked;
 		if (body.label !== undefined) key.label = body.label ?? null;
+		if (body.allowed_ips !== undefined)
+			key.allowed_ips = body.allowed_ips?.length ? body.allowed_ips : null;
 		return HttpResponse.json(key);
 	}),
 
@@ -239,6 +357,9 @@ export const toolkitsHandlers = [
 			api_vendor: null,
 			credential_type: null,
 			bound_at: now(),
+			// A fresh bind has zero rules → the backend flags it (broker denies
+			// by default). The warning persists on the list response too.
+			warnings: [zeroRulesWarning(body.credential_id)],
 			permissions: [],
 		};
 		bindingsByToolkit[toolkitId] = [...(bindingsByToolkit[toolkitId] ?? []), binding];
@@ -275,8 +396,57 @@ export const toolkitsHandlers = [
 					_comment: 'system safety',
 				},
 			];
-			if (binding) binding.permissions = withSystem;
+			if (binding) {
+				binding.permissions = withSystem;
+				// Authoring rules resolves the zero-rules warning.
+				if (rules.length > 0) binding.warnings = [];
+			}
 			return HttpResponse.json({ data: withSystem });
+		},
+	),
+
+	// Broker dry-run (`POST …/permissions:test`) — evaluates the binding's rule
+	// list in order, the way the broker's vendor-pooled evaluation does, without
+	// calling upstream. The colon is escaped so path-to-regexp reads a literal
+	// `permissions:test` segment rather than a `:test` param.
+	http.post(
+		'/toolkits/:toolkitId/credentials/:credentialId/permissions\\:test',
+		async ({ params, request }) => {
+			const list = bindingsByToolkit[params.toolkitId as string] ?? [];
+			const binding = list.find((b) => b.credential_id === params.credentialId);
+			if (!binding) return new HttpResponse(null, { status: 404 });
+			const body = (await request.json()) as { method: string; path: string };
+			const rules = (binding.permissions as Array<Record<string, unknown>>) ?? [];
+			const method = body.method.toUpperCase();
+			for (let i = 0; i < rules.length; i++) {
+				const rule = rules[i];
+				const methods = rule.methods as string[] | null;
+				if (methods && !methods.map((m) => m.toUpperCase()).includes(method)) continue;
+				let matches = false;
+				try {
+					matches = new RegExp(`^${rule.path as string}$`).test(body.path);
+				} catch {
+					matches = false;
+				}
+				if (!matches) continue;
+				return HttpResponse.json({
+					allowed: rule.effect === 'allow',
+					matched: true,
+					effect: rule.effect,
+					rule_index: i,
+					is_system: Boolean(rule._system),
+					credential_id: params.credentialId,
+				});
+			}
+			// No rule matched → default deny.
+			return HttpResponse.json({
+				allowed: false,
+				matched: false,
+				effect: null,
+				rule_index: null,
+				is_system: null,
+				credential_id: null,
+			});
 		},
 	),
 
@@ -354,5 +524,122 @@ export const toolkitsHandlers = [
 			},
 		];
 		return HttpResponse.json({ data, has_more: false, next_cursor: null });
+	}),
+
+	// --- Toolkit-scoped observability lenses -------------------------------
+	//
+	// These two handlers answer ONLY the toolkit-scoped variants of the shared
+	// monitoring endpoints (`?toolkit_id=…`, or `group_by=toolkit` for the list
+	// page's sparklines). Anything else falls through (returns undefined) to
+	// the dashboard/monitor fixtures registered later — MSW is first-match-wins
+	// and the toolkits module registers first.
+
+	http.get('/monitoring/usage', ({ request }) => {
+		const url = new URL(request.url);
+		const toolkitId = url.searchParams.get('toolkit_id');
+		const groupBy = url.searchParams.get('group_by');
+		// The sparkline query is `group_by=toolkit&top_limit=50` (the repository
+		// pins top_limit to the max). The dashboard's Top-usage toolkit lens uses
+		// top_limit=5, so it keeps falling through to its own fixtures.
+		const isSparklineQuery =
+			groupBy === 'toolkit' && url.searchParams.get('top_limit') === '50';
+		if (!toolkitId && !isSparklineQuery) return undefined;
+
+		const nowSec = Math.floor(Date.now() / 60_000) * 60;
+		const untilParam = url.searchParams.get('until');
+		const until = untilParam != null ? Number(untilParam) : nowSec;
+		const sinceParam = url.searchParams.get('since');
+		const since = sinceParam != null ? Number(sinceParam) : until - 7 * 86_400;
+
+		const trendFor = (id: string) => usageTrendByToolkit[id] ?? [];
+		const statsOf = (trend: number[]) => {
+			const total = trend.reduce((sum, v) => sum + v, 0);
+			const failed = Math.round(total * 0.024);
+			return { total, success: total - failed, failed };
+		};
+
+		const bucketsFor = (trend: number[]) =>
+			trend.map((total, i) => {
+				const { failed } = statsOf([total]);
+				return {
+					ts: until - (trend.length - i) * 86_400,
+					total,
+					success: total - failed,
+					failed,
+					avg_ms: 420,
+				};
+			});
+
+		if (toolkitId) {
+			const trend = trendFor(toolkitId);
+			const { total, success, failed } = statsOf(trend);
+			return HttpResponse.json({
+				since,
+				until,
+				bucket_seconds: 86_400,
+				group_by: groupBy ?? 'api',
+				stats: {
+					total,
+					success,
+					failed,
+					pending: 0,
+					avg_ms: total ? 420 : 0,
+					p50_ms: total ? 310 : null,
+					p95_ms: total ? 412 : null,
+					active_now: 0,
+				},
+				buckets: bucketsFor(trend),
+				top: [],
+			});
+		}
+
+		// group_by=toolkit — the list page's sparkline query. Top rows keyed by
+		// the seeded toolkit ids so cards can join on toolkit_id.
+		const top = toolkits
+			.map((t) => {
+				const trend = trendFor(t.toolkit_id);
+				const { total, success, failed } = statsOf(trend);
+				return {
+					key: t.toolkit_id,
+					label: t.toolkit_id,
+					total,
+					success,
+					failed,
+					avg_ms: total ? 420 : 0,
+					trend,
+				};
+			})
+			.filter((row) => row.total > 0)
+			.sort((a, b) => b.total - a.total);
+		const total = top.reduce((sum, r) => sum + r.total, 0);
+		const success = top.reduce((sum, r) => sum + r.success, 0);
+		const failed = top.reduce((sum, r) => sum + r.failed, 0);
+		return HttpResponse.json({
+			since,
+			until,
+			bucket_seconds: 86_400,
+			group_by: 'toolkit',
+			stats: {
+				total,
+				success,
+				failed,
+				pending: 0,
+				avg_ms: total ? 420 : 0,
+				p50_ms: total ? 310 : null,
+				p95_ms: total ? 412 : null,
+				active_now: 0,
+			},
+			buckets: [],
+			top,
+		});
+	}),
+
+	http.get('/executions', ({ request }) => {
+		const url = new URL(request.url);
+		const toolkitId = url.searchParams.get('toolkit_id');
+		if (!toolkitId) return undefined; // Monitor's org-wide fixtures answer.
+		const limit = Math.max(1, Number(url.searchParams.get('limit') ?? 25));
+		const rows = (executionsByToolkit[toolkitId] ?? []).slice(0, limit);
+		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
 	}),
 ];

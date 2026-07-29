@@ -46,7 +46,7 @@ export function ToolkitAuditPanel({ toolkitId, poll = true }: ToolkitAuditPanelP
 		<div className="bg-card border-border overflow-hidden rounded-xl border">
 			<div className="border-border flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3.5 sm:px-5 sm:py-4">
 				<h3 className="font-heading text-foreground flex items-center gap-2 font-semibold">
-					<History className="h-4 w-4" aria-hidden="true" /> Activity
+					<History className="h-4 w-4" aria-hidden="true" /> Recent changes
 				</h3>
 				<span className="text-muted-foreground text-xs">
 					Toolkit-level events · admin only

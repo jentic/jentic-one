@@ -12,7 +12,8 @@
  * server-side search yet (tracked in jentic-one#624). The bar leaves room for
  * it once the backend lands.
  */
-import { Select, type SegmentedToggleOption } from '@/shared/ui';
+import { X } from 'lucide-react';
+import { Button, Select, type SegmentedToggleOption } from '@/shared/ui';
 import { SegmentedToggle } from '@/shared/ui';
 import { useActors, type MonitorTab } from '@/modules/monitor/api';
 import {
@@ -82,6 +83,27 @@ export function MonitorFilterBar({ tab }: MonitorFilterBarProps) {
 					))}
 				</Select>
 			</div>
+
+			{/* Toolkit scope — an executions-only deep-link filter (written by the
+			    toolkit detail's "Open in Monitor" link). Rendered as a removable
+			    chip rather than a picker: there's no in-Monitor toolkit selector
+			    yet, so the chip's job is to make the active scope visible and
+			    dismissible. */}
+			{tab === 'executions' && filters.toolkitId && (
+				<span className="border-primary/30 bg-primary/5 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs">
+					<span className="text-muted-foreground">Toolkit</span>
+					<span className="text-foreground font-mono">{filters.toolkitId}</span>
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Clear toolkit filter"
+						className="h-4 w-4 p-0"
+						onClick={() => filters.setToolkit(null)}
+					>
+						<X className="h-3 w-3" aria-hidden="true" />
+					</Button>
+				</span>
+			)}
 		</div>
 	);
 }

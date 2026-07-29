@@ -430,6 +430,7 @@ export const monitorHandlers = [
 		const url = new URL(request.url);
 		const traceId = url.searchParams.get('trace_id');
 		const actorId = url.searchParams.get('actor_id');
+		const toolkitId = url.searchParams.get('toolkit_id');
 		const from = url.searchParams.get('from');
 		const statuses = url.searchParams.getAll('status');
 		const cursor = url.searchParams.get('cursor');
@@ -439,6 +440,7 @@ export const monitorHandlers = [
 		let rows = EXECUTIONS;
 		if (traceId) rows = rows.filter((r) => r.trace_id === traceId);
 		if (actorId) rows = rows.filter((r) => r.actor_id === actorId);
+		if (toolkitId) rows = rows.filter((r) => r.toolkit_id === toolkitId);
 		if (from) rows = rows.filter((r) => r.started_at >= from);
 		if (statuses.length) rows = rows.filter((r) => statuses.includes(r.status));
 		return HttpResponse.json(paginateCursor(rows, cursor, limit));
