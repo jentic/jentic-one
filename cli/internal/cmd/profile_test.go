@@ -152,9 +152,45 @@ func TestProfileViewShowsAccessTree(t *testing.T) {
 		// dev box and is a sanctioned exec route.
 		"/usr/bin/*",
 		"read-only",
+		// The access tree always tells the operator how to take access back, naming
+		// the agent so the command is copy-pasteable.
+		"jentic run bot --revoke",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("profile view missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+// A bare `jentic profile view` (no name) resolves the currently active profile,
+// so an agent can see its own access map without knowing its profile name.
+func TestProfileViewNoNameShowsActive(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "bot", "agnt_1")
+	if err := config.SetDefaultProfile(app.Paths, "bot"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetLocalAgent("bot", config.LocalAgent{
+		User:        "bot-agent",
+		HomeDir:     "/Users/Shared/bot-agent",
+		GrantedDirs: []string{"/opt/data"},
+	})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	// No argument: must not error, and must show the active profile's access map.
+	if err := app.profileView(""); err != nil {
+		t.Fatalf("profileView(\"\"): %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"Filesystem access", "/opt/data/*", "jentic run bot --revoke"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bare profile view missing %q\n---\n%s", want, got)
 		}
 	}
 }

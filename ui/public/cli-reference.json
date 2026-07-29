@@ -151,8 +151,9 @@
             {
               "name": "view",
               "path": "jentic profile view",
-              "use": "view \u003cname\u003e",
-              "short": "Show a profile's details and the directories its agent can access"
+              "use": "view [name]",
+              "short": "Show a profile's details and the directories its agent can access",
+              "long": "Show a profile's details plus the map of every directory its agent can\nreach. With no name it non-interactively shows the currently active profile —\nso an agent can run `jentic profile view` to see exactly what it can access."
             },
             {
               "name": "use",

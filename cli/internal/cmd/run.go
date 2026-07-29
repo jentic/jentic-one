@@ -643,6 +643,7 @@ func (a *App) runListGrants(agentID, agentUser string, entry config.LocalAgent, 
 		}
 		fmt.Fprintln(a.Out, line)
 	}
+	a.printRevokeHint(agentID)
 	return nil
 }
 

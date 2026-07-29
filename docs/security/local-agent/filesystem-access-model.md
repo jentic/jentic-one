@@ -347,6 +347,15 @@ Why the operator needs it:
   PATH (shown read-only). Sourcing both from one function is deliberate — it
   prevents the "what the agent can see" display from silently drifting from what
   the sandbox actually mounts.
+- **`jentic profile view` runs with no argument.** Bare `jentic profile view`
+  (no profile name) resolves the currently active profile (flag < `JENTIC_PROFILE`
+  < configured default) and non-interactively prints its access map. This is the
+  command an agent runs to answer "what directories can I reach?" for itself,
+  without needing to know its own profile name — the filesystem counterpart to
+  `jentic access whoami`, which points at it. Every command that prints the access
+  tree (`profile view`, `run <agent> --list-grants`) closes with a one-line footer
+  showing how to take a grant back (`jentic run <agent> --revoke <dir>`), so
+  revocation is always one command away from wherever access is shown.
 
 This grant is **additive and idempotent** — re-applying only ever widens — so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a

@@ -40,10 +40,17 @@ fresh login shell — is handled inside `jentic run` as guided prompts. Manageme
 shortcuts:
 
 ```bash
+jentic profile view                      # the active profile's access map (an agent's own view)
 jentic run claude --list-grants          # show every directory the agent can reach
 jentic run claude --grant   ~/work/api   # grant a directory, then exit
 jentic run claude --revoke  ~/work/api   # remove a grant, then exit
 ```
+
+`jentic profile view` with no name resolves the currently active profile and
+prints its access map non-interactively, so an agent can inspect exactly what it
+can reach without knowing its own profile name (`jentic access whoami` points at
+it for the filesystem side of "what can I do?"). Any command that prints the
+directory tree ends with a one-line reminder of how to revoke a grant.
 
 ## Why this posture works
 

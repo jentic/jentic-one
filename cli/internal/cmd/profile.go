@@ -40,11 +40,18 @@ func newProfileCmd(app *App) *cobra.Command {
 
 func newProfileViewCmd(app *App) *cobra.Command {
 	return &cobra.Command{
-		Use:   "view <name>",
+		Use:   "view [name]",
 		Short: "Show a profile's details and the directories its agent can access",
-		Args:  cobra.ExactArgs(1),
+		Long: "Show a profile's details plus the map of every directory its agent can\n" +
+			"reach. With no name it non-interactively shows the currently active profile —\n" +
+			"so an agent can run `jentic profile view` to see exactly what it can access.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return app.profileView(args[0])
+			name := ""
+			if len(args) == 1 {
+				name = args[0]
+			}
+			return app.profileView(name)
 		},
 	}
 }
@@ -233,10 +240,17 @@ func (a *App) printProfileRow(ref profileRef, active bool) {
 // what the sandbox actually mounts. A directory reachable wholesale is shown with
 // a trailing "/*", and nested paths collapse into their enclosing entry so the
 // tree stays high-level.
+//
+// With no name it resolves the currently active profile (flag < JENTIC_PROFILE <
+// configured default), so an agent can run bare `jentic profile view` to see the
+// map of what it can access without knowing its own profile name.
 func (a *App) profileView(name string) error {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		return err
+	}
+	if name == "" {
+		name = cfg.ResolvedProfileName("")
 	}
 	ref, found, err := a.findProfileRef(cfg, name)
 	if err != nil {
@@ -263,7 +277,23 @@ func (a *App) profileView(name string) error {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Filesystem access")+" "+theme.Dim.Render("(agent: "+agentID+")"))
 	dirs := localagent.SessionAccess(agent.HomeDir, agent.GrantedDirs)
 	fmt.Fprint(a.Out, renderAccessTree(dirs))
+	a.printRevokeHint(agentID)
 	return nil
+}
+
+// printRevokeHint prints a small footer, under any directory-access tree, telling
+// the operator how to take a grant away again. It mirrors the "Granted (…)" line
+// the grant flow prints, so revocation is always one command away from wherever
+// access is shown. Kept generic (agentID may be empty) so callers that don't know
+// the agent still get the shape of the command.
+func (a *App) printRevokeHint(agentID string) {
+	id := agentID
+	if id == "" {
+		id = "<agent>"
+	}
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("To take a directory away: `jentic run "+id+" --revoke <dir>` "+
+		"(`--list-grants` to review)."))
 }
 
 // resolveProfileAgent finds the local-agent config entry whose access the profile
