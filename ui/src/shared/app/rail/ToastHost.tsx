@@ -5,7 +5,7 @@
  * platform toaster) — shifted left of the rail at `xl+` so the two never
  * overlap. Mounted by the shell alongside `AgentRail`.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
@@ -13,6 +13,7 @@ import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	formatStreamTime,
 	inlineActionsFor,
+	isFailureSeverity,
 	matchesToastScope,
 	primaryDestinationFor,
 	RAIL_COLLAPSE_CHANGE_EVENT,
@@ -49,6 +50,13 @@ export function ToastHost() {
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
 	const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
+	// Ids the operator has EXPLICITLY dismissed. The insert effect re-runs on
+	// every `scope` change with the same `latest`; without this a failure toast
+	// the operator closed would silently re-appear when scope flips, because the
+	// dedup guard below only inspects still-alive toasts. TTL-expiry does NOT go
+	// in here (#671: an unattended failure that merely timed out must be able to
+	// re-toast when it becomes eligible again).
+	const dismissedIdsRef = useRef<Set<string>>(new Set());
 
 	// React to scope + rail-collapse changes (same-tab CustomEvent + cross-tab StorageEvent)
 	useEffect(() => {
@@ -72,17 +80,23 @@ export function ToastHost() {
 		};
 	}, []);
 
-	// Push the latest stream event into the toast queue if it matches scope
+	// Push the latest stream event into the toast queue if it matches scope.
+	// Failures (error/critical) always toast — even under scope `off` — so a
+	// silently-failed unattended run can't go unnoticed (#671).
 	useEffect(() => {
 		if (!latest) return;
-		if (!matchesToastScope(latest.severity, scope)) return;
+		if (dismissedIdsRef.current.has(latest.id)) return;
+		if (!isFailureSeverity(latest.severity) && !matchesToastScope(latest.severity, scope))
+			return;
 		setToasts((prev) => {
 			if (prev.some((t) => t.id === latest.id)) return prev;
 			return [{ ...latest, addedAt: Date.now() }, ...prev].slice(0, MAX_TOASTS);
 		});
 	}, [latest, scope]);
 
-	// Auto-dismiss after TOAST_TTL_MS
+	// Auto-dismiss after TOAST_TTL_MS. TTL-expiry only drops the toast from the
+	// visible list — it must NOT record the id as dismissed, or an unattended
+	// failure that simply timed out could never re-toast (#671).
 	useEffect(() => {
 		if (toasts.length === 0) return undefined;
 		const t = window.setInterval(() => {
@@ -93,6 +107,7 @@ export function ToastHost() {
 	}, [toasts.length]);
 
 	function dismiss(id: string) {
+		dismissedIdsRef.current.add(id);
 		setToasts((prev) => prev.filter((t) => t.id !== id));
 	}
 

@@ -26,7 +26,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
-import { Tooltip } from '@/shared/ui/Tooltip';
+import { Tooltip } from '@/shared/ui';
 import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {

@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { page } from '@vitest/browser/context';
+import { page, cdp } from '@vitest/browser/context';
 import type { ReactElement } from 'react';
+import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, fireEvent, userEvent, checkA11y } from '@/__tests__/test-utils';
+import { worker } from '@/mocks/browser';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
 import { ToastHost } from '@/shared/app/rail/ToastHost';
 import {
@@ -11,14 +13,16 @@ import {
 	adaptEvent,
 	buildGroupKeyForTest,
 	buildTraceBundle,
-	formatStreamDateTime,
+	formatFailurePillCount,
 	formatStreamDayLabel,
 	inlineActionsFor,
+	isFailureSeverity,
 	kindForType,
 	matchesToastScope,
 	primaryDestinationFor,
 	severityForWire,
 	streamDayKey,
+	unacknowledgedFailureCount,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	TOAST_SCOPE_STORAGE_KEY,
 	type StreamEvent,
@@ -85,6 +89,7 @@ function makeEvent(partial: Partial<StreamEvent>): StreamEvent {
 
 beforeEach(async () => {
 	window.localStorage.clear();
+	window.sessionStorage.clear();
 	// The rail is `hidden xl:flex` (xl = 1280px). Widen the page so the rail
 	// and its controls join the accessibility tree; role queries skip
 	// `display:none` content.
@@ -92,6 +97,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
 	window.localStorage.clear();
+	window.sessionStorage.clear();
 });
 
 describe('agentStream — wire adaptation + pure helpers', () => {
@@ -159,6 +165,55 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(matchesToastScope('warning', 'critical')).toBe(false);
 	});
 
+	it('isFailureSeverity flags only error + critical (#671)', () => {
+		expect(isFailureSeverity('critical')).toBe(true);
+		expect(isFailureSeverity('error')).toBe(true);
+		expect(isFailureSeverity('warning')).toBe(false);
+		expect(isFailureSeverity('info')).toBe(false);
+	});
+
+	it('unacknowledgedFailureCount counts only unacked error/critical (#671)', () => {
+		const events = [
+			makeEvent({ id: 'e1', severity: 'error' }),
+			makeEvent({ id: 'c1', severity: 'critical' }),
+			makeEvent({ id: 'e2', severity: 'error', acknowledged: true }),
+			makeEvent({ id: 'w1', severity: 'warning' }),
+			makeEvent({ id: 'i1', severity: 'info' }),
+		];
+		expect(unacknowledgedFailureCount(events)).toBe(2);
+		expect(unacknowledgedFailureCount([])).toBe(0);
+		// Acknowledging every failure drops the count to zero.
+		expect(unacknowledgedFailureCount(events.map((e) => ({ ...e, acknowledged: true })))).toBe(
+			0,
+		);
+	});
+
+	it('formatFailurePillCount caps at 99+ and clamps pathological inputs (#8)', () => {
+		expect(formatFailurePillCount(0)).toBe('0');
+		expect(formatFailurePillCount(1)).toBe('1');
+		expect(formatFailurePillCount(99)).toBe('99');
+		expect(formatFailurePillCount(100)).toBe('99+');
+		// Pathological inputs must not leak "NaN" / "-1" onto the pill.
+		expect(formatFailurePillCount(NaN)).toBe('0');
+		expect(formatFailurePillCount(-1)).toBe('0');
+		expect(formatFailurePillCount(-5)).toBe('0');
+		expect(formatFailurePillCount(3.9)).toBe('3');
+		expect(formatFailurePillCount(Infinity)).toBe('0');
+	});
+
+	it('failures toast regardless of scope; non-failures still honour scope (#671)', () => {
+		// The ToastHost gate is `isFailureSeverity(sev) || matchesToastScope(sev, scope)`.
+		// A failed unattended run must surface even under the quietest scope.
+		const wouldToast = (sev: StreamEvent['severity'], scope: 'off' | 'critical' | 'all') =>
+			isFailureSeverity(sev) || matchesToastScope(sev, scope);
+		expect(wouldToast('error', 'off')).toBe(true);
+		expect(wouldToast('critical', 'off')).toBe(true);
+		// Non-failures obey scope as before.
+		expect(wouldToast('info', 'off')).toBe(false);
+		expect(wouldToast('warning', 'off')).toBe(false);
+		expect(wouldToast('info', 'all')).toBe(true);
+	});
+
 	describe('timestamp date helpers (#705)', () => {
 		it('streamDayKey buckets by local calendar day, not UTC', () => {
 			const a = new Date(2026, 6, 16, 9, 0, 0).getTime(); // 16 Jul, local
@@ -177,18 +232,58 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			const older = new Date(2026, 6, 13, 8, 0, 0).getTime();
 			expect(formatStreamDayLabel(today, now)).toBe('Today');
 			expect(formatStreamDayLabel(yesterday, now)).toBe('Yesterday');
-			// Older days fall through to a compact weekday+date label.
-			expect(formatStreamDayLabel(older, now)).not.toBe('Today');
-			expect(formatStreamDayLabel(older, now)).not.toBe('Yesterday');
-			expect(formatStreamDayLabel(older, now)).toMatch(/Jul/);
+			// Older days fall through to a compact weekday+date label. The label is
+			// locale-formatted (TZ + locale are pinned in vitest.config.ts, #7), so
+			// assert against the same formatter rather than a brittle literal.
+			const olderLabel = formatStreamDayLabel(older, now);
+			expect(olderLabel).not.toBe('Today');
+			expect(olderLabel).not.toBe('Yesterday');
+			expect(olderLabel).toBe(
+				new Date(older).toLocaleDateString(undefined, {
+					weekday: 'short',
+					day: 'numeric',
+					month: 'short',
+				}),
+			);
 		});
 
-		it('formatStreamDateTime returns an absolute datetime (with year)', () => {
-			const ts = new Date(2026, 6, 16, 14, 4, 31).getTime();
-			const out = formatStreamDateTime(ts);
-			expect(out).toMatch(/2026/);
-			expect(out).toMatch(/Jul/);
-			expect(formatStreamDateTime(NaN)).toBe('');
+		it('formatStreamDayLabel computes Yesterday by calendar rewind across a real DST boundary (#4)', async () => {
+			// The suite is globally pinned to UTC (DST-free) for determinism, so a
+			// fixed-24h rewind and a calendar-day rewind coincide and a UTC-only
+			// test can't tell the fix from the bug. Override JUST this test's
+			// timezone to a DST-observing zone via CDP so the in-page `Date`
+			// genuinely straddles America/New_York spring-forward
+			// (2026-03-08 02:00 EST → 03:00 EDT — a 23-hour local day), then
+			// restore UTC so the rest of the suite stays deterministic.
+			// The public `cdp()` type is intentionally minimal; the playwright
+			// provider backs it with a real Chrome DevTools session that exposes
+			// `send(method, params)`. Narrow to just that here.
+			const session = cdp() as unknown as {
+				send: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+			};
+			await session.send('Emulation.setTimezoneOverride', {
+				timezoneId: 'America/New_York',
+			});
+			try {
+				// `now` = 2026-03-09 00:30 EDT (= 04:30 UTC). Because 2026-03-08 was
+				// only 23h long, subtracting a fixed 24h of real ms overshoots to
+				// 2026-03-07 23:30 EST — the WRONG local day. A calendar-day rewind
+				// correctly lands on 2026-03-08.
+				const now = Date.UTC(2026, 2, 9, 4, 30, 0);
+				// Event on the previous LOCAL calendar day (2026-03-08 12:00 EDT =
+				// 16:00 UTC). The fix returns 'Yesterday'; the fixed-24h form keys
+				// 2026-03-07 and would fall through to a dated label instead.
+				const prevDay = Date.UTC(2026, 2, 8, 16, 0, 0);
+				// Two local days before `now` (2026-03-07) — never 'Yesterday'.
+				const twoDaysAgo = Date.UTC(2026, 2, 7, 16, 0, 0);
+
+				expect(formatStreamDayLabel(prevDay, now)).toBe('Yesterday');
+				expect(formatStreamDayLabel(twoDaysAgo, now)).not.toBe('Yesterday');
+				expect(formatStreamDayLabel(twoDaysAgo, now)).not.toBe('Today');
+			} finally {
+				// Restore the pinned UTC zone for every following test.
+				await session.send('Emulation.setTimezoneOverride', { timezoneId: 'UTC' });
+			}
 		});
 	});
 
@@ -500,6 +595,277 @@ describe('AgentRail — shell-mounted live surface', () => {
 			expect(screen.getByTestId('location')).toHaveTextContent('/monitor?tab=executions'),
 		);
 	});
+
+	it('shows a failure pill for unacknowledged failures and clears it once acknowledged (#671)', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText('Agent rail');
+		// The seeded backlog has exactly one unacknowledged failure (the critical
+		// execution.failed) → the pill reads "1 unacknowledged failure".
+		const pill = await screen.findByRole('button', {
+			name: /1 unacknowledged failure\. Show failures\./i,
+		});
+		expect(pill).toBeInTheDocument();
+
+		// Acknowledge the failure → the count drops to zero and the pill disappears.
+		const ack = screen.getAllByRole('button', { name: 'Acknowledge' })[0];
+		await user.click(ack);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole('button', { name: /unacknowledged failure/i }),
+			).not.toBeInTheDocument(),
+		);
+	});
+
+	it('focuses the feed on failures when the failure pill is clicked (#671)', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText('Agent rail');
+		// Before: an info event (import completed) is visible in the feed.
+		await screen.findByText(/Import completed: petstore/i);
+
+		await user.click(
+			await screen.findByRole('button', {
+				name: /unacknowledged failure\. Show failures\./i,
+			}),
+		);
+
+		// After: the feed is filtered to error+critical, so the info import row
+		// drops out while the critical failure remains.
+		await waitFor(() =>
+			expect(screen.queryByText(/Import completed: petstore/i)).not.toBeInTheDocument(),
+		);
+		expect(screen.getByText(/Execution failed: slack\.postMessage/i)).toBeInTheDocument();
+	});
+
+	it('focusFailures preserves the operator’s search + kind filters (#5)', async () => {
+		const user = userEvent.setup();
+		renderRail(<AgentRail />);
+		await screen.findByText('Agent rail');
+
+		// The operator has narrowed the view: a search term + a kind chip + a
+		// severity chip (warning) they picked on purpose.
+		const searchBox = screen.getByLabelText('Filter rail events');
+		await user.click(searchBox);
+		await user.paste('slack');
+		const execChip = screen.getByRole('button', { name: 'executions' });
+		await user.click(execChip);
+		await waitFor(() => expect(execChip).toHaveAttribute('aria-pressed', 'true'));
+		const warningChip = screen.getByRole('button', { name: 'warning' });
+		await user.click(warningChip);
+		await waitFor(() => expect(warningChip).toHaveAttribute('aria-pressed', 'true'));
+
+		// Clicking the failure pill must ADD failure severities, NOT wipe the
+		// operator's search or kind filters.
+		await user.click(
+			screen.getByRole('button', { name: /unacknowledged failure\. Show failures\./i }),
+		);
+
+		expect(searchBox).toHaveValue('slack');
+		expect(screen.getByRole('button', { name: 'executions' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+		// The union path: the operator's `warning` chip survives alongside the
+		// failure severities that were added.
+		expect(screen.getByRole('button', { name: 'warning' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+		// And the severities were added: both error and critical chips are pressed.
+		expect(screen.getByRole('button', { name: 'error' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+		expect(screen.getByRole('button', { name: 'critical' })).toHaveAttribute(
+			'aria-pressed',
+			'true',
+		);
+	});
+
+	it('re-inserting a dismissed failure toast does not happen on scope change (#2)', async () => {
+		const user = userEvent.setup();
+		// Override the stream with a SINGLE critical event so `latest` is
+		// deterministically the failure (failures toast regardless of scope, #671)
+		// and no later event overwrites it.
+		const failure = {
+			event_id: 'evt_only_failure',
+			type: 'execution.failed',
+			severity: 'critical',
+			summary: 'Execution failed: solo.run',
+			detail: 'boom',
+			created_at: new Date().toISOString(),
+			requires_action: true,
+			acknowledged: false,
+			acknowledged_at: null,
+			acknowledged_by: null,
+			trace_id: 'tr_solo',
+			data: { execution_id: 'exec_solo' },
+			_links: { self: '/events/evt_only_failure' },
+		};
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({ data: [failure], has_more: false, next_cursor: null }),
+			),
+			http.get('/events/stream', () => {
+				const frame = `event: ${failure.type}\nid: ${failure.event_id}\ndata: ${JSON.stringify(
+					failure,
+				)}\n\n`;
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(frame));
+					},
+				});
+				return new HttpResponse(stream, {
+					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+				});
+			}),
+		);
+
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({
+						defaultOptions: {
+							queries: { retry: false },
+							mutations: { retry: false },
+						},
+					})
+				}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<Routes>
+							<Route
+								path="/*"
+								element={
+									<>
+										<AgentRail />
+										<ToastHost />
+									</>
+								}
+							/>
+						</Routes>
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+
+		// The failure toast pops, then the operator dismisses it.
+		const dismiss = await screen.findByRole('button', { name: 'Dismiss toast' });
+		await user.click(dismiss);
+		await waitFor(() =>
+			expect(screen.queryByRole('button', { name: 'Dismiss toast' })).not.toBeInTheDocument(),
+		);
+
+		// Flip the toast scope (this re-runs ToastHost's insert effect with the
+		// SAME `latest`). The dismissed failure toast must NOT re-appear (#2).
+		const scopeSelect = screen.getByLabelText('Toasts');
+		await user.selectOptions(scopeSelect, 'all');
+		await waitFor(() =>
+			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all'),
+		);
+		await user.selectOptions(scopeSelect, 'critical');
+		await waitFor(() =>
+			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('critical'),
+		);
+		expect(screen.queryByRole('button', { name: 'Dismiss toast' })).not.toBeInTheDocument();
+	});
+
+	it('re-toasts a failure that only TTL-expired (not operator-dismissed) after a scope change (#3)', async () => {
+		const user = userEvent.setup();
+		// A single critical failure so `latest` is deterministically the failure
+		// and no later event overwrites it. Failures toast regardless of scope.
+		const failure = {
+			event_id: 'evt_ttl_failure',
+			type: 'execution.failed',
+			severity: 'critical',
+			summary: 'Execution failed: ttl.run',
+			detail: 'boom',
+			created_at: new Date().toISOString(),
+			requires_action: true,
+			acknowledged: false,
+			acknowledged_at: null,
+			acknowledged_by: null,
+			trace_id: 'tr_ttl',
+			data: { execution_id: 'exec_ttl' },
+			_links: { self: '/events/evt_ttl_failure' },
+		};
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({ data: [failure], has_more: false, next_cursor: null }),
+			),
+			http.get('/events/stream', () => {
+				const frame = `event: ${failure.type}\nid: ${failure.event_id}\ndata: ${JSON.stringify(
+					failure,
+				)}\n\n`;
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(encoder.encode(frame));
+					},
+				});
+				return new HttpResponse(stream, {
+					headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+				});
+			}),
+		);
+
+		render(
+			<QueryClientProvider
+				client={
+					new QueryClient({
+						defaultOptions: {
+							queries: { retry: false },
+							mutations: { retry: false },
+						},
+					})
+				}
+			>
+				<MemoryRouter initialEntries={['/dashboard']}>
+					<AgentStreamProvider live={true}>
+						<Routes>
+							<Route
+								path="/*"
+								element={
+									<>
+										<AgentRail />
+										<ToastHost />
+									</>
+								}
+							/>
+						</Routes>
+					</AgentStreamProvider>
+				</MemoryRouter>
+			</QueryClientProvider>,
+		);
+
+		// The failure toast pops. The rail feed also shows a row for the same
+		// event, so key off the toast-only "Dismiss toast" control rather than the
+		// title text (which the feed row shares).
+		await screen.findByRole('button', { name: 'Dismiss toast' });
+
+		// Let it AUTO-DISMISS via TTL (no operator interaction). The TTL is 6s and
+		// the sweeper runs every 250ms, so wait past the horizon.
+		await waitFor(
+			() =>
+				expect(
+					screen.queryByRole('button', { name: 'Dismiss toast' }),
+				).not.toBeInTheDocument(),
+			{ timeout: 9000 },
+		);
+
+		// Flip the toast scope — this re-runs ToastHost's insert effect with the
+		// SAME `latest`. A TTL-expired failure must re-toast (its id was NOT
+		// remembered as dismissed): #671 says a failure must never be missed.
+		const scopeSelect = screen.getByLabelText('Toasts');
+		await user.selectOptions(scopeSelect, 'all');
+		await waitFor(() =>
+			expect(window.localStorage.getItem(TOAST_SCOPE_STORAGE_KEY)).toBe('all'),
+		);
+		await screen.findByRole('button', { name: 'Dismiss toast' });
+	}, 20000);
 
 	it('acknowledges a seeded action-required event → row flips to Acked', async () => {
 		const user = userEvent.setup();

@@ -51,7 +51,11 @@ function withDaySeparators(rows: FeedRow[]): FeedRow[] {
 	const days = new Set<string>();
 	for (const row of rows) {
 		const head = rowHeadEvent(row);
-		if (head) days.add(streamDayKey(head.tsMs));
+		if (!head) continue;
+		const key = streamDayKey(head.tsMs);
+		// A malformed timestamp yields an empty key; treating '' as a real day
+		// would inject a blank, label-less separator, so skip it here and below.
+		if (key) days.add(key);
 	}
 	if (days.size < 2) return rows;
 
@@ -61,7 +65,7 @@ function withDaySeparators(rows: FeedRow[]): FeedRow[] {
 		const head = rowHeadEvent(row);
 		if (head) {
 			const day = streamDayKey(head.tsMs);
-			if (day !== prevDay) {
+			if (day && day !== prevDay) {
 				out.push({ kind: 'day', dayKey: day, tsMs: head.tsMs });
 				prevDay = day;
 			}
@@ -171,7 +175,7 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 						<div
 							key={`day-${row.dayKey}`}
 							className="text-muted-foreground flex items-center gap-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider uppercase"
-							role="separator"
+							role="presentation"
 							aria-label={formatStreamDayLabel(row.tsMs)}
 						>
 							<span className="shrink-0">{formatStreamDayLabel(row.tsMs)}</span>

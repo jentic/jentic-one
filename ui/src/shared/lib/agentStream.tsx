@@ -672,6 +672,40 @@ export function matchesToastScope(severity: StreamSeverity, scope: ToastScope): 
 	return severity === 'critical';
 }
 
+/**
+ * A failure severity — `error` or `critical`. Failures are surfaced proactively
+ * (toast + persistent badge) regardless of the operator's toast scope, since a
+ * silently-failed unattended run is exactly what must never be missed (#671).
+ */
+export function isFailureSeverity(severity: StreamSeverity): boolean {
+	return severity === 'error' || severity === 'critical';
+}
+
+/**
+ * Count of unacknowledged failure events (error/critical) in the feed — the
+ * number shown on the rail's persistent failure badge (#671). Drops to zero as
+ * the operator acknowledges each failing event.
+ */
+export function unacknowledgedFailureCount(events: StreamEvent[]): number {
+	let n = 0;
+	for (const ev of events) {
+		if (!ev.acknowledged && isFailureSeverity(ev.severity)) n += 1;
+	}
+	return n;
+}
+
+/**
+ * Badge-friendly rendering of a failure count: caps at "99+" so a runaway count
+ * can't overflow the narrow rail pill, and clamps pathological inputs (NaN,
+ * negatives, fractions) to a sane non-negative integer so the pill never shows
+ * "NaN" or "-1". The underlying number stays accurate for aria labels — this
+ * only shapes the visible glyphs (#11).
+ */
+export function formatFailurePillCount(count: number): string {
+	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+	return n > 99 ? '99+' : String(n);
+}
+
 export function severityStripeClass(s: StreamSeverity): string {
 	if (s === 'critical') return 'border-l-danger';
 	if (s === 'error') return 'border-l-danger';
@@ -685,24 +719,6 @@ export function formatStreamTime(tsMs: number): string {
 	const mm = d.getMinutes().toString().padStart(2, '0');
 	const ss = d.getSeconds().toString().padStart(2, '0');
 	return `${hh}:${mm}:${ss}`;
-}
-
-/**
- * Absolute local datetime for a timestamp tooltip, e.g. "16 Jul 2026, 14:04:31".
- * Surfaced as the `title` on each rail timestamp so the full date is always
- * discoverable even inside a single day (issue #705).
- */
-export function formatStreamDateTime(tsMs: number): string {
-	const d = new Date(tsMs);
-	if (Number.isNaN(d.getTime())) return '';
-	return d.toLocaleString(undefined, {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-		second: '2-digit',
-	});
 }
 
 /**
@@ -749,7 +765,13 @@ export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): st
 	const key = streamDayKey(tsMs);
 	if (!key) return '';
 	if (key === streamDayKey(now)) return 'Today';
-	if (key === streamDayKey(now - 86_400_000)) return 'Yesterday';
+	// "Yesterday" is the previous LOCAL calendar day. Rewinding by a fixed 24h in
+	// ms mislabels the day after a DST transition (the previous local day is 23h
+	// or 25h away), so step the Date's day-of-month instead — this stays correct
+	// across spring-forward / fall-back.
+	const y = new Date(now);
+	y.setDate(y.getDate() - 1);
+	if (key === streamDayKey(y.getTime())) return 'Yesterday';
 	return new Date(tsMs).toLocaleDateString(undefined, {
 		weekday: 'short',
 		day: 'numeric',

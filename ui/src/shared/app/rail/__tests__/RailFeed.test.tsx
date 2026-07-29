@@ -34,11 +34,13 @@ describe('RailFeed — day separators (#705)', () => {
 			ev({ id: 'a', tsMs: today, title: 'today event' }),
 			ev({ id: 'b', tsMs: older, title: 'older event' }),
 		];
-		render(<RailFeed events={events} filters={NO_FILTERS} />);
+		const { container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
 
 		// Two distinct days → two separators. "Today" leads; the older day shows
-		// its weekday+date label (not "Today"/"Yesterday").
-		const separators = screen.getAllByRole('separator');
+		// its weekday+date label (not "Today"/"Yesterday"). Separators are
+		// role="presentation" (#7 — quiet in the live log, still in the DOM), so
+		// query by the presentation role attribute rather than the a11y tree.
+		const separators = container.querySelectorAll('[role="presentation"]');
 		expect(separators.length).toBeGreaterThanOrEqual(2);
 	});
 
@@ -49,8 +51,50 @@ describe('RailFeed — day separators (#705)', () => {
 			ev({ id: 'a', tsMs: evening, title: 'evening event' }),
 			ev({ id: 'b', tsMs: morning, title: 'morning event' }),
 		];
-		render(<RailFeed events={events} filters={NO_FILTERS} />);
+		const { container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+		expect(container.querySelectorAll('[role="presentation"]')).toHaveLength(0);
+	});
+
+	it('does not emit a blank separator for a malformed (NaN) timestamp (#3)', () => {
+		// A NaN timestamp yields an empty day key. It must NOT become its own
+		// label-less separator row; the event still renders normally.
+		const today = new Date(2026, 6, 17, 10, 0, 0).getTime();
+		const older = new Date(2026, 6, 13, 10, 0, 0).getTime();
+		const events = [
+			ev({ id: 'good1', tsMs: today, title: 'today event' }),
+			ev({ id: 'bad', tsMs: NaN, title: 'malformed event' }),
+			ev({ id: 'good2', tsMs: older, title: 'older event' }),
+		];
+		const { container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+
+		// The malformed event still renders as an event row…
+		expect(screen.getByText('malformed event')).toBeInTheDocument();
+		// …and every rendered separator carries a non-empty label (no blank ones).
+		for (const sep of container.querySelectorAll('[role="presentation"]')) {
+			expect(sep.getAttribute('aria-label')).toBeTruthy();
+		}
+	});
+
+	it('marks day separators role="presentation" so the role="log" feed does not announce them (#7)', () => {
+		const today = new Date(2026, 6, 17, 10, 0, 0).getTime();
+		const older = new Date(2026, 6, 13, 10, 0, 0).getTime();
+		const events = [
+			ev({ id: 'a', tsMs: today, title: 'today event' }),
+			ev({ id: 'b', tsMs: older, title: 'older event' }),
+		];
+		const { container } = render(<RailFeed events={events} filters={NO_FILTERS} />);
+		// `role="presentation"` strips the row from the accessibility tree — so the
+		// role="log" + aria-relevant="additions" container never announces a
+		// spliced-in separator as a fake "event" — while the label text stays in
+		// the DOM and readable on explicit SR navigation.
+		const separators = container.querySelectorAll('[role="presentation"]');
+		expect(separators.length).toBeGreaterThanOrEqual(2);
+		// The rows are no longer exposed with the `separator` role.
 		expect(screen.queryByRole('separator')).toBeNull();
+		for (const sep of separators) {
+			expect(sep).toHaveAttribute('role', 'presentation');
+			expect(sep.getAttribute('aria-label')).toBeTruthy();
+		}
 	});
 
 	it('shows the full date and time as an instant tooltip on hover of a timestamp', async () => {
