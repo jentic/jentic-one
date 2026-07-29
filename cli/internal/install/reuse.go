@@ -125,15 +125,16 @@ func ReuseSecrets(d *Draft, path string) (bool, error) {
 
 	// SSO id_signing: only the first entry (render.go emits one). Kid + PEM
 	// carry over so signed ID tokens don't get orphaned if the operator
-	// re-enables SSO. When SSO stays disabled in the wizard the fields are
-	// ignored at render time (authOut only emits them behind d.SSOEnabled).
+	// re-enables SSO. The pair is copied both-or-neither: a config with a kid
+	// but a lost PEM (or vice versa) must not leave FillSecrets generating a
+	// fresh key advertised under the old kid — the exact rotation-under-the-
+	// same-id failure this file exists to prevent. When SSO stays disabled in
+	// the wizard the fields are ignored at render time (authOut only emits
+	// them behind d.SSOEnabled).
 	if len(view.Auth.IDSigning) > 0 {
 		s := view.Auth.IDSigning[0]
-		if s.KID != "" {
+		if s.KID != "" && s.PrivateKeyPEM != "" {
 			d.IDSigningKID = s.KID
-			reused = true
-		}
-		if s.PrivateKeyPEM != "" {
 			d.IDSigningKeyPEM = s.PrivateKeyPEM
 			reused = true
 		}

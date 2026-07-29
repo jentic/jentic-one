@@ -137,15 +137,6 @@ func (p Paths) ConfigPath() string { return filepath.Join(p.Root, ConfigName) }
 // InstallConfigPath returns the generated app config path (~/.jentic/jentic-one.yaml).
 func (p Paths) InstallConfigPath() string { return filepath.Join(p.Root, InstallConfigName) }
 
-// InstallConfigBackupPath returns the uninstall-backup path for the generated
-// app config (~/.jentic/jentic-one-old.yaml). `jenticctl uninstall` renames
-// the live config to this name before wiping ~/.jentic; a subsequent
-// `install` uses it as a fallback source for secret reuse so the volume it
-// preserves stays decryptable.
-func (p Paths) InstallConfigBackupPath() string {
-	return filepath.Join(p.Root, BackupName(InstallConfigName))
-}
-
 // BackupName turns "name.ext" into "name-old.ext" (or "name-old" if no ext).
 // Uninstall renames its preserved config files with this transform; install's
 // secret-reuse path resolves the backup with the same rule.

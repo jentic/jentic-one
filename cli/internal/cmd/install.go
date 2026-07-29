@@ -127,13 +127,8 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 		return &exitCodeError{code: 1}
 	}
 	// Stamp the decision onto the draft so the generated config's telemetry gate
-	// reflects the user's choice. An opted-in install gets a stable opaque
-	// instance id (seeds the durable admin-DB identity row on first boot); an
-	// opted-out install writes an explicit `enabled: false` (never a leftover id).
-	draft.TelemetryEnabled = enabled
-	if enabled {
-		draft.TelemetryInstanceID = uuid.NewString()
-	}
+	// reflects the user's choice.
+	stampTelemetryDecision(draft, enabled)
 
 	data, err := draft.Render()
 	if err != nil {
@@ -479,6 +474,20 @@ func installLocal(a *App, draft *install.Draft, configPath string) error {
 	}
 	draft.MigrationsDone = true
 	return nil
+}
+
+// stampTelemetryDecision records the consent decision on the draft. An
+// opted-in install gets a stable opaque instance id (seeds the durable
+// admin-DB identity row on first boot); an id pre-seeded from a prior config
+// (reuseInstallSecrets) is kept so re-consenting preserves the same telemetry
+// identity — its stability contract; an opted-out install writes an explicit
+// `enabled: false` (never a leftover id — render ignores the id when
+// disabled).
+func stampTelemetryDecision(draft *install.Draft, enabled bool) {
+	draft.TelemetryEnabled = enabled
+	if enabled && draft.TelemetryInstanceID == "" {
+		draft.TelemetryInstanceID = uuid.NewString()
+	}
 }
 
 // reuseInstallSecrets pre-seeds draft with the secret fields from an existing

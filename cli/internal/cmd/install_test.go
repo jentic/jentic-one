@@ -10,6 +10,46 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/install"
 )
 
+func TestStampTelemetryDecisionKeepsReusedInstanceID(t *testing.T) {
+	// The stability contract: an instance id carried over from a prior config
+	// by reuseInstallSecrets must survive the consent stamp — re-consenting
+	// on reinstall keeps the same telemetry identity instead of churning it.
+	draft := install.NewDraft()
+	draft.TelemetryInstanceID = "inst-reused-id"
+
+	stampTelemetryDecision(draft, true)
+
+	if !draft.TelemetryEnabled {
+		t.Errorf("TelemetryEnabled = false, want true")
+	}
+	if draft.TelemetryInstanceID != "inst-reused-id" {
+		t.Errorf("TelemetryInstanceID = %q, want the reused id", draft.TelemetryInstanceID)
+	}
+}
+
+func TestStampTelemetryDecisionGeneratesFreshIDWhenEmpty(t *testing.T) {
+	draft := install.NewDraft()
+
+	stampTelemetryDecision(draft, true)
+
+	if draft.TelemetryInstanceID == "" {
+		t.Errorf("expected a fresh instance id for a first opt-in")
+	}
+}
+
+func TestStampTelemetryDecisionOptOutGeneratesNoID(t *testing.T) {
+	draft := install.NewDraft()
+
+	stampTelemetryDecision(draft, false)
+
+	if draft.TelemetryEnabled {
+		t.Errorf("TelemetryEnabled = true, want false")
+	}
+	if draft.TelemetryInstanceID != "" {
+		t.Errorf("TelemetryInstanceID = %q, want empty on opt-out", draft.TelemetryInstanceID)
+	}
+}
+
 func TestReuseInstallSecretsFromLiveConfig(t *testing.T) {
 	// The reinstall repro guard at the cmd layer: reuseInstallSecrets must
 	// pre-seed the draft from an existing jentic-one.yaml so a subsequent

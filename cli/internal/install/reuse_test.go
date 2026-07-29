@@ -259,3 +259,46 @@ func TestReuseSecretsCarriesSSOSigningKey(t *testing.T) {
 		t.Errorf("IDSigningKeyPEM drifted")
 	}
 }
+
+func TestReuseSecretsIgnoresMismatchedSSOPair(t *testing.T) {
+	// A prior config with a kid but a lost PEM (or vice versa) must not be
+	// half-reused: FillSecrets would generate a fresh key advertised under
+	// the old kid — rotation under the same key id, the exact failure class
+	// reuse exists to prevent. The pair carries both-or-neither.
+	for name, body := range map[string]string{
+		"kid only": `
+auth:
+  id_signing:
+    - kid: stale-kid
+      private_key_pem: ""
+`,
+		"pem only": `
+auth:
+  id_signing:
+    - kid: ""
+      private_key_pem: |
+        -----BEGIN PRIVATE KEY-----
+        orphaned
+        -----END PRIVATE KEY-----
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "jentic-one.yaml")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			dst := NewDraft()
+			reused, err := ReuseSecrets(dst, path)
+			if err != nil {
+				t.Fatalf("ReuseSecrets: %v", err)
+			}
+			if reused {
+				t.Errorf("mismatched id_signing pair should not count as reuse")
+			}
+			if dst.IDSigningKID != "" || dst.IDSigningKeyPEM != "" {
+				t.Errorf("half-reused pair: kid=%q pemSet=%v", dst.IDSigningKID, dst.IDSigningKeyPEM != "")
+			}
+		})
+	}
+}
