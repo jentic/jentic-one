@@ -123,6 +123,46 @@ async def test_expired_jwt_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_jwt_without_actor_type_defaults_to_agent() -> None:
+    """Missing actor_type keeps the least-privileged AGENT default (#864).
+
+    The broker's JWT producers include external trusted issuers with no
+    published claims contract requiring actor_type, so the claim stays
+    optional — unlike the shared admin gate, which fails closed (#862).
+    """
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "scopes": [BROKER_EXECUTE_SCOPE]})
+
+    resolved = await validator.validate(token)
+
+    assert resolved.actor_type == ActorType.AGENT
+
+
+@pytest.mark.asyncio
+async def test_jwt_with_explicit_actor_type_is_honoured() -> None:
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "usr_jwt", "exp": exp, "actor_type": "user"})
+
+    resolved = await validator.validate(token)
+
+    assert resolved.actor_type == ActorType.USER
+
+
+@pytest.mark.asyncio
+async def test_jwt_with_unknown_actor_type_is_rejected() -> None:
+    """An unrecognised actor_type is refused deliberately (#864), with the same
+    ValueError shape as any other invalid JWT — never a bare enum error."""
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": "definitely-not-a-real-actor"})
+
+    with pytest.raises(ValueError, match="jwt_unknown_actor_type"):
+        await validator.validate(token)
+
+
+@pytest.mark.asyncio
 async def test_jwt_path_disabled_when_no_verifier() -> None:
     """With ``jwt=None`` even a JWT-shaped token falls through to opaque resolution."""
     resolver = _StubResolver(_opaque_resolution())

@@ -22,10 +22,13 @@ from enum import StrEnum
 from typing import Protocol
 
 import jwt
+import structlog
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
+
+logger = structlog.get_logger(__name__)
 
 # Algorithms we accept for the self-contained-JWT path. HS256 only for the
 # minimal PR-A2 verifier; §08 widens/locks this down (and adds asymmetric/JWKS).
@@ -97,13 +100,32 @@ class JwtTokenValidator:
         if not isinstance(sub, str) or not isinstance(exp, int | float):
             raise ValueError("jwt_missing_required_claims")
 
-        actor_type_raw = claims.get(Claim.ACTOR_TYPE, ActorType.AGENT.value)
+        actor_type_raw = claims.get(Claim.ACTOR_TYPE)
+        if actor_type_raw is None:
+            # Unlike the shared admin gate (#862), the broker's JWT producers
+            # include *external* trusted issuers with no published claims
+            # contract requiring actor_type, so a missing claim keeps the
+            # least-privileged AGENT default. Log it so operators can see
+            # which issuers omit the claim before any future hard refusal.
+            logger.warning("jwt_actor_type_missing_defaulting_to_agent", sub=sub)
+            actor_type = ActorType.AGENT
+        else:
+            try:
+                actor_type = ActorType(str(actor_type_raw))
+            except ValueError:
+                # An unrecognised value is a malformed token, not a contract
+                # gap — refuse it deliberately (#864) with the same error
+                # shape as any other invalid JWT instead of letting the enum
+                # constructor's ValueError escape by accident.
+                logger.warning("jwt_actor_type_unknown", sub=sub, actor_type=str(actor_type_raw))
+                raise ValueError("jwt_unknown_actor_type") from None
+
         scopes_raw = claims.get(Claim.SCOPES, [])
         permissions = [str(s) for s in scopes_raw] if isinstance(scopes_raw, list) else []
 
         return Identity(
             sub=sub,
-            actor_type=ActorType(str(actor_type_raw)),
+            actor_type=actor_type,
             permissions=permissions,
             expires_at=datetime.fromtimestamp(float(exp), tz=UTC),
             active=True,
