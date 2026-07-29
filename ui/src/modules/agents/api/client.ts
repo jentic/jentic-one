@@ -264,14 +264,50 @@ export async function unbindToolkitFromAgent(agentId: string, toolkitId: string)
 export async function createAgent(params: {
 	name: string;
 	description?: string | null;
+	scopes?: string[] | null;
 }): Promise<AgentEntity> {
 	try {
 		const res = await AgentsService.createAgent({
-			requestBody: { name: params.name, description: params.description ?? null },
+			requestBody: {
+				name: params.name,
+				description: params.description ?? null,
+				// Optional initial grants — POST /agents accepts scopes[] so a
+				// manually created agent can start with the permissions it needs
+				// instead of a follow-up PUT from the detail page.
+				scopes: params.scopes?.length ? params.scopes : null,
+			},
 		});
 		return agentToEntity(res);
 	} catch (error) {
 		throw toAgentsError(error, 'Failed to create the agent.');
+	}
+}
+
+/** Fields an operator may edit in place (PATCH /agents/{id}). */
+export interface AgentPatch {
+	name?: string;
+	description?: string | null;
+	ownerId?: string | null;
+}
+
+/**
+ * Partially update an agent — name, description, or owner. Only the provided
+ * keys are sent (PATCH semantics: an omitted key is left untouched, an
+ * explicit `null` clears the field where the backend allows it).
+ */
+export async function updateAgent(agentId: string, patch: AgentPatch): Promise<AgentEntity> {
+	try {
+		const res = await AgentsService.updateAgent({
+			agentId,
+			requestBody: {
+				...(patch.name !== undefined ? { name: patch.name } : {}),
+				...(patch.description !== undefined ? { description: patch.description } : {}),
+				...(patch.ownerId !== undefined ? { owner_id: patch.ownerId } : {}),
+			},
+		});
+		return agentToEntity(res);
+	} catch (error) {
+		throw toAgentsError(error, 'Failed to update the agent.');
 	}
 }
 
@@ -364,10 +400,16 @@ export async function listServiceAccounts(params: {
 export async function createServiceAccount(params: {
 	name: string;
 	description?: string | null;
+	scopes?: string[] | null;
 }): Promise<ServiceAccountEntity> {
 	try {
 		const res: ServiceAccountResponse = await ServiceAccountsService.createServiceAccount({
-			requestBody: { name: params.name, description: params.description ?? null },
+			requestBody: {
+				name: params.name,
+				description: params.description ?? null,
+				// Optional initial grants (mirrors createAgent).
+				scopes: params.scopes?.length ? params.scopes : null,
+			},
 		});
 		return serviceAccountToEntity(res);
 	} catch (error) {

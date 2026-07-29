@@ -26,6 +26,8 @@ import {
 	archiveServiceAccount,
 	createAgent,
 	createServiceAccount,
+	updateAgent,
+	type AgentPatch,
 	denyAgent,
 	denyServiceAccount,
 	disableAgent,
@@ -413,7 +415,8 @@ export function useArchiveAgent() {
 export function useCreateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null }) => createAgent(input),
+		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
+			createAgent(input),
 		onSuccess: (agent) => {
 			// Invalidate the whole agents root (not just lists()) so the
 			// persistent pending-agents nav badge — keyed under agentsRoot, not
@@ -431,6 +434,29 @@ export function useCreateAgent() {
 			});
 		},
 		onError: (e) => notifyError(e, 'Failed to create the agent.'),
+	});
+}
+
+/**
+ * Partial in-place edit (PATCH /agents/{id}): rename, re-describe, or
+ * reassign the owner from the detail page's Settings tab. Seeds the detail
+ * cache from the response (the PATCH returns the full row) and refreshes the
+ * roster so the fleet table picks the new name up immediately.
+ */
+export function useUpdateAgent() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: ({ id, patch }: { id: string; patch: AgentPatch }) => updateAgent(id, patch),
+		onSuccess: (agent) => {
+			qc.setQueryData(agentsKeys.detail(agent.id), agent);
+			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
+			toast({
+				title: 'Agent updated',
+				description: `${agent.name} saved.`,
+				variant: 'success',
+			});
+		},
+		onError: (e) => notifyError(e, 'Failed to update the agent.'),
 	});
 }
 
@@ -500,7 +526,7 @@ export function useServiceAccount(id: string | null) {
 export function useCreateServiceAccount() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null }) =>
+		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
 			createServiceAccount(input),
 		onSuccess: (sa) => {
 			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
@@ -589,11 +615,12 @@ export function useArchiveServiceAccount() {
  * generously; the Scopes editor maps it into the picker's scope list and uses
  * `grantableByCaller` to disable scopes the operator can't grant.
  */
-export function usePermissionCatalogue() {
+export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	return useQuery<PermissionCatalogEntry[]>({
 		queryKey: permissionsKey,
 		queryFn: () => listPermissions(),
 		staleTime: 5 * 60 * 1000,
+		enabled: options.enabled ?? true,
 	});
 }
 

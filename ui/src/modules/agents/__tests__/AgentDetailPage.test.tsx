@@ -255,17 +255,18 @@ describe('AgentDetailPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('gates lifecycle actions by status (pending → approve / deny / archive)', async () => {
+	it('gates lifecycle actions by status (pending → approve / deny in header)', async () => {
 		renderDetail('agnt_pending_1');
 		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
 		expect(
 			screen.getByRole('button', { name: 'Approve inbox-triage-bot' }),
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Deny inbox-triage-bot' })).toBeInTheDocument();
-		// Pending actors can be archived (cleanup) but not disabled (not active).
+		// Destructive actions (Archive / Disable) moved to the Settings tab's
+		// danger zone (phase 4) — the header only offers constructive ones.
 		expect(
-			screen.getByRole('button', { name: 'Archive inbox-triage-bot' }),
-		).toBeInTheDocument();
+			screen.queryByRole('button', { name: 'Archive inbox-triage-bot' }),
+		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole('button', { name: 'Disable inbox-triage-bot' }),
 		).not.toBeInTheDocument();
@@ -311,6 +312,117 @@ describe('AgentDetailPage', () => {
 		const dialog = await screen.findByRole('dialog');
 		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
 		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
+	});
+
+	// --- Phase 4: Settings tab (PATCH /agents/:id + danger zone) -----------
+
+	it('renames an agent from the Settings tab, sending only the dirty field', async () => {
+		const user = userEvent.setup();
+		// Capture the PATCH body to pin real PATCH semantics: only changed keys.
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					id: 'agnt_active_1',
+					name: 'support-agent-v2',
+					description: 'Handles support tickets end to end.',
+					status: 'active',
+					created_at: '2026-05-01T09:00:00Z',
+				});
+			}),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+
+		// Save is disabled until something changes.
+		const save = screen.getByRole('button', { name: 'Save changes' });
+		expect(save).toBeDisabled();
+
+		await user.clear(nameInput);
+		await user.type(nameInput, 'support-agent-v2');
+		expect(save).toBeEnabled();
+		await user.click(save);
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		// Only the renamed field crossed the wire — no description/owner echo.
+		expect(patchBody).toEqual({ name: 'support-agent-v2' });
+		// The detail cache re-seeds from the PATCH response → header updates.
+		expect(
+			await screen.findByRole('heading', { name: 'support-agent-v2' }),
+		).toBeInTheDocument();
+	});
+
+	it('clears the description by sending an explicit null', async () => {
+		const user = userEvent.setup();
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					id: 'agnt_active_1',
+					name: 'support-agent',
+					description: null,
+					status: 'active',
+					created_at: '2026-05-01T09:00:00Z',
+				});
+			}),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const descInput = await screen.findByLabelText('Description');
+		await user.clear(descInput);
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		expect(patchBody).toEqual({ description: null });
+	});
+
+	it('keeps the draft and toasts when the PATCH fails', async () => {
+		const user = userEvent.setup();
+		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		worker.use(createErrorHandler('patch', '/agents/:id', { status: 500 }));
+
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'renamed-agent');
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Failed to update the agent.')).toBeInTheDocument();
+		// Draft survives so the user can retry without retyping.
+		expect(nameInput).toHaveValue('renamed-agent');
+	});
+
+	it('hosts Disable and Archive in the Settings danger zone for an active agent', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		// Header carries no destructive lifecycle buttons any more.
+		expect(
+			screen.queryByRole('button', { name: 'Disable support-agent' }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: 'Archive support-agent' }),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('Danger zone')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Disable support-agent' })).toBeInTheDocument();
+
+		// Archive routes through the cascade-delete confirmation dialog.
+		await user.click(screen.getByRole('button', { name: 'Archive support-agent' }));
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/support-agent/)).toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {

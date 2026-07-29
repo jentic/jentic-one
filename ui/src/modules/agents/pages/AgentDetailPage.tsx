@@ -11,6 +11,8 @@
  *                 with a pre-filtered "Open in Monitor" deep-link
  *   - Access    → platform scopes (#615) + filed access requests (#619)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
+ *   - Settings  → editable metadata (PATCH /agents/{id}) + danger zone hosting
+ *                 the destructive lifecycle actions (Disable / Archive)
  *
  * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
  * shareable and back-button friendly. Activity/KPI sources are admin-gated:
@@ -60,10 +62,11 @@ import {
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
+import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
 import { ROUTES } from '@/shared/app/routes';
 
-const DETAIL_TABS = ['overview', 'activity', 'access', 'keys'] as const;
+const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
 const TAB_LABELS: Record<DetailTab, string> = {
@@ -71,6 +74,7 @@ const TAB_LABELS: Record<DetailTab, string> = {
 	activity: 'Activity',
 	access: 'Access',
 	keys: 'Keys',
+	settings: 'Settings',
 };
 
 function isDetailTab(value: string | null): value is DetailTab {
@@ -147,7 +151,12 @@ export default function AgentDetailPage() {
 	}
 
 	const agent = agentQuery.data;
-	const actions = ACTIONS_FOR_STATUS[agent.status];
+	// The identity header only offers constructive actions (Approve / Deny /
+	// Enable); destructive ones (Disable / Archive) live in the Settings tab's
+	// danger zone (canvas plan, phase 4).
+	const headerActions = ACTIONS_FOR_STATUS[agent.status].filter(
+		(a) => a !== 'disable' && a !== 'archive',
+	);
 	const actionPending =
 		approve.isPending ||
 		deny.isPending ||
@@ -241,10 +250,10 @@ export default function AgentDetailPage() {
 							)}
 						</div>
 
-						{/* Lifecycle actions — gated by status, mirrors the list page. */}
-						{actions.length > 0 && (
+						{/* Constructive lifecycle actions — destructive ones are in Settings. */}
+						{headerActions.length > 0 && (
 							<div className="flex shrink-0 flex-wrap gap-2">
-								{actions.map((action) => (
+								{headerActions.map((action) => (
 									<Button
 										key={action}
 										size="sm"
@@ -368,6 +377,16 @@ export default function AgentDetailPage() {
 				)}
 
 				{activeTab === 'keys' && <AgentKeysPanel agent={agent} />}
+
+				{activeTab === 'settings' && (
+					<AgentSettingsPanel
+						agent={agent}
+						lifecyclePending={actionPending}
+						onLifecycle={(action) =>
+							setConfirm({ kind: action, id: agent.id, name: agent.name })
+						}
+					/>
+				)}
 			</div>
 
 			<LifecycleDialogs

@@ -301,6 +301,7 @@ export function resetAgentsStore(): void {
 		seedAgent({
 			id: 'agnt_active_1',
 			name: 'support-agent',
+			description: 'Handles support tickets end to end.',
 			status: 'active',
 			approved_by: ADMIN,
 			approved_at: now(-30),
@@ -719,6 +720,7 @@ export const agentsHandlers = [
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string;
 			description?: string | null;
+			scopes?: string[] | null;
 		};
 		const row = seedAgent({
 			id: genId('agnt'),
@@ -728,7 +730,29 @@ export const agentsHandlers = [
 			created_at: now(),
 		});
 		agents.unshift(row);
+		// Optional initial grants (POST /agents accepts scopes[]).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			const check = validateScopes(body.scopes);
+			if (!check.ok) {
+				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			}
+			actorScopes[row.id] = [...new Set(body.scopes)];
+		}
 		return HttpResponse.json(row, { status: 201 });
+	}),
+	// Partial in-place edit — name / description / owner_id.
+	http.patch('/agents/:id', async ({ params, request }) => {
+		const row = agents.find((a) => a.id === params.id);
+		if (!row) return new HttpResponse(null, { status: 404 });
+		const body = (await request.json().catch(() => ({}))) as {
+			name?: string | null;
+			description?: string | null;
+			owner_id?: string | null;
+		};
+		if (typeof body.name === 'string' && body.name.trim()) row.name = body.name.trim();
+		if (body.description !== undefined) row.description = body.description;
+		if (body.owner_id !== undefined) row.owner_id = body.owner_id;
+		return HttpResponse.json(row);
 	}),
 	// Generate API key for an agent.
 	http.post('/agents/:id\\:generate-api-key', ({ params }) => {
@@ -836,6 +860,7 @@ export const agentsHandlers = [
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string;
 			description?: string | null;
+			scopes?: string[] | null;
 		};
 		const row = seedSa({
 			id: genId('sva'),
@@ -845,6 +870,13 @@ export const agentsHandlers = [
 			created_at: now(),
 		});
 		serviceAccounts.unshift(row);
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			const check = validateScopes(body.scopes);
+			if (!check.ok) {
+				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			}
+			actorScopes[row.id] = [...new Set(body.scopes)];
+		}
 		return HttpResponse.json(row, { status: 201 });
 	}),
 	http.get('/service-accounts/:id', ({ params }) => {

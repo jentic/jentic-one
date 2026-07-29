@@ -104,6 +104,39 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 });
 
 /**
+ * Phase-4 editability: rename an agent from the Settings tab (PATCH
+ * /agents/:id) and verify the round trip — header, toast, and the fleet
+ * table row all pick up the new name from the same session store.
+ */
+test('rename an agent from the Settings tab round-trips to the list', async ({ page }) => {
+	await page.goto('/app/agents/agnt_active_1');
+
+	await page.getByLabel('Email').fill('admin@local');
+	await page.getByRole('textbox', { name: 'Password' }).fill('password');
+	await page.getByRole('button', { name: 'Sign in' }).click();
+
+	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
+
+	await page.getByRole('tab', { name: 'Settings' }).click();
+	const nameInput = page.getByLabel('Name');
+	await nameInput.fill('support-agent-renamed');
+	await page.getByRole('button', { name: 'Save changes' }).click();
+
+	// Toast + header re-render from the PATCH response.
+	await expect(page.getByText('Agent updated')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'support-agent-renamed' })).toBeVisible();
+
+	// Destructive lifecycle lives in the danger zone, not the header.
+	await expect(page.getByText('Danger zone')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Archive support-agent-renamed' })).toBeVisible();
+
+	// The fleet table reflects the rename (list invalidation → mock store).
+	await page.getByTestId('back-button').click();
+	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('row').filter({ hasText: 'support-agent-renamed' })).toBeVisible();
+});
+
+/**
  * Scopes flow (#615): open an active agent's detail page, grant a platform
  * permission via the Scopes editor, save (full-list PUT), and verify the new
  * scope renders as a chip and is reflected when the editor is reopened (read

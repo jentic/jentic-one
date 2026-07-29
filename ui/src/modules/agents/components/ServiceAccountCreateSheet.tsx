@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
 import { useCreateServiceAccount } from '@/modules/agents/api';
+import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
 
 interface ServiceAccountCreateSheetProps {
 	open: boolean;
@@ -18,6 +19,7 @@ interface ServiceAccountCreateSheetProps {
 export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreateSheetProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
+	const [scopes, setScopes] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const create = useCreateServiceAccount();
@@ -36,9 +38,11 @@ export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreat
 			await create.mutateAsync({
 				name: trimmed,
 				description: description.trim() || null,
+				scopes,
 			});
 			setName('');
 			setDescription('');
+			setScopes([]);
 			setError(null);
 			onClose();
 		} catch {
@@ -87,6 +91,7 @@ export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreat
 						maxLength={1024}
 					/>
 				</div>
+				<InitialScopesField selected={scopes} onChange={setScopes} idPrefix="sa-create" />
 			</div>
 
 			<footer className="border-border flex items-center justify-end gap-2 border-t p-5">

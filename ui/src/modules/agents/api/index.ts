@@ -40,6 +40,7 @@ export {
 	useActorsUsage,
 	useActorUsageDetail,
 	useActorExecutions,
+	useUpdateAgent,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
 } from '@/modules/agents/api/hooks';
@@ -50,6 +51,7 @@ export type {
 	ActorUsageDetail,
 	ActorExecutionEntity,
 	UsageBucketEntity,
+	AgentPatch,
 } from '@/modules/agents/api/client';
 
 export {
