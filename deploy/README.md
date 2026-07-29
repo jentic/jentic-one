@@ -341,19 +341,21 @@ container listens on `8000` (`server.port`).
 ```bash
 # app: default surfaces (registry,admin,control,auth) — serves the UI + APIs.
 docker run -d --name jentic-app --env-file prod.env \
-  -v /etc/jentic:/etc/jentic:ro -p 8000:8000 \
+  -v /etc/jentic:/etc/jentic:ro -p 127.0.0.1:8000:8000 \
   ghcr.io/jentic/jentic-one-app:latest
 
 # broker: sole surface (the runtime execution edge).
 docker run -d --name jentic-broker --env-file prod.env \
   -e JENTIC__APPS=broker \
-  -v /etc/jentic:/etc/jentic:ro -p 8080:8000 \
+  -v /etc/jentic:/etc/jentic:ro -p 127.0.0.1:8080:8000 \
   ghcr.io/jentic/jentic-one-app:latest
 ```
 
-Each surface exposes `GET /health`. Behind a reverse proxy / load balancer,
-route the public UI + control/admin/registry/auth traffic to the `app`
-container and the execution traffic to the `broker` container.
+Each surface exposes `GET /health`. Both surfaces speak plain HTTP — the
+loopback binds above keep them off the network until a TLS-terminating
+reverse proxy / load balancer fronts them: route the public UI +
+control/admin/registry/auth traffic to the `app` container and the execution
+traffic to the `broker` container.
 
 ### docker-compose example
 
