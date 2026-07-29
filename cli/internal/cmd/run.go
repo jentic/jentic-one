@@ -338,8 +338,8 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 	}
 
 	// Not accessible — decide whether to grant, open-in-home, or cancel.
-	danger := localagent.DangerReason(abs, localagent.OperatorHome())
-	grant, err := a.decideDirGrant(cmd, opts, agentUser, abs, danger)
+	verdict := localagent.Classify(abs, localagent.OperatorHome())
+	grant, err := a.decideDirGrant(cmd, opts, agentUser, abs, verdict)
 	if err != nil {
 		return "", err
 	}
@@ -446,17 +446,29 @@ func plural(n int, one, other string) string {
 }
 
 // decideDirGrant returns whether to grant the agent access to dir, honouring the
-// flags and, for a dangerous path, requiring a typed confirmation.
-func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, dir, danger string) (bool, error) {
-	// Flags pre-answer, but --yes/--allow-dir must never punch a dangerous hole.
+// flags and the path's ban class. A banned path (the operator's or another
+// user's home, or any sensitive/system subtree) is NEVER grantable — there is no
+// "grant anyway" escape hatch; the operator may only open in the agent's home or
+// cancel. Only an ordinary, unbanned path can be granted.
+func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
+	// A banned path can never be granted, by any flag or prompt.
+	if verdict.Banned() {
+		if opts.allowDir {
+			return false, fmt.Errorf("refusing to grant a protected directory (%s); "+
+				"this path cannot be handed to the agent — pick a directory outside it", verdict.Reason)
+		}
+		if !wantsInteractive(cmd, opts.yes) {
+			// Non-interactive: fall back to the agent's home (no grant).
+			return false, nil
+		}
+		return a.confirmBannedPath(agentUser, dir, verdict)
+	}
+
+	// Ordinary path: flags may pre-answer.
 	if opts.noAllowDir {
 		return false, nil
 	}
 	if opts.allowDir {
-		if danger != "" {
-			return false, fmt.Errorf("refusing to grant a flagged-dangerous directory non-interactively (%s); "+
-				"re-run interactively to confirm, or pick a neutral path", danger)
-		}
 		return true, nil
 	}
 	if opts.yes {
@@ -464,10 +476,6 @@ func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, di
 	}
 	if !wantsInteractive(cmd, opts.yes) {
 		return false, nil
-	}
-
-	if danger != "" {
-		return a.confirmDangerousGrant(agentUser, dir, danger)
 	}
 	return a.confirmPlainGrant(agentUser, dir)
 }
@@ -501,18 +509,21 @@ func (a *App) confirmPlainGrant(agentUser, dir string) (bool, error) {
 	}
 }
 
-func (a *App) confirmDangerousGrant(agentUser, dir, danger string) (bool, error) {
+// confirmBannedPath handles a protected path: it explains why the directory
+// cannot be granted and offers only to open in the agent's home or cancel. There
+// is deliberately no "grant anyway" option — a banned path is a non-negotiable
+// boundary, so this returns (false, ...) in every non-error case.
+func (a *App) confirmBannedPath(agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  "+strings.ToUpper(dir)))
-	fmt.Fprintln(a.Out, theme.Warnf("   Granting %s here is dangerous: %s.", agentUser, danger))
-	fmt.Fprintln(a.Out, theme.Dim.Render("   This re-opens the credential boundary this setup exists to protect."))
+	fmt.Fprintln(a.Out, theme.Warnf("   %s can't be granted access here: %s.", agentUser, verdict.Reason))
+	fmt.Fprintln(a.Out, theme.Dim.Render("   This directory is a protected boundary and cannot be handed to the agent."))
 
 	var choice string
 	err := install.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
-			Title("This directory should not normally be granted.").
+			Title("This directory cannot be granted.").
 			Options(
 				huh.NewOption("Open in the agent's home instead", "home"),
-				huh.NewOption("I understand the risk — grant anyway", "allow"),
 				huh.NewOption("Cancel", "cancel"),
 			).
 			Value(&choice),
@@ -523,30 +534,10 @@ func (a *App) confirmDangerousGrant(agentUser, dir, danger string) (bool, error)
 		}
 		return false, err
 	}
-	if choice != "allow" {
-		if choice == "cancel" {
-			return false, errCancelled
-		}
-		return false, nil
+	if choice == "cancel" {
+		return false, errCancelled
 	}
-
-	// Require typing the word to confirm — a keypress is not enough here.
-	var typed string
-	if err := install.NewForm(huh.NewGroup(
-		install.Input().
-			Title("Type 'grant' to confirm this dangerous grant").
-			Value(&typed),
-	)).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return false, errCancelled
-		}
-		return false, err
-	}
-	if strings.TrimSpace(typed) != "grant" {
-		fmt.Fprintln(a.Out, theme.Dim.Render("Not confirmed — opening in the agent's home instead."))
-		return false, nil
-	}
-	return true, nil
+	return false, nil
 }
 
 // errCancelled signals a user-initiated cancel that runE turns into a clean exit.
@@ -570,17 +561,23 @@ func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, 
 	}
 
 	var grantedDirs []string
+	var agentHome string
 	if entry, ok := cfg.LocalAgent(agentID); ok {
 		grantedDirs = entry.GrantedDirs
+		agentHome = entry.HomeDir
 	}
-	operatorHome := localagent.OperatorHome()
+	if agentHome == "" {
+		// Fall back to the conventional default so the sandbox re-allows the
+		// agent's own home even if config predates HomeDir being recorded.
+		agentHome = localagent.DefaultHomeDir(agentUser)
+	}
 
 	where := dir
 	if where == "" {
 		where = "the agent's home"
 	}
 	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
-	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, operatorHome, grantedDirs)
+	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, grantedDirs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }
@@ -630,8 +627,8 @@ func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 		return nil
 	}
 
-	danger := localagent.DangerReason(abs, localagent.OperatorHome())
-	grant, err := a.decideDirGrant(cmd, opts, agentUser, abs, danger)
+	verdict := localagent.Classify(abs, localagent.OperatorHome())
+	grant, err := a.decideDirGrant(cmd, opts, agentUser, abs, verdict)
 	if err != nil {
 		if errors.Is(err, errCancelled) {
 			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))

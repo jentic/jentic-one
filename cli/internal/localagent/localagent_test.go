@@ -95,8 +95,10 @@ func TestCreateAccountCmds(t *testing.T) {
 }
 
 // TestGrantOperatorHomeCmd guards the standalone operator-grant builder used on
-// the account-reuse path: sudo-fronted, names the operator + home, inherited, and
-// (on macOS) carries the directory-mutation bits so `mkdir <home>/.jentic` works.
+// the account-reuse path: sudo-fronted, names the operator + home, RECURSIVE (so
+// agent-owned profiles under <home>/.jentic stay operator-readable), inherited,
+// and (on macOS) carrying the directory-mutation bits so `mkdir <home>/.jentic`
+// works.
 func TestGrantOperatorHomeCmd(t *testing.T) {
 	homeDir := "/Users/Shared/alice-local-agent"
 	joined := strings.Join(GrantOperatorHomeCmd("alice", homeDir).Args, " ")
@@ -107,40 +109,58 @@ func TestGrantOperatorHomeCmd(t *testing.T) {
 		t.Errorf("operator grant must name the operator and home: %s", joined)
 	}
 	if runtime.GOOS == "darwin" {
+		// Recursion via `find ! -type l` (chmod -R follows symlinks / refuses -h).
+		if !strings.Contains(joined, "find") || !strings.Contains(joined, "! -type l") {
+			t.Errorf("macOS operator grant must recurse via find ! -type l: %s", joined)
+		}
 		for _, bit := range []string{"add_subdirectory", "file_inherit", "directory_inherit"} {
 			if !strings.Contains(joined, bit) {
 				t.Errorf("macOS operator grant missing %q bit: %s", bit, joined)
 			}
 		}
-	} else if !strings.Contains(joined, "-d") {
-		t.Errorf("Linux operator grant must include a default ACL: %s", joined)
+	} else {
+		if !strings.Contains(joined, "-R") {
+			t.Errorf("Linux operator grant must be recursive (-R): %s", joined)
+		}
+		if !strings.Contains(joined, "-d") {
+			t.Errorf("Linux operator grant must include a default ACL: %s", joined)
+		}
 	}
 }
 
-func TestDangerReason(t *testing.T) {
+func TestClassify(t *testing.T) {
 	home := "/Users/alice"
 	cases := []struct {
-		name       string
-		dir        string
-		wantDanger bool
+		name string
+		dir  string
+		want BanClass
 	}{
-		{"operator home root", "/Users/alice", true},
-		{"operator ssh dir", "/Users/alice/.ssh", true},
-		{"operator jentic dir", "/Users/alice/.jentic", true},
-		{"another user home", "/Users/bob", true},
-		{"linux other home", "/home/bob", true},
-		{"system etc", "/etc", true},
-		{"system usr subdir", "/usr/local/bin", true},
-		{"root", "/", true},
-		{"neutral shared path", "/Users/Shared/alice-local-agent/work", false},
-		{"project under home is not the home root", "/Users/alice/projects/api", false},
-		{"opt path", "/opt/alice-local-agent", false},
+		// SoftBan: home roots — the dir itself is off-limits, subdirs are fine.
+		{"operator home root", "/Users/alice", SoftBan},
+		{"another user home", "/Users/bob", SoftBan},
+		{"linux other home", "/home/bob", SoftBan},
+		// HardBan: sensitive dotfile subtrees — root AND descendants off-limits.
+		{"operator ssh dir", "/Users/alice/.ssh", HardBan},
+		{"operator jentic dir", "/Users/alice/.jentic", HardBan},
+		{"deep under jentic dir", "/Users/alice/.jentic/profiles/default", HardBan},
+		{"deep under ssh dir", "/Users/alice/.ssh/keys/id", HardBan},
+		// HardBan: system trees.
+		{"system etc", "/etc", HardBan},
+		{"system usr subdir", "/usr/local/bin", HardBan},
+		{"root", "/", HardBan},
+		// NotBanned: ordinary grantable paths, including subdirs of the home root.
+		{"neutral shared path", "/Users/Shared/alice-local-agent/work", NotBanned},
+		{"project under home is not the home root", "/Users/alice/projects/api", NotBanned},
+		{"opt path", "/opt/alice-local-agent", NotBanned},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DangerReason(tc.dir, home)
-			if (got != "") != tc.wantDanger {
-				t.Fatalf("DangerReason(%q) = %q, wantDanger=%v", tc.dir, got, tc.wantDanger)
+			got := Classify(tc.dir, home)
+			if got.Class != tc.want {
+				t.Fatalf("Classify(%q).Class = %v, want %v (reason %q)", tc.dir, got.Class, tc.want, got.Reason)
+			}
+			if (got.Reason != "") != (tc.want != NotBanned) {
+				t.Fatalf("Classify(%q) reason=%q inconsistent with class %v", tc.dir, got.Reason, got.Class)
 			}
 		})
 	}

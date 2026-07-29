@@ -174,24 +174,30 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 	}
 }
 
-// GrantOperatorHomeCmd gives the operator inherited read/write on the agent's
-// home, so the operator can seed config and — critically — write the agent's
-// jentic identity (mkdir <home>/.jentic) before handing it to the agent. It is
+// GrantOperatorHomeCmd gives the operator RECURSIVE, inherited read/write on the
+// agent's home, so the operator can seed config, write the agent's jentic identity
+// (mkdir <home>/.jentic) before handing it over, AND later read the agent's own
+// profiles back out of <home>/.jentic (which `jentic profile` enumerates). It is
 // part of CreateAccountCmds and is ALSO re-applied when reusing an existing
 // account, because the agent home may be owned by the agent (after reclaim) with
 // only a stale, too-narrow operator ACL.
 //
-// On macOS the permission set is spelled out explicitly (macLeafACE) rather than
-// the "read,write,execute" shorthand: on a *directory* that shorthand expands to
-// only list,add_file,search — WITHOUT add_subdirectory — so the operator can
-// create files but not directories, and `mkdir <home>/.jentic` fails with EACCES.
-// The explicit set carries the directory-mutation bits and the inherit flags. The
-// grant is additive (a duplicate/narrower ACE is harmless — allow ACEs union), so
-// re-applying on reuse simply widens access to the correct set. Runs as root.
+// The grant is recursive so profiles the AGENT writes after handover (owned by the
+// agent uid, 0700) are still operator-readable, and inherited (file_inherit,
+// directory_inherit in macLeafACE) so anything created later stays readable
+// without a re-stamp. On macOS the recursion is driven by `find ! -type l` (see
+// LeafGrantCmd) — chmod -R would follow symlinks to their targets and error on
+// dangling links, and macOS chmod refuses -R with -h. The explicit macLeafACE
+// permission set is used rather than the "read,write,execute" shorthand: on a
+// *directory* that shorthand expands to only list,add_file,search — WITHOUT
+// add_subdirectory — so the operator could create files but not directories, and
+// `mkdir <home>/.jentic` would fail with EACCES. The grant is additive (duplicate/
+// narrower ACEs are harmless — allow ACEs union), so re-applying on reuse simply
+// widens access to the correct set. Runs as root.
 func GrantOperatorHomeCmd(operator, homeDir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "+a", //nolint:gosec // operator is the current login user; homeDir is a resolved path.
-			"user:"+operator+" allow "+macLeafACE, homeDir)
+		return exec.Command("sudo", "find", homeDir, "!", "-type", "l", //nolint:gosec // operator is the current login user; homeDir is a resolved path.
+			"-exec", "chmod", "+a#", "0", "user:"+operator+" allow "+macLeafACE, "{}", "+")
 	}
 	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
 		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
@@ -863,60 +869,110 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// DangerReason classifies whether granting the agent access to dir would
-// re-open the credential boundary. It returns a non-empty human reason when dir
-// is sensitive (so the caller demotes "Allow" to a typed-confirm), and "" when
-// dir is an ordinary, safe-to-grant location.
+// BanClass describes how a path is protected from being handed to the agent.
+// The two classes are handled differently at the grant prompt (see run.go): a
+// SoftBan blocks only the path itself, a HardBan blocks its whole subtree.
+type BanClass int
+
+const (
+	// NotBanned means the path is an ordinary, safe-to-grant location.
+	NotBanned BanClass = iota
+	// SoftBan means the path itself must not be granted because it holds
+	// secrets directly (e.g. the operator's home, another user's home), but a
+	// grant on a *subdirectory* below it is still allowed.
+	SoftBan
+	// HardBan means nothing anywhere in this subtree may be granted — the path
+	// and every descendant is off-limits (e.g. ~/.ssh, ~/.jentic, ~/.aws,
+	// keychains, browser profiles, and OS-owned system trees).
+	HardBan
+)
+
+// DangerVerdict is the result of classifying a candidate grant path: its ban
+// class and a human-readable reason (empty when NotBanned).
+type DangerVerdict struct {
+	Class  BanClass
+	Reason string
+}
+
+// Banned reports whether the path may not be granted at all.
+func (v DangerVerdict) Banned() bool { return v.Class != NotBanned }
+
+// Classify decides how (if at all) granting the agent access to dir is
+// restricted. It distinguishes two protection classes:
 //
-// operatorHome is the operator's own home (os.UserHomeDir). The checks are
-// against the cleaned absolute path.
-func DangerReason(dir, operatorHome string) string {
+//   - HardBan: the path or any ancestor of it is a sensitive-subtree root
+//     (dotfile credential dirs like ~/.ssh, ~/.jentic, ~/.aws; keychains;
+//     browser profiles; OS system trees). NOTHING under these may be granted,
+//     so the check matches the path itself AND any descendant.
+//   - SoftBan: the path is a home root that holds secrets directly (the
+//     operator's own home, or any other human's home) — it must not be granted
+//     as-is, but a subdirectory beneath it still can be.
+//
+// operatorHome is the operator's own home (os.UserHomeDir). Checks are against
+// the cleaned absolute path.
+func Classify(dir, operatorHome string) DangerVerdict {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		abs = dir
 	}
 	abs = filepath.Clean(abs)
 
+	// HardBan first: sensitive dotfile subtrees under the operator's home. The
+	// whole subtree is off-limits, so match the root or any descendant.
 	if operatorHome != "" {
 		home := filepath.Clean(operatorHome)
-		if abs == home {
-			return "this is the operator's home — granting here re-opens the credential boundary (keys, browser profile, SSH)"
-		}
-		// Direct sensitive dotfile dirs under the operator's home.
 		for _, d := range sensitiveDotDirs {
-			if abs == filepath.Join(home, d) {
-				return "this is a sensitive dir in the operator's home (" + d + ") holding keys/credentials"
+			root := filepath.Join(home, d)
+			if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+				return DangerVerdict{HardBan,
+					"this is inside a sensitive dir in the operator's home (" + d + ") holding keys/credentials"}
 			}
 		}
 	}
 
-	// Any other human's home root (/Users/<name> or /home/<name> exactly). The
-	// operator's own home was already caught above; the agent's home normally
-	// lives under /Users/Shared or /opt, which is not a direct child here.
-	for _, base := range []string{"/Users", "/home"} {
-		if isDirectChild(abs, base) {
-			return "this is another user's home directory"
-		}
-	}
-
-	// System trees.
+	// HardBan: OS-owned system trees (root and everything below).
 	for _, sys := range systemTrees {
 		if abs == sys || strings.HasPrefix(abs, sys+string(filepath.Separator)) {
-			return "this is a system directory (" + sys + ")"
+			return DangerVerdict{HardBan, "this is inside a system directory (" + sys + ")"}
 		}
 	}
-	return ""
+
+	// SoftBan: the operator's own home root — holds secrets directly, but a
+	// subdirectory below it may still be granted.
+	if operatorHome != "" && abs == filepath.Clean(operatorHome) {
+		return DangerVerdict{SoftBan,
+			"this is the operator's home — granting here re-opens the credential boundary (keys, browser profile, SSH)"}
+	}
+
+	// SoftBan: any other human's home root (/Users/<name> or /home/<name>
+	// exactly). The agent's own home lives under /Users/Shared or /opt, which is
+	// not a direct child here.
+	for _, base := range []string{"/Users", "/home"} {
+		if isDirectChild(abs, base) {
+			return DangerVerdict{SoftBan, "this is another user's home directory"}
+		}
+	}
+
+	return DangerVerdict{NotBanned, ""}
 }
 
-// sensitiveDotDirs are the dotfile directories under a home that must never be
-// handed to the agent.
+// DangerReason returns the human reason a path is restricted (empty when it is
+// freely grantable). It is a thin wrapper over Classify for display-only callers
+// that don't need the ban class.
+func DangerReason(dir, operatorHome string) string {
+	return Classify(dir, operatorHome).Reason
+}
+
+// sensitiveDotDirs are the dotfile directories under a home whose entire subtree
+// must never be handed to the agent (HardBan).
 var sensitiveDotDirs = []string{
 	".ssh", ".jentic", ".aws", ".config", ".gnupg", ".gcloud", ".kube",
 	".docker", "Library/Keychains", ".mozilla", ".config/google-chrome",
 	"Library/Application Support/Google/Chrome",
 }
 
-// systemTrees are OS-owned roots that should never be agent-granted.
+// systemTrees are OS-owned roots whose entire subtree must never be
+// agent-granted (HardBan).
 var systemTrees = []string{"/etc", "/usr", "/var", "/System", "/Library", "/bin", "/sbin", "/"}
 
 // isDirectChild reports whether abs is exactly base/<one-segment> (a home root

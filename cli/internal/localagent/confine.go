@@ -61,24 +61,24 @@ func ConfinementAvailable() (bool, string) {
 // the caller wires os.Stdin/out/err. Callers MUST have checked ConfinementAvailable
 // first — on an unsupported platform confineExec adds no wrapper, so reaching here
 // unconfined is a programming error, not a security posture.
-func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, operatorHome string, grantedDirs []string) *exec.Cmd {
+func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome string, grantedDirs []string) *exec.Cmd {
 	cd := `cd "$HOME"`
 	if dir != "" {
 		cd = "cd " + shellQuote(dir)
 	}
-	inner := cd + " && exec " + confineExec(binary, dir, operatorHome, grantedDirs)
+	inner := cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs)
 	return agentCmdContext(ctx, agentUser, inner)
 }
 
 // confineExec builds the `sandbox-exec …`/`bwrap …` prefix plus the agent binary,
 // already shell-quoted for embedding in the login-shell snippet.
-func confineExec(binary, dir, operatorHome string, grantedDirs []string) string {
+func confineExec(binary, dir, agentHome string, grantedDirs []string) string {
 	switch runtime.GOOS {
 	case "darwin":
-		profile := SandboxProfile(operatorHome, grantedDirs)
+		profile := SandboxProfile(agentHome, grantedDirs)
 		return "sandbox-exec -p " + shellQuote(profile) + " " + shellQuote(binary)
 	case "linux":
-		return strings.Join(bwrapArgs(binary, dir, operatorHome, grantedDirs), " ")
+		return strings.Join(bwrapArgs(binary, dir, agentHome, grantedDirs), " ")
 	default:
 		// Unsupported — no confinement to add. Callers gate on
 		// ConfinementAvailable, so reaching here means the launch was not guarded.
@@ -88,45 +88,65 @@ func confineExec(binary, dir, operatorHome string, grantedDirs []string) string 
 
 // ── macOS: Seatbelt / SBPL ────────────────────────────────────────────────────
 
-// SandboxProfile builds the SBPL profile for a confined macOS session. It is the
-// targeted-home-deny model: keep the base permissive, deny the operator home, then
-// re-open only what a grant under ~ needs — metadata traversal on the ancestor
-// chain (so path resolution into the grant works) plus full access to the granted
-// subtree. Grants OUTSIDE the home need no rule: `(allow default)` already permits
-// them, so we never enumerate the agent binary, its dylibs, tmp, /dev, the loopback
-// socket, or the shared toolchain (the brittleness a `(deny default)` profile would
-// have incurred).
+// humanHomeRoots are the parent directories of every human home. The whole
+// subtree of each is denied by default in the sandbox: granting the agent access
+// to one user's directory must never expose any other user's files, and the
+// operator's own home (a child of one of these) is covered by the same blanket
+// deny rather than a bespoke rule.
+var humanHomeRoots = []string{"/Users", "/home"}
+
+// SandboxProfile builds the SBPL profile for a confined macOS session. The model
+// is: keep the base permissive (so the agent's own runtime deps — its binary,
+// dylibs, tmp, /dev, the loopback socket, the shared toolchain — are untouched and
+// can't fail to start on an OS/agent update), then deny ALL human-home roots
+// (/Users, /home) and re-open only what this session legitimately needs:
 //
-// Seatbelt evaluates rules top-to-bottom with LAST-match-wins, so every re-allow is
-// emitted after the home deny. Ancestor metadata uses `(literal …)` — it matches
-// the directory node itself, not its children, so it grants stat/traverse on the
-// path component without re-exposing that ancestor's other entries (the SBPL analog
-// of the execute-only ACL traverse-walk).
-func SandboxProfile(operatorHome string, grantedDirs []string) string {
+//   - the agent's own home (it lives under /Users/Shared, inside the deny);
+//   - each granted directory;
+//   - metadata traversal on the ancestor chain of each re-allowed path (so path
+//     resolution into it works).
+//
+// Finally the executable/CLI routes on the agent's PATH are marked read-only: a
+// compromised agent must not be able to rewrite the very binaries `jentic run`
+// executes and thereby escape its sandbox on the next launch. This is a
+// non-negotiable default boundary.
+//
+// Seatbelt evaluates rules top-to-bottom with LAST-match-wins, so re-allows are
+// emitted after the home denies, and the read-only exec-route denies are emitted
+// LAST so they hold even if a re-allow overlapped them. Ancestor metadata uses
+// `(literal …)` — it matches the directory node itself, not its children, so it
+// grants stat/traverse on the path component without re-exposing that ancestor's
+// other entries (the SBPL analog of the execute-only ACL traverse-walk).
+func SandboxProfile(agentHome string, grantedDirs []string) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n")
 	b.WriteString("(allow default)\n")
 
-	if operatorHome == "" {
-		// No home to protect — nothing to trim. The permissive base stands.
-		// (Guard before Clean, which would turn "" into ".".)
-		return b.String()
+	b.WriteString("; deny every human home; re-open only the agent home and granted paths\n")
+	for _, root := range humanHomeRoots {
+		fmt.Fprintf(&b, "(deny file* (subpath %s))\n", sbplPath(root))
 	}
-	home := filepath.Clean(operatorHome)
 
-	b.WriteString("; close the operator home, then re-open only the granted paths\n")
-	fmt.Fprintf(&b, "(deny file* (subpath %s))\n", sbplPath(home))
+	// Everything the session may reach inside a denied root: the agent's own home
+	// first (always), then each granted directory.
+	var reopen []string
+	if agentHome != "" {
+		reopen = append(reopen, filepath.Clean(agentHome))
+	}
+	for _, g := range grantedDirs {
+		reopen = append(reopen, filepath.Clean(g))
+	}
 
 	seenMeta := map[string]bool{}
 	var metaLines, allowLines []string
-	for _, g := range grantedDirs {
-		g = filepath.Clean(g)
-		if !IsUnderHome(home, g) {
-			continue // outside the home: already allowed by (allow default)
+	for _, p := range reopen {
+		root := deniedRootOf(p)
+		if root == "" {
+			continue // outside every denied root: already allowed by (allow default)
 		}
-		// Metadata traversal on each ancestor from the home down to the grant's
-		// parent — the exact path the kernel resolves to reach the grant.
-		for _, anc := range AncestorChain(home, g) {
+		// Metadata traversal on each ancestor from the denied root down to p's
+		// parent — the exact path the kernel resolves to reach p.
+		for _, anc := range AncestorChain(root, p) {
 			if seenMeta[anc] {
 				continue
 			}
@@ -134,9 +154,9 @@ func SandboxProfile(operatorHome string, grantedDirs []string) string {
 			metaLines = append(metaLines,
 				fmt.Sprintf("(allow file-read-metadata (literal %s))", sbplPath(anc)))
 		}
-		// Full access to the granted subtree (wins over the home deny by last-match).
+		// Full access to the re-opened subtree (wins over the home deny by last-match).
 		allowLines = append(allowLines,
-			fmt.Sprintf("(allow file* (subpath %s))", sbplPath(g)))
+			fmt.Sprintf("(allow file* (subpath %s))", sbplPath(p)))
 	}
 	for _, l := range metaLines {
 		b.WriteString(l)
@@ -146,7 +166,51 @@ func SandboxProfile(operatorHome string, grantedDirs []string) string {
 		b.WriteString(l)
 		b.WriteByte('\n')
 	}
+
+	// Read-only executable routes, emitted LAST so the write-deny is authoritative.
+	b.WriteString("; the binaries jentic run executes stay read-only (no sandbox self-escape)\n")
+	for _, d := range execRouteDirs() {
+		fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", sbplPath(d))
+	}
 	return b.String()
+}
+
+// deniedRootOf returns the human-home root (/Users or /home) that p sits under,
+// or "" if p is outside every denied root.
+func deniedRootOf(p string) string {
+	for _, root := range humanHomeRoots {
+		if IsUnderHome(root, p) {
+			return root
+		}
+	}
+	return ""
+}
+
+// systemBinDirs are the OS binary directories always present on the login PATH.
+// They are marked read-only alongside the sanctioned tool dirs so the agent can
+// run the tools it needs but never overwrite any executable on its PATH.
+var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
+
+// execRouteDirs returns the executable directories on the agent's PATH that the
+// sandbox marks read-only: the sanctioned shared tool dirs plus the system bin
+// dirs, de-duplicated and filtered to those that exist. Making these
+// write-denied is a non-negotiable boundary — it stops a compromised agent from
+// rewriting the binaries `jentic run` executes to shed its own sandbox next run.
+func execRouteDirs() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range append(append([]string{}, candidateSharedBinDirs...), systemBinDirs...) {
+		d = filepath.Clean(d)
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // sbplPath renders a filesystem path as an SBPL double-quoted string literal,
@@ -161,21 +225,37 @@ func sbplPath(p string) string {
 
 // bwrapArgs builds the `bwrap … <binary>` argv (each token shell-quoted) that
 // mirrors the macOS profile: bind the whole host read/write (DAC still applies
-// inside the namespace — bwrap grants no privilege), then hide the operator home
-// behind a tmpfs and re-bind only the granted dirs over it. Grants outside the home
-// stay visible through the root bind. --die-with-parent tears the namespace (and
-// its mounts) down when the session exits.
-func bwrapArgs(binary, dir, operatorHome string, grantedDirs []string) []string {
+// inside the namespace — bwrap grants no privilege), then hide EVERY human-home
+// root (/Users, /home) behind a tmpfs and re-bind only the agent's own home and
+// the granted dirs over the top. Grants outside those roots stay visible through
+// the root bind. Finally the executable routes are re-mounted read-only so the
+// agent can't rewrite the binaries it runs. --die-with-parent tears the namespace
+// (and its mounts) down when the session exits.
+//
+// Order matters: bwrap applies mounts left-to-right, so the tmpfs masks come
+// first, the re-binds land on top, and the read-only exec-route binds come LAST so
+// they hold even if a grant re-bound an overlapping path.
+func bwrapArgs(binary, dir, agentHome string, grantedDirs []string) []string {
 	args := []string{"bwrap", "--die-with-parent", "--dev-bind", "/", "/"}
-	if operatorHome != "" {
-		home := filepath.Clean(operatorHome)
-		args = append(args, "--tmpfs", home)
-		for _, g := range grantedDirs {
-			g = filepath.Clean(g)
-			if IsUnderHome(home, g) {
-				args = append(args, "--bind", g, g)
-			}
+	for _, root := range humanHomeRoots {
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			args = append(args, "--tmpfs", root)
 		}
+	}
+	var reopen []string
+	if agentHome != "" {
+		reopen = append(reopen, filepath.Clean(agentHome))
+	}
+	for _, g := range grantedDirs {
+		reopen = append(reopen, filepath.Clean(g))
+	}
+	for _, p := range reopen {
+		if deniedRootOf(p) != "" {
+			args = append(args, "--bind", p, p)
+		}
+	}
+	for _, d := range execRouteDirs() {
+		args = append(args, "--ro-bind", d, d)
 	}
 	if dir != "" {
 		args = append(args, "--chdir", dir)

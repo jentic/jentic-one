@@ -1,14 +1,19 @@
 # Plan — confine the agent process with `sandbox-exec` / `bwrap`
 
-> **Design doc, not yet implemented.** This is the high-level plan for adding a
-> per-session process-confinement layer on top of the existing agent-account +
-> allow-ACL model, and for retiring the `chmod 700 ~` default-deny. The mechanics
+> **Implemented.** This began as the design for a per-session process-confinement
+> layer on top of the agent-account + allow-ACL model, replacing the `chmod 700 ~`
+> default-deny. It now ships in `cli/internal/localagent/confine.go`; this doc is
+> kept as the reference for *why* the profile is shaped the way it is. The mechanics
 > it builds on live in [`filesystem-access-model.md`](filesystem-access-model.md);
 > the flows it slots into live in [`local-agent-isolation.md`](local-agent-isolation.md).
+> Two boundaries hardened since the first draft: the deny covers **all** human-home
+> roots (`/Users`, `/home`), not just the operator's home, and the agent's
+> executable/CLI routes are mounted **read-only** — see
+> [Non-negotiable boundaries](filesystem-access-model.md#non-negotiable-boundaries).
 
 ## Why
 
-The [sibling-traversal residual](filesystem-access-model.md#open-problem--the-sibling-traversal-residual)
+The [sibling-traversal residual](filesystem-access-model.md#the-sibling-traversal-residual-closed-by-confinement)
 cannot be closed portably by ACLs/modes alone: POSIX ACLs (Linux) have no `deny`
 primitive, and macOS has no native bind mount. The
 [settled division of labour](filesystem-access-model.md#chosen-division-of-labour--account--allow-acl--sandbox)
@@ -26,10 +31,11 @@ unprivileged, writes nothing to disk, self-cleans on process exit.
    **intersection-only** and can never grant a uid access its ownership denies. We
    add **no** default-deny / inherited-deny / per-sibling deny ACEs.
 3. **Per-session confinement profile (new).** A Seatbelt profile (macOS) / a
-   `bwrap` namespace (Linux) that **denies the operator's home except the granted
-   subpaths**. This is what closes the sibling leak. See
-   [Profile model](#profile-model--targeted-home-deny-not-deny-default) for why this
-   is a *targeted deny* rather than a strict `(deny default)` allow-list.
+   `bwrap` namespace (Linux) that **denies every human-home root (`/Users`,
+   `/home`) except the granted subpaths and the agent's own home**, and marks the
+   agent's executable routes **read-only**. This is what closes the sibling leak.
+   See [Profile model](#profile-model--targeted-home-deny-not-deny-default) for why
+   this is a *targeted deny* rather than a strict `(deny default)` allow-list.
 
 ## What changes in code
 
@@ -48,17 +54,27 @@ profile is derived from it, nothing new to store.
 
 ## Profile model — targeted home-deny, not `(deny default)`
 
-The profile is **default-allow with a targeted deny on the operator's home**, not a
-strict `(deny default)` allow-list:
+The profile is **default-allow with a targeted deny on the human-home roots**, not
+a strict `(deny default)` allow-list:
 
 ```scheme
 (version 1)
 (allow default)
-; close the operator home, then re-open only the granted subpaths
-(deny file* (subpath "/Users/alice"))
-(allow file* (subpath "/Users/alice/projects/api"))   ; a granted dir
-(allow file* (subpath "/Users/Shared/alice-local-agent"))  ; agent home
+; close ALL human homes wholesale, then re-open only the granted subpaths
+(deny file* (subpath "/Users"))
+(deny file* (subpath "/home"))
+(allow file-read-metadata (literal "/Users") (literal "/Users/Shared"))  ; ancestor traversal
+(allow file* (subpath "/Users/Shared/alice-local-agent"))  ; agent home (first)
+(allow file* (subpath "/Users/alice/projects/api"))        ; a granted dir
+; executable routes stay read-only so the agent can't rewrite its own launcher
+(deny file-write* (subpath "/opt/homebrew/bin"))
+(deny file-write* (subpath "/usr/local/bin"))
 ```
+
+Note the whole-`/Users` (and `/home`) deny, not just the operator's own home: a
+grant into one user's tree can never expose another's. The agent home is re-opened
+even though it sits under the denied `/Users` root, and its `/Users`, `/Users/Shared`
+ancestors get `file-read-metadata` so the kernel can traverse down to it.
 
 **Why not `(deny default)`.** A strict deny-everything-then-allow profile is the
 theoretically strongest confinement, but it is **brittle** for a Node-based agent
@@ -90,30 +106,38 @@ locked-down sessions unusable in practice.
 
 ## The rule-set (what the profile denies and re-allows)
 
-Because the base is `(allow default)`, the profile only needs to name the operator
-home (to deny it) and the paths that must be re-opened **inside** it:
+Because the base is `(allow default)`, the profile only needs to name the human-home
+roots (to deny them) and the paths that must be re-opened **inside** them:
 
-- **Deny** — the operator home root (`subpath "<operatorHome>"`). Everything under
-  `~` becomes unreachable to the agent process.
-- **Re-allow — the granted dirs** under `~`: `GrantedDirs` for this agent (the
-  first-match / most-specific `allow` overrides the home `deny`).
-- **Re-allow — the agent's own home**, if it happens to sit under the operator home
-  (it normally does not — it lives under `/Users/Shared/…` — but re-allowing it is
-  harmless and future-proofs a differently-placed home).
+- **Deny** — every human-home root (`subpath "/Users"`, `subpath "/home"`).
+  Everything under them becomes unreachable to the agent process, regardless of
+  which user owns it.
+- **Re-allow — the agent's own home** (macOS: under `/Users/Shared/…`, itself under
+  the denied `/Users`), plus **the granted dirs**. The first-match / most-specific
+  `allow` overrides the root `deny`. Ancestors of each re-allowed path get
+  `file-read-metadata` (SBPL literals) so the kernel can traverse down to it through
+  the denied root.
+- **Deny writes on the executable routes** — `/usr/bin`, `/bin`, `/usr/sbin`,
+  `/sbin`, `/usr/local/bin`, and the sanctioned tool dirs (`/opt/homebrew/bin`, …),
+  emitted **last** so the write-deny wins. Read + execute stay (they're covered by
+  `(allow default)`); only writes are refused, so the agent can't overwrite the
+  binaries its next launch runs. See
+  [Non-negotiable boundaries](filesystem-access-model.md#non-negotiable-boundaries).
 
-Everything **outside** `~` — the agent binary and its dylibs, `/usr`,
-`/System/Library`, tmp, `/dev`, the loopback socket to Jentic One, the world-readable
-`SharedBinPaths` (`/opt/homebrew/bin`, …), and any provider config the agent legitimately
-owns — is already permitted by `(allow default)`, so the profile does **not** have
-to enumerate it. This is precisely the brittleness a `(deny default)` profile would
-have incurred, and why the targeted-deny model avoids it.
+Everything **else outside the human homes** — the agent binary and its dylibs,
+`/usr`, `/System/Library`, tmp, `/dev`, the loopback socket to Jentic One, and any
+provider config the agent legitimately owns — is already permitted by
+`(allow default)`, so the profile does **not** have to enumerate it (beyond the
+write-deny on exec routes). This is precisely the brittleness a `(deny default)`
+profile would have incurred, and why the targeted-deny model avoids it.
 
 ## What stays the same
 
-- **`DangerReason` and the sensitivity rules stay verbatim.** The home root and
+- **`localagent.Classify` and the sensitivity rules stay.** The home root and
   sensitive dotfile dirs remain un-grantable even with 700 removed — the classifier
-  is an advisory gate on what the CLI *offers*, not DAC enforcement, and this change
-  does not relax it.
+  is a gate on what the CLI *offers*, not DAC enforcement, and this change does not
+  relax it. It now returns a two-class verdict (soft ban vs hard-subtree ban), and
+  banned paths get **no grant option at all**, but the sensitivity set is unchanged.
 - **Traverse-walk + rwx-leaf ACLs stay.** Removing our `chmod 700` does **not** set
   `~` to `0755`; on macOS a login home is `0700` by OS default, so the agent still
   needs the execute-only traverse ACEs to reach a grant. The leaf grant is still
@@ -165,8 +189,9 @@ the locked-down launch and say why.
 
 1. **This doc** (design first). ✅
 2. Confinement shim + profile generation, gated on availability detection; when
-   unavailable it errors closed (never launches unconfined).
-3. Remove the `chmod 700 ~` enforcement.
+   unavailable it errors closed (never launches unconfined). ✅
+   (`cli/internal/localagent/confine.go`)
+3. Remove the `chmod 700 ~` enforcement. ✅
 4. Smoke: confined launch can reach a granted dir and **cannot** read a
    world-readable sibling; the unavailable path refuses to launch with the
    Docker-alternative guidance.

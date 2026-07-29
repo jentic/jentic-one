@@ -38,13 +38,21 @@ path under `~` is built from three layers.
 ### Layer 0 — default-deny is the confinement profile
 
 The agent process is launched under a per-session confinement profile
-(sandbox-exec on macOS, bwrap on Linux) that **denies the operator home except the
-granted subpaths** — see [`sandbox-exec-plan.md`](sandbox-exec-plan.md). We add
-**no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because in-home
-confidentiality now rests on the profile being applied, `jentic run` **errors
-closed** when confinement is unavailable rather than launching an exposed session.
-This is the layer that makes the per-entry non-negotiable (grant `~/a`, hide `~/b`)
-hold — the ACLs below only ever *open* access; they never trim it.
+(sandbox-exec on macOS, bwrap on Linux) that **denies every human-home root
+(`/Users`, `/home`) except the paths this session legitimately needs** — see
+[`sandbox-exec-plan.md`](sandbox-exec-plan.md). The re-allow list is the agent's
+own home, the granted directories, and metadata-traversal on their ancestors;
+everything else under `/Users` and `/home` is invisible to the agent regardless of
+its mode. We add **no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because
+in-home confidentiality now rests on the profile being applied, `jentic run`
+**errors closed** when confinement is unavailable rather than launching an exposed
+session. This is the layer that makes the per-entry non-negotiable (grant `~/a`,
+hide `~/b`) hold — the ACLs below only ever *open* access; they never trim it.
+
+The same profile also marks the **executable/CLI routes** on the agent's PATH
+(`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`, and the sanctioned
+tool dirs like `/opt/homebrew/bin`) **read-only** — see
+[Non-negotiable boundaries](#non-negotiable-boundaries) below.
 
 ### Layer 1 — traverse-walk (execute-only, per ancestor)
 
@@ -89,16 +97,46 @@ Two consequences worth stating plainly:
   (`delete`, `delete_child`, `add_subdirectory`); grant and revoke share the
   identical string so macOS can drop the ACE by exact match.
 
-### Danger classification — dangerous grants are never the default
+### Danger classification — two ban classes, and banned paths cannot be granted
 
-Before offering **Allow**, `jentic run` classifies the target. The operator's
-home **root**, its sensitive dotfile dirs (`~/.ssh`, `~/.jentic`, `~/.aws`,
-`~/.config`, `~/.gnupg`, `~/.gcloud`, `~/.kube`, `~/.docker`, Keychain paths,
-browser profiles), any other user's home, and system trees (`/etc`, `/usr`,
-`/var`, `/System`, `/Library`, `/bin`, `/sbin`, `/`) all trip a warning: the safe
-options are listed first, **Allow** requires a *typed* confirmation, and `--yes`
-**declines** rather than grants. Granting those would re-open the very boundary
-`chmod 700 ~` exists to close.
+Before offering **Allow**, `jentic run` classifies the target into one of three
+outcomes (`localagent.Classify`). Crucially, **a banned path offers no "grant
+anyway" option at all** — the interactive prompt lists only *Open in the agent's
+home* and *Cancel*, `--allow-dir` hard-refuses, and there is no typed-confirmation
+escape hatch. The two ban classes differ only in *which* paths they cover:
+
+| Class | Meaning | Examples | A **subdirectory** below it? |
+| ----- | ------- | -------- | ---------------------------- |
+| **Soft ban** | The directory holds secrets *directly*, so it can't be granted as-is — but a subdirectory beneath it is ordinary and grantable. | the operator's own home root; any other user's home (`/Users/<name>`, `/home/<name>`) | **grantable** |
+| **Hard-subtree ban** | Nothing anywhere in the subtree may be granted — the path *and every descendant* is off-limits. | `~/.ssh`, `~/.jentic`, `~/.aws`, `~/.config`, `~/.gnupg`, `~/.gcloud`, `~/.kube`, `~/.docker`, Keychain paths, browser profiles; system trees (`/etc`, `/usr`, `/var`, `/System`, `/Library`, `/bin`, `/sbin`, `/`) | **also banned** |
+
+So `~` itself is a *soft* ban (you can still grant `~/projects/api`), while
+`~/.ssh` is a *hard* ban (neither `~/.ssh` nor `~/.ssh/keys/prod` can ever be
+granted). Everything else is an ordinary path: `jentic run` offers **Allow** /
+**Open in agent's home** (default) / **Cancel**, and `--yes` takes the safe
+default (open in home) rather than granting.
+
+### Non-negotiable boundaries
+
+Three boundaries are enforced by default and cannot be relaxed through the normal
+grant flow:
+
+1. **Human homes are denied wholesale.** The confinement profile denies *all* of
+   `/Users` and `/home`, not just the operator's home, and re-opens only the
+   agent's own home + granted paths. Granting the agent access to one user's
+   directory can never expose another user's files.
+2. **Hard-banned subtrees can never be granted.** The sensitive dotfile dirs and
+   system trees above are refused at the prompt with no override — see the ban-class
+   table.
+3. **The binaries `jentic run` executes stay read-only.** The profile marks every
+   executable route on the agent's PATH (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`,
+   `/usr/local/bin`, and the sanctioned tool dirs such as `/opt/homebrew/bin`)
+   **read-only** (SBPL `(deny file-write* (subpath …))` on macOS, `--ro-bind` on
+   Linux). Read and execute are preserved; only writes are denied. This closes a
+   **self-escape** path: without it, a compromised or prompt-injected agent could
+   overwrite the very `jentic`/agent binary the operator runs, and thereby strip
+   its own sandbox on the *next* `jentic run`. Because it protects the launcher
+   itself, it is a default that the grant flow never opens.
 
 ### The sibling-traversal residual (closed by confinement)
 
@@ -263,8 +301,12 @@ so granting the operator in never means widening a home. At account creation the
 operator is granted a **recursive, inherited** ACL over the agent home:
 
 ```bash
-# macOS — the same explicit permission set as the leaf grant, inherited
-sudo chmod +a "user:$OPERATOR allow <full-leaf-ACE-set incl. inherit bits>" "$AGENT_HOME"
+# macOS — the same explicit permission set as the leaf grant (incl. inherit bits),
+# stamped over every existing entry too. `find ! -type l` is used rather than
+# `chmod -R` because macOS rejects `-R -h` together, and `chmod -R` follows
+# symlinks — so we walk real entries and skip symlinks explicitly.
+sudo find "$AGENT_HOME" ! -type l \
+  -exec chmod +a# 0 "user:$OPERATOR allow <full-leaf-ACE-set incl. inherit bits>" {} +
 # Linux — recursive access ACL + default ACL
 sudo setfacl -R -m u:"$OPERATOR":rwX "$AGENT_HOME"
 sudo setfacl -R -d -m u:"$OPERATOR":rwX "$AGENT_HOME"
@@ -279,6 +321,13 @@ Why the operator needs it:
   `add_subdirectory` (the macOS `write` shorthand omits it) and the inherit bits
   (without `file_inherit`/`directory_inherit` the operator loses access to
   whatever the agent creates afterwards).
+- **Profile discovery reads the agent's own home.** An agent registered as its
+  own Unix user writes its identity into `<agent-home>/.jentic/profiles`, at
+  `0700`. Because the grant is applied **recursively over existing entries** (not
+  just inherited onto future ones), those profile files stay operator-readable, so
+  `jentic profile list` / `jentic profile view` can surface agent-owned profiles.
+  Without the recursive stamp, the operator would see only their own profiles —
+  the bug this direction's recursive grant fixes.
 
 This grant is **additive and idempotent** — re-applying only ever widens — so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a
@@ -322,3 +371,8 @@ between what's recorded and what's actually present.
 - It does not share anything under the operator's 700 home by symlink or PATH —
   those resolve with the agent's credentials and dangle at the home boundary (see
   the CLI-tool-sharing note in [`local-agent-isolation.md`](local-agent-isolation.md)).
+- It never lets the agent **write** the binaries it is launched with. Executable
+  routes on its PATH are mounted read-only by the confinement profile (see
+  [Non-negotiable boundaries](#non-negotiable-boundaries)); read + execute stay,
+  writes are denied, so the agent cannot rewrite its launcher to escape the sandbox
+  on a later run.

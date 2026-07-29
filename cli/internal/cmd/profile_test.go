@@ -44,6 +44,108 @@ func TestProfileListMarksActive(t *testing.T) {
 	}
 }
 
+func TestProfileListDiscoversAgentOwnedProfiles(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+
+	// An agent registered as its own Unix user writes its identity into its own
+	// home (<ConfigDir>/profiles), not the operator's ~/.jentic. Simulate that by
+	// pointing a configured agent at a separate config root and seeding a profile
+	// there.
+	agentRoot := t.TempDir()
+	agentPaths := config.Paths{Root: agentRoot}
+	ap, err := profile.Open(agentPaths, "botprofile")
+	if err != nil {
+		t.Fatalf("open agent profile: %v", err)
+	}
+	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000"}); err != nil {
+		t.Fatalf("save agent meta: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetLocalAgent("mybot", config.LocalAgent{User: "mybot-agent", ConfigDir: agentRoot})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	if err := app.profileList(); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"botprofile", "agnt_bot", "(agent: mybot)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list output missing agent-owned profile marker %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderAccessTreeCollapsesNestedAndMarksSubtree(t *testing.T) {
+	out := renderAccessTree([]string{
+		"/opt/data",
+		"/opt/data/inner", // nested under /opt/data → folded away
+		"/Users/Shared/bot",
+	})
+	if !strings.Contains(out, "/opt/data/*") {
+		t.Errorf("expected whole-subtree marker on /opt/data:\n%s", out)
+	}
+	if strings.Contains(out, "/opt/data/inner") {
+		t.Errorf("nested grant should be folded into its parent:\n%s", out)
+	}
+	if !strings.Contains(out, "/Users/Shared/bot/*") {
+		t.Errorf("expected the agent home in the tree:\n%s", out)
+	}
+}
+
+func TestRenderAccessTreeEmpty(t *testing.T) {
+	if out := renderAccessTree(nil); !strings.Contains(out, "no directories") {
+		t.Errorf("expected empty marker, got:\n%s", out)
+	}
+}
+
+func TestProfileViewShowsAccessTree(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "bot", "agnt_1")
+
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetLocalAgent("bot", config.LocalAgent{
+		User:        "bot-agent",
+		HomeDir:     "/Users/Shared/bot-agent",
+		GrantedDirs: []string{"/opt/data", "/Users/alice/projects/api"},
+	})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	if err := app.profileView("bot"); err != nil {
+		t.Fatalf("profileView: %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{
+		"Filesystem access",
+		"/Users/Shared/bot-agent/*",
+		"/opt/data/*",
+		"/Users/alice/projects/api/*",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("profile view missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestProfileViewMissingErrors(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+	err := app.profileView("ghost")
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected does-not-exist error, got %v", err)
+	}
+}
+
 func TestProfileListEmpty(t *testing.T) {
 	app := testApp(t)
 	if err := app.profileList(); err != nil {

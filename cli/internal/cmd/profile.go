@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -31,9 +33,21 @@ func newProfileCmd(app *App) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newProfileListCmd(app))
+	cmd.AddCommand(newProfileViewCmd(app))
 	cmd.AddCommand(newProfileUseCmd(app))
 	cmd.AddCommand(newProfileAddKeyCmd(app))
 	return cmd
+}
+
+func newProfileViewCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "view <name>",
+		Short: "Show a profile's details and the directories its agent can access",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return app.profileView(args[0])
+		},
+	}
 }
 
 func newProfileListCmd(app *App) *cobra.Command {
@@ -63,6 +77,82 @@ func newProfileUseCmd(app *App) *cobra.Command {
 	}
 }
 
+// profileRef locates one discovered profile: its name, the Paths root the
+// profile store lives under, and (for an agent-owned profile) the agent id whose
+// home holds it. Operator-owned profiles have an empty agentID.
+type profileRef struct {
+	name    string
+	paths   config.Paths
+	agentID string
+}
+
+// owned reports whether this profile lives in an agent user's home rather than
+// the operator's own ~/.jentic.
+func (r profileRef) owned() bool { return r.agentID != "" }
+
+// discoverProfiles returns every profile visible to the operator: those in the
+// operator's own ~/.jentic/profiles, plus those an agent registered as its own
+// Unix user wrote into its home (<ConfigDir>/profiles). The operator can read the
+// latter because account creation grants a recursive, inherited ACL over the
+// agent home (see localagent.GrantOperatorHomeCmd). A name that exists in more
+// than one source is kept as distinct refs, disambiguated for display by owner.
+func (a *App) discoverProfiles(cfg *config.FileConfig) ([]profileRef, error) {
+	var refs []profileRef
+
+	names, err := profile.List(a.Paths)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		refs = append(refs, profileRef{name: n, paths: a.Paths})
+	}
+
+	// Agent-owned profiles, one source per configured agent with a ConfigDir.
+	for id, agent := range cfg.LocalAgents {
+		if agent.ConfigDir == "" {
+			continue // same-user agent: its identity is in the operator's config
+		}
+		ap := config.Paths{Root: agent.ConfigDir}
+		agentNames, aerr := profile.List(ap)
+		if aerr != nil {
+			// An unreadable agent home shouldn't sink the whole listing.
+			fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf("  (skipping agent %s profiles: %v)", id, aerr)))
+			continue
+		}
+		for _, n := range agentNames {
+			refs = append(refs, profileRef{name: n, paths: ap, agentID: id})
+		}
+	}
+
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].name != refs[j].name {
+			return refs[i].name < refs[j].name
+		}
+		return refs[i].agentID < refs[j].agentID
+	})
+	return refs, nil
+}
+
+// findProfileRef resolves a profile name to its ref among the discovered
+// profiles, preferring an operator-owned profile when the name is ambiguous.
+func (a *App) findProfileRef(cfg *config.FileConfig, name string) (profileRef, bool, error) {
+	refs, err := a.discoverProfiles(cfg)
+	if err != nil {
+		return profileRef{}, false, err
+	}
+	var match profileRef
+	found := false
+	for _, r := range refs {
+		if r.name != name {
+			continue
+		}
+		if !found || !r.owned() {
+			match, found = r, true
+		}
+	}
+	return match, found, nil
+}
+
 // profileList prints every profile with the active one marked by a filled radio
 // ring, plus each profile's base URL, agent id, and token state.
 func (a *App) profileList() error {
@@ -70,21 +160,22 @@ func (a *App) profileList() error {
 	if err != nil {
 		return err
 	}
-	names, err := profile.List(a.Paths)
+	refs, err := a.discoverProfiles(cfg)
 	if err != nil {
 		return err
 	}
 
 	fmt.Fprintln(a.Out, theme.Heading.Render("Profiles"))
-	if len(names) == 0 {
+	if len(refs) == 0 {
 		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no profiles yet — run `jentic register`"))
 		return nil
 	}
 
-	sort.Strings(names)
 	active := cfg.ResolvedProfileName("")
-	for _, name := range names {
-		a.printProfileRow(name, name == active)
+	for _, ref := range refs {
+		// Only an operator-owned profile can be the active one (the active
+		// profile governs the operator's own commands).
+		a.printProfileRow(ref, ref.name == active && !ref.owned())
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Dim.Render("active: ")+theme.Command.Render(active))
@@ -93,14 +184,18 @@ func (a *App) profileList() error {
 
 // printProfileRow renders a single profile: a radio glyph + name header, then an
 // indented summary read from its on-disk metadata and cached tokens.
-func (a *App) printProfileRow(name string, active bool) {
+func (a *App) printProfileRow(ref profileRef, active bool) {
 	glyph := theme.Dim.Render(theme.SelectOff)
 	if active {
 		glyph = theme.Success.Render(theme.SelectOn)
 	}
-	fmt.Fprintln(a.Out, glyph+" "+theme.Accent.Render(name))
+	header := glyph + " " + theme.Accent.Render(ref.name)
+	if ref.owned() {
+		header += " " + theme.Dim.Render("(agent: "+ref.agentID+")")
+	}
+	fmt.Fprintln(a.Out, header)
 
-	p, err := profile.Open(a.Paths, name)
+	p, err := profile.Open(ref.paths, ref.name)
 	if err != nil {
 		fmt.Fprintln(a.Out, "    "+theme.Warnf("unreadable: %v", err))
 		return
@@ -129,6 +224,115 @@ func (a *App) printProfileRow(name string, active bool) {
 	tokens, _ := p.LoadTokens()
 	state, _ := tokenStatus(tokens)
 	fmt.Fprintln(a.Out, "    "+theme.Field("token", state))
+}
+
+// profileView prints one profile's details plus an ASCII tree of every directory
+// the agent behind it can access: the agent's own home and each granted dir. A
+// directory that is granted wholesale (the agent may read/write everything under
+// it) is shown with a trailing "/*", and nested grants collapse into their
+// enclosing grant so the tree stays high-level.
+func (a *App) profileView(name string) error {
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	ref, found, err := a.findProfileRef(cfg, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("profile %q does not exist; run `jentic profile list` to see options", name)
+	}
+
+	// Header + details (reuse the same summary the list row prints).
+	active := cfg.ResolvedProfileName("")
+	a.printProfileRow(ref, ref.name == active && !ref.owned())
+
+	// Which agent's access does this profile represent? An agent-owned profile
+	// names its agent directly; an operator profile is matched to a configured
+	// agent by its registered agent id, if any.
+	agentID, agent, ok := a.resolveProfileAgent(cfg, ref)
+	fmt.Fprintln(a.Out)
+	if !ok {
+		fmt.Fprintln(a.Out, theme.Dim.Render("No local agent account is linked to this profile — no filesystem access to show."))
+		return nil
+	}
+
+	fmt.Fprintln(a.Out, theme.Heading.Render("Filesystem access")+" "+theme.Dim.Render("(agent: "+agentID+")"))
+	var roots []string
+	if agent.HomeDir != "" {
+		roots = append(roots, agent.HomeDir)
+	}
+	roots = append(roots, agent.GrantedDirs...)
+	fmt.Fprint(a.Out, renderAccessTree(roots))
+	return nil
+}
+
+// resolveProfileAgent finds the local-agent config entry whose access the profile
+// represents: for an agent-owned profile that is the owning agent; for an
+// operator profile it is the agent whose registered AgentID matches the profile's
+// metadata (if any). Returns the agent id (the LocalAgents key), the entry, and
+// whether a match was found.
+func (a *App) resolveProfileAgent(cfg *config.FileConfig, ref profileRef) (string, config.LocalAgent, bool) {
+	if ref.owned() {
+		entry, ok := cfg.LocalAgent(ref.agentID)
+		return ref.agentID, entry, ok
+	}
+	// An operator profile has no explicit agent link; the best-effort match is a
+	// configured local agent whose id equals the profile name (the common case,
+	// since `jentic run <id>` and the profile are usually named alike).
+	if entry, ok := cfg.LocalAgent(ref.name); ok && entry.User != "" {
+		return ref.name, entry, true
+	}
+	return "", config.LocalAgent{}, false
+}
+
+// renderAccessTree draws a high-level ASCII directory tree of the given accessible
+// roots. Each root is shown with a trailing "/*" (the agent has full access to
+// everything beneath it); a root that is nested inside another is folded away so
+// only the outermost grants are drawn. Common parent directories are shown as
+// shared branches so, e.g., /opt/data and /opt/tools render under a single /opt.
+func renderAccessTree(roots []string) string {
+	cleaned := make([]string, 0, len(roots))
+	seen := map[string]bool{}
+	for _, r := range roots {
+		c := filepath.Clean(r)
+		if c == "" || c == "." || seen[c] {
+			continue
+		}
+		seen[c] = true
+		cleaned = append(cleaned, c)
+	}
+	if len(cleaned) == 0 {
+		return "  " + theme.Dim.Render("(no directories)") + "\n"
+	}
+	sort.Strings(cleaned)
+
+	// Drop any root that is contained by another (the enclosing grant already
+	// covers it, since access is whole-subtree).
+	var tops []string
+	for _, c := range cleaned {
+		contained := false
+		for _, other := range cleaned {
+			if other != c && localagent.IsUnderHome(other, c) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			tops = append(tops, c)
+		}
+	}
+
+	var b strings.Builder
+	for i, t := range tops {
+		connector := "├─ "
+		if i == len(tops)-1 {
+			connector = "└─ "
+		}
+		fmt.Fprintf(&b, "%s%s\n", connector, theme.Accent.Render(t+"/*"))
+	}
+	return b.String()
 }
 
 // profileSwitch persists the default profile. With no name it opens the

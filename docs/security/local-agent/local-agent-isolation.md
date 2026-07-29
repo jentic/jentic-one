@@ -280,6 +280,14 @@ via a curated copy is a possible future addition, but is out of scope today.
 > executables — it grants no new filesystem reach, and the credential boundary is
 > unchanged.
 
+> **The shared tool dirs are mounted read-only.** These executable routes
+> (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, …) are marked read-only in
+> the confinement profile (SBPL `(deny file-write* …)` / bwrap `--ro-bind`) as a
+> **non-negotiable default** — read and execute stay, writes are denied. Without it
+> a compromised agent could overwrite a binary the operator's next `jentic run`
+> executes and strip its own sandbox. See
+> [Non-negotiable boundaries](filesystem-access-model.md#non-negotiable-boundaries).
+
 ### Step 3 — config seeding (opt-in, once, never clobbers)
 
 Provisioning gives a runnable tool but not the operator's *settings*. After the
@@ -332,12 +340,17 @@ single agent user; the operator's own access is never touched) in three layers:
 - **Layer 2 — rwx-leaf** — full, **recursive**, inherited read/write/execute on the
   chosen workspace and everything already in it or created later.
 
-Before offering **Allow**, `jentic run` classifies the target: the operator's home
-root, its sensitive dotfile dirs, other users' homes, and system trees all trip a
-warning — **Allow** requires a *typed* confirmation and `--yes` declines. Revoke
-drops the leaf allow (ancestor traverse stays); a full `jentic reset` walks the
-ancestor chain and drops those too. Grants **persist across sessions** by design,
-so `--list-grants` exists to keep access from quietly sprawling.
+Before offering **Allow**, `jentic run` classifies the target into two ban
+classes, and **a banned target gets no "grant anyway" option at all**: the prompt
+offers only *Open in agent's home* / *Cancel*, `--allow-dir` hard-refuses, and
+`--yes` takes the safe default. A **soft ban** (the operator's home root, another
+user's home) blocks granting *that directory* but still lets you grant a
+subdirectory beneath it; a **hard-subtree ban** (sensitive dotfile dirs — `~/.ssh`,
+`~/.jentic`, `~/.aws`, …, Keychain, browser profiles — and system trees like
+`/etc`, `/usr`, `/`) blocks the path *and every descendant*. Revoke drops the leaf
+allow (ancestor traverse stays); a full `jentic reset` walks the ancestor chain and
+drops those too. Grants **persist across sessions** by design, so `--list-grants`
+exists to keep access from quietly sprawling.
 
 > The exact ACL commands, the macOS `write`-shorthand gotcha (why the permission
 > set is spelled out in full), the recursive-over-existing-contents consequence,

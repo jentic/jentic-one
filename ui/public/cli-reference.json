@@ -149,6 +149,12 @@
               ]
             },
             {
+              "name": "view",
+              "path": "jentic profile view",
+              "use": "view \u003cname\u003e",
+              "short": "Show a profile's details and the directories its agent can access"
+            },
+            {
               "name": "use",
               "path": "jentic profile use",
               "use": "use [name]",
