@@ -1,6 +1,7 @@
 package localagent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -195,6 +196,24 @@ func TestGrantAndRevokeCmdShape(t *testing.T) {
 		if !strings.Contains(joined, "a-local-agent") || !strings.Contains(joined, c.target) {
 			t.Errorf("%s: args missing user or target: %v", c.name, c.args)
 		}
+	}
+}
+
+// TestCanRunAsAgentCmdShape guards the preflight that confirms the operator can
+// become the agent user: it must be sudo-fronted, target the agent account, and
+// run a trivial no-op so a non-zero exit means "couldn't switch" (declined
+// password / no rights) rather than anything about the workload.
+func TestCanRunAsAgentCmdShape(t *testing.T) {
+	args := CanRunAsAgentCmd(context.Background(), "alice-local-agent").Args
+	if args[0] != "sudo" {
+		t.Fatalf("preflight must be sudo-fronted, got %v", args)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-u alice-local-agent") {
+		t.Errorf("preflight must switch to the agent user: %v", args)
+	}
+	if !strings.HasSuffix(joined, " true") {
+		t.Errorf("preflight must run a no-op (true) so exit code reflects the switch only: %v", args)
 	}
 }
 

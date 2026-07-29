@@ -243,6 +243,20 @@ func ProbeBinary(ctx context.Context, agentUser string, desc Descriptor) BinaryS
 	return BinaryMissing
 }
 
+// CanRunAsAgentCmd builds a no-op `sudo -u <agent> … true` used as a preflight to
+// confirm the operator can actually *become* the agent user before anything else
+// runs. Every later step (ProbeBinary, the ACL grants, the launch) shells through
+// the same sudo, and a failed sudo authentication (the operator declines the
+// password prompt and no passwordless rule is installed) exits non-zero exactly
+// like a genuine "command not found" — so without this check the binary probe
+// misreads a refused password as a missing binary. `true` is a bash builtin, so
+// it succeeds whenever sudo genuinely switched us to the agent and fails only when
+// it could not. The caller must wire the command's stdio to the terminal so the
+// sudo password prompt is visible and interactive.
+func CanRunAsAgentCmd(ctx context.Context, agentUser string) *exec.Cmd {
+	return agentCmdContext(ctx, agentUser, "true")
+}
+
 // DirAccess reports whether the agent user can read, write, and traverse dir.
 func DirAccess(ctx context.Context, agentUser, dir string) bool {
 	// -r -a -w -a -x: readable AND writable AND traversable, all as the agent.

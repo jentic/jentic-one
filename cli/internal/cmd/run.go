@@ -113,6 +113,17 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser)
 	}
 
+	// Confirm we can actually become the agent user before anything else. Every
+	// later step (binary probe, ACL grants, launch) runs through `sudo -u <agent>`,
+	// and a failed sudo authentication exits non-zero exactly like a missing binary
+	// — so without this preflight a declined password prompt is misreported as
+	// "agent not installed" and the operator is offered a pointless reinstall. Fail
+	// here with the real reason instead. This is also the single place the password
+	// prompt appears (subsequent sudo calls reuse the cached credential).
+	if err := a.ensureCanRunAsAgent(ctx, agentUser); err != nil {
+		return err
+	}
+
 	// Record/refresh the entry so subsequent runs never re-derive the account.
 	if !hasEntry {
 		cfg.SetLocalAgent(agentID, config.LocalAgent{User: agentUser, Binary: binary})
@@ -180,6 +191,27 @@ func resolveAgentUser(flag string, entry config.LocalAgent) string {
 		operator = u.Username
 	}
 	return localagent.DefaultUserName(operator)
+}
+
+// ensureCanRunAsAgent confirms the operator can switch to the agent user before
+// any step that relies on it. The check runs `sudo -u <agent> … true` with the
+// terminal wired up, so a passwordless rule passes silently and, without one, the
+// operator sees the sudo password prompt here — the single place it appears. A
+// non-zero exit means we could NOT become the agent (declined/wrong password, no
+// sudoers rights), which every later `sudo -u <agent>` would hit too; we surface
+// that as the real reason rather than letting the binary probe misread it as a
+// missing install.
+func (a *App) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
+	c := localagent.CanRunAsAgentCmd(ctx, agentUser)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, a.Out, a.Err
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("couldn't switch to the agent user %q — the launch needs to run as that "+
+			"account (every step uses `sudo -u %s`).\n"+
+			"  If you were asked for your password and cancelled, re-run and enter it. To skip the\n"+
+			"  prompt each time, enable passwordless launch during `jentic bootstrap` (or re-run it).",
+			agentUser, agentUser)
+	}
+	return nil
 }
 
 // ── step 2: binary provisioning ──────────────────────────────────────────────
