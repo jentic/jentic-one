@@ -67,6 +67,7 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 									key={cred.credential_id}
 									{...rowMotion}
 									layout
+									data-testid="binding-row"
 									className="bg-muted/30 border-border/60 hover:border-border overflow-hidden rounded-lg border transition-colors"
 								>
 									<div className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -144,6 +145,26 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 											</InlineConfirm>
 										</div>
 									</div>
+									{/* Bind-time warnings from the API (BindingWarningSchema)
+									    — e.g. zero rules ⇒ broker default-denies. Rendered
+									    verbatim; the backend message carries the recovery hint. */}
+									{(cred.warnings ?? []).length > 0 && (
+										<div className="border-warning/30 bg-warning/5 space-y-1 border-t px-4 py-2.5">
+											{(cred.warnings ?? []).map((warning) => (
+												<p
+													key={warning.code}
+													className="text-warning flex items-start gap-1.5 text-xs"
+													data-testid="binding-warning"
+												>
+													<AlertTriangle
+														className="mt-0.5 h-3.5 w-3.5 shrink-0"
+														aria-hidden="true"
+													/>
+													{warning.message}
+												</p>
+											))}
+										</div>
+									)}
 									<AnimatePresence initial={false}>
 										{editingPermForCred === cred.credential_id && (
 											<motion.div

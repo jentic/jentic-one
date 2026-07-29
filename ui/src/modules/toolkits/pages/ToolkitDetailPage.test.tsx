@@ -295,6 +295,56 @@ describe('ToolkitDetailPage', () => {
 		await user.click(stripeRow);
 		// Bind succeeds → the dialog closes (onSuccess → setBindOpen(false)).
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+		// The fresh bind lands with zero rules — the backend's warnings[] renders
+		// verbatim on the new binding row.
+		expect(await screen.findByTestId('binding-warning')).toHaveTextContent(
+			/no permission rules/i,
+		);
+	});
+
+	it('dry-runs a request against the saved rules with the rule tester', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Open the permissions editor for the seeded GitHub binding — the tester
+		// lives next to the rule editor. (Scoped to the row: a previous test may
+		// have bound extra credentials to the shared mock store.)
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /permissions/i }),
+		);
+		await screen.findByText(/test a request/i);
+
+		// GET /repos/… matches the seeded allow rule → Allowed, rule #1.
+		await user.type(screen.getByLabelText('Request path'), '/repos/acme/site');
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		expect(await screen.findByTestId('rule-verdict')).toHaveTextContent(
+			/allowed — matched rule #1/i,
+		);
+
+		// /admin/… trips the system safety deny → Denied, system-tagged.
+		await user.clear(screen.getByLabelText('Request path'));
+		await user.type(screen.getByLabelText('Request path'), '/admin/users');
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		await waitFor(() =>
+			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
+				/denied — matched rule #2 \(system safety\)/i,
+			),
+		);
+
+		// A path nothing matches → the broker's default deny.
+		await user.clear(screen.getByLabelText('Request path'));
+		await user.type(screen.getByLabelText('Request path'), '/unmapped');
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		await waitFor(() =>
+			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
+				/denied — no rule matched/i,
+			),
+		);
 	});
 
 	it('filters the credential picker by the search term', async () => {

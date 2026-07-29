@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Save } from 'lucide-react';
 import { Button, PermissionRuleEditor, isEmptyAllowRule } from '@/shared/ui';
 import { useReplacePermissions } from '@/modules/toolkits/api';
+import { RuleTester } from '@/modules/toolkits/components/detail/RuleTester';
 import type { PermissionRule, PermissionRuleInput } from '@/modules/toolkits/api/types';
 
 /**
@@ -86,6 +87,8 @@ export function CredentialPermissionEditor({
 					Cancel
 				</Button>
 			</div>
+
+			<RuleTester toolkitId={toolkitId} credentialId={credentialId} />
 		</div>
 	);
 }
