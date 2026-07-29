@@ -226,10 +226,13 @@ func (a *App) printProfileRow(ref profileRef, active bool) {
 }
 
 // profileView prints one profile's details plus an ASCII tree of every directory
-// the agent behind it can access: the agent's own home and each granted dir. A
-// directory that is granted wholesale (the agent may read/write everything under
-// it) is shown with a trailing "/*", and nested grants collapse into their
-// enclosing grant so the tree stays high-level.
+// a confined agent session can actually reach: the agent's own home and each
+// granted dir (read/write), plus the executable routes on its PATH (read-only).
+// The access set is sourced from localagent.SessionAccess — the SAME function the
+// launcher's confinement builders use — so this display can never diverge from
+// what the sandbox actually mounts. A directory reachable wholesale is shown with
+// a trailing "/*", and nested paths collapse into their enclosing entry so the
+// tree stays high-level.
 func (a *App) profileView(name string) error {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
@@ -258,12 +261,8 @@ func (a *App) profileView(name string) error {
 	}
 
 	fmt.Fprintln(a.Out, theme.Heading.Render("Filesystem access")+" "+theme.Dim.Render("(agent: "+agentID+")"))
-	var roots []string
-	if agent.HomeDir != "" {
-		roots = append(roots, agent.HomeDir)
-	}
-	roots = append(roots, agent.GrantedDirs...)
-	fmt.Fprint(a.Out, renderAccessTree(roots))
+	dirs := localagent.SessionAccess(agent.HomeDir, agent.GrantedDirs)
+	fmt.Fprint(a.Out, renderAccessTree(dirs))
 	return nil
 }
 
@@ -286,29 +285,70 @@ func (a *App) resolveProfileAgent(cfg *config.FileConfig, ref profileRef) (strin
 	return "", config.LocalAgent{}, false
 }
 
-// renderAccessTree draws a high-level ASCII directory tree of the given accessible
-// roots. Each root is shown with a trailing "/*" (the agent has full access to
-// everything beneath it); a root that is nested inside another is folded away so
-// only the outermost grants are drawn. Common parent directories are shown as
-// shared branches so, e.g., /opt/data and /opt/tools render under a single /opt.
-func renderAccessTree(roots []string) string {
-	cleaned := make([]string, 0, len(roots))
-	seen := map[string]bool{}
-	for _, r := range roots {
-		c := filepath.Clean(r)
-		if c == "" || c == "." || seen[c] {
+// renderAccessTree draws a high-level ASCII directory tree of everything a
+// confined session can reach, as returned by localagent.SessionAccess. Read/write
+// directories (the agent home and grants) render first; read-only executable
+// routes render after under a dimmed "(read-only)" tag so the operator sees the
+// full mounted set without mistaking the exec routes for writable grants. Each
+// entry is shown with a trailing "/*" (whole-subtree access); a path nested inside
+// another entry of the SAME access kind is folded into it so the tree stays
+// high-level.
+func renderAccessTree(dirs []localagent.SessionDir) string {
+	var rw, ro []string
+	for _, d := range dirs {
+		c := filepath.Clean(d.Path)
+		if c == "" || c == "." {
 			continue
 		}
-		seen[c] = true
-		cleaned = append(cleaned, c)
+		if d.Kind == localagent.AccessReadOnly {
+			ro = append(ro, c)
+		} else {
+			rw = append(rw, c)
+		}
 	}
-	if len(cleaned) == 0 {
+	rw = topLevelDirs(rw)
+	ro = topLevelDirs(ro)
+	if len(rw) == 0 && len(ro) == 0 {
 		return "  " + theme.Dim.Render("(no directories)") + "\n"
+	}
+
+	var b strings.Builder
+	// The read-only tag is a suffix on those rows; the last drawn row (of either
+	// group) gets the └─ elbow.
+	total := len(rw) + len(ro)
+	i := 0
+	draw := func(path, suffix string) {
+		connector := "├─ "
+		if i == total-1 {
+			connector = "└─ "
+		}
+		i++
+		fmt.Fprintf(&b, "%s%s%s\n", connector, theme.Accent.Render(path+"/*"), suffix)
+	}
+	for _, t := range rw {
+		draw(t, "")
+	}
+	for _, t := range ro {
+		draw(t, " "+theme.Dim.Render("(read-only)"))
+	}
+	return b.String()
+}
+
+// topLevelDirs de-duplicates, sorts, and drops any directory contained by another
+// in the same set (the enclosing entry already covers it, since access is
+// whole-subtree).
+func topLevelDirs(paths []string) []string {
+	seen := map[string]bool{}
+	cleaned := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		cleaned = append(cleaned, p)
 	}
 	sort.Strings(cleaned)
 
-	// Drop any root that is contained by another (the enclosing grant already
-	// covers it, since access is whole-subtree).
 	var tops []string
 	for _, c := range cleaned {
 		contained := false
@@ -322,16 +362,7 @@ func renderAccessTree(roots []string) string {
 			tops = append(tops, c)
 		}
 	}
-
-	var b strings.Builder
-	for i, t := range tops {
-		connector := "├─ "
-		if i == len(tops)-1 {
-			connector = "└─ "
-		}
-		fmt.Fprintf(&b, "%s%s\n", connector, theme.Accent.Render(t+"/*"))
-	}
-	return b.String()
+	return tops
 }
 
 // profileSwitch persists the default profile. With no name it opens the

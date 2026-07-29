@@ -328,6 +328,15 @@ Why the operator needs it:
   `jentic profile list` / `jentic profile view` can surface agent-owned profiles.
   Without the recursive stamp, the operator would see only their own profiles —
   the bug this direction's recursive grant fixes.
+- **`jentic profile view` shows the real session mount set.** The directory tree
+  it prints is not hand-built from the config; it is computed by
+  `localagent.SessionAccess(agentHome, grantedDirs)` — the **same** function the
+  launcher's confinement builders (`SandboxProfile` on macOS, `bwrapArgs` on
+  Linux) consume. So the display lists exactly what a confined session can reach:
+  the agent home and each grant (read/write), plus the executable routes on its
+  PATH (shown read-only). Sourcing both from one function is deliberate — it
+  prevents the "what the agent can see" display from silently drifting from what
+  the sandbox actually mounts.
 
 This grant is **additive and idempotent** — re-applying only ever widens — so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a

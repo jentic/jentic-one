@@ -112,6 +112,49 @@ func TestSandboxProfileDedupesSharedAncestors(t *testing.T) {
 	}
 }
 
+// SessionAccess is the single source of truth both the confinement builders and
+// `jentic profile view` consume: the agent home + grants are read/write, the
+// existing exec routes are read-only, and everything it reports read/write must
+// be exactly what SandboxProfile re-opens (so the display can't drift from the
+// mount).
+func TestSessionAccessClassifiesAndFeedsSandbox(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	grants := []string{"/Users/alice/projects/api"}
+	dirs := SessionAccess(home, grants)
+
+	var rw, ro []string
+	for _, d := range dirs {
+		switch d.Kind {
+		case AccessReadWrite:
+			rw = append(rw, d.Path)
+		case AccessReadOnly:
+			ro = append(ro, d.Path)
+		}
+	}
+	// Home + grant are read/write, in that order.
+	if len(rw) != 2 || rw[0] != home || rw[1] != grants[0] {
+		t.Fatalf("read/write set = %v, want [%s %s]", rw, home, grants[0])
+	}
+	// /usr/bin exists on every dev box and must be reported read-only.
+	foundBin := false
+	for _, p := range ro {
+		if p == "/usr/bin" {
+			foundBin = true
+		}
+	}
+	if !foundBin {
+		t.Errorf("read-only routes %v missing /usr/bin", ro)
+	}
+
+	// The profile the launcher builds must re-open exactly the read/write set.
+	p := SandboxProfile(home, grants)
+	for _, w := range rw {
+		if !strings.Contains(p, `(allow file* (subpath "`+w+`"))`) {
+			t.Errorf("sandbox profile does not re-open read/write dir %q\n%s", w, p)
+		}
+	}
+}
+
 func TestSbplPathEscaping(t *testing.T) {
 	got := sbplPath(`/tmp/a"b\c`)
 	want := `"/tmp/a\"b\\c"`

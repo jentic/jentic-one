@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -82,10 +83,10 @@ func TestProfileListDiscoversAgentOwnedProfiles(t *testing.T) {
 }
 
 func TestRenderAccessTreeCollapsesNestedAndMarksSubtree(t *testing.T) {
-	out := renderAccessTree([]string{
-		"/opt/data",
-		"/opt/data/inner", // nested under /opt/data → folded away
-		"/Users/Shared/bot",
+	out := renderAccessTree([]localagent.SessionDir{
+		{Path: "/opt/data", Kind: localagent.AccessReadWrite},
+		{Path: "/opt/data/inner", Kind: localagent.AccessReadWrite}, // nested → folded away
+		{Path: "/Users/Shared/bot", Kind: localagent.AccessReadWrite},
 	})
 	if !strings.Contains(out, "/opt/data/*") {
 		t.Errorf("expected whole-subtree marker on /opt/data:\n%s", out)
@@ -95,6 +96,22 @@ func TestRenderAccessTreeCollapsesNestedAndMarksSubtree(t *testing.T) {
 	}
 	if !strings.Contains(out, "/Users/Shared/bot/*") {
 		t.Errorf("expected the agent home in the tree:\n%s", out)
+	}
+}
+
+// A read-only exec route renders after the read/write grants under a
+// "(read-only)" tag, and is NOT folded into a read/write entry even if nested.
+func TestRenderAccessTreeSeparatesReadOnlyRoutes(t *testing.T) {
+	out := renderAccessTree([]localagent.SessionDir{
+		{Path: "/Users/Shared/bot", Kind: localagent.AccessReadWrite},
+		{Path: "/usr/bin", Kind: localagent.AccessReadOnly},
+	})
+	if !strings.Contains(out, "/usr/bin/*") || !strings.Contains(out, "read-only") {
+		t.Errorf("expected read-only exec route with tag:\n%s", out)
+	}
+	// Ordering: the read/write grant comes before the read-only route.
+	if rw, ro := strings.Index(out, "/Users/Shared/bot"), strings.Index(out, "/usr/bin"); rw < 0 || ro < 0 || ro < rw {
+		t.Errorf("read/write grant must render before read-only route (rw@%d ro@%d)\n%s", rw, ro, out)
 	}
 }
 
@@ -130,6 +147,11 @@ func TestProfileViewShowsAccessTree(t *testing.T) {
 		"/Users/Shared/bot-agent/*",
 		"/opt/data/*",
 		"/Users/alice/projects/api/*",
+		// The read-only executable routes the sandbox mounts are shown too, so the
+		// operator sees the full set the agent can reach. /usr/bin exists on every
+		// dev box and is a sanctioned exec route.
+		"/usr/bin/*",
+		"read-only",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("profile view missing %q\n---\n%s", want, got)

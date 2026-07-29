@@ -70,6 +70,72 @@ func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome str
 	return agentCmdContext(ctx, agentUser, inner)
 }
 
+// AccessKind classifies how a confined session can reach a directory.
+type AccessKind int
+
+const (
+	// AccessReadWrite is a directory the session can both read and write: the
+	// agent's own home and each granted directory.
+	AccessReadWrite AccessKind = iota
+	// AccessReadOnly is a directory the session can read/execute but not write:
+	// the executable routes on its PATH, held read-only so the agent can't
+	// rewrite the binaries it runs.
+	AccessReadOnly
+)
+
+// SessionDir is one directory a confined agent session can reach, and how.
+type SessionDir struct {
+	Path string
+	Kind AccessKind
+}
+
+// SessionAccess returns the complete set of directories a confined agent session
+// can reach: the agent's own home and each granted directory (read/write), plus
+// the executable routes on its PATH (read-only). It is the SINGLE source of truth
+// shared by the confinement builders (SandboxProfile on macOS, bwrapArgs on
+// Linux) and any display of "what the agent can see" (`jentic profile view`), so
+// the two can never diverge. Paths are cleaned; the read-only routes are filtered
+// to those that actually exist on this machine, exactly as the launcher computes
+// them. Directories outside a denied human-home root are still reachable via the
+// permissive base and are not enumerated here (they are not session-specific).
+func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
+	var dirs []SessionDir
+	if agentHome != "" {
+		dirs = append(dirs, SessionDir{Path: filepath.Clean(agentHome), Kind: AccessReadWrite})
+	}
+	for _, g := range grantedDirs {
+		dirs = append(dirs, SessionDir{Path: filepath.Clean(g), Kind: AccessReadWrite})
+	}
+	for _, d := range execRouteDirs() {
+		dirs = append(dirs, SessionDir{Path: d, Kind: AccessReadOnly})
+	}
+	return dirs
+}
+
+// reopenDirs returns just the read/write directories from SessionAccess — the
+// paths the confinement re-opens inside an otherwise-denied human-home root.
+func reopenDirs(agentHome string, grantedDirs []string) []string {
+	var out []string
+	for _, d := range SessionAccess(agentHome, grantedDirs) {
+		if d.Kind == AccessReadWrite {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
+// roExecDirs returns just the read-only executable-route directories from
+// SessionAccess.
+func roExecDirs(agentHome string, grantedDirs []string) []string {
+	var out []string
+	for _, d := range SessionAccess(agentHome, grantedDirs) {
+		if d.Kind == AccessReadOnly {
+			out = append(out, d.Path)
+		}
+	}
+	return out
+}
+
 // confineExec builds the `sandbox-exec …`/`bwrap …` prefix plus the agent binary,
 // already shell-quoted for embedding in the login-shell snippet.
 func confineExec(binary, dir, agentHome string, grantedDirs []string) string {
@@ -128,14 +194,9 @@ func SandboxProfile(agentHome string, grantedDirs []string) string {
 	}
 
 	// Everything the session may reach inside a denied root: the agent's own home
-	// first (always), then each granted directory.
-	var reopen []string
-	if agentHome != "" {
-		reopen = append(reopen, filepath.Clean(agentHome))
-	}
-	for _, g := range grantedDirs {
-		reopen = append(reopen, filepath.Clean(g))
-	}
+	// first (always), then each granted directory. Sourced from the shared
+	// SessionAccess so this can't drift from what `jentic profile view` shows.
+	reopen := reopenDirs(agentHome, grantedDirs)
 
 	seenMeta := map[string]bool{}
 	var metaLines, allowLines []string
@@ -169,7 +230,7 @@ func SandboxProfile(agentHome string, grantedDirs []string) string {
 
 	// Read-only executable routes, emitted LAST so the write-deny is authoritative.
 	b.WriteString("; the binaries jentic run executes stay read-only (no sandbox self-escape)\n")
-	for _, d := range execRouteDirs() {
+	for _, d := range roExecDirs(agentHome, grantedDirs) {
 		fmt.Fprintf(&b, "(deny file-write* (subpath %s))\n", sbplPath(d))
 	}
 	return b.String()
@@ -242,19 +303,12 @@ func bwrapArgs(binary, dir, agentHome string, grantedDirs []string) []string {
 			args = append(args, "--tmpfs", root)
 		}
 	}
-	var reopen []string
-	if agentHome != "" {
-		reopen = append(reopen, filepath.Clean(agentHome))
-	}
-	for _, g := range grantedDirs {
-		reopen = append(reopen, filepath.Clean(g))
-	}
-	for _, p := range reopen {
+	for _, p := range reopenDirs(agentHome, grantedDirs) {
 		if deniedRootOf(p) != "" {
 			args = append(args, "--bind", p, p)
 		}
 	}
-	for _, d := range execRouteDirs() {
+	for _, d := range roExecDirs(agentHome, grantedDirs) {
 		args = append(args, "--ro-bind", d, d)
 	}
 	if dir != "" {
