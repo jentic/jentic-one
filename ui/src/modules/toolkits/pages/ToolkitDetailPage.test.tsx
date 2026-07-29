@@ -312,9 +312,12 @@ describe('ToolkitDetailPage', () => {
 		expect(shell).not.toHaveClass('max-w-4xl');
 	});
 
-	it('binds a credential picked from the searchable list', async () => {
+	it('binds a credential with full access through the two-step wizard', async () => {
+		// Unique id: the shared MSW bindings store persists across tests AND
+		// retries — a fixed id would leave the picker empty on a retry.
+		const credId = `cred_stripe_${Math.random().toString(36).slice(2, 7)}`;
 		seedCredentials([
-			{ credential_id: 'cred_stripe', name: 'Stripe key', type: 'api_key', vendor: 'stripe' },
+			{ credential_id: credId, name: 'Stripe key', type: 'api_key', vendor: 'stripe' },
 			{ credential_id: 'cred_gh_1', name: 'GitHub PAT', type: 'api_key', vendor: 'github' },
 		]);
 		const user = userEvent.setup();
@@ -324,22 +327,70 @@ describe('ToolkitDetailPage', () => {
 		await user.click(screen.getByRole('tab', { name: /^Access/ }));
 		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
 
-		// Picker lists the unbound credential…
+		// Step 1: the picker lists the unbound credential…
 		const stripeRow = await screen.findByText('Stripe key');
 		expect(stripeRow).toBeInTheDocument();
 		// …and hides the one already bound to this toolkit (cred_gh_1, "GitHub PAT").
 		const dialog = screen.getByRole('dialog');
 		expect(within(dialog).queryByText('GitHub PAT')).not.toBeInTheDocument();
 
+		// Step 2: picking advances to the access decision (NOT an instant bind),
+		// defaulting to the allow-all grant.
 		await user.click(stripeRow);
-		// Bind succeeds → the dialog closes (onSuccess → setBindOpen(false)).
+		expect(
+			await within(dialog).findByRole('radio', { name: /allow all operations/i }),
+		).toHaveAttribute('aria-checked', 'true');
+		await user.click(within(dialog).getByRole('button', { name: /^bind api$/i }));
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
-		// The fresh bind lands with zero rules — the backend's warnings[] renders
-		// verbatim on the new binding row.
-		expect(await screen.findByTestId('binding-warning')).toHaveTextContent(
+		// The binding lands WITH the allow-all rule — no zero-rules warning — and
+		// renders the grant through the shared operations grammar (effect chip).
+		// (findByText waits out the post-bind list refetch.)
+		const stripeLabel = await screen.findByText(credId);
+		const stripeBound = stripeLabel.closest('[data-testid="binding-row"]');
+		expect(stripeBound).not.toBeNull();
+		expect(within(stripeBound as HTMLElement).getByText('Allow')).toBeInTheDocument();
+		expect(
+			within(stripeBound as HTMLElement).queryByTestId('binding-warning'),
+		).not.toBeInTheDocument();
+	});
+
+	it('binds a credential in the blocked state and surfaces the zero-rules warning', async () => {
+		// Unique id for retry-safety (same reasoning as the wizard test above).
+		const credId = `cred_notion_${Math.random().toString(36).slice(2, 7)}`;
+		seedCredentials([
+			{
+				credential_id: credId,
+				name: 'Notion token',
+				type: 'api_key',
+				vendor: 'notion',
+			},
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
+		await user.click(await screen.findByText('Notion token'));
+
+		const dialog = screen.getByRole('dialog');
+		await user.click(await within(dialog).findByRole('radio', { name: /start blocked/i }));
+		await user.click(within(dialog).getByRole('button', { name: /^bind api$/i }));
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+		// Zero rules → the backend's warnings[] renders verbatim on the row, plus
+		// the row-level "every operation is blocked" note. (findByText waits out
+		// the post-bind list refetch.)
+		const notionLabel = await screen.findByText(credId);
+		const notionBound = notionLabel.closest('[data-testid="binding-row"]');
+		expect(notionBound).not.toBeNull();
+		expect(within(notionBound as HTMLElement).getByTestId('binding-warning')).toHaveTextContent(
 			/no permission rules/i,
 		);
+		expect(
+			within(notionBound as HTMLElement).getByTestId('binding-no-rules'),
+		).toBeInTheDocument();
 	});
 
 	it('dry-runs a request against the saved rules with the rule tester', async () => {
@@ -347,14 +398,14 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// Open the permissions editor for the seeded GitHub binding — the tester
-		// lives next to the rule editor. (Scoped to the row: a previous test may
-		// have bound extra credentials to the shared mock store.)
+		// Open the rules editor for the seeded GitHub binding — the tester lives
+		// next to the rule editor. (Scoped to the row: a previous test may have
+		// bound extra credentials to the shared mock store.)
 		const rows = await screen.findAllByTestId('binding-row');
 		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
 		expect(githubRow).toBeDefined();
 		await user.click(
-			within(githubRow as HTMLElement).getByRole('button', { name: /permissions/i }),
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
 		);
 		await screen.findByText(/test a request/i);
 
@@ -365,13 +416,14 @@ describe('ToolkitDetailPage', () => {
 			/allowed — matched rule #1/i,
 		);
 
-		// /admin/… trips the system safety deny → Denied, system-tagged.
+		// /admin/… trips the system safety deny (rule 3 after the seeded
+		// allow-GET + deny-DELETE agent rules) → Denied, system-tagged.
 		await user.clear(screen.getByLabelText('Request path'));
 		await user.type(screen.getByLabelText('Request path'), '/admin/users');
 		await user.click(screen.getByRole('button', { name: /^test$/i }));
 		await waitFor(() =>
 			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
-				/denied — matched rule #2 \(system safety\)/i,
+				/denied — matched rule #3 \(system safety\)/i,
 			),
 		);
 
@@ -434,12 +486,15 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// Read-only summary of the Access tab's bindings, on the landing tab.
-		// (Count is left loose: earlier cases in this file mutate the shared
-		// MSW binding store.)
+		// Summary of the Access tab's bindings, on the landing tab. (Count is
+		// left loose: earlier cases in this file mutate the shared MSW store.)
 		expect(await screen.findByText(/Bound credentials \(\d+\)/)).toBeInTheDocument();
 		const credRows = await screen.findAllByTestId('overview-credential-row');
-		expect(credRows.some((r) => within(r).queryByText('GitHub PAT') != null)).toBe(true);
+		const githubRow = credRows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		// Each row carries the grant's gist in the platform's rule voice
+		// (restrictions first), not an opaque "N rules" count.
+		expect(within(githubRow as HTMLElement).getByText(/Blocks DELETE/)).toBeInTheDocument();
 
 		// Manage jumps to the Access tab (full bind/permissions management).
 		await user.click(screen.getByRole('button', { name: 'Manage' }));
@@ -448,6 +503,18 @@ describe('ToolkitDetailPage', () => {
 			'true',
 		);
 		expect(await screen.findByRole('button', { name: /^bind api$/i })).toBeInTheDocument();
+	});
+
+	it('opens the bind wizard straight from the Overview credentials card', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		await screen.findAllByTestId('overview-credential-row');
+
+		// Symmetry with "Link agent": credentials bind from the landing tab too.
+		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/step 1 of 2/i)).toBeInTheDocument();
 	});
 
 	it('disables the agent filter and shows only the real empty state when no agents are linkable', async () => {

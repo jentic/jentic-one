@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { Button } from '@/shared/ui';
+import type { PermissionRule as DisplayRule } from '@/shared/lib';
+import type { PermissionRule } from '@/modules/toolkits/api/types';
 
 /**
  * Shared scaffolding for the toolkit detail tabs (see `ToolkitDetailBody`).
@@ -7,6 +9,26 @@ import { Button } from '@/shared/ui';
  * with the same motion presets the pre-tab layout used, so the split does not
  * change the page's feel.
  */
+
+/**
+ * Project a binding's stored rules into the shared display shape consumed by
+ * `OperationsSummary`/`OperationsDialog` — the SAME preview the access-request
+ * review cards render, so "what can this credential do" reads identically at
+ * review time and on the live binding. System safety rules are dropped: they
+ * are backend-owned plumbing, not part of the operator's grant.
+ */
+export function toDisplayRules(rules: PermissionRule[] | null | undefined): DisplayRule[] {
+	return (rules ?? [])
+		.filter((rule) => !rule._system)
+		.map((rule) => ({
+			// The generated read enum and the display union share the same
+			// 'allow'/'deny' strings; String() bridges the nominal enum type.
+			effect: String(rule.effect) === 'deny' ? ('deny' as const) : ('allow' as const),
+			methods: rule.methods ?? null,
+			path: rule.path ?? null,
+			operations: rule.operations ?? null,
+		}));
+}
 
 export const rowMotion = {
 	initial: { opacity: 0, y: -4, height: 0 },

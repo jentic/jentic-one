@@ -21,8 +21,8 @@ import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolk
 interface CredentialPickerProps {
 	/** Credential ids already bound to this toolkit — hidden from the list. */
 	boundIds: Set<string>;
-	/** Fired with the chosen credential id. */
-	onSelect: (credentialId: string) => void;
+	/** Fired with the chosen credential (full row, so hosts can show its label). */
+	onSelect: (credential: BindableCredential) => void;
 	/** Disables rows while a bind mutation is in flight. */
 	pending?: boolean;
 	/** Only fetch when the host dialog is actually open. */
@@ -142,7 +142,7 @@ function CredentialRow({
 	disabled,
 }: {
 	cred: BindableCredential;
-	onSelect: (credentialId: string) => void;
+	onSelect: (credential: BindableCredential) => void;
 	disabled?: boolean;
 }) {
 	const subtitle = cred.vendor ?? cred.provider ?? cred.credential_id;
@@ -150,7 +150,7 @@ function CredentialRow({
 		<button
 			type="button"
 			disabled={disabled}
-			onClick={() => onSelect(cred.credential_id)}
+			onClick={() => onSelect(cred)}
 			data-testid="credential-picker-row"
 			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
 		>

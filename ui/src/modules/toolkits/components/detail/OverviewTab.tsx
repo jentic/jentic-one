@@ -9,6 +9,7 @@ import {
 	Unlink,
 } from 'lucide-react';
 import { ActorStatusBadge, AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
+import { ruleSummary } from '@/shared/lib';
 import {
 	useLinkAgentToToolkit,
 	useToolkit,
@@ -17,9 +18,15 @@ import {
 	useUnlinkAgentFromToolkit,
 } from '@/modules/toolkits/api';
 import { AgentPicker } from '@/modules/toolkits/components/AgentPicker';
+import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
 import { ToolkitAuditPanel } from '@/modules/toolkits/components/ToolkitAuditPanel';
-import { DetailSection, EmptyRow, rowMotion } from '@/modules/toolkits/components/detail/shared';
+import {
+	DetailSection,
+	EmptyRow,
+	rowMotion,
+	toDisplayRules,
+} from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
 
@@ -27,11 +34,12 @@ import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
  * Overview tab — the safety-critical relationships an operator acts on first.
  *
  * Bound Agents leads (issue #636 rationale preserved from the pre-tab layout):
- * "which agent can use this toolkit" sits closest to the kill switch. A
- * read-only Bound credentials summary sits beside it ("what can this toolkit
- * call") with a Manage jump into the Access tab, and the audit slice follows —
- * so the landing tab answers "who can call this", "what can it reach", and
- * "what changed recently" without a click.
+ * "which agent can use this toolkit" sits closest to the kill switch. Bound
+ * credentials sits beside it ("what can this toolkit call") with the SAME
+ * primary affordance shape — Link agent / Bind API — so both halves of the
+ * wiring are one click from the landing tab. Rule *editing* stays on Access
+ * (the Manage jump); the audit slice follows, so the tab answers "who can call
+ * this", "what can it reach", and "what changed recently" without a click.
  */
 
 export interface OverviewTabProps {
@@ -47,8 +55,10 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 	const linkAgent = useLinkAgentToToolkit(toolkitId);
 	const unlinkAgent = useUnlinkAgentFromToolkit(toolkitId);
 	const [linkAgentOpen, setLinkAgentOpen] = useState(false);
+	const [bindOpen, setBindOpen] = useState(false);
 
 	const linkedAgentIds = new Set(agents.map((a) => a.agent_id));
+	const boundIds = new Set(bindings.map((b) => b.credential_id));
 
 	const submitLinkAgent = (agentId: string) => {
 		if (!agentId) return;
@@ -157,23 +167,32 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 					)}
 				</DetailSection>
 
-				{/* Read-only slice of the Access tab: what this toolkit can call.
-				    Management (bind/unbind, permission rules) stays on Access. */}
+				{/* Same rank as agents: credentials bind right here (the wizard decides
+				    the grant inline); rule editing stays on Access, one click away. */}
 				<DetailSection
 					title={`Bound credentials (${bindings.length})`}
 					icon={<KeyRound className="h-4 w-4" />}
 					className="h-full"
-					action={{ label: 'Manage', onClick: onManageAccess }}
+					trailing={
+						<div className="flex items-center gap-1.5">
+							<Button variant="ghost" size="sm" onClick={onManageAccess}>
+								Manage
+							</Button>
+							<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
+								<LinkIcon className="h-4 w-4" /> Bind API
+							</Button>
+						</div>
+					}
 				>
 					{bindingsError && <ErrorAlert message="Failed to load bound credentials." />}
 					{!bindingsError && bindings.length === 0 ? (
 						<EmptyRow icon={<KeyRound />}>
-							No credentials bound — this toolkit can't reach any API yet. Bind one
-							from the Access tab.
+							No credentials bound — this toolkit can't reach any API yet. Bind one to
+							grant access.
 						</EmptyRow>
 					) : (
 						bindings.map((cred) => {
-							const agentRules = (cred.permissions ?? []).filter((r) => !r._system);
+							const displayRules = toDisplayRules(cred.permissions);
 							return (
 								<div
 									key={cred.credential_id}
@@ -190,20 +209,23 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 										<p className="text-muted-foreground truncate font-mono text-xs">
 											{cred.api_name ?? cred.api_vendor ?? cred.credential_id}
 										</p>
-									</div>
-									<span className="text-muted-foreground ml-auto shrink-0 text-xs">
-										{agentRules.length === 0 ? (
-											<span className="text-warning inline-flex items-center gap-1">
-												<AlertTriangle
-													className="h-3 w-3"
-													aria-hidden="true"
-												/>
-												all ops blocked
-											</span>
-										) : (
-											`${agentRules.length} rule${agentRules.length === 1 ? '' : 's'}`
+										{/* The grant's gist in the platform's rule voice —
+										    "Blocks DELETE; Allows GET on 3 operations". */}
+										{displayRules.length > 0 && (
+											<p
+												className="text-muted-foreground mt-0.5 truncate text-xs"
+												title={ruleSummary(displayRules)}
+											>
+												{ruleSummary(displayRules)}
+											</p>
 										)}
-									</span>
+									</div>
+									{displayRules.length === 0 && (
+										<span className="text-warning ml-auto inline-flex shrink-0 items-center gap-1 text-xs">
+											<AlertTriangle className="h-3 w-3" aria-hidden="true" />
+											all ops blocked
+										</span>
+									)}
 								</div>
 							);
 						})
@@ -244,6 +266,15 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 					/>
 				</div>
 			</Dialog>
+
+			{/* Two-step bind wizard — the same component the Access tab opens, so
+			    binding reads identically wherever it starts. */}
+			<BindCredentialDialog
+				toolkitId={toolkitId}
+				open={bindOpen}
+				onClose={() => setBindOpen(false)}
+				boundIds={boundIds}
+			/>
 		</div>
 	);
 }

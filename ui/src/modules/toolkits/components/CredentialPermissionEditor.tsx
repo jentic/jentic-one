@@ -65,7 +65,7 @@ export function CredentialPermissionEditor({
 			<div className="flex items-start justify-between gap-2">
 				<div>
 					<p className="text-foreground text-sm font-semibold">
-						Permission Rules for {credentialLabel}
+						Permission rules for {credentialLabel}
 					</p>
 					<p className="text-muted-foreground mt-0.5 text-xs">
 						Define which operations this credential can access. With no rules, all

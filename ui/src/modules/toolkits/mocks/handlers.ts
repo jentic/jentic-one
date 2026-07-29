@@ -90,7 +90,20 @@ const bindingsByToolkit: Record<string, Array<Record<string, unknown>>> = {
 			bound_at: '2026-05-01T10:10:00Z',
 			warnings: [],
 			permissions: [
-				{ effect: 'allow', methods: ['GET'], path: '/repos/.*', _system: false },
+				{
+					effect: 'allow',
+					methods: ['GET'],
+					path: '/repos/.*',
+					operations: [
+						'repos/get',
+						'repos/list-for-org',
+						'issues/list-for-repo',
+						'pulls/list',
+						'pulls/get',
+					],
+					_system: false,
+				},
+				{ effect: 'deny', methods: ['DELETE'], path: '/repos/.*', _system: false },
 				{
 					effect: 'deny',
 					methods: null,
@@ -367,7 +380,17 @@ export const toolkitsHandlers = [
 
 	http.post('/toolkits/:toolkitId/credentials', async ({ params, request }) => {
 		const toolkitId = params.toolkitId as string;
-		const body = (await request.json()) as { credential_id: string };
+		const body = (await request.json()) as {
+			credential_id: string;
+			allow_all?: boolean;
+			permissions?: Array<Record<string, unknown>> | null;
+		};
+		// Mirror the backend's inline-grant contract: `allow_all` expands to one
+		// catch-all allow rule; `permissions` is stored verbatim; neither ⇒ zero
+		// rules and the broker default-denies (flagged via the warning).
+		const agentRules: Array<Record<string, unknown>> = body.allow_all
+			? [{ effect: 'allow', methods: null, path: '.*', operations: null }]
+			: (body.permissions ?? []);
 		const binding = {
 			toolkit_id: toolkitId,
 			credential_id: body.credential_id,
@@ -376,10 +399,20 @@ export const toolkitsHandlers = [
 			api_vendor: null,
 			credential_type: null,
 			bound_at: now(),
-			// A fresh bind has zero rules → the backend flags it (broker denies
-			// by default). The warning persists on the list response too.
-			warnings: [zeroRulesWarning(body.credential_id)],
-			permissions: [],
+			warnings: agentRules.length === 0 ? [zeroRulesWarning(body.credential_id)] : [],
+			permissions:
+				agentRules.length === 0
+					? []
+					: [
+							...agentRules,
+							{
+								effect: 'deny',
+								methods: null,
+								path: '/admin/.*',
+								_system: true,
+								_comment: 'system safety',
+							},
+						],
 		};
 		bindingsByToolkit[toolkitId] = [...(bindingsByToolkit[toolkitId] ?? []), binding];
 		return HttpResponse.json(binding);

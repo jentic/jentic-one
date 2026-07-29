@@ -9,44 +9,35 @@ import {
 	ShieldCheck,
 	Unlink,
 } from 'lucide-react';
-import { AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
-import { useBindCredential, useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
+import { Button, ErrorAlert } from '@/shared/ui';
+import { OperationsSummary } from '@/shared/app';
+import { useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
+import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
-import { CredentialPicker } from '@/modules/toolkits/components/CredentialPicker';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
 import {
 	DetailSection,
 	EmptyRow,
 	panelMotion,
 	rowMotion,
+	toDisplayRules,
 } from '@/modules/toolkits/components/detail/shared';
-import { ROUTES } from '@/shared/app/routes';
 
 /**
  * Access tab — what this toolkit is allowed to call: credential bindings and
- * their per-binding permission rules (the broker's allow/deny list).
+ * their per-binding permission rules (the broker's allow/deny list). Each
+ * binding renders its grant through the same `OperationsSummary` the
+ * access-request review cards use, so "what can this credential do" reads
+ * identically at review time and on the live binding.
  */
 export function AccessTab({ toolkitId }: { toolkitId: string }) {
 	const { data: bindings = [], isError: bindingsError } = useToolkitBindings(toolkitId);
-	const bindCredential = useBindCredential(toolkitId);
 	const unbindCredential = useUnbindCredential(toolkitId);
 
 	const [bindOpen, setBindOpen] = useState(false);
 	const [editingPermForCred, setEditingPermForCred] = useState<string | null>(null);
 
 	const boundIds = new Set(bindings.map((b) => b.credential_id));
-
-	const submitBind = (credentialId: string) => {
-		if (!credentialId) return;
-		bindCredential.mutate(
-			{ credential_id: credentialId },
-			{
-				onSuccess: () => {
-					setBindOpen(false);
-				},
-			},
-		);
-	};
 
 	return (
 		<>
@@ -70,7 +61,7 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 				) : (
 					<AnimatePresence initial={false}>
 						{bindings.map((cred) => {
-							const agentRules = (cred.permissions ?? []).filter((r) => !r._system);
+							const displayRules = toDisplayRules(cred.permissions);
 							return (
 								<motion.div
 									key={cred.credential_id}
@@ -89,22 +80,6 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 													{cred.api_name ?? cred.api_vendor}
 												</p>
 											)}
-											<p className="text-muted-foreground mt-0.5 flex items-center gap-1 text-xs">
-												{agentRules.length === 0 ? (
-													<span
-														className="text-warning inline-flex items-center gap-1"
-														title="All operations blocked — no allow rules defined"
-													>
-														<AlertTriangle className="h-3 w-3" />
-														No rules — all ops blocked
-													</span>
-												) : (
-													<>
-														{agentRules.length} agent rule(s) + system
-														safety
-													</>
-												)}
-											</p>
 										</div>
 										<div className="ml-auto flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
 											<Button
@@ -122,7 +97,7 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 												}
 												className="inline-flex items-center gap-1 px-2 py-1 text-xs"
 											>
-												<Edit2 className="h-3 w-3" /> Permissions
+												<Edit2 className="h-3 w-3" /> Edit rules
 												<motion.span
 													animate={{
 														rotate:
@@ -152,6 +127,30 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 													<Unlink className="h-3 w-3" /> Unbind API
 												</Button>
 											</InlineConfirm>
+										</div>
+										{/* The grant, in the platform's one operations grammar
+										    (effect chips + bounded preview + full-view dialog).
+										    Zero agent rules ⇒ the broker default-denies; say so
+										    in the same voice the Overview summary uses. */}
+										<div className="w-full">
+											{displayRules.length > 0 ? (
+												<OperationsSummary
+													rules={displayRules}
+													targetLabel={cred.label ?? cred.credential_id}
+												/>
+											) : (
+												<p
+													className="text-warning flex items-center gap-1.5 text-xs"
+													data-testid="binding-no-rules"
+												>
+													<AlertTriangle
+														className="h-3.5 w-3.5 shrink-0"
+														aria-hidden="true"
+													/>
+													No rules — every operation is blocked until you
+													add allow rules.
+												</p>
+											)}
 										</div>
 									</div>
 									{/* Bind-time warnings from the API (BindingWarningSchema)
@@ -199,34 +198,13 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 				)}
 			</DetailSection>
 
-			{/* Bind-existing dialog — stateless picker, selection is the commit. */}
-			<Dialog
+			{/* Two-step bind wizard (mounted once — its draft survives dismissal). */}
+			<BindCredentialDialog
+				toolkitId={toolkitId}
 				open={bindOpen}
 				onClose={() => setBindOpen(false)}
-				title="Bind API"
-				size="sm"
-				footer={
-					<Button variant="secondary" onClick={() => setBindOpen(false)}>
-						Cancel
-					</Button>
-				}
-			>
-				<div className="space-y-3">
-					<p className="text-muted-foreground text-sm">
-						Pick a credential to bind to this toolkit. Manage credentials on the{' '}
-						<AppLink href={ROUTES.credentials} className="text-primary font-medium">
-							Credentials
-						</AppLink>{' '}
-						page.
-					</p>
-					<CredentialPicker
-						boundIds={boundIds}
-						onSelect={submitBind}
-						pending={bindCredential.isPending}
-						enabled={bindOpen}
-					/>
-				</div>
-			</Dialog>
+				boundIds={boundIds}
+			/>
 		</>
 	);
 }
