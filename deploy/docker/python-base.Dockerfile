@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 # Pinned to a specific digest for reproducible builds.
-# To bump: `docker pull python:3.12-slim` then update the digest below.
+# To bump: `docker pull python:3.12-slim` / `node:22-slim` then update the
+# digests below (`docker buildx imagetools inspect <image>` prints them).
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
-ARG NODE_IMAGE=node:22-slim
+ARG NODE_IMAGE=node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
 
 # UI build stage — produces ui/dist, bundled into the wheel via the
 # [tool.hatch.build.targets.wheel.force-include] "ui/dist" -> jentic_one/static.
