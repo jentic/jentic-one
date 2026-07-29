@@ -5,9 +5,10 @@
 //
 // The security model this implements is documented in
 // docs/security/local-agent/local-agent-isolation.md: the agent runs as its own
-// unprivileged Unix user, the operator's home is locked 700, and the agent is
-// granted access to individual working directories via inherited ACLs rather
-// than by widening any human's home.
+// unprivileged Unix user, is granted access to individual working directories via
+// inherited ACLs rather than by widening any human's home, and is launched under a
+// per-session process-confinement profile (confine.go) that trims its view of the
+// operator's home to just those grants.
 package localagent
 
 import (
@@ -133,9 +134,9 @@ type AccountStep struct {
 // CreateAccountCmds returns the ordered, platform-specific steps that create the
 // agent's Unix account, materialise its home, and grant the operator inherited
 // read/write into that home — the privileged half of the setup recipe in
-// docs/security/local-agent/local-agent-isolation.md. It does NOT lock the
-// operator's own home (that is LockOperatorHomeCmd, which runs unprivileged as
-// the operator) so the two concerns stay separable.
+// docs/security/local-agent/local-agent-isolation.md. It does NOT touch the
+// operator's own home: in-home confidentiality against the agent is enforced per
+// session by the process-confinement layer (see confine.go), not by locking ~.
 //
 // macOS: `sysadminctl -addUser` provisions a password-less account and only
 // *records* the home path, so `createhomedir -c -u` is needed to actually create
@@ -195,16 +196,6 @@ func GrantOperatorHomeCmd(operator, homeDir string) *exec.Cmd {
 	setfacl := "setfacl -R -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir) +
 		" && setfacl -R -d -m u:" + shellQuote(operator) + ":rwX " + shellQuote(homeDir)
 	return exec.Command("sudo", "sh", "-c", setfacl) //nolint:gosec // operator/homeDir are config-derived, shell-quoted.
-}
-
-// LockOperatorHomeCmd returns the `chmod 700 <operatorHome>` that is the
-// machine-independent isolation guarantee: with the operator's home at
-// drwx------ no other account — the agent included — can traverse or read it.
-// It runs unprivileged (the operator owns their own home), so it is kept
-// separate from the sudo-fronted CreateAccountCmds and is safe to run every
-// time as an idempotent backstop.
-func LockOperatorHomeCmd(operatorHome string) *exec.Cmd {
-	return exec.Command("chmod", "700", operatorHome) //nolint:gosec // operatorHome is os.UserHomeDir.
 }
 
 // BinaryStatus is the outcome of probing whether an agent's binary is runnable
@@ -506,27 +497,14 @@ func IsUnderHome(home, dir string) bool {
 	return dir == home || strings.HasPrefix(dir, home+string(filepath.Separator))
 }
 
-// LaunchCmd builds the interactive launch: become the agent user in a login
-// shell (fresh env, HOME set to the agent's home) and exec the binary. When dir
-// is set the shell cd's there first; otherwise it cd's to the agent's home. The
-// caller wires os.Stdin/out/err.
+// agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
+// bash. Shared by every agent invocation (probe, grant, and the confined launch).
 //
 // We use `sudo -u <user> -H bash -lc` rather than `sudo -i`: `-i` re-serializes
 // the command through the login shell (mangling any multi-token/multi-line
 // snippet), while plain sudo passes argv straight through. `-H` points HOME at
 // the agent's home and `bash -l` still sources the agent's login profiles (so a
 // PATH export we added there is honoured).
-func LaunchCmd(ctx context.Context, agentUser, binary, dir string) *exec.Cmd {
-	cd := `cd "$HOME"`
-	if dir != "" {
-		cd = "cd " + shellQuote(dir)
-	}
-	inner := cd + " && exec " + shellQuote(binary)
-	return agentCmdContext(ctx, agentUser, inner)
-}
-
-// agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
-// bash (see LaunchCmd for why not `sudo -i`). Shared by every agent invocation.
 func agentBashArgs(agentUser, snippet string) []string {
 	return []string{"-u", agentUser, "-H", "bash", "-lc", snippet}
 }

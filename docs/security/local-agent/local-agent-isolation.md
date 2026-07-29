@@ -17,7 +17,8 @@
 
 ```bash
 # 1. One-time: onboard. Right after picking your operator, bootstrap/wizard offers
-#    to create the dedicated agent user + its home, and lock your own home.
+#    to create the dedicated agent user + its home (jentic run then confines each
+#    session so the agent sees only the directories you grant).
 jentic bootstrap                         # (or: jenticctl wizard — same flow)
 
 # 2. Every session: launch the agent, isolated, in the directory you name.
@@ -95,7 +96,8 @@ AGENT="$(whoami)-local-agent"; AGENT_HOME_DIR="/Users/Shared/$AGENT"
 sudo sysadminctl -addUser "$AGENT" -fullName "$(whoami) Local Agent" -home "$AGENT_HOME_DIR" -password -
 sudo createhomedir -c -u "$AGENT"                                  # sysadminctl only *records* the home; this creates it
 sudo chmod +a "user:$(whoami) allow read,write,execute,file_inherit,directory_inherit" "$AGENT_HOME_DIR"
-chmod 700 ~                                                        # the machine-independent isolation guarantee
+# The operator's home is NOT force-locked to 700 — in-home confidentiality against
+# the agent is enforced per session by the confinement profile (see below).
 ```
 
 ```bash
@@ -103,17 +105,19 @@ chmod 700 ~                                                        # the machine
 AGENT="$(whoami)-local-agent"; AGENT_HOME_DIR="/opt/$AGENT"
 sudo useradd -m -d "$AGENT_HOME_DIR" -s /bin/bash "$AGENT"
 sudo setfacl -R -m u:"$USER":rwX "$AGENT_HOME_DIR" && sudo setfacl -R -d -m u:"$USER":rwX "$AGENT_HOME_DIR"
-chmod 700 ~
 ```
 
 Three things worth calling out, because they're the load-bearing parts:
 
-- **`chmod 700 ~` is the isolation guarantee.** With the operator's home at
-  `drwx------`, *no* other account — whatever group it lands in — can traverse or
-  read it. This is machine-independent: it needs no shared-group bookkeeping and
-  doesn't depend on platform defaults (which vary between stock macOS, MDM-managed
-  devices, and Linux distros). The keyset should not live in the operator's home
-  at all, but `chmod 700 ~` closes the read path regardless.
+- **Per-session process confinement is the isolation guarantee.** `jentic run`
+  launches the agent under a confinement profile (sandbox-exec on macOS, bwrap on
+  Linux) that denies the operator's home except the granted subpaths, and **errors
+  closed** if confinement is unavailable. This replaces the earlier blanket `chmod
+  700 ~`: it closes the same read path *and* the sibling-traversal leak a whole-home
+  700 could not, without changing the operator home's own permissions. Real secrets
+  keep their own `0700` modes regardless. See
+  [`sandbox-exec-plan.md`](sandbox-exec-plan.md) and the
+  [filesystem-access model](filesystem-access-model.md).
 - **The agent's home is the shared space.** It lives under an existing shared
   parent (`/Users/Shared/…`, `/opt/…`), owned by the agent, with an *inherited*
   ACL granting the single operator read/write. The `*_inherit` flags mean the
@@ -165,18 +169,19 @@ writer, one source of truth, one pointer.
 > agent home lives under a shared parent (`/Users/Shared/<agent>`, `/opt/<agent>`).
 > A nicer default would be `~/jentic-agents/<agent-name>` — discoverable, clearly
 > owned by the operator's account tree, and self-documenting. The open question is
-> purely how it interacts with the isolation paradigm: the operator's home is
-> `chmod 700`, so an agent running as its own user **cannot traverse into `~` at
-> all** — which is the whole point of the 700 guarantee. Putting the agent home
-> under `~` would require granting the agent an **execute-only traverse** grant on
-> the operator's home (the same Layer-1 mechanism [Step 4](#step-4--directory-access-700-home--traverse-walk--rwx-leaf)
+> purely how it interacts with the isolation paradigm: on stock macOS the operator's
+> home is `0700` by OS default, so an agent running as its own user **cannot traverse
+> into `~` at all** without a grant. Putting the agent home under `~` would require
+> granting the agent an **execute-only traverse** grant on
+> the operator's home (the same Layer-1 mechanism [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement)
 > already uses for granted working directories) so it can reach `~/jentic-agents/<agent>`
 > without being able to *read* anything else in `~`. That is believed to be a small
 > change (reuse the existing traverse-grant path, point the default home there), but
 > it is **documented here and deferred** — we'll follow up with the implementation
 > once the traverse-into-`~` interaction is confirmed safe. Note it does **not**
-> weaken the 700 guarantee: execute-without-read still blocks directory listing and
-> file reads of `~`; it only opens the single named path.
+> weaken the boundary: execute-without-read still blocks directory listing and file
+> reads of `~`, and the confinement profile still denies everything but the granted
+> path; it only opens the single named path.
 
 ### Optional: passwordless launch
 
@@ -226,8 +231,8 @@ What it does, in order:
 ### Step 2 — binary provisioning (copy vs. install)
 
 A binary the operator installed for themselves is not on the agent's `PATH` (and
-shouldn't be — it may sit inside the now-`700` operator home). `jentic run` probes
-as the agent and, if the binary is genuinely absent, offers:
+shouldn't be — it may sit inside the operator's home, which the agent can't reach).
+`jentic run` probes as the agent and, if the binary is genuinely absent, offers:
 
 - **Copy** — for self-contained single-file binaries (e.g. Claude Code's
   `~/.local/bin/claude`). The binary carries no credentials, so copying it to the
@@ -260,12 +265,12 @@ the candidates are `/usr/local/bin`, `/opt/homebrew/bin`, `/snap/bin`.
 
 **Home-local tool dirs are deliberately NOT shared** — `~/.local/bin`,
 `~/.cargo/bin`, `~/go/bin`, npm-global, pyenv/rbenv shims, and anything else under
-the operator's home. They sit beneath the `700` lock, and that lock is the whole
-isolation guarantee: the agent cannot traverse into the operator's home, so a
-symlink or `PATH` entry pointing there resolves with the *agent's* credentials
-and dangles with `EACCES` at the home boundary. There is no way to share those
-without punching a traversal hole through the 700 home — which would reopen the
-exact surface this design closes. If the agent needs such a tool, install it in
+the operator's home. The agent cannot reach into the operator's home (stock macOS
+homes are `0700`, and the per-session confinement profile denies the home except
+granted paths regardless), so a symlink or `PATH` entry pointing there resolves
+with the *agent's* credentials and dangles with `EACCES` at the home boundary.
+Sharing those would mean opening a path into `~` the confinement layer exists to
+keep closed. If the agent needs such a tool, install it in
 the agent account (`brew`, `pipx`, the tool's own installer run as the agent) or,
 for a self-contained binary, use the Step 2 copy route. Sharing home-local tools
 via a curated copy is a possible future addition, but is out of scope today.
@@ -306,20 +311,21 @@ offers to seed *that provider's* config only:
 > lands in the agent account at all. Seeding is a credential crossing the boundary,
 > so it is always surfaced and confirmed, never silent.
 
-### Step 4 — directory access: 700-home + traverse-walk + rwx-leaf
+### Step 4 — directory access: traverse-walk + rwx-leaf + confinement
 
 By default `jentic run claude` works on the directory the operator is standing in
-— almost always inside the now-`700` operator home, which the agent user can't
-read. `jentic run` resolves this up front rather than letting it surface as opaque
-permission errors. It tests whether the agent can read/write/execute the target;
-if not, it offers **Allow** / **Open in agent's home** (default) / **Cancel**.
+— almost always inside the operator's home, which the agent user can't read
+without a grant. `jentic run` resolves this up front rather than letting it surface
+as opaque permission errors. It tests whether the agent can read/write/execute the
+target; if not, it offers **Allow** / **Open in agent's home** (default) / **Cancel**.
 
 Granting a directory **inside the operator's home** — the important case, since
-`~` must stay closed by default — uses **named-user ACLs** (scoped to the single
-agent user; the operator's own access is never touched) in three layers:
+`~` stays closed to the agent by default — uses **named-user ACLs** (scoped to the
+single agent user; the operator's own access is never touched) in three layers:
 
-- **Layer 0** — the default-deny is the existing `chmod 700 ~`; we add **no** ACL
-  to `~` itself.
+- **Layer 0** — the default-deny is the per-session confinement profile
+  (sandbox-exec/bwrap), which denies the operator home except the granted subpaths;
+  we add **no** ACL to `~` itself and no longer `chmod 700 ~`.
 - **Layer 1 — traverse-walk** — execute-only (search, not list, not read) on each
   ancestor from `~` down to the leaf's parent, so the agent can pass *through* to a
   known path without enumerating it.
@@ -351,7 +357,7 @@ Two details from live testing, both baked into `jentic run`:
   passes argv straight through. `-H` points `HOME` at the agent's home; `bash -l`
   still sources the agent's login profiles (so a `PATH` export there is honoured).
 - **Pin the parent process's cwd to `/`.** The operator's shell cwd is typically
-  inside the `700` home, which the agent can't read; if the `sudo` child inherits
+  inside the operator's home, which the agent can't read; if the `sudo` child inherits
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
@@ -424,7 +430,7 @@ preserved or deleted:
       whether to delete it after confirming the rest.
 
   NOT touched:
-    - your own home (/Users/alice) stays chmod 700 — reset does not revert it
+    - your own home's permissions — reset only drops the agent's named-user ACLs
     - your own files, config, keys, and Jentic One itself
 
 Type the agent name ('claude') to confirm, or anything else to abort: claude
@@ -466,9 +472,10 @@ Design requirements baked into that plan:
   is a full teardown, so it walks the recorded ancestor chains and drops the
   execute-only entries it added. (Contrast `--revoke`, which intentionally leaves
   traverse grants in place for the next grant.)
-- **It never reverts `chmod 700 ~`** and never touches the operator's own files —
-  the "NOT touched" block states this explicitly so the operator can see the
-  blast radius stops at the agent.
+- **It never changes the operator home's own permissions** — setup no longer locks
+  it, and teardown only drops the agent's named-user ACLs — and never touches the
+  operator's own files; the "NOT touched" block states this explicitly so the
+  operator can see the blast radius stops at the agent.
 
 ### Order of operations
 
@@ -556,7 +563,8 @@ bare `jentic reset` with no configured agents is a valid config-only clean slate
 by design:
 
 - **Skills** — the generated skill files (see [below](#not-yet-implemented--skill-cleanup)).
-- **`chmod 700 ~`** — never reverted; the operator's home stays locked down.
+- **The operator home's permissions** — setup never locks them and reset never
+  changes them; teardown only drops the agent's named-user ACLs.
 - **Agent homes** — preserved and re-owned to the operator by default (the agent's
   work survives); deleting a home is the separate, explicit per-agent confirmation,
   offered in the full clean slate too, not only the named flow. The agent's *identity*

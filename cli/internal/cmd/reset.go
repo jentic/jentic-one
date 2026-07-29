@@ -52,8 +52,8 @@ func newResetCmd(app *App) *cobra.Command {
 			"Deleting an account and stripping ACLs are privileged, so reset requires\n" +
 			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
 			"password when it reaches the privileged steps. It shows the full plan before\n" +
-			"touching anything. It never reverts `chmod 700 ~` and never touches another\n" +
-			"user's files.",
+			"touching anything. It only ever removes the agent's own named-user ACLs and\n" +
+			"never touches another user's files.",
 		Example: "  jentic reset                              # full clean slate: every agent + your own config\n" +
 			"  jentic reset claude                       # just this agent and its config links\n" +
 			"  jentic reset claude --force               # non-interactive; keeps the home\n" +
@@ -592,7 +592,7 @@ func (a *App) printResetPlan(plan resetPlan) {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Success.Render("  NOT touched:"))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    - your own home stays chmod 700 — reset does not revert it"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - your own home's permissions — reset only drops the agent's named-user ACLs"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - your own files, config, keys, and Jentic One itself"))
 	fmt.Fprintln(a.Out)
 }

@@ -117,19 +117,6 @@ func TestGrantOperatorHomeCmd(t *testing.T) {
 	}
 }
 
-func TestLockOperatorHomeCmd(t *testing.T) {
-	c := LockOperatorHomeCmd("/Users/alice")
-	joined := strings.Join(c.Args, " ")
-	// It must NOT be sudo-fronted (the operator owns their own home) and must be a
-	// 700 lock of exactly the given path.
-	if c.Args[0] == "sudo" {
-		t.Errorf("locking the operator's own home should not need sudo: %v", c.Args)
-	}
-	if !strings.Contains(joined, "chmod") || !strings.Contains(joined, "700") || !strings.Contains(joined, "/Users/alice") {
-		t.Errorf("expected `chmod 700 /Users/alice`, got %v", c.Args)
-	}
-}
-
 func TestDangerReason(t *testing.T) {
 	home := "/Users/alice"
 	cases := []struct {

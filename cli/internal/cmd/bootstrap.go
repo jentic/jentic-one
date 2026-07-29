@@ -287,10 +287,16 @@ func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
 		return nil
 	}
 
-	// Launch in the agent's own home (dir "" → login shell starts in $HOME).
+	// Launch in the agent's own home (dir "" → login shell starts in $HOME). No
+	// working-dir grant is involved here, but launchAgent still loads the recorded
+	// grants to build the confinement profile, so pass the current config.
 	desc, _ := localagent.Lookup(setup.agentID)
 	binary := desc.Binary
-	return a.launchAgent(ctx, setup.agentUser, binary, "")
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	return a.launchAgent(ctx, cfg, setup.agentID, setup.agentUser, binary, "")
 }
 
 // bootstrapIdentity registers the agent if needed and resolves a token pair. It

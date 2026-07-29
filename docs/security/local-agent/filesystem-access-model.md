@@ -11,8 +11,15 @@ boundary runs in **both** directions across them:
 
 | Directory | Owner | Default posture | The other party gets in via |
 | --------- | ----- | --------------- | --------------------------- |
-| Operator home `~` (e.g. `/Users/alice`) | operator | `chmod 700` — closed | **per-directory named-user ACLs**, granted on demand |
+| Operator home `~` (e.g. `/Users/alice`) | operator | per-session **process confinement** (sandbox-exec/bwrap) hides all but granted paths | **per-directory named-user ACLs**, granted on demand |
 | Agent home (e.g. `/Users/Shared/alice-local-agent`) | agent | agent-owned, under a **shared** parent | an **inherited operator ACL**, laid down at creation |
+
+> **Note.** An earlier iteration closed `~` with a blanket `chmod 700`. That is
+> gone: in-home confidentiality against the agent is now enforced per session by the
+> [process-confinement layer](sandbox-exec-plan.md) (`jentic run` launches under
+> sandbox-exec/bwrap and **errors closed** if confinement is unavailable), which
+> also closes the sibling-traversal leak a blanket 700 could not. Real secrets keep
+> their own `0700` modes regardless.
 
 The asymmetry is deliberate: the operator's home is the thing worth protecting,
 so it is closed by default and opened one path at a time; the agent's home is
@@ -28,11 +35,16 @@ the agent can already read/write/execute the target and, if not, offers
 **Allow** / **Open in agent's home** (default) / **Cancel**. An **Allow** for a
 path under `~` is built from three layers.
 
-### Layer 0 — default-deny is `chmod 700 ~`
+### Layer 0 — default-deny is the confinement profile
 
-With `~` at `drwx------`, no other account (including the agent) can even
-*traverse* the home, let alone read it. We add **no** ACL to `~` itself. This is
-the machine-independent guarantee everything else builds on.
+The agent process is launched under a per-session confinement profile
+(sandbox-exec on macOS, bwrap on Linux) that **denies the operator home except the
+granted subpaths** — see [`sandbox-exec-plan.md`](sandbox-exec-plan.md). We add
+**no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because in-home
+confidentiality now rests on the profile being applied, `jentic run` **errors
+closed** when confinement is unavailable rather than launching an exposed session.
+This is the layer that makes the per-entry non-negotiable (grant `~/a`, hide `~/b`)
+hold — the ACLs below only ever *open* access; they never trim it.
 
 ### Layer 1 — traverse-walk (execute-only, per ancestor)
 
@@ -88,11 +100,12 @@ options are listed first, **Allow** requires a *typed* confirmation, and `--yes`
 **declines** rather than grants. Granting those would re-open the very boundary
 `chmod 700 ~` exists to close.
 
-### Open problem — the sibling-traversal residual
+### The sibling-traversal residual (closed by confinement)
 
-> **Provisional — under active investigation.** This section states the problem
-> and the candidate fixes; the chosen direction is not yet settled and nothing
-> here beyond the status quo is implemented.
+> **Resolved.** This section states the problem and the candidate fixes it drove.
+> The chosen answer — a per-session confinement profile — is now implemented; see
+> [`sandbox-exec-plan.md`](sandbox-exec-plan.md). The analysis below is retained
+> because it explains *why* the ACL layer alone cannot close the leak.
 
 **Symptom.** With `~` closed, the agent can touch nothing under it. Grant `~/a`
 and the agent can now also reach `~/b` — a sibling it was never granted. Concretely
@@ -302,8 +315,8 @@ between what's recorded and what's actually present.
 
 ## What this model does *not* do
 
-- It never reverts `chmod 700 ~` — teardown removes agent ACLs but leaves the
-  home locked.
+- It never changes the operator home's own permissions — setup no longer locks it
+  to 700, and teardown only removes the agent's named-user ACLs.
 - It never touches the operator's *own* access to their files — every ACL is a
   **named-user** entry scoped to the single agent account.
 - It does not share anything under the operator's 700 home by symlink or PATH —

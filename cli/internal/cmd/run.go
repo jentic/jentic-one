@@ -161,8 +161,8 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return err
 	}
 
-	// 4. Launch.
-	return a.launchAgent(ctx, agentUser, binary, dir)
+	// 4. Launch (confined — see launchAgent for the error-closed contract).
+	return a.launchAgent(ctx, cfg, agentID, agentUser, binary, dir)
 }
 
 // resolveAgentUser applies the precedence: --agent-user flag, then the recorded
@@ -356,14 +356,15 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 	return abs, nil
 }
 
-// grantDir applies the "700 home + traverse-walk + rwx-leaf" model so the agent
-// can read/write abs without gaining access to the rest of the operator's home.
-// For a path under the home it (1) opens execute-only traverse on each ancestor
-// the agent can't already pass through, then (2) grants the rwx leaf. For a path
-// outside the home the leaf grant alone suffices. The default-deny is the home's
-// existing 0700 mode, not an ACL we add — see localagent's model comment for why
-// we deliberately avoid a home-wide deny sweep. All grants are scoped to the
-// agent user and never touch the operator's own permissions.
+// grantDir applies the "traverse-walk + rwx-leaf" ACL model so the agent uid can
+// read/write abs. For a path under the home it (1) opens execute-only traverse on
+// each ancestor the agent can't already pass through, then (2) grants the rwx leaf.
+// For a path outside the home the leaf grant alone suffices. These grants only ever
+// OPEN access (the sandbox is intersection-only, so a DAC grant is still required);
+// the sibling-traversal leak they leave open is closed per session by the
+// process-confinement layer (see localagent/confine.go), not by an ACL deny sweep.
+// All grants are scoped to the agent user and never touch the operator's own
+// permissions.
 func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, abs string) error {
 	home := localagent.OperatorHome()
 
@@ -507,13 +508,33 @@ var errCancelled = errors.New("cancelled")
 
 // ── step 4: launch ───────────────────────────────────────────────────────────
 
-func (a *App) launchAgent(ctx context.Context, agentUser, binary, dir string) error {
+// launchAgent starts the confined agent session. Confinement is REQUIRED: it
+// closes the sibling-traversal leak that the coarse ACL grant leaves open, and it
+// is what replaces the old `chmod 700 ~` guarantee. When this machine can't confine
+// the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
+// we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
+// session — and point the operator at an alternative isolation route.
+func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, binary, dir string) error {
+	if ok, reason := localagent.ConfinementAvailable(); !ok {
+		return fmt.Errorf("fully locked-down agent sessions aren't available on this machine (%s).\n"+
+			"  jentic run won't start an unconfined session, because that would expose the operator's\n"+
+			"  home beyond the directories granted. To run this agent in isolation instead, consider\n"+
+			"  containerising it (e.g. run it inside Docker). See "+
+			"docs/security/local-agent/sandbox-exec-plan.md", reason)
+	}
+
+	var grantedDirs []string
+	if entry, ok := cfg.LocalAgent(agentID); ok {
+		grantedDirs = entry.GrantedDirs
+	}
+	operatorHome := localagent.OperatorHome()
+
 	where := dir
 	if where == "" {
 		where = "the agent's home"
 	}
-	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s ...", binary, agentUser, where))
-	cmd := localagent.LaunchCmd(ctx, agentUser, binary, dir)
+	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
+	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, operatorHome, grantedDirs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }

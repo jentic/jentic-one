@@ -194,15 +194,13 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		}
 	}
 
-	// Lock the operator's own home — the machine-independent isolation guarantee.
-	// It is unprivileged (the operator owns it) and idempotent, so run it always.
-	if home := localagent.OperatorHome(); home != "" {
-		lock := localagent.LockOperatorHomeCmd(home)
-		lock.Stdout, lock.Stderr = a.Out, a.Err
-		if err := lock.Run(); err != nil {
-			return fmt.Errorf("lock the operator's home (chmod 700): %w", err)
-		}
-	}
+	// We no longer force the operator's home to `chmod 700`. In-home confidentiality
+	// against the agent is now enforced per session by the process-confinement layer
+	// (`jentic run` launches under sandbox-exec/bwrap and errors closed if that is
+	// unavailable), which also closes the sibling-traversal leak a blanket 700 could
+	// not. Real secrets keep their own 0700 modes regardless; the sensitivity rules
+	// (DangerReason) still gate what may be granted. See
+	// docs/security/local-agent/sandbox-exec-plan.md.
 
 	// Seed config/provider per the operator's toggles — the same porting logic
 	// `jentic run` uses. The field bools drive the decision directly, so there is

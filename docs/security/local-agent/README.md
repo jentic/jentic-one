@@ -13,7 +13,7 @@ agent as its own unprivileged Unix user so the isolated posture is the default.
 | --- | -------------- |
 | [`analysis.md`](analysis.md) | **The problem.** The same-user attack paths (AP-1…AP-4), why isolating the *agent* is strictly stronger than isolating Jentic One, and the state before this work. |
 | [`local-agent-isolation.md`](local-agent-isolation.md) | **The design.** Run the agent as a dedicated Unix user, wrapped by the `jentic` CLI: account creation folded into `bootstrap` / `wizard`, then `jentic run <agent>`, directory grants, and `jentic reset`. |
-| [`filesystem-access-model.md`](filesystem-access-model.md) | **The permission mechanics.** How the agent's and operator's accounts reach — and are kept out of — each other's files: 700-home, traverse-walk + rwx-leaf ACLs, the inherited operator grant, and the grant/revoke/reset lifecycle. |
+| [`filesystem-access-model.md`](filesystem-access-model.md) | **The permission mechanics.** How the agent's and operator's accounts reach — and are kept out of — each other's files: traverse-walk + rwx-leaf ACLs, the inherited operator grant, per-session process confinement, and the grant/revoke/reset lifecycle. |
 | [`sandbox-exec-plan.md`](sandbox-exec-plan.md) | **The plan.** Adding a per-session process-confinement layer (`sandbox-exec` on macOS, `bwrap` on Linux) to close the sibling-traversal leak, and retiring the `chmod 700 ~` default-deny. |
 
 For the broader deployment guidance (separate host / network postures) see
