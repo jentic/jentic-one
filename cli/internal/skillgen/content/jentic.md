@@ -101,16 +101,21 @@ several APIs is one command the human decides in one sitting:
 ```
 jentic access request \
   --provision slack.com/api --auth slack.com/api=bearer \
+  --rules-json 'slack.com/api=[{"effect":"allow","methods":["POST"],"path":"/chat\\.postMessage"}]' \
   --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \
+  --rules-json 'googleapis.com/sheets=[{"effect":"allow","methods":["GET"],"path":".*"}]' \
   --toolkit github.com/api \
   --reason "one reason covering the whole job" \
   --wait
 ```
 
-Each `--provision` adds a full plan for that API; `--toolkit`/`--toolkit-id`/
-`--scope` add single items. With more than one `--provision`, key `--auth` and
-`--rules-json` by API (`--auth vendor/name=bearer`); the bare form applies when
-there is exactly one. Never file duplicate or per-operation requests, and don't
+Each `--provision` adds a full plan for that API — keep every plan complete
+(auth, rules, reason), exactly as you would for a single one;
+`--toolkit`/`--toolkit-id`/`--scope` add single items. With more than one
+`--provision`, key `--auth` and `--rules-json` by the same
+`vendor/name[/version]` you passed to `--provision` (include the version in
+the key if you used one); the bare form applies when there is exactly one.
+Never file duplicate or per-operation requests, and don't
 withdraw-and-refile to tweak a proposal; once filed, tell your operator an
 approval is waiting and hand back (or `--wait`). If a composite collides with
 an older pending request for one of its targets, nothing is filed — drop that
@@ -363,8 +368,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
   files the whole path to first execution as one plan when nothing serves the
   API yet; `--toolkit <vendor/name>` asks to be bound to an **existing**
-  toolkit; `--scope <scope>` requests a missing scope. Always pass `--reason`;
-  add `--wait` to block on approval (see Procedure for full examples).
+  toolkit; `--scope <scope>` requests a missing scope. All target flags repeat
+  and combine into **one composite request**. Always pass `--reason`; add
+  `--wait` to block on approval (see Procedure for full examples).
 - `jentic access list | status <id> | withdraw <id>` — track your requests.
 - `jentic access refresh` — re-mint your token after an approved **scope**
   grant that `whoami` flags as not yet on your token. Bindings need no

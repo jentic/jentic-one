@@ -85,8 +85,9 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 			"All target flags repeat and combine, so a job needing several APIs files ONE\n" +
 			"composite request the human decides in one sitting: each --provision appends\n" +
 			"a provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\n" +
-			"item. With more than one --provision, key --auth and --rules-json by API\n" +
-			"(--auth vendor/name=bearer); the bare form applies when there is exactly one.\n\n" +
+			"item. With more than one --provision, key --auth and --rules-json by the\n" +
+			"same vendor/name[/version] passed to --provision; the bare form applies\n" +
+			"when there is exactly one.\n\n" +
 			"An existing pending request for the same resource is reused when this request\n" +
 			"names a single target; a composite aborts instead (drop the already-pending\n" +
 			"target or withdraw the older request, then re-file).\n\n" +
@@ -102,7 +103,7 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 			"    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n" +
 			"  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n" +
 			"    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n" +
-			"    --toolkit github.com/api --scope catalog:import \\\n" +
+			"    --toolkit github.com/api --scope apis:write \\\n" +
 			"    --reason \"release-notes automation\" --wait",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -113,8 +114,8 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 	cmd.Flags().StringArrayVar(&opts.toolkitIDs, "toolkit-id", nil, "request a binding to this toolkit id (tk_…; repeatable)")
 	cmd.Flags().StringArrayVar(&opts.scopes, "scope", nil, "request this scope be granted (repeatable)")
 	cmd.Flags().StringArrayVar(&opts.provisions, "provision", nil, "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)")
-	cmd.Flags().StringArrayVar(&opts.auths, "auth", nil, "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name=<type>)")
-	cmd.Flags().StringArrayVar(&opts.rulesJSONs, "rules-json", nil, "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name=<json>)")
+	cmd.Flags().StringArrayVar(&opts.auths, "auth", nil, "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=<type>)")
+	cmd.Flags().StringArrayVar(&opts.rulesJSONs, "rules-json", nil, "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=<json>)")
 	cmd.Flags().StringVar(&opts.reason, "reason", "", "human-readable justification shown to the approver")
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "block until the request is decided")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 10*time.Minute, "max time to wait with --wait")
