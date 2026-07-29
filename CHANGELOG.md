@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.22.0](https://github.com/jentic/jentic-one/compare/v0.21.0...v0.22.0) (2026-07-29)
+
+
+### Features
+
+* **access-requests:** filer-owner enrichment, widened UI type, shared queue helpers ([#858](https://github.com/jentic/jentic-one/issues/858)) ([5c55059](https://github.com/jentic/jentic-one/commit/5c550594eba0edd4fca0c5bab657d8916d1947ea))
+* **ui:** rebuild dashboard into layered gateway-health overview ([#859](https://github.com/jentic/jentic-one/issues/859)) ([1c22567](https://github.com/jentic/jentic-one/commit/1c225675f316cf300857803784dd6f076bc62bc1))
+
+
+### Bug Fixes
+
+* **auth:** fail closed on missing or unknown actor_type in verify_token ([#863](https://github.com/jentic/jentic-one/issues/863)) ([ecd5c17](https://github.com/jentic/jentic-one/commit/ecd5c179b4bf6ce1e78450a69fbe393227c05dd6))
+* **auth:** repair expired-token login race and add sliding web sessions ([#857](https://github.com/jentic/jentic-one/issues/857)) ([d716c15](https://github.com/jentic/jentic-one/commit/d716c1505d8e1c4478265f6cb76f630b08e44059))
+
 ## [0.21.0](https://github.com/jentic/jentic-one/compare/v0.20.0...v0.21.0) (2026-07-28)
 
 
