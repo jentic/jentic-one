@@ -1,7 +1,8 @@
-"""Cross-database prerequisite queries for access request validation.
+"""Cross-database reads against admin tables for the control module.
 
-Uses raw SQL (text()) to avoid importing admin ORM models — the control module
-must not import from the admin module.
+Existence checks (access-request prerequisites) and labelling lookups (display
+enrichment) share one seam: raw SQL (text()) so the control module never
+imports admin ORM models.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ class UserDisplayRow(NamedTuple):
 
 
 class PrerequisiteRepository:
-    """Checks existence of bindings in the admin database without admin imports."""
+    """Cross-DB reads (existence checks + labelling lookups) without admin imports."""
 
     @staticmethod
     async def active_user_exists(session: AsyncSession, *, user_id: str) -> bool:

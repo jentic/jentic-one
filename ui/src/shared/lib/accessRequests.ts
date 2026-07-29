@@ -100,16 +100,20 @@ export interface AccessRequest {
 	requested_by: string;
 	/** The principal that created the row (the agent itself for self-filed requests). */
 	created_by: string;
-	/** The filer's human owner (null for ownerless actors, e.g. service accounts). */
+	/**
+	 * The filer's owner id. Stamped from the filer's parent (or the filer
+	 * itself), so it may be a non-user id (e.g. a service account) — the
+	 * enrichment below is simply absent in that case. Null only on legacy rows.
+	 */
 	filer_owner_id?: string | null;
-	/** Server-resolved display info for `filer_owner_id` (absent when it isn't a user). */
+	/** Server-resolved owner display info (absent when the id isn't a user). */
 	filer_owner?: AccessRequestOwner | null;
 	/** Deep link into the webapp's decision surface (stamped at file time). */
 	approve_url: string;
-	/** ISO timestamp the request was filed (present on list/get responses). */
-	filed_at?: string | null;
+	/** ISO timestamp the request was filed. */
+	filed_at: string;
 	/** ISO timestamp the request expires. */
-	expires_at?: string | null;
+	expires_at: string;
 	items: AccessRequestItem[];
 	/** Whether the caller can fulfill the request, and the blocking checks if not. */
 	evaluation?: AccessRequestEvaluation | null;
@@ -307,8 +311,10 @@ export function scopeLabel(item: AccessRequestItem): string {
 
 /**
  * One-line queue-row summary of a request's items: "toolkit · bind +2 more".
- * The single copy of the presentation every queue surface (dashboard queue
- * page, per-actor card, downstream consoles) previously hand-rolled.
+ * The single copy of the presentation the OSS queue surfaces (dashboard queue
+ * page, per-actor card) previously hand-rolled. Richer consumers that resolve
+ * target names client-side (e.g. the enterprise console) extend rather than
+ * replace this.
  */
 export function summarizeAccessRequest(request: AccessRequest): string {
 	const n = request.items.length;

@@ -35,6 +35,8 @@ function plan(items: AccessRequestItem[]): AccessRequest {
 		requested_by: 'agnt_1',
 		created_by: 'agnt_1',
 		approve_url: 'https://app.example.test/access-requests/areq_1',
+		filed_at: '2026-07-23T09:00:00Z',
+		expires_at: '2026-07-30T09:00:00Z',
 		items,
 	};
 }

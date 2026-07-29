@@ -368,14 +368,22 @@ class AccessRequestService:
         label for requests they can already read. Ids that aren't users
         (service-account filers) or no longer resolve stay ``None`` — the
         wire field is optional by design.
+
+        Rows without a ``filer_owner_id`` (nullable column; legacy rows) fall
+        back to ``created_by`` — the same fallback consumers render — so a
+        user-filed row still gets its label when only the creator is recorded.
         """
-        owner_ids = sorted({v.filer_owner_id for v in views if v.filer_owner_id})
+
+        def owner_key(view: AccessRequestView) -> str:
+            return view.filer_owner_id or view.created_by
+
+        owner_ids = sorted({owner_key(v) for v in views if owner_key(v)})
         if not owner_ids:
             return
         async with self._ctx.admin_db.session() as session:
             displays = await PrerequisiteRepository.get_user_displays(session, user_ids=owner_ids)
         for view in views:
-            row = displays.get(view.filer_owner_id or "")
+            row = displays.get(owner_key(view))
             if row is None:
                 continue
             name = " ".join(part for part in (row.first_name, row.last_name) if part).strip()

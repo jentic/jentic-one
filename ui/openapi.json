@@ -359,7 +359,7 @@
         "type": "object"
       },
       "AccessRequestOwnerResponse": {
-        "description": "Display info for the filer's human owner (labelling only, not authorization).\n\nServer-resolved from ``filer_owner_id`` so consumers don't need\n``users:read`` (or a roster fetch) just to label a row. Absent when the\nid doesn't resolve to a user (service-account filers, purged rows) or on\nmutation responses, which skip the enrichment.",
+        "description": "Display info for the filer's human owner (labelling only, not authorization).\n\nServer-resolved from ``filer_owner_id`` (falling back to ``created_by``\nwhen the former is null, mirroring what consumers render) so they don't\nneed ``users:read`` (or a roster fetch) just to label a row. Absent when\nthe id doesn't resolve to a user (service-account filers, purged rows) or\non mutation responses, which skip the enrichment.",
         "properties": {
           "display_name": {
             "anyOf": [
@@ -379,7 +379,7 @@
             "type": "string"
           },
           "id": {
-            "description": "The owner's user id (same value as filer_owner_id).",
+            "description": "The resolved owner's user id (filer_owner_id, or created_by when null).",
             "title": "Id",
             "type": "string"
           }
