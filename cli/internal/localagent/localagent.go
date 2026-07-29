@@ -159,6 +159,14 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 			{
 				What: "grant the operator read/write into the agent's home",
 				Cmd:  GrantOperatorHomeCmd(operator, homeDir),
+				// Best-effort: the recursive grant descends into the macOS home
+				// template, which carries SIP/TCC-protected entries (Library/Mail,
+				// Library/Containers, ContainerManager, …) that NOBODY — not even
+				// root — can ACL. `find`/`chmod` process everything they can and
+				// exit non-zero on those; the home root (which carries the inherit
+				// bits that actually matter) is stamped first, so a residual failure
+				// on protected template files must not abort account creation.
+				BestEffort: true,
 			},
 		}
 	}

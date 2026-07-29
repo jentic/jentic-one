@@ -158,6 +158,13 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 			c := step.Cmd
 			c.Stdout, c.Stderr = a.Out, a.Err
 			if err := c.Run(); err != nil {
+				if step.BestEffort {
+					// e.g. the recursive operator grant hitting SIP/TCC-protected
+					// home-template files nobody can ACL — expected, not fatal.
+					fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
+						"  (%s: some protected system files couldn't be changed — that's expected; continuing)", step.What)))
+					continue
+				}
 				return fmt.Errorf("%s: %w", step.What, err)
 			}
 		}
@@ -189,7 +196,12 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 			grant := localagent.GrantOperatorHomeCmd(operator, fields.homeDir)
 			grant.Stdout, grant.Stderr = a.Out, a.Err
 			if err := grant.Run(); err != nil {
-				return fmt.Errorf("grant the operator read/write into the agent's home: %w", err)
+				// Same best-effort rationale as CreateAccountCmds: the recursive
+				// grant exits non-zero on SIP/TCC-protected home-template files
+				// nobody can ACL. The home root and the agent's real content are
+				// stamped regardless, so this must not fail reuse.
+				fmt.Fprintln(a.Out, theme.Dim.Render(
+					"  (some protected system files in the home couldn't be granted to you — that's expected; continuing)"))
 			}
 		}
 	}

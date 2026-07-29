@@ -658,7 +658,12 @@ func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentID, ag
 	r := localagent.LeafRevokeCmd(agentUser, abs)
 	r.Stdout, r.Stderr = a.Out, a.Err
 	if err := r.Run(); err != nil {
-		return fmt.Errorf("revoke directory access: %w", err)
+		// The revoke recurses over the subtree; macOS `chmod -a` exits non-zero on
+		// entries that don't carry the exact ACE (inherited-only children, files
+		// with no ACL). That is benign — the ACE is removed everywhere it existed —
+		// so warn and still drop the recorded grant rather than abort.
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"  (some entries had no matching grant to remove — that's expected; continuing)"))
 	}
 	if cfg.RemoveGrantedDir(agentID, abs) {
 		if err := cfg.Save(a.Paths); err != nil {

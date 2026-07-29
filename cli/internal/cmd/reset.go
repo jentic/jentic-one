@@ -354,8 +354,12 @@ func (a *App) execAgentReset(paths config.Paths, cfg *config.FileConfig, plan re
 		c.Stdout, c.Stderr = a.Out, a.Err
 		if err := c.Run(); err != nil {
 			if step.BestEffort {
+				// Expected residual non-zero exits: SIP/TCC-protected home-template
+				// files nobody can chown (re-own/delete home), and macOS `chmod -a`
+				// reporting the ACE already absent on some subtree entries (leaf
+				// revoke). Neither leaves the teardown incomplete.
 				fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
-					"  (%s: some protected system files couldn't be changed — that's expected; continuing)", step.What)))
+					"  (%s: some entries couldn't be changed — that's expected; continuing)", step.What)))
 				continue
 			}
 			return fmt.Errorf("%s: %w", step.What, err)
@@ -470,6 +474,14 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		steps = append(steps, localagent.AccountStep{
 			What: "remove read/write grant on " + acl.dir,
 			Cmd:  localagent.LeafRevokeCmd(plan.user, acl.dir),
+			// Best-effort: the leaf revoke recurses (find ! -type l -exec chmod
+			// -a) over the whole granted subtree, and macOS `chmod -a` exits
+			// non-zero per entry that doesn't carry the exact ACE — "Entry not
+			// found" on inherited-only children, "No ACL present" on files with no
+			// ACL. Those are benign (the ACE is already absent there); the net
+			// effect is the entry removed everywhere it existed, so a residual
+			// non-zero exit must not abort the teardown before the account is gone.
+			BestEffort: true,
 		})
 	}
 	// (1b) Ancestor traverse grants next.

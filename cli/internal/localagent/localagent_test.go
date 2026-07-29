@@ -83,6 +83,13 @@ func TestCreateAccountCmds(t *testing.T) {
 		if !strings.Contains(all, "file_inherit") || !strings.Contains(all, "directory_inherit") {
 			t.Error("macOS operator grant must be inherited (file_inherit/directory_inherit)")
 		}
+		// The recursive operator grant descends into SIP/TCC-protected home-template
+		// files nobody can ACL, so it must be best-effort or account creation aborts.
+		for _, s := range steps {
+			if strings.Contains(s.What, "grant the operator") && !s.BestEffort {
+				t.Error("macOS operator-grant step must be BestEffort (SIP/TCC-protected home files can't be ACLed)")
+			}
+		}
 		// The operator grant must carry add_subdirectory: bootstrap writes the agent
 		// identity by `mkdir <home>/.jentic` as the operator, and the macOS "write"
 		// shorthand omits add_subdirectory on a directory (files ok, mkdir EACCES).

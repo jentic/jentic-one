@@ -144,11 +144,13 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 			idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
 	}
 
-	// The home step is best-effort (a macOS home has SIP/TCC-protected files that
-	// nobody can chown/remove, so its non-zero exit must not abort the teardown);
-	// no other step is.
+	// Best-effort steps: the home step (a macOS home has SIP/TCC-protected files
+	// nobody can chown/remove) and the leaf read/write revoke (its recursive macOS
+	// `chmod -a` exits non-zero on subtree entries that don't carry the exact ACE).
+	// Both must not abort the teardown; nothing else is best-effort.
 	for _, s := range steps {
-		wantBestEffort := strings.Contains(s.What, "the agent's home")
+		wantBestEffort := strings.Contains(s.What, "the agent's home") ||
+			strings.Contains(s.What, "read/write grant on")
 		if s.BestEffort != wantBestEffort {
 			t.Errorf("step %q BestEffort=%v, want %v", s.What, s.BestEffort, wantBestEffort)
 		}
