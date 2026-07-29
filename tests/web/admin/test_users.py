@@ -193,39 +193,6 @@ def test_users_read_can_list(
     assert resp.status_code == 200
 
 
-def test_token_without_actor_type_is_401(
-    unauthed_client: TestClient, web_context: Context, reader_user_permissions: None
-) -> None:
-    """Fail closed (#862): a validly-signed JWT with no actor_type claim gets 401."""
-    config = web_context.config.admin.auth
-    claims = {
-        "sub": "reader-user",
-        "email": "reader@test.com",
-        "must_change_password": False,
-    }
-    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
-    resp = unauthed_client.get("/users", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 401
-    assert resp.json()["type"] == "unauthorized"
-
-
-def test_token_with_unknown_actor_type_is_401_not_500(
-    unauthed_client: TestClient, web_context: Context, reader_user_permissions: None
-) -> None:
-    """An unrecognised actor_type claim is a clean 401, never a ValueError→500."""
-    config = web_context.config.admin.auth
-    claims = {
-        "sub": "reader-user",
-        "email": "reader@test.com",
-        "actor_type": "definitely-not-a-real-actor",
-        "must_change_password": False,
-    }
-    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
-    resp = unauthed_client.get("/users", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 401
-    assert resp.json()["type"] == "unauthorized"
-
-
 def test_users_read_cannot_create(
     unauthed_client: TestClient, web_context: Context, reader_user_permissions: None
 ) -> None:

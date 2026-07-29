@@ -64,11 +64,19 @@ async def verify_token(token: str, *, secret: str, ctx: Context) -> Identity:
     claims = decode_jwt(token, secret)
     actor_type_claim = claims.get("actor_type")
     if actor_type_claim is None:
+        # The wire response is deliberately uniform with any other bad token
+        # (401, no oracle for forgers) — log the real cause so an operator
+        # can tell a claim-less token from a bad signature or wrong secret.
+        logger.warning("jwt_actor_type_missing", sub=claims.get("sub"))
         raise InvalidTokenError("Token does not declare an actor_type")
     try:
         actor_type = ActorType(actor_type_claim)
     except ValueError as exc:
-        # Unknown value: refuse cleanly (401) instead of leaking a 500.
+        # Typed, deliberate rejection instead of relying on the web layer's
+        # catch-all to absorb a ValueError from the enum constructor.
+        logger.warning(
+            "jwt_actor_type_unknown", sub=claims.get("sub"), actor_type=str(actor_type_claim)
+        )
         raise InvalidTokenError("Token declares an unknown actor_type") from exc
     sub = claims["sub"]
     parent_actor_id = claims.get("parent_actor_id")

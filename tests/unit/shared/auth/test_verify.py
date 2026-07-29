@@ -109,30 +109,24 @@ async def test_jwt_with_permissions_and_scopes_merges_both(
 
 
 @pytest.mark.asyncio
-async def test_jwt_without_actor_type_rejected(mock_ctx: MagicMock) -> None:
-    """Fail closed (#862): a validly-signed JWT with no actor_type claim is refused."""
+@pytest.mark.parametrize(
+    "actor_type_claim",
+    [None, "definitely-not-a-real-actor"],
+    ids=["missing", "unknown"],
+)
+async def test_jwt_with_bad_actor_type_rejected(
+    mock_ctx: MagicMock, actor_type_claim: str | None
+) -> None:
+    """Fail closed (#862): a validly-signed JWT is refused when actor_type is
+    absent or unrecognised — typed InvalidTokenError, never a bare ValueError."""
     secret = "a" * 32
     claims = {
         "sub": "usr_5",
         "email": "user@example.com",
         "permissions": ["org:admin"],
     }
-    token = issue_jwt(claims=claims, secret=secret, ttl_seconds=3600)
-
-    with pytest.raises(InvalidTokenError):
-        await verify_token(token, secret=secret, ctx=mock_ctx)
-
-
-@pytest.mark.asyncio
-async def test_jwt_with_unknown_actor_type_rejected(mock_ctx: MagicMock) -> None:
-    """An unrecognised actor_type raises InvalidTokenError (mapped to 401), not ValueError."""
-    secret = "a" * 32
-    claims = {
-        "sub": "usr_6",
-        "email": "user@example.com",
-        "actor_type": "definitely-not-a-real-actor",
-        "permissions": ["org:admin"],
-    }
+    if actor_type_claim is not None:
+        claims["actor_type"] = actor_type_claim
     token = issue_jwt(claims=claims, secret=secret, ttl_seconds=3600)
 
     with pytest.raises(InvalidTokenError):
