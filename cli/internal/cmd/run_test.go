@@ -67,3 +67,29 @@ func TestRunRegisteredOnAPITree(t *testing.T) {
 		t.Error("jenticctl root unexpectedly registers 'run'")
 	}
 }
+
+func TestClassifyGrantStderr(t *testing.T) {
+	cases := []struct {
+		name        string
+		in          string
+		wantMissing int
+		wantBenign  bool
+	}{
+		{"empty", "", 0, false},
+		{"whitespace only", "\n  \n", 0, false},
+		{"single missing", "chmod: Failed to set ACL on file 'a.js': No such file or directory", 1, true},
+		{"many missing with blanks", "chmod: Failed to set ACL on file 'a.js': No such file or directory\n\nchmod: Failed to set ACL on file 'b.js': No such file or directory\n", 2, true},
+		{"crlf tolerated", "chmod: Failed to set ACL on file 'a.js': No such file or directory\r", 1, true},
+		{"real error aborts", "chmod: Failed to set ACL on file 'a.js': No such file or directory\nchmod: Operation not permitted", 1, false},
+		{"permission denied", "chmod: /x: Permission denied", 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			missing, benign := classifyGrantStderr(c.in)
+			if missing != c.wantMissing || benign != c.wantBenign {
+				t.Errorf("classifyGrantStderr(%q) = (%d, %v), want (%d, %v)",
+					c.in, missing, benign, c.wantMissing, c.wantBenign)
+			}
+		})
+	}
+}

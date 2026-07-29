@@ -391,12 +391,58 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, age
 }
 
 // runGrant runs one ACL command, wiring output and wrapping any failure.
+//
+// A recursive stamp over a large, live tree can race the filesystem: an entry the
+// walk saw can be gone by the time chmod reaches it, and chmod exits non-zero after
+// printing "No such file or directory" for that entry even though every surviving
+// file was stamped. Those per-entry misses are benign, so stderr is captured and
+// classified: if the only failures are missing entries the grant is reported as a
+// success (with a count), and any other error still fails.
 func (a *App) runGrant(c *exec.Cmd, what string) error {
-	c.Stdout, c.Stderr = a.Out, a.Err
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("%s: %w", what, err)
+	c.Stdout = a.Out
+	var stderr strings.Builder
+	c.Stderr = &stderr
+	err := c.Run()
+	out := stderr.String()
+	if err == nil {
+		fmt.Fprint(a.Err, out)
+		return nil
 	}
-	return nil
+	if missing, benign := classifyGrantStderr(out); benign {
+		fmt.Fprintln(a.Err, theme.Infof(
+			"%s: skipped %d entr%s that disappeared during the scan (harmless).",
+			what, missing, plural(missing, "y", "ies")))
+		return nil
+	}
+	fmt.Fprint(a.Err, out)
+	return fmt.Errorf("%s: %w", what, err)
+}
+
+// classifyGrantStderr reports how many entries chmod could not find and whether
+// every non-blank stderr line was one of those benign "No such file or directory"
+// misses. Any other diagnostic makes the failure real.
+func classifyGrantStderr(out string) (missing int, benign bool) {
+	sawLine := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		sawLine = true
+		if strings.HasSuffix(strings.TrimRight(line, "\r"), "No such file or directory") {
+			missing++
+			continue
+		}
+		return missing, false
+	}
+	return missing, sawLine
+}
+
+// plural returns one or other depending on n.
+func plural(n int, one, other string) string {
+	if n == 1 {
+		return one
+	}
+	return other
 }
 
 // decideDirGrant returns whether to grant the agent access to dir, honouring the

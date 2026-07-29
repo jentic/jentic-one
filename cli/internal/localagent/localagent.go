@@ -337,10 +337,19 @@ const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," 
 // On macOS the allow is inserted at a low index and applied recursively so it
 // wins over any pre-existing deny ACE on the subtree (see the ordering note
 // above); on Linux it is a recursive access + default ACL.
+//
+// The macOS form drives the recursion with find and excludes symlinks (! -type l)
+// rather than using chmod -R: a workspace like a Node/JS install is full of
+// relative and dangling symlinks (pnpm/npm layouts), and chmod -R follows each one
+// to its target, failing with "No such file or directory" for every broken link.
+// An ACL on a symlink is ignored by the kernel anyway (access is decided by the
+// target, which find stamps directly when it visits it), so skipping links is both
+// correct and quiet. (macOS chmod also refuses -R and -h together, ruling out the
+// obvious alternative.)
 func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "-R", "+a#", "0", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"user:"+agentUser+" allow "+macLeafACE, dir)
+		return exec.Command("sudo", "find", dir, "!", "-type", "l", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+			"-exec", "chmod", "+a#", "0", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
 	}
 	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
 		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
@@ -354,8 +363,8 @@ func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 // permission string must match LeafGrantCmd's exactly so macOS removes the ACE.
 func LeafRevokeCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "-R", "-a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"user:"+agentUser+" allow "+macLeafACE, dir)
+		return exec.Command("sudo", "find", dir, "!", "-type", "l", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+			"-exec", "chmod", "-a", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
 	}
 	script := "setfacl -R -x u:" + shellQuote(agentUser) + " " + shellQuote(dir) +
 		" && setfacl -R -d -x u:" + shellQuote(agentUser) + " " + shellQuote(dir)
