@@ -20,10 +20,15 @@ Releases are automated with [release-please](https://github.com/googleapis/relea
    - **gate** — builds the app, runs every migration on a fresh ephemeral
      SQLite DB, asserts each DB reached an Alembic head, and checks `/health`
      serves the tag version. Nothing publishes if this fails.
+   - **smoke** — the full Helm smoke matrix (combined / parts / broker / +obs)
+     on a kind cluster, reusing `smoke-helm.yml`. Unlike the post-merge run on
+     `main`, this one blocks: a release cannot ship while any deployment mode
+     is red.
    - **publish-image** — builds the `app` container image and pushes it to GHCR
-     as `ghcr.io/<owner>/jentic-one-app` (tagged `vX.Y.Z`, the short SHA, and
-     `latest`). One image serves every surface via `JENTIC__APPS`; this is the
-     image self-hosters pull — see
+     as `ghcr.io/<owner>/jentic-one-app` (tagged `X.Y.Z` — the `v` is stripped
+     — and the short SHA; `latest` moves only on stable releases). One image
+     serves every surface via `JENTIC__APPS`; this is the image self-hosters
+     pull — see
      [`deploy/README.md`](../deploy/README.md#self-hosted-containers--external-postgres).
    - **release** — GoReleaser builds the signed, checksummed `jenticctl` +
      `jentic` binaries (cosign keyless + syft SBOMs) and pushes the Homebrew cask.
@@ -73,9 +78,12 @@ with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`).
 
 **First-release checklist:** the first push creates the `jentic-one-app`
 package under the repo owner **as private**. After the first release, a
-maintainer must set its visibility to **public** in the package settings
-(and optionally enable immutable tags) — until then self-hosters cannot
-`docker pull` without authenticating. The image is cosign-signed with an SBOM
+maintainer must set its visibility to **public** in the package settings —
+until then self-hosters cannot `docker pull` without authenticating. GHCR's
+**immutable tags** option is a trade-off, not a default: it hardens tags
+against re-pushes, but breaks the tag-re-run recovery path above (a re-run
+from the same tag cannot re-push `X.Y.Z`) — enable it only if you accept
+recovering via `Release-As` instead. The image is cosign-signed with an SBOM
 attestation; the verify commands live in `deploy/README.md` ("Verify the
 image signature").
 

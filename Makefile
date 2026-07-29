@@ -213,9 +213,13 @@ images: ## List locally built jentic-one images
 #   make release-image REGISTRY=ghcr.io/jentic
 #
 # builds deploy/docker/app.Dockerfile and pushes it to
-# $(REGISTRY)/jentic-one-app tagged with the pyproject version, the short git
-# SHA, and `latest`. Requires `docker login <registry>` first. CI does this
-# automatically on a vX.Y.Z tag (see .github/workflows/release.yml).
+# $(REGISTRY)/jentic-one-app tagged with the pyproject version and the short
+# git SHA. `latest` only moves when the version is a stable X.Y.Z (no
+# prerelease suffix), mirroring CI's guard so a dev/rc push can never hijack
+# the tag self-hosters float on. Requires `docker login <registry>` first. CI
+# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml);
+# unlike this target, CI also lower-cases the GHCR owner and cosign-signs the
+# pushed digest.
 REGISTRY ?=
 RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
 
@@ -225,9 +229,14 @@ release-image: build-base ## Build + push the app image to REGISTRY (e.g. REGIST
 	fi
 	docker build -f deploy/docker/app.Dockerfile \
 		-t $(RELEASE_IMAGE):$(VERSION) \
-		-t $(RELEASE_IMAGE):$(GIT_SHA) \
-		-t $(RELEASE_IMAGE):latest .
+		-t $(RELEASE_IMAGE):$(GIT_SHA) .
 	docker push $(RELEASE_IMAGE):$(VERSION)
 	docker push $(RELEASE_IMAGE):$(GIT_SHA)
-	docker push $(RELEASE_IMAGE):latest
-	@echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"
+	@if echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		docker tag $(RELEASE_IMAGE):$(VERSION) $(RELEASE_IMAGE):latest; \
+		docker push $(RELEASE_IMAGE):latest; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"; \
+	else \
+		echo "Prerelease version — not moving :latest"; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA))"; \
+	fi

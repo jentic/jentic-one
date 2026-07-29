@@ -13,7 +13,10 @@
 #   3. publish-image — build the `app` container image and push it to GHCR
 #                      (ghcr.io/<owner>/jentic-one-app). One image serves every
 #                      surface via JENTIC__APPS; this is the image self-hosters
-#                      pull (see deploy/README.md "Self-hosted").
+#                      pull (see deploy/README.md "Self-hosted"). Needs gate +
+#                      smoke: the image is part of the release, so it must not
+#                      publish (nor move :latest) while any deployment mode is
+#                      red.
 #   4. release       — GoReleaser builds the signed, checksummed jenticctl +
 #                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
 #                      pushes the Homebrew cask. This is the install (see
@@ -131,7 +134,10 @@ jobs:
 
   publish-image:
     name: Publish app image to GHCR
-    needs: gate
+    # Needs smoke too: the image (and :latest) is part of the release, so it
+    # must not publish while any deployment mode is red — same bar as the
+    # binaries.
+    needs: [gate, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -175,7 +181,7 @@ jobs:
         id: push
         run: |
           set -euo pipefail
-          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          OWNER="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
           IMAGE="ghcr.io/${OWNER}/jentic-one-app"
           VERSION="${GITHUB_REF_NAME#v}"
           SHA="$(git rev-parse --short HEAD)"
@@ -210,9 +216,9 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
-          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign sign "${IMAGE}@${DIGEST}"
           syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
-          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+          cosign attest --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
 
   release:
     name: GoReleaser (signed CLI binaries)

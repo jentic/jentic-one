@@ -106,9 +106,10 @@ self-hosted deployment is **two containers from the same image**: one `app`
 (default `JENTIC__APPS`) and one `broker` (`JENTIC__APPS=broker`).
 
 `JENTIC__APPS` accepts a comma-separated string; each surface only opens the
-database connections it needs (`auth` also reads the `admin` DB; `broker` reads
-`admin`, `control`, and `registry`). The surface/DB dependency map lives in
-`SURFACE_DB_DEPS` in `src/jentic_one/__main__.py`.
+database connections it needs (`auth` also reads the `admin` and `control`
+DBs; `broker` reads `admin`, `control`, and `registry`; standalone `control`
+and `registry` read `admin` to verify callers). The surface/DB dependency map
+lives in `SURFACE_DB_DEPS` in `src/jentic_one/__main__.py`.
 
 ### Pull the image
 
@@ -121,16 +122,17 @@ docker pull ghcr.io/jentic/jentic-one-app:1.2.3       # a specific release (tags
 ```
 
 Note that **only a `@sha256:` digest is a true pin** — every tag, including
-`:vX.Y.Z`, is floating and could in principle be re-pushed. For production,
-pin to the digest the release run printed (the `publish-image` job echoes
-`Image digest: sha256:…`, and it's shown on the GHCR package page):
+the version tag `:1.2.3`, is floating and could in principle be re-pushed. For
+production, pin to the digest the release run printed (the `publish-image` job
+echoes `Image digest: sha256:…`, and it's shown on the GHCR package page):
 
 ```bash
 docker pull ghcr.io/jentic/jentic-one-app@sha256:<digest-from-the-release>
 ```
 
-`:latest` only moves on stable `vX.Y.Z` releases — prerelease tags (e.g.
-`v1.2.3-rc.1`) publish their own version tag but never touch `:latest`.
+`:latest` only moves on stable releases (a `vX.Y.Z` git tag exactly, published
+as image tag `X.Y.Z`) — prerelease tags (e.g. `v1.2.3-rc.1`) publish their own
+version tag but never touch `:latest`.
 
 ### Verify the image signature
 
@@ -141,13 +143,13 @@ image CI built:
 
 ```bash
 cosign verify \
-  --certificate-identity-regexp 'https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/jentic/jentic-one-app@sha256:<digest>
 
 # and inspect the attached SBOM attestation:
 cosign verify-attestation --type spdxjson \
-  --certificate-identity-regexp 'https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-identity-regexp '^https://github\.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   ghcr.io/jentic/jentic-one-app@sha256:<digest>
 ```
@@ -160,8 +162,9 @@ make release-image REGISTRY=ghcr.io/<your-org>         # builds + pushes app ima
 ```
 
 `make release-image` builds `deploy/docker/app.Dockerfile` and pushes
-`<REGISTRY>/jentic-one-app` tagged with the pyproject version, the short git
-SHA, and `latest`.
+`<REGISTRY>/jentic-one-app` tagged with the pyproject version and the short
+git SHA; `latest` only moves when the version is a stable `X.Y.Z` (same guard
+as CI).
 
 ### The three databases (one instance, three schemas)
 
@@ -361,12 +364,16 @@ long-running services against an **external** Postgres (no bundled DB — point
 
 ```yaml
 # docker-compose.yaml — app + broker against an EXTERNAL Postgres.
-# `migrate` and `create-admin` are one-shot init containers; `app` and `broker`
-# wait for `migrate` to complete before starting.
+# `migrate` is a one-shot init service; `app` and `broker` wait for it to
+# complete before starting. The first admin is created afterwards with a
+# one-off `docker compose run` (see below).
 #
 # The digest pin is the reproducibility contract: replace it with the digest
 # echoed by the release you are deploying ("Pull the image" above). A floating
 # tag here would let a re-pushed tag change your deployment underneath you.
+#
+# Ports bind to 127.0.0.1: both surfaces speak plain HTTP, so expose them via
+# a TLS-terminating reverse proxy (or your ingress) — never directly.
 x-image: &image ghcr.io/jentic/jentic-one-app@sha256:<digest-from-the-release>
 x-common: &common
   image: *image
@@ -386,17 +393,19 @@ services:
     <<: *common
     depends_on:
       migrate: { condition: service_completed_successfully }
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     restart: unless-stopped
 
   broker:
     <<: *common
     depends_on:
       migrate: { condition: service_completed_successfully }
+    # YAML merge replaces the whole `environment` map, so JENTIC_CONFIG_FILE
+    # must be re-declared alongside the broker-specific JENTIC__APPS.
     environment:
       JENTIC_CONFIG_FILE: /etc/jentic/production.yaml
       JENTIC__APPS: broker
-    ports: ["8080:8000"]
+    ports: ["127.0.0.1:8080:8000"]
     restart: unless-stopped
 ```
 
@@ -442,17 +451,18 @@ build today and a build in six months produce the same base layers:
 
 ```dockerfile
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203
+ARG NODE_IMAGE=node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
 FROM ${PYTHON_IMAGE} AS builder
 ...
 FROM ${PYTHON_IMAGE} AS runtime
 ```
 
-To bump the base image (e.g. for a CVE patch):
+To bump either base image (e.g. for a CVE patch):
 
 ```bash
-docker pull python:3.12-slim
-docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
-# copy the resulting python@sha256:... into python-base.Dockerfile
+docker pull python:3.12-slim          # or node:22-slim
+docker buildx imagetools inspect python:3.12-slim
+# copy the resulting sha256:... into the matching ARG in python-base.Dockerfile
 ```
 
 `uv` is also pinned to a major.minor (`ghcr.io/astral-sh/uv:0.7`) rather than
