@@ -35,7 +35,7 @@ type runOptions struct {
 func newRunCmd(app *App) *cobra.Command {
 	opts := &runOptions{}
 	cmd := &cobra.Command{
-		Use:   "run <agent> [path]",
+		Use:   "run <agent> [path] [-- <agent-args>...]",
 		Short: "Launch a coding agent as its own isolated Unix user",
 		Long: "run launches a coding agent (claude, ...) under a dedicated, unprivileged\n" +
 			"OS account distinct from the operator's login user, so a compromised or\n" +
@@ -44,10 +44,31 @@ func newRunCmd(app *App) *cobra.Command {
 			"account if missing, resolves filesystem access to the working directory\n" +
 			"(granting a scoped ACL only when the operator confirms), and starts the\n" +
 			"session in a login shell so no operator environment leaks.\n\n" +
+			"Arguments for the agent binary are forwarded verbatim, in either form:\n" +
+			"  jentic run claude -- --model opus -p \"hi\"   (agent, then -- <agent-args>)\n" +
+			"  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\n" +
+			"both run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\n" +
+			"form the first token after `--` is the agent id and there is no path argument\n" +
+			"(the working directory defaults to the current one); use the trailing form to\n" +
+			"pass a path. Without any `--`, run takes at most the agent id and a path.\n\n" +
 			"The agent account, its home, and the directories it has been granted are\n" +
 			"recorded in ~/.jentic/config.yaml. See the security analysis in\n" +
 			"docs/security/local-agent/local-agent-isolation.md for the full rationale.",
-		Args: cobra.MaximumNArgs(2),
+		// Only the positional args that are jentic's own (agent id, optional path)
+		// count against the limit; everything forwarded to the agent does not.
+		// cmd.ArgsLenAtDash() is the arg count before `--` (-1 when absent): a
+		// LEADING `--` (dash == 0) puts the agent id in the passthrough, so 0
+		// jentic positionals; a trailing `--` (dash > 0) keeps agent+path before it.
+		Args: func(cmd *cobra.Command, args []string) error {
+			n := len(args)
+			if dash := cmd.ArgsLenAtDash(); dash >= 0 {
+				n = dash
+			}
+			if n > 2 {
+				return fmt.Errorf("accepts at most 2 args before `--` (agent and path), received %d", n)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.runE(cmd, opts, args)
 		},
@@ -77,10 +98,36 @@ func newRunCmd(app *App) *cobra.Command {
 
 func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	ctx := cmd.Context()
-	if len(args) == 0 {
+
+	// Split jentic's own positional args (agent id, optional path) from the agent
+	// passthrough — the argv forwarded verbatim to the agent binary. Two `--` forms
+	// are supported (ArgsLenAtDash() is the arg count before `--`, -1 when absent):
+	//
+	//   jentic run claude -- --flag x   (trailing): dash=1 → agent/path before it,
+	//                                    forwarded args after.
+	//   jentic run -- claude --flag x   (leading):  dash=0 → the whole agent command
+	//                                    is forwarded, so its FIRST token is the
+	//                                    agent id and the remainder is the argv. The
+	//                                    leading form takes no path (cwd is used).
+	//
+	// The leading form's value is that everything after `--` skips jentic's flag
+	// parsing, so an agent flag like --resumeSessionId never collides with a jentic
+	// flag or needs escaping.
+	posArgs, agentArgs := args, []string(nil)
+	if dash := cmd.ArgsLenAtDash(); dash == 0 {
+		// Leading `--`: pull the agent id out of the forwarded tokens.
+		if len(args) == 0 {
+			return fmt.Errorf("missing agent identifier after `--`; known agents: %s", strings.Join(localagent.Known(), ", "))
+		}
+		posArgs, agentArgs = args[:1], args[1:]
+	} else if dash > 0 {
+		posArgs, agentArgs = args[:dash], args[dash:]
+	}
+
+	if len(posArgs) == 0 {
 		return fmt.Errorf("missing agent identifier; known agents: %s", strings.Join(localagent.Known(), ", "))
 	}
-	agentID := args[0]
+	agentID := posArgs[0]
 	desc, ok := localagent.Lookup(agentID)
 	if !ok {
 		return fmt.Errorf("unknown agent %q; known agents: %s", agentID, strings.Join(localagent.Known(), ", "))
@@ -164,7 +211,7 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	}
 
 	// 3. Resolve the working directory and its access.
-	dir, err := a.resolveWorkingDir(ctx, cmd, cfg, opts, agentID, agentUser, args)
+	dir, err := a.resolveWorkingDir(ctx, cmd, cfg, opts, agentID, agentUser, posArgs)
 	if err != nil {
 		if errors.Is(err, errCancelled) {
 			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
@@ -174,7 +221,7 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	}
 
 	// 4. Launch (confined — see launchAgent for the error-closed contract).
-	return a.launchAgent(ctx, cfg, agentID, agentUser, binary, dir)
+	return a.launchAgent(ctx, cfg, agentID, agentUser, binary, dir, agentArgs)
 }
 
 // resolveAgentUser applies the precedence: --agent-user flag, then the recorded
@@ -587,7 +634,7 @@ var errCancelled = errors.New("cancelled")
 // the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.
-func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, binary, dir string) error {
+func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, binary, dir string, agentArgs []string) error {
 	if ok, reason := localagent.ConfinementAvailable(); !ok {
 		return fmt.Errorf("fully locked-down agent sessions aren't available on this machine (%s).\n"+
 			"  jentic run won't start an unconfined session, because that would expose the operator's\n"+
@@ -613,7 +660,7 @@ func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, 
 		where = "the agent's home"
 	}
 	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
-	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, grantedDirs)
+	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, grantedDirs, agentArgs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }

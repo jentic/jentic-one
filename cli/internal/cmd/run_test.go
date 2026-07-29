@@ -25,6 +25,103 @@ func TestRunRequiresAgentArg(t *testing.T) {
 	}
 }
 
+// The Args validator counts only the positional args BEFORE a `--`, so any number
+// of forwarded agent args is accepted while a third jentic positional is not.
+func TestRunArgsValidatorCountsBeforeDash(t *testing.T) {
+	app := testApp(t)
+	cases := []struct {
+		name    string
+		argv    []string
+		wantErr bool
+	}{
+		{"agent only", []string{"claude"}, false},
+		{"agent + path", []string{"claude", "/work"}, false},
+		{"three positionals", []string{"claude", "/work", "extra"}, true},
+		{"agent + many forwarded", []string{"claude", "--", "--model", "opus", "-p", "hi"}, false},
+		{"agent + path + forwarded", []string{"claude", "/work", "--", "-p", "hi"}, false},
+		{"three before dash", []string{"claude", "/work", "extra", "--", "-p"}, true},
+		{"leading dash agent + args", []string{"--", "claude", "--model", "opus"}, false},
+		{"leading dash agent only", []string{"--", "claude"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newRunCmd(app)
+			if err := cmd.ParseFlags(tc.argv); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err := cmd.Args(cmd, cmd.Flags().Args())
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("argv %v: wantErr=%v got %v", tc.argv, tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// runE splits jentic's positional args from the `--`-forwarded agent args using
+// ArgsLenAtDash, which cobra sets during flag parsing. Verify the split boundary
+// so a forwarded flag never lands in jentic's positional slice (which would be
+// misread as a working-directory path).
+func TestRunSplitsAtDash(t *testing.T) {
+	cmd := newRunCmd(testApp(t))
+	if err := cmd.ParseFlags([]string{"claude", "/work", "--", "--model", "opus"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	args := cmd.Flags().Args()
+	dash := cmd.ArgsLenAtDash()
+	if dash != 2 {
+		t.Fatalf("ArgsLenAtDash = %d, want 2 (claude, /work)", dash)
+	}
+	pos, forwarded := args[:dash], args[dash:]
+	if strings.Join(pos, ",") != "claude,/work" {
+		t.Errorf("positional args = %v, want [claude /work]", pos)
+	}
+	if strings.Join(forwarded, ",") != "--model,opus" {
+		t.Errorf("forwarded args = %v, want [--model opus]", forwarded)
+	}
+}
+
+// A LEADING `--` (jentic run -- claude --flag) reports ArgsLenAtDash()==0 and
+// captures the whole agent command (including its flags) as positional args,
+// bypassing jentic's flag parser — so an agent flag can never collide with a
+// jentic flag. The agent id is then the first forwarded token.
+func TestRunLeadingDashCapturesAgentCommand(t *testing.T) {
+	cmd := newRunCmd(testApp(t))
+	// --resumeSessionId is not a jentic flag; parsing must NOT error on it.
+	if err := cmd.ParseFlags([]string{"--", "claude", "--resumeSessionId=1234", "-p", "hi"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if dash := cmd.ArgsLenAtDash(); dash != 0 {
+		t.Fatalf("ArgsLenAtDash = %d, want 0 for a leading `--`", dash)
+	}
+	args := cmd.Flags().Args()
+	// The Args validator sees 0 jentic positionals → accepted.
+	if err := cmd.Args(cmd, args); err != nil {
+		t.Fatalf("Args validator rejected a leading-dash command: %v", err)
+	}
+	// runE takes args[0] as the agent id and args[1:] as the forwarded argv.
+	if args[0] != "claude" {
+		t.Errorf("agent id = %q, want claude", args[0])
+	}
+	if strings.Join(args[1:], ",") != "--resumeSessionId=1234,-p,hi" {
+		t.Errorf("forwarded argv = %v, want [--resumeSessionId=1234 -p hi]", args[1:])
+	}
+}
+
+// A bare leading `--` with nothing after it is a missing-agent error, not a panic.
+func TestRunLeadingDashRequiresAgent(t *testing.T) {
+	app := testApp(t)
+	cmd := newRunCmd(app)
+	if err := cmd.ParseFlags([]string{"--"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Simulate cobra's post-parse state: ArgsLenAtDash()==0 with no args. runE must
+	// surface the missing-agent error.
+	err := app.runE(cmd, &runOptions{}, cmd.Flags().Args())
+	if err == nil || !strings.Contains(err.Error(), "missing agent") {
+		t.Fatalf("expected missing-agent error, got %v", err)
+	}
+}
+
 func TestRunListGrantsEmpty(t *testing.T) {
 	app := testApp(t)
 	cmd := newRunCmd(app)

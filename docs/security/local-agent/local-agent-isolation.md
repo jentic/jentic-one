@@ -52,6 +52,40 @@ can reach without knowing its own profile name (`jentic access whoami` points at
 it for the filesystem side of "what can I do?"). Any command that prints the
 directory tree ends with a one-line reminder of how to revoke a grant.
 
+### Forwarding arguments to the agent
+
+Arguments after a `--` separator are forwarded **verbatim** to the agent binary,
+following the usual CLI convention (`cargo run --`, `kubectl exec --`). Two forms
+are supported:
+
+```bash
+# Trailing `--`: jentic's own args (agent, optional path) come first.
+jentic run claude -- --model opus -p "review this"   # runs: claude --model opus -p "review this"
+jentic run claude ~/work/api -- --resume             # forwards --resume, working dir ~/work/api
+
+# Leading `--`: the whole agent command follows the separator.
+jentic run -- claude --resumeSessionId=1234          # runs: claude --resumeSessionId=1234
+```
+
+In the **trailing** form, args before `--` are jentic's own (the agent id and an
+optional working-directory path) and args after it are the agent's argv. In the
+**leading** form, the first token after `--` is the agent id and everything else
+is forwarded; there is no path argument (the working directory defaults to the
+current one) — use the trailing form when you need to pass a path. The leading
+form's advantage is that *nothing* after `--` is parsed by jentic's flag parser,
+so an agent flag such as `--resumeSessionId` can never collide with a jentic flag
+or need escaping.
+
+The split is driven by cobra's `ArgsLenAtDash()` (the arg count before `--`: `> 0`
+for the trailing form, `0` for the leading one), so a forwarded flag can never be
+mistaken for a jentic flag or misread as the path positional. Each forwarded
+argument is shell-quoted independently before it is embedded in the `sudo -u
+<agent> … bash -lc` launch snippet, so spaces, globs, and quotes reach the agent
+as single literal tokens; on Linux the confinement wrapper (`bwrap`) also ends its
+own options with `--` before the binary so a forwarded `--flag` is passed through
+rather than parsed by bwrap. The arguments run inside the same confined session as
+an interactive launch — forwarding argv does not widen the sandbox.
+
 ## Why this posture works
 
 If the agent runs as `<operator>-local-agent` and the operator is their normal
@@ -281,7 +315,8 @@ What it does, in order:
 3. **Optionally seed config** — the agent's own settings, then the LLM-provider
    config (below).
 4. **Resolve the working directory and its access** (below).
-5. **Launch** as the agent user, in a login shell, in the resolved directory.
+5. **Launch** as the agent user, in a login shell, in the resolved directory,
+   forwarding any `--`-separated arguments verbatim to the agent binary (above).
 
 ### Step 2 — binary provisioning (copy vs. install)
 
@@ -415,10 +450,13 @@ exists to keep access from quietly sprawling.
 ### Step 5 — launch
 
 ```bash
-sudo -u "$AGENT" -H bash -lc 'cd "$DIR" && exec <binary>'
+sudo -u "$AGENT" -H bash -lc 'cd "$DIR" && exec <binary> <forwarded-args...>'
 ```
 
-Two details from live testing, both baked into `jentic run`:
+`<binary>` is wrapped in the platform confinement mechanism (`sandbox-exec` on
+macOS, `bwrap` on Linux); any `--`-forwarded arguments are appended after it, each
+shell-quoted independently so they survive the `bash -lc` snippet as single
+tokens. Two further details from live testing, both baked into `jentic run`:
 
 - **`-H bash -lc`, not `sudo -i`.** `sudo -i` re-serializes the command through the
   login shell and mangles multi-token snippets; plain `sudo -u … -H bash -lc`

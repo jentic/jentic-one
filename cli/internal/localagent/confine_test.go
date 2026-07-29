@@ -168,7 +168,7 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	// assertions on the command shape.
 	quoted := bwrapArgs("/usr/bin/claude", "/Users/alice/projects/api",
 		"/Users/Shared/alice-local-agent",
-		[]string{"/Users/alice/projects/api", "/opt/outside"})
+		[]string{"/Users/alice/projects/api", "/opt/outside"}, nil)
 	args := make([]string, len(quoted))
 	for i, q := range quoted {
 		args[i] = strings.Trim(q, "'")
@@ -185,6 +185,8 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 		// exec routes re-mounted read-only (/usr/bin exists everywhere)
 		"--ro-bind /usr/bin /usr/bin",
 		"--chdir /Users/alice/projects/api",
+		// the binary is introduced by bwrap's `--` end-of-options marker
+		"-- /usr/bin/claude",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("bwrap args missing %q\ngot: %s", want, joined)
@@ -204,5 +206,43 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	}
 	if strings.Index(joined, "--bind /Users/alice/projects/api") > strings.Index(joined, "--ro-bind /usr/bin") {
 		t.Errorf("read-only exec bind must come after grant re-binds:\n%s", joined)
+	}
+}
+
+// Forwarded agent arguments are appended verbatim after the binary on every
+// platform, each shell-quoted so spaces and quotes survive as single tokens.
+func TestConfineExecForwardsAgentArgs(t *testing.T) {
+	got := confineExec("/usr/bin/claude", "/work", "/Users/Shared/bot", nil,
+		[]string{"--model", "opus", "-p", "hello world"})
+
+	// The binary comes first, then each arg in order.
+	iBin := strings.Index(got, "/usr/bin/claude")
+	iModel := strings.Index(got, "--model")
+	iOpus := strings.Index(got, "opus")
+	if iBin < 0 || iModel < iBin || iOpus < iModel {
+		t.Fatalf("args must follow the binary in order, got:\n%s", got)
+	}
+	// A multi-word argument is a single quoted token, not two.
+	if !strings.Contains(got, shellQuote("hello world")) {
+		t.Errorf("multi-word arg must be one quoted token, got:\n%s", got)
+	}
+	// No args → no trailing junk after the binary/wrapper.
+	if bare := confineExec("/usr/bin/claude", "", "/Users/Shared/bot", nil, nil); strings.HasSuffix(bare, " ") {
+		t.Errorf("no-args exec must not leave a trailing separator: %q", bare)
+	}
+}
+
+// A forwarded flag must not be parsed as a bwrap option: bwrapArgs ends its own
+// options with `--` before the binary, so `--model` reaches the agent.
+func TestBwrapArgsSeparatesForwardedFlags(t *testing.T) {
+	quoted := bwrapArgs("/usr/bin/claude", "", "/Users/Shared/bot", nil, []string{"--model", "opus"})
+	args := make([]string, len(quoted))
+	for i, q := range quoted {
+		args[i] = strings.Trim(q, "'")
+	}
+	// `--` immediately precedes the binary, and the forwarded flag comes after it.
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-- /usr/bin/claude --model opus") {
+		t.Errorf("forwarded flags must follow `-- <binary>`, got:\n%s", joined)
 	}
 }

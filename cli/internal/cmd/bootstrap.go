@@ -296,7 +296,7 @@ func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
 	if err != nil {
 		return err
 	}
-	return a.launchAgent(ctx, cfg, setup.agentID, setup.agentUser, binary, "")
+	return a.launchAgent(ctx, cfg, setup.agentID, setup.agentUser, binary, "", nil)
 }
 
 // bootstrapIdentity registers the agent if needed and resolves a token pair. It

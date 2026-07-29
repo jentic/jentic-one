@@ -58,15 +58,17 @@ func ConfinementAvailable() (bool, string) {
 // shell (`sudo -u <user> -H bash -lc`, fresh env, HOME at the agent's home), cd to
 // dir (or the agent's home), and exec the agent binary wrapped in the platform
 // confinement mechanism. operatorHome + grantedDirs drive the deny/re-allow set;
-// the caller wires os.Stdin/out/err. Callers MUST have checked ConfinementAvailable
-// first — on an unsupported platform confineExec adds no wrapper, so reaching here
-// unconfined is a programming error, not a security posture.
-func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome string, grantedDirs []string) *exec.Cmd {
+// agentArgs are the operator's `--`-forwarded arguments, appended verbatim (each
+// shell-quoted) to the agent's argv. The caller wires os.Stdin/out/err. Callers
+// MUST have checked ConfinementAvailable first — on an unsupported platform
+// confineExec adds no wrapper, so reaching here unconfined is a programming error,
+// not a security posture.
+func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome string, grantedDirs, agentArgs []string) *exec.Cmd {
 	cd := `cd "$HOME"`
 	if dir != "" {
 		cd = "cd " + shellQuote(dir)
 	}
-	inner := cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs)
+	inner := cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
 	return agentCmdContext(ctx, agentUser, inner)
 }
 
@@ -136,20 +138,38 @@ func roExecDirs(agentHome string, grantedDirs []string) []string {
 	return out
 }
 
-// confineExec builds the `sandbox-exec …`/`bwrap …` prefix plus the agent binary,
-// already shell-quoted for embedding in the login-shell snippet.
-func confineExec(binary, dir, agentHome string, grantedDirs []string) string {
+// confineExec builds the `sandbox-exec …`/`bwrap …` prefix plus the agent binary
+// and its forwarded arguments, already shell-quoted for embedding in the
+// login-shell snippet. agentArgs are appended verbatim after the binary on both
+// platforms so the confinement wrapper execs `<binary> <args...>`.
+func confineExec(binary, dir, agentHome string, grantedDirs, agentArgs []string) string {
 	switch runtime.GOOS {
 	case "darwin":
 		profile := SandboxProfile(agentHome, grantedDirs)
-		return "sandbox-exec -p " + shellQuote(profile) + " " + shellQuote(binary)
+		return "sandbox-exec -p " + shellQuote(profile) + " " + shellQuote(binary) + quotedArgsSuffix(agentArgs)
 	case "linux":
-		return strings.Join(bwrapArgs(binary, dir, agentHome, grantedDirs), " ")
+		return strings.Join(bwrapArgs(binary, dir, agentHome, grantedDirs, agentArgs), " ")
 	default:
 		// Unsupported — no confinement to add. Callers gate on
 		// ConfinementAvailable, so reaching here means the launch was not guarded.
-		return shellQuote(binary)
+		return shellQuote(binary) + quotedArgsSuffix(agentArgs)
 	}
+}
+
+// quotedArgsSuffix renders agentArgs as a leading-space-separated, shell-quoted
+// suffix (empty when there are none) for appending to a binary in the login-shell
+// snippet. Each arg is quoted independently so spaces, globs, and quotes in an
+// argument reach the agent as a single literal token.
+func quotedArgsSuffix(agentArgs []string) string {
+	if len(agentArgs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, a := range agentArgs {
+		b.WriteString(" ")
+		b.WriteString(shellQuote(a))
+	}
+	return b.String()
 }
 
 // ── macOS: Seatbelt / SBPL ────────────────────────────────────────────────────
@@ -296,7 +316,7 @@ func sbplPath(p string) string {
 // Order matters: bwrap applies mounts left-to-right, so the tmpfs masks come
 // first, the re-binds land on top, and the read-only exec-route binds come LAST so
 // they hold even if a grant re-bound an overlapping path.
-func bwrapArgs(binary, dir, agentHome string, grantedDirs []string) []string {
+func bwrapArgs(binary, dir, agentHome string, grantedDirs, agentArgs []string) []string {
 	args := []string{"bwrap", "--die-with-parent", "--dev-bind", "/", "/"}
 	for _, root := range humanHomeRoots {
 		if info, err := os.Stat(root); err == nil && info.IsDir() {
@@ -314,7 +334,11 @@ func bwrapArgs(binary, dir, agentHome string, grantedDirs []string) []string {
 	if dir != "" {
 		args = append(args, "--chdir", dir)
 	}
-	args = append(args, binary)
+	// The agent binary and its forwarded arguments end the argv; `--` is bwrap's
+	// own end-of-options marker so a forwarded flag (e.g. `--model`) is never
+	// mistaken for a bwrap option.
+	args = append(args, "--", binary)
+	args = append(args, agentArgs...)
 	quoted := make([]string, len(args))
 	for i, a := range args {
 		quoted[i] = shellQuote(a)
