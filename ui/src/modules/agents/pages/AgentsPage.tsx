@@ -54,6 +54,7 @@ import {
 } from '@/modules/agents/components/LifecycleDialogs';
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
 import { ServiceAccountCreateSheet } from '@/modules/agents/components/ServiceAccountCreateSheet';
+import { DcrQuickstart } from '@/modules/agents/components/DcrQuickstart';
 
 type Tab = 'agents' | 'service-accounts';
 
@@ -190,6 +191,10 @@ interface ActorsSectionProps<T extends ActorRow> {
 	disableBody: string;
 	emptyTitle: string;
 	emptyBody: string;
+	/** CTA rendered inside the empty state (e.g. "New agent"). */
+	emptyAction?: React.ReactNode;
+	/** Extra first-run content below the empty state (e.g. DCR quickstart). */
+	emptyExtra?: React.ReactNode;
 	detailHref: (item: T) => string;
 }
 
@@ -204,6 +209,8 @@ function ActorsSection<T extends ActorRow>({
 	disableBody,
 	emptyTitle,
 	emptyBody,
+	emptyAction,
+	emptyExtra,
 	detailHref,
 }: ActorsSectionProps<T>) {
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
@@ -308,11 +315,15 @@ function ActorsSection<T extends ActorRow>({
 			{query.isPending ? (
 				<LoadingState message={`Loading ${nounPlural}…`} />
 			) : entities.length === 0 ? (
-				<EmptyState
-					icon={<Bot className="h-6 w-6" />}
-					title={emptyTitle}
-					description={emptyBody}
-				/>
+				<>
+					<EmptyState
+						icon={<Bot className="h-6 w-6" />}
+						title={emptyTitle}
+						description={emptyBody}
+						action={emptyAction}
+					/>
+					{emptyExtra}
+				</>
 			) : (
 				<ActorTable<T>
 					items={filtered}
@@ -387,6 +398,13 @@ function AgentsSection({
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
 				emptyTitle="No agents registered yet"
 				emptyBody="Agents appear here the moment they register with this instance."
+				emptyAction={
+					<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+						<Plus className="h-4 w-4" />
+						Create one manually
+					</Button>
+				}
+				emptyExtra={<DcrQuickstart />}
 				detailHref={(a) => ROUTE_PATHS.agent(a.id)}
 			/>
 			<AgentCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
@@ -428,6 +446,12 @@ function ServiceAccountsSection({
 				disableBody="Disabling immediately revokes this service account's access. You can re-enable it later."
 				emptyTitle="No service accounts yet"
 				emptyBody="Create a service account to give a non-human caller its own identity."
+				emptyAction={
+					<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+						<Plus className="h-4 w-4" />
+						New service account
+					</Button>
+				}
 				detailHref={(sa) => ROUTE_PATHS.serviceAccount(sa.id)}
 			/>
 			<ServiceAccountCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />

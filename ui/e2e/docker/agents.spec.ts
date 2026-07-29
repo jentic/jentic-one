@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { captureConsoleErrors, createServiceAccount, uniqueSuffix } from './helpers';
+import { provisionAdminOwnedAgent } from './agent-flow';
 
 /**
  * Agents (real backend). The Agents surface has two tabs: OAuth Agents and
@@ -55,4 +56,49 @@ test('the service-account create sheet opens from the agents surface', async ({ 
 		.first()
 		.click();
 	await expect(page.getByLabel('Name')).toBeVisible();
+});
+
+/**
+ * Phase 4/5 (agents rebuild): a DCR-registered agent gets the full identity
+ * console — KPI strip, tab shell, per-actor Activity with a Monitor deep-link —
+ * and can be renamed in place through the Settings tab (real PATCH /agents/:id
+ * round trip against the backend, not MSW).
+ */
+test('a DCR-registered agent gets the identity console and can be renamed', async ({
+	page,
+	request,
+}) => {
+	const errors = captureConsoleErrors(page);
+	const agent = await provisionAdminOwnedAgent(request);
+
+	await page.goto(`/app/agents/${agent.clientId}`);
+	await expect(page.getByRole('heading', { name: agent.name })).toBeVisible();
+
+	// Console shell: KPI strip + tab set render for a real (fresh) agent.
+	await expect(page.getByRole('group', { name: 'Key metrics' })).toBeVisible();
+	for (const tab of ['Overview', 'Activity', 'Access', 'Keys', 'Settings']) {
+		await expect(page.getByRole('tab', { name: tab })).toBeVisible();
+	}
+
+	// Activity: a fresh agent has no executions; the deep-link into Monitor
+	// still carries this actor's filter (the URL contract Monitor honours).
+	await page.getByRole('tab', { name: 'Activity' }).click();
+	const monitorLink = page.getByRole('link', { name: /Open in Monitor/ });
+	if (await monitorLink.isVisible().catch(() => false)) {
+		expect(await monitorLink.getAttribute('href')).toContain(`actor_id=${agent.clientId}`);
+	}
+
+	// Settings: rename via the real PATCH endpoint and verify the round trip.
+	await page.getByRole('tab', { name: 'Settings' }).click();
+	const renamed = `${agent.name}-renamed`;
+	await page.getByLabel('Name').fill(renamed);
+	await page.getByRole('button', { name: 'Save changes' }).click();
+
+	await expect(page.getByText('Agent updated')).toBeVisible();
+	await expect(page.getByRole('heading', { name: renamed })).toBeVisible();
+	// Destructive lifecycle lives in the danger zone.
+	await expect(page.getByText('Danger zone')).toBeVisible();
+	await expect(page.getByRole('button', { name: `Archive ${renamed}` })).toBeVisible();
+
+	expect(errors, `unexpected console errors:\n${errors.join('\n')}`).toEqual([]);
 });

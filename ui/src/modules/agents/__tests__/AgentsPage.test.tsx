@@ -320,4 +320,93 @@ describe('AgentsPage — agents lifecycle', () => {
 		expect(screen.getByText('Approved')).toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
+
+	// --- Phase 5: first-run empty state with DCR quickstart ----------------
+
+	it('shows the DCR quickstart when no agents are registered', async () => {
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderPage();
+
+		expect(await screen.findByText('No agents registered yet')).toBeInTheDocument();
+		// First-run guidance: a manual-create CTA plus a copyable POST /register curl.
+		expect(screen.getByRole('button', { name: /Create one manually/ })).toBeInTheDocument();
+		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
+		expect(screen.getByText(/curl -X POST/)).toBeInTheDocument();
+		expect(screen.getByText(/"client_name": "my-first-agent"/)).toBeInTheDocument();
+	});
+
+	// --- Phase 4: create sheet with optional initial scopes ----------------
+
+	it('creates an agent with initial scopes included in the POST body', async () => {
+		const user = userEvent.setup();
+		let postBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/agents', async ({ request }) => {
+				postBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json(
+					{
+						id: 'agnt_new',
+						name: postBody.name,
+						description: postBody.description ?? null,
+						status: 'active',
+						created_at: new Date().toISOString(),
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		await user.type(within(sheet).getByLabelText('Name'), 'scoped-agent');
+
+		// The scopes section is an optional, collapsed disclosure.
+		await user.click(within(sheet).getByRole('button', { name: /Initial scopes/ }));
+		// Expand the Capabilities group, then tick one grantable scope.
+		await user.click(await within(sheet).findByRole('button', { name: /Capabilities scopes/ }));
+		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
+
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		expect(postBody).toMatchObject({
+			name: 'scoped-agent',
+			scopes: ['capabilities:execute'],
+		});
+	});
+
+	it('omits scopes from the POST body when none are selected', async () => {
+		const user = userEvent.setup();
+		let postBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/agents', async ({ request }) => {
+				postBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json(
+					{
+						id: 'agnt_new',
+						name: postBody.name,
+						status: 'active',
+						created_at: new Date().toISOString(),
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		await user.type(within(sheet).getByLabelText('Name'), 'plain-agent');
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+
+		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		// The client normalises an empty selection to `scopes: null`.
+		expect(postBody).toMatchObject({ name: 'plain-agent', scopes: null });
+	});
 });
