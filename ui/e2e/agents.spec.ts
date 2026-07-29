@@ -73,6 +73,37 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 });
 
 /**
+ * Phase-3 identity console: the detail page's Activity tab shows THIS agent's
+ * execution feed and deep-links into Monitor pre-filtered by actor.
+ */
+test('the Activity tab feeds per-agent executions and deep-links to Monitor', async ({ page }) => {
+	await page.goto('/app/agents/agnt_active_1');
+
+	await page.getByLabel('Email').fill('admin@local');
+	await page.getByRole('textbox', { name: 'Password' }).fill('password');
+	await page.getByRole('button', { name: 'Sign in' }).click();
+
+	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
+
+	// KPI strip reads the per-actor usage aggregate.
+	await expect(page.getByRole('group', { name: 'Key metrics' }).getByText('1,204')).toBeVisible();
+
+	await page.getByRole('tab', { name: 'Activity' }).click();
+	await expect(page.getByText('github.create_issue')).toBeVisible();
+
+	// The Monitor deep-link carries the actor filter (Monitor's URL contract).
+	const href = await page.getByRole('link', { name: /Open in Monitor/ }).getAttribute('href');
+	expect(href).toContain('tab=executions');
+	expect(href).toContain('actor_id=agnt_active_1');
+	expect(href).toContain('actor_type=agent');
+
+	// Tab state is deep-linkable (?tab=) and survives reload.
+	await expect(page).toHaveURL(/tab=activity/);
+	await page.reload();
+	await expect(page.getByText('github.create_issue')).toBeVisible();
+});
+
+/**
  * Scopes flow (#615): open an active agent's detail page, grant a platform
  * permission via the Scopes editor, save (full-list PUT), and verify the new
  * scope renders as a chip and is reflected when the editor is reopened (read
@@ -86,6 +117,9 @@ test('grant a scope to an agent via the Scopes editor', async ({ page }) => {
 	await page.getByRole('button', { name: 'Sign in' }).click();
 
 	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
+
+	// Scopes live on the detail page's Access tab.
+	await page.getByRole('tab', { name: 'Access' }).click();
 
 	const scopeList = page.getByRole('list', { name: 'Granted scopes' });
 	await expect(scopeList.getByText('capabilities:execute')).toBeVisible();
@@ -128,6 +162,9 @@ test('show and decide an agent-filed pending access request', async ({ page }) =
 	await page.getByRole('button', { name: 'Sign in' }).click();
 
 	await expect(page.getByRole('heading', { name: 'support-agent' })).toBeVisible();
+
+	// Access requests live on the detail page's Access tab.
+	await page.getByRole('tab', { name: 'Access' }).click();
 
 	// The card lists the request this agent filed, summarized by its first item.
 	await expect(page.getByRole('heading', { name: 'Access requests' })).toBeVisible();

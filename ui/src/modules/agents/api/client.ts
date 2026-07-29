@@ -13,6 +13,7 @@
 import {
 	ApiError,
 	AgentsService,
+	ExecutionsService,
 	GroupBy,
 	MonitoringService,
 	PermissionsService,
@@ -567,6 +568,107 @@ export async function fetchActorsUsage(
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 403) return null;
 		throw toAgentsError(error, 'Failed to load usage statistics.');
+	}
+}
+
+/** One time bucket of an actor's execution volume. */
+export interface UsageBucketEntity {
+	/** Bucket start, unix seconds. */
+	ts: number;
+	total: number;
+	success: number;
+	failed: number;
+}
+
+/** A single actor's execution stats + volume series over the query window. */
+export interface ActorUsageDetail {
+	total: number;
+	success: number;
+	failed: number;
+	/** Width of each bucket in seconds (drives axis label formatting). */
+	bucketSeconds: number;
+	/** Sparse: only buckets with data (no zero-fill), oldest → newest. */
+	buckets: UsageBucketEntity[];
+}
+
+/**
+ * One actor's usage over the trailing `sinceDays` window — the detail page's
+ * KPI strip and Activity chart. `agent_id` is the endpoint's (misnamed) actor
+ * filter: the backend maps it onto `actor_id`, so it works for service
+ * accounts too. Same 403 contract as `fetchActorsUsage`: `null` means the
+ * viewer isn't an admin and the caller renders no stats — never an error.
+ */
+export async function fetchActorUsageDetail(
+	actorId: string,
+	sinceDays = 7,
+): Promise<ActorUsageDetail | null> {
+	try {
+		const res = await MonitoringService.getUsageStats({
+			since: Math.floor(Date.now() / 1000) - sinceDays * 86400,
+			agentId: actorId,
+			// `top` is irrelevant here (the window is already one actor).
+			topLimit: 1,
+		});
+		return {
+			total: res.stats.total,
+			success: res.stats.success,
+			failed: res.stats.failed,
+			bucketSeconds: res.bucket_seconds,
+			buckets: res.buckets.map((b) => ({
+				ts: b.ts,
+				total: b.total,
+				success: b.success,
+				failed: b.failed,
+			})),
+		};
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return null;
+		throw toAgentsError(error, 'Failed to load usage statistics.');
+	}
+}
+
+/** One row of an actor's execution feed (a trimmed `ExecutionResponse`). */
+export interface ActorExecutionEntity {
+	id: string;
+	status: string;
+	toolkitId: string;
+	toolkitName: string | null;
+	operationId: string | null;
+	durationMs: number | null;
+	httpStatus: number | null;
+	error: string | null;
+	startedAt: string;
+}
+
+/**
+ * The most recent executions attributed to one actor
+ * (`GET /executions?actor_id=…`). One page only — the detail page shows a
+ * recent-activity feed and deep-links to Monitor (which owns cursor paging,
+ * filters, and trace sheets) for the full history. `null` on 403.
+ */
+export async function fetchActorExecutions(
+	actorId: string,
+	limit = 10,
+): Promise<{ items: ActorExecutionEntity[]; hasMore: boolean } | null> {
+	try {
+		const res = await ExecutionsService.listExecutions({ actorId, limit });
+		return {
+			items: res.data.map((r) => ({
+				id: r.execution_id,
+				status: r.status,
+				toolkitId: r.toolkit_id,
+				toolkitName: r.toolkit_name ?? null,
+				operationId: r.operation_id ?? null,
+				durationMs: r.duration_ms ?? null,
+				httpStatus: r.http_status ?? null,
+				error: r.error ?? null,
+				startedAt: r.started_at,
+			})),
+			hasMore: res.has_more,
+		};
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return null;
+		throw toAgentsError(error, 'Failed to load executions.');
 	}
 }
 

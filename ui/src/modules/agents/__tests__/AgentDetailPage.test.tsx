@@ -148,8 +148,11 @@ describe('AgentDetailPage', () => {
 	});
 
 	it('shows the pending access requests this agent has filed (#619)', async () => {
+		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
+		// The permission story lives on the Access tab.
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
 		expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument();
 		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
 	});
@@ -163,6 +166,93 @@ describe('AgentDetailPage', () => {
 	it('renders a not-found surface for an unknown id', async () => {
 		renderDetail('agnt_does_not_exist');
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();
+	});
+
+	// --- Phase 3: identity console (KPI strip + tabs) ----------------------
+
+	it('renders the KPI strip from the per-actor usage aggregate', async () => {
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		// The agents-module usage fixture sums to 1,204 executions / 99.0%.
+		const strip = await screen.findByRole('group', { name: 'Key metrics' });
+		await waitFor(() => expect(within(strip).getByText('1,204')).toBeInTheDocument());
+		expect(within(strip).getByText('99%')).toBeInTheDocument();
+		expect(within(strip).getByText('Bound toolkits')).toBeInTheDocument();
+	});
+
+	it('renders em-dashes in the KPI strip when monitoring is admin-gated (403)', async () => {
+		const { worker } = await import('@/mocks/browser');
+		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		worker.use(
+			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
+			createErrorHandler('get', '/executions', { status: 403 }),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		const strip = await screen.findByRole('group', { name: 'Key metrics' });
+		// Executions + success + last-activity all degrade to em-dashes; the
+		// toolkit count (not admin-gated) still renders.
+		await waitFor(() => expect(within(strip).getAllByText('—').length).toBe(3));
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('shows the per-agent executions feed on the Activity tab with a Monitor deep-link', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		// The feed lists this agent's executions only (agents-module fixture).
+		expect(await screen.findByText('github.create_issue')).toBeInTheDocument();
+		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
+		expect(screen.getByText('Execution volume (7d)')).toBeInTheDocument();
+
+		// The deep-link carries the actor filter into Monitor's URL contract.
+		const link = screen.getByRole('link', { name: /Open in Monitor/ });
+		expect(link.getAttribute('href')).toContain('tab=executions');
+		expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
+		expect(link.getAttribute('href')).toContain('actor_type=agent');
+	});
+
+	it('shows a quiet permission note on the Activity tab for non-admins (403)', async () => {
+		const user = userEvent.setup();
+		const { worker } = await import('@/mocks/browser');
+		const { createErrorHandler } = await import('@/__tests__/test-utils');
+		worker.use(
+			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
+			createErrorHandler('get', '/executions', { status: 403 }),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		expect(await screen.findByText('Activity requires admin access')).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('hosts the API key lifecycle on the Keys tab', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+
+		// No key issued yet → honest empty copy + the generate action.
+		expect(
+			await screen.findByText('No API key has been issued for this agent yet.'),
+		).toBeInTheDocument();
+		await user.click(
+			screen.getByRole('button', { name: 'Generate API key for support-agent' }),
+		);
+
+		// Plaintext shows exactly once via the ApiKeyDialog.
+		expect(
+			await screen.findByRole('dialog', { name: 'API key generated' }),
+		).toBeInTheDocument();
 	});
 
 	it('gates lifecycle actions by status (pending → approve / deny / archive)', async () => {

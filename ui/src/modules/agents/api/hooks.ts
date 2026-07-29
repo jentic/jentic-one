@@ -53,7 +53,11 @@ import {
 	unbindToolkitFromAgent,
 	fetchActorAccessRequests,
 	fetchActorsUsage,
+	fetchActorUsageDetail,
+	fetchActorExecutions,
 	type ActorUsage,
+	type ActorUsageDetail,
+	type ActorExecutionEntity,
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
@@ -649,6 +653,36 @@ export function useActorsUsage(actorType: 'agent' | 'service_account') {
 		queryKey: ['agents-usage', actorType],
 		queryFn: () => fetchActorsUsage(actorType),
 		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * One actor's usage stats + volume buckets (trailing 7 days) for the detail
+ * page's KPI strip and Activity chart. Same `agents-usage` root and 403/`null`
+ * degrade contract as `useActorsUsage` (see its docblock).
+ */
+export function useActorUsageDetail(actorId: string | null) {
+	return useQuery<ActorUsageDetail | null>({
+		queryKey: ['agents-usage', 'detail', actorId],
+		queryFn: () => fetchActorUsageDetail(actorId as string),
+		enabled: actorId != null,
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The most recent executions attributed to one actor — the detail page's
+ * Activity feed. Single page by design: the full, filterable history lives in
+ * Monitor (the feed carries a pre-filtered deep-link). `null` on 403.
+ */
+export function useActorExecutions(actorId: string | null) {
+	return useQuery<{ items: ActorExecutionEntity[]; hasMore: boolean } | null>({
+		queryKey: ['agents-usage', 'executions', actorId],
+		queryFn: () => fetchActorExecutions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
 		retry: false,
 	});
 }
