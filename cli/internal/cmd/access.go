@@ -396,7 +396,7 @@ func splitKeyedValue(flag, raw string, provKeys []string) (key, value string, ke
 	candidate := strings.TrimSpace(raw[:eq])
 	ref, refErr := parseToolkitRef(candidate)
 	if refErr != nil {
-		return "", "", false, nil
+		return "", "", false, nil //nolint:nilerr // an unparsable key prefix means "bare value", not a failure.
 	}
 	canonical := refKey(ref)
 	for _, k := range provKeys {
