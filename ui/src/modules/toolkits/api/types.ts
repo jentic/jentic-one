@@ -146,3 +146,14 @@ export type BindingWarning = BindingWarningSchema;
  * `credential_id` may name a *different* binding than the one tested against.
  */
 export type PermissionTestResult = PermissionTestResponse;
+
+/**
+ * One toolkit's slice of the `group_by=toolkit` usage aggregation — the list
+ * page's card sparklines (7d volume trend + totals).
+ */
+export interface ToolkitUsageSummary {
+	total: number;
+	success: number;
+	failed: number;
+	trend: number[];
+}

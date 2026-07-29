@@ -6,7 +6,13 @@
  * Views must never reach past this layer (ESLint-enforced). Query keys are
  * namespaced under `['toolkits', …]` so callers/tests can target invalidation.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
 import type {
 	ToolkitCreateRequest,
@@ -27,7 +33,7 @@ import { sharedQueryKeys } from '@/shared/api';
  * card through `sharedQueryKeys.toolkitsRoot` without the two prefixes drifting. */
 export const toolkitKeys = {
 	all: sharedQueryKeys.toolkitsRoot,
-	list: (cursor: string | null) => [...toolkitKeys.all, 'list', cursor] as const,
+	list: () => [...toolkitKeys.all, 'list'] as const,
 	detail: (id: string) => [...toolkitKeys.all, 'detail', id] as const,
 	keys: (id: string) => [...toolkitKeys.all, 'keys', id] as const,
 	bindings: (id: string) => [...toolkitKeys.all, 'bindings', id] as const,
@@ -38,6 +44,7 @@ export const toolkitKeys = {
 	usage: (id: string) => [...toolkitKeys.all, 'usage', id] as const,
 	executions: (id: string) => [...toolkitKeys.all, 'executions', id] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
+	usageByToolkit: () => [...toolkitKeys.all, 'usage-by-toolkit'] as const,
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,
 	linkableAgents: () => [...toolkitKeys.all, 'linkable-agents'] as const,
 };
@@ -46,12 +53,30 @@ const STALE_POLL_MS = 30_000;
 
 // --- Toolkit list + detail ------------------------------------------------
 
-export function useToolkits(params: { cursor?: string | null } = {}) {
-	const cursor = params.cursor ?? null;
-	return useQuery({
-		queryKey: toolkitKeys.list(cursor),
-		queryFn: () => client.listToolkits({ cursor }),
+/**
+ * Cursor-keyset toolkit list as an infinite query — pages accumulate behind a
+ * "Load more" affordance instead of replacing each other, so the grid never
+ * discards what the user already scanned. Polling refetches every loaded page.
+ */
+export function useToolkits() {
+	return useInfiniteQuery({
+		queryKey: toolkitKeys.list(),
+		queryFn: ({ pageParam }) => client.listToolkits({ cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
 		placeholderData: keepPreviousData,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+/**
+ * Per-toolkit 7d usage summaries for the list's card sparklines (single
+ * `group_by=toolkit` aggregation, admin-gated → `null` hides the sparklines).
+ */
+export function useUsageByToolkit() {
+	return useQuery({
+		queryKey: toolkitKeys.usageByToolkit(),
+		queryFn: () => client.getUsageByToolkit(),
 		refetchInterval: STALE_POLL_MS,
 	});
 }

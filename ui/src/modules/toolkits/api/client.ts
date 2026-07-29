@@ -23,6 +23,7 @@ import {
 	AuditTargetType,
 	ExecutionsService,
 	MonitoringService,
+	GroupBy,
 	type ToolkitResponse,
 	type ToolkitListResponse,
 	type ToolkitCreateRequest,
@@ -49,6 +50,7 @@ import type {
 	CreatedToolkit,
 	ToolkitAgent,
 	ToolkitExecution,
+	ToolkitUsageSummary,
 } from '@/modules/toolkits/api/types';
 
 /**
@@ -484,5 +486,44 @@ export async function listToolkitExecutions(
 			return null;
 		}
 		throw toToolkitsError(error, 'Failed to load toolkit executions.');
+	}
+}
+
+/**
+ * Per-toolkit 7d usage summaries for the list page's card sparklines — ONE
+ * aggregation call (`GET /monitoring/usage?group_by=toolkit&top_limit=50`)
+ * joined onto the cards by toolkit id, instead of N per-card requests.
+ * Same admin gating as the other monitoring lenses (401/403 → `null`).
+ */
+export async function getUsageByToolkit(
+	opts: { sinceDays?: number } = {},
+): Promise<Record<string, ToolkitUsageSummary> | null> {
+	const days = opts.sinceDays ?? 7;
+	const until = Math.floor(Date.now() / 60_000) * 60;
+	try {
+		const res = await MonitoringService.getUsageStats({
+			since: until - days * 86_400,
+			until,
+			groupBy: GroupBy.TOOLKIT,
+			topLimit: 50,
+		});
+		const map: Record<string, ToolkitUsageSummary> = {};
+		for (const row of res.top) {
+			// Unattributed executions arrive with a null key; the list page can't
+			// join them onto a card, so they're dropped here.
+			if (!row.key) continue;
+			map[row.key] = {
+				total: row.total,
+				success: row.success,
+				failed: row.failed,
+				trend: row.trend,
+			};
+		}
+		return map;
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return null;
+		}
+		throw toToolkitsError(error, 'Failed to load toolkit usage.');
 	}
 }

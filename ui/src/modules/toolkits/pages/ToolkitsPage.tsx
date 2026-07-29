@@ -1,33 +1,54 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router';
-import { Boxes, Plus } from 'lucide-react';
-import { Button, EmptyState, ErrorAlert, PageHeader, PageHelp, PageShell } from '@/shared/ui';
-import { useToolkits } from '@/modules/toolkits/api';
+import { Boxes, Compass, Plus } from 'lucide-react';
+import {
+	AppLink,
+	Button,
+	EmptyState,
+	ErrorAlert,
+	PageHeader,
+	PageHelp,
+	PageShell,
+} from '@/shared/ui';
+import { useToolkits, useUsageByToolkit } from '@/modules/toolkits/api';
 import { CreateToolkitDialog } from '@/modules/toolkits/components/CreateToolkitDialog';
 import { ToolkitCard, ToolkitsListSkeleton } from '@/modules/toolkits/components/ToolkitCard';
 import {
 	ToolkitsToolbar,
 	type ToolkitStatusFilter,
 } from '@/modules/toolkits/components/ToolkitsToolbar';
-import { ROUTE_PATHS } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * `/app/toolkits` — the toolkit list. Lists first-party toolkits (cursor
- * paginated), each card deep-linking to `/app/toolkits/:id`. The "New toolkit"
- * dialog (`CreateToolkitDialog`) creates a toolkit — with optional inline
- * credential binds — and reveals the one-time plaintext key before handing
- * off to the detail page.
+ * paginated behind "Load more"), each card deep-linking to `/app/toolkits/:id`
+ * and carrying a 7d usage sparkline when the admin-gated `group_by=toolkit`
+ * aggregation is readable. The "New toolkit" dialog (`CreateToolkitDialog`)
+ * creates a toolkit — with optional inline credential binds — and reveals the
+ * one-time plaintext key before handing off to the detail page. "Import an
+ * API" links to Discover so the no-credentials journey doesn't dead-end here.
  */
 export function ToolkitsPage() {
-	const { data, isLoading, isError, error, refetch, isFetching } = useToolkits();
+	const {
+		data,
+		isLoading,
+		isError,
+		error,
+		refetch,
+		isFetching,
+		hasNextPage,
+		fetchNextPage,
+		isFetchingNextPage,
+	} = useToolkits();
+	const { data: usageByToolkit } = useUsageByToolkit();
 	const navigate = useNavigate();
 
 	const [search, setSearch] = useState('');
 	const [statusFilter, setStatusFilter] = useState<ToolkitStatusFilter>('all');
 	const [createOpen, setCreateOpen] = useState(false);
 
-	const toolkits = useMemo(() => data?.data ?? [], [data]);
+	const toolkits = useMemo(() => data?.pages.flatMap((page) => page.data) ?? [], [data]);
 
 	const filtered = useMemo(() => {
 		const q = search.trim().toLowerCase();
@@ -49,6 +70,9 @@ export function ToolkitsPage() {
 				subtitle="Group credentials and API keys into a scoped surface for your agents."
 				actions={
 					<div className="flex items-center gap-2">
+						<AppLink href={ROUTES.discover} variant="secondary" size="md">
+							<Compass className="h-4 w-4" /> Import an API
+						</AppLink>
 						<Button onClick={() => setCreateOpen(true)}>
 							<Plus className="h-4 w-4" /> New toolkit
 						</Button>
@@ -110,16 +134,33 @@ export function ToolkitsPage() {
 						description="No toolkits match your current filter. Try a different search term or status."
 					/>
 				) : (
-					<motion.div
-						className="grid grid-cols-1 gap-4 md:grid-cols-2"
-						initial="hidden"
-						animate="visible"
-						variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
-					>
-						{filtered.map((toolkit) => (
-							<ToolkitCard key={toolkit.toolkit_id} toolkit={toolkit} />
-						))}
-					</motion.div>
+					<>
+						<motion.div
+							className="grid grid-cols-1 gap-4 md:grid-cols-2"
+							initial="hidden"
+							animate="visible"
+							variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
+						>
+							{filtered.map((toolkit) => (
+								<ToolkitCard
+									key={toolkit.toolkit_id}
+									toolkit={toolkit}
+									usage={usageByToolkit?.[toolkit.toolkit_id] ?? null}
+								/>
+							))}
+						</motion.div>
+						{hasNextPage && (
+							<div className="mt-4 flex justify-center">
+								<Button
+									variant="secondary"
+									loading={isFetchingNextPage}
+									onClick={() => void fetchNextPage()}
+								>
+									Load more
+								</Button>
+							</div>
+						)}
+					</>
 				)}
 			</div>
 
