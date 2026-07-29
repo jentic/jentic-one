@@ -15,6 +15,7 @@ type MockToolkit = {
 	credential_count: number;
 	permissions: Array<Record<string, unknown>>;
 	created_at: string;
+	created_by?: string | null;
 	updated_at: string | null;
 };
 
@@ -30,6 +31,7 @@ const toolkits: MockToolkit[] = [
 		credential_count: 1,
 		permissions: [],
 		created_at: '2026-05-01T10:00:00Z',
+		created_by: 'admin@local',
 		updated_at: null,
 	},
 	{
@@ -41,6 +43,7 @@ const toolkits: MockToolkit[] = [
 		credential_count: 2,
 		permissions: [],
 		created_at: '2026-04-12T08:30:00Z',
+		created_by: 'admin@local',
 		updated_at: '2026-06-01T12:00:00Z',
 	},
 ];
@@ -238,6 +241,7 @@ export const toolkitsHandlers = [
 			credential_count: credentialIds.length,
 			permissions: [],
 			created_at: now(),
+			created_by: 'admin@local',
 			updated_at: null,
 		};
 		toolkits.unshift(toolkit);

@@ -107,6 +107,9 @@ describe('ToolkitDetailPage', () => {
 		expect(await screen.findByRole('heading', { name: /recent changes/i })).toBeInTheDocument();
 		expect(await screen.findByText(/suspended pending review/i)).toBeInTheDocument();
 
+		// Provenance line (created_by rendered at last).
+		expect(screen.getByTestId('toolkit-provenance')).toHaveTextContent('admin@local');
+
 		// Keys tab lists the seeded key.
 		await user.click(screen.getByRole('tab', { name: 'Keys' }));
 		expect(await screen.findByText('CI runner')).toBeInTheDocument();
@@ -257,6 +260,39 @@ describe('ToolkitDetailPage', () => {
 
 		expect(await screen.findByText('New API Key Created')).toBeInTheDocument();
 		expect(screen.getByText(/jntc_live_freshmockplaintext/)).toBeInTheDocument();
+	});
+
+	it('creates a key with an IP allowlist and shows the restriction chip', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(await screen.findByRole('button', { name: /create key/i }));
+		await user.type(screen.getByLabelText('Key label'), 'Edge worker');
+		await user.type(screen.getByLabelText('Allowed IPs'), '10.0.0.1, 10.0.0.2');
+		await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+		await screen.findByText('New API Key Created');
+		// The new key row renders the allowed_ips chip.
+		expect(await screen.findByText('10.0.0.1, 10.0.0.2')).toBeInTheDocument();
+	});
+
+	it('renames a key inline from the Keys tab', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		await screen.findByText('CI runner');
+
+		// Pencil → inline input pre-filled with the current label.
+		await user.click(screen.getAllByRole('button', { name: 'Rename key' })[0]);
+		const input = screen.getByLabelText('Key label');
+		expect(input).toHaveValue('CI runner');
+		await user.clear(input);
+		await user.type(input, 'Deploy runner{Enter}');
+
+		// PATCH lands, the list refetches, the new label renders.
+		expect(await screen.findByText('Deploy runner')).toBeInTheDocument();
+		expect(screen.queryByText('CI runner')).not.toBeInTheDocument();
 	});
 
 	it('renders full-width (no reading max-width cap)', async () => {

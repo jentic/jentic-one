@@ -1,40 +1,31 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router';
 import { Boxes, Plus } from 'lucide-react';
-import {
-	Button,
-	Dialog,
-	EmptyState,
-	ErrorAlert,
-	Input,
-	Label,
-	PageHeader,
-	PageHelp,
-	PageShell,
-	Textarea,
-} from '@/shared/ui';
-import { useCreateToolkit, useToolkits } from '@/modules/toolkits/api';
+import { Button, EmptyState, ErrorAlert, PageHeader, PageHelp, PageShell } from '@/shared/ui';
+import { useToolkits } from '@/modules/toolkits/api';
+import { CreateToolkitDialog } from '@/modules/toolkits/components/CreateToolkitDialog';
 import { ToolkitCard, ToolkitsListSkeleton } from '@/modules/toolkits/components/ToolkitCard';
 import {
 	ToolkitsToolbar,
 	type ToolkitStatusFilter,
 } from '@/modules/toolkits/components/ToolkitsToolbar';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * `/app/toolkits` — the toolkit list. Lists first-party toolkits (cursor
  * paginated), each card deep-linking to `/app/toolkits/:id`. The "New toolkit"
- * dialog creates a toolkit and surfaces the one-time plaintext key on the
- * resulting detail page.
+ * dialog (`CreateToolkitDialog`) creates a toolkit — with optional inline
+ * credential binds — and reveals the one-time plaintext key before handing
+ * off to the detail page.
  */
 export function ToolkitsPage() {
 	const { data, isLoading, isError, error, refetch, isFetching } = useToolkits();
-	const createToolkit = useCreateToolkit();
+	const navigate = useNavigate();
 
 	const [search, setSearch] = useState('');
 	const [statusFilter, setStatusFilter] = useState<ToolkitStatusFilter>('all');
 	const [createOpen, setCreateOpen] = useState(false);
-	const [name, setName] = useState('');
-	const [description, setDescription] = useState('');
 
 	const toolkits = useMemo(() => data?.data ?? [], [data]);
 
@@ -50,20 +41,6 @@ export function ToolkitsPage() {
 			);
 		});
 	}, [toolkits, search, statusFilter]);
-
-	const submit = () => {
-		if (!name.trim()) return;
-		createToolkit.mutate(
-			{ name: name.trim(), description: description.trim() || null },
-			{
-				onSuccess: () => {
-					setCreateOpen(false);
-					setName('');
-					setDescription('');
-				},
-			},
-		);
-	};
 
 	return (
 		<PageShell spacing="space-y-0">
@@ -146,72 +123,11 @@ export function ToolkitsPage() {
 				)}
 			</div>
 
-			<Dialog
+			<CreateToolkitDialog
 				open={createOpen}
 				onClose={() => setCreateOpen(false)}
-				title="New toolkit"
-				size="sm"
-				footer={
-					<>
-						<Button variant="secondary" onClick={() => setCreateOpen(false)}>
-							Cancel
-						</Button>
-						<Button
-							onClick={submit}
-							loading={createToolkit.isPending}
-							disabled={!name.trim()}
-						>
-							{createToolkit.isPending ? 'Creating...' : 'Create'}
-						</Button>
-					</>
-				}
-			>
-				<div className="space-y-4">
-					{createToolkit.isError && (
-						<ErrorAlert
-							message={
-								createToolkit.error instanceof Error
-									? createToolkit.error.message
-									: 'Failed to create toolkit.'
-							}
-						/>
-					)}
-					<div>
-						<Label
-							htmlFor="tk-create-name"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Name
-						</Label>
-						<Input
-							id="tk-create-name"
-							type="text"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							placeholder="My toolkit"
-							autoFocus
-							onKeyDown={(e) => {
-								if (e.key === 'Enter' && !createToolkit.isPending) submit();
-							}}
-						/>
-					</div>
-					<div>
-						<Label
-							htmlFor="tk-create-description"
-							className="text-muted-foreground mb-1 block text-xs"
-						>
-							Description
-						</Label>
-						<Textarea
-							id="tk-create-description"
-							value={description}
-							onChange={(e) => setDescription(e.target.value)}
-							rows={2}
-							placeholder="Optional"
-						/>
-					</div>
-				</div>
-			</Dialog>
+				onGoToToolkit={(toolkitId) => navigate(ROUTE_PATHS.toolkit(toolkitId))}
+			/>
 		</PageShell>
 	);
 }

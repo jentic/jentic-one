@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Bot, Link as LinkIcon, Unlink } from 'lucide-react';
+import { Bot, CalendarClock, Link as LinkIcon, Unlink } from 'lucide-react';
 import { ActorStatusBadge, AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
 import {
 	useLinkAgentToToolkit,
+	useToolkit,
 	useToolkitAgents,
 	useUnlinkAgentFromToolkit,
 } from '@/modules/toolkits/api';
@@ -23,6 +24,7 @@ import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
  * call this" and "what changed recently" without a click.
  */
 export function OverviewTab({ toolkitId }: { toolkitId: string }) {
+	const { data: toolkit } = useToolkit(toolkitId);
 	const { data: agents = [], isError: agentsError } = useToolkitAgents(toolkitId);
 	const linkAgent = useLinkAgentToToolkit(toolkitId);
 	const unlinkAgent = useUnlinkAgentFromToolkit(toolkitId);
@@ -41,6 +43,29 @@ export function OverviewTab({ toolkitId }: { toolkitId: string }) {
 
 	return (
 		<div className="space-y-6">
+			{/* Provenance line — created_by finally rendered (phase-4 gap #10). */}
+			{toolkit && (
+				<p
+					className="text-muted-foreground flex items-center gap-1.5 text-xs"
+					data-testid="toolkit-provenance"
+				>
+					<CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+					Created {timeAgo(Date.parse(toolkit.created_at))}
+					{toolkit.created_by ? (
+						<>
+							{' '}
+							by{' '}
+							<span className="text-foreground font-medium">
+								{toolkit.created_by}
+							</span>
+						</>
+					) : null}
+					{toolkit.updated_at
+						? ` · updated ${timeAgo(Date.parse(toolkit.updated_at))}`
+						: ''}
+				</p>
+			)}
+
 			<DetailSection
 				title={`Bound Agents (${agents.length})`}
 				action={{

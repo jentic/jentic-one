@@ -181,6 +181,25 @@ export function useRevokeKey(toolkitId: string) {
 	});
 }
 
+/**
+ * Non-destructive key metadata update — label rename and/or `allowed_ips`
+ * (both already accepted by `PATCH /toolkits/{id}/keys/{key_id}`). Kept apart
+ * from `useRevokeKey` so its toast/invalidations stay revocation-specific.
+ */
+export function useUpdateKey(toolkitId: string) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ keyId, body }: { keyId: string; body: ToolkitKeyUpdateRequest }) =>
+			client.updateKey(toolkitId, keyId, body),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: toolkitKeys.keys(toolkitId) });
+			toast({ title: 'API key updated', variant: 'success' });
+		},
+		onError: (err: Error) =>
+			toast({ title: 'Failed to update key', description: err.message, variant: 'error' }),
+	});
+}
+
 export function useDeleteKey(toolkitId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({

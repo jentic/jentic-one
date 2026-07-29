@@ -28,13 +28,20 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 	// Seeded toolkits render.
 	await expect(page.getByText('GitHub Tools')).toBeVisible();
 
-	// Create a new toolkit.
+	// Create a new toolkit — the dialog now reveals the one-time key before
+	// handing off to the detail page.
 	await page
 		.getByRole('button', { name: /new toolkit/i })
 		.first()
 		.click();
 	await page.getByLabel('Name').fill('Slack Tools');
 	await page.getByRole('button', { name: /^create$/i }).click();
+	await expect(page.getByText('jntc_live_mockplaintextkey_show_once')).toBeVisible();
+	await page.getByRole('button', { name: /open toolkit/i }).click();
+	await expect(page.getByRole('heading', { name: 'Slack Tools' })).toBeVisible();
+
+	// Back to the list; the new toolkit is there.
+	await page.getByRole('button', { name: /all toolkits/i }).click();
 	await expect(page.getByText('Slack Tools')).toBeVisible();
 
 	// Open an existing toolkit's detail.

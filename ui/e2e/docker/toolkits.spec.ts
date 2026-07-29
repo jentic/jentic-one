@@ -34,7 +34,14 @@ test('create a toolkit via the UI and see it in the list', async ({ page }) => {
 	await page.getByLabel('Name').fill(name);
 	await page.getByRole('button', { name: /^create$/i }).click();
 
-	// The new toolkit lands in the list (real POST /toolkits -> 201).
+	// The dialog reveals the real one-time key (real POST /toolkits -> 201);
+	// dismiss it via the hand-off CTA, then return to the list.
+	await expect(page.getByText(/jntc_live_/).first()).toBeVisible();
+	await page.getByRole('button', { name: /open toolkit/i }).click();
+	await expect(page.getByRole('heading', { name })).toBeVisible();
+	await page.getByRole('button', { name: /all toolkits/i }).click();
+
+	// The new toolkit lands in the list.
 	await expect(page.getByText(name)).toBeVisible();
 });
 
