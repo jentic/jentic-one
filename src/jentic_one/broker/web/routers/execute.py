@@ -49,6 +49,7 @@ from jentic_one.broker.core.headers import (
     REGION_MISMATCH_HINT,
     TRACESTATE_HEADER,
     JenticHeader,
+    header_safe_value,
 )
 from jentic_one.broker.core.idempotency import fingerprint
 from jentic_one.broker.core.proxy_headers import (
@@ -397,10 +398,11 @@ def _metadata_headers(ctx_req: ExecuteRequestContext, execution_id: str) -> dict
     # picked a stored credential — a broker-origin failure before injection,
     # inline auth, or a credential-less API leaves both ``None`` and both
     # headers absent, so a missing header unambiguously means "no credential".
+    # The name is operator-authored free text: sanitize before emission.
     if ctx_req.credential_id:
         meta[JenticHeader.CREDENTIAL_ID.value] = ctx_req.credential_id
     if ctx_req.credential_name:
-        meta[JenticHeader.CREDENTIAL_NAME.value] = ctx_req.credential_name
+        meta[JenticHeader.CREDENTIAL_NAME.value] = header_safe_value(ctx_req.credential_name)
     # Echo the jentic= tracestate member (same who/what payload as the outbound
     # request) so a caller can correlate the response to its distributed trace
     # without re-deriving it (§04 / OpenAPI Tracestate).

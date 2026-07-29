@@ -72,3 +72,36 @@ def test_stream_metadata_headers_omit_credential_attribution_when_absent():
     )
     assert JenticHeader.CREDENTIAL_ID.value not in headers
     assert JenticHeader.CREDENTIAL_NAME.value not in headers
+
+
+def test_metadata_headers_sanitize_unsafe_credential_name():
+    """Operator-authored names are reduced to printable ASCII before emission.
+
+    A verbatim non-latin-1 name (emoji/CJK) would raise at response-encode
+    time — turning every execution that used that credential into a 500 —
+    and CR/LF is a header-injection primitive behind a non-validating
+    intermediary. Unsafe characters become ``?`` so the header stays present
+    (presence still means "a credential was used")."""
+    headers = _metadata_headers(
+        _ctx(credential_id="cred_abc", credential_name="日本語 key 🔑"),
+        "exec_1",
+    )
+    assert headers[JenticHeader.CREDENTIAL_NAME.value] == "??? key ?"
+
+    headers = _metadata_headers(
+        _ctx(credential_id="cred_abc", credential_name="evil\r\nSet-Cookie: x=1"),
+        "exec_1",
+    )
+    assert "\r" not in headers[JenticHeader.CREDENTIAL_NAME.value]
+    assert "\n" not in headers[JenticHeader.CREDENTIAL_NAME.value]
+    assert headers[JenticHeader.CREDENTIAL_NAME.value] == "evil??Set-Cookie: x=1"
+
+
+def test_stream_metadata_headers_sanitize_unsafe_credential_name():
+    """The streaming twin applies the same sanitization as the sync router."""
+    headers = _stream_metadata_headers(
+        _ctx(credential_id="cred_abc", credential_name="café\nkey"),
+        "exec_1",
+        200,
+    )
+    assert headers[JenticHeader.CREDENTIAL_NAME.value] == "caf??key"
