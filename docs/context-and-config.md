@@ -162,9 +162,12 @@ curl -s http://127.0.0.1:8000/instance
 - `canonical_base_url` / `host` come from `auth.canonical_base_url` (set in
   `config/local.yaml` to `http://127.0.0.1:8000` for local runs; a hosted
   platform sets its own). This is the instance describing *itself*, so it is
-  the value to trust over any client-side assumption.
-- `instance_id` is the opaque telemetry instance id when telemetry has resolved
-  one (else `null`); it disambiguates two installs that share a host.
+  the value to trust over any client-side assumption. Any userinfo embedded in
+  the configured URL is stripped before echoing.
+- `instance_id` is an opaque digest *derived from* the telemetry instance id
+  (never the id itself). It only disambiguates two installs sharing a host when
+  both have telemetry enabled — it is `null` whenever telemetry has not
+  resolved an id (e.g. telemetry disabled).
 
 To check which backend a given base URL is bound to, hit `/instance` on that
 URL. If the `backend`/`host` is not the one you expected, the client is pointed

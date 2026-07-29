@@ -9,6 +9,7 @@ as fast units.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -100,17 +101,36 @@ def test_instance_endpoint_not_mounted_on_broker(sample_config_dict: dict[str, A
     assert "backend" not in resp.text
 
 
-def test_instance_endpoint_surfaces_resolved_instance_id(
+def test_instance_endpoint_surfaces_resolved_instance_id_as_digest(
     sample_config_dict: dict[str, Any],
 ) -> None:
+    """A resolved telemetry id is published only as a stable one-way digest."""
     ctx = _ctx(sample_config_dict)
     ctx.instance_id = "inst-abc-123"
     client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
 
-    assert client.get("/instance").json()["instance_id"] == "inst-abc-123"
+    published = client.get("/instance").json()["instance_id"]
+
+    expected = hashlib.sha256(b"jentic-instance-identity:inst-abc-123").hexdigest()[:16]
+    assert published == expected
+    # The durable telemetry identifier itself must never appear in the payload.
+    assert published != ctx.instance_id
+    assert ctx.instance_id not in client.get("/instance").text
 
 
-def test_instance_endpoint_hidden_public_in_openapi(sample_config_dict: dict[str, Any]) -> None:
+def test_instance_endpoint_response_has_exactly_the_documented_fields(
+    sample_config_dict: dict[str, Any],
+) -> None:
+    """The contract is exactly four fields — in particular no ``version`` (CWE-200)."""
+    ctx = _ctx(sample_config_dict)
+    client = TestClient(create_combined_app(ctx, ["control"]), raise_server_exceptions=False)
+
+    data = client.get("/instance").json()
+
+    assert set(data) == {"backend", "canonical_base_url", "host", "instance_id"}
+
+
+def test_instance_endpoint_schema_visible_and_public(sample_config_dict: dict[str, Any]) -> None:
     """It is a real (schema-visible) route stamped public (no BearerAuth)."""
     ctx = _ctx(sample_config_dict)
     app = create_combined_app(ctx, ["control"])
@@ -140,3 +160,14 @@ def test_resolve_instance_identity_unset_base_url(sample_config_dict: dict[str, 
     assert identity.backend == "local"
     assert identity.canonical_base_url == ""
     assert identity.host == ""
+
+
+def test_resolve_instance_identity_strips_userinfo(sample_config_dict: dict[str, Any]) -> None:
+    """Credentials embedded in the canonical base URL are never echoed back."""
+    identity = resolve_instance_identity(
+        _ctx(sample_config_dict, "https://user:secret@jentic.acme.example:8443/base")
+    )
+    assert identity.canonical_base_url == "https://jentic.acme.example:8443/base"
+    assert identity.host == "jentic.acme.example:8443"
+    assert "secret" not in identity.canonical_base_url
+    assert "user" not in identity.host

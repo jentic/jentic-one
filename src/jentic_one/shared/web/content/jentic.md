@@ -290,14 +290,16 @@ bound to a different one. Check the backend your base URL serves before
 diagnosing data loss:
 
 ```
-curl -s "$(jentic config get base-url 2>/dev/null || echo http://127.0.0.1:8000)/instance"
+jentic profile list        # shows each profile's base_url
+curl -s "<base-url>/instance"   # e.g. http://127.0.0.1:8000/instance on a default local install
 ```
 
 The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
-the install's declared `server.backend`), `canonical_base_url`, and `host`. If
-it's not the backend you meant to use (e.g. an MCP server still on a remote
-backend while you imported locally), repoint that client at the right base URL
-rather than importing/searching again.
+the install's declared `server.backend`), `canonical_base_url`, `host`, and an
+opaque `instance_id` (null when telemetry is off). If it's not the backend you
+meant to use (e.g. an MCP server still on a remote backend while you imported
+locally), repoint that client at the right base URL rather than
+importing/searching again.
 
 ### 4. Inspect the operation's contract
 

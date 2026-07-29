@@ -783,7 +783,8 @@ uv run python -m tools.deploy cluster down              # Destroy the cluster
 > looks like data loss. Confirm which backend a base URL serves with the
 > unauthenticated identity probe `curl http://localhost:8000/instance` (returns
 > `backend` = `local` / `remote` — the operator-declared `server.backend`, default
-> `local` — plus `canonical_base_url`, `host`, and `instance_id`). To migrate a
+> `local` — plus `canonical_base_url`, `host`, and a telemetry-derived opaque
+> `instance_id`, `null` when telemetry is off). To migrate a
 > client to this install, point *its* backend base URL at your local
 > `canonical_base_url` and re-check `/instance`.
 > See [`docs/context-and-config.md`](../docs/context-and-config.md#local--remote-coexistence-which-backend-am-i-talking-to).

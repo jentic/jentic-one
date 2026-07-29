@@ -11,22 +11,31 @@ This endpoint gives any client a cheap, unauthenticated way to read the
 identity of the backend it is talking to, so it can label its responses and a
 human/agent can tell local from remote at a glance. It intentionally exposes
 only non-sensitive identity metadata: the operator-declared ``backend`` locality
-(``server.backend``), the instance's own canonical base URL / host (from
-``auth.canonical_base_url``) and, when telemetry has resolved one, the opaque
-telemetry ``instance_id``. All are values the operator already set or that the
-instance advertises about itself — no secrets.
+(``server.backend``) and the instance's own canonical base URL / host (from
+``auth.canonical_base_url``, with any userinfo stripped before echoing). The
+``instance_id`` is a one-way digest *derived from* the telemetry instance id —
+distinct installs get distinct values, but the durable telemetry identifier
+itself is never published.
 """
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+import hashlib
+from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from jentic_one.shared.context import Context
+from jentic_one.shared.web.deps import get_ctx
 
 INSTANCE_PATH = "/instance"
+
+# Domain-separation prefix so the published digest can't double as a lookup key
+# into anything else keyed by the raw telemetry instance id.
+_INSTANCE_ID_DIGEST_PREFIX = "jentic-instance-identity:"
+_INSTANCE_ID_DIGEST_LENGTH = 16
 
 
 class InstanceIdentityResponse(BaseModel):
@@ -37,7 +46,7 @@ class InstanceIdentityResponse(BaseModel):
     (e.g. a local install vs. a remote one) before diagnosing "missing" data.
     """
 
-    backend: str = Field(
+    backend: Literal["local", "remote"] = Field(
         description=(
             "Operator-declared backend locality (server.backend): 'local' for a "
             "self-hosted install on the operator's own machine/network, 'remote' for "
@@ -46,24 +55,64 @@ class InstanceIdentityResponse(BaseModel):
         )
     )
     canonical_base_url: str = Field(
-        description="The instance's own canonical base URL (auth.canonical_base_url); '' if unset."
+        description=(
+            "The instance's own canonical base URL (auth.canonical_base_url), with "
+            "any userinfo stripped; '' if unset."
+        )
     )
-    host: str = Field(description="Host (with port) parsed from canonical_base_url; '' if unset.")
+    host: str = Field(
+        description=(
+            "Host (and port, when the canonical base URL declares one) parsed from "
+            "canonical_base_url; '' if unset or unparseable."
+        )
+    )
     instance_id: str | None = Field(
         default=None,
-        description="Opaque telemetry instance id if telemetry has resolved one, else null.",
+        description=(
+            "Opaque digest derived from the telemetry instance id — stable per "
+            "install, but not the telemetry id itself. Null when telemetry has not "
+            "resolved an id (e.g. telemetry disabled)."
+        ),
     )
+
+
+def _public_instance_id(instance_id: str | None) -> str | None:
+    """Derive the publishable instance id digest from the telemetry id."""
+    if instance_id is None:
+        return None
+    digest = hashlib.sha256((_INSTANCE_ID_DIGEST_PREFIX + instance_id).encode("utf-8"))
+    return digest.hexdigest()[:_INSTANCE_ID_DIGEST_LENGTH]
+
+
+def _sanitized_url_parts(canonical_base_url: str) -> tuple[str, str]:
+    """Return ``(canonical_base_url, host)`` with any userinfo stripped.
+
+    ``urlsplit().netloc`` retains ``user:password@`` userinfo, so both the echoed
+    URL and the derived host are rebuilt from ``hostname``/``port`` to guarantee
+    credentials embedded in ``auth.canonical_base_url`` are never published.
+    """
+    parts = urlsplit(canonical_base_url)
+    host = parts.hostname or ""
+    if host and parts.port is not None:
+        host = f"{host}:{parts.port}"
+    if parts.username is not None or parts.password is not None:
+        canonical_base_url = urlunsplit(
+            (parts.scheme, host, parts.path, parts.query, parts.fragment)
+        )
+    return canonical_base_url, host
 
 
 def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
     """Build the backend-identity payload from the live application ``Context``."""
     canonical_base_url = ctx.config.auth.canonical_base_url or ""
-    host = urlsplit(canonical_base_url).netloc if canonical_base_url else ""
+    canonical_base_url, host = (
+        _sanitized_url_parts(canonical_base_url) if canonical_base_url else ("", "")
+    )
     return InstanceIdentityResponse(
         backend=ctx.config.server.backend,
         canonical_base_url=canonical_base_url,
         host=host,
-        instance_id=ctx.instance_id,
+        instance_id=_public_instance_id(ctx.instance_id),
     )
 
 
@@ -75,17 +124,15 @@ def get_instance_router() -> APIRouter:
         INSTANCE_PATH,
         operation_id="getInstance",
         summary="Backend identity",
-        tags=["System"],
         response_model=InstanceIdentityResponse,
     )
-    async def instance(request: Request) -> InstanceIdentityResponse:
+    async def instance(ctx: Context = Depends(get_ctx)) -> InstanceIdentityResponse:
         """Return this backend's self-describing identity.
 
         Unauthenticated and dependency-free so any client (an MCP server, the
         CLI, an agent) can read which backend it is bound to — local vs. a
         remote install — and label its responses accordingly.
         """
-        ctx: Context = request.app.state.ctx
         return resolve_instance_identity(ctx)
 
     return router

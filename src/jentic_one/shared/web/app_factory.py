@@ -439,7 +439,9 @@ def create_surface_app(
     # CLI, agent) can tell which backend it is bound to — cloud vs. local. Off
     # for the broker data plane (its only public routes are its probes).
     if include_instance_router:
-        app.include_router(get_instance_router(), responses=COMMON_ERROR_RESPONSES)
+        # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
+        # 400/422 (same posture as /health).
+        app.include_router(get_instance_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
             extra_router,
@@ -537,7 +539,9 @@ def create_combined_app(
 
     # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
     # tell which backend it is bound to — cloud vs. a local self-hosted install.
-    root.include_router(get_instance_router(), responses=COMMON_ERROR_RESPONSES)
+    # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
+    # 400/422 (same posture as /health).
+    root.include_router(get_instance_router())
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.

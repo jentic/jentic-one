@@ -46,6 +46,10 @@ server:
   host: 0.0.0.0
   port: 8000
   reload: false
+  # Locality label reported by the public GET /instance identity probe:
+  # "local" (default) for a self-hosted install on your own machine/network,
+  # "remote" for a hosted install run elsewhere.
+  # backend: local
 
 apps:
   - registry
