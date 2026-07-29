@@ -83,6 +83,7 @@ func TestFillSecretsGeneratesES256ForSSO(t *testing.T) {
 	block, _ := pem.Decode([]byte(d.IDSigningKeyPEM))
 	if block == nil {
 		t.Fatalf("id signing key is not PEM")
+		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
 	if _, err := x509.ParsePKCS8PrivateKey(block.Bytes); err != nil {
 		t.Fatalf("id signing key not a valid PKCS8 key: %v", err)
