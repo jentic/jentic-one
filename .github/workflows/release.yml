@@ -17,7 +17,8 @@
 #   4. release       — GoReleaser builds the signed, checksummed jenticctl +
 #                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
 #                      pushes the Homebrew cask. This is the install (see
-#                      docs/releasing.md).
+#                      docs/releasing.md). Needs gate + smoke + publish-image so
+#                      a release never half-ships (binaries without the image).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
@@ -135,6 +136,7 @@ jobs:
     permissions:
       contents: read
       packages: write # push the app image to GHCR (ghcr.io/<owner>/jentic-one-app)
+      id-token: write # cosign keyless signing (fulcio/OIDC), mirroring the CLI binaries
     steps:
       - uses: actions/checkout@v7
 
@@ -144,6 +146,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
 
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
@@ -156,7 +164,15 @@ jobs:
       # must be lower-case, so lower-case the owner for the image name.
       # Single-arch (amd64) for now; multi-arch is a documented follow-up
       # (deploy/README.md "What's deferred").
+      #
+      # `:latest` only moves on stable releases (vX.Y.Z exactly) so a prerelease
+      # tag (v1.2.3-rc.1) can never hijack the tag self-hosters float on.
+      #
+      # The pushed digest is echoed (and is the thing that gets signed): tags
+      # are floating, so the digest is the only true pin — deploy/README.md
+      # "Reproducibility" tells self-hosters to pin to it.
       - name: Build and push the app image
+        id: push
         run: |
           set -euo pipefail
           OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
@@ -166,16 +182,45 @@ jobs:
           make build-base
           docker build -f deploy/docker/app.Dockerfile \
             -t "${IMAGE}:${VERSION}" \
-            -t "${IMAGE}:${SHA}" \
-            -t "${IMAGE}:latest" .
+            -t "${IMAGE}:${SHA}" .
           docker push "${IMAGE}:${VERSION}"
           docker push "${IMAGE}:${SHA}"
-          docker push "${IMAGE}:latest"
-          echo "Pushed ${IMAGE} (${VERSION}, ${SHA}, latest)"
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+            echo "Pushed ${IMAGE} (${VERSION}, ${SHA}, latest)"
+          else
+            echo "Prerelease tag — not moving :latest"
+            echo "Pushed ${IMAGE} (${VERSION}, ${SHA})"
+          fi
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}:${VERSION}" | cut -d@ -f2)"
+          echo "Image digest: ${DIGEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
+      # does for the CLI binaries (cosign keyless via the job's OIDC identity +
+      # syft SBOM). Both target the immutable digest, never a floating tag.
+      # Self-hosters verify with `cosign verify` (deploy/README.md "Verify the
+      # image signature").
+      - name: Sign the image and attest its SBOM (cosign keyless + syft)
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
 
   release:
     name: GoReleaser (signed CLI binaries)
-    needs: [gate, smoke]
+    # publish-image gates the binaries too: a release must not exist in a state
+    # where the CLI shipped but the container image it documents did not (or
+    # vice versa). If either publish half fails, the whole release run is red
+    # and gets re-run from the tag.
+    needs: [gate, smoke, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release
