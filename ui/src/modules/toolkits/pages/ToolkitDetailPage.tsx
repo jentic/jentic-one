@@ -2,6 +2,7 @@ import { useNavigate, useParams } from 'react-router';
 import { BackButton, PageHeader, PageShell } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
 import { ToolkitDetailBody } from '@/modules/toolkits/components/ToolkitDetailBody';
+import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
 import { ROUTES } from '@/shared/app/routes';
 
 /**
@@ -9,9 +10,10 @@ import { ROUTES } from '@/shared/app/routes';
  * toolkit detail.
  *
  * Mirrors the `/agents/:agentId` layout: a shared `PageHeader` band (the
- * toolkit name as title + its own description as subtitle) sits at the top, a
- * `BackButton` row sits just beneath it, and the operational chrome + tabbed
- * content (id, kill switch, Overview/Access/Keys/Settings) lives in
+ * toolkit name as title + its own description as subtitle, with the kill
+ * switch as the header action so suspension is always one click away) sits at
+ * the top, a `BackButton` row sits just beneath it, and the KPI strip + tabbed
+ * content (Overview/Activity/Access/Keys/Settings) lives in
  * `ToolkitDetailBody`, whose tabs each own their queries/mutations. The header
  * is read from the same cached `useToolkit` query the body uses, so there is
  * no extra fetch.
@@ -37,6 +39,11 @@ export function ToolkitDetailPage() {
 			<PageHeader
 				title={toolkit?.name ?? 'Toolkit'}
 				subtitle={toolkit?.description ?? undefined}
+				actions={
+					toolkit ? (
+						<ToolkitKillSwitch toolkitId={toolkitId} active={toolkit.active} />
+					) : undefined
+				}
 			/>
 
 			<div className="-mt-2">

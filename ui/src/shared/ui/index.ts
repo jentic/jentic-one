@@ -27,6 +27,8 @@ export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
+export { TabNav } from '@/shared/ui/TabNav';
+export type { TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 

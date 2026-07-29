@@ -183,7 +183,8 @@ export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended
 
 	return (
 		<DetailSection
-			title={`API Keys (${keys.length})`}
+			title={`API keys (${keys.length})`}
+			icon={<Key className="h-4 w-4" />}
 			danger={suspended}
 			titleExtra={
 				suspended ? (

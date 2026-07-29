@@ -1,4 +1,4 @@
-import { Activity, ExternalLink, Lock } from 'lucide-react';
+import { Activity, ExternalLink, ListOrdered, Lock, TrendingUp } from 'lucide-react';
 import { AppLink, TrendLineChart } from '@/shared/ui';
 import { useToolkitExecutions, useToolkitUsage } from '@/modules/toolkits/api';
 import type { ToolkitExecution } from '@/modules/toolkits/api/types';
@@ -83,7 +83,7 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 
 	if (adminBlocked) {
 		return (
-			<DetailSection title="Activity">
+			<DetailSection title="Activity" icon={<Activity className="h-4 w-4" />}>
 				<EmptyRow icon={<Lock />}>
 					Execution history is admin-only. Ask an org admin, or check the toolkit's
 					entries in Monitor if you have access.
@@ -98,7 +98,7 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 
 	return (
 		<div className="space-y-6">
-			<DetailSection title="Execution volume · 7d">
+			<DetailSection title="Execution volume · 7d" icon={<TrendingUp className="h-4 w-4" />}>
 				{loading ? (
 					<div className="bg-muted h-28 animate-pulse rounded-lg" aria-hidden="true" />
 				) : chartData.length >= 2 ? (
@@ -121,6 +121,7 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 
 			<DetailSection
 				title="Recent executions"
+				icon={<ListOrdered className="h-4 w-4" />}
 				titleExtra={
 					<AppLink
 						href={`${ROUTES.monitor}?tab=executions&toolkit_id=${toolkitId}`}

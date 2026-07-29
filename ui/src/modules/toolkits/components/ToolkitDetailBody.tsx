@@ -1,9 +1,15 @@
 import { useSearchParams } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ShieldOff } from 'lucide-react';
-import { Button, CopyButton, SegmentedToggle } from '@/shared/ui';
+import {
+	Activity as ActivityIcon,
+	Key,
+	LayoutDashboard,
+	Settings,
+	ShieldCheck,
+	ShieldOff,
+} from 'lucide-react';
+import { Button, TabNav } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
-import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
 import { OverviewTab } from '@/modules/toolkits/components/detail/OverviewTab';
 import { ActivityTab } from '@/modules/toolkits/components/detail/ActivityTab';
 import { AccessTab } from '@/modules/toolkits/components/detail/AccessTab';
@@ -15,16 +21,15 @@ import { RowSkeleton } from '@/modules/toolkits/components/detail/shared';
 /**
  * Toolkit detail — the tabbed shell.
  *
- * The always-visible header zone carries the operational chrome: the mono id
- * chip and the kill switch (suspension is the page's safety superpower, so it
- * never hides behind a tab), plus the suspended banner. Everything else lives
- * in four tabs, one component each:
+ * The kill switch lives in the host page's `PageHeader` (suspension is the
+ * page's safety superpower, so it never hides behind a tab); this body owns
+ * the suspended banner, the KPI strip, and the `TabNav`:
  *
- *   - Overview  bound agents (safety-first ordering, #636) + audit slice
+ *   - Overview  bound agents + bound-credentials summary + audit slice
  *   - Activity  7d usage chart + recent executions (admin-gated, Monitor link)
  *   - Access    credential bindings + per-binding permission rules
  *   - Keys      static API keys (create / one-time reveal / revoke)
- *   - Settings  identity editing + danger zone (cascade delete)
+ *   - Settings  identity (incl. the copyable toolkit id) + danger zone
  *
  * The active tab is held in the `?tab=` search param (same pattern as the
  * Monitor page) so tabs are deep-linkable and the back button moves between
@@ -34,16 +39,6 @@ import { RowSkeleton } from '@/modules/toolkits/components/detail/shared';
 
 const TOOLKIT_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type ToolkitTab = (typeof TOOLKIT_TABS)[number];
-
-const TAB_LABELS: Record<ToolkitTab, string> = {
-	overview: 'Overview',
-	activity: 'Activity',
-	access: 'Access',
-	keys: 'Keys',
-	settings: 'Settings',
-};
-
-const TAB_OPTIONS = TOOLKIT_TABS.map((id) => ({ value: id, label: TAB_LABELS[id] }));
 
 const tabId = (tab: string) => `toolkit-tab-${tab}`;
 const panelId = (tab: string) => `toolkit-panel-${tab}`;
@@ -111,17 +106,30 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 
 	const suspended = !toolkit.active;
 
+	const tabOptions = [
+		{
+			value: 'overview',
+			label: 'Overview',
+			icon: <LayoutDashboard className="h-4 w-4" />,
+		},
+		{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
+		{
+			value: 'access',
+			label: 'Access',
+			icon: <ShieldCheck className="h-4 w-4" />,
+			count: toolkit.credential_count,
+		},
+		{
+			value: 'keys',
+			label: 'Keys',
+			icon: <Key className="h-4 w-4" />,
+			count: toolkit.key_count,
+		},
+		{ value: 'settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> },
+	];
+
 	return (
 		<div className="space-y-6">
-			{/* Operational chrome — never hidden behind a tab. */}
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
-					{toolkit.toolkit_id}
-					<CopyButton value={toolkit.toolkit_id} size="icon" variant="ghost" />
-				</span>
-				<ToolkitKillSwitch toolkitId={toolkitId} active={toolkit.active} />
-			</div>
-
 			<AnimatePresence initial={false}>
 				{suspended && (
 					<motion.div key="suspended-banner" {...panelMotion} className="overflow-hidden">
@@ -152,10 +160,9 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 
 			<UsageStrip toolkit={toolkit} />
 
-			<SegmentedToggle
-				as="tabs"
+			<TabNav
 				ariaLabel="Toolkit sections"
-				options={TAB_OPTIONS}
+				options={tabOptions}
 				value={activeTab}
 				onChange={setTab}
 				getTabId={tabId}
@@ -169,7 +176,9 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				tabIndex={0}
 				className="focus-visible:outline-none"
 			>
-				{activeTab === 'overview' && <OverviewTab toolkitId={toolkitId} />}
+				{activeTab === 'overview' && (
+					<OverviewTab toolkitId={toolkitId} onManageAccess={() => setTab('access')} />
+				)}
 				{activeTab === 'activity' && <ActivityTab toolkitId={toolkitId} />}
 				{activeTab === 'access' && <AccessTab toolkitId={toolkitId} />}
 				{activeTab === 'keys' && <KeysTab toolkitId={toolkitId} suspended={suspended} />}

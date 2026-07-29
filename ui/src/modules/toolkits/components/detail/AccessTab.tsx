@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertTriangle, ChevronDown, Edit2, Key, Link as LinkIcon, Unlink } from 'lucide-react';
+import {
+	AlertTriangle,
+	ChevronDown,
+	Edit2,
+	Key,
+	Link as LinkIcon,
+	ShieldCheck,
+	Unlink,
+} from 'lucide-react';
 import { AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
 import { useBindCredential, useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
 import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
@@ -43,7 +51,8 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 	return (
 		<>
 			<DetailSection
-				title={`Bound Credentials (${bindings.length})`}
+				title={`Bound credentials (${bindings.length})`}
+				icon={<ShieldCheck className="h-4 w-4" />}
 				action={{
 					label: (
 						<>

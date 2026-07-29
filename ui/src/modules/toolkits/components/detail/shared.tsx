@@ -43,6 +43,11 @@ export interface SectionActionProps {
 interface DetailSectionProps {
 	/** Section heading (sentence-case, `font-heading font-semibold` ladder). */
 	title: ReactNode;
+	/**
+	 * Leading glyph for the heading (`h-4 w-4`), rendered in the same muted
+	 * icon medallion the dashboard sections use — one grammar everywhere.
+	 */
+	icon?: ReactNode;
 	/** Extra inline content next to the title (e.g. a "Keys blocked" pill). */
 	titleExtra?: ReactNode;
 	/** Right-aligned header action button. */
@@ -53,7 +58,14 @@ interface DetailSectionProps {
 }
 
 /** The card shell every toolkit-detail section renders inside. */
-export function DetailSection({ title, titleExtra, action, danger, children }: DetailSectionProps) {
+export function DetailSection({
+	title,
+	icon,
+	titleExtra,
+	action,
+	danger,
+	children,
+}: DetailSectionProps) {
 	return (
 		<div
 			className={`overflow-hidden rounded-xl border ${danger ? 'border-danger/50' : 'border-border'} bg-card`}
@@ -63,7 +75,19 @@ export function DetailSection({ title, titleExtra, action, danger, children }: D
 					danger ? 'border-danger/30 bg-danger/5 border-b' : 'border-border border-b'
 				}`}
 			>
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2.5">
+					{icon && (
+						<span
+							aria-hidden="true"
+							className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ${
+								danger
+									? 'bg-danger/10 text-danger ring-danger/25'
+									: 'bg-muted text-muted-foreground ring-border'
+							}`}
+						>
+							{icon}
+						</span>
+					)}
 					<h3 className="font-heading text-foreground font-semibold">{title}</h3>
 					{titleExtra}
 				</div>

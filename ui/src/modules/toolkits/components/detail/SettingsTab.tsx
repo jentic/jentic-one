@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Fingerprint, SlidersHorizontal, Trash2 } from 'lucide-react';
 import {
 	Button,
 	CascadeDeleteDialog,
+	CopyButton,
 	ErrorAlert,
 	Input,
 	Label,
@@ -82,7 +83,19 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 
 	return (
 		<div className="space-y-6">
-			<DetailSection title="Identity">
+			<DetailSection title="Identity" icon={<SlidersHorizontal className="h-4 w-4" />}>
+				{/* The immutable toolkit id — what agents and API calls reference.
+				    Lives here (not in the page chrome) so the header stays clean. */}
+				<div className="mb-4 flex max-w-xl flex-wrap items-center justify-between gap-2">
+					<span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+						<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+						Toolkit ID
+					</span>
+					<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
+						{toolkitId}
+						<CopyButton value={toolkitId} size="icon" variant="ghost" />
+					</span>
+				</div>
 				<form
 					className="max-w-xl space-y-4"
 					onSubmit={(e) => {
@@ -136,7 +149,7 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 				</form>
 			</DetailSection>
 
-			<DetailSection title="Danger zone" danger>
+			<DetailSection title="Danger zone" icon={<Trash2 className="h-4 w-4" />} danger>
 				<div className="flex flex-wrap items-center justify-between gap-3 p-1">
 					<p className="text-muted-foreground max-w-prose text-sm">
 						Deleting this toolkit cascades: agent grants, API keys, and credential

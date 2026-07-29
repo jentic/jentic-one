@@ -101,7 +101,6 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 
 		expect(await screen.findByRole('heading', { name: 'GitHub Tools' })).toBeInTheDocument();
-		expect(screen.getByText('tk_demo_github')).toBeInTheDocument();
 
 		// Overview is the landing tab: audit slice renders without a click.
 		expect(await screen.findByRole('heading', { name: /recent changes/i })).toBeInTheDocument();
@@ -111,12 +110,16 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.getByTestId('toolkit-provenance')).toHaveTextContent('admin@local');
 
 		// Keys tab lists the seeded key.
-		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		await user.click(screen.getByRole('tab', { name: /^Keys/ }));
 		expect(await screen.findByText('CI runner')).toBeInTheDocument();
 
 		// Access tab lists the bound credential.
-		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
 		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
+
+		// The immutable toolkit id lives on Settings (not in the page chrome).
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('tk_demo_github')).toBeInTheDocument();
 	});
 
 	it('deep-links a tab through the ?tab= search param', async () => {
@@ -126,7 +129,7 @@ describe('ToolkitDetailPage', () => {
 		// The Keys panel content renders without any click…
 		expect(await screen.findByText('CI runner')).toBeInTheDocument();
 		// …and the Keys tab is the selected one.
-		expect(screen.getByRole('tab', { name: 'Keys' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('tab', { name: /^Keys/ })).toHaveAttribute('aria-selected', 'true');
 	});
 
 	it('shows the 7-day KPI strip from the toolkit-scoped usage aggregation', async () => {
@@ -135,7 +138,7 @@ describe('ToolkitDetailPage', () => {
 		const strip = await screen.findByTestId('usage-strip');
 		// Sum of the seeded daily trend (64+88+71+120+104+141+126).
 		expect(within(strip).getByText('714')).toBeInTheDocument();
-		expect(within(strip).getByText(/executions · 7d/i)).toBeInTheDocument();
+		expect(within(strip).getByText('Executions')).toBeInTheDocument();
 		expect(within(strip).getByText('97.6%')).toBeInTheDocument();
 		expect(within(strip).getByText('412ms')).toBeInTheDocument();
 		// Agents / creds / keys roll-up: 1 bound agent, 1 credential, 2 keys.
@@ -254,7 +257,7 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		await user.click(screen.getByRole('tab', { name: /^Keys/ }));
 		await user.click(await screen.findByRole('button', { name: /create key/i }));
 		await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
@@ -318,7 +321,7 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
 		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
 
 		// Picker lists the unbound credential…
@@ -392,7 +395,7 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
 		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
 		await screen.findByText('AWS key');
 
@@ -412,8 +415,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// Bound Agents section header reflects the seeded count.
-		expect(await screen.findByText(/Bound Agents \(1\)/)).toBeInTheDocument();
+		// Bound agents section header reflects the seeded count.
+		expect(await screen.findByText(/Bound agents \(1\)/)).toBeInTheDocument();
 		// The seeded bound agent shows up as a row. The id shares a <p> with an
 		// optional "· linked …" suffix, so scope the (substring) match to the row
 		// to keep it unambiguous rather than matching across the whole document.
@@ -424,6 +427,27 @@ describe('ToolkitDetailPage', () => {
 		// (parity with the /agents page), not the raw lowercase wire value.
 		expect(within(row).getByText('Active')).toBeInTheDocument();
 		expect(within(row).queryByText('active')).not.toBeInTheDocument();
+	});
+
+	it('shows the bound-credentials summary on Overview with a Manage jump to Access', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Read-only summary of the Access tab's bindings, on the landing tab.
+		// (Count is left loose: earlier cases in this file mutate the shared
+		// MSW binding store.)
+		expect(await screen.findByText(/Bound credentials \(\d+\)/)).toBeInTheDocument();
+		const credRows = await screen.findAllByTestId('overview-credential-row');
+		expect(credRows.some((r) => within(r).queryByText('GitHub PAT') != null)).toBe(true);
+
+		// Manage jumps to the Access tab (full bind/permissions management).
+		await user.click(screen.getByRole('button', { name: 'Manage' }));
+		expect(screen.getByRole('tab', { name: /^Access/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		expect(await screen.findByRole('button', { name: /^bind api$/i })).toBeInTheDocument();
 	});
 
 	it('disables the agent filter and shows only the real empty state when no agents are linkable', async () => {
