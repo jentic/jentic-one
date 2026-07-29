@@ -139,6 +139,13 @@ jobs:
     # binaries.
     needs: [gate, smoke]
     runs-on: ubuntu-latest
+    # Serialize image publishes across concurrently pushed tags so two runs
+    # can't interleave their :latest pushes (last-writer-wins is still the
+    # contract for :latest — digest pins are the real guarantee — but at least
+    # each run's push+sign sequence is atomic with respect to the other's).
+    concurrency:
+      group: release-publish-image
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write # push the app image to GHCR (ghcr.io/<owner>/jentic-one-app)
@@ -146,18 +153,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Install the third-party tooling BEFORE `docker login` writes the
+      # packages:write-scoped token to ~/.docker/config.json: a compromised
+      # installer action must never execute with the registry credential on
+      # disk (it could push — and with this job's id-token grant, even sign —
+      # a malicious image as this repo's release identity). Post-hooks run in
+      # reverse order, so login-action's logout also fires before the
+      # installers' post-steps.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Install syft (SBOM)
-        uses: anchore/sbom-action/download-syft@v0
 
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
@@ -171,13 +185,15 @@ jobs:
       # Single-arch (amd64) for now; multi-arch is a documented follow-up
       # (deploy/README.md "What's deferred").
       #
-      # `:latest` only moves on stable releases (vX.Y.Z exactly) so a prerelease
-      # tag (v1.2.3-rc.1) can never hijack the tag self-hosters float on.
+      # Only the version + SHA tags push here — :latest waits until AFTER the
+      # digest is signed (next steps), so a cosign/syft failure can never
+      # strand the floating tag on an unsigned image.
       #
       # The pushed digest is echoed (and is the thing that gets signed): tags
       # are floating, so the digest is the only true pin — deploy/README.md
-      # "Reproducibility" tells self-hosters to pin to it.
-      - name: Build and push the app image
+      # "Reproducibility" tells self-hosters to pin to it. RepoDigests is
+      # filtered by our image name rather than blindly taking index 0.
+      - name: Build and push the app image (version + SHA tags)
         id: push
         run: |
           set -euo pipefail
@@ -191,17 +207,12 @@ jobs:
             -t "${IMAGE}:${SHA}" .
           docker push "${IMAGE}:${VERSION}"
           docker push "${IMAGE}:${SHA}"
-          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
-            docker push "${IMAGE}:latest"
-            echo "Pushed ${IMAGE} (${VERSION}, ${SHA}, latest)"
-          else
-            echo "Prerelease tag — not moving :latest"
-            echo "Pushed ${IMAGE} (${VERSION}, ${SHA})"
-          fi
-          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}:${VERSION}" | cut -d@ -f2)"
+          DIGEST="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE}:${VERSION}" \
+            | grep "^${IMAGE}@" | head -n1 | cut -d@ -f2)"
+          test -n "${DIGEST}"
           echo "Image digest: ${DIGEST}"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
@@ -219,6 +230,24 @@ jobs:
           cosign sign "${IMAGE}@${DIGEST}"
           syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
           cosign attest --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+
+      # :latest moves LAST, only on stable releases (vX.Y.Z exactly, so a
+      # prerelease tag like v1.2.3-rc.1 can never hijack the tag self-hosters
+      # float on), and only after the digest above was signed — a red run
+      # anywhere earlier leaves :latest untouched.
+      - name: Move :latest (stable releases only, after signing)
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+          VERSION: ${{ steps.push.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+            echo "Moved ${IMAGE}:latest to ${VERSION}"
+          else
+            echo "Prerelease tag — not moving :latest"
+          fi
 
   release:
     name: GoReleaser (signed CLI binaries)

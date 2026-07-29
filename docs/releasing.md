@@ -38,11 +38,28 @@ release is `v0.14.0` (we continue the `0.x` line — see `VERSIONING.md`).
 
 ### Forcing or recovering a release
 
-release-please only opens a Release PR when there are user-facing commits since
-the last release (`ci`, `chore`, `test` and other hidden types don't trigger a
-bump). To force a release anyway — e.g. to recover a release whose `release.yml`
-run failed before GoReleaser published its assets — land a commit on `main`
-whose footer sets the version explicitly:
+For a **partially failed run** (e.g. `publish-image` succeeded but GoReleaser
+failed, or cosign/Sigstore hiccuped after the image pushed), the first move is
+**"Re-run failed jobs"** on that run in the Actions UI: it re-executes only the
+red jobs, leaving the already-pushed image (and its signature) untouched.
+Two states worth knowing by name:
+
+- **Published-but-unsigned**: the image push succeeded but the sign/attest
+  step failed. `:latest` has *not* moved (it only moves after signing), but
+  the `X.Y.Z`/SHA tags are live unsigned. Re-run the failed jobs — signing
+  targets the already-pushed digest, so it converges.
+- **Full re-run**: re-running *all* jobs rebuilds the image and `docker push`
+  **overwrites** the existing `X.Y.Z`/SHA tags with a **new digest** (builds
+  aren't bit-reproducible; the old digest stays pullable but untagged). The
+  digest echoed by the *first* run then no longer matches the tag — anyone
+  who pinned it keeps the old (still-signed) image. Prefer "Re-run failed
+  jobs" precisely to avoid this.
+
+When the run can't be recovered in place (the workflow itself needs a fix),
+force a fresh release instead. release-please only opens a Release PR when
+there are user-facing commits since the last release (`ci`, `chore`, `test`
+and other hidden types don't trigger a bump) — to force one anyway, land a
+commit on `main` whose footer sets the version explicitly:
 
 ```
 ci(release): force patch release to republish artifacts
@@ -81,11 +98,16 @@ package under the repo owner **as private**. After the first release, a
 maintainer must set its visibility to **public** in the package settings —
 until then self-hosters cannot `docker pull` without authenticating. GHCR's
 **immutable tags** option is a trade-off, not a default: it hardens tags
-against re-pushes, but breaks the tag-re-run recovery path above (a re-run
-from the same tag cannot re-push `X.Y.Z`) — enable it only if you accept
-recovering via `Release-As` instead. The image is cosign-signed with an SBOM
-attestation; the verify commands live in `deploy/README.md` ("Verify the
-image signature").
+against re-pushes, but breaks the full-re-run recovery path above (a full
+re-run cannot overwrite `X.Y.Z`) — enable it only if you accept recovering
+via "Re-run failed jobs" or `Release-As` instead. The image is cosign-signed
+with an SBOM attestation; the verify commands live in `deploy/README.md`
+("Verify the image signature").
+
+Also consider a **repository ruleset restricting `v*` tag creation** to the
+release App and admins: the workflow trusts any pushed tag, and while the
+gate's version assertion bounds what a rogue tag can ship, a signed release
+should only ever be release-please-initiated.
 
 ## Verifying a release (supply chain)
 

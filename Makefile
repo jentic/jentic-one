@@ -8,7 +8,7 @@ BUILD_DIR := build
 .PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
 
@@ -182,6 +182,9 @@ build-base: ## Build the Python base Docker image (builder + runtime stages)
 
 # Per-service build / push / save rules generated explicitly (no pattern rules,
 # so this works on GNU Make 3.81 — Apple's bundled version).
+# NOTE: push-<svc> pushes the local per-service names ($(IMG_PREFIX)/<svc>) for
+# dev/fork registries; the published-release path is `release-image` below,
+# which pushes the differently named <REGISTRY>/jentic-one-app.
 define SERVICE_RULES
 build-$(1): build-base ## Build Docker image for $(1)
 	docker build -f deploy/docker/$(1).Dockerfile -t $(IMG_PREFIX)/$(1):$(VERSION) -t $(IMG_PREFIX)/$(1):$(GIT_SHA) .
@@ -217,9 +220,10 @@ images: ## List locally built jentic-one images
 # git SHA. `latest` only moves when the version is a stable X.Y.Z (no
 # prerelease suffix), mirroring CI's guard so a dev/rc push can never hijack
 # the tag self-hosters float on. Requires `docker login <registry>` first. CI
-# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml);
-# unlike this target, CI also lower-cases the GHCR owner and cosign-signs the
-# pushed digest.
+# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml)
+# with its own inline script rather than this target: CI must interleave
+# signing between the version and :latest pushes (and lower-case the GHCR
+# owner), which this all-in-one target can't express.
 REGISTRY ?=
 RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
 

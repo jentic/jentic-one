@@ -113,6 +113,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | Guide | Description |
 | ----- | ----------- |
 | [Build & Deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, local kind cluster, and observability |
+| [Self-hosted deployment](deploy/README.md#self-hosted-containers--external-postgres) | Pull the published container image and run it against an external Postgres — the "no Kubernetes" production-shaped path |
 | [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
 | [API Specs](openapi/) | OpenAPI specifications (broker, control) |
 | [Endpoint & scope reference](docs/reference/endpoints.md) | Generated map of every HTTP route, its scope, and who may call it |
