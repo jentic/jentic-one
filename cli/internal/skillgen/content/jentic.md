@@ -135,6 +135,11 @@ jentic access request --provision stripe.com/api \
   credential (account) is connected. Filing an access request will **not** fix
   this; the directive carries a `provisioning_url` — hand it to your operator to
   connect the account, then retry.
+- **`credential_undecryptable` (424)** — a credential *is* connected, but its
+  stored secret can no longer be decrypted (typically the deployment's
+  encryption key rotated underneath it, e.g. a reinstall over existing data).
+  Neither an access request nor retrying will fix this — ask your operator to
+  remove and re-add the credential, then retry.
 - **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
   credential *is* connected, but that credential's stored identity doesn't cover
   this API (e.g. it targets a different name/version, or was stored in a
@@ -407,6 +412,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).
+  - **424 `credential_undecryptable`** → the connected credential's secret
+    can't be decrypted anymore; retrying won't help — ask your operator to
+    remove and re-add the credential.
   - **403 `credential_identity_mismatch`** → a bound credential exists but its
     identity doesn't cover this API (`parameters.expected` vs
     `parameters.found`). An access request won't help — ask your operator to fix
