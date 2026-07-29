@@ -3626,6 +3626,49 @@
         "title": "HealthResponse",
         "type": "object"
       },
+      "InstanceIdentityResponse": {
+        "description": "Self-describing identity of the backend serving this request.\n\nA client can compare ``backend``/``canonical_base_url``/``host`` against where\nit *thinks* it is pointed to confirm it is talking to the intended backend\n(e.g. a local install vs. a remote one) before diagnosing \"missing\" data.",
+        "properties": {
+          "backend": {
+            "description": "Operator-declared backend locality (server.backend): 'local' for a self-hosted install on the operator's own machine/network, 'remote' for a hosted install run elsewhere. A hint, not an authorization signal; defaults to 'local'.",
+            "enum": [
+              "local",
+              "remote"
+            ],
+            "title": "Backend",
+            "type": "string"
+          },
+          "canonical_base_url": {
+            "description": "The instance's own canonical base URL (auth.canonical_base_url), with any userinfo stripped; '' if unset.",
+            "title": "Canonical Base Url",
+            "type": "string"
+          },
+          "host": {
+            "description": "Host (and port, when the canonical base URL declares one) parsed from canonical_base_url; '' if unset or unparseable.",
+            "title": "Host",
+            "type": "string"
+          },
+          "instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Opaque digest derived from the telemetry instance id — stable per install, but not the telemetry id itself. Null when telemetry has not resolved an id (e.g. telemetry disabled).",
+            "title": "Instance Id"
+          }
+        },
+        "required": [
+          "backend",
+          "canonical_base_url",
+          "host"
+        ],
+        "title": "InstanceIdentityResponse",
+        "type": "object"
+      },
       "IntrospectRequest": {
         "description": "Introspection endpoint request (form body).",
         "properties": {
@@ -21246,6 +21289,29 @@
         "summary": "Inspect operation",
         "tags": [
           "Inspect"
+        ]
+      }
+    },
+    "/instance": {
+      "get": {
+        "description": "Return this backend's self-describing identity.\n\nUnauthenticated and dependency-free so any client (an MCP server, the\nCLI, an agent) can read which backend it is bound to — local vs. a\nremote install — and label its responses accordingly.",
+        "operationId": "getInstance",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [],
+        "summary": "Backend identity",
+        "tags": [
+          "System"
         ]
       }
     },
