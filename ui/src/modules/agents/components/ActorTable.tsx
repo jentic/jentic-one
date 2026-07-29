@@ -18,18 +18,23 @@ import {
 	AgentBadge,
 	AppLink,
 	Button,
+	Card,
+	CardBody,
 	DataTable,
 	MenuPanel,
 	menuItemClass,
 	useDismissable,
 	ActorStatusBadge,
+	SparklineChart,
 	type Column,
 } from '@/shared/ui';
+import { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
 	type ActorStatus,
+	type ActorUsage,
 	type AgentAction,
 } from '@/modules/agents/api';
 
@@ -50,6 +55,12 @@ interface ActorTableProps<T extends ActorRow> {
 	emptyMessage: string;
 	/** The actor id with a lifecycle mutation in flight, if any. */
 	pendingId?: string | null;
+	/**
+	 * Per-actor execution stats keyed by id (trailing 7 days). `undefined` or
+	 * `null` (still loading / non-admin 403 / degraded) renders the roster
+	 * without the activity columns — never an error state.
+	 */
+	usage?: Map<string, ActorUsage> | null;
 	onAction: (item: T, action: AgentAction) => void;
 	detailHref: (item: T) => string;
 }
@@ -149,14 +160,25 @@ function timeCell(value: string | null) {
 	);
 }
 
+/** "99.2%" success share, or an em-dash for actors with no traffic. */
+function successShare(u: ActorUsage | undefined): string {
+	if (!u || u.total === 0) return '—';
+	return `${((u.success / u.total) * 100).toFixed(1).replace(/\.0$/, '')}%`;
+}
+
 export function ActorTable<T extends ActorRow>({
 	items,
 	kindLabel,
 	emptyMessage,
 	pendingId,
+	usage,
 	onAction,
 	detailHref,
 }: ActorTableProps<T>) {
+	// DataTable swaps to stacked cards below `sm`; the card chrome around the
+	// table would double-frame those, so mirror its breakpoint here.
+	const isMobile = useMediaQuery('(max-width: 639px)');
+
 	const columns: Column<T>[] = [
 		{
 			key: 'name',
@@ -172,17 +194,55 @@ export function ActorTable<T extends ActorRow>({
 			className: 'w-28',
 			render: (row) => <ActorStatusBadge status={row.status} />,
 		},
+		...(usage
+			? ([
+					{
+						key: 'activity',
+						header: 'Activity (7d)',
+						className: 'w-32 whitespace-nowrap',
+						render: (row) => {
+							const trend = usage.get(row.id)?.trend;
+							return trend?.some((v) => v > 0) ? (
+								<SparklineChart data={trend} className="text-primary" />
+							) : (
+								<span className="text-muted-foreground text-xs">idle</span>
+							);
+						},
+					},
+					{
+						key: 'executions',
+						header: 'Executions',
+						className: 'w-28 text-right',
+						render: (row) => (
+							<span className="font-mono text-xs tabular-nums">
+								{(usage.get(row.id)?.total ?? 0).toLocaleString()}
+							</span>
+						),
+					},
+					{
+						key: 'success',
+						header: 'Success',
+						className: 'w-24 text-right',
+						render: (row) => (
+							<span className="text-muted-foreground font-mono text-xs tabular-nums">
+								{successShare(usage.get(row.id))}
+							</span>
+						),
+					},
+				] satisfies Column<T>[])
+			: ([
+					{
+						key: 'approvedAt',
+						header: 'Approved',
+						className: 'w-32',
+						render: (row) => timeCell(row.approvedAt),
+					},
+				] satisfies Column<T>[])),
 		{
 			key: 'createdAt',
 			header: 'Registered',
 			className: 'w-32',
 			render: (row) => timeCell(row.createdAt),
-		},
-		{
-			key: 'approvedAt',
-			header: 'Approved',
-			className: 'w-32',
-			render: (row) => timeCell(row.approvedAt),
 		},
 		{
 			key: 'actions',
@@ -194,31 +254,50 @@ export function ActorTable<T extends ActorRow>({
 		},
 	];
 
-	return (
+	const table = (
 		<DataTable<T>
 			columns={columns}
 			data={items}
 			getRowKey={(row) => row.id}
 			emptyMessage={emptyMessage}
 			ariaLabel={`${kindLabel} list`}
-			renderCard={(row) => (
-				<div className="space-y-2">
-					<div className="flex items-start justify-between gap-2">
-						<IdentityCell item={row} kindLabel={kindLabel} detailHref={detailHref} />
-						<RowActionsMenu
-							item={row}
-							pending={pendingId === row.id}
-							onAction={onAction}
-						/>
+			renderCard={(row) => {
+				const u = usage?.get(row.id);
+				return (
+					<div className="space-y-2">
+						<div className="flex items-start justify-between gap-2">
+							<IdentityCell
+								item={row}
+								kindLabel={kindLabel}
+								detailHref={detailHref}
+							/>
+							<RowActionsMenu
+								item={row}
+								pending={pendingId === row.id}
+								onAction={onAction}
+							/>
+						</div>
+						<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+							<ActorStatusBadge status={row.status} />
+							{u && u.total > 0 && (
+								<span className="text-muted-foreground font-mono text-[11px] tabular-nums">
+									{u.total.toLocaleString()} runs · {successShare(u)} ok
+								</span>
+							)}
+							<span className="text-muted-foreground text-[11px]">
+								Registered {timeAgo(row.createdAt)}
+							</span>
+						</div>
 					</div>
-					<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-						<ActorStatusBadge status={row.status} />
-						<span className="text-muted-foreground text-[11px]">
-							Registered {timeAgo(row.createdAt)}
-						</span>
-					</div>
-				</div>
-			)}
+				);
+			}}
 		/>
+	);
+
+	if (isMobile) return table;
+	return (
+		<Card>
+			<CardBody className="px-0 py-0">{table}</CardBody>
+		</Card>
 	);
 }

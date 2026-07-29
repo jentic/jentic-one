@@ -13,6 +13,8 @@
 import {
 	ApiError,
 	AgentsService,
+	GroupBy,
+	MonitoringService,
 	PermissionsService,
 	ServiceAccountsService,
 	ToolkitsService,
@@ -512,6 +514,59 @@ export async function replaceServiceAccountScopes(
 		return res.scopes;
 	} catch (error) {
 		throw toAgentsError(error, "Failed to update the service account's scopes.");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Fleet usage (GET /monitoring/usage?group_by=agent)
+//
+// The same aggregate the Monitor page and the enterprise console read, sliced
+// per actor for the fleet table's activity columns. The endpoint is gated on
+// `org:admin`; a 403 is an expected outcome for non-admin operators, not an
+// error — the caller hides the columns entirely.
+// ---------------------------------------------------------------------------
+
+/** One actor's execution stats over the query window. */
+export interface ActorUsage {
+	total: number;
+	success: number;
+	failed: number;
+	/** Executions per aggregate bucket, oldest → newest (sparkline-ready). */
+	trend: number[];
+}
+
+/**
+ * Per-actor usage over the trailing `sinceDays` window, keyed by actor id.
+ * Backend `top` keys are mechanical `actor_type/actor_id` strings; rows for
+ * other actor types (users, unattributed NULLs) are dropped here. Returns
+ * `null` on 403 — the caller renders no activity columns for non-admins.
+ */
+export async function fetchActorsUsage(
+	actorType: 'agent' | 'service_account',
+	sinceDays = 7,
+): Promise<Map<string, ActorUsage> | null> {
+	try {
+		const res = await MonitoringService.getUsageStats({
+			since: Math.floor(Date.now() / 1000) - sinceDays * 86400,
+			groupBy: GroupBy.AGENT,
+			// The fleet table joins every loaded row, not a top-10 leaderboard.
+			topLimit: 200,
+		});
+		const prefix = `${actorType}/`;
+		const usage = new Map<string, ActorUsage>();
+		for (const row of res.top) {
+			if (!row.key?.startsWith(prefix)) continue;
+			usage.set(row.key.slice(prefix.length), {
+				total: row.total,
+				success: row.success,
+				failed: row.failed,
+				trend: row.trend,
+			});
+		}
+		return usage;
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 403) return null;
+		throw toAgentsError(error, 'Failed to load usage statistics.');
 	}
 }
 

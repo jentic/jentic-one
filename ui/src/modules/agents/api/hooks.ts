@@ -52,6 +52,8 @@ import {
 	bindToolkitToAgent,
 	unbindToolkitFromAgent,
 	fetchActorAccessRequests,
+	fetchActorsUsage,
+	type ActorUsage,
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
@@ -628,6 +630,26 @@ export function useReplaceServiceAccountScopes() {
 			toast({ title: 'Scopes updated', variant: 'success' });
 		},
 		onError: (e) => notifyError(e, "Failed to update the service account's scopes."),
+	});
+}
+
+/**
+ * Per-actor execution stats for the fleet table's activity columns
+ * (`GET /monitoring/usage?group_by=agent`, trailing 7 days). Kept under its
+ * OWN root (like `linkableToolkitsKey`) so agent lifecycle invalidations —
+ * which sweep `sharedQueryKeys.agentsRoot` on approve/deny/create — don't
+ * pointlessly re-aggregate the monitoring window. Resolves `null` for
+ * non-admins (403): the table renders without activity columns rather than
+ * erroring, and `retry: false` stops TanStack from hammering a gate that
+ * won't open. Any other failure also degrades to no columns (no toast — the
+ * roster itself is the page's primary data, usage is enrichment).
+ */
+export function useActorsUsage(actorType: 'agent' | 'service_account') {
+	return useQuery<Map<string, ActorUsage> | null>({
+		queryKey: ['agents-usage', actorType],
+		queryFn: () => fetchActorsUsage(actorType),
+		staleTime: 60 * 1000,
+		retry: false,
 	});
 }
 

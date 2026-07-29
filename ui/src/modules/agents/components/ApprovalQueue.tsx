@@ -47,33 +47,26 @@ export function ApprovalQueue<T extends ActorRow>({
 					return (
 						<div
 							key={item.id}
-							className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+							className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2"
 						>
-							<div className="flex min-w-0 flex-1 items-center gap-3">
-								<AgentBadge
-									id={item.id}
-									name={item.name}
-									kind={kindLabel}
-									size="sm"
-								/>
-								<div className="min-w-0">
-									<AppLink
-										href={detailHref(item)}
-										className="font-heading text-foreground hover:text-primary block truncate text-sm font-semibold"
-									>
-										{item.name}
-									</AppLink>
-									<code className="text-muted-foreground block truncate font-mono text-xs">
-										{item.id}
-									</code>
-								</div>
+							<AgentBadge id={item.id} name={item.name} kind={kindLabel} size="sm" />
+							<div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+								<AppLink
+									href={detailHref(item)}
+									className="font-heading text-foreground hover:text-primary truncate text-sm font-semibold"
+								>
+									{item.name}
+								</AppLink>
+								<code className="text-muted-foreground truncate font-mono text-[11px]">
+									{item.id}
+								</code>
+								<span
+									className="text-muted-foreground text-[11px]"
+									title={formatTimestamp(item.createdAt)}
+								>
+									· registered {timeAgo(item.createdAt)}
+								</span>
 							</div>
-							<span
-								className="text-muted-foreground hidden text-[11px] sm:block"
-								title={formatTimestamp(item.createdAt)}
-							>
-								Registered {timeAgo(item.createdAt)}
-							</span>
 							<div className="flex items-center gap-2">
 								{DECISIONS.map((action) => (
 									<Button

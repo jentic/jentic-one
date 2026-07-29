@@ -39,6 +39,7 @@ import {
 	useDisableServiceAccount,
 	useEnableServiceAccount,
 	useArchiveServiceAccount,
+	useActorsUsage,
 	ACTOR_STATUSES,
 	STATUS_LABELS,
 	type ActorStatus,
@@ -182,6 +183,8 @@ interface ActorsSectionProps<T extends ActorRow> {
 	entities: T[];
 	mutations: LifecycleMutations;
 	entityType: 'agent' | 'service-account';
+	/** Backend `actor_type` discriminator for the usage aggregate. */
+	usageActorType: 'agent' | 'service_account';
 	kindLabel: string;
 	nounPlural: string;
 	disableBody: string;
@@ -195,6 +198,7 @@ function ActorsSection<T extends ActorRow>({
 	entities,
 	mutations,
 	entityType,
+	usageActorType,
 	kindLabel,
 	nounPlural,
 	disableBody,
@@ -205,6 +209,11 @@ function ActorsSection<T extends ActorRow>({
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 	const [filterQuery, setFilterQuery] = useState('');
 	const [statusFilter, setStatusFilter] = useState<ActorStatusFilter>('all');
+
+	// Activity columns are enrichment: `data` is a per-actor stats map for
+	// admins, `null` for non-admins (403), `undefined` while loading/failed —
+	// the table renders the plain roster in every non-map case.
+	const usage = useActorsUsage(usageActorType);
 
 	const { approve, deny, disable, enable, archive } = mutations;
 	const pendingId = activeId([approve, deny, disable, enable, archive]);
@@ -310,6 +319,7 @@ function ActorsSection<T extends ActorRow>({
 					kindLabel={kindLabel}
 					emptyMessage={`No ${nounPlural} match your filter.`}
 					pendingId={pendingId}
+					usage={usage.data}
 					onAction={handleAction}
 					detailHref={detailHref}
 				/>
@@ -371,6 +381,7 @@ function AgentsSection({
 				entities={entities}
 				mutations={mutations}
 				entityType="agent"
+				usageActorType="agent"
 				kindLabel="Agent"
 				nounPlural="agents"
 				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
@@ -411,6 +422,7 @@ function ServiceAccountsSection({
 				entities={entities}
 				mutations={mutations}
 				entityType="service-account"
+				usageActorType="service_account"
 				kindLabel="Service account"
 				nounPlural="service accounts"
 				disableBody="Disabling immediately revokes this service account's access. You can re-enable it later."

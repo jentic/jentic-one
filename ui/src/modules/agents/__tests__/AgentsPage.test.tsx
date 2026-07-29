@@ -287,4 +287,37 @@ describe('AgentsPage — agents lifecycle', () => {
 		renderPage();
 		expect(await screen.findByRole('alert')).toBeInTheDocument();
 	});
+
+	it('enriches rows with 7-day activity columns from the usage aggregate', async () => {
+		renderPage();
+		await screen.findByText('support-agent');
+
+		// The usage query resolves after the roster; wait for the columns.
+		expect(await screen.findByText('Activity (7d)')).toBeInTheDocument();
+		// The mock windows totals by `since`, so assert shape not exact counts:
+		// a busy agent gets a nonzero execution count and a success share.
+		const active = tableRowFor('support-agent');
+		await waitFor(() => {
+			const [count] = within(active).getAllByText(/^[\d,]+$/);
+			expect(Number(count.textContent!.replace(/,/g, ''))).toBeGreaterThan(0);
+		});
+		expect(within(active).getByText(/^\d+(\.\d+)?%$/)).toBeInTheDocument();
+
+		// Actors without usage rows read as genuinely idle, not broken.
+		const pending = tableRowFor('inbox-triage-bot');
+		expect(within(pending).getByText('idle')).toBeInTheDocument();
+		expect(within(pending).getByText('—')).toBeInTheDocument();
+	});
+
+	it('renders the plain roster when the usage aggregate is admin-gated (403)', async () => {
+		worker.use(createErrorHandler('get', '/monitoring/usage', { status: 403 }));
+		renderPage();
+		await screen.findByText('support-agent');
+
+		// No activity enrichment for non-admins — and no error either; the
+		// lifecycle columns take the space back.
+		expect(screen.queryByText('Activity (7d)')).not.toBeInTheDocument();
+		expect(screen.getByText('Approved')).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
 });
