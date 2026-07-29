@@ -30,7 +30,6 @@ import {
 	ErrorAlert,
 	LoadingState,
 	SegmentedToggle,
-	type BadgeVariant,
 	type SegmentedToggleOption,
 } from '@/shared/ui';
 import { AccessRequestDecisionDialog } from '@/shared/app';
@@ -40,6 +39,7 @@ import {
 	type AccessRequest,
 } from '@/modules/agents/api';
 import { pendingAccessRequestCountKey } from '@/shared/hooks';
+import { ACCESS_REQUEST_STATUS_VARIANT, summarizeAccessRequest } from '@/shared/lib';
 import { timeAgo } from '@/shared/lib/utils';
 
 type StatusFilter = 'pending' | 'approved' | 'denied' | 'all';
@@ -50,20 +50,6 @@ const STATUS_OPTIONS: SegmentedToggleOption<StatusFilter>[] = [
 	{ value: 'denied', label: 'Denied' },
 	{ value: 'all', label: 'All' },
 ];
-
-const STATUS_VARIANT: Record<string, BadgeVariant> = {
-	pending: 'pending',
-	approved: 'success',
-	denied: 'danger',
-};
-
-/** A one-line summary of a request's items: "toolkit · use +2 more". */
-function summarize(request: AccessRequest): string {
-	const n = request.items.length;
-	const head = request.items[0];
-	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
-	return n > 1 ? `${label} +${n - 1} more` : label;
-}
 
 export function ActorAccessRequestsCard({
 	actorId,
@@ -90,7 +76,9 @@ export function ActorAccessRequestsCard({
 						Access requests
 					</CardTitle>
 					{data && data.length > 0 && (
-						<Badge variant={STATUS_VARIANT[status] ?? 'default'}>{data.length}</Badge>
+						<Badge variant={ACCESS_REQUEST_STATUS_VARIANT[status] ?? 'default'}>
+							{data.length}
+						</Badge>
 					)}
 				</CardHeader>
 				<CardBody className="space-y-3">
@@ -131,7 +119,7 @@ export function ActorAccessRequestsCard({
 									>
 										<div className="min-w-0">
 											<p className="text-foreground truncate font-medium">
-												{summarize(request)}
+												{summarizeAccessRequest(request)}
 											</p>
 											{request.reason && (
 												<p className="text-muted-foreground truncate text-xs">
@@ -154,7 +142,9 @@ export function ActorAccessRequestsCard({
 											{status === 'all' && (
 												<Badge
 													variant={
-														STATUS_VARIANT[request.status] ?? 'default'
+														ACCESS_REQUEST_STATUS_VARIANT[
+															request.status
+														] ?? 'default'
 													}
 												>
 													{request.status}

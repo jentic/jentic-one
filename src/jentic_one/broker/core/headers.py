@@ -8,7 +8,28 @@ rather than inline string literals scattered across the routers.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
+
+# Anything outside printable ASCII (0x20-0x7E). Excludes CR/LF/NUL and all
+# control characters by construction, and every codepoint that would fail
+# Starlette's latin-1 response-header encoding or invite header injection
+# behind a non-validating intermediary.
+_UNSAFE_HEADER_CHARS = re.compile(r"[^\x20-\x7E]")
+
+
+def header_safe_value(value: str) -> str:
+    """Return ``value`` reduced to a printable-ASCII header-safe form.
+
+    Used for operator-authored free text (e.g. a credential's display name)
+    that rides in a response header: emitting it verbatim would 500 the whole
+    response on any non-latin-1 character and hand CR/LF-bearing input a
+    response-splitting primitive. Unsafe characters are replaced with ``?``
+    rather than dropped so the header stays present (attribution contract:
+    header presence means a credential was used) and visibly marked as
+    transformed.
+    """
+    return _UNSAFE_HEADER_CHARS.sub("?", value)
 
 
 class JenticHeader(StrEnum):
@@ -18,6 +39,19 @@ class JenticHeader(StrEnum):
     TOOLKIT_ID = "Jentic-Toolkit-Id"
     OPERATION = "Jentic-Operation"
     API_VENDOR = "Jentic-Api-Vendor"
+    # The credential the broker resolved and used for this execution (#740). The
+    # id is stable + non-secret (a ``cred_``-prefixed KSUID); the name is the
+    # human-readable label from the stored row — operator-authored free text,
+    # so it must pass through ``header_safe_value`` before emission (a raw
+    # non-latin-1 name would fail response encoding; CR/LF is a header-
+    # injection primitive). Both are emitted only when a credential was actually
+    # used — broker-origin failures before credential resolution carry neither.
+    # Note: ``Jentic-Credential-Name`` is *also* a request header that clients
+    # send inbound to disambiguate ambiguous resolution — the outbound response
+    # header shares the name intentionally (same convention as
+    # ``Jentic-Toolkit-Id``, which is both request and response).
+    CREDENTIAL_ID = "Jentic-Credential-Id"
+    CREDENTIAL_NAME = "Jentic-Credential-Name"
     UPSTREAM_STATUS = "Jentic-Upstream-Status"
     ERROR_ORIGIN = "Jentic-Error-Origin"
     HINT = "Jentic-Hint"

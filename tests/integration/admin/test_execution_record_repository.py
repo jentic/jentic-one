@@ -82,6 +82,59 @@ async def test_create_and_get_by_id(
         assert loaded.pinned_revisions == {"rev": 1}
 
 
+async def test_create_persists_credential_attribution(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    """#740: credential id/name populate on the execution record."""
+    now = datetime.now(UTC)
+    async with admin_db.session() as session:
+        record = await ExecutionRecordRepository.create(
+            session,
+            toolkit_id="tk_test000000000000000000",
+            trace_id="abcdef1234567890abcdef12",
+            started_at=now,
+            status="completed",
+            created_by="usr_test",
+            actor_id="usr_test",
+            actor_type="user",
+            credential_id="cred_abc123",
+            credential_name="stripe-live",
+        )
+        await session.commit()
+        record_id = record.id
+
+    async with admin_db.session() as session:
+        loaded = await ExecutionRecordRepository.get_by_id(session, record_id)
+        assert loaded is not None
+        assert loaded.credential_id == "cred_abc123"
+        assert loaded.credential_name == "stripe-live"
+
+
+async def test_create_leaves_credential_attribution_null_when_absent(
+    admin_db: DatabaseSession, clean_execution_records: None
+) -> None:
+    """No credential path attempted ⇒ both columns NULL (unambiguous)."""
+    async with admin_db.session() as session:
+        record = await ExecutionRecordRepository.create(
+            session,
+            toolkit_id="tk_test000000000000000000",
+            trace_id="abcdef1234567890abcdef12",
+            started_at=datetime.now(UTC),
+            status="completed",
+            created_by="usr_test",
+            actor_id="usr_test",
+            actor_type="user",
+        )
+        await session.commit()
+        record_id = record.id
+
+    async with admin_db.session() as session:
+        loaded = await ExecutionRecordRepository.get_by_id(session, record_id)
+        assert loaded is not None
+        assert loaded.credential_id is None
+        assert loaded.credential_name is None
+
+
 async def test_list_all_with_filters(
     admin_db: DatabaseSession, clean_execution_records: None
 ) -> None:

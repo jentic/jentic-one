@@ -358,6 +358,39 @@
         "title": "AccessRequestListResponse",
         "type": "object"
       },
+      "AccessRequestOwnerResponse": {
+        "description": "Display info for the filer's human owner (labelling only, not authorization).\n\nServer-resolved from ``filer_owner_id`` (falling back to ``created_by``\nwhen the former is null, mirroring what consumers render) so they don't\nneed ``users:read`` (or a roster fetch) just to label a row. Absent when\nthe id doesn't resolve to a user (service-account filers, purged rows) or\non mutation responses, which skip the enrichment.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The owner's full name, when set on the profile.",
+            "title": "Display Name"
+          },
+          "email": {
+            "description": "The owner's email address.",
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "description": "The resolved owner's user id (filer_owner_id, or created_by when null).",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email"
+        ],
+        "title": "AccessRequestOwnerResponse",
+        "type": "object"
+      },
       "AccessRequestResponse": {
         "description": "Response model for an access request envelope.",
         "properties": {
@@ -392,6 +425,16 @@
             "format": "date-time",
             "title": "Filed At",
             "type": "string"
+          },
+          "filer_owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessRequestOwnerResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "filer_owner_id": {
             "anyOf": [
@@ -3366,6 +3409,28 @@
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "credential_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Name"
           },
           "duration_ms": {
             "anyOf": [
@@ -8022,7 +8087,7 @@
     },
     "summary": "HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).",
     "title": "Jentic Control Plane API",
-    "version": "0.21.0"
+    "version": "0.22.0"
   },
   "openapi": "3.1.0",
   "paths": {

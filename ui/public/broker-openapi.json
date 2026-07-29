@@ -1,6 +1,24 @@
 {
   "components": {
     "headers": {
+      "JenticCredentialId": {
+        "description": "ID of the stored credential the broker resolved and used to sign\nthis execution. Present only when a stored credential was actually\nused — a missing header unambiguously means no credential (inline\nauth, a credential-less API, or a failure before resolution).\n",
+        "schema": {
+          "examples": [
+            "cred_abc123"
+          ],
+          "type": "string"
+        }
+      },
+      "JenticCredentialName": {
+        "description": "Human-readable label of the credential in `Jentic-Credential-Id`,\nsanitized to printable ASCII (unsafe characters replaced with `?`).\nPresent under the same condition as the id header. The same header\nname is also accepted on requests to disambiguate credential\nresolution.\n",
+        "schema": {
+          "examples": [
+            "Stripe prod key"
+          ],
+          "type": "string"
+        }
+      },
       "JenticExecutionId": {
         "description": "Execution ID — unique identifier for this brokered request.",
         "schema": {
@@ -140,7 +158,7 @@
             }
           }
         },
-        "description": "No credential is connected for the resolved upstream API — the\nbound credential is a missing dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `agent_directive` is a\n`prompt_human` instruction carrying a non-secret `provisioning_url`\n(when account-linking is configured) and an `intent_id` correlation\nid, so an autonomous agent stops and asks the user to connect the\naccount rather than retrying or guessing the credential.\n"
+        "description": "A bound credential is an unusable dependency, so the broker cannot\nsign the upstream call. Body is RFC 9457\n`application/problem+json`; the `type` discriminates two cases with\nopposite recovery paths:\n- `credential_not_provisioned` — no credential is connected for the\n  resolved upstream API. The `agent_directive` is a `prompt_human`\n  instruction carrying a non-secret `provisioning_url` (when\n  account-linking is configured) and an `intent_id` correlation id,\n  so an autonomous agent stops and asks the user to connect the\n  account rather than retrying or guessing the credential.\n- `credential_undecryptable` — a credential is connected but its\n  stored secret can no longer be decrypted (typically the\n  deployment's encryption key rotated underneath it, e.g. a\n  reinstall over existing data). The caller cannot self-provision\n  and retrying will not help; the `prompt_human` directive tells\n  the agent to ask an operator to remove and re-add the credential.\n"
       },
       "Default": {
         "content": {
@@ -263,6 +281,12 @@
               ],
               "type": "string"
             }
+          },
+          "Jentic-Credential-Id": {
+            "$ref": "#/components/headers/JenticCredentialId"
+          },
+          "Jentic-Credential-Name": {
+            "$ref": "#/components/headers/JenticCredentialName"
           },
           "Jentic-Execution-Id": {
             "$ref": "#/components/headers/JenticExecutionId"

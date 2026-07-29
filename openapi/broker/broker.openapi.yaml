@@ -589,6 +589,27 @@ components:
         type: string
         examples:
           - exec_xyz789
+    JenticCredentialId:
+      description: |
+        ID of the stored credential the broker resolved and used to sign
+        this execution. Present only when a stored credential was actually
+        used — a missing header unambiguously means no credential (inline
+        auth, a credential-less API, or a failure before resolution).
+      schema:
+        type: string
+        examples:
+          - cred_abc123
+    JenticCredentialName:
+      description: |
+        Human-readable label of the credential in `Jentic-Credential-Id`,
+        sanitized to printable ASCII (unsafe characters replaced with `?`).
+        Present under the same condition as the id header. The same header
+        name is also accepted on requests to disambiguate credential
+        resolution.
+      schema:
+        type: string
+        examples:
+          - Stripe prod key
   parameters:
     UpstreamUrl:
       name: upstream_url
@@ -823,6 +844,10 @@ components:
             type: integer
             examples:
               - 200
+        Jentic-Credential-Id:
+          $ref: "#/components/headers/JenticCredentialId"
+        Jentic-Credential-Name:
+          $ref: "#/components/headers/JenticCredentialName"
       content:
         "*/*":
           schema:
@@ -952,14 +977,22 @@ components:
             $ref: 'https://raw.githubusercontent.com/jentic/api-problem-details/c741877182d2deea2bb38859e3df4caa76265d98/schemas/problem-details.yaml'
     CredentialNotProvisioned:
       description: |
-        No credential is connected for the resolved upstream API — the
-        bound credential is a missing dependency, so the broker cannot
+        A bound credential is an unusable dependency, so the broker cannot
         sign the upstream call. Body is RFC 9457
-        `application/problem+json`; the `agent_directive` is a
-        `prompt_human` instruction carrying a non-secret `provisioning_url`
-        (when account-linking is configured) and an `intent_id` correlation
-        id, so an autonomous agent stops and asks the user to connect the
-        account rather than retrying or guessing the credential.
+        `application/problem+json`; the `type` discriminates two cases with
+        opposite recovery paths:
+        - `credential_not_provisioned` — no credential is connected for the
+          resolved upstream API. The `agent_directive` is a `prompt_human`
+          instruction carrying a non-secret `provisioning_url` (when
+          account-linking is configured) and an `intent_id` correlation id,
+          so an autonomous agent stops and asks the user to connect the
+          account rather than retrying or guessing the credential.
+        - `credential_undecryptable` — a credential is connected but its
+          stored secret can no longer be decrypted (typically the
+          deployment's encryption key rotated underneath it, e.g. a
+          reinstall over existing data). The caller cannot self-provision
+          and retrying will not help; the `prompt_human` directive tells
+          the agent to ask an operator to remove and re-add the credential.
       content:
         application/problem+json:
           schema:

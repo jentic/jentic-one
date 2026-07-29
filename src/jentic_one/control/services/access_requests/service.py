@@ -46,6 +46,7 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
     CollectedResourceIds,
     Evaluation,
     EvaluationCheck,
+    FilerOwnerView,
     ResolvedNames,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -312,7 +313,8 @@ class AccessRequestService:
             names = await self._resolve_names(session, [request])
             view = self._to_view(request, names=names)
             view.evaluation = self._compute_evaluation(request, identity)
-            return view
+        await self._resolve_filer_owners([view])
+        return view
 
     async def list_all(
         self,
@@ -352,7 +354,44 @@ class AccessRequestService:
                 last = rows[-1]
                 next_cursor = encode_cursor(last.filed_at, last.id)
 
+        await self._resolve_filer_owners(data)
         return AccessRequestPage(data=data, has_more=has_more, next_cursor=next_cursor)
+
+    async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
+        """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
+
+        ``filer_owner_id`` is a bare string (no cross-DB FK to the admin
+        ``users`` table), so consumers historically had to join it against a
+        separately-fetched roster client-side — which requires ``users:read``
+        just to label a row. Resolving here (one batched admin-DB lookup per
+        page, mirroring ``_resolve_names``) lets any viewer see the owner
+        label for requests they can already read. Ids that aren't users
+        (service-account filers) or no longer resolve stay ``None`` — the
+        wire field is optional by design.
+
+        Rows without a ``filer_owner_id`` (nullable column; legacy rows) fall
+        back to ``created_by`` — the same fallback consumers render — so a
+        user-filed row still gets its label when only the creator is recorded.
+        """
+
+        def owner_key(view: AccessRequestView) -> str:
+            return view.filer_owner_id or view.created_by
+
+        owner_ids = sorted({owner_key(v) for v in views if owner_key(v)})
+        if not owner_ids:
+            return
+        async with self._ctx.admin_db.session() as session:
+            displays = await PrerequisiteRepository.get_user_displays(session, user_ids=owner_ids)
+        for view in views:
+            row = displays.get(owner_key(view))
+            if row is None:
+                continue
+            name = " ".join(part for part in (row.first_name, row.last_name) if part).strip()
+            view.filer_owner = FilerOwnerView(
+                id=row.user_id,
+                email=row.email,
+                display_name=name or None,
+            )
 
     async def decide(
         self,

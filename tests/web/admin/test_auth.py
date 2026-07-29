@@ -271,6 +271,40 @@ def test_refresh_non_user_token_rejected(
     assert resp.json()["type"] == "invalid_credentials"
 
 
+# ── Shared auth gate (verify_token fail-closed, #862) ───────────────────────
+
+
+@pytest.mark.parametrize(
+    "actor_type_claim",
+    [None, "definitely-not-a-real-actor"],
+    ids=["missing", "unknown"],
+)
+def test_token_with_bad_actor_type_is_401(
+    unauthed_client: TestClient,
+    web_context: Context,
+    admin_user_id: str,
+    actor_type_claim: str | None,
+) -> None:
+    """Fail closed (#862): the gate refuses a JWT whose actor_type is absent or unrecognised.
+
+    The wire response must stay uniform with any other bad token — 401
+    ``unauthorized`` Problem Details, no oracle about which check failed.
+    """
+    config = web_context.config.admin.auth
+    claims: dict[str, Any] = {
+        "sub": admin_user_id,
+        "email": ADMIN_EMAIL,
+        "permissions": ["org:admin"],
+        "must_change_password": False,
+    }
+    if actor_type_claim is not None:
+        claims["actor_type"] = actor_type_claim
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    resp = unauthed_client.get("/users/me", headers=_bearer(token))
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "unauthorized"
+
+
 # ── First-run create-admin (one-time, unauthenticated setup) ───────────────
 
 

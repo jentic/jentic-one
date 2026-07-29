@@ -11,6 +11,7 @@ export type { AccessRequestFileRequest } from './models/AccessRequestFileRequest
 export { AccessRequestItemRequest } from './models/AccessRequestItemRequest';
 export type { AccessRequestItemResponse } from './models/AccessRequestItemResponse';
 export type { AccessRequestListResponse } from './models/AccessRequestListResponse';
+export type { AccessRequestOwnerResponse } from './models/AccessRequestOwnerResponse';
 export type { AccessRequestResponse } from './models/AccessRequestResponse';
 export type { ActorListResponse } from './models/ActorListResponse';
 export type { ActorSummaryResponse } from './models/ActorSummaryResponse';
