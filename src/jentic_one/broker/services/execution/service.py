@@ -374,6 +374,8 @@ async def persist_streaming_execution(
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,
+        credential_id=ctx_req.credential_id,
+        credential_name=ctx_req.credential_name,
     )
 
     # Third-party auth failure on the streaming path — mirrors run_execution
@@ -434,6 +436,8 @@ async def _persist(
         actor_id=actor_id,
         actor_type=actor_type,
         origin=origin,
+        credential_id=ctx_req.credential_id,
+        credential_name=ctx_req.credential_name,
     )
 
 
