@@ -84,10 +84,11 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 				</p>
 			)}
 
-			<div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+			<div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
 				<DetailSection
 					title={`Bound agents (${agents.length})`}
 					icon={<Bot className="h-4 w-4" />}
+					className="h-full"
 					action={{
 						label: (
 							<>
@@ -161,6 +162,7 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 				<DetailSection
 					title={`Bound credentials (${bindings.length})`}
 					icon={<KeyRound className="h-4 w-4" />}
+					className="h-full"
 					action={{ label: 'Manage', onClick: onManageAccess }}
 				>
 					{bindingsError && <ErrorAlert message="Failed to load bound credentials." />}

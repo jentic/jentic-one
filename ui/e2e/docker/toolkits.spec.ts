@@ -39,7 +39,7 @@ test('create a toolkit via the UI and see it in the list', async ({ page }) => {
 	await expect(page.getByText(/jntc_live_/).first()).toBeVisible();
 	await page.getByRole('button', { name: /open toolkit/i }).click();
 	await expect(page.getByRole('heading', { name })).toBeVisible();
-	await page.getByRole('button', { name: /all toolkits/i }).click();
+	await page.getByRole('link', { name: /all toolkits/i }).click();
 
 	// The new toolkit lands in the list.
 	await expect(page.getByText(name)).toBeVisible();

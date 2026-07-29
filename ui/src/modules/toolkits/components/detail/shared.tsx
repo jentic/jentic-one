@@ -54,6 +54,10 @@ interface DetailSectionProps {
 	action?: SectionActionProps;
 	/** Danger-tinted borders (suspended keys section). */
 	danger?: boolean;
+	/** Extra classes on the card shell (e.g. `h-full` in equal-height grids). */
+	className?: string;
+	/** Right-aligned header content when `action` (a button) doesn't fit — e.g. a link. */
+	trailing?: ReactNode;
 	children: ReactNode;
 }
 
@@ -64,11 +68,13 @@ export function DetailSection({
 	titleExtra,
 	action,
 	danger,
+	className,
+	trailing,
 	children,
 }: DetailSectionProps) {
 	return (
 		<div
-			className={`overflow-hidden rounded-xl border ${danger ? 'border-danger/50' : 'border-border'} bg-card`}
+			className={`flex flex-col overflow-hidden rounded-xl border ${danger ? 'border-danger/50' : 'border-border'} bg-card ${className ?? ''}`}
 		>
 			<div
 				className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 sm:px-5 sm:py-4 ${
@@ -100,8 +106,9 @@ export function DetailSection({
 						{action.label}
 					</Button>
 				)}
+				{trailing}
 			</div>
-			<div className="space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">{children}</div>
+			<div className="flex-1 space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">{children}</div>
 		</div>
 	);
 }

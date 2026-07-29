@@ -122,7 +122,7 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 			<DetailSection
 				title="Recent executions"
 				icon={<ListOrdered className="h-4 w-4" />}
-				titleExtra={
+				trailing={
 					<AppLink
 						href={`${ROUTES.monitor}?tab=executions&toolkit_id=${toolkitId}`}
 						className="text-primary inline-flex items-center gap-1 text-xs font-medium"

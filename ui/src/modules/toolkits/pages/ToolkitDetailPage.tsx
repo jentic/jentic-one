@@ -28,7 +28,7 @@ export function ToolkitDetailPage() {
 			<PageShell width="wide">
 				<PageHeader title="Toolkit" subtitle="No toolkit selected." />
 				<div className="-mt-2">
-					<BackButton to={ROUTES.toolkits} label="All toolkits" />
+					<BackButton to={ROUTES.toolkits} label="All toolkits" useHistory={false} />
 				</div>
 			</PageShell>
 		);
@@ -47,7 +47,9 @@ export function ToolkitDetailPage() {
 			/>
 
 			<div className="-mt-2">
-				<BackButton to={ROUTES.toolkits} label="All toolkits" />
+				{/* Static link (not history-back): tab switches push history entries,
+				    so popping would step through tabs instead of leaving the page. */}
+				<BackButton to={ROUTES.toolkits} label="All toolkits" useHistory={false} />
 			</div>
 
 			<ToolkitDetailBody

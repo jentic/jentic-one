@@ -44,7 +44,7 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: 'Slack Tools' })).toBeVisible();
 
 	// Back to the list; the new toolkit is there.
-	await page.getByRole('button', { name: /all toolkits/i }).click();
+	await page.getByRole('link', { name: /all toolkits/i }).click();
 	await expect(page.getByText('Slack Tools')).toBeVisible();
 
 	// Open an existing toolkit's detail.

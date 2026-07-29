@@ -199,7 +199,7 @@ describe('ToolkitDetailPage', () => {
 			expect(screen.getAllByRole('heading', { name: 'GitHub Tools' })).toHaveLength(1),
 		);
 		// "Back to <parent>" affordance sits beneath the header (not baked in).
-		expect(screen.getByRole('button', { name: /all toolkits/i })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /all toolkits/i })).toBeInTheDocument();
 	});
 
 	it('saves identity edits from the Settings tab form', async () => {

@@ -93,7 +93,7 @@ export function TabNav<T extends string = string>({
 			role="tablist"
 			aria-label={ariaLabel}
 			className={cn(
-				'border-border relative flex max-w-full items-end gap-1 overflow-x-auto border-b',
+				'border-border relative flex max-w-full items-end gap-1 overflow-x-auto overflow-y-hidden border-b',
 				className,
 			)}
 		>
@@ -124,7 +124,7 @@ export function TabNav<T extends string = string>({
 						onClick={() => onChange(option.value)}
 						onKeyDown={handleKeyDown}
 						className={cn(
-							'focus-visible:ring-ring group relative -mb-px inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
+							'focus-visible:ring-ring group relative inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none',
 							isActive
 								? 'text-foreground'
 								: 'text-muted-foreground hover:text-foreground hover:bg-muted/50',

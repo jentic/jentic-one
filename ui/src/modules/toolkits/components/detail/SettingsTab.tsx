@@ -86,7 +86,7 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 			<DetailSection title="Identity" icon={<SlidersHorizontal className="h-4 w-4" />}>
 				{/* The immutable toolkit id — what agents and API calls reference.
 				    Lives here (not in the page chrome) so the header stays clean. */}
-				<div className="mb-4 flex max-w-xl flex-wrap items-center justify-between gap-2">
+				<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
 					<span className="text-muted-foreground flex items-center gap-1.5 text-xs">
 						<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
 						Toolkit ID
@@ -97,7 +97,7 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 					</span>
 				</div>
 				<form
-					className="max-w-xl space-y-4"
+					className="space-y-4"
 					onSubmit={(e) => {
 						e.preventDefault();
 						updateToolkit.mutate(
