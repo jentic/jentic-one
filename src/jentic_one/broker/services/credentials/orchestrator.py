@@ -101,9 +101,12 @@ class CredentialService:
                 # rotation dropped the retired entry, or a DB was restored
                 # under a different key). The agent cannot self-recover —
                 # only an operator can re-add the credential — so map to a
-                # dedicated 424 with a prompt_human directive. Redaction:
-                # carry the credential id (opaque, not a secret) in extra;
-                # never ciphertext or key material.
+                # dedicated 424 with a prompt_human directive and flag the
+                # event requires_action so it reaches the Action Inbox
+                # (unlike not_provisioned/refresh_failed, no agent-side
+                # reconnect can fix this). Redaction: carry the credential
+                # id (opaque, not a secret) in extra; never ciphertext or
+                # key material.
                 await self._emit_credential_failure(
                     type=EventType.CREDENTIAL_UNDECRYPTABLE,
                     summary=(
@@ -111,14 +114,13 @@ class CredentialService:
                         f"for '{api.vendor}'"
                     ),
                     identity=identity,
+                    requires_action=True,
                 )
                 raise CredentialUndecryptableError(
                     detail=(
                         f"Credential '{resolved.credential_id}' for "
-                        f"'{api.vendor}' cannot be decrypted — an operator "
-                        "must re-add it (common cause: the encryption key "
-                        "was rotated without preserving the retired entry, "
-                        "e.g. a reinstall over existing data)."
+                        f"'{api.vendor}' cannot be decrypted with the "
+                        "configured encryption keys"
                     ),
                     type="credential_undecryptable",
                     extra={
@@ -213,6 +215,7 @@ class CredentialService:
         summary: str,
         identity: Identity,
         tags: set[EventTag] | None = None,
+        requires_action: bool = False,
     ) -> None:
         """Emit a credential-health event on the admin DB (best-effort)."""
         try:
@@ -226,6 +229,7 @@ class CredentialService:
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                     tags=tags,
+                    requires_action=requires_action,
                 )
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)

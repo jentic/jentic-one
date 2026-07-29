@@ -265,7 +265,7 @@ async def test_decryption_error_during_oauth_refresh_also_maps(
 ) -> None:
     """OAuth refresh also touches encrypted material (encrypted_refresh_token /
     encrypted_client_secret via TokenRefresher). A DecryptionError there must
-    map to the same 424 —     the orchestrator's single seam covers refresh + inject.
+    map to the same 424 — the orchestrator's single seam covers refresh + inject.
     """
     oauth_cred = ResolvedCredential(
         credential_id="cred_oauth",
@@ -325,3 +325,6 @@ async def test_decryption_error_emits_undecryptable_event_not_access(
     assert kwargs["type"] == "credential.undecryptable"
     # Severity must be WARNING so the operator sees it in the events rail.
     assert kwargs["severity"] == EventSeverity.WARNING
+    # Only an operator can fix an undecryptable credential, so the event must
+    # be flagged actionable to surface in the Action Inbox — not just the rail.
+    assert kwargs["requires_action"] is True

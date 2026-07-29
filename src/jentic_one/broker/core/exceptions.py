@@ -169,8 +169,8 @@ class CredentialUndecryptableError(BrokerError):
     gone. Common cause: a reinstall regenerated the encryption keyset under
     the same key id, so lookup succeeds and AES-GCM authentication fails
     (see ``shared/crypto/encryption.py`` — ``InvalidTag`` →
-    :class:`~jentic_one.shared.crypto.DecryptionError`); other paths in
-    include a hand-rotated key without keeping the retired entry, a
+    :class:`~jentic_one.shared.crypto.DecryptionError`); other paths include
+    a hand-rotated key without keeping the retired entry, a
     corrupted row, or a database restored under a different key. The
     ``prompt_human`` directive tells the agent to escalate to an operator
     rather than retry. Never carry ciphertext or key material in the body
