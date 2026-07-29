@@ -1460,6 +1460,46 @@ async def test_file_emits_unserved_advisory_for_plain_toolkit_bind_with_no_servi
     assert "no-such-vendor/no-such-api" in event.summary
 
 
+async def test_file_survives_non_string_reference_fields(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Non-string reference values must never escape the advisory (post-commit 500).
+
+    ``resource_reference`` is schema-typed ``dict[str, Any]``, so a caller can
+    put an int/list where ``name``/``version`` are expected. The advisory runs
+    after the filing has committed; an uncaught TypeError here would fail the
+    request *and* skip its CREATE audit record. Values are coerced to strings
+    instead.
+    """
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="crafted non-string reference fields",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "no-such-vendor", "name": 123, "version": 4},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert len(matching) == 1
+    assert matching[0].data["api"] == {
+        "vendor": "no-such-vendor",
+        "name": "123",
+        "version": "4",
+    }
+
+
 async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
     svc: AccessRequestService,
     clean_access_requests: None,

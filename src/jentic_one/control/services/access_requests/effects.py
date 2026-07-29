@@ -353,7 +353,7 @@ class EffectApplicator:
         an actionable, plan-aware reason that names the intent id(s) still
         awaiting fulfilment rather than the cryptic "to_id missing" / "no
         toolkit serves API" a plain approval would otherwise surface.
-        Default (``_UNGOVERNED``) means "plain contract" — non-plan items and
+        Default (``UNGOVERNED_PLAN``) means "plain contract" — non-plan items and
         non-plan requests never construct a governance value at all.
         """
         key = (item.resource_type, item.action)

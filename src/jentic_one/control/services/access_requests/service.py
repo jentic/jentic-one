@@ -18,6 +18,7 @@ from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.access_requests.effects import (
+    PLAN_INTENT_COMBINATIONS,
     UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
@@ -83,17 +84,6 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
     CredentialNotFoundForBindError,
     RequiredFieldMissingError,
     ProvisioningPlanNotFulfilledError,
-)
-
-# The fulfilment-only intent item types that mark a request as a provisioning
-# plan. Their presence means the bind items are fulfilled out-of-band by the
-# setup wizard (create toolkit + credential, then amend their ids), so a plain
-# approval of an unfulfilled bind must be denied with a plan-aware reason rather
-# than half-approving into a guaranteed-broken state. Governance is computed
-# per-item by :func:`plan_governance_for_items` (issue #778); this constant is
-# retained only for tests/documentation that name the combinations.
-_PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
-    {("toolkit", "create"), ("credential", "provision")}
 )
 
 # Statuses in which a request has been decided and its actionable
@@ -217,11 +207,15 @@ class AccessRequestService:
         """Emit a best-effort ``TOOLKIT_BINDING_UNSERVED`` for unfulfillable filings.
 
         A plain (non-plan) ``toolkit:bind`` filed by ``vendor/name`` reference
-        will deny on approval with :class:`ToolkitReferenceUnresolvedError`
-        when no toolkit visible to the filer's owner currently serves that
-        API. Surfacing that at file time gives operators an early signal —
-        symmetric to the broker's own emit for the same event on execute-time
-        denials (see ``execute._emit_toolkit_binding_unserved``).
+        will typically deny on approval with
+        :class:`ToolkitReferenceUnresolvedError` when no toolkit owned by the
+        filer's owner currently serves that API. (Approval-time resolution
+        runs under the *decider's* scope — an org-admin can resolve toolkits
+        the filer's owner doesn't hold, so this owner-scoped check is a
+        heuristic, not a promise of denial.) Surfacing it at file time gives
+        operators an early signal — symmetric to the broker's own emit for
+        the same event on execute-time denials (see
+        ``execute._emit_toolkit_binding_unserved``).
 
         Deliberately silent when:
 
@@ -235,9 +229,17 @@ class AccessRequestService:
 
         Never blocks the filing — the emit is best-effort and any lookup
         failure logs and continues.
+
+        The plan check here is deliberately request-wide (any intent item
+        silences all binds), unlike :func:`plan_governance_for_items`'s
+        per-item scoping used at approval time: at file() everything is
+        pending and a request carrying any fulfilment intent is wizard-bound,
+        where the operator will see unfulfillable binds up close anyway —
+        a coarser, quieter heuristic is the right trade-off for an advisory.
         """
-        plan_types = {("toolkit", "create"), ("credential", "provision")}
-        if any((it.get("resource_type"), it.get("action")) in plan_types for it in items):
+        if any(
+            (it.get("resource_type"), it.get("action")) in PLAN_INTENT_COMBINATIONS for it in items
+        ):
             return
 
         actor_type_value = identity.actor_type.value if identity.actor_type is not None else None
@@ -247,17 +249,29 @@ class AccessRequestService:
             if item.get("resource_id") or item.get("to_id"):
                 continue
             reference = item.get("resource_reference") or {}
-            vendor = reference.get("vendor")
-            if not vendor:
+            raw_vendor = reference.get("vendor")
+            if not raw_vendor:
                 continue
+            # ``resource_reference`` is schema-typed ``dict[str, Any]`` — coerce
+            # the fields once so a non-string value can't raise past the
+            # best-effort guards below (the filing is already committed here;
+            # an escape would 500 the request and skip its audit record).
+            # Emit the canonical slug forms (matching the broker's emit, which
+            # uses the resolved APIReference) so the same API correlates across
+            # the two emit sites — a raw `httpbin.org` filing and the broker's
+            # `httpbin-org` denial are the same problem.
+            vendor = slugify_api_field(str(raw_vendor))
             raw_name = reference.get("name")
+            name = slugify_api_field(str(raw_name)) if raw_name is not None else None
+            raw_version = reference.get("version")
+            version = str(raw_version) if raw_version is not None else None
             try:
                 async with self._ctx.control_db.session() as session:
                     candidates = await EffectsRepository.resolve_toolkits_for_api(
                         session,
-                        vendor=slugify_api_field(str(vendor)),
-                        name=(slugify_api_field(str(raw_name)) if raw_name else raw_name),
-                        version=reference.get("version"),
+                        vendor=vendor,
+                        name=name,
+                        version=version,
                         owner_ids=[filer_owner_id],
                     )
             except Exception:
@@ -272,7 +286,7 @@ class AccessRequestService:
             if candidates:
                 continue
 
-            api_id = "/".join(part for part in (str(vendor), raw_name) if part) or str(vendor)
+            api_id = "/".join(part for part in (vendor, name) if part) or vendor
             summary = (
                 f"Access request {request_id} names API '{api_id}' but no owned "
                 "toolkit serves it yet — provision a credential to enable binding."
@@ -291,8 +305,8 @@ class AccessRequestService:
                             "request_id": request_id,
                             "api": {
                                 "vendor": vendor,
-                                "name": raw_name,
-                                "version": reference.get("version"),
+                                "name": name,
+                                "version": version,
                             },
                         },
                     )
@@ -396,7 +410,7 @@ class AccessRequestService:
         )
         # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
         # referenced by vendor/name that no owned toolkit currently serves will
-        # deny on approval with ToolkitReferenceUnresolvedError (§03). Emit an
+        # deny on approval with ToolkitReferenceUnresolvedError. Emit an
         # operator-visible signal *now* so the operator sees the gap before an
         # approve/deny cycle. Best-effort — never blocks the file() commit.
         await self._advise_unserved_bind_references(

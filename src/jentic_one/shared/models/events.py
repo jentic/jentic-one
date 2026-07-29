@@ -61,7 +61,10 @@ class EventType:
     # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
     # when a bound toolkit's credential is unresolvable at inject time): this
     # event is the *pre-binding* signal, giving operators visibility into
-    # agent-needed APIs before a doomed access request appears.
+    # agent-needed APIs before a doomed access request appears. Despite the
+    # ``broker.`` namespace, the control plane also emits it as a file-time
+    # advisory for the same condition (see
+    # ``AccessRequestService._advise_unserved_bind_references``).
     TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
 
     ALL: frozenset[str] = frozenset(
