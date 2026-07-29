@@ -116,7 +116,40 @@ Once a release is cut, the `app` image is published to GHCR by the
 `publish-image` job in [`release.yml`](../.github/workflows/release.yml):
 
 ```bash
-docker pull ghcr.io/jentic/jentic-one-app:latest      # or a pinned :vX.Y.Z
+docker pull ghcr.io/jentic/jentic-one-app:latest      # floating: tracks the newest stable release
+docker pull ghcr.io/jentic/jentic-one-app:1.2.3       # a specific release (tags can still be re-pushed)
+```
+
+Note that **only a `@sha256:` digest is a true pin** — every tag, including
+`:vX.Y.Z`, is floating and could in principle be re-pushed. For production,
+pin to the digest the release run printed (the `publish-image` job echoes
+`Image digest: sha256:…`, and it's shown on the GHCR package page):
+
+```bash
+docker pull ghcr.io/jentic/jentic-one-app@sha256:<digest-from-the-release>
+```
+
+`:latest` only moves on stable `vX.Y.Z` releases — prerelease tags (e.g.
+`v1.2.3-rc.1`) publish their own version tag but never touch `:latest`.
+
+### Verify the image signature
+
+Every published image is signed with cosign (keyless, via the release
+workflow's OIDC identity) and carries an SPDX SBOM attestation — the same
+supply-chain treatment as the CLI binaries. To verify you're running the
+image CI built:
+
+```bash
+cosign verify \
+  --certificate-identity-regexp 'https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/jentic/jentic-one-app@sha256:<digest>
+
+# and inspect the attached SBOM attestation:
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp 'https://github.com/jentic/jentic-one/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/jentic/jentic-one-app@sha256:<digest>
 ```
 
 To publish from your own fork/registry instead:
@@ -330,7 +363,11 @@ long-running services against an **external** Postgres (no bundled DB — point
 # docker-compose.yaml — app + broker against an EXTERNAL Postgres.
 # `migrate` and `create-admin` are one-shot init containers; `app` and `broker`
 # wait for `migrate` to complete before starting.
-x-image: &image ghcr.io/jentic/jentic-one-app:latest
+#
+# The digest pin is the reproducibility contract: replace it with the digest
+# echoed by the release you are deploying ("Pull the image" above). A floating
+# tag here would let a re-pushed tag change your deployment underneath you.
+x-image: &image ghcr.io/jentic/jentic-one-app@sha256:<digest-from-the-release>
 x-common: &common
   image: *image
   env_file: [.env]                 # JENTIC_ENV, DB passwords, the three secrets
@@ -399,9 +436,9 @@ To bump the release:
 
 ## Reproducibility: the digest pin
 
-`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim` to a specific
-sha256 digest, not just the floating tag, so a build today and a build in
-six months produce the same base layer:
+`deploy/docker/python-base.Dockerfile` pins `python:3.12-slim` **and**
+`node:22-slim` to specific sha256 digests, not just the floating tags, so a
+build today and a build in six months produce the same base layers:
 
 ```dockerfile
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:090ba77e2958f6af52a5341f788b50b032dd4ca28377d2893dcf1ecbdfdfe203

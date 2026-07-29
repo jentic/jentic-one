@@ -69,10 +69,15 @@ cosign signing needs no secret — it uses the release job's OIDC token (keyless
 via Sigstore/Fulcio).
 
 The **`publish-image`** stage needs no extra secret either — it pushes to GHCR
-with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`). The
-first push creates the `jentic-one-app` package under the repo owner; a
-maintainer may want to set its visibility to **public** in the package settings
-so self-hosters can `docker pull` without authenticating.
+with the built-in `GITHUB_TOKEN` (the job grants it `packages: write`).
+
+**First-release checklist:** the first push creates the `jentic-one-app`
+package under the repo owner **as private**. After the first release, a
+maintainer must set its visibility to **public** in the package settings
+(and optionally enable immutable tags) — until then self-hosters cannot
+`docker pull` without authenticating. The image is cosign-signed with an SBOM
+attestation; the verify commands live in `deploy/README.md` ("Verify the
+image signature").
 
 ## Verifying a release (supply chain)
 
