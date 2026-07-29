@@ -51,15 +51,19 @@ import {
 	parseItemRules,
 	ruleSummary,
 	type AccessRequest,
+	type AccessRequestItem,
+	type ItemAmendment,
+	type ItemDecision,
 } from '@/shared/lib/accessRequests';
 import {
-	findItem,
+	chainAuthType,
+	chainIsNoAuth,
+	chainItems,
 	isPlanGranted,
-	planApiReference,
-	planAuthType,
+	planChains,
 	planDenialReason,
-	planIsNoAuth,
 	type PlanApiReference,
+	type PlanChain,
 } from '@/shared/lib/provisioningPlan';
 import {
 	createNoAuthCredential,
@@ -72,15 +76,23 @@ import {
 type Step = 'toolkit' | 'credential' | 'rules' | 'review' | 'done';
 type Outcome = 'granted' | 'error';
 
-/** The wizard's resumable progress for one request. */
-interface WizardDraft {
-	step: Step;
+/** Per-chain fulfilment progress — one entry per provisioning chain. */
+interface ChainProgress {
 	toolkitId: string | null;
 	toolkitName: string;
 	toolkitNameEdited: boolean;
 	credentialId: string | null;
 	credentialType: string | null;
 	rules: PermissionRuleInput[];
+	/** Operator chose not to set this API up now; its items are denied at submit. */
+	skipped: boolean;
+}
+
+/** The wizard's resumable progress for one request. */
+interface WizardDraft {
+	step: Step;
+	chainIndex: number;
+	chains: ChainProgress[];
 }
 
 /**
@@ -141,21 +153,59 @@ function authTypeToCredentialType(auth: string | null): CredentialType | undefin
 	}
 }
 
+/** Seed the rule editor from the agent's proposed rules on a chain's bind item. */
+function proposedChainRules(chain: PlanChain): PermissionRuleInput[] {
+	if (!chain.credentialBind) return [];
+	return parseItemRules(chain.credentialBind).map((r) => ({
+		// The editor only authors allow/deny; collapse the rare require-approval.
+		effect: (r.effect === 'require-approval'
+			? 'deny'
+			: r.effect) as PermissionRuleInput['effect'],
+		methods: r.methods ?? null,
+		path: r.path ?? null,
+		operations: r.operations ?? null,
+	}));
+}
+
+/** Fresh (untouched) progress for each of a request's chains. */
+function seedChainProgress(chains: PlanChain[], agentName: string | undefined): ChainProgress[] {
+	return chains.map((chain) => ({
+		toolkitId: null,
+		toolkitName: suggestChainToolkitName(chain, agentName, chains.length > 1),
+		toolkitNameEdited: false,
+		credentialId: null,
+		credentialType: null,
+		rules: proposedChainRules(chain),
+		skipped: false,
+	}));
+}
+
+/**
+ * Per-chain toolkit-name suggestion. With several chains the agent-based
+ * suggestion would be identical for every chain (only 409 suffixes would
+ * disambiguate), so append the API name to keep the names meaningful.
+ */
+function suggestChainToolkitName(
+	chain: PlanChain,
+	agentName: string | undefined,
+	multi: boolean,
+): string {
+	const base = suggestToolkitName(agentName, chain.apiRef.vendor, chain.apiRef.name);
+	if (!multi || !base) return base;
+	const api = chain.apiRef.name ?? chain.apiRef.vendor;
+	return `${base.slice(0, 200)} (${api.slice(0, 40)})`;
+}
+
 export function ProvisioningRequestDialog({
 	open,
 	request,
 	onClose,
 	onFulfilled,
 }: ProvisioningRequestDialogProps) {
-	const apiRef = useMemo(() => planApiReference(request), [request]);
-	const noAuth = useMemo(() => planIsNoAuth(request), [request]);
-	const detectedAuth = useMemo(() => planAuthType(request), [request]);
-	const initialCredentialType = useMemo(
-		() => authTypeToCredentialType(detectedAuth),
-		[detectedAuth],
-	);
-	const bindItem = useMemo(() => findItem(request, 'credential', 'bind'), [request]);
-	const agentBindItem = useMemo(() => findItem(request, 'toolkit', 'bind'), [request]);
+	// The request split into provisioning chains (one per API) + plain extras
+	// (binds to existing toolkits, scope grants) decided alongside the chains.
+	const shape = useMemo(() => planChains(request), [request]);
+	const chains = shape.chains;
 
 	// The requesting agent's display name, resolved from the actor directory.
 	// Feeds the header badge and the toolkit-name suggestion (a toolkit is the
@@ -196,45 +246,24 @@ export function ProvisioningRequestDialog({
 
 	const agentName = directoryName ?? fetchedAgentName;
 
-	// Seed the rule editor from the agent's proposed rules on the bind item.
-	const proposedRules = useMemo<PermissionRuleInput[]>(() => {
-		if (!bindItem) return [];
-		return parseItemRules(bindItem).map((r) => ({
-			// The editor only authors allow/deny; collapse the rare require-approval.
-			effect: (r.effect === 'require-approval'
-				? 'deny'
-				: r.effect) as PermissionRuleInput['effect'],
-			methods: r.methods ?? null,
-			path: r.path ?? null,
-			operations: r.operations ?? null,
-		}));
-	}, [bindItem]);
-
 	// Draft-aware initial state: a reopened request resumes where it left off
 	// (see `wizardDrafts`). Lazy initializers so the FIRST render already
 	// carries the draft — a post-mount restore effect would race the
-	// draft-save effect below and clobber the draft with defaults.
-	const [step, setStep] = useState<Step>(() => wizardDrafts.get(request.id)?.step ?? 'toolkit');
-	const [toolkitId, setToolkitId] = useState<string | null>(
-		() => wizardDrafts.get(request.id)?.toolkitId ?? null,
+	// draft-save effect below and clobber the draft with defaults. A stored
+	// draft whose chain count no longer matches (the request was amended
+	// elsewhere) is discarded rather than mis-applied.
+	const draftFor = (id: string): WizardDraft | undefined => {
+		const draft = wizardDrafts.get(id);
+		return draft && draft.chains.length === chains.length ? draft : undefined;
+	};
+	const [step, setStep] = useState<Step>(() => draftFor(request.id)?.step ?? 'toolkit');
+	const [chainIndex, setChainIndex] = useState(() => draftFor(request.id)?.chainIndex ?? 0);
+	const [chainStates, setChainStates] = useState<ChainProgress[]>(
+		() => draftFor(request.id)?.chains ?? seedChainProgress(chains, agentName),
 	);
-	const [toolkitName, setToolkitName] = useState(
-		() => wizardDrafts.get(request.id)?.toolkitName ?? '',
-	);
-	// Set once the operator edits the toolkit name, so the async agent-name
-	// upgrade below never clobbers a manual edit.
-	const [toolkitNameEdited, setToolkitNameEdited] = useState(
-		() => wizardDrafts.get(request.id)?.toolkitNameEdited ?? false,
-	);
-	const [credentialId, setCredentialId] = useState<string | null>(
-		() => wizardDrafts.get(request.id)?.credentialId ?? null,
-	);
-	const [credentialType, setCredentialType] = useState<string | null>(
-		() => wizardDrafts.get(request.id)?.credentialType ?? null,
-	);
-	const [rules, setRules] = useState<PermissionRuleInput[]>(
-		() => wizardDrafts.get(request.id)?.rules ?? proposedRules,
-	);
+	// Set once the operator mutates anything, gating draft persistence — a
+	// pristine peek at a plan should not accumulate map entries.
+	const [touched, setTouched] = useState(() => draftFor(request.id) !== undefined);
 	const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -292,16 +321,11 @@ export function ProvisioningRequestDialog({
 	useEffect(() => {
 		if (lastSeededId.current === request.id) return;
 		lastSeededId.current = request.id;
-		const draft = wizardDrafts.get(request.id);
+		const draft = draftFor(request.id);
 		setStep(draft?.step ?? 'toolkit');
-		setToolkitId(draft?.toolkitId ?? null);
-		setCredentialId(draft?.credentialId ?? null);
-		setCredentialType(draft?.credentialType ?? null);
-		setToolkitNameEdited(draft?.toolkitNameEdited ?? false);
-		setToolkitName(
-			draft?.toolkitName ?? suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name),
-		);
-		setRules(draft?.rules ?? proposedRules);
+		setChainIndex(draft?.chainIndex ?? 0);
+		setChainStates(draft?.chains ?? seedChainProgress(chains, agentName));
+		setTouched(draft !== undefined);
 		setOutcome(null);
 		setFreshStatus(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,38 +341,16 @@ export function ProvisioningRequestDialog({
 	const effectiveStatus = freshStatus ?? request.status;
 	useEffect(() => {
 		if (outcome !== null || effectiveStatus !== 'pending') return;
-		const pristine =
-			step === 'toolkit' &&
-			toolkitId === null &&
-			credentialId === null &&
-			!toolkitNameEdited &&
-			rules === proposedRules;
-		if (pristine) {
+		if (!touched) {
 			wizardDrafts.delete(request.id);
 			return;
 		}
 		wizardDrafts.set(request.id, {
 			step: step === 'done' ? 'review' : step,
-			toolkitId,
-			toolkitName,
-			toolkitNameEdited,
-			credentialId,
-			credentialType,
-			rules,
+			chainIndex,
+			chains: chainStates,
 		});
-	}, [
-		request.id,
-		step,
-		toolkitId,
-		toolkitName,
-		toolkitNameEdited,
-		credentialId,
-		credentialType,
-		rules,
-		outcome,
-		effectiveStatus,
-		proposedRules,
-	]);
+	}, [request.id, step, chainIndex, chainStates, touched, outcome, effectiveStatus]);
 
 	// If the request was decided ELSEWHERE (another operator, the rail's Deny
 	// fast-path) while a draft existed, the draft can never be resumed — the
@@ -362,85 +364,142 @@ export function ProvisioningRequestDialog({
 	}, [effectiveStatus, request.id]);
 
 	// The actor directory resolves asynchronously, so the requester's name often
-	// lands AFTER the seed above. Upgrade the suggested name when it does — but
-	// never clobber a manual edit or a name the toolkit was already created with.
+	// lands AFTER the seed above. Upgrade each chain's suggested name when it
+	// does — but never clobber a manual edit or a name a toolkit was already
+	// created with.
 	useEffect(() => {
-		if (toolkitNameEdited || toolkitId !== null) return;
-		setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
-	}, [agentName, toolkitNameEdited, toolkitId, apiRef]);
+		setChainStates((prev) =>
+			prev.map((cs, i) => {
+				if (cs.toolkitNameEdited || cs.toolkitId !== null || chains[i] === undefined) {
+					return cs;
+				}
+				return {
+					...cs,
+					toolkitName: suggestChainToolkitName(chains[i], agentName, chains.length > 1),
+				};
+			}),
+		);
+	}, [agentName, chains]);
+
+	// The chain the per-chain steps currently operate on. `chain`/`progress`
+	// are undefined only transiently (index race on a re-seed); guarded below.
+	const chain = chains[chainIndex] as PlanChain | undefined;
+	const progress = chainStates[chainIndex] as ChainProgress | undefined;
+	const noAuth = chain ? chainIsNoAuth(chain) : true;
+	const detectedAuth = chain ? chainAuthType(chain) : null;
+	const initialCredentialType = authTypeToCredentialType(detectedAuth);
+
+	/** Mutate the current chain's progress (marks the wizard as touched). */
+	const updateChain = useCallback(
+		(patch: Partial<ChainProgress>, index?: number) => {
+			const at = index ?? chainIndex;
+			setTouched(true);
+			setChainStates((prev) => prev.map((cs, i) => (i === at ? { ...cs, ...patch } : cs)));
+		},
+		[chainIndex],
+	);
+
+	/** Advance past the current chain: next chain's first step, or review. */
+	const advanceChain = useCallback(() => {
+		if (chainIndex + 1 < chains.length) {
+			setChainIndex(chainIndex + 1);
+			setStep('toolkit');
+		} else {
+			setStep('review');
+		}
+	}, [chainIndex, chains.length]);
+
+	/** Skip the current chain (its items are denied at submit) and advance. */
+	const handleSkipChain = useCallback(() => {
+		updateChain({ skipped: true });
+		advanceChain();
+	}, [updateChain, advanceChain]);
 
 	const handleCreateToolkit = useCallback(async () => {
+		if (!progress) return;
 		setBusy(true);
 		setError(null);
 		try {
-			const created = await createPlanToolkit(toolkitName.trim());
-			setToolkitId(created.toolkitId);
+			const created = await createPlanToolkit(progress.toolkitName.trim());
 			// Adopt the name the toolkit was ACTUALLY created with — on a 409 it
 			// carries a disambiguation suffix (e.g. "Claude Code toolkit-2"), and
 			// the review step + no-auth credential name derive from this state.
 			// This also settles any async suggested-name upgrade racing the POST.
-			setToolkitName(created.name);
+			updateChain({ toolkitId: created.toolkitId, toolkitName: created.name });
 			setStep(noAuth ? 'rules' : 'credential');
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 		}
-	}, [toolkitName, noAuth]);
+	}, [progress, noAuth, updateChain]);
 
-	const handleCredentialCreated = useCallback(async (info: CreatedCredentialInfo) => {
-		setCredentialDialogOpen(false);
-		setCredentialId(info.credentialId);
-		setCredentialType(info.type);
-		// An OAuth2 credential that needs a browser sign-in (authorization-code
-		// with an authorize URL) has NO token until the connect flow completes —
-		// binding it as-is makes the broker fail at execute with "No refresh
-		// token available". So drive the connect flow now and only advance once
-		// it's connected; on cancel/timeout/error, discard the dangling credential
-		// and stay on this step so the operator can retry. Non-redirect grants
-		// (client_credentials, static/manual tokens) are usable immediately.
-		const needsConnect =
-			info.type === CredentialType.OAUTH2 && info.provider !== 'static' && info.needsConnect;
-		if (!needsConnect) {
-			setStep('rules');
-			return;
-		}
-		setBusy(true);
-		setError(null);
-		try {
-			const outcome = await runConnectFlow(info.credentialId);
-			if (outcome.status === 'connected' || outcome.status === 'redirected') {
-				// 'redirected' = popup blocked, same-tab navigation in progress; the
-				// callback will land on return. Treat both as "proceeding".
+	const handleCredentialCreated = useCallback(
+		async (info: CreatedCredentialInfo) => {
+			setCredentialDialogOpen(false);
+			updateChain({ credentialId: info.credentialId, credentialType: info.type });
+			// An OAuth2 credential that needs a browser sign-in (authorization-code
+			// with an authorize URL) has NO token until the connect flow completes —
+			// binding it as-is makes the broker fail at execute with "No refresh
+			// token available". So drive the connect flow now and only advance once
+			// it's connected; on cancel/timeout/error, discard the dangling credential
+			// and stay on this step so the operator can retry. Non-redirect grants
+			// (client_credentials, static/manual tokens) are usable immediately.
+			const needsConnect =
+				info.type === CredentialType.OAUTH2 &&
+				info.provider !== 'static' &&
+				info.needsConnect;
+			if (!needsConnect) {
 				setStep('rules');
-			} else {
-				await discardPlanCredential(info.credentialId);
-				setCredentialId(null);
-				setError(
-					outcome.status === 'timeout'
-						? 'Sign-in timed out — the unconnected credential was discarded. Try connecting again.'
-						: 'Sign-in was cancelled — the unconnected credential was discarded. Try again.',
-				);
+				return;
 			}
-		} catch (e) {
-			await discardPlanCredential(info.credentialId);
-			setCredentialId(null);
-			setError(e instanceof Error ? e.message : 'Could not complete sign-in.');
-		} finally {
-			setBusy(false);
-		}
-	}, []);
+			setBusy(true);
+			setError(null);
+			try {
+				const flow = await runConnectFlow(info.credentialId);
+				if (flow.status === 'connected' || flow.status === 'redirected') {
+					// 'redirected' = popup blocked, same-tab navigation in progress; the
+					// callback will land on return. Treat both as "proceeding".
+					setStep('rules');
+				} else {
+					await discardPlanCredential(info.credentialId);
+					updateChain({ credentialId: null });
+					setError(
+						flow.status === 'timeout'
+							? 'Sign-in timed out — the unconnected credential was discarded. Try connecting again.'
+							: 'Sign-in was cancelled — the unconnected credential was discarded. Try again.',
+					);
+				}
+			} catch (e) {
+				await discardPlanCredential(info.credentialId);
+				updateChain({ credentialId: null });
+				setError(e instanceof Error ? e.message : 'Could not complete sign-in.');
+			} finally {
+				setBusy(false);
+			}
+		},
+		[updateChain],
+	);
+
+	// Everything the wizard created this session, for orphan control on cancel.
+	const createdToolkitIds = chainStates.filter((cs) => cs.toolkitId).map((cs) => cs.toolkitId!);
+	const createdCredentialIds = chainStates
+		.filter((cs) => cs.credentialId)
+		.map((cs) => cs.credentialId!);
 
 	const handleCancel = useCallback(() => {
-		// Orphan control: if we created a toolkit/credential but didn't approve,
+		// Orphan control: if we created toolkits/credentials but didn't approve,
 		// ask whether to discard them so an abandoned fulfilment doesn't strand
 		// objects. In-dialog (house style) — never a native browser confirm().
-		if ((toolkitId || credentialId) && outcome !== 'granted') {
+		if (
+			(createdToolkitIds.length > 0 || createdCredentialIds.length > 0) &&
+			outcome !== 'granted'
+		) {
 			setConfirmDiscard(true);
 			return;
 		}
 		onClose();
-	}, [toolkitId, credentialId, outcome, onClose]);
+	}, [createdToolkitIds.length, createdCredentialIds.length, outcome, onClose]);
 
 	/** "Keep & finish later" — close the wizard, leave the draft objects. */
 	const handleKeepAndClose = useCallback(() => {
@@ -452,70 +511,116 @@ export function ProvisioningRequestDialog({
 	const handleDiscardAndClose = useCallback(async () => {
 		setDiscarding(true);
 		try {
-			if (credentialId) await discardPlanCredential(credentialId);
-			if (toolkitId) await discardPlanToolkit(toolkitId);
+			for (const id of createdCredentialIds) await discardPlanCredential(id);
+			for (const id of createdToolkitIds) await discardPlanToolkit(id);
 		} finally {
 			// Reset the draft so a reopen doesn't reference the deleted objects
 			// (the draft otherwise persists across dismissals by design).
 			wizardDrafts.delete(request.id);
-			setCredentialId(null);
-			setCredentialType(null);
-			setToolkitId(null);
-			setToolkitNameEdited(false);
-			setToolkitName(suggestToolkitName(agentName, apiRef?.vendor ?? '', apiRef?.name));
+			setChainStates(seedChainProgress(chains, agentName));
+			setChainIndex(0);
 			setStep('toolkit');
+			setTouched(false);
 			setDiscarding(false);
 			setConfirmDiscard(false);
 			onClose();
 		}
-	}, [toolkitId, credentialId, onClose, agentName, apiRef, request.id]);
+	}, [createdToolkitIds, createdCredentialIds, onClose, agentName, chains, request.id]);
+
+	// A chain counts as fulfilled when it wasn't skipped AND has everything its
+	// bind items need: a created toolkit, plus a connected credential unless the
+	// chain is no-auth (that credential is auto-created at submit).
+	const chainFulfilled = useCallback(
+		(i: number): boolean => {
+			const cs = chainStates[i];
+			const c = chains[i];
+			if (!cs || !c || cs.skipped) return false;
+			if (cs.toolkitId === null) return false;
+			return chainIsNoAuth(c) || cs.credentialId !== null;
+		},
+		[chains, chainStates],
+	);
+	const fulfilledCount = chains.reduce((n, _c, i) => n + (chainFulfilled(i) ? 1 : 0), 0);
+	const skippedKeys = useMemo(
+		() => new Set(chains.filter((_c, i) => chainStates[i]?.skipped).map((c) => c.key)),
+		[chains, chainStates],
+	);
 
 	const handleSubmit = useCallback(async () => {
-		if (!bindItem || !toolkitId || !apiRef) return;
+		if (fulfilledCount === 0 && shape.extras.length === 0) return;
 		setBusy(true);
 		setError(null);
 		try {
-			// A no-auth plan still needs a credential for the credential:bind
-			// effect to attach the toolkit binding + rules to (the broker keys
-			// rules on `(toolkit, credential)` and resolves a no_auth credential as
-			// a no-op auth). We didn't ask the operator for one — auto-create a
-			// NO_AUTH credential now and bind THAT. For an auth plan the operator
-			// already connected a real credential (`credentialId`).
-			let bindCredentialId = credentialId;
-			if (noAuth && !bindCredentialId) {
-				const created = await createNoAuthCredential(
-					{ vendor: apiRef.vendor, name: apiRef.name, version: apiRef.version },
-					// Credential names share the 255-char DB cap but the create
-					// schema doesn't enforce it, so an over-long name surfaces as
-					// an opaque server error at the FINAL step. The toolkit name
-					// can legitimately be 255 (manual entry, 409-suffixed adopted
-					// name) — clamp it before deriving so the suffix always fits.
-					`${toolkitName.trim().slice(0, 240)} (no-auth)`,
-				);
-				bindCredentialId = created.credentialId;
-				setCredentialId(created.credentialId);
-			}
-			// 1. Amend the resolved toolkit + credential ids + confirmed rules onto
-			//    the credential:bind item. Also stamp the concrete toolkit id onto
-			//    the toolkit:bind item so it resolves by id — the credential->
-			//    toolkit binding isn't visible to the reference join until the
-			//    credential:bind effect applies later in the same decision, so
-			//    resolving the agent binding by API reference would deny (see
-			//    provisioning-plan e2e / #656 ordering).
-			await amendAccessRequest(request.id, [
-				{
-					item_id: bindItem.id,
-					to_id: toolkitId,
+			// 1. Amend every fulfilled chain's resolved ids + confirmed rules onto
+			//    its bind items in ONE call. A no-auth chain still needs a
+			//    credential for the credential:bind effect to attach the toolkit
+			//    binding + rules to (the broker keys rules on `(toolkit,
+			//    credential)` and resolves a no_auth credential as a no-op auth) —
+			//    auto-create a NO_AUTH credential per such chain now. The concrete
+			//    toolkit id is also stamped onto each chain's toolkit:bind so it
+			//    resolves by id — the credential→toolkit binding isn't visible to
+			//    the reference join until the credential:bind effect applies later
+			//    in the same decision (see provisioning-plan e2e / #656 ordering).
+			const amendments: ItemAmendment[] = [];
+			for (let i = 0; i < chains.length; i++) {
+				if (!chainFulfilled(i)) continue;
+				const c = chains[i];
+				const cs = chainStates[i];
+				if (!c.credentialBind || !cs.toolkitId) continue;
+				let bindCredentialId = cs.credentialId;
+				if (chainIsNoAuth(c) && !bindCredentialId) {
+					const created = await createNoAuthCredential(
+						{
+							vendor: c.apiRef.vendor,
+							name: c.apiRef.name,
+							version: c.apiRef.version,
+						},
+						// Credential names share the 255-char DB cap but the create
+						// schema doesn't enforce it, so an over-long name surfaces as
+						// an opaque server error at the FINAL step. The toolkit name
+						// can legitimately be 255 (manual entry, 409-suffixed adopted
+						// name) — clamp it before deriving so the suffix always fits.
+						`${cs.toolkitName.trim().slice(0, 240)} (no-auth)`,
+					);
+					bindCredentialId = created.credentialId;
+					updateChain({ credentialId: created.credentialId }, i);
+				}
+				amendments.push({
+					item_id: c.credentialBind.id,
+					to_id: cs.toolkitId,
 					...(bindCredentialId ? { resource_id: bindCredentialId } : {}),
-					rules,
-				},
-				...(agentBindItem ? [{ item_id: agentBindItem.id, resource_id: toolkitId }] : []),
-			]);
-			// 2. Approve every pending item — the bind effects wire everything.
+					rules: cs.rules,
+				});
+				if (c.toolkitBind) {
+					amendments.push({ item_id: c.toolkitBind.id, resource_id: cs.toolkitId });
+				}
+			}
+			if (amendments.length > 0) {
+				await amendAccessRequest(request.id, amendments);
+			}
+			// 2. Decide every pending item: approve fulfilled chains + the plain
+			//    extras, deny the chains the operator skipped (leaving them pending
+			//    would hold the whole request open and the filing agent's --wait
+			//    hanging). Item ids are re-read from the amended request and
+			//    re-grouped so decisions key on the CHAIN, not item order.
 			const fresh = await getAccessRequest(request.id);
-			const decisions = fresh.items
+			const freshShape = planChains(fresh);
+			const skippedItemIds = new Set(
+				freshShape.chains
+					.filter((c) => skippedKeys.has(c.key))
+					.flatMap((c) => chainItems(c).map((it) => it.id)),
+			);
+			const decisions: ItemDecision[] = fresh.items
 				.filter((it) => it.status === 'pending')
-				.map((it) => ({ item_id: it.id, decision: 'approved' as const }));
+				.map((it) =>
+					skippedItemIds.has(it.id)
+						? {
+								item_id: it.id,
+								decision: 'denied' as const,
+								decision_reason: 'Skipped by the operator during fulfilment.',
+							}
+						: { item_id: it.id, decision: 'approved' as const },
+				);
 			if (decisions.length === 0) {
 				// Nothing left to decide — the request was already decided elsewhere
 				// (e.g. a stale snapshot). Reflect the current server truth instead
@@ -530,12 +635,21 @@ export function ProvisioningRequestDialog({
 				return;
 			}
 			const decided = await decideAccessRequest(request.id, decisions);
-			// A plan is only truly granted when BOTH bind items that wire access
-			// (credential:bind + toolkit:bind) end up approved. The aggregate
-			// `partially_approved` is NOT success here: if one bind is denied the
-			// agent still can't call the API, so surface it as an error with the
-			// denied item's reason rather than a misleading "Access granted".
-			const granted = isPlanGranted(decided);
+			// Granted = everything the operator MEANT to grant actually wired: every
+			// fulfilled chain's binds approved and every extra item approved.
+			// Skipped chains were denied on purpose and don't count against it. The
+			// aggregate `partially_approved` is NOT the signal here — one denied
+			// bind on a fulfilled chain means that agent still can't call that API.
+			const decidedShape = planChains(decided);
+			const chainsOk = decidedShape.chains
+				.filter((c) => !skippedKeys.has(c.key))
+				.every(
+					(c) =>
+						c.credentialBind?.status === 'approved' &&
+						(c.toolkitBind === undefined || c.toolkitBind.status === 'approved'),
+				);
+			const extrasOk = decidedShape.extras.every((it) => it.status === 'approved');
+			const granted = chainsOk && extrasOk;
 			// Decided either way — there is no draft left to resume.
 			wizardDrafts.delete(request.id);
 			setOutcome(granted ? 'granted' : 'error');
@@ -551,21 +665,22 @@ export function ProvisioningRequestDialog({
 			setBusy(false);
 		}
 	}, [
-		bindItem,
-		agentBindItem,
-		toolkitId,
-		credentialId,
-		rules,
+		chains,
+		chainStates,
+		chainFulfilled,
+		fulfilledCount,
+		shape.extras.length,
+		skippedKeys,
 		request.id,
 		onFulfilled,
-		noAuth,
-		apiRef,
-		toolkitName,
+		updateChain,
 	]);
 
-	if (!apiRef || !bindItem) {
-		// Not a well-formed provisioning plan — the caller should have routed this
-		// to the plain AccessRequestDialog. Render nothing rather than a broken UI.
+	// A usable wizard needs at least one chain that can be wired (its
+	// credential:bind is what the amend targets). Otherwise the caller should
+	// have routed this to the plain AccessRequestDialog — render nothing rather
+	// than a broken UI.
+	if (chains.length === 0 || !chains.some((c) => c.credentialBind !== undefined)) {
 		return null;
 	}
 
@@ -582,22 +697,39 @@ export function ProvisioningRequestDialog({
 				open={open}
 				request={request}
 				status={effectiveStatus}
-				apiLabel={apiLabel(apiRef)}
 				onClose={onClose}
 			/>
 		);
 	}
 
-	const credentialLabel = credentialType
-		? (CREDENTIAL_TYPE_LABELS[credentialType as CredentialType] ?? credentialType)
+	const credentialLabel = progress?.credentialType
+		? (CREDENTIAL_TYPE_LABELS[progress.credentialType as CredentialType] ??
+			progress.credentialType)
 		: null;
-	const rulesGist = summarizeRules(rules);
+	const multiChain = chains.length > 1;
+	const chainLabel = apiLabel(chain?.apiRef ?? null);
+	// Skipping is only offered on a composite: skipping the ONLY chain would
+	// leave nothing to approve, which is a deny — the rail already has a
+	// dedicated deny fast-path for that.
+	const canSkip = multiChain && step !== 'review' && step !== 'done';
+	// Review can submit when everything non-skipped is fulfilled and at least
+	// one chain (or extra) will actually be granted.
+	const allSettled = chains.every((_c, i) => chainFulfilled(i) || chainStates[i]?.skipped);
+	const canSubmit = allSettled && (fulfilledCount > 0 || shape.extras.length > 0);
+
+	const skipButton = canSkip ? (
+		<Button variant="ghost" onClick={handleSkipChain} disabled={busy}>
+			Skip this API
+		</Button>
+	) : (
+		<span />
+	);
 
 	const stepFooter: Record<Step, React.ReactNode> = {
 		toolkit: (
 			<>
-				<span />
-				{toolkitId !== null ? (
+				{skipButton}
+				{progress?.toolkitId != null ? (
 					// Resumed draft: the toolkit already exists. Re-showing "Create
 					// toolkit" here would mint a duplicate one click after a Back —
 					// continue with the one we have instead.
@@ -612,7 +744,7 @@ export function ProvisioningRequestDialog({
 						variant="primary"
 						onClick={handleCreateToolkit}
 						loading={busy}
-						disabled={busy || !toolkitName.trim()}
+						disabled={busy || !progress?.toolkitName.trim()}
 					>
 						Create toolkit
 						<ArrowRight className="h-4 w-4" />
@@ -625,7 +757,11 @@ export function ProvisioningRequestDialog({
 				<Button variant="ghost" onClick={() => setStep('toolkit')}>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</Button>
-				<Button variant="primary" onClick={() => setStep('rules')} disabled={!credentialId}>
+				<Button
+					variant="primary"
+					onClick={() => setStep('rules')}
+					disabled={!progress?.credentialId}
+				>
 					Continue <ArrowRight className="h-4 w-4" />
 				</Button>
 			</>
@@ -635,17 +771,39 @@ export function ProvisioningRequestDialog({
 				<Button variant="ghost" onClick={() => setStep(noAuth ? 'toolkit' : 'credential')}>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</Button>
-				<Button variant="primary" onClick={() => setStep('review')}>
-					Review <ArrowRight className="h-4 w-4" />
+				<Button variant="primary" onClick={advanceChain}>
+					{chainIndex + 1 < chains.length ? (
+						<>
+							Next API <ArrowRight className="h-4 w-4" />
+						</>
+					) : (
+						<>
+							Review <ArrowRight className="h-4 w-4" />
+						</>
+					)}
 				</Button>
 			</>
 		),
 		review: (
 			<>
-				<Button variant="ghost" onClick={() => setStep('rules')}>
+				<Button
+					variant="ghost"
+					onClick={() => {
+						// Back into the LAST chain's rules step (skipped chains
+						// included — backing in un-skips nothing; the operator can
+						// re-do a skip from there if they change their mind).
+						setChainIndex(chains.length - 1);
+						setStep(chainStates[chains.length - 1]?.skipped ? 'toolkit' : 'rules');
+					}}
+				>
 					<ArrowLeft className="h-4 w-4" /> Back
 				</Button>
-				<Button variant="primary" onClick={handleSubmit} loading={busy} disabled={busy}>
+				<Button
+					variant="primary"
+					onClick={handleSubmit}
+					loading={busy}
+					disabled={busy || !canSubmit}
+				>
 					<ShieldCheck className="h-4 w-4" /> Approve &amp; grant access
 				</Button>
 			</>
@@ -684,7 +842,17 @@ export function ProvisioningRequestDialog({
 								className="text-foreground font-medium"
 							/>
 							access to
-							<Badge variant="default">{apiLabel(apiRef)}</Badge>
+							{chains.map((c) => (
+								<Badge key={c.key} variant="default">
+									{apiLabel(c.apiRef)}
+								</Badge>
+							))}
+							{shape.extras.length > 0 && (
+								<span className="text-muted-foreground">
+									+ {shape.extras.length} more item
+									{shape.extras.length === 1 ? '' : 's'}
+								</span>
+							)}
 						</span>
 						{request.reason && (
 							<span className="text-muted-foreground flex items-baseline gap-1.5">
@@ -707,7 +875,12 @@ export function ProvisioningRequestDialog({
 			>
 				<div className="flex flex-col gap-8 sm:flex-row">
 					<aside className="bg-muted/40 border-border shrink-0 rounded-lg border p-5 sm:w-60">
-						<Stepper step={step} noAuth={noAuth} />
+						<Stepper
+							step={step}
+							chainIndex={chainIndex}
+							chains={chains}
+							chainStates={chainStates}
+						/>
 					</aside>
 					<div className="flex min-h-[22rem] min-w-0 flex-1 flex-col">
 						{error && (
@@ -718,22 +891,28 @@ export function ProvisioningRequestDialog({
 
 						{step === 'toolkit' && (
 							<StepBody
-								title="Create a toolkit"
-								blurb={`A toolkit is the container that will serve ${apiLabel(apiRef)} to this agent. Give it a name — the default is fine.`}
+								title={
+									multiChain
+										? `Create a toolkit for ${chainLabel}`
+										: 'Create a toolkit'
+								}
+								blurb={`A toolkit is the container that will serve ${chainLabel} to this agent. Give it a name — the default is fine.`}
 							>
 								<div className="max-w-md space-y-1.5">
 									<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
 									<Input
 										id="pw-toolkit-name"
-										value={toolkitName}
+										value={progress?.toolkitName ?? ''}
 										onChange={(e) => {
-											setToolkitNameEdited(true);
-											setToolkitName(e.target.value);
+											updateChain({
+												toolkitName: e.target.value,
+												toolkitNameEdited: true,
+											});
 										}}
 										placeholder="e.g. Claude Code toolkit"
-										disabled={toolkitId !== null}
+										disabled={progress?.toolkitId != null}
 									/>
-									{toolkitId !== null && (
+									{progress?.toolkitId != null && (
 										// Created already (resumed draft / Back from a later
 										// step). The field is locked because this state feeds
 										// the review summary and the no-auth credential name —
@@ -752,10 +931,14 @@ export function ProvisioningRequestDialog({
 
 						{step === 'credential' && (
 							<StepBody
-								title="Connect a credential"
+								title={
+									multiChain
+										? `Connect a credential for ${chainLabel}`
+										: 'Connect a credential'
+								}
 								blurb={
 									<>
-										{apiLabel(apiRef)} needs an account to call it
+										{chainLabel} needs an account to call it
 										{detectedAuth ? (
 											<>
 												{' '}
@@ -768,7 +951,7 @@ export function ProvisioningRequestDialog({
 									</>
 								}
 							>
-								{credentialId ? (
+								{progress?.credentialId ? (
 									<div className="border-success/30 bg-success/5 flex max-w-md items-center gap-2.5 rounded-lg border p-4 text-sm">
 										<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
 										<span>
@@ -789,10 +972,17 @@ export function ProvisioningRequestDialog({
 
 						{step === 'rules' && (
 							<StepBody
-								title="Confirm what the agent can do"
+								title={
+									multiChain
+										? `Confirm what the agent can do on ${chainLabel}`
+										: 'Confirm what the agent can do'
+								}
 								blurb="The agent proposed these permission rules from the API spec. Edit them if you like — with no rules, every call is blocked."
 							>
-								<PermissionRuleEditor rules={rules} onChange={setRules} />
+								<PermissionRuleEditor
+									rules={progress?.rules ?? []}
+									onChange={(next) => updateChain({ rules: next })}
+								/>
 							</StepBody>
 						)}
 
@@ -801,20 +991,61 @@ export function ProvisioningRequestDialog({
 								title="Review & grant"
 								blurb="Approving wires this up and lets the agent call the API. Here's exactly what will happen:"
 							>
-								<dl className="border-border divide-border max-w-xl divide-y rounded-lg border text-sm">
-									<SummaryRow label="API">{apiLabel(apiRef)}</SummaryRow>
-									<SummaryRow label="Toolkit">{toolkitName}</SummaryRow>
-									<SummaryRow label="Credential">
-										{noAuth ? (
-											<span className="text-muted-foreground">
-												none — this API needs no auth
-											</span>
-										) : (
-											(credentialLabel ?? 'connected')
-										)}
-									</SummaryRow>
-									<SummaryRow label="Agent can">{rulesGist}</SummaryRow>
-								</dl>
+								<div className="max-w-xl space-y-4">
+									{chains.map((c, i) => {
+										const cs = chainStates[i];
+										const skipped = cs?.skipped === true;
+										return (
+											<dl
+												key={c.key}
+												className={
+													skipped
+														? 'border-border divide-border divide-y rounded-lg border text-sm opacity-60'
+														: 'border-border divide-border divide-y rounded-lg border text-sm'
+												}
+											>
+												<SummaryRow label="API">
+													{apiLabel(c.apiRef)}
+													{skipped && (
+														<span className="text-danger ml-2">
+															skipped — will be denied
+														</span>
+													)}
+												</SummaryRow>
+												{!skipped && (
+													<>
+														<SummaryRow label="Toolkit">
+															{cs?.toolkitName}
+														</SummaryRow>
+														<SummaryRow label="Credential">
+															{chainIsNoAuth(c) ? (
+																<span className="text-muted-foreground">
+																	none — this API needs no auth
+																</span>
+															) : (
+																(credentialTypeLabel(
+																	cs?.credentialType,
+																) ?? 'connected')
+															)}
+														</SummaryRow>
+														<SummaryRow label="Agent can">
+															{summarizeRules(cs?.rules ?? [])}
+														</SummaryRow>
+													</>
+												)}
+											</dl>
+										);
+									})}
+									{shape.extras.length > 0 && (
+										<dl className="border-border divide-border divide-y rounded-lg border text-sm">
+											{shape.extras.map((it) => (
+												<SummaryRow key={it.id} label="Also approves">
+													{extraItemLabel(it)}
+												</SummaryRow>
+											))}
+										</dl>
+									)}
+								</div>
 							</StepBody>
 						)}
 
@@ -830,7 +1061,12 @@ export function ProvisioningRequestDialog({
 												Access granted
 											</p>
 											<p className="text-muted-foreground text-sm">
-												{apiLabel(apiRef)} is now callable by this agent.
+												{chains
+													.filter((_c, i) => !chainStates[i]?.skipped)
+													.map((c) => apiLabel(c.apiRef))
+													.join(', ') || 'The approved items are'}{' '}
+												{fulfilledCount === 1 ? 'is' : 'are'} now callable
+												by this agent.
 											</p>
 										</div>
 									</>
@@ -884,11 +1120,11 @@ export function ProvisioningRequestDialog({
 					<p className="text-foreground">
 						This setup already created{' '}
 						<span className="font-medium">
-							{toolkitId && credentialId
-								? 'a toolkit and a credential'
-								: toolkitId
-									? 'a toolkit'
-									: 'a credential'}
+							{createdToolkitIds.length > 0 && createdCredentialIds.length > 0
+								? `${countLabel(createdToolkitIds.length, 'toolkit')} and ${countLabel(createdCredentialIds.length, 'credential')}`
+								: createdToolkitIds.length > 0
+									? countLabel(createdToolkitIds.length, 'toolkit')
+									: countLabel(createdCredentialIds.length, 'credential')}
 						</span>{' '}
 						for this request, but access hasn&rsquo;t been granted yet.
 					</p>
@@ -937,35 +1173,57 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
 	);
 }
 
+/** "a toolkit" / "2 toolkits" — for the discard confirmation copy. */
+function countLabel(n: number, noun: string): string {
+	return n === 1 ? `a ${noun}` : `${n} ${noun}s`;
+}
+
+/** Credential-type display label, or null for an absent/unknown type. */
+function credentialTypeLabel(type: string | null | undefined): string | null {
+	if (!type) return null;
+	return CREDENTIAL_TYPE_LABELS[type as CredentialType] ?? type;
+}
+
+/** Human label for a plain (non-chain) item on the review step. */
+function extraItemLabel(it: AccessRequestItem): string {
+	const key = `${it.resource_type}:${it.action}`;
+	if (key === 'scope:grant') return `scope ${it.resource_id ?? ''}`.trim();
+	if (key === 'toolkit:bind') {
+		const ref = it.resource_reference;
+		const target =
+			it.resource_id ??
+			(ref && typeof ref.vendor === 'string'
+				? [ref.vendor, typeof ref.name === 'string' ? ref.name : null]
+						.filter(Boolean)
+						.join('/')
+				: 'a toolkit');
+		return `bind to existing toolkit ${target}`;
+	}
+	return key;
+}
+
 /**
  * Read-only summary shown when a provisioning plan is opened after it's already
  * been decided (or otherwise left `pending`). No create/approve controls. For an
- * approved plan it reconstructs WHAT was set up from the decided items (toolkit,
- * credential, the rules the agent got, when); for a denial it shows the reason
- * the agent reads back. Prevents re-fulfilling a settled request.
+ * approved plan it reconstructs WHAT was set up from the decided items (per
+ * chain: toolkit, credential, the rules the agent got, when); for a denial it
+ * shows the reason the agent reads back. Prevents re-fulfilling a settled
+ * request.
  */
 function TerminalSummaryDialog({
 	open,
 	request,
 	status,
-	apiLabel,
 	onClose,
 }: {
 	open: boolean;
 	request: AccessRequest;
 	status: string;
-	apiLabel: string;
 	onClose: () => void;
 }) {
 	const approved = status === 'approved' || status === 'partially_approved';
 	const deniedItem = request.items.find((it) => it.status === 'denied');
-
-	// Reconstruct what the approval actually wired, from the decided items.
-	const bindItem = findItem(request, 'credential', 'bind');
-	const agentBindItem = findItem(request, 'toolkit', 'bind');
-	const toolkitId = agentBindItem?.resource_id ?? bindItem?.to_id ?? null;
-	const credentialId = bindItem?.resource_id ?? null;
-	const grantedRules = bindItem ? ruleSummary(parseItemRules(bindItem)) : null;
+	const { chains } = planChains(request);
 	const decidedAt = request.items.find((it) => it.decided_at)?.decided_at ?? null;
 
 	const STATUS_COPY: Record<string, string> = {
@@ -989,7 +1247,11 @@ function TerminalSummaryDialog({
 						className="text-foreground font-medium"
 					/>
 					· for
-					<Badge variant="default">{apiLabel}</Badge>
+					{chains.map((c) => (
+						<Badge key={c.key} variant="default">
+							{apiLabel(c.apiRef)}
+						</Badge>
+					))}
 				</span>
 			}
 			footer={
@@ -1023,23 +1285,53 @@ function TerminalSummaryDialog({
 					</div>
 				</div>
 
-				{/* What the approval actually wired — concrete, not filler. */}
-				{approved && (toolkitId || credentialId || grantedRules) && (
-					<dl className="border-border divide-border divide-y rounded-lg border text-sm">
-						<SummaryRow label="API">{apiLabel}</SummaryRow>
-						{toolkitId && <SummaryRow label="Toolkit">{toolkitId}</SummaryRow>}
-						<SummaryRow label="Credential">
-							{credentialId ?? (
-								<span className="text-muted-foreground">none — no-auth API</span>
-							)}
-						</SummaryRow>
-						{grantedRules && <SummaryRow label="Agent can">{grantedRules}</SummaryRow>}
-						{decidedAt && (
-							<SummaryRow label="Decided">
-								{new Date(decidedAt).toLocaleString()}
-							</SummaryRow>
-						)}
-					</dl>
+				{/* What the approval actually wired — concrete, per chain. */}
+				{approved &&
+					chains.map((c) => {
+						const toolkitId =
+							c.toolkitBind?.resource_id ?? c.credentialBind?.to_id ?? null;
+						const credentialId = c.credentialBind?.resource_id ?? null;
+						const grantedRules = c.credentialBind
+							? ruleSummary(parseItemRules(c.credentialBind))
+							: null;
+						const chainDenied = chainItems(c).some((it) => it.status === 'denied');
+						return (
+							<dl
+								key={c.key}
+								className="border-border divide-border divide-y rounded-lg border text-sm"
+							>
+								<SummaryRow label="API">
+									{apiLabel(c.apiRef)}
+									{chainDenied && (
+										<span className="text-danger ml-2">denied</span>
+									)}
+								</SummaryRow>
+								{!chainDenied && (
+									<>
+										{toolkitId && (
+											<SummaryRow label="Toolkit">{toolkitId}</SummaryRow>
+										)}
+										<SummaryRow label="Credential">
+											{credentialId ?? (
+												<span className="text-muted-foreground">
+													none — no-auth API
+												</span>
+											)}
+										</SummaryRow>
+										{grantedRules && (
+											<SummaryRow label="Agent can">
+												{grantedRules}
+											</SummaryRow>
+										)}
+									</>
+								)}
+							</dl>
+						);
+					})}
+				{approved && decidedAt && (
+					<p className="text-muted-foreground text-xs">
+						Decided {new Date(decidedAt).toLocaleString()}
+					</p>
 				)}
 
 				{deniedItem?.decision_reason && (
@@ -1072,28 +1364,91 @@ function summarizeRules(rules: PermissionRuleInput[]): string {
 	return parts.join('; ');
 }
 
-function Stepper({ step, noAuth }: { step: Step; noAuth: boolean }) {
-	const steps: { key: Step; label: string; hint: string }[] = [
-		{ key: 'toolkit', label: 'Create toolkit', hint: 'A container that serves this API' },
-		...(noAuth
-			? []
-			: [
-					{
-						key: 'credential' as Step,
-						label: 'Connect credential',
-						hint: 'You enter the secret',
-					},
-				]),
-		{ key: 'rules', label: 'Confirm rules', hint: 'What the agent may call' },
-		{ key: 'review', label: 'Review & approve', hint: 'Grant access' },
-	];
-	const order: Step[] = [...steps.map((s) => s.key), 'done'];
-	const activeIndex = order.indexOf(step);
+function Stepper({
+	step,
+	chainIndex,
+	chains,
+	chainStates,
+}: {
+	step: Step;
+	chainIndex: number;
+	chains: PlanChain[];
+	chainStates: ChainProgress[];
+}) {
+	// Flatten every chain's steps (toolkit → credential? → rules) plus the
+	// global review into one ordered list. With several chains each step is
+	// suffixed with its API so the rail reads as a per-API checklist; a skipped
+	// chain collapses to a single dimmed entry.
+	const multi = chains.length > 1;
+	interface RailStep {
+		key: string;
+		label: string;
+		hint: string;
+		skipped?: boolean;
+		/** Matches the wizard's (chainIndex, step) position, -1 for never-active. */
+		chain: number;
+		step: Step | null;
+	}
+	const steps: RailStep[] = [];
+	chains.forEach((c, i) => {
+		const suffix = multi ? ` — ${apiLabel(c.apiRef)}` : '';
+		if (chainStates[i]?.skipped) {
+			steps.push({
+				key: `${c.key}:skipped`,
+				label: `Skipped${suffix}`,
+				hint: 'This API will be denied',
+				skipped: true,
+				chain: i,
+				step: null,
+			});
+			return;
+		}
+		steps.push({
+			key: `${c.key}:toolkit`,
+			label: `Create toolkit${suffix}`,
+			hint: 'A container that serves this API',
+			chain: i,
+			step: 'toolkit',
+		});
+		if (!chainIsNoAuth(c)) {
+			steps.push({
+				key: `${c.key}:credential`,
+				label: `Connect credential${suffix}`,
+				hint: 'You enter the secret',
+				chain: i,
+				step: 'credential',
+			});
+		}
+		steps.push({
+			key: `${c.key}:rules`,
+			label: `Confirm rules${suffix}`,
+			hint: 'What the agent may call',
+			chain: i,
+			step: 'rules',
+		});
+	});
+	steps.push({
+		key: 'review',
+		label: 'Review & approve',
+		hint: 'Grant access',
+		chain: chains.length,
+		step: 'review',
+	});
+
+	const activeIndex =
+		step === 'done'
+			? steps.length
+			: steps.findIndex(
+					(s) =>
+						(s.step === 'review' && step === 'review') ||
+						(s.chain === chainIndex && s.step === step),
+				);
 
 	return (
 		<ol className="space-y-0">
 			{steps.map((s, i) => {
-				const done = step === 'done' || i < activeIndex;
+				const done =
+					!s.skipped && (step === 'done' || (activeIndex >= 0 && i < activeIndex));
 				const active = i === activeIndex && step !== 'done';
 				const last = i === steps.length - 1;
 				return (
@@ -1122,11 +1477,13 @@ function Stepper({ step, noAuth }: { step: Step; noAuth: boolean }) {
 						<div className={last ? 'pb-0' : 'pb-6'}>
 							<p
 								className={
-									active
-										? 'text-foreground text-sm font-semibold'
-										: done
-											? 'text-foreground text-sm font-medium'
-											: 'text-muted-foreground text-sm'
+									s.skipped
+										? 'text-muted-foreground text-sm line-through'
+										: active
+											? 'text-foreground text-sm font-semibold'
+											: done
+												? 'text-foreground text-sm font-medium'
+												: 'text-muted-foreground text-sm'
 								}
 							>
 								{s.label}

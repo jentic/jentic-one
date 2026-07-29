@@ -914,9 +914,14 @@ async def test_validate_credential_bind_in_plan_passes_when_fulfilled(
         pytest.fail("a fulfilled credential:bind must not raise ProvisioningPlanNotFulfilledError")
 
 
-async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
-    # A reference-only toolkit:bind in a plan (no resolved id) must be denied —
-    # it can't resolve by the not-yet-visible credential->toolkit join.
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled(
+    effects_repo: MagicMock,
+) -> None:
+    # A reference-only toolkit:bind in a plan whose reference does NOT resolve
+    # (the plan's own toolkit doesn't exist yet — the wizard hasn't created it)
+    # must be denied with the plan-aware reason, not the raw resolution error.
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
     ctx = _make_ctx()
     session = _make_session()
     applicator = EffectApplicator(ctx)
@@ -934,3 +939,29 @@ async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
             control_session=session,
             is_provisioning_plan=True,
         )
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_toolkit_bind_in_plan_passes_when_reference_resolves(
+    effects_repo: MagicMock,
+) -> None:
+    # A composite request can mix plan chains with PLAIN reference binds to
+    # toolkits that already exist. Such a bind is satisfiable exactly as filed,
+    # so the plan context must not auto-deny it (the mixed-composite fix).
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_existing"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    await applicator.validate(
+        item,
+        identity=_make_identity(),
+        control_session=session,
+        is_provisioning_plan=True,
+    )

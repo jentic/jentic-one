@@ -149,3 +149,126 @@ export function planDenialReason(request: AccessRequest): string | null {
 	);
 	return denied?.decision_reason ?? null;
 }
+
+// ── Multi-chain composites ────────────────────────────────────────────────────
+//
+// A composite request can carry SEVERAL provisioning chains (one per
+// `--provision` API) plus plain items (reference binds to existing toolkits,
+// scope grants). Items are grouped into chains by the API reference they carry
+// — never by position, which the server does not guarantee.
+
+/** One provisioning chain: the four intents/binds for a single API. */
+export interface PlanChain {
+	/** Canonical `vendor/name[/version]` key the chain's items share. */
+	key: string;
+	apiRef: PlanApiReference;
+	create?: AccessRequestItem;
+	provision?: AccessRequestItem;
+	credentialBind?: AccessRequestItem;
+	toolkitBind?: AccessRequestItem;
+}
+
+/** A composite request split into its provisioning chains and everything else. */
+export interface PlanShape {
+	chains: PlanChain[];
+	/** Items outside any chain: plain binds to existing toolkits, scope grants…
+	 * The wizard surfaces them on the review step and decides them with the
+	 * chains, so one composite request is decided in one sitting. */
+	extras: AccessRequestItem[];
+}
+
+/** The `{vendor,name,version}` of an item's reference, or null. */
+function itemApiRef(item: AccessRequestItem): PlanApiReference | null {
+	const ref = item.resource_reference;
+	if (!ref || typeof ref.vendor !== 'string' || ref.vendor === '') return null;
+	return {
+		vendor: ref.vendor,
+		name: typeof ref.name === 'string' ? ref.name : undefined,
+		version: typeof ref.version === 'string' ? ref.version : undefined,
+	};
+}
+
+function refKeyOf(ref: PlanApiReference): string {
+	return [ref.vendor, ref.name ?? '', ref.version ?? ''].join('/');
+}
+
+/**
+ * Group a request's items into provisioning chains keyed by API reference,
+ * plus the plain items outside any chain.
+ *
+ * Legacy fallback: requests filed before composite support carry ONE chain
+ * whose `credential:bind` has no reference. When there is exactly one chain
+ * and exactly one unmatched, reference-less `credential:bind`, it is adopted
+ * into that chain — preserving the old single-plan behavior. With several
+ * chains no such guess is safe, so an unattributable bind stays an extra
+ * (the wizard won't silently wire it to the wrong API).
+ */
+export function planChains(request: AccessRequest): PlanShape {
+	const chains = new Map<string, PlanChain>();
+	const extras: AccessRequestItem[] = [];
+	const unmatchedCredentialBinds: AccessRequestItem[] = [];
+
+	// Pass 1: fulfilment intents define the chains (in item order).
+	for (const it of request.items) {
+		if (!FULFILMENT_ITEM_TYPES.has(itemKey(it))) continue;
+		const ref = itemApiRef(it);
+		if (!ref) continue;
+		const key = refKeyOf(ref);
+		const chain = chains.get(key) ?? { key, apiRef: ref };
+		if (it.resource_type === 'toolkit') chain.create ??= it;
+		else chain.provision ??= it;
+		chains.set(key, chain);
+	}
+
+	// Pass 2: attach binds to their chain by reference; collect the rest.
+	for (const it of request.items) {
+		if (FULFILMENT_ITEM_TYPES.has(itemKey(it))) {
+			if (!itemApiRef(it)) extras.push(it); // malformed intent: no reference
+			continue;
+		}
+		const key = itemKey(it);
+		const ref = itemApiRef(it);
+		const chain = ref ? chains.get(refKeyOf(ref)) : undefined;
+		if (chain && key === 'credential:bind' && chain.credentialBind === undefined) {
+			chain.credentialBind = it;
+		} else if (chain && key === 'toolkit:bind' && chain.toolkitBind === undefined) {
+			chain.toolkitBind = it;
+		} else if (key === 'credential:bind' && !ref) {
+			unmatchedCredentialBinds.push(it);
+		} else {
+			extras.push(it);
+		}
+	}
+
+	const ordered = [...chains.values()];
+	// Legacy single-chain adoption (see docstring).
+	if (
+		ordered.length === 1 &&
+		unmatchedCredentialBinds.length === 1 &&
+		ordered[0].credentialBind === undefined
+	) {
+		ordered[0].credentialBind = unmatchedCredentialBinds[0];
+	} else {
+		extras.push(...unmatchedCredentialBinds);
+	}
+	return { chains: ordered, extras };
+}
+
+/** Per-chain variant of {@link planAuthType}. */
+export function chainAuthType(chain: PlanChain): string | null {
+	const scheme = chain.provision?.resource_reference?.security_scheme;
+	return typeof scheme === 'string' ? scheme : null;
+}
+
+/** Per-chain variant of {@link planIsNoAuth}. */
+export function chainIsNoAuth(chain: PlanChain): boolean {
+	if (chain.provision === undefined) return true;
+	return chainAuthType(chain) === 'no_auth';
+}
+
+/** All items belonging to a chain (for building per-chain decisions). */
+export function chainItems(chain: PlanChain): AccessRequestItem[] {
+	return [chain.create, chain.provision, chain.credentialBind, chain.toolkitBind].filter(
+		(it): it is AccessRequestItem => it !== undefined,
+	);
+}

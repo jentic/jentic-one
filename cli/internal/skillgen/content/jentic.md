@@ -94,13 +94,29 @@ after an approved `scope:grant` **and** only if `whoami` flags the scope as not
 yet on your token (see the stale-scope note it prints).
 
 **File once, richly — never thrash.** Work out the full access end-state up
-front — from `whoami`, the catalog, and the task. A provisioning plan covers
-**one API**, so a job needing several APIs means several requests: file them
-all in one pass (one `--provision` per API, each complete: auth, rules,
-reason) — filed together they read as one plan to the approving human. Never
-file duplicate or per-operation requests, and don't withdraw-and-refile to
-tweak a proposal; once filed, tell your operator an approval is waiting and
-hand back (or `--wait`).
+front — from `whoami`, the catalog, and the task — and file it as **one
+composite request**: every target flag repeats and combines, so a job needing
+several APIs is one command the human decides in one sitting:
+
+```
+jentic access request \
+  --provision slack.com/api --auth slack.com/api=bearer \
+  --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \
+  --toolkit github.com/api \
+  --reason "one reason covering the whole job" \
+  --wait
+```
+
+Each `--provision` adds a full plan for that API; `--toolkit`/`--toolkit-id`/
+`--scope` add single items. With more than one `--provision`, key `--auth` and
+`--rules-json` by API (`--auth vendor/name=bearer`); the bare form applies when
+there is exactly one. Never file duplicate or per-operation requests, and don't
+withdraw-and-refile to tweak a proposal; once filed, tell your operator an
+approval is waiting and hand back (or `--wait`). If a composite collides with
+an older pending request for one of its targets, nothing is filed — drop that
+target or `jentic access withdraw` the old request, then re-file. `--wait` can
+end `partially_approved` (exit 4): check `jentic access status <id>` to see
+which items were granted before proceeding.
 
 If you'd rather be reactive, the broker also guides you: when `execute` is denied
 it prints a recovery line on stderr (the `agent_directive`) and **exits 2**, so

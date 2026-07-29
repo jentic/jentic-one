@@ -194,12 +194,28 @@ class EffectApplicator:
             if item.rules:
                 raise RulesNotSupportedForBindError(item.resource_type, item.action)
             if is_provisioning_plan and not (item.resource_id or item.to_id):
-                # In a plan the agent binding must resolve by the concrete toolkit
-                # id the wizard creates (the credential→toolkit binding it depends
-                # on isn't visible to the reference join until the credential:bind
-                # applies later in the same decision). An unfulfilled reference-only
-                # toolkit:bind can't be satisfied by a plain approval.
-                raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
+                # A plan's own agent binding targets the toolkit the wizard
+                # creates, so its reference resolves only after fulfilment (the
+                # credential→toolkit binding isn't visible to the reference join
+                # until the credential:bind applies later in the same decision).
+                # But a composite request can mix plan chains with PLAIN
+                # reference binds to toolkits that already exist — those are
+                # satisfiable exactly as filed, and denying them because a
+                # sibling chain made the request "a plan" would reject a good
+                # item. Try the resolution: only a reference that doesn't
+                # resolve to one visible toolkit gets the plan-aware denial.
+                try:
+                    await self._resolve_toolkit_bind_target(
+                        item, identity=identity, session=control_session
+                    )
+                except (
+                    ToolkitReferenceUnresolvedError,
+                    ToolkitReferenceAmbiguousError,
+                ) as exc:
+                    raise ProvisioningPlanNotFulfilledError(
+                        item.resource_type, item.action
+                    ) from exc
+                return
             await self._resolve_toolkit_bind_target(
                 item, identity=identity, session=control_session
             )
