@@ -1,6 +1,24 @@
 {
   "components": {
     "headers": {
+      "JenticCredentialId": {
+        "description": "ID of the stored credential the broker resolved and used to sign\nthis execution. Present only when a stored credential was actually\nused — a missing header unambiguously means no credential (inline\nauth, a credential-less API, or a failure before resolution).\n",
+        "schema": {
+          "examples": [
+            "cred_abc123"
+          ],
+          "type": "string"
+        }
+      },
+      "JenticCredentialName": {
+        "description": "Human-readable label of the credential in `Jentic-Credential-Id`,\nsanitized to printable ASCII (unsafe characters replaced with `?`).\nPresent under the same condition as the id header. The same header\nname is also accepted on requests to disambiguate credential\nresolution.\n",
+        "schema": {
+          "examples": [
+            "Stripe prod key"
+          ],
+          "type": "string"
+        }
+      },
       "JenticExecutionId": {
         "description": "Execution ID — unique identifier for this brokered request.",
         "schema": {
@@ -263,6 +281,12 @@
               ],
               "type": "string"
             }
+          },
+          "Jentic-Credential-Id": {
+            "$ref": "#/components/headers/JenticCredentialId"
+          },
+          "Jentic-Credential-Name": {
+            "$ref": "#/components/headers/JenticCredentialName"
           },
           "Jentic-Execution-Id": {
             "$ref": "#/components/headers/JenticExecutionId"

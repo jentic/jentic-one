@@ -589,6 +589,27 @@ components:
         type: string
         examples:
           - exec_xyz789
+    JenticCredentialId:
+      description: |
+        ID of the stored credential the broker resolved and used to sign
+        this execution. Present only when a stored credential was actually
+        used — a missing header unambiguously means no credential (inline
+        auth, a credential-less API, or a failure before resolution).
+      schema:
+        type: string
+        examples:
+          - cred_abc123
+    JenticCredentialName:
+      description: |
+        Human-readable label of the credential in `Jentic-Credential-Id`,
+        sanitized to printable ASCII (unsafe characters replaced with `?`).
+        Present under the same condition as the id header. The same header
+        name is also accepted on requests to disambiguate credential
+        resolution.
+      schema:
+        type: string
+        examples:
+          - Stripe prod key
   parameters:
     UpstreamUrl:
       name: upstream_url
@@ -823,6 +844,10 @@ components:
             type: integer
             examples:
               - 200
+        Jentic-Credential-Id:
+          $ref: "#/components/headers/JenticCredentialId"
+        Jentic-Credential-Name:
+          $ref: "#/components/headers/JenticCredentialName"
       content:
         "*/*":
           schema:
