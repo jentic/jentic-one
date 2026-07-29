@@ -11,9 +11,15 @@
  * the browser back button moves between lenses. Tabs themselves are built in
  * the per-tab todos; this page owns the shell + tab switching.
  */
-import { useMemo } from 'react';
 import { useSearchParams } from 'react-router';
-import { PageShell, PageHeader, PageHelp, SegmentedToggle } from '@/shared/ui';
+import {
+	Activity as ActivityIcon,
+	BellRing,
+	LayoutDashboard,
+	ListTodo,
+	ScrollText,
+} from 'lucide-react';
+import { PageShell, PageHeader, PageHelp, TabNav, type TabNavOption } from '@/shared/ui';
 import { MONITOR_TABS, type MonitorTab } from '@/modules/monitor/api';
 import { OverviewTab } from '@/modules/monitor/components/OverviewTab';
 import { ExecutionsTab } from '@/modules/monitor/components/ExecutionsTab';
@@ -22,13 +28,14 @@ import { EventsTab } from '@/modules/monitor/components/EventsTab';
 import { AuditTab } from '@/modules/monitor/components/AuditTab';
 import { MonitorFilterBar } from '@/modules/monitor/components/MonitorFilterBar';
 
-const TAB_LABELS: Record<MonitorTab, string> = {
-	overview: 'Overview',
-	executions: 'Executions',
-	jobs: 'Jobs',
-	events: 'Events',
-	audit: 'Audit',
-};
+/** Lens options — same underline TabNav grammar as the detail consoles. */
+const TAB_OPTIONS: TabNavOption<MonitorTab>[] = [
+	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+	{ value: 'executions', label: 'Executions', icon: <ActivityIcon className="h-4 w-4" /> },
+	{ value: 'jobs', label: 'Jobs', icon: <ListTodo className="h-4 w-4" /> },
+	{ value: 'events', label: 'Events', icon: <BellRing className="h-4 w-4" /> },
+	{ value: 'audit', label: 'Audit', icon: <ScrollText className="h-4 w-4" /> },
+];
 
 const tabId = (tab: string) => `monitor-tab-${tab}`;
 const panelId = (tab: string) => `monitor-panel-${tab}`;
@@ -44,11 +51,6 @@ export default function MonitorPage() {
 	// usage/health view — when no `?tab=` is present. The other lenses are one
 	// click (and deep-linkable) away.
 	const activeTab: MonitorTab = isMonitorTab(tabParam) ? tabParam : 'overview';
-
-	const tabOptions = useMemo(
-		() => MONITOR_TABS.map((id) => ({ value: id, label: TAB_LABELS[id] })),
-		[],
-	);
 
 	const setTab = (tab: string) => {
 		setSearchParams(
@@ -102,10 +104,9 @@ export default function MonitorPage() {
 					/>
 				}
 			/>
-			<SegmentedToggle
-				as="tabs"
+			<TabNav<MonitorTab>
 				ariaLabel="Monitor lenses"
-				options={tabOptions}
+				options={TAB_OPTIONS}
 				value={activeTab}
 				onChange={(tab) => setTab(tab)}
 				getTabId={tabId}

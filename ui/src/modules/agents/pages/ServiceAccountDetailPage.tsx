@@ -21,7 +21,15 @@
  */
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
-import { Activity, KeyRound, TriangleAlert } from 'lucide-react';
+import {
+	Activity as ActivityIcon,
+	Key,
+	KeyRound,
+	LayoutDashboard,
+	Settings,
+	ShieldCheck,
+	TriangleAlert,
+} from 'lucide-react';
 import {
 	ActorLabel,
 	AgentBadge,
@@ -36,7 +44,8 @@ import {
 	LoadingState,
 	PageHeader,
 	PageShell,
-	SegmentedToggle,
+	TabNav,
+	type TabNavOption,
 } from '@/shared/ui';
 import { cn, formatTimestamp } from '@/shared/lib/utils';
 import {
@@ -71,13 +80,14 @@ import { ROUTES } from '@/shared/app/routes';
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
 
-const TAB_LABELS: Record<DetailTab, string> = {
-	overview: 'Overview',
-	activity: 'Activity',
-	access: 'Access',
-	keys: 'Keys',
-	settings: 'Settings',
-};
+/** Tab options for the console shell — same icon grammar as the toolkit console. */
+const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
+	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
+	{ value: 'access', label: 'Access', icon: <ShieldCheck className="h-4 w-4" /> },
+	{ value: 'keys', label: 'Keys', icon: <Key className="h-4 w-4" /> },
+	{ value: 'settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> },
+];
 
 function isDetailTab(value: string | null): value is DetailTab {
 	return DETAIL_TABS.includes(value as DetailTab);
@@ -356,7 +366,7 @@ export default function ServiceAccountDetailPage() {
 					href={ROUTES.monitor}
 					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium transition-colors"
 				>
-					<Activity className="h-3.5 w-3.5" /> Open Monitor
+					<ActivityIcon className="h-3.5 w-3.5" /> Open Monitor
 				</AppLink>
 			</div>
 
@@ -439,15 +449,13 @@ export default function ServiceAccountDetailPage() {
 				</CardBody>
 			</Card>
 
-			<SegmentedToggle<DetailTab>
-				options={DETAIL_TABS.map((tab) => ({ value: tab, label: TAB_LABELS[tab] }))}
+			<TabNav<DetailTab>
+				options={TAB_OPTIONS}
 				value={activeTab}
 				onChange={setTab}
-				as="tabs"
 				ariaLabel="Service account detail sections"
 				getTabId={tabId}
 				getControls={panelId}
-				className="w-max max-w-full overflow-x-auto"
 			/>
 
 			<div
