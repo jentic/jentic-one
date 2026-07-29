@@ -289,7 +289,8 @@ anything an offer would otherwise propose.
 ## `jentic run <agent>` — the daily driver
 
 ```
-jentic run <agent> [path] [flags]
+jentic run <agent> [path] [flags] [-- <agent-args>...]
+jentic run -- <agent> [agent-args...]
 ```
 
 - **`<agent>`** — a known coding-agent identifier (`claude`, …), mapping to a
@@ -299,6 +300,9 @@ jentic run <agent> [path] [flags]
   `--home`, `--allow-dir`/`--no-allow-dir`, `--seed-config`/`--no-seed-config`,
   `--yes` (assume the safe default; never picks a flagged-dangerous option),
   `--agent-user <name>`, and the `--list-grants`/`--grant`/`--revoke` shortcuts.
+- **`-- <agent-args>...`** — arguments forwarded verbatim to the agent binary. See
+  [Forwarding arguments to the agent](#forwarding-arguments-to-the-agent) for the
+  trailing (`jentic run claude -- …`) and leading (`jentic run -- claude …`) forms.
 
 State — which local agents exist, their user/home, and their durable directory
 grants — lives in the operator's own `jentic` config (`local_agents:` keyed by the
