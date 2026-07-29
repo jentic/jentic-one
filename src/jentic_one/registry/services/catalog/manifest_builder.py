@@ -134,26 +134,58 @@ def _tokenise(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
-def score_entry(api_id: str, q_tokens: list[str]) -> float:
-    """Token-overlap score for an api_id against query tokens (0.0-1.0)."""
+#: Points for a query token that equals a whole ``api_id`` token (e.g. query
+#: "stripe" vs the id token "stripe" in ``stripe.com``) — the strongest signal.
+_WHOLE_TOKEN_POINTS = 3
+#: Points for a query token that is only a substring of an ``api_id`` token
+#: (e.g. query "box" buried inside "mapbox") — a weak, incidental match.
+_SUBSTRING_POINTS = 1
+
+
+def score_entry(api_id: str, q_tokens: list[str]) -> int:
+    """Relevance score for an ``api_id`` against query tokens.
+
+    Grades each query token by *how* it matches, not merely *whether* it does:
+    a whole-token match (the query word IS one of the id's words) scores higher
+    than an incidental substring match (the query word is buried inside a longer
+    id word). Scores are summed across query tokens, so an entry matching more of
+    the query — and matching it more strongly — ranks first.
+
+    Integer points (not a 0-1 fraction) so match tiers add up cleanly and the
+    score is an exact, hashable sort key. A whole-token hit and a substring hit
+    are mutually exclusive per query token — a whole-token match already satisfies
+    the substring test, so it is scored once at the higher tier.
+    """
     name_tokens = _tokenise(api_id)
     if not name_tokens:
-        return 0.0
-    matches = sum(1.0 for t in q_tokens if any(t in nt for nt in name_tokens))
-    return matches / max(len(q_tokens), 1)
+        return 0
+    name_token_set = set(name_tokens)
+    score = 0
+    for t in q_tokens:
+        if t in name_token_set:
+            score += _WHOLE_TOKEN_POINTS
+        elif any(t in nt for nt in name_tokens):
+            score += _SUBSTRING_POINTS
+    return score
 
 
 def score_entries(
     entries: list[ManifestEntry], q: str | None
-) -> list[tuple[ManifestEntry, float | None]]:
+) -> list[tuple[ManifestEntry, int | None]]:
     """Order entries for paging, returning each with its sort score.
 
     Two stable orderings, each with a unique tail key (``api_id``) so keyset
     paging never skips or repeats:
 
     - **Browse** (empty ``q``): the natural ``api_id`` order, score ``None``.
-    - **Search**: matches only, sorted by ``(-score, api_id)``; the score is
-      carried in the cursor so the next page resumes at the exact tie-break.
+    - **Search**: matches only, sorted by ``(-score, api_id)``; the integer score
+      is carried in the cursor so the next page resumes at the exact tie-break.
+
+    Membership (which entries appear at all) is unchanged from the original
+    token-overlap behaviour: an entry qualifies iff at least one query token
+    substring-matches one of its ``api_id`` tokens. Only the *scoring* — and thus
+    the *order* — is graded by match quality (see ``score_entry``); recall is
+    identical to before.
     """
     if not q or not q.strip():
         return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
@@ -176,11 +208,11 @@ class EntryPage:
     items: list[ManifestEntry]
     has_more: bool
     next_api_id: str | None
-    next_score: float | None
+    next_score: int | None
 
 
 def paginate_entries(
-    scored: list[tuple[ManifestEntry, float | None]],
+    scored: list[tuple[ManifestEntry, int | None]],
     *,
     after_api_id: str | None,
     after_score: float | None,
@@ -193,6 +225,10 @@ def paginate_entries(
     request resumes at the first item strictly after it in that same order. This
     is an in-memory slice — the whole catalog is a ~1 MB cached blob — so there
     is no DB cost to paging.
+
+    ``after_score`` is decoded from a client cursor and typed ``float`` so any
+    historical/foreign cursor value round-trips; our own scores are integers, and
+    ``int``/``float`` compare exactly for these small values in ``_is_after_cursor``.
     """
     if after_api_id is not None:
         start = 0
@@ -229,7 +265,7 @@ def paginate_entries(
 
 
 def _is_after_cursor(
-    score: float | None, api_id: str, cursor_score: float | None, cursor_api_id: str
+    score: int | None, api_id: str, cursor_score: float | None, cursor_api_id: str
 ) -> bool:
     """Whether ``(score, api_id)`` sorts strictly after the cursor position.
 
