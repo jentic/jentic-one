@@ -1,4 +1,4 @@
-import { AlertTriangle, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Input';
 import { Select } from '@/shared/ui/Select';
@@ -117,8 +117,8 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 						key={index}
 						className={
 							invalid
-								? 'border-danger/50 bg-card space-y-2 rounded-lg border p-3'
-								: 'border-border bg-card space-y-2 rounded-lg border p-3'
+								? 'border-danger/50 bg-card space-y-2.5 rounded-lg border p-3'
+								: 'border-border bg-card space-y-2.5 rounded-lg border p-3'
 						}
 					>
 						<div className="flex items-center gap-2">
@@ -134,7 +134,7 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 							>
 								{PERMISSION_EFFECTS.map((effect: PermissionEffect) => (
 									<option key={effect} value={effect}>
-										{effect}
+										{effect === 'allow' ? 'Allow' : 'Deny'}
 									</option>
 								))}
 							</Select>
@@ -142,8 +142,8 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 								aria-label="Path regex"
 								value={rule.path ?? ''}
 								onChange={(e) => update(index, { path: e.target.value })}
-								placeholder="Path regex (optional)"
-								className="flex-1"
+								placeholder="Path regex — empty matches any path"
+								className="flex-1 font-mono"
 							/>
 							<Button
 								variant="ghost"
@@ -154,25 +154,37 @@ export function PermissionRuleEditor({ rules, onChange }: PermissionRuleEditorPr
 								<Trash2 className="h-4 w-4" />
 							</Button>
 						</div>
-						<div className="flex flex-wrap gap-1.5">
-							{HTTP_METHODS.map((method) => {
-								const selected = (rule.methods ?? []).includes(method);
-								return (
-									<button
-										key={method}
-										type="button"
-										onClick={() => toggleMethod(index, method)}
-										aria-pressed={selected}
-										className={
-											selected
-												? 'bg-primary text-background rounded-md px-2 py-0.5 font-mono text-xs'
-												: 'bg-muted text-muted-foreground hover:bg-muted/60 rounded-md px-2 py-0.5 font-mono text-xs'
-										}
-									>
-										{method}
-									</button>
-								);
-							})}
+						<div>
+							<p className="text-muted-foreground mb-1.5 font-mono text-[10px] tracking-wide uppercase">
+								Methods
+								<span className="text-muted-foreground/60 normal-case">
+									{' '}
+									· none selected = any method
+								</span>
+							</p>
+							<div className="flex flex-wrap gap-1.5">
+								{HTTP_METHODS.map((method) => {
+									const selected = (rule.methods ?? []).includes(method);
+									return (
+										<button
+											key={method}
+											type="button"
+											onClick={() => toggleMethod(index, method)}
+											aria-pressed={selected}
+											className={
+												selected
+													? 'bg-primary text-background inline-flex items-center gap-1 rounded-md px-2.5 py-1 font-mono text-xs font-semibold'
+													: 'border-border bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground inline-flex items-center gap-1 rounded-md border px-2.5 py-1 font-mono text-xs transition-colors'
+											}
+										>
+											{selected && (
+												<Check className="h-3 w-3" aria-hidden="true" />
+											)}
+											{method}
+										</button>
+									);
+								})}
+							</div>
 						</div>
 						{invalid && (
 							<p role="alert" className="text-danger flex items-center gap-1 text-xs">

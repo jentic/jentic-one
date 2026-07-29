@@ -398,16 +398,18 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// Open the rules editor for the seeded GitHub binding — the tester lives
-		// next to the rule editor. (Scoped to the row: a previous test may have
-		// bound extra credentials to the shared mock store.)
+		// Open the rules editor for the seeded GitHub binding — the tester
+		// lives behind a disclosure next to the rule editor. (Scoped to the
+		// row: a previous test may have bound extra credentials to the shared
+		// mock store.)
 		const rows = await screen.findAllByTestId('binding-row');
 		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
 		expect(githubRow).toBeDefined();
 		await user.click(
 			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
 		);
-		await screen.findByText(/test a request/i);
+		await user.click(await screen.findByRole('button', { name: /test a request/i }));
+		await screen.findByLabelText('Request path');
 
 		// GET /repos/… matches the seeded allow rule → Allowed, rule #1.
 		await user.type(screen.getByLabelText('Request path'), '/repos/acme/site');
@@ -436,6 +438,37 @@ describe('ToolkitDetailPage', () => {
 				/denied — no rule matched/i,
 			),
 		);
+	});
+
+	it('shows a live pending-changes diff while editing rules', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
+		);
+
+		// Untouched draft → no diff panel, save disabled (nothing to commit).
+		expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
+
+		// Toggle POST onto the seeded allow-GET rule: the diff must show the old
+		// grant leaving (−) and the widened grant arriving (+).
+		await user.click(screen.getAllByRole('button', { name: 'POST', pressed: false })[0]);
+		const diff = await screen.findByTestId('rules-diff');
+		expect(within(diff).getByText(/Allows GET on 5 operations/)).toBeInTheDocument();
+		expect(within(diff).getByText(/Allows GET, POST on 5 operations/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeEnabled();
+
+		// Toggling POST back off restores a clean draft — diff gone (after the
+		// exit animation), save off.
+		await user.click(screen.getByRole('button', { name: 'POST', pressed: true }));
+		await waitFor(() => expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument());
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
 	});
 
 	it('filters the credential picker by the search term', async () => {

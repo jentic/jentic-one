@@ -21,8 +21,8 @@ import type { ToolkitKey } from '@/modules/toolkits/api/types';
  * (sensitive-data rule — it never persists across a dismissal).
  *
  * Keys also carry two long-supported-but-previously-hidden PATCH fields:
- * label rename (row-level Rename action → inline input) and `allowed_ips`
- * (set at create, shown as a chip) — see the phase-4 plan.
+ * label rename (inline pencil) and `allowed_ips` (set at create, shown as a
+ * chip) — see the phase-4 plan.
  */
 
 /** Parse a comma/space separated IP list into the wire array (null = no restriction). */
@@ -101,9 +101,25 @@ function KeyRow({
 							</Button>
 						</span>
 					) : (
-						<span className="text-foreground truncate text-sm font-medium">
-							{key.label || 'Unnamed Key'}
-						</span>
+						<>
+							<span className="text-foreground truncate text-sm font-medium">
+								{key.label || 'Unnamed Key'}
+							</span>
+							{!key.revoked && (
+								<Button
+									variant="ghost"
+									size="icon"
+									onClick={startEdit}
+									aria-label="Rename key"
+									// Compact but NOT shrunken: a fixed 28px hit target with
+									// centred padding — the old h-5 override clipped the
+									// button's own p-2 and rendered a squashed 20px stub.
+									className="h-7 w-7 p-0"
+								>
+									<Pencil className="h-3.5 w-3.5" />
+								</Button>
+							)}
+						</>
 					)}
 					<code className="text-muted-foreground font-mono text-xs">
 						{key.key_preview}
@@ -127,20 +143,7 @@ function KeyRow({
 				</p>
 			</div>
 			{!key.revoked && (
-				<div className="ml-auto flex w-full shrink-0 items-center justify-end gap-1.5 sm:w-auto">
-					{/* Same labeled-action grammar as the Access tab's binding rows —
-					    no tiny icon-only buttons hiding next to the label. */}
-					{!editing && (
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={startEdit}
-							aria-label="Rename key"
-							className="inline-flex items-center gap-1 px-2 py-1 text-xs"
-						>
-							<Pencil className="h-3 w-3" /> Rename
-						</Button>
-					)}
+				<div className="ml-auto w-full sm:w-auto">
 					<InlineConfirm
 						onConfirm={onRevoke}
 						message="Revoke this key?"

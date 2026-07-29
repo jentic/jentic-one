@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { FlaskConical } from 'lucide-react';
 import { Button, Input, Select } from '@/shared/ui';
 import { useTestPermissions } from '@/modules/toolkits/api';
 import type { PermissionTestResult } from '@/modules/toolkits/api/types';
@@ -7,7 +6,8 @@ import type { PermissionTestResult } from '@/modules/toolkits/api/types';
 /**
  * Rule tester — the broker's own dry-run (`POST …/permissions:test`) surfaced
  * next to the rule editor, so authoring becomes write→test→save instead of
- * write-and-pray.
+ * write-and-pray. Rendered headless (the host's disclosure carries the "Test a
+ * request" title).
  *
  * The verdict evaluates the SAVED rules (the same vendor-pooled list the
  * broker sees at request time), not the editor's unsaved draft — the caption
@@ -68,9 +68,6 @@ export function RuleTester({ toolkitId, credentialId }: RuleTesterProps) {
 
 	return (
 		<div className="border-border/60 bg-card space-y-2 rounded-lg border border-dashed p-3">
-			<p className="text-foreground flex items-center gap-1.5 text-xs font-semibold">
-				<FlaskConical className="h-3.5 w-3.5" aria-hidden="true" /> Test a request
-			</p>
 			<div className="flex flex-wrap items-center gap-2">
 				<div className="w-28 shrink-0">
 					<Select
