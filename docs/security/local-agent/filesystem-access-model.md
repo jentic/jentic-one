@@ -116,6 +116,16 @@ granted). Everything else is an ordinary path: `jentic run` offers **Allow** /
 **Open in agent's home** (default) / **Cancel**, and `--yes` takes the safe
 default (open in home) rather than granting.
 
+**Bulk grants obey the same classification.** Account setup can offer to grant, in
+one step, the workspaces the operator has already trusted in the agent's own config
+(Claude Code's `~/.claude.json` `projects` entries with
+`hasTrustDialogAccepted: true`) — see [local-agent-isolation.md](local-agent-isolation.md#optional-bringing-your-workspaces-over).
+That offer uses `Classify` as its filter: any banned candidate (a hard-banned
+subtree, or a soft-banned home root) is dropped before it is ever shown, and each
+selection is re-classified at grant time as a belt-and-braces guard. The ban rules
+cancel out anything the bulk offer would otherwise propose — the same precedence
+the single-path grant flow enforces.
+
 ### Non-negotiable boundaries
 
 Three boundaries are enforced by default and cannot be relaxed through the normal

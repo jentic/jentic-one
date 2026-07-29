@@ -142,6 +142,13 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// config need only reference it.
 	configDir := localagent.AgentConfigDir(fields.homeDir)
 	a.recordAgentAccount(agentID, fields.name, desc.Binary, fields.homeDir, configDir, true)
+
+	// Offer to bring the operator's trusted workspaces (from the agent's own config)
+	// over to the new agent in one step, rather than making them re-grant each
+	// project by hand on first `jentic run`. Best-effort: a discovery/grant hiccup
+	// must not block the setup the operator came for.
+	a.offerWorkspaceGrants(ctx, desc, agentID, fields.name)
+
 	a.printAgentRunInstructions(agentID, fields.homeDir)
 	return agentSetup{
 		created:   true,

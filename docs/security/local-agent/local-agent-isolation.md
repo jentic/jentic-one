@@ -200,6 +200,51 @@ and account reuse). `jentic reset` removes the agent's line from the drop-in
 instead enable Touch ID for sudo (`auth sufficient pam_tid.so` in
 `/etc/pam.d/sudo_local`).
 
+### Optional: bringing your workspaces over
+
+A fresh agent account starts with access to nothing but its own home, so the
+operator would otherwise have to re-grant each project by hand on first
+`jentic run`. To skip that, account setup **reads the workspaces the operator has
+already trusted in the agent's own config and offers to grant them in one step**.
+This is deliberately **operator-specific**: rather than scanning the home for
+marker files (most `AGENTS.md`/`CLAUDE.md` dirs are dependencies, clones, or
+templates the operator never actually opened with the agent), it reads the agent's
+own record of where the operator genuinely worked. For Claude Code that is
+`~/.claude.json`, whose top-level `projects` map is keyed by absolute directory
+path; we take only the entries with `hasTrustDialogAccepted: true` — the
+directories the operator explicitly answered "yes, I trust this folder" for.
+Nested trusted workspaces are **collapsed to their top-level ancestor**: the leaf
+grant is recursive + inherited, so granting a parent already covers every trusted
+descendant — offering the child too would be a no-op that only clutters the picker.
+The trusted set is shown as a **pre-selected multiselect** the operator can trim
+before confirming. Each chosen workspace is granted through the same scoped-ACL
+path (traverse-walk + rwx-leaf, see [Step 4](#step-4--directory-access-traverse-walk--rwx-leaf--confinement))
+an in-launch grant uses, and is recorded so it persists across sessions.
+
+**The strict permission model always takes precedence.** Every candidate is run
+through `Classify` and any banned one is dropped — the two ban classes from the
+[filesystem-access model](filesystem-access-model.md#non-negotiable-boundaries):
+`HardBan` subtrees (sensitive dotfile dirs like `~/.ssh`, `~/.aws`, `~/.jentic`;
+system trees) and any `SoftBan` root (a home root). Paths no longer on disk are
+dropped too. A workspace that conflicts with the permission model is therefore
+**never surfaced**, and as a belt-and-braces guard each selection is re-classified
+at grant time and a banned one is skipped with a note — so a conflicting directory
+can never be granted even if the trusted list and classification ever drifted. This
+is the same precedence the whole grant flow follows: the boundaries cancel out
+anything an offer would otherwise propose.
+
+> **Applies to every selected operator (forward-looking).** Agent selection is
+> **single-choice today**, so this runs for the one operator picked (e.g.
+> `claude`), reading **its** trusted-projects list. Selection will become
+> **multi-choice** — the operator will be able to pick several agents (`claude`,
+> `hermes`, …) in one bootstrap. When it does, this workspace offer must run for
+> **every** selected operator that gets an isolated account. Unlike a home-wide
+> marker scan, the trusted-projects source is **per-agent** (Claude Code's
+> `~/.claude.json` here; another agent would have its own), so each operator reads
+> **its own** trusted list — `TrustedWorkspaces` already dispatches on the agent
+> descriptor. Wire the multi-operator loop so each selected agent's own trusted set
+> is offered and granted into that agent's account.
+
 ## `jentic run <agent>` — the daily driver
 
 ```

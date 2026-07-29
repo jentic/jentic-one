@@ -561,3 +561,102 @@ func TestIsUnderHome(t *testing.T) {
 		t.Error("did not expect sibling-prefix path to be under home")
 	}
 }
+
+// TestTrustedWorkspaces checks that only TRUSTED projects from the agent's own
+// config are returned, that the strict permission model still takes precedence
+// (banned paths dropped), that vanished paths are dropped, and that the result is
+// deduped.
+func TestTrustedWorkspaces(t *testing.T) {
+	// Root the fixture under the real home, not t.TempDir(): on macOS the latter is
+	// under /var, which Classify HardBans as a system tree, so every candidate would
+	// be dropped. A real operator home (/Users/x, /home/x) is never under a system
+	// tree, so this mirrors production while staying hermetic (removed on cleanup).
+	home := workspaceTestRoot(t)
+
+	mkdir := func(rel string) string {
+		dir := filepath.Join(home, rel)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	trustedA := mkdir("code/api")
+	trustedB := mkdir("src/web")
+	untrusted := mkdir("code/scratch") // exists, but not trust-accepted → dropped
+	bannedDir := mkdir(".ssh")         // trusted in config but a HardBan → dropped
+	gonePath := filepath.Join(home, "code/deleted")
+	// A trusted parent and a trusted child under it: the parent's recursive grant
+	// already covers the child, so only the parent should be offered.
+	nestedParent := mkdir("work")
+	nestedChild := mkdir("work/repo")
+
+	// A ~/.claude.json with a projects map: two trusted, one untrusted, one banned,
+	// one trusted-but-missing-on-disk, and a trusted parent+child pair.
+	claudeJSON := `{
+      "projects": {
+        "` + trustedA + `":     {"hasTrustDialogAccepted": true},
+        "` + trustedB + `":     {"hasTrustDialogAccepted": true},
+        "` + untrusted + `":    {"hasTrustDialogAccepted": false},
+        "` + bannedDir + `":    {"hasTrustDialogAccepted": true},
+        "` + gonePath + `":     {"hasTrustDialogAccepted": true},
+        "` + nestedParent + `": {"hasTrustDialogAccepted": true},
+        "` + nestedChild + `":  {"hasTrustDialogAccepted": true}
+      }
+    }`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(claudeJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	desc, _ := Lookup("claude")
+	got := TrustedWorkspaces(home, desc)
+	set := map[string]bool{}
+	for _, g := range got {
+		set[g] = true
+	}
+
+	if !set[trustedA] || !set[trustedB] {
+		t.Errorf("expected both trusted workspaces, got %v", got)
+	}
+	if !set[nestedParent] {
+		t.Errorf("expected the trusted parent workspace, got %v", got)
+	}
+	for _, bad := range []string{untrusted, bannedDir, gonePath, nestedChild} {
+		if set[bad] {
+			t.Errorf("TrustedWorkspaces must not surface %s; got %v", bad, got)
+		}
+	}
+	// trustedA, trustedB, nestedParent — the child collapses into the parent.
+	if len(got) != 3 {
+		t.Errorf("expected exactly 3 workspaces (child collapsed into parent), got %v", got)
+	}
+}
+
+// TestTrustedWorkspacesEmptyOrUnknown guards the guards: no home, and an agent with
+// no trusted-projects source wired up, both yield nil.
+func TestTrustedWorkspacesEmptyOrUnknown(t *testing.T) {
+	desc, _ := Lookup("claude")
+	if got := TrustedWorkspaces("", desc); got != nil {
+		t.Errorf("expected nil for empty home, got %v", got)
+	}
+	if got := TrustedWorkspaces(workspaceTestRoot(t), Descriptor{ID: "unknown-agent"}); got != nil {
+		t.Errorf("expected nil for an agent with no trusted-projects source, got %v", got)
+	}
+}
+
+// workspaceTestRoot returns a unique, self-cleaning directory under the real
+// operator home, so paths look like production (not under /var, which Classify
+// HardBans). It skips if the home isn't usable.
+func workspaceTestRoot(t *testing.T) string {
+	t.Helper()
+	home := OperatorHome()
+	if home == "" {
+		t.Skip("no operator home available")
+	}
+	root, err := os.MkdirTemp(home, ".jentic-ws-test-")
+	if err != nil {
+		t.Skipf("cannot create fixture under home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
