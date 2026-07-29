@@ -52,6 +52,21 @@
       "AccessRequestCountResponse": {
         "description": "Count of access requests visible to the caller.",
         "properties": {
+          "by_status": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-status breakdown (stored statuses only; the derived 'expired' presentation status counts under 'pending'). Only present when group_by=status was requested; statuses with no rows are omitted.",
+            "title": "By Status"
+          },
           "count": {
             "description": "Number of matching requests, after visibility filtering.",
             "title": "Count",
@@ -8624,7 +8639,7 @@
     },
     "/access-requests/count": {
       "get": {
-        "description": "Count access requests without hydrating a page.\n\nThe cheap companion to the list endpoint for badge and per-segment\nconsumers: the same visibility filter (caller-scoped for members,\norg-wide for ``org:admin``) and the same ``actor_id``/``status``\npredicates, but a single ``COUNT(*)`` — no items, no pagination, no\npage-size cap on the number. ``status`` matches the stored value, like\nthe list filter: a pending request past its expiry (presented as the\nderived ``expired`` status) still counts as ``pending``.",
+        "description": "Count access requests without hydrating a page.\n\nThe cheap companion to the list endpoint for badge and per-segment\nconsumers: the same visibility filter (caller-scoped for members,\norg-wide for ``org:admin``) and the same ``actor_id``/``status``\npredicates, but a single ``COUNT(*)`` — no items, no pagination, no\npage-size cap on the number. ``status`` matches the stored value, like\nthe list filter: a pending request past its expiry (presented as the\nderived ``expired`` status) still counts as ``pending``.\n\nWith ``group_by=status`` the response additionally carries ``by_status``\n— one ``GROUP BY`` query for the whole breakdown, so a consumer rendering\nseveral status segments doesn't poll the endpoint once per status.\n``status`` still applies as a predicate, so combining both simply narrows\nthe breakdown to that one key.",
         "operationId": "countAccessRequests",
         "parameters": [
           {
@@ -8657,6 +8672,23 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "status",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Group By"
             }
           }
         ],

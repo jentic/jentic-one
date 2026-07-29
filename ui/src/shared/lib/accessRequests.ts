@@ -204,6 +204,30 @@ export async function countAccessRequests(
 	}
 }
 
+/**
+ * Per-status breakdown of visible access requests
+ * (`GET /access-requests/count?group_by=status`) — one request for every
+ * segment count instead of one `countAccessRequests` call per status. Keys are
+ * STORED statuses (a pending request past its expiry counts under `pending`,
+ * matching the list filter); statuses with no rows are absent, so read with a
+ * `?? 0` fallback.
+ */
+export async function countAccessRequestsByStatus(
+	params: Pick<ListAccessRequestsParams, 'actorId'> = {},
+): Promise<Record<string, number>> {
+	const query: Record<string, unknown> = { group_by: 'status' };
+	if (params.actorId != null) query.actor_id = params.actorId;
+	try {
+		const res = await apiRequest<{ count: number; by_status?: Record<string, number> | null }>(
+			OpenAPI,
+			{ method: 'GET', url: '/access-requests/count', query },
+		);
+		return res.by_status ?? {};
+	} catch (error) {
+		throw toRailError(error, 'Failed to count access requests.');
+	}
+}
+
 /** Fetch a single access request (we need its item ids to decide). */
 export async function getAccessRequest(requestId: string): Promise<AccessRequest> {
 	try {

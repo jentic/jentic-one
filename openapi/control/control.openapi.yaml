@@ -42,6 +42,14 @@ components:
     AccessRequestCountResponse:
       description: Count of access requests visible to the caller.
       properties:
+        by_status:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          description: Per-status breakdown (stored statuses only; the derived 'expired' presentation status counts under 'pending'). Only present when group_by=status was requested; statuses with no rows are omitted.
+          title: By Status
         count:
           description: Number of matching requests, after visibility filtering.
           title: Count
@@ -5637,6 +5645,12 @@ paths:
         page-size cap on the number. ``status`` matches the stored value, like
         the list filter: a pending request past its expiry (presented as the
         derived ``expired`` status) still counts as ``pending``.
+
+        With ``group_by=status`` the response additionally carries ``by_status``
+        — one ``GROUP BY`` query for the whole breakdown, so a consumer rendering
+        several status segments doesn't poll the endpoint once per status.
+        ``status`` still applies as a predicate, so combining both simply narrows
+        the breakdown to that one key.
       operationId: countAccessRequests
       parameters:
       - in: query
@@ -5655,6 +5669,15 @@ paths:
           - type: string
           - type: 'null'
           title: Status
+      - in: query
+        name: group_by
+        required: false
+        schema:
+          anyOf:
+          - const: status
+            type: string
+          - type: 'null'
+          title: Group By
       responses:
         '200':
           content:

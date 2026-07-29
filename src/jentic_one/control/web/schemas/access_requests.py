@@ -194,6 +194,14 @@ class AccessRequestCountResponse(BaseModel):
     """Count of access requests visible to the caller."""
 
     count: int = Field(description="Number of matching requests, after visibility filtering.")
+    by_status: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Per-status breakdown (stored statuses only; the derived 'expired' "
+            "presentation status counts under 'pending'). Only present when "
+            "group_by=status was requested; statuses with no rows are omitted."
+        ),
+    )
 
 
 class AccessRequestListResponse(BaseModel):

@@ -213,6 +213,37 @@ def test_count_missing_token_returns_401(unauthed_client: TestClient) -> None:
     assert resp.status_code == 401
 
 
+def test_count_grouped_by_status(filer_client: TestClient) -> None:
+    """group_by=status returns the whole breakdown in one call; total is the sum."""
+    filed = _file_request(filer_client)
+    filer_client.post(f"/access-requests/{filed['id']}:withdraw")
+    resp = filer_client.get("/access-requests/count?group_by=status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["by_status"] == {"withdrawn": 1}
+    assert body["count"] == 1
+
+
+def test_count_grouped_with_status_narrows_to_that_key(filer_client: TestClient) -> None:
+    _file_request(filer_client)
+    resp = filer_client.get("/access-requests/count?group_by=status&status=approved")
+    assert resp.status_code == 200
+    assert resp.json() == {"count": 0, "by_status": {}}
+
+
+def test_count_rejects_unknown_group_by(filer_client: TestClient) -> None:
+    resp = filer_client.get("/access-requests/count?group_by=actor")
+    assert resp.status_code == 422
+
+
+def test_count_ungrouped_omits_by_status(filer_client: TestClient) -> None:
+    """The plain badge shape stays lean — no breakdown unless asked for."""
+    _file_request(filer_client)
+    body = filer_client.get("/access-requests/count").json()
+    assert body["count"] == 1
+    assert body.get("by_status") is None
+
+
 # --- Filer-owner enrichment ---
 
 

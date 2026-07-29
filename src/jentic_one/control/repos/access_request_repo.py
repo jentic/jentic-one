@@ -194,6 +194,28 @@ class AccessRequestRepository:
         return int(result.scalar_one())
 
     @staticmethod
+    async def count_by_status(
+        session: AsyncSession,
+        *,
+        actor_id: str | None = None,
+        filters: Sequence[ColumnElement[bool]] | None = None,
+    ) -> dict[str, int]:
+        """Count requests per stored status, under the same predicates as :meth:`count`.
+
+        One ``GROUP BY status`` instead of one ``COUNT(*)`` per status, so a
+        consumer rendering several status segments (queue tabs, badges) pays a
+        single query for the whole breakdown. Statuses with no rows are simply
+        absent — callers decide which keys they care about.
+        """
+        stmt = select(AccessRequest.status, func.count()).group_by(AccessRequest.status)
+        if actor_id is not None:
+            stmt = stmt.where(AccessRequest.actor_id == actor_id)
+        for f in filters or ():
+            stmt = stmt.where(f)
+        result = await session.execute(stmt)
+        return {str(status): int(n) for status, n in result.all()}
+
+    @staticmethod
     async def withdraw(
         session: AsyncSession,
         request_id: str,

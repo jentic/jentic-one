@@ -383,6 +383,28 @@ class AccessRequestService:
                 filters=access_filters,
             )
 
+    async def count_by_status(
+        self,
+        *,
+        identity: Identity,
+        actor_id: str | None = None,
+    ) -> dict[str, int]:
+        """Count visible access requests per stored status, in one query.
+
+        The grouped companion to :meth:`count` for consumers that render a
+        breakdown (per-status queue segments): same visibility filter, one
+        ``GROUP BY`` instead of a ``COUNT(*)`` per status. Keys are stored
+        statuses — the derived ``expired`` presentation status never appears
+        (those rows count under ``pending``, exactly like the list filter).
+        """
+        access_filters = build_access_filters(identity, AccessRequest)
+        async with self._ctx.control_db.session() as session:
+            return await AccessRequestRepository.count_by_status(
+                session,
+                actor_id=actor_id,
+                filters=access_filters,
+            )
+
     async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
         """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
 

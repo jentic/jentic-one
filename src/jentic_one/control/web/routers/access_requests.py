@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 
 from jentic_one.control.services.access_requests.schemas.access_requests import (
@@ -129,12 +131,19 @@ async def list_access_requests(
     )
 
 
-@router.get("/access-requests/count", summary="Count access requests")
+@router.get(
+    "/access-requests/count",
+    summary="Count access requests",
+    # Keep the plain badge shape `{count}` — `by_status` only appears when
+    # `group_by=status` is requested, instead of a permanent `null` field.
+    response_model_exclude_none=True,
+)
 async def count_access_requests(
     identity: Identity = get_current_identity(),
     svc: AccessRequestService = Depends(get_access_request_service),
     actor_id: str | None = None,
     status: str | None = None,
+    group_by: Literal["status"] | None = None,
 ) -> AccessRequestCountResponse:
     """Count access requests without hydrating a page.
 
@@ -145,7 +154,18 @@ async def count_access_requests(
     page-size cap on the number. ``status`` matches the stored value, like
     the list filter: a pending request past its expiry (presented as the
     derived ``expired`` status) still counts as ``pending``.
+
+    With ``group_by=status`` the response additionally carries ``by_status``
+    — one ``GROUP BY`` query for the whole breakdown, so a consumer rendering
+    several status segments doesn't poll the endpoint once per status.
+    ``status`` still applies as a predicate, so combining both simply narrows
+    the breakdown to that one key.
     """
+    if group_by == "status":
+        by_status = await svc.count_by_status(identity=identity, actor_id=actor_id)
+        if status is not None:
+            by_status = {k: v for k, v in by_status.items() if k == status}
+        return AccessRequestCountResponse(count=sum(by_status.values()), by_status=by_status)
     count = await svc.count(identity=identity, actor_id=actor_id, status=status)
     return AccessRequestCountResponse(count=count)
 

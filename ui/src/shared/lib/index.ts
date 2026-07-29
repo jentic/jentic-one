@@ -12,6 +12,7 @@
 export {
 	listAccessRequests,
 	countAccessRequests,
+	countAccessRequestsByStatus,
 	getAccessRequest,
 	decideAccessRequest,
 	decideAllPending,

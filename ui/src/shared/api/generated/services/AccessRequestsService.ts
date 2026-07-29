@@ -85,15 +85,23 @@ export class AccessRequestsService {
      * page-size cap on the number. ``status`` matches the stored value, like
      * the list filter: a pending request past its expiry (presented as the
      * derived ``expired`` status) still counts as ``pending``.
+     *
+     * With ``group_by=status`` the response additionally carries ``by_status``
+     * — one ``GROUP BY`` query for the whole breakdown, so a consumer rendering
+     * several status segments doesn't poll the endpoint once per status.
+     * ``status`` still applies as a predicate, so combining both simply narrows
+     * the breakdown to that one key.
      * @returns AccessRequestCountResponse Successful Response
      * @throws ApiError
      */
     public static countAccessRequests({
         actorId,
         status,
+        groupBy,
     }: {
         actorId?: (string | null),
         status?: (string | null),
+        groupBy?: (string | null),
     }): CancelablePromise<AccessRequestCountResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -101,6 +109,7 @@ export class AccessRequestsService {
             query: {
                 'actor_id': actorId,
                 'status': status,
+                'group_by': groupBy,
             },
             errors: {
                 400: `Bad Request`,

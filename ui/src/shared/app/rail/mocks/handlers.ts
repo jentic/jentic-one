@@ -388,10 +388,15 @@ export const railEventsHandlers = [
 		const url = new URL(request.url);
 		const status = url.searchParams.get('status');
 		const actorId = url.searchParams.get('actor_id');
-		const count = accessRequests.filter(
+		const matching = accessRequests.filter(
 			(r) => (!status || r.status === status) && (!actorId || r.actor_id === actorId),
-		).length;
-		return HttpResponse.json({ count });
+		);
+		if (url.searchParams.get('group_by') === 'status') {
+			const byStatus: Record<string, number> = {};
+			for (const r of matching) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
+			return HttpResponse.json({ count: matching.length, by_status: byStatus });
+		}
+		return HttpResponse.json({ count: matching.length });
 	}),
 	// Access-request decision flow (the rail's real "feed the agent back" path).
 	// The `:decide` verb shares its prefix with the bare GET, so match it first

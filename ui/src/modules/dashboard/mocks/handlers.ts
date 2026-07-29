@@ -268,7 +268,12 @@ export const dashboardHandlers = [
 	http.get('/access-requests/count', ({ request }) => {
 		const url = new URL(request.url);
 		const status = url.searchParams.get('status');
-		if (status !== 'pending' || url.searchParams.has('actor_id')) return undefined;
+		if (
+			status !== 'pending' ||
+			url.searchParams.has('actor_id') ||
+			url.searchParams.has('group_by')
+		)
+			return undefined;
 		return HttpResponse.json({ count: dashboardPendingAccessRequests.length });
 	}),
 

@@ -223,6 +223,17 @@ async def test_count_matches_list_predicates(
             )
             == 0
         )
+        by_status = await AccessRequestRepository.count_by_status(session)
+        assert by_status == {"pending": 3}
+        assert await AccessRequestRepository.count_by_status(session, actor_id="actor_b") == {
+            "pending": 1
+        }
+        assert (
+            await AccessRequestRepository.count_by_status(
+                session, filters=[AccessRequest.created_by == "nobody"]
+            )
+            == {}
+        )
         await session.commit()
 
 
