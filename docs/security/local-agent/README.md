@@ -1,6 +1,8 @@
 # Running local coding agents on the credential boundary
 
-> **Status:** analysis / design exploration. Not yet a committed plan.
+> **Status:** implemented and shipping in the `jentic` CLI (account creation,
+> `jentic run` with per-session confinement, directory grants, and `jentic
+> reset`). Two follow-ups remain deferred and are called out as such below.
 
 Jentic One keeps third-party credentials off the *network* path (the Broker
 injects them; the agent only sees responses). But the one-line install lands most
