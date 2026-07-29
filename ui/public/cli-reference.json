@@ -5,7 +5,7 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? Run `jentic register` to create an agent, then browse the catalog\nwith `jentic apis`. To install and operate jentic-one locally, use the\n`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? Run `jentic bootstrap` to create an agent, then browse the catalog\nwith `jentic apis`. To install and operate jentic-one locally, use the\n`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
       "commands": [
         {
           "name": "bootstrap",

@@ -100,7 +100,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 		"catalog. Register and switch agent identities, browse and import APIs from\n" +
 		"the public catalog into your local registry, inspect operations, and execute\n" +
 		"against them.\n\n" +
-		"New here? Run `jentic register` to create an agent, then browse the catalog\n" +
+		"New here? Run `jentic bootstrap` to create an agent, then browse the catalog\n" +
 		"with `jentic apis`. To install and operate jentic-one locally, use the\n" +
 		"`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic <command> --help` for details."
 

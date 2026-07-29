@@ -29,7 +29,7 @@ cobra definitions (`make cli-reference`) and rendered in the platform docs —
 open `/app/docs` on your deployment (Reference → CLI). This README covers
 building, onboarding, and operating; it does not duplicate per-flag docs.
 
-**New here?** Run `jenticctl install` to set up locally, then `jentic register`
+**New here?** Run `jenticctl install` to set up locally, then `jentic bootstrap`
 to create an agent.
 
 ## Build
