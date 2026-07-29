@@ -87,6 +87,51 @@ func TestSurveyResetPlan(t *testing.T) {
 	}
 }
 
+// TestSurveyResetNestedLeafNotTraversed guards the overlap bug: when a dir is
+// granted directly AND is an ancestor of a deeper leaf grant, it must appear ONLY
+// as a leaf ACL, never also as a traverse ancestor of the deeper grant. It carries
+// the rwx leaf ACE, not a bare execute ACE — so a traverse revoke on it (`chmod -a
+// … allow execute`) would error "Entry not found" and abort the whole teardown.
+func TestSurveyResetNestedLeafNotTraversed(t *testing.T) {
+	home := "/Users/alice"
+	entry := config.LocalAgent{
+		User: "alice-local-agent",
+		GrantedDirs: []string{
+			"/Users/alice/workspace",             // leaf grant AND ancestor of the next
+			"/Users/alice/workspace/github/repo", // deeper leaf grant
+		},
+	}
+	plan := surveyReset(context.Background(), "alice", home, "claude", entry)
+
+	for _, acl := range plan.acls {
+		if acl.traverse && acl.dir == "/Users/alice/workspace" {
+			t.Errorf("a dir that is itself a leaf grant must not also be a traverse ancestor: %q", acl.dir)
+		}
+	}
+	// It must still be present as a leaf, and the genuine (non-leaf) ancestors of
+	// the deeper grant — the home and the intermediate `github` — are traverses.
+	var leaves, traverses []string
+	for _, acl := range plan.acls {
+		if acl.traverse {
+			traverses = append(traverses, acl.dir)
+		} else {
+			leaves = append(leaves, acl.dir)
+		}
+	}
+	if len(leaves) != 2 {
+		t.Errorf("expected 2 leaf grants, got %v", leaves)
+	}
+	wantTraverse := map[string]bool{"/Users/alice": true, "/Users/alice/workspace/github": true}
+	for _, tr := range traverses {
+		if !wantTraverse[tr] {
+			t.Errorf("unexpected traverse ancestor %q", tr)
+		}
+	}
+	if len(traverses) != len(wantTraverse) {
+		t.Errorf("traverse ancestors = %v, want keys of %v", traverses, wantTraverse)
+	}
+}
+
 // TestSurveyResetDefaultsUser falls back to the derived <operator>-local-agent
 // name when the config entry has no user recorded.
 func TestSurveyResetDefaultsUser(t *testing.T) {
@@ -145,12 +190,14 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	}
 
 	// Best-effort steps: the home step (a macOS home has SIP/TCC-protected files
-	// nobody can chown/remove) and the leaf read/write revoke (its recursive macOS
-	// `chmod -a` exits non-zero on subtree entries that don't carry the exact ACE).
-	// Both must not abort the teardown; nothing else is best-effort.
+	// nobody can chown/remove) and both ACL revokes (their macOS `chmod -a` exits
+	// non-zero on entries that don't carry the exact ACE — subtree entries for the
+	// recursive leaf revoke, a drifted/re-shaped ancestor for the traverse revoke).
+	// None must abort the teardown; nothing else is best-effort.
 	for _, s := range steps {
 		wantBestEffort := strings.Contains(s.What, "the agent's home") ||
-			strings.Contains(s.What, "read/write grant on")
+			strings.Contains(s.What, "read/write grant on") ||
+			strings.Contains(s.What, "traverse grant on")
 		if s.BestEffort != wantBestEffort {
 			t.Errorf("step %q BestEffort=%v, want %v", s.What, s.BestEffort, wantBestEffort)
 		}

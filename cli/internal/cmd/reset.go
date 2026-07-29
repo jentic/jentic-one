@@ -429,6 +429,17 @@ func surveyReset(ctx context.Context, operator, operatorHome, agentID string, en
 	var acls []aclRemoval
 	seenTraverse := map[string]bool{}
 
+	// A dir that is itself a leaf grant must never also be treated as a traverse
+	// ancestor of a deeper leaf grant (e.g. `.../workspace` granted directly and
+	// also on the chain to `.../workspace/Github/repo`). It carries the rwx leaf
+	// ACE, not a bare execute ACE, so the leaf revoke below removes it — issuing a
+	// traverse revoke (`chmod -a … allow execute`) on the same dir would error
+	// "Entry not found" and abort the teardown.
+	leafDirs := make(map[string]bool, len(entry.GrantedDirs))
+	for _, dir := range entry.GrantedDirs {
+		leafDirs[dir] = true
+	}
+
 	for _, dir := range entry.GrantedDirs {
 		acls = append(acls, aclRemoval{
 			traverse: false,
@@ -436,10 +447,11 @@ func surveyReset(ctx context.Context, operator, operatorHome, agentID string, en
 			present:  localagent.AgentACLPresent(ctx, agentUser, dir),
 		})
 		// Ancestor traverse grants: walk home→leaf and record each ancestor that
-		// still carries the agent's execute ACL. Deduped across all granted dirs.
+		// still carries the agent's execute ACL. Deduped across all granted dirs,
+		// and skipping any ancestor that is itself a leaf grant (handled above).
 		if operatorHome != "" && localagent.IsUnderHome(operatorHome, dir) {
 			for _, anc := range localagent.AncestorChain(operatorHome, dir) {
-				if seenTraverse[anc] {
+				if seenTraverse[anc] || leafDirs[anc] {
 					continue
 				}
 				seenTraverse[anc] = true
@@ -501,6 +513,12 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		steps = append(steps, localagent.AccountStep{
 			What: "remove traverse grant on " + acl.dir,
 			Cmd:  localagent.TraverseRevokeCmd(plan.user, acl.dir),
+			// Best-effort, for the same reason the leaf revoke is: the ancestor may
+			// no longer carry the exact execute-only ACE (drifted off disk, or a
+			// deeper grant re-shaped it), and macOS `chmod -a` exits non-zero on a
+			// missing entry. That residual is benign — the ACE is already absent —
+			// and must not abort the teardown before the account is gone.
+			BestEffort: true,
 		})
 	}
 
