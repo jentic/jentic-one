@@ -51,8 +51,16 @@ class Claim(StrEnum):
 
     SUB = "sub"
     EXP = "exp"
+    ISS = "iss"
     ACTOR_TYPE = "actor_type"
     SCOPES = "scopes"
+
+
+# Dedup for the missing-actor_type warning: one line per (iss, sub) instead of
+# one per request, so a steady issuer that omits the claim doesn't flood the
+# logs. Bounded — reset wholesale rather than tracking recency.
+_MISSING_ACTOR_TYPE_SEEN: set[tuple[str, str]] = set()
+_MISSING_ACTOR_TYPE_SEEN_MAX = 1024
 
 
 def looks_like_jwt(token: str) -> bool:
@@ -89,36 +97,60 @@ class JwtVerifier:
 
 @dataclass(frozen=True, slots=True)
 class JwtTokenValidator:
-    """Validates a self-contained signed JWT into an ``Identity`` (no DB lookup)."""
+    """Validates a self-contained signed JWT into an ``Identity`` (no DB lookup).
+
+    ``actor_type`` claim handling (#864): a missing claim defaults to the
+    least-privileged AGENT (external trusted issuers have no claims contract
+    requiring it) and is logged; an unrecognised value is refused outright.
+    """
 
     verifier: TokenVerifier
 
     async def validate(self, token: str) -> Identity:
+        """Verify the JWT and map its claims to an ``Identity`` (fails closed)."""
         claims = self.verifier.verify(token)
         sub = claims.get(Claim.SUB)
         exp = claims.get(Claim.EXP)
         if not isinstance(sub, str) or not isinstance(exp, int | float):
             raise ValueError("jwt_missing_required_claims")
+        iss = str(claims.get(Claim.ISS, ""))
 
         actor_type_raw = claims.get(Claim.ACTOR_TYPE)
         if actor_type_raw is None:
             # Unlike the shared admin gate (#862), the broker's JWT producers
             # include *external* trusted issuers with no published claims
             # contract requiring actor_type, so a missing claim keeps the
-            # least-privileged AGENT default. Log it so operators can see
-            # which issuers omit the claim before any future hard refusal.
-            logger.warning("jwt_actor_type_missing_defaulting_to_agent", sub=sub)
+            # least-privileged AGENT default. Log it (deduped per issuer/sub)
+            # so operators can see which issuers omit the claim before any
+            # future hard refusal. Same event name as the shared gate so both
+            # aggregate together; ``outcome`` tells the two behaviours apart.
+            if (iss, sub) not in _MISSING_ACTOR_TYPE_SEEN:
+                if len(_MISSING_ACTOR_TYPE_SEEN) >= _MISSING_ACTOR_TYPE_SEEN_MAX:
+                    _MISSING_ACTOR_TYPE_SEEN.clear()
+                _MISSING_ACTOR_TYPE_SEEN.add((iss, sub))
+                logger.warning(
+                    "jwt_actor_type_missing",
+                    sub=sub,
+                    iss=iss,
+                    outcome="defaulted_to_agent",
+                )
             actor_type = ActorType.AGENT
         else:
             try:
                 actor_type = ActorType(str(actor_type_raw))
-            except ValueError:
+            except ValueError as exc:
                 # An unrecognised value is a malformed token, not a contract
                 # gap — refuse it deliberately (#864) with the same error
                 # shape as any other invalid JWT instead of letting the enum
-                # constructor's ValueError escape by accident.
-                logger.warning("jwt_actor_type_unknown", sub=sub, actor_type=str(actor_type_raw))
-                raise ValueError("jwt_unknown_actor_type") from None
+                # constructor's ValueError escape by accident. The claim value
+                # is attacker-influenced: truncate it before logging.
+                logger.warning(
+                    "jwt_actor_type_unknown",
+                    sub=sub,
+                    iss=iss,
+                    actor_type=str(actor_type_raw)[:64],
+                )
+                raise ValueError("jwt_actor_type_unknown") from exc
 
         scopes_raw = claims.get(Claim.SCOPES, [])
         permissions = [str(s) for s in scopes_raw] if isinstance(scopes_raw, list) else []

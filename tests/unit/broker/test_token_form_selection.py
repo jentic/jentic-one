@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+from structlog.testing import capture_logs
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth import (
@@ -14,6 +15,7 @@ from jentic_one.broker.services.auth import (
     JwtVerifier,
     looks_like_jwt,
 )
+from jentic_one.broker.services.auth.token_validation import _MISSING_ACTOR_TYPE_SEEN
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
@@ -140,6 +142,24 @@ async def test_jwt_without_actor_type_defaults_to_agent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_actor_type_warning_is_deduped_per_issuer_sub() -> None:
+    """The missing-claim warning fires once per (iss, sub), not per request."""
+    _MISSING_ACTOR_TYPE_SEEN.clear()
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "iss": "https://idp.example"})
+
+    with capture_logs() as logs:
+        await validator.validate(token)
+        await validator.validate(token)
+
+    missing = [log for log in logs if log["event"] == "jwt_actor_type_missing"]
+    assert len(missing) == 1
+    assert missing[0]["iss"] == "https://idp.example"
+    assert missing[0]["outcome"] == "defaulted_to_agent"
+
+
+@pytest.mark.asyncio
 async def test_jwt_with_explicit_actor_type_is_honoured() -> None:
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
@@ -150,15 +170,25 @@ async def test_jwt_with_explicit_actor_type_is_honoured() -> None:
     assert resolved.actor_type == ActorType.USER
 
 
+@pytest.mark.parametrize(
+    "bad_actor_type",
+    [
+        "definitely-not-a-real-actor",
+        "AGENT",  # StrEnum values are case-sensitive
+        "",  # empty string is unknown, not missing
+        5,
+        ["agent"],
+    ],
+)
 @pytest.mark.asyncio
-async def test_jwt_with_unknown_actor_type_is_rejected() -> None:
+async def test_jwt_with_unknown_actor_type_is_rejected(bad_actor_type: object) -> None:
     """An unrecognised actor_type is refused deliberately (#864), with the same
     ValueError shape as any other invalid JWT — never a bare enum error."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
-    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": "definitely-not-a-real-actor"})
+    token = _sign({"sub": "agnt_jwt", "exp": exp, "actor_type": bad_actor_type})
 
-    with pytest.raises(ValueError, match="jwt_unknown_actor_type"):
+    with pytest.raises(ValueError, match="jwt_actor_type_unknown"):
         await validator.validate(token)
 
 
