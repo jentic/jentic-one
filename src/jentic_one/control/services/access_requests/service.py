@@ -21,6 +21,7 @@ from jentic_one.control.services.access_requests.effects import (
     EffectPhase,
     admin_effect_keys,
     classify_effect,
+    plan_chain_ref_key,
 )
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
@@ -442,7 +443,15 @@ class AccessRequestService:
             items_by_id = {item.id: item for item in request.items}
             # A request is a provisioning plan when it carries fulfilment intents;
             # its bind items are only satisfiable after the wizard fulfils them, so
-            # validate() denies an unfulfilled bind with a plan-aware reason.
+            # validate() denies an unfulfilled bind with a plan-aware reason. The
+            # intents' API references let validate() attribute each bind to its
+            # own chain — plain binds to other APIs keep non-plan semantics.
+            plan_chain_refs = frozenset(
+                key
+                for it in request.items
+                if (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS
+                and (key := plan_chain_ref_key(it.resource_reference)) is not None
+            )
             is_plan = any(
                 (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS for it in request.items
             )
@@ -481,6 +490,7 @@ class AccessRequestService:
                                 identity=identity,
                                 control_session=session,
                                 is_provisioning_plan=is_plan,
+                                plan_chain_refs=plan_chain_refs,
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -518,6 +528,7 @@ class AccessRequestService:
                         identity=identity,
                         control_session=session,
                         is_provisioning_plan=is_plan,
+                        plan_chain_refs=plan_chain_refs,
                     )
 
                 phase = classify_effect(target.resource_type, target.action)

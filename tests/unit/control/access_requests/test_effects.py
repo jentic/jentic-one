@@ -918,9 +918,9 @@ async def test_validate_credential_bind_in_plan_passes_when_fulfilled(
 async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled(
     effects_repo: MagicMock,
 ) -> None:
-    # A reference-only toolkit:bind in a plan whose reference does NOT resolve
-    # (the plan's own toolkit doesn't exist yet — the wizard hasn't created it)
-    # must be denied with the plan-aware reason, not the raw resolution error.
+    # A CHAIN-OWNED reference-only toolkit:bind (its reference matches a
+    # fulfilment intent's) targets the toolkit the wizard is yet to create —
+    # deny with the plan-aware reason, without attempting resolution.
     effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
     ctx = _make_ctx()
     session = _make_session()
@@ -938,7 +938,39 @@ async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled(
             identity=_make_identity(),
             control_session=session,
             is_provisioning_plan=True,
+            plan_chain_refs=frozenset({("acme", "widgets", None)}),
         )
+    effects_repo.resolve_toolkits_for_api.assert_not_awaited()
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_chain_owned_bind_never_half_wires_to_preexisting_toolkit(
+    effects_repo: MagicMock,
+) -> None:
+    # Even when a PRE-EXISTING toolkit serves the same API, a chain-owned bind
+    # must NOT resolve to it: approving it plain would wire the agent to the
+    # old toolkit while the rest of its chain (the new toolkit + credential)
+    # is denied — a half-wired grant. The plan-aware denial must win.
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_preexisting"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            is_provisioning_plan=True,
+            plan_chain_refs=frozenset({("acme", "widgets", None)}),
+        )
+    effects_repo.resolve_toolkits_for_api.assert_not_awaited()
 
 
 @patch(f"{_MODULE}.EffectsRepository")
@@ -946,8 +978,9 @@ async def test_validate_toolkit_bind_in_plan_passes_when_reference_resolves(
     effects_repo: MagicMock,
 ) -> None:
     # A composite request can mix plan chains with PLAIN reference binds to
-    # toolkits that already exist. Such a bind is satisfiable exactly as filed,
-    # so the plan context must not auto-deny it (the mixed-composite fix).
+    # toolkits that already exist. A bind whose API no chain provisions is
+    # satisfiable exactly as filed, so the plan context must not auto-deny it
+    # (the mixed-composite fix).
     effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_existing"])
     ctx = _make_ctx()
     session = _make_session()
@@ -964,4 +997,58 @@ async def test_validate_toolkit_bind_in_plan_passes_when_reference_resolves(
         identity=_make_identity(),
         control_session=session,
         is_provisioning_plan=True,
+        plan_chain_refs=frozenset({("othercorp", "api", None)}),
     )
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_plain_bind_in_composite_keeps_ambiguity_pending(
+    effects_repo: MagicMock,
+) -> None:
+    # An AMBIGUOUS plain reference inside a composite keeps the documented
+    # non-plan semantics: it raises (so the item stays pending for amendment)
+    # instead of being converted into a misleading plan denial.
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_1", "tk_2"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    with pytest.raises(ToolkitReferenceAmbiguousError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            is_provisioning_plan=True,
+            plan_chain_refs=frozenset({("othercorp", "api", None)}),
+        )
+
+
+async def test_validate_vendorless_bind_in_plan_denies_with_plan_reason() -> None:
+    # A malformed (vendor-less) reference can't be attributed to a chain OR
+    # resolved. It must get the plan-aware denial — never a bare ValueError,
+    # which would escape decide()'s deny-with-reason handling and strand the
+    # whole request pending behind a server error.
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"name": "widgets"},
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            is_provisioning_plan=True,
+            plan_chain_refs=frozenset({("acme", "widgets", None)}),
+        )

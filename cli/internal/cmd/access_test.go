@@ -99,6 +99,15 @@ func TestAccessRequestCompose(t *testing.T) {
 			t.Fatalf("err = %v, want duplicate rejection", err)
 		}
 	})
+	t.Run("raw-domain and slug spellings of the same API collide", func(t *testing.T) {
+		// The server slugifies vendor/name (httpbin.org -> httpbin-org); the
+		// CLI's dedup key mirrors that so both spellings can't file two chains
+		// the server would treat as one API.
+		opts := &accessRequestOptions{provisions: []string{"httpbin.org/http", "httpbin-org/http"}}
+		if _, err := opts.compose(); err == nil || !strings.Contains(err.Error(), "more than once") {
+			t.Fatalf("err = %v, want slug-collision rejection", err)
+		}
+	})
 	t.Run("same API in toolkit and provision rejected", func(t *testing.T) {
 		opts := &accessRequestOptions{provisions: []string{"x.com/api"}, toolkits: []string{"x.com/api"}}
 		if _, err := opts.compose(); err == nil || !strings.Contains(err.Error(), "both --toolkit and --provision") {

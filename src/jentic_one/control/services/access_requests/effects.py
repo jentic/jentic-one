@@ -40,6 +40,31 @@ logger = structlog.get_logger(__name__)
 EffectResult = CredentialBindEffect | ToolkitBindEffect | ScopeGrantEffect | SkippedEffect
 
 
+def plan_chain_ref_key(
+    reference: dict[str, Any] | None,
+) -> tuple[str, str | None, str | None] | None:
+    """Canonical ``(vendor, name, version)`` key for chain attribution.
+
+    A provisioning plan's fulfilment intents and the bind items of the same
+    chain are stamped with the same API ``resource_reference`` (the CLI
+    guarantees this). Slugified so raw-domain and slug spellings of the same
+    vendor/name compare equal (see issue #656). ``None`` when the reference is
+    missing or has no vendor — an unattributable bind, treated as chain-owned
+    by ``validate()`` (the conservative, pre-composite behavior).
+    """
+    ref = reference or {}
+    vendor = ref.get("vendor")
+    if not vendor:
+        return None
+    name = ref.get("name")
+    version = ref.get("version")
+    return (
+        slugify_api_field(str(vendor)),
+        slugify_api_field(str(name)) if name else None,
+        str(version) if version else None,
+    )
+
+
 class EffectPhase(enum.Enum):
     """Which transaction phase applies an effect.
 
@@ -157,6 +182,7 @@ class EffectApplicator:
         identity: Identity,
         control_session: Any,
         is_provisioning_plan: bool = False,
+        plan_chain_refs: frozenset[tuple[str, str | None, str | None]] = frozenset(),
     ) -> None:
         """Validate an approved item's effect can be applied — without writing.
 
@@ -168,11 +194,13 @@ class EffectApplicator:
         the only safe place to fail is up front.
 
         ``is_provisioning_plan`` is set by ``decide()`` when the item's request
-        also carries fulfilment intents (``toolkit:create`` / ``credential:provision``).
-        A bind item in such a plan that hasn't been fulfilled (no ``to_id`` /
-        ``resource_id`` stamped by the wizard) is denied with a plan-aware,
-        actionable reason rather than the cryptic "to_id missing" / "no toolkit
-        serves API" a plain approval would otherwise surface.
+        also carries fulfilment intents (``toolkit:create`` / ``credential:provision``);
+        ``plan_chain_refs`` carries those intents' canonical API references (see
+        :func:`plan_chain_ref_key`) so a bind can be attributed to its own chain.
+        A chain's bind that hasn't been fulfilled (no ``to_id`` / ``resource_id``
+        stamped by the wizard) is denied with a plan-aware, actionable reason
+        rather than the cryptic "to_id missing" / "no toolkit serves API" a plain
+        approval would otherwise surface.
         """
         key = (item.resource_type, item.action)
         if key == ("credential", "bind"):
@@ -194,28 +222,26 @@ class EffectApplicator:
             if item.rules:
                 raise RulesNotSupportedForBindError(item.resource_type, item.action)
             if is_provisioning_plan and not (item.resource_id or item.to_id):
-                # A plan's own agent binding targets the toolkit the wizard
-                # creates, so its reference resolves only after fulfilment (the
-                # credential→toolkit binding isn't visible to the reference join
-                # until the credential:bind applies later in the same decision).
-                # But a composite request can mix plan chains with PLAIN
-                # reference binds to toolkits that already exist — those are
-                # satisfiable exactly as filed, and denying them because a
-                # sibling chain made the request "a plan" would reject a good
-                # item. Try the resolution: only a reference that doesn't
-                # resolve to one visible toolkit gets the plan-aware denial.
-                try:
-                    await self._resolve_toolkit_bind_target(
-                        item, identity=identity, session=control_session
-                    )
-                except (
-                    ToolkitReferenceUnresolvedError,
-                    ToolkitReferenceAmbiguousError,
-                ) as exc:
-                    raise ProvisioningPlanNotFulfilledError(
-                        item.resource_type, item.action
-                    ) from exc
-                return
+                # A composite request can mix plan chains with PLAIN reference
+                # binds to toolkits that already exist. Attribute the bind by
+                # its API reference:
+                #
+                # - CHAIN-OWNED (its reference matches a fulfilment intent's,
+                #   or is missing/unattributable): the binding targets the
+                #   toolkit the wizard is yet to create. Resolving the
+                #   reference NOW could only find a PRE-EXISTING toolkit for
+                #   the same API and half-wire the agent to it while the rest
+                #   of its chain is denied — so deny with the plan-aware
+                #   reason; the wizard amends concrete ids before approving.
+                # - PLAIN (references an API no chain provisions): satisfiable
+                #   exactly as filed — keep the non-plan semantics unchanged:
+                #   resolvable passes; no visible toolkit denies with the
+                #   plain unresolved reason; an AMBIGUOUS reference raises so
+                #   the item stays pending for amendment (see
+                #   _UNFULFILLABLE_BIND_TARGET's deliberate exclusions).
+                ref_key = plan_chain_ref_key(item.resource_reference)
+                if ref_key is None or ref_key in plan_chain_refs:
+                    raise ProvisioningPlanNotFulfilledError(item.resource_type, item.action)
             await self._resolve_toolkit_bind_target(
                 item, identity=identity, session=control_session
             )

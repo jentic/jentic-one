@@ -510,4 +510,66 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		expect(denied.sort()).toEqual(['b1', 'b2', 'b3', 'b4']);
 		expect(decisions.filter((d) => d.decision === 'approved')).toHaveLength(5);
 	});
+
+	it('backing into a skipped chain lets the operator include it again', async () => {
+		let decideBody: unknown;
+		const request = stubComposite({ onDecide: (b) => (decideBody = b) });
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Fulfil chain 1, skip chain 2, then change your mind from review.
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /Next API/ }));
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
+		await screen.findByText(/skipped — will be denied/);
+		await user.click(screen.getByRole('button', { name: /Back/ }));
+
+		// The skipped chain's step offers the un-skip affordance; taking it
+		// restores the normal create flow, and fulfilment proceeds as usual.
+		await user.click(await screen.findByRole('button', { name: /Include this API/ }));
+		await user.click(await screen.findByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+		expect(screen.queryByText(/skipped — will be denied/)).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// Nothing is denied — the un-skipped chain was fulfilled and approved.
+		const decisions = (decideBody as { items: { decision: string }[] }).items;
+		expect(decisions).toHaveLength(9);
+		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
+	});
+
+	it('persists the draft to sessionStorage so a same-tab redirect can resume', async () => {
+		const request = stubComposite();
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByRole('button', { name: /Next API/ });
+
+		// The draft (with the created toolkit id) must be in sessionStorage —
+		// a module-scoped map would not survive the OAuth popup-blocked
+		// same-tab redirect fallback. (The persist effect is passive; wait
+		// for it to flush.)
+		await waitFor(() => {
+			expect(sessionStorage.getItem('jentic.provisioningWizardDrafts')).not.toBeNull();
+		});
+		const raw = sessionStorage.getItem('jentic.provisioningWizardDrafts');
+		const stored = JSON.parse(raw!) as Record<
+			string,
+			{ chains: { key: string; toolkitId: string | null }[] }
+		>;
+		const draft = stored[request.id];
+		expect(draft).toBeDefined();
+		expect(draft.chains[0].toolkitId).toBe('tk_chain_1');
+		expect(draft.chains[0].key).toContain('open-meteo-com');
+	});
 });

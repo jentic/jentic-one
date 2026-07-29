@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -340,15 +341,29 @@ func canonicalRefKeys(flag string, values []string) ([]string, error) {
 }
 
 // refKey renders a parsed reference back to its canonical vendor/name[/version]
-// string, used to match keyed --auth/--rules-json values to their chain.
+// string, used to match keyed --auth/--rules-json values to their chain and to
+// reject duplicates. Vendor/name are slugified exactly like the server does
+// (jentic_one.shared.models.api_identity.slugify_api_field), so raw-domain and
+// slug spellings of the same API ("httpbin.org" vs "httpbin-org") collide here
+// instead of filing as two distinct chains that the server would then merge.
 func refKey(ref map[string]any) string {
 	vendor, _ := ref["vendor"].(string)
 	name, _ := ref["name"].(string)
-	key := vendor + "/" + name
+	key := slugifyAPIField(vendor) + "/" + slugifyAPIField(name)
 	if version, ok := ref["version"].(string); ok && version != "" {
 		key += "/" + version
 	}
 	return key
+}
+
+var apiSlugRe = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// slugifyAPIField mirrors the server's canonical slug form for API vendor/name
+// fields: lowercase, strip, runs of non-[a-z0-9-] become a single hyphen,
+// leading/trailing hyphens trimmed.
+func slugifyAPIField(value string) string {
+	slug := apiSlugRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "-")
+	return strings.Trim(slug, "-")
 }
 
 // resolveKeyedValues maps repeatable per-API option values (--auth,

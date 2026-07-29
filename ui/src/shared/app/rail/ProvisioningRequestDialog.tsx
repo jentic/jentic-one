@@ -78,6 +78,8 @@ type Outcome = 'granted' | 'error';
 
 /** Per-chain fulfilment progress — one entry per provisioning chain. */
 interface ChainProgress {
+	/** The chain's `PlanChain.key` — aligns restored drafts to the right API. */
+	key: string;
 	toolkitId: string | null;
 	toolkitName: string;
 	toolkitNameEdited: boolean;
@@ -100,10 +102,54 @@ interface WizardDraft {
  * mount path (AccessRequestDecisionDialog) UNMOUNTS it on close, so component
  * state alone would evaporate on "Keep & finish later" — reopening would then
  * create a SECOND toolkit/credential, accumulating exactly the orphans the
- * discard flow exists to prevent. Kept in module scope (not storage): drafts
- * reference server objects created this session and shouldn't outlive it.
+ * discard flow exists to prevent. Backed by sessionStorage (best-effort,
+ * per-tab, gone when the tab closes): the OAuth connect flow can fall back to
+ * a SAME-TAB redirect when the popup is blocked, and a module-scoped map
+ * would not survive that full-page navigation — every chain's created
+ * toolkit/credential id would be lost mid-fulfilment.
  */
-const wizardDrafts = new Map<string, WizardDraft>();
+const DRAFTS_STORAGE_KEY = 'jentic.provisioningWizardDrafts';
+
+function loadDrafts(): Map<string, WizardDraft> {
+	try {
+		const raw = sessionStorage.getItem(DRAFTS_STORAGE_KEY);
+		if (!raw) return new Map();
+		return new Map(Object.entries(JSON.parse(raw) as Record<string, WizardDraft>));
+	} catch {
+		return new Map();
+	}
+}
+
+function saveDrafts(drafts: Map<string, WizardDraft>): void {
+	try {
+		if (drafts.size === 0) {
+			sessionStorage.removeItem(DRAFTS_STORAGE_KEY);
+			return;
+		}
+		sessionStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(drafts)));
+	} catch {
+		// Quota/privacy-mode failures degrade to in-memory-only drafts.
+	}
+}
+
+const drafts = loadDrafts();
+
+const wizardDrafts = {
+	get(id: string): WizardDraft | undefined {
+		return drafts.get(id);
+	},
+	set(id: string, draft: WizardDraft): void {
+		drafts.set(id, draft);
+		saveDrafts(drafts);
+	},
+	delete(id: string): void {
+		if (drafts.delete(id)) saveDrafts(drafts);
+	},
+	clear(): void {
+		drafts.clear();
+		saveDrafts(drafts);
+	},
+};
 
 // Drafts must not outlive the operator session: on a shared workstation the
 // next sign-in would otherwise resume the previous operator's wizard (step,
@@ -167,32 +213,52 @@ function proposedChainRules(chain: PlanChain): PermissionRuleInput[] {
 	}));
 }
 
+/**
+ * A chain the wizard cannot wire: without a `credential:bind` item there is
+ * nothing to amend the created toolkit/credential onto, so walking the
+ * operator through creating them would throw that work away. Such chains
+ * (only reachable via raw-API-filed requests) are seeded as skipped, locked,
+ * and denied at submit with an explicit reason.
+ */
+function chainUnfulfillable(chain: PlanChain): boolean {
+	return chain.credentialBind === undefined;
+}
+
 /** Fresh (untouched) progress for each of a request's chains. */
 function seedChainProgress(chains: PlanChain[], agentName: string | undefined): ChainProgress[] {
 	return chains.map((chain) => ({
+		key: chain.key,
 		toolkitId: null,
-		toolkitName: suggestChainToolkitName(chain, agentName, chains.length > 1),
+		toolkitName: suggestChainToolkitName(chain, agentName, chains),
 		toolkitNameEdited: false,
 		credentialId: null,
 		credentialType: null,
 		rules: proposedChainRules(chain),
-		skipped: false,
+		skipped: chainUnfulfillable(chain),
 	}));
 }
 
 /**
  * Per-chain toolkit-name suggestion. With several chains the agent-based
  * suggestion would be identical for every chain (only 409 suffixes would
- * disambiguate), so append the API name to keep the names meaningful.
+ * disambiguate), so append the API name — or vendor/name when two chains
+ * share an API name — to keep the names meaningful.
  */
 function suggestChainToolkitName(
 	chain: PlanChain,
 	agentName: string | undefined,
-	multi: boolean,
+	chains: PlanChain[],
 ): string {
 	const base = suggestToolkitName(agentName, chain.apiRef.vendor, chain.apiRef.name);
-	if (!multi || !base) return base;
-	const api = chain.apiRef.name ?? chain.apiRef.vendor;
+	if (chains.length <= 1 || !base) return base;
+	const name = chain.apiRef.name ?? chain.apiRef.vendor;
+	const nameCollides = chains.some(
+		(c) => c.key !== chain.key && (c.apiRef.name ?? c.apiRef.vendor) === name,
+	);
+	const api = nameCollides ? `${chain.apiRef.vendor}/${name}` : name;
+	// The pre-resolution fallback base is already "<vendor/name> toolkit" —
+	// suffixing it with the same slug would read "…/forecast toolkit (forecast)".
+	if (base.toLowerCase().includes(api.toLowerCase())) return base;
 	return `${base.slice(0, 200)} (${api.slice(0, 40)})`;
 }
 
@@ -249,12 +315,23 @@ export function ProvisioningRequestDialog({
 	// Draft-aware initial state: a reopened request resumes where it left off
 	// (see `wizardDrafts`). Lazy initializers so the FIRST render already
 	// carries the draft — a post-mount restore effect would race the
-	// draft-save effect below and clobber the draft with defaults. A stored
-	// draft whose chain count no longer matches (the request was amended
-	// elsewhere) is discarded rather than mis-applied.
+	// draft-save effect below and clobber the draft with defaults. Draft
+	// chains are realigned to the CURRENT chain order by `PlanChain.key` —
+	// item order isn't guaranteed server-side, so a positional restore could
+	// apply one API's toolkit/credential/rules to another API's chain. A
+	// draft whose keys no longer match (the request was amended elsewhere)
+	// is discarded rather than mis-applied.
 	const draftFor = (id: string): WizardDraft | undefined => {
 		const draft = wizardDrafts.get(id);
-		return draft && draft.chains.length === chains.length ? draft : undefined;
+		if (!draft || draft.chains.length !== chains.length) return undefined;
+		const byKey = new Map(draft.chains.map((cs) => [cs.key, cs]));
+		const aligned: ChainProgress[] = [];
+		for (const chain of chains) {
+			const cs = byKey.get(chain.key);
+			if (!cs) return undefined;
+			aligned.push(cs);
+		}
+		return { ...draft, chains: aligned };
 	};
 	const [step, setStep] = useState<Step>(() => draftFor(request.id)?.step ?? 'toolkit');
 	const [chainIndex, setChainIndex] = useState(() => draftFor(request.id)?.chainIndex ?? 0);
@@ -375,7 +452,7 @@ export function ProvisioningRequestDialog({
 				}
 				return {
 					...cs,
-					toolkitName: suggestChainToolkitName(chains[i], agentName, chains.length > 1),
+					toolkitName: suggestChainToolkitName(chains[i], agentName, chains),
 				};
 			}),
 		);
@@ -388,6 +465,9 @@ export function ProvisioningRequestDialog({
 	const noAuth = chain ? chainIsNoAuth(chain) : true;
 	const detectedAuth = chain ? chainAuthType(chain) : null;
 	const initialCredentialType = authTypeToCredentialType(detectedAuth);
+	// Locked chains can't be un-skipped: there is no credential:bind to amend,
+	// so any toolkit/credential the operator created would be thrown away.
+	const chainLocked = chain !== undefined && chainUnfulfillable(chain);
 
 	/** Mutate the current chain's progress (marks the wizard as touched). */
 	const updateChain = useCallback(
@@ -415,8 +495,14 @@ export function ProvisioningRequestDialog({
 		advanceChain();
 	}, [updateChain, advanceChain]);
 
+	/** Include a previously skipped chain again (not offered on locked chains). */
+	const handleUnskipChain = useCallback(() => {
+		if (chainLocked) return;
+		updateChain({ skipped: false });
+	}, [chainLocked, updateChain]);
+
 	const handleCreateToolkit = useCallback(async () => {
-		if (!progress) return;
+		if (!progress || chainLocked) return;
 		setBusy(true);
 		setError(null);
 		try {
@@ -425,14 +511,21 @@ export function ProvisioningRequestDialog({
 			// carries a disambiguation suffix (e.g. "Claude Code toolkit-2"), and
 			// the review step + no-auth credential name derive from this state.
 			// This also settles any async suggested-name upgrade racing the POST.
-			updateChain({ toolkitId: created.toolkitId, toolkitName: created.name });
+			// Creating a toolkit is committing to this chain — fulfilment work
+			// always clears a skip, so the created objects can't end up silently
+			// stranded behind a still-skipped (denied) chain.
+			updateChain({
+				toolkitId: created.toolkitId,
+				toolkitName: created.name,
+				skipped: false,
+			});
 			setStep(noAuth ? 'rules' : 'credential');
 		} catch (e) {
 			setError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setBusy(false);
 		}
-	}, [progress, noAuth, updateChain]);
+	}, [progress, noAuth, updateChain, chainLocked]);
 
 	const handleCredentialCreated = useCallback(
 		async (info: CreatedCredentialInfo) => {
@@ -602,25 +695,31 @@ export function ProvisioningRequestDialog({
 			//    extras, deny the chains the operator skipped (leaving them pending
 			//    would hold the whole request open and the filing agent's --wait
 			//    hanging). Item ids are re-read from the amended request and
-			//    re-grouped so decisions key on the CHAIN, not item order.
+			//    re-grouped so decisions key on the CHAIN, not item order. Locked
+			//    (unfulfillable) chains carry their own reason so the agent reads
+			//    back why, not just that, they were denied.
 			const fresh = await getAccessRequest(request.id);
 			const freshShape = planChains(fresh);
-			const skippedItemIds = new Set(
-				freshShape.chains
-					.filter((c) => skippedKeys.has(c.key))
-					.flatMap((c) => chainItems(c).map((it) => it.id)),
-			);
+			const denialReasons = new Map<string, string>();
+			for (const c of freshShape.chains) {
+				if (!skippedKeys.has(c.key)) continue;
+				const reason = chainUnfulfillable(c)
+					? 'Cannot be fulfilled from the dashboard wizard: the request has no credential:bind item for this API.'
+					: 'Skipped by the operator during fulfilment.';
+				for (const it of chainItems(c)) denialReasons.set(it.id, reason);
+			}
 			const decisions: ItemDecision[] = fresh.items
 				.filter((it) => it.status === 'pending')
-				.map((it) =>
-					skippedItemIds.has(it.id)
+				.map((it) => {
+					const reason = denialReasons.get(it.id);
+					return reason !== undefined
 						? {
 								item_id: it.id,
 								decision: 'denied' as const,
-								decision_reason: 'Skipped by the operator during fulfilment.',
+								decision_reason: reason,
 							}
-						: { item_id: it.id, decision: 'approved' as const },
-				);
+						: { item_id: it.id, decision: 'approved' as const };
+				});
 			if (decisions.length === 0) {
 				// Nothing left to decide — the request was already decided elsewhere
 				// (e.g. a stale snapshot). Reflect the current server truth instead
@@ -708,10 +807,12 @@ export function ProvisioningRequestDialog({
 		: null;
 	const multiChain = chains.length > 1;
 	const chainLabel = apiLabel(chain?.apiRef ?? null);
+	const chainSkipped = progress?.skipped === true;
 	// Skipping is only offered on a composite: skipping the ONLY chain would
 	// leave nothing to approve, which is a deny — the rail already has a
-	// dedicated deny fast-path for that.
-	const canSkip = multiChain && step !== 'review' && step !== 'done';
+	// dedicated deny fast-path for that. An already-skipped chain shows the
+	// un-skip affordance instead.
+	const canSkip = multiChain && !chainSkipped && step !== 'review' && step !== 'done';
 	// Review can submit when everything non-skipped is fulfilled and at least
 	// one chain (or extra) will actually be granted.
 	const allSettled = chains.every((_c, i) => chainFulfilled(i) || chainStates[i]?.skipped);
@@ -724,12 +825,51 @@ export function ProvisioningRequestDialog({
 	) : (
 		<span />
 	);
+	/** Back within/between chains: previous step, or the previous chain's end. */
+	const backToPrevious = (from: 'toolkit' | 'credential' | 'rules') => {
+		if (from === 'credential') {
+			setStep('toolkit');
+			return;
+		}
+		if (from === 'rules') {
+			setStep(noAuth ? 'toolkit' : 'credential');
+			return;
+		}
+		if (chainIndex > 0) {
+			setChainIndex(chainIndex - 1);
+			setStep(chainStates[chainIndex - 1]?.skipped ? 'toolkit' : 'rules');
+		}
+	};
 
 	const stepFooter: Record<Step, React.ReactNode> = {
 		toolkit: (
 			<>
-				{skipButton}
-				{progress?.toolkitId != null ? (
+				<span className="flex items-center gap-2">
+					{chainIndex > 0 && (
+						<Button variant="ghost" onClick={() => backToPrevious('toolkit')}>
+							<ArrowLeft className="h-4 w-4" /> Back
+						</Button>
+					)}
+					{skipButton}
+				</span>
+				{chainSkipped ? (
+					<span className="flex items-center gap-2">
+						<Button variant="ghost" onClick={advanceChain}>
+							{chainLocked ? (
+								<>
+									Continue <ArrowRight className="h-4 w-4" />
+								</>
+							) : (
+								'Keep skipped'
+							)}
+						</Button>
+						{!chainLocked && (
+							<Button variant="primary" onClick={handleUnskipChain}>
+								Include this API
+							</Button>
+						)}
+					</span>
+				) : progress?.toolkitId != null ? (
 					// Resumed draft: the toolkit already exists. Re-showing "Create
 					// toolkit" here would mint a duplicate one click after a Back —
 					// continue with the one we have instead.
@@ -789,9 +929,8 @@ export function ProvisioningRequestDialog({
 				<Button
 					variant="ghost"
 					onClick={() => {
-						// Back into the LAST chain's rules step (skipped chains
-						// included — backing in un-skips nothing; the operator can
-						// re-do a skip from there if they change their mind).
+						// Back into the LAST chain (skipped chains land on their
+						// locked/skip notice, where "Include this API" un-skips).
 						setChainIndex(chains.length - 1);
 						setStep(chainStates[chains.length - 1]?.skipped ? 'toolkit' : 'rules');
 					}}
@@ -892,40 +1031,89 @@ export function ProvisioningRequestDialog({
 						{step === 'toolkit' && (
 							<StepBody
 								title={
-									multiChain
-										? `Create a toolkit for ${chainLabel}`
-										: 'Create a toolkit'
+									chainSkipped
+										? `${chainLabel} is skipped`
+										: multiChain
+											? `Create a toolkit for ${chainLabel}`
+											: 'Create a toolkit'
 								}
-								blurb={`A toolkit is the container that will serve ${chainLabel} to this agent. Give it a name — the default is fine.`}
+								blurb={
+									chainSkipped
+										? 'This API is not part of the grant.'
+										: `A toolkit is the container that will serve ${chainLabel} to this agent. Give it a name — the default is fine.`
+								}
 							>
-								<div className="max-w-md space-y-1.5">
-									<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
-									<Input
-										id="pw-toolkit-name"
-										value={progress?.toolkitName ?? ''}
-										onChange={(e) => {
-											updateChain({
-												toolkitName: e.target.value,
-												toolkitNameEdited: true,
-											});
-										}}
-										placeholder="e.g. Claude Code toolkit"
-										disabled={progress?.toolkitId != null}
-									/>
-									{progress?.toolkitId != null && (
-										// Created already (resumed draft / Back from a later
-										// step). The field is locked because this state feeds
-										// the review summary and the no-auth credential name —
-										// editing it here would no longer rename the real
-										// toolkit.
-										<div className="border-success/30 bg-success/5 mt-3 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
-											<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-											<span>
-												Toolkit created — continue to the next step.
-											</span>
-										</div>
-									)}
-								</div>
+								{chainSkipped ? (
+									<div className="border-border bg-muted/40 flex max-w-md items-start gap-2.5 rounded-lg border p-4 text-sm">
+										<XCircle className="text-danger mt-0.5 h-5 w-5 shrink-0" />
+										<span>
+											{chainLocked ? (
+												<>
+													This API&rsquo;s items can&rsquo;t be fulfilled
+													from this wizard (the request has no
+													credential:bind item for it) and will be{' '}
+													<span className="text-danger font-medium">
+														denied
+													</span>{' '}
+													at approval.
+												</>
+											) : (
+												<>
+													You skipped this API — its items will be{' '}
+													<span className="text-danger font-medium">
+														denied
+													</span>{' '}
+													at approval.
+													{(progress?.toolkitId ||
+														progress?.credentialId) && (
+														<>
+															{' '}
+															The{' '}
+															{progress.toolkitId &&
+															progress.credentialId
+																? 'toolkit and credential'
+																: progress.toolkitId
+																	? 'toolkit'
+																	: 'credential'}{' '}
+															you already created will be kept.
+														</>
+													)}{' '}
+													Use &ldquo;Include this API&rdquo; below to
+													change your mind.
+												</>
+											)}
+										</span>
+									</div>
+								) : (
+									<div className="max-w-md space-y-1.5">
+										<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
+										<Input
+											id="pw-toolkit-name"
+											value={progress?.toolkitName ?? ''}
+											onChange={(e) => {
+												updateChain({
+													toolkitName: e.target.value,
+													toolkitNameEdited: true,
+												});
+											}}
+											placeholder="e.g. Claude Code toolkit"
+											disabled={progress?.toolkitId != null}
+										/>
+										{progress?.toolkitId != null && (
+											// Created already (resumed draft / Back from a later
+											// step). The field is locked because this state feeds
+											// the review summary and the no-auth credential name —
+											// editing it here would no longer rename the real
+											// toolkit.
+											<div className="border-success/30 bg-success/5 mt-3 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
+												<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
+												<span>
+													Toolkit created — continue to the next step.
+												</span>
+											</div>
+										)}
+									</div>
+								)}
 							</StepBody>
 						)}
 
@@ -992,27 +1180,75 @@ export function ProvisioningRequestDialog({
 								blurb="Approving wires this up and lets the agent call the API. Here's exactly what will happen:"
 							>
 								<div className="max-w-xl space-y-4">
+									{!canSubmit && allSettled && (
+										<div className="border-border bg-muted/40 rounded-lg border p-4 text-sm">
+											Every API was skipped, so there is nothing to grant. Go
+											back and include at least one API — or cancel and deny
+											the request from the requests list instead.
+										</div>
+									)}
 									{chains.map((c, i) => {
 										const cs = chainStates[i];
 										const skipped = cs?.skipped === true;
+										const locked = chainUnfulfillable(c);
 										return (
 											<dl
 												key={c.key}
-												className={
-													skipped
-														? 'border-border divide-border divide-y rounded-lg border text-sm opacity-60'
-														: 'border-border divide-border divide-y rounded-lg border text-sm'
-												}
+												className="border-border divide-border divide-y rounded-lg border text-sm"
 											>
 												<SummaryRow label="API">
-													{apiLabel(c.apiRef)}
-													{skipped && (
-														<span className="text-danger ml-2">
-															skipped — will be denied
+													<span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+														<span
+															className={
+																skipped ? 'opacity-60' : undefined
+															}
+														>
+															{apiLabel(c.apiRef)}
 														</span>
-													)}
+														{skipped && (
+															<span className="text-danger">
+																{locked
+																	? 'unfulfillable — will be denied'
+																	: 'skipped — will be denied'}
+															</span>
+														)}
+														{!locked && (
+															<Button
+																variant="ghost"
+																size="sm"
+																onClick={() => {
+																	setChainIndex(i);
+																	setStep(
+																		skipped ||
+																			!chainFulfilled(i)
+																			? 'toolkit'
+																			: 'rules',
+																	);
+																}}
+															>
+																Edit
+															</Button>
+														)}
+													</span>
 												</SummaryRow>
-												{!skipped && (
+												{skipped ? (
+													(cs?.toolkitId || cs?.credentialId) && (
+														<SummaryRow label="Note">
+															<span className="text-warning">
+																The{' '}
+																{cs.toolkitId && cs.credentialId
+																	? 'toolkit and credential'
+																	: cs.toolkitId
+																		? 'toolkit'
+																		: 'credential'}{' '}
+																created for this API will be kept
+																even though it is denied — use Edit
+																to include it, or delete them
+																afterwards.
+															</span>
+														</SummaryRow>
+													)
+												) : (
 													<>
 														<SummaryRow label="Toolkit">
 															{cs?.toolkitName}
@@ -1061,12 +1297,15 @@ export function ProvisioningRequestDialog({
 												Access granted
 											</p>
 											<p className="text-muted-foreground text-sm">
-												{chains
-													.filter((_c, i) => !chainStates[i]?.skipped)
-													.map((c) => apiLabel(c.apiRef))
-													.join(', ') || 'The approved items are'}{' '}
-												{fulfilledCount === 1 ? 'is' : 'are'} now callable
-												by this agent.
+												{(() => {
+													const granted = chains
+														.filter((_c, i) => !chainStates[i]?.skipped)
+														.map((c) => apiLabel(c.apiRef));
+													if (granted.length === 0) {
+														return 'The approved items are now active for this agent.';
+													}
+													return `${granted.join(', ')} ${granted.length === 1 ? 'is' : 'are'} now callable by this agent.`;
+												})()}
 											</p>
 										</div>
 									</>
@@ -1396,7 +1635,10 @@ function Stepper({
 			steps.push({
 				key: `${c.key}:skipped`,
 				label: `Skipped${suffix}`,
-				hint: 'This API will be denied',
+				hint:
+					c.credentialBind === undefined
+						? 'Unfulfillable — will be denied'
+						: 'This API will be denied',
 				skipped: true,
 				chain: i,
 				step: null,
@@ -1441,7 +1683,10 @@ function Stepper({
 			: steps.findIndex(
 					(s) =>
 						(s.step === 'review' && step === 'review') ||
-						(s.chain === chainIndex && s.step === step),
+						// A skipped chain collapses to one rail entry; when the
+						// wizard is positioned inside it (Back from review, or
+						// skipping forward), that entry is the active one.
+						(s.chain === chainIndex && (s.step === step || s.skipped)),
 				);
 
 	return (
@@ -1463,7 +1708,12 @@ function Stepper({
 											: 'border-border text-muted-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs'
 								}
 							>
-								{done ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
+								{done ? (
+									<CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+								) : (
+									i + 1
+								)}
+								{done && <span className="sr-only">done</span>}
 							</span>
 							{!last && (
 								<span
