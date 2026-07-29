@@ -108,6 +108,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 		&cobra.Group{ID: "identity", Title: "Identity & access"},
 		&cobra.Group{ID: "apis", Title: "APIs"},
 		&cobra.Group{ID: "agent", Title: "Find and run operations"},
+		&cobra.Group{ID: "client", Title: "Local agent client"},
 		&cobra.Group{ID: "admin", Title: "Administration"},
 	)
 
@@ -122,9 +123,12 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	addGrouped(root, "agent", newInspectCmd(app))
 	addGrouped(root, "agent", newExecuteCmd(app))
 	addGrouped(root, "agent", newAccessCmd(app))
-	addGrouped(root, "agent", newSkillCmd(app))
-	addGrouped(root, "agent", newRunCmd(app))
-	addGrouped(root, "agent", newResetCmd(app))
+	// The agent-client commands manage and drive the local coding agent
+	// (generate its skills, launch it under isolation, tear its account down),
+	// distinct from the catalog find/run operations above.
+	addGrouped(root, "client", newSkillCmd(app))
+	addGrouped(root, "client", newRunCmd(app))
+	addGrouped(root, "client", newResetCmd(app))
 	addGrouped(root, "admin", newAdminCmd(app))
 
 	return root

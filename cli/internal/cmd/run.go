@@ -483,7 +483,10 @@ func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, di
 
 func (a *App) confirmPlainGrant(agentUser, dir string) (bool, error) {
 	fmt.Fprintln(a.Out, theme.Warnf("Agent %s has no access to %s.", agentUser, dir))
-	var choice string
+	// Focus "Allow" by default: this is an ordinary (non-banned) workspace the
+	// operator explicitly asked to open, so granting is the expected choice. huh
+	// focuses the option whose value matches the bound field's current value.
+	choice := "allow"
 	err := install.NewForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("How should the session reach this directory?").

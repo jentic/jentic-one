@@ -1207,7 +1207,7 @@
           "use": "skill",
           "short": "Generate the Jentic CLI-usage skill into your agent's native layout",
           "long": "skill writes a \"how to use Jentic via the CLI\" skill into each supported\nagent runtime's native layout — a dedicated SKILL.md for claude-code,\ncursor, and hermes, or a spliced block in AGENTS.md for codex and generic —\nso the agent knows the platform loop (register -\u003e request access -\u003e\nsearch/inspect/execute) without you hand-writing anything.\n\nWrites are idempotent: generated content lives in a clearly-marked managed\nblock, so re-running never clobbers your own edits around it.",
-          "group_title": "Find and run operations",
+          "group_title": "Local agent client",
           "subcommands": [
             {
               "name": "init",
@@ -1319,7 +1319,7 @@
           "use": "run \u003cagent\u003e [path]",
           "short": "Launch a coding agent as its own isolated Unix user",
           "long": "run launches a coding agent (claude, ...) under a dedicated, unprivileged\nOS account distinct from the operator's login user, so a compromised or\nprompt-injected agent cannot read the operator's keys, browser session, or\nthe jentic-one credential store. It provisions the agent's binary for that\naccount if missing, resolves filesystem access to the working directory\n(granting a scoped ACL only when the operator confirms), and starts the\nsession in a login shell so no operator environment leaks.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis in\ndocs/security/local-agent/local-agent-isolation.md for the full rationale.",
-          "group_title": "Find and run operations",
+          "group_title": "Local agent client",
           "flags": [
             {
               "name": "agent-user",
@@ -1388,7 +1388,7 @@
           "short": "Tear down a local agent: account, home, ACLs, sudoers, and config entry",
           "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`:\nit removes the system state a local agent accumulated — the dedicated Unix\naccount, the named-user ACLs stamped across the operator's home (both the\nleaf read/write grants and the execute-only ancestor traverse grants), the\npasswordless-launch sudoers drop-in, and the local_agents entry in your\nconfig. The agent's home is PRESERVED by default (re-owned to you); deleting\nit takes a separate, explicit confirmation.\n\nScope follows the argument. `jentic reset \u003cagent\u003e` tears down just that\nagent and removes only its links from your config. `jentic reset` with no\nagent is a full clean slate: it tears down EVERY configured local agent and\nthen also wipes your OWN jentic CLI config — every profile (keys, tokens,\nregistration) under ~/.jentic/profiles and the default profile. That last\npart destroys your own identity, so it takes its own separate confirmation\nand is scoped to the account you run reset from.\n\nDeleting an account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
           "example": "  jentic reset                              # full clean slate: every agent + your own config\n  jentic reset claude                       # just this agent and its config links\n  jentic reset claude --force               # non-interactive; keeps the home\n  jentic reset claude --force --delete-home # non-interactive; deletes the home",
-          "group_title": "Find and run operations",
+          "group_title": "Local agent client",
           "flags": [
             {
               "name": "delete-home",

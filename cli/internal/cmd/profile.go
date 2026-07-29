@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -336,26 +335,39 @@ func renderAccessTree(roots []string) string {
 }
 
 // profileSwitch persists the default profile. With no name it opens the
-// interactive picker on a terminal, or errors on a pipe/CI.
+// interactive picker on a terminal, or errors on a pipe/CI. It works off the
+// same discovered set as `profile list` — operator-owned and agent-owned
+// profiles alike are listed.
+//
+// Selecting an AGENT-OWNED profile is not yet a completed action: making it the
+// operator's active profile is meant to run every subsequent operation AS the
+// agent's Unix user (a run-as mechanism). That is a substantial change tracked
+// as a merge prerequisite in
+// docs/security/local-agent/profile-run-as-agent-plan.md; until it lands, an
+// agent-owned profile is viewable and selectable in the picker but the switch
+// is refused with a pointer, rather than silently setting a default that would
+// not run-as.
 func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		return err
 	}
-	names, err := profile.List(a.Paths)
+	refs, err := a.discoverProfiles(cfg)
 	if err != nil {
 		return err
 	}
-	if len(names) == 0 {
+	if len(refs) == 0 {
 		return errors.New("no profiles found — run `jentic register` to create one")
 	}
-	sort.Strings(names)
 
+	active := cfg.ResolvedProfileName("")
+
+	var chosen profileRef
 	if name == "" {
 		if !term.IsTerminal(os.Stdin.Fd()) {
 			return errors.New("no profile name given; pass one (e.g. `jentic profile use <name>`) or run interactively")
 		}
-		selected, perr := a.pickProfile(names, cfg.ResolvedProfileName(""))
+		selected, perr := a.pickProfile(refs, active)
 		if perr != nil {
 			if errors.Is(perr, errProfilePickAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
@@ -363,16 +375,29 @@ func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 			}
 			return perr
 		}
-		name = selected
+		chosen = selected
+	} else {
+		ref, found, ferr := a.findProfileRef(cfg, name)
+		if ferr != nil {
+			return ferr
+		}
+		if !found {
+			return fmt.Errorf("profile %q does not exist; run `jentic profile list` to see options", name)
+		}
+		chosen = ref
 	}
 
-	if !slices.Contains(names, name) {
-		return fmt.Errorf("profile %q does not exist; run `jentic profile list` to see options", name)
+	// Deferred: running operations as the agent user. See the plan doc above.
+	if chosen.owned() {
+		return fmt.Errorf("profile %q belongs to agent %q. Switching to it so operations run as that "+
+			"agent isn't supported yet — see docs/security/local-agent/profile-run-as-agent-plan.md. "+
+			"View it with `jentic profile view %s`", chosen.name, chosen.agentID, chosen.name)
 	}
 
-	if err := config.SetDefaultProfile(a.Paths, name); err != nil {
+	if err := config.SetDefaultProfile(a.Paths, chosen.name); err != nil {
 		return err
 	}
+	name = chosen.name
 	fmt.Fprintln(a.Out, theme.Successf("Active profile set to %q", name))
 	if env := os.Getenv(config.ProfileEnv); env != "" && env != name {
 		fmt.Fprintln(a.Out, theme.Warnf("note: $%s=%q overrides this for the current shell", config.ProfileEnv, env))
@@ -385,33 +410,38 @@ func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 var errProfilePickAborted = errors.New("profile selection cancelled")
 
 // pickProfile runs the interactive two-column picker: a list of profiles on the
-// left and the highlighted profile's details on the right. It pre-selects the
-// active profile and returns the chosen name (or errProfilePickAborted).
-func (a *App) pickProfile(names []string, active string) (string, error) {
-	items := make([]profileItem, 0, len(names))
+// left and the highlighted profile's details on the right. It lists the same
+// discovered set as `profile list` (operator- and agent-owned alike),
+// pre-selects the active profile, and returns the chosen ref (or
+// errProfilePickAborted). Only an operator-owned profile matches `active`.
+func (a *App) pickProfile(refs []profileRef, active string) (profileRef, error) {
+	items := make([]profileItem, 0, len(refs))
 	start := 0
-	for i, n := range names {
-		items = append(items, a.loadProfileItem(n))
-		if n == active {
+	for i, r := range refs {
+		items = append(items, a.loadProfileItem(r))
+		if r.name == active && !r.owned() {
 			start = i
 		}
 	}
 
 	m, err := tea.NewProgram(&profilePicker{items: items, cursor: start, active: active}).Run()
 	if err != nil {
-		return "", err
+		return profileRef{}, err
 	}
 	res := m.(*profilePicker)
 	if res.aborted {
-		return "", errProfilePickAborted
+		return profileRef{}, errProfilePickAborted
 	}
-	return res.chosen, nil
+	return refs[res.cursorAtDone], nil
 }
 
 // profileItem is a profile's display summary, loaded once before the picker runs
-// so cursor movement re-renders without touching disk.
+// so cursor movement re-renders without touching disk. owner is the agent id for
+// an agent-owned profile (empty for operator-owned), used to tag the row and
+// detail pane.
 type profileItem struct {
 	name       string
+	owner      string
 	registered bool
 	apiKey     bool
 	baseURL    string
@@ -421,10 +451,12 @@ type profileItem struct {
 	keyLabel   string
 }
 
-// loadProfileItem reads a profile's metadata and token state for the detail pane.
-func (a *App) loadProfileItem(name string) profileItem {
-	it := profileItem{name: name}
-	p, err := profile.Open(a.Paths, name)
+// loadProfileItem reads a profile's metadata and token state for the detail
+// pane, from the store the ref points at (the operator's ~/.jentic or an agent's
+// home).
+func (a *App) loadProfileItem(ref profileRef) profileItem {
+	it := profileItem{name: ref.name, owner: ref.agentID}
+	p, err := profile.Open(ref.paths, ref.name)
 	if err != nil {
 		return it
 	}
@@ -457,12 +489,12 @@ const profileListWidth = 24
 
 // profilePicker is the Bubble Tea model backing the interactive picker.
 type profilePicker struct {
-	items   []profileItem
-	cursor  int
-	active  string
-	chosen  string
-	aborted bool
-	done    bool
+	items        []profileItem
+	cursor       int
+	active       string
+	cursorAtDone int
+	aborted      bool
+	done         bool
 }
 
 func (p *profilePicker) Init() tea.Cmd { return nil }
@@ -486,9 +518,7 @@ func (p *profilePicker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			p.cursor++
 		}
 	case "enter", " ":
-		if len(p.items) > 0 {
-			p.chosen = p.items[p.cursor].name
-		}
+		p.cursorAtDone = p.cursor
 		p.done = true
 		return p, tea.Quit
 	}
@@ -519,10 +549,13 @@ func (p *profilePicker) View() string {
 }
 
 // row renders one profile in the left list: a filled ring + accent name for the
-// hovered row, a hollow ring otherwise, with an "(active)" tag on the persisted one.
+// hovered row, a hollow ring otherwise. An agent-owned profile carries an
+// "(agent: id)" tag; the persisted operator profile carries "(active)".
 func (p *profilePicker) row(i int, it profileItem) string {
 	tag := ""
-	if it.name == p.active {
+	if it.owner != "" {
+		tag = " " + theme.Dim.Render("(agent: "+it.owner+")")
+	} else if it.name == p.active {
 		tag = " " + theme.Dim.Render("(active)")
 	}
 	if i == p.cursor {
@@ -534,6 +567,9 @@ func (p *profilePicker) row(i int, it profileItem) string {
 // profileDetailView renders the right-hand details for the hovered profile.
 func profileDetailView(it profileItem) string {
 	out := theme.Heading.Render(it.name)
+	if it.owner != "" {
+		out += " " + theme.Dim.Render("(agent: "+it.owner+")")
+	}
 	if !it.registered {
 		return out + "\n" + theme.Dim.Render("not registered — run `jentic register`")
 	}

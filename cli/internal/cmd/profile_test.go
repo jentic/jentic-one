@@ -185,6 +185,44 @@ func TestProfileUseMissingErrors(t *testing.T) {
 	}
 }
 
+// Switching to an agent-owned profile is refused until the run-as mechanism
+// lands (see docs/security/local-agent/profile-run-as-agent-plan.md): the
+// operator can view it but not make it active, and the operator's default must
+// be left unchanged.
+func TestProfileSwitchAgentOwnedRefused(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+
+	agentRoot := t.TempDir()
+	ap, err := profile.Open(config.Paths{Root: agentRoot}, "botprofile")
+	if err != nil {
+		t.Fatalf("open agent profile: %v", err)
+	}
+	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000"}); err != nil {
+		t.Fatalf("save agent meta: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetLocalAgent("mybot", config.LocalAgent{User: "mybot-agent", ConfigDir: agentRoot})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	err = app.profileSwitch(nil, "botprofile")
+	if err == nil || !strings.Contains(err.Error(), "run as that") {
+		t.Fatalf("expected run-as-deferred error, got %v", err)
+	}
+	reloaded, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("reload cfg: %v", err)
+	}
+	if reloaded.DefaultProfile == "botprofile" {
+		t.Errorf("agent-owned profile must not become the operator default")
+	}
+}
+
 // In the test runner stdin is not a TTY, so a bare switch with profiles present
 // must error rather than block on an interactive picker.
 func TestProfileSwitchNoNameNonTTYErrors(t *testing.T) {
@@ -209,10 +247,10 @@ func TestLoadProfileItem(t *testing.T) {
 	seedProfile(t, app, "fresh", "")
 	seedProfile(t, app, "reg", "agnt_42")
 
-	if it := app.loadProfileItem("fresh"); it.registered {
+	if it := app.loadProfileItem(profileRef{name: "fresh", paths: app.Paths}); it.registered {
 		t.Errorf("unregistered profile marked registered: %+v", it)
 	}
-	it := app.loadProfileItem("reg")
+	it := app.loadProfileItem(profileRef{name: "reg", paths: app.Paths})
 	if !it.registered || it.agentID != "agnt_42" || it.baseURL != "http://example:9000" {
 		t.Errorf("registered profile not loaded: %+v", it)
 	}
@@ -250,7 +288,7 @@ func TestLoadProfileItemAPIKey(t *testing.T) {
 	if err := p.SaveAPIKey("jak_abcdefgh1234"); err != nil {
 		t.Fatalf("save key: %v", err)
 	}
-	it := app.loadProfileItem("keyed")
+	it := app.loadProfileItem(profileRef{name: "keyed", paths: app.Paths})
 	if !it.registered || !it.apiKey || it.keyLabel != "jak_…1234" {
 		t.Errorf("api-key item not loaded: %+v", it)
 	}
