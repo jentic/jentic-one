@@ -224,6 +224,7 @@ def test_password_expired_blocks_access(unauthed_client: TestClient, web_context
     claims = {
         "sub": "expired-pw-user",
         "email": "expired@test.com",
+        "actor_type": "user",
         "permissions": ["org:admin"],
         "must_change_password": True,
     }

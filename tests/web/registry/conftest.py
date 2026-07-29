@@ -58,6 +58,7 @@ def _make_token(ctx: Context) -> str:
     claims = {
         "sub": "usr_test_registry",
         "email": "registry-test@test.local",
+        "actor_type": "user",
         "permissions": ["apis:read", "apis:write", "capabilities:read"],
         "must_change_password": False,
     }
