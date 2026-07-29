@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/user"
 	"time"
 
@@ -156,11 +157,17 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		fmt.Fprintln(a.Out, theme.Infof("Creating agent account %q (home %s) ...", fields.name, fields.homeDir))
 		for _, step := range localagent.CreateAccountCmds(operator, fields.name, fields.homeDir) {
 			c := step.Cmd
-			c.Stdout, c.Stderr = a.Out, a.Err
+			c.Stdout = a.Out
+			// A best-effort step's stderr is expected noise (per-file "Operation not
+			// permitted" on SIP/TCC-protected home-template files nobody can ACL); we
+			// summarise it ourselves, so swallow the raw diagnostics.
+			if step.BestEffort {
+				c.Stderr = io.Discard
+			} else {
+				c.Stderr = a.Err
+			}
 			if err := c.Run(); err != nil {
 				if step.BestEffort {
-					// e.g. the recursive operator grant hitting SIP/TCC-protected
-					// home-template files nobody can ACL — expected, not fatal.
 					fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 						"  (%s: some protected system files couldn't be changed — that's expected; continuing)", step.What)))
 					continue
@@ -180,7 +187,7 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 	// chown, so a residual non-zero exit is expected and must not fail setup.
 	if fields.homeDir != "" {
 		reclaim := localagent.ReclaimAgentHomeCmd(fields.name, fields.homeDir)
-		reclaim.Stdout, reclaim.Stderr = a.Out, a.Err
+		reclaim.Stdout, reclaim.Stderr = a.Out, io.Discard // raw chown errors are expected; we summarise below
 		if err := reclaim.Run(); err != nil {
 			fmt.Fprintln(a.Out, theme.Dim.Render(
 				"  (some protected system files in the home couldn't be re-owned to the agent — that's expected; continuing)"))
@@ -194,7 +201,7 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		// grant idempotently; it is additive, so widening never removes anything.
 		if reused {
 			grant := localagent.GrantOperatorHomeCmd(operator, fields.homeDir)
-			grant.Stdout, grant.Stderr = a.Out, a.Err
+			grant.Stdout, grant.Stderr = a.Out, io.Discard // raw find/chmod errors are expected; we summarise below
 			if err := grant.Run(); err != nil {
 				// Same best-effort rationale as CreateAccountCmds: the recursive
 				// grant exits non-zero on SIP/TCC-protected home-template files

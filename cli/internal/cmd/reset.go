@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"strings"
@@ -351,7 +352,15 @@ func (a *App) execAgentReset(paths config.Paths, cfg *config.FileConfig, plan re
 	for _, step := range buildResetSteps(plan, deleteHome) {
 		fmt.Fprintln(a.Out, theme.Infof("• %s", step.What))
 		c := step.Cmd
-		c.Stdout, c.Stderr = a.Out, a.Err
+		c.Stdout = a.Out
+		// Best-effort steps produce expected per-file stderr (SIP/TCC "Operation not
+		// permitted", or `chmod -a` reporting an ACE already absent); we summarise it
+		// ourselves, so swallow the raw diagnostics rather than flood the terminal.
+		if step.BestEffort {
+			c.Stderr = io.Discard
+		} else {
+			c.Stderr = a.Err
+		}
 		if err := c.Run(); err != nil {
 			if step.BestEffort {
 				// Expected residual non-zero exits: SIP/TCC-protected home-template

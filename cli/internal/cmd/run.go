@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -656,7 +657,9 @@ func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentID, ag
 
 	fmt.Fprintln(a.Out, theme.Infof("Revoking %s access to %s ...", agentUser, abs))
 	r := localagent.LeafRevokeCmd(agentUser, abs)
-	r.Stdout, r.Stderr = a.Out, a.Err
+	// The recursive `chmod -a` emits an expected per-file error on entries that
+	// don't carry the exact ACE; we summarise it below, so swallow the raw stderr.
+	r.Stdout, r.Stderr = a.Out, io.Discard
 	if err := r.Run(); err != nil {
 		// The revoke recurses over the subtree; macOS `chmod -a` exits non-zero on
 		// entries that don't carry the exact ACE (inherited-only children, files
