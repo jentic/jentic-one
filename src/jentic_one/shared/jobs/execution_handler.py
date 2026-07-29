@@ -103,15 +103,20 @@ class ExecutionHandler:
         upstream_url = validate_upstream_url(upstream_url, self._egress)
 
         headers: dict[str, str] = {}
+        credential_id: str | None = None
+        credential_name: str | None = None
         if self._credential_injector is not None and api_vendor:
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
                 api_name=api_name or "",
                 api_version=api_version or "",
                 identity=_worker_identity(created_by, actor_type),
+                trace_id=trace_id,
             )
             applied = _apply_injection(upstream_url, injection)
             upstream_url, headers = applied.url, applied.headers
+            credential_id = injection.credential_id
+            credential_name = injection.credential_name
             if injection.server_variables:
                 upstream_url = validate_upstream_url(upstream_url, self._egress)
 
@@ -142,6 +147,11 @@ class ExecutionHandler:
                         "actor_id": created_by,
                         "actor_type": actor_type,
                         "origin": origin,
+                        # Credential attribution (#740): carried so the
+                        # pipeline persists the same credential_id/name on
+                        # the execution record as the sync router would.
+                        "credential_id": credential_id,
+                        "credential_name": credential_name,
                     },
                 ),
                 session=session,
