@@ -262,21 +262,6 @@ export const dashboardHandlers = [
 		});
 	}),
 
-	// Count companion to the list shadow above — the nav badge reads this, and
-	// it must agree with the pending queue this module serves. Same fall-through
-	// rule for non-pending / actor-scoped counts.
-	http.get('/access-requests/count', ({ request }) => {
-		const url = new URL(request.url);
-		const status = url.searchParams.get('status');
-		if (
-			status !== 'pending' ||
-			url.searchParams.has('actor_id') ||
-			url.searchParams.has('group_by')
-		)
-			return undefined;
-		return HttpResponse.json({ count: dashboardPendingAccessRequests.length });
-	}),
-
 	// The Dashboard card opens the shared AccessRequestDialog for its OWN
 	// fixtures (`ar_dash_*`), which the rail handler doesn't know about — without
 	// these the dialog's GET-by-id / :decide would 404 ("Access request not

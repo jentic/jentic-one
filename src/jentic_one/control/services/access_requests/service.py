@@ -357,54 +357,6 @@ class AccessRequestService:
         await self._resolve_filer_owners(data)
         return AccessRequestPage(data=data, has_more=has_more, next_cursor=next_cursor)
 
-    async def count(
-        self,
-        *,
-        identity: Identity,
-        actor_id: str | None = None,
-        status: str | None = None,
-    ) -> int:
-        """Count access requests visible to the caller (no row hydration).
-
-        The cheap companion to ``list_all`` for badge/segment consumers: same
-        visibility filter (``build_access_filters`` — caller-scoped for
-        members, org-wide for ``org:admin``) and the same ``actor_id``/
-        ``status`` predicates, but a single ``COUNT(*)`` instead of a page of
-        envelopes. ``status`` matches the stored column, exactly like the
-        list filter — a stored-pending request past its ``expires_at`` (shown
-        as the derived ``expired`` status) still counts as ``pending``.
-        """
-        access_filters = build_access_filters(identity, AccessRequest)
-        async with self._ctx.control_db.session() as session:
-            return await AccessRequestRepository.count(
-                session,
-                actor_id=actor_id,
-                status=status,
-                filters=access_filters,
-            )
-
-    async def count_by_status(
-        self,
-        *,
-        identity: Identity,
-        actor_id: str | None = None,
-    ) -> dict[str, int]:
-        """Count visible access requests per stored status, in one query.
-
-        The grouped companion to :meth:`count` for consumers that render a
-        breakdown (per-status queue segments): same visibility filter, one
-        ``GROUP BY`` instead of a ``COUNT(*)`` per status. Keys are stored
-        statuses — the derived ``expired`` presentation status never appears
-        (those rows count under ``pending``, exactly like the list filter).
-        """
-        access_filters = build_access_filters(identity, AccessRequest)
-        async with self._ctx.control_db.session() as session:
-            return await AccessRequestRepository.count_by_status(
-                session,
-                actor_id=actor_id,
-                filters=access_filters,
-            )
-
     async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
         """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
 

@@ -7,7 +7,6 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
-export type { AccessRequestCountResponse } from './models/AccessRequestCountResponse';
 export type { AccessRequestFileRequest } from './models/AccessRequestFileRequest';
 export { AccessRequestItemRequest } from './models/AccessRequestItemRequest';
 export type { AccessRequestItemResponse } from './models/AccessRequestItemResponse';

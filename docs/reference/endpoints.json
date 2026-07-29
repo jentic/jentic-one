@@ -83,26 +83,6 @@
       "group": "Any authenticated actor",
       "implied_scopes": {},
       "method": "GET",
-      "operation_id": "countAccessRequests",
-      "path": "/access-requests/count",
-      "public": false,
-      "required_scopes": [],
-      "summary": "Count access requests",
-      "surface": "access-requests",
-      "typical_caller": "any"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Any authenticated actor",
-      "implied_scopes": {},
-      "method": "GET",
       "operation_id": "getAccessRequest",
       "path": "/access-requests/{request_id}",
       "public": false,
@@ -4499,5 +4479,5 @@
     ],
     "total": 30
   },
-  "total": 152
+  "total": 151
 }

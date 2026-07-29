@@ -6,7 +6,7 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -166,54 +166,6 @@ class AccessRequestRepository:
         stmt = stmt.limit(limit + 1)
         result = await session.execute(stmt)
         return list(result.scalars().all())
-
-    @staticmethod
-    async def count(
-        session: AsyncSession,
-        *,
-        actor_id: str | None = None,
-        status: str | None = None,
-        filters: Sequence[ColumnElement[bool]] | None = None,
-    ) -> int:
-        """Count requests matching the same predicates as :meth:`list_all`.
-
-        A bare ``COUNT(*)`` — no item hydration, no ordering, no pagination —
-        so badge/segment consumers don't pay for a full page just to count it.
-        ``status`` compares the **stored** column, exactly like ``list_all``
-        (the derived ``expired`` presentation status is computed at view time
-        and cannot be counted here).
-        """
-        stmt = select(func.count()).select_from(AccessRequest)
-        if actor_id is not None:
-            stmt = stmt.where(AccessRequest.actor_id == actor_id)
-        if status is not None:
-            stmt = stmt.where(AccessRequest.status == status)
-        for f in filters or ():
-            stmt = stmt.where(f)
-        result = await session.execute(stmt)
-        return int(result.scalar_one())
-
-    @staticmethod
-    async def count_by_status(
-        session: AsyncSession,
-        *,
-        actor_id: str | None = None,
-        filters: Sequence[ColumnElement[bool]] | None = None,
-    ) -> dict[str, int]:
-        """Count requests per stored status, under the same predicates as :meth:`count`.
-
-        One ``GROUP BY status`` instead of one ``COUNT(*)`` per status, so a
-        consumer rendering several status segments (queue tabs, badges) pays a
-        single query for the whole breakdown. Statuses with no rows are simply
-        absent — callers decide which keys they care about.
-        """
-        stmt = select(AccessRequest.status, func.count()).group_by(AccessRequest.status)
-        if actor_id is not None:
-            stmt = stmt.where(AccessRequest.actor_id == actor_id)
-        for f in filters or ():
-            stmt = stmt.where(f)
-        result = await session.execute(stmt)
-        return {str(status): int(n) for status, n in result.all()}
 
     @staticmethod
     async def withdraw(

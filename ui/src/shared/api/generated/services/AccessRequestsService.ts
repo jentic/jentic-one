@@ -2,7 +2,6 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { AccessRequestCountResponse } from '../models/AccessRequestCountResponse';
 import type { AccessRequestFileRequest } from '../models/AccessRequestFileRequest';
 import type { AccessRequestListResponse } from '../models/AccessRequestListResponse';
 import type { AccessRequestResponse } from '../models/AccessRequestResponse';
@@ -64,53 +63,6 @@ export class AccessRequestsService {
             url: '/access-requests',
             body: requestBody,
             mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Count access requests
-     * Count access requests without hydrating a page.
-     *
-     * The cheap companion to the list endpoint for badge and per-segment
-     * consumers: the same visibility filter (caller-scoped for members,
-     * org-wide for ``org:admin``) and the same ``actor_id``/``status``
-     * predicates, but a single ``COUNT(*)`` — no items, no pagination, no
-     * page-size cap on the number. ``status`` matches the stored value, like
-     * the list filter: a pending request past its expiry (presented as the
-     * derived ``expired`` status) still counts as ``pending``.
-     *
-     * With ``group_by=status`` the response additionally carries ``by_status``
-     * — one ``GROUP BY`` query for the whole breakdown, so a consumer rendering
-     * several status segments doesn't poll the endpoint once per status.
-     * ``status`` still applies as a predicate, so combining both simply narrows
-     * the breakdown to that one key.
-     * @returns AccessRequestCountResponse Successful Response
-     * @throws ApiError
-     */
-    public static countAccessRequests({
-        actorId,
-        status,
-        groupBy,
-    }: {
-        actorId?: (string | null),
-        status?: (string | null),
-        groupBy?: (string | null),
-    }): CancelablePromise<AccessRequestCountResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/access-requests/count',
-            query: {
-                'actor_id': actorId,
-                'status': status,
-                'group_by': groupBy,
-            },
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

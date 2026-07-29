@@ -14,15 +14,18 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe('usePendingAccessRequestCount', () => {
-	it('reports the pending count from the dedicated count endpoint', async () => {
+	it('reports the count of pending access requests from the real endpoint', async () => {
 		const { result } = renderHook(() => usePendingAccessRequestCount(), { wrapper });
 		await waitFor(() => expect(result.current.count).toBeGreaterThan(0));
+		// The seed's pending set fits in one page, so it's an exact count, not "N+".
+		expect(result.current.atLeast).toBe(false);
 	});
 
 	it('resolves to 0 (never a misleading badge) when the request fails', async () => {
-		worker.use(createErrorHandler('get', '/access-requests/count', { status: 500 }));
+		worker.use(createErrorHandler('get', '/access-requests', { status: 500 }));
 		const { result } = renderHook(() => usePendingAccessRequestCount(), { wrapper });
 		// Give the failed query a tick to settle; the floor stays at 0.
 		await waitFor(() => expect(result.current.count).toBe(0));
+		expect(result.current.atLeast).toBe(false);
 	});
 });
