@@ -1,25 +1,43 @@
 import { PageShell, PageHeader, PageHelp, RefreshButton } from '@/shared/ui';
 import { useQueryClient } from '@tanstack/react-query';
-import { dashboardKeys } from '@/modules/dashboard/api';
-import { OverviewCards } from '@/modules/dashboard/components/OverviewCards';
-import { PendingAgentsCard } from '@/modules/dashboard/components/PendingAgentsCard';
-import { PendingAccessRequestsCard } from '@/modules/dashboard/components/PendingAccessRequestsCard';
-import { AlertsCard } from '@/modules/dashboard/components/AlertsCard';
+import { dashboardKeys, useHasAgents, useRecentExecutions } from '@/modules/dashboard/api';
+import { GatewayHealthSection } from '@/modules/dashboard/components/GatewayHealthSection';
+import { ActionInboxBell } from '@/modules/dashboard/components/ActionInboxBell';
 import { RecentActivityCard } from '@/modules/dashboard/components/RecentActivityCard';
-import { QuickActions } from '@/modules/dashboard/components/QuickActions';
+import { QuickActionsMenu } from '@/modules/dashboard/components/QuickActionsMenu';
+import { FirstRunChecklist } from '@/modules/dashboard/components/FirstRunChecklist';
 import { ROUTES } from '@/shared/app/routes';
 
 /**
- * Dashboard — the `/app` index (landing) page.
+ * Dashboard — the `/app` index (landing) page, laid out in layers ordered by
+ * how urgently an operator needs each answer:
  *
- * There is no aggregate/stats endpoint: the overview is composed CLIENT-SIDE
- * from four existing list endpoints (agents, events, executions, apis), each
- * read through the shared api facade (never by importing sibling modules) and
- * each owning its own loading/error state so one failing source degrades only
- * its widget. See COLLABORATION.md §1.5 + the Dashboard brief.
+ *   1. STATUS / ACTION — the "Needs your action" bell in the page header: one
+ *      count badge (red when something severe is failing) over a dropdown
+ *      merging the approval queues + actionable alerts into a single
+ *      urgency-sorted triage list. It lives in the header rather than the body
+ *      because the Agent rail already streams the same items live — the bell
+ *      is the durable, glanceable counterpart, not a second feed. Its three
+ *      sources stay independent queries, so one failing endpoint degrades to
+ *      an inline row instead of killing the queue.
+ *   2. PERFORMANCE — real gateway KPIs and trend charts from the org:admin
+ *      `GET /monitoring/usage` aggregate (no more client-side approximations).
+ *   3. CONTEXT — top APIs / toolkits / agents by usage, same query.
+ *   4. DETAIL — a five-row recent-activity teaser that links into Monitor.
+ *
+ * A workspace with no agents and no executions yet swaps layers 2–3 for the
+ * first-run setup checklist — an empty install renders guidance, not a blank
+ * health section. The bell stays mounted (it simply shows no badge).
  */
 export default function DashboardPage() {
 	const queryClient = useQueryClient();
+	const hasAgents = useHasAgents();
+	const executions = useRecentExecutions();
+
+	// First-run only when BOTH probes have resolved empty — while they load we
+	// render the normal layout (its own skeletons) instead of flashing the
+	// checklist at every returning user for a frame.
+	const isFirstRun = hasAgents.data === false && executions.data?.sampled === 0;
 
 	return (
 		<PageShell>
@@ -29,6 +47,8 @@ export default function DashboardPage() {
 				animated={false}
 				actions={
 					<>
+						<ActionInboxBell />
+						<QuickActionsMenu />
 						<RefreshButton
 							onRefresh={() =>
 								queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
@@ -37,11 +57,11 @@ export default function DashboardPage() {
 						/>
 						<PageHelp
 							title="About the Dashboard"
-							intro="The landing page composes a live overview from your agents, events, executions, and registered APIs."
+							intro="The landing page layers what needs you now (the bell's action queue), how the gateway is doing (real usage statistics), and what just ran."
 							sections={[
 								{
-									heading: 'Composed, not aggregated',
-									body: 'There is no stats endpoint — each widget reads a small page from an existing list endpoint, so one source being unavailable degrades only its card.',
+									heading: 'Independently sourced',
+									body: 'Each widget reads its own endpoint, so one source being unavailable degrades only its rows. The Gateway health section reads the monitoring usage aggregate and is visible to org admins only.',
 								},
 							]}
 							links={[
@@ -55,18 +75,9 @@ export default function DashboardPage() {
 				}
 			/>
 
-			<OverviewCards />
-
-			<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-				<PendingAgentsCard />
-				<PendingAccessRequestsCard />
-			</div>
-
-			<AlertsCard />
+			{isFirstRun ? <FirstRunChecklist /> : <GatewayHealthSection />}
 
 			<RecentActivityCard />
-
-			<QuickActions />
 		</PageShell>
 	);
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { cn } from '@/shared/lib/utils';
 
@@ -17,6 +17,8 @@ import { cn } from '@/shared/lib/utils';
  *  - {@link useDismissable} — wires outside-click + Escape close into a
  *    container ref. The trigger and the panel must both be inside the same
  *    container (so clicks on the trigger don't count as "outside").
+ *  - {@link useViewportClamp} — nudges a trigger-anchored panel back inside
+ *    the viewport when the trigger sits too close to a screen edge.
  *  - {@link MenuPanel} — the absolutely-positioned popover shell.
  *  - {@link MenuSeparator} — a thin inset divider for grouping items.
  *  - {@link menuItemClass} — the canonical item className (consume on
@@ -44,6 +46,41 @@ export function useDismissable<T extends HTMLElement>(open: boolean, onClose: ()
 			window.removeEventListener('keydown', onKey);
 		};
 	}, [open, onClose]);
+
+	return ref;
+}
+
+/**
+ * Keeps a trigger-anchored panel inside the viewport horizontally.
+ *
+ * Panels anchor to their trigger with `absolute left-0`/`right-0`, which
+ * overflows the screen edge when the trigger sits near (or wraps to) the
+ * opposite side — e.g. a wide dropdown whose trigger lands on the left half
+ * of a phone header. Attach the returned ref to the panel: after it opens
+ * (and on resize) the panel is measured and nudged back into view with a
+ * transform, preserving the anchor in the common case where nothing
+ * overflows.
+ */
+export function useViewportClamp<T extends HTMLElement>(open: boolean, margin = 12) {
+	const ref = useRef<T>(null);
+
+	useLayoutEffect(() => {
+		const el = ref.current;
+		if (!open || !el) return;
+		function place() {
+			if (!el) return;
+			el.style.transform = '';
+			const rect = el.getBoundingClientRect();
+			const shift =
+				rect.left < margin
+					? margin - rect.left
+					: Math.min(0, window.innerWidth - margin - rect.right);
+			if (shift !== 0) el.style.transform = `translateX(${shift}px)`;
+		}
+		place();
+		window.addEventListener('resize', place);
+		return () => window.removeEventListener('resize', place);
+	}, [open, margin]);
 
 	return ref;
 }
