@@ -162,7 +162,7 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();
 
 		// Deep-link into Monitor carries the toolkit filter.
-		const link = screen.getByRole('link', { name: /open in monitor/i });
+		const link = screen.getByRole('link', { name: /open monitor/i });
 		expect(link).toHaveAttribute(
 			'href',
 			expect.stringContaining('tab=executions&toolkit_id=tk_demo_github'),
@@ -325,7 +325,7 @@ describe('ToolkitDetailPage', () => {
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
 		await user.click(screen.getByRole('tab', { name: /^Access/ }));
-		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
 
 		// Step 1: the picker lists the unbound credential…
 		const stripeRow = await screen.findByText('Stripe key');
@@ -340,7 +340,7 @@ describe('ToolkitDetailPage', () => {
 		expect(
 			await within(dialog).findByRole('radio', { name: /allow all operations/i }),
 		).toHaveAttribute('aria-checked', 'true');
-		await user.click(within(dialog).getByRole('button', { name: /^bind api$/i }));
+		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
 		// The binding lands WITH the allow-all rule — no zero-rules warning — and
@@ -371,12 +371,12 @@ describe('ToolkitDetailPage', () => {
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
 		await user.click(screen.getByRole('tab', { name: /^Access/ }));
-		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
 		await user.click(await screen.findByText('Notion token'));
 
 		const dialog = screen.getByRole('dialog');
 		await user.click(await within(dialog).findByRole('radio', { name: /start blocked/i }));
-		await user.click(within(dialog).getByRole('button', { name: /^bind api$/i }));
+		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 
 		// Zero rules → the backend's warnings[] renders verbatim on the row, plus
@@ -411,31 +411,35 @@ describe('ToolkitDetailPage', () => {
 		await user.click(await screen.findByRole('button', { name: /test a request/i }));
 		await screen.findByLabelText('Request path');
 
-		// GET /repos/… matches the seeded allow rule → Allowed, rule #1.
+		// The seeded allow rule is operation-scoped, so — like the real broker —
+		// it only fires when the request carries a matching operation id.
 		await user.type(screen.getByLabelText('Request path'), '/repos/acme/site');
+		await user.type(screen.getByLabelText('Operation ID (optional)'), 'repos/get');
 		await user.click(screen.getByRole('button', { name: /^test$/i }));
-		expect(await screen.findByTestId('rule-verdict')).toHaveTextContent(
-			/allowed — matched rule #1/i,
+		// The verdict anchors to the numbered editor row AND names the rule in
+		// the shared summary voice — no bare unanchored ordinal.
+		const verdict = await screen.findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent(/allowed — matched rule #1/i);
+		expect(verdict).toHaveTextContent(/allows get/i);
+
+		// The same request WITHOUT the operation id skips the operation-scoped
+		// allow (broker fidelity) → default deny.
+		await user.clear(screen.getByLabelText('Operation ID (optional)'));
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		await waitFor(() =>
+			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
+				/denied — no rule matched/i,
+			),
 		);
 
-		// /admin/… trips the system safety deny (rule 3 after the seeded
-		// allow-GET + deny-DELETE agent rules) → Denied, system-tagged.
+		// /admin/… trips the platform-managed system safety deny — named as
+		// such, never as a number pointing at an invisible row.
 		await user.clear(screen.getByLabelText('Request path'));
 		await user.type(screen.getByLabelText('Request path'), '/admin/users');
 		await user.click(screen.getByRole('button', { name: /^test$/i }));
 		await waitFor(() =>
 			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
-				/denied — matched rule #3 \(system safety\)/i,
-			),
-		);
-
-		// A path nothing matches → the broker's default deny.
-		await user.clear(screen.getByLabelText('Request path'));
-		await user.type(screen.getByLabelText('Request path'), '/unmapped');
-		await user.click(screen.getByRole('button', { name: /^test$/i }));
-		await waitFor(() =>
-			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
-				/denied — no rule matched/i,
+				/denied — matched a platform system safety rule/i,
 			),
 		);
 	});
@@ -471,6 +475,37 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
 	});
 
+	it('treats a pure rule reorder as a change (first match wins) and says so', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
+		);
+
+		// Rows are numbered — the same numbers the tester's verdict cites.
+		const ruleRows = await screen.findAllByTestId('permission-rule-row');
+		expect(within(ruleRows[0]).getByText('#1')).toBeInTheDocument();
+		expect(within(ruleRows[1]).getByText('#2')).toBeInTheDocument();
+
+		// Swap the two seeded rules: same multiset, different evaluation order —
+		// the diff panel must flag the reorder and the save must arm.
+		await user.click(within(ruleRows[0]).getByRole('button', { name: /move rule down/i }));
+		const diff = await screen.findByTestId('rules-diff');
+		expect(within(diff).getByText(/rules reordered/i)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeEnabled();
+
+		// Swapping back restores a clean draft.
+		const swapped = screen.getAllByTestId('permission-rule-row');
+		await user.click(within(swapped[1]).getByRole('button', { name: /move rule up/i }));
+		await waitFor(() => expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument());
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
+	});
+
 	it('filters the credential picker by the search term', async () => {
 		seedCredentials([
 			{ credential_id: 'cred_aws', name: 'AWS key', type: 'api_key', vendor: 'aws' },
@@ -481,7 +516,7 @@ describe('ToolkitDetailPage', () => {
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
 		await user.click(screen.getByRole('tab', { name: /^Access/ }));
-		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
 		await screen.findByText('AWS key');
 
 		await user.type(screen.getByLabelText('Filter credentials'), 'slack');
@@ -535,7 +570,9 @@ describe('ToolkitDetailPage', () => {
 			'aria-selected',
 			'true',
 		);
-		expect(await screen.findByRole('button', { name: /^bind api$/i })).toBeInTheDocument();
+		expect(
+			await screen.findByRole('button', { name: /^bind credential$/i }),
+		).toBeInTheDocument();
 	});
 
 	it('opens the bind wizard straight from the Overview credentials card', async () => {
@@ -545,7 +582,7 @@ describe('ToolkitDetailPage', () => {
 		await screen.findAllByTestId('overview-credential-row');
 
 		// Symmetry with "Link agent": credentials bind from the landing tab too.
-		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
+		await user.click(screen.getByRole('button', { name: /^bind credential$/i }));
 		const dialog = await screen.findByRole('dialog');
 		expect(within(dialog).getByText(/step 1 of 2/i)).toBeInTheDocument();
 	});

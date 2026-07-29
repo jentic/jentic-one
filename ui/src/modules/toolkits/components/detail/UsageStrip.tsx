@@ -1,16 +1,13 @@
-import type { ReactNode } from 'react';
 import { Activity, Boxes, CheckCircle2, Gauge } from 'lucide-react';
-import { Skeleton } from '@/shared/ui';
-import { cn } from '@/shared/lib/utils';
+import { Skeleton, StatCard } from '@/shared/ui';
 import { useToolkitAgents, useToolkitUsage } from '@/modules/toolkits/api';
 import type { Toolkit } from '@/modules/toolkits/api/types';
 
 /**
  * KPI strip under the detail header — the toolkit's 7-day vitals from
- * `GET /monitoring/usage?toolkit_id=…`, plus the relationship counts.
- * Deliberately the same tile grammar as the dashboard's `StatCard`
- * (mono uppercase label, accent icon medallion, bold tabular value) so the
- * detail page reads as part of the same product.
+ * `GET /monitoring/usage?toolkit_id=…`, plus the relationship counts. Rendered
+ * with the shared `StatCard` (the dashboard's tile grammar) so the detail page
+ * reads as part of the same product.
  *
  * Admin-gated by data shape: the repository maps 401/403 to `null`, and a
  * `null` usage hides the whole strip (non-admins lose nothing they could see
@@ -27,59 +24,6 @@ function formatLatency(ms: number | null | undefined): string {
 	if (ms == null) return '—';
 	if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
 	return `${Math.round(ms)}ms`;
-}
-
-type Accent = 'blue' | 'green' | 'orange' | 'primary' | 'danger';
-
-const ACCENT_MEDALLION: Record<Accent, string> = {
-	blue: 'bg-accent-blue/12 text-accent-blue ring-accent-blue/20',
-	green: 'bg-accent-green/12 text-accent-green ring-accent-green/20',
-	orange: 'bg-accent-orange/12 text-accent-orange ring-accent-orange/20',
-	primary: 'bg-primary/12 text-primary ring-primary/20',
-	danger: 'bg-danger/12 text-danger ring-danger/20',
-};
-
-interface StatTileProps {
-	label: string;
-	value: string;
-	caption?: string;
-	icon: ReactNode;
-	accent: Accent;
-	valueClassName?: string;
-}
-
-function StatTile({ label, value, caption, icon, accent, valueClassName }: StatTileProps) {
-	return (
-		<div className="border-border/60 bg-card flex flex-col gap-2 rounded-xl border p-4">
-			<div className="flex items-start justify-between gap-2">
-				<span className="text-muted-foreground font-mono text-[11px] leading-none font-medium tracking-wider uppercase">
-					{label}
-				</span>
-				<span
-					aria-hidden="true"
-					className={cn(
-						'-mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
-						ACCENT_MEDALLION[accent],
-					)}
-				>
-					{icon}
-				</span>
-			</div>
-			<div className="flex items-baseline gap-2">
-				<span
-					className={cn(
-						'font-heading text-foreground text-2xl leading-none font-bold whitespace-nowrap tabular-nums',
-						valueClassName,
-					)}
-				>
-					{value}
-				</span>
-				{caption && (
-					<span className="text-muted-foreground truncate text-xs">{caption}</span>
-				)}
-			</div>
-		</div>
-	);
 }
 
 export function UsageStrip({ toolkit }: { toolkit: Toolkit }) {
@@ -114,14 +58,14 @@ export function UsageStrip({ toolkit }: { toolkit: Toolkit }) {
 
 	return (
 		<div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="usage-strip">
-			<StatTile
+			<StatCard
 				label="Executions"
 				value={total.toLocaleString()}
 				caption="last 7 days"
 				icon={<Activity className="h-4 w-4" />}
 				accent="blue"
 			/>
-			<StatTile
+			<StatCard
 				label="Success rate"
 				value={formatPercent(success, total)}
 				caption={total > 0 && failed > 0 ? `${failed.toLocaleString()} failed` : undefined}
@@ -129,17 +73,17 @@ export function UsageStrip({ toolkit }: { toolkit: Toolkit }) {
 				accent={healthy ? 'green' : 'danger'}
 				valueClassName={total === 0 ? undefined : healthy ? 'text-success' : 'text-danger'}
 			/>
-			<StatTile
+			<StatCard
 				label="p95 latency"
 				value={formatLatency(usage.stats.p95_ms)}
 				caption="last 7 days"
 				icon={<Gauge className="h-4 w-4" />}
 				accent="orange"
 			/>
-			<StatTile
+			<StatCard
 				label="Wired up"
 				value={`${agents.length} / ${toolkit.credential_count} / ${toolkit.key_count}`}
-				caption="agents / creds / keys"
+				caption="agents / credentials / keys"
 				icon={<Boxes className="h-4 w-4" />}
 				accent="primary"
 			/>

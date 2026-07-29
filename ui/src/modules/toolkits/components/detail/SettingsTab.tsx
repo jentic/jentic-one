@@ -144,7 +144,7 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 						disabled={!dirty || updateToolkit.isPending}
 						loading={updateToolkit.isPending}
 					>
-						{updateToolkit.isPending ? 'Saving...' : 'Save Changes'}
+						{updateToolkit.isPending ? 'Saving…' : 'Save changes'}
 					</Button>
 				</form>
 			</DetailSection>

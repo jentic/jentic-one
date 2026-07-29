@@ -154,7 +154,7 @@ function CredentialRow({
 			data-testid="credential-picker-row"
 			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
 		>
-			<div className="bg-accent-yellow/10 text-accent-yellow flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+			<div className="bg-accent-blue/10 text-accent-blue flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 				<KeyRound className="h-4 w-4" />
 			</div>
 			<div className="min-w-0 flex-1">

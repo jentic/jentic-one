@@ -103,7 +103,7 @@ function KeyRow({
 					) : (
 						<>
 							<span className="text-foreground truncate text-sm font-medium">
-								{key.label || 'Unnamed Key'}
+								{key.label || 'Unnamed key'}
 							</span>
 							{!key.revoked && (
 								<Button
@@ -124,7 +124,7 @@ function KeyRow({
 					<code className="text-muted-foreground font-mono text-xs">
 						{key.key_preview}
 					</code>
-					{key.revoked && <Badge variant="danger">revoked</Badge>}
+					{key.revoked && <Badge variant="danger">Revoked</Badge>}
 					{(key.allowed_ips ?? []).length > 0 && (
 						<span
 							className="border-border bg-card text-muted-foreground inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]"
@@ -203,7 +203,7 @@ export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended
 					: {
 							label: (
 								<>
-									<Plus className="h-4 w-4" /> Create Key
+									<Plus className="h-4 w-4" /> Create key
 								</>
 							),
 							onClick: () => setShowKeyCreate(true),
@@ -220,7 +220,7 @@ export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended
 				{showKeyCreate && (
 					<motion.div key="create-key-form" {...panelMotion} className="overflow-hidden">
 						<div className="bg-muted/30 border-border/60 space-y-3 rounded-lg border p-4">
-							<p className="text-foreground text-sm font-semibold">Create API Key</p>
+							<p className="text-foreground text-sm font-semibold">Create API key</p>
 							<Input
 								type="text"
 								value={keyName}
@@ -250,7 +250,7 @@ export function KeysTab({ toolkitId, suspended }: { toolkitId: string; suspended
 							</div>
 							<div className="flex gap-2">
 								<Button size="sm" onClick={submitKey} loading={createKey.isPending}>
-									{createKey.isPending ? 'Generating...' : 'Generate'}
+									{createKey.isPending ? 'Generating…' : 'Generate'}
 								</Button>
 								<Button
 									variant="secondary"

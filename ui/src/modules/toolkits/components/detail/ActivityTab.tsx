@@ -1,5 +1,5 @@
-import { Activity, ExternalLink, ListOrdered, Lock, TrendingUp } from 'lucide-react';
-import { AppLink, TrendLineChart } from '@/shared/ui';
+import { Activity, ListOrdered, Lock, TrendingUp } from 'lucide-react';
+import { ActorLabel, AppLink, TrendLineChart } from '@/shared/ui';
 import { useToolkitExecutions, useToolkitUsage } from '@/modules/toolkits/api';
 import type { ToolkitExecution } from '@/modules/toolkits/api/types';
 import { DetailSection, EmptyRow } from '@/modules/toolkits/components/detail/shared';
@@ -29,10 +29,16 @@ function formatDuration(ms: number | null): string {
 	return `${ms}ms`;
 }
 
+/**
+ * Execution lifecycle → dot colour, aligned with Monitor's vocabulary
+ * (running/completed/failed/cancelled — see `ExecutionStatusPill`). Unknown
+ * wire values fall through to the neutral dot rather than leaking a colour.
+ */
 const STATUS_DOT_CLASS: Record<string, string> = {
 	completed: 'bg-success',
 	failed: 'bg-danger',
-	pending: 'bg-warning',
+	running: 'bg-accent-blue',
+	cancelled: 'bg-warning',
 };
 
 function ExecutionRow({ row }: { row: ToolkitExecution }) {
@@ -48,6 +54,8 @@ function ExecutionRow({ row }: { row: ToolkitExecution }) {
 				aria-hidden="true"
 				title={row.status}
 			/>
+			{/* The dot alone is invisible to AT — carry the status as text too. */}
+			<span className="sr-only">{row.status}</span>
 			<div className="min-w-0 flex-1 basis-48">
 				<p className="text-foreground truncate font-mono text-xs">
 					{row.operation_id ?? row.api_label ?? row.trace_id}
@@ -61,8 +69,9 @@ function ExecutionRow({ row }: { row: ToolkitExecution }) {
 				</p>
 				{row.error && <p className="text-danger mt-0.5 truncate text-xs">{row.error}</p>}
 			</div>
-			<span className="text-muted-foreground shrink-0 font-mono text-xs">
-				{row.actor_type}/{row.actor_id}
+			<span className="text-muted-foreground shrink-0 text-xs">
+				{/* Resolve the raw actor id like every other attribution surface. */}
+				<ActorLabel actorId={row.actor_id} actorType={row.actor_type} />
 			</span>
 			<span className="text-muted-foreground w-14 shrink-0 text-right font-mono text-xs">
 				{formatDuration(row.duration_ms)}
@@ -127,7 +136,9 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 						href={`${ROUTES.monitor}?tab=executions&toolkit_id=${toolkitId}`}
 						className="text-primary inline-flex items-center gap-1 text-xs font-medium"
 					>
-						Open in Monitor <ExternalLink className="h-3 w-3" aria-hidden="true" />
+						{/* In-app route — the Activity glyph, matching the agents page;
+						    ExternalLink is reserved for real external targets. */}
+						Open Monitor <Activity className="h-3 w-3" aria-hidden="true" />
 					</AppLink>
 				}
 			>

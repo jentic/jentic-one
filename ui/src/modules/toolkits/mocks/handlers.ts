@@ -385,9 +385,25 @@ export const toolkitsHandlers = [
 			allow_all?: boolean;
 			permissions?: Array<Record<string, unknown>> | null;
 		};
-		// Mirror the backend's inline-grant contract: `allow_all` expands to one
-		// catch-all allow rule; `permissions` is stored verbatim; neither ⇒ zero
-		// rules and the broker default-denies (flagged via the warning).
+		// Mirror the backend's error contract: allow_all XOR permissions (422),
+		// duplicate bind (409) — so the dialog's failure paths stay testable.
+		if (body.allow_all && (body.permissions ?? []).length > 0) {
+			return HttpResponse.json(
+				{ detail: 'allow_all and permissions are mutually exclusive' },
+				{ status: 422 },
+			);
+		}
+		if (
+			(bindingsByToolkit[toolkitId] ?? []).some((b) => b.credential_id === body.credential_id)
+		) {
+			return HttpResponse.json(
+				{ detail: 'Credential is already bound to this toolkit.' },
+				{ status: 409 },
+			);
+		}
+		// `allow_all` expands to one catch-all allow rule; `permissions` is stored
+		// verbatim; neither ⇒ zero rules and the broker default-denies (flagged
+		// via the warning). The backend does NOT append system rules on bind.
 		const agentRules: Array<Record<string, unknown>> = body.allow_all
 			? [{ effect: 'allow', methods: null, path: '.*', operations: null }]
 			: (body.permissions ?? []);
@@ -400,22 +416,10 @@ export const toolkitsHandlers = [
 			credential_type: null,
 			bound_at: now(),
 			warnings: agentRules.length === 0 ? [zeroRulesWarning(body.credential_id)] : [],
-			permissions:
-				agentRules.length === 0
-					? []
-					: [
-							...agentRules,
-							{
-								effect: 'deny',
-								methods: null,
-								path: '/admin/.*',
-								_system: true,
-								_comment: 'system safety',
-							},
-						],
+			permissions: agentRules,
 		};
 		bindingsByToolkit[toolkitId] = [...(bindingsByToolkit[toolkitId] ?? []), binding];
-		return HttpResponse.json(binding);
+		return HttpResponse.json(binding, { status: 201 });
 	}),
 
 	http.delete('/toolkits/:toolkitId/credentials/:credentialId', ({ params }) => {
@@ -438,56 +442,113 @@ export const toolkitsHandlers = [
 			const list = bindingsByToolkit[params.toolkitId as string] ?? [];
 			const binding = list.find((b) => b.credential_id === params.credentialId);
 			const rules = (await request.json()) as Array<Record<string, unknown>>;
-			const withSystem = [
-				...rules,
-				{
-					effect: 'deny',
-					methods: null,
-					path: '/admin/.*',
-					_system: true,
-					_comment: 'system safety',
-				},
-			];
+			// Backend contract: a condition-less allow is a 422, and an invalid
+			// regex path is a 422 — reject like the real schema does.
+			for (const rule of rules) {
+				const conditionless =
+					!(rule.methods as string[] | null)?.length &&
+					!(typeof rule.path === 'string' && rule.path.trim()) &&
+					!(rule.operations as string[] | null)?.length;
+				if (rule.effect === 'allow' && conditionless) {
+					return HttpResponse.json(
+						{ detail: 'A condition-less allow rule is not permitted.' },
+						{ status: 422 },
+					);
+				}
+				const mode = (rule.match_mode as string | undefined) ?? 'regex';
+				if (typeof rule.path === 'string' && rule.path && mode === 'regex') {
+					try {
+						new RegExp(rule.path);
+					} catch {
+						return HttpResponse.json(
+							{ detail: `Invalid path regex: ${rule.path}` },
+							{ status: 422 },
+						);
+					}
+				}
+			}
+			// Replace USER rules only — pre-existing system rules are
+			// platform-managed and survive the save untouched.
+			const systemRules = (
+				(binding?.permissions as Array<Record<string, unknown>>) ?? []
+			).filter((r) => r._system);
+			const next = [...rules.map((r) => ({ ...r, _system: false })), ...systemRules];
 			if (binding) {
-				binding.permissions = withSystem;
+				binding.permissions = next;
 				// Authoring rules resolves the zero-rules warning.
 				if (rules.length > 0) binding.warnings = [];
 			}
-			return HttpResponse.json({ data: withSystem });
+			return HttpResponse.json({ data: next });
 		},
 	),
 
-	// Broker dry-run (`POST …/permissions:test`) — evaluates the binding's rule
-	// list in order, the way the broker's vendor-pooled evaluation does, without
-	// calling upstream. The colon is escaped so path-to-regexp reads a literal
-	// `permissions:test` segment rather than a `:test` param.
+	// Broker dry-run (`POST …/permissions:test`) — a faithful port of the
+	// backend's vendor-POOLED evaluation: rules from every same-vendor binding
+	// on the toolkit compete in one ordered list (binding insertion order mirrors
+	// the sequence column); null conditions match everything; condition-less
+	// allows are skipped; operation-scoped rules only fire when the request
+	// carries an operation id; prefix/exact match modes are honoured. The colon
+	// is escaped so path-to-regexp reads a literal `permissions:test` segment.
 	http.post(
 		'/toolkits/:toolkitId/credentials/:credentialId/permissions\\:test',
 		async ({ params, request }) => {
 			const list = bindingsByToolkit[params.toolkitId as string] ?? [];
 			const binding = list.find((b) => b.credential_id === params.credentialId);
 			if (!binding) return new HttpResponse(null, { status: 404 });
-			const body = (await request.json()) as { method: string; path: string };
-			const rules = (binding.permissions as Array<Record<string, unknown>>) ?? [];
-			const method = body.method.toUpperCase();
-			for (let i = 0; i < rules.length; i++) {
-				const rule = rules[i];
-				const methods = rule.methods as string[] | null;
-				if (methods && !methods.map((m) => m.toUpperCase()).includes(method)) continue;
-				let matches = false;
-				try {
-					matches = new RegExp(`^${rule.path as string}$`).test(body.path);
-				} catch {
-					matches = false;
+			const body = (await request.json()) as {
+				method: string;
+				path: string;
+				operation_id?: string | null;
+			};
+			// Pool rules across all bindings sharing this binding's vendor.
+			const vendor = (binding.api_vendor as string | null) ?? null;
+			const pooled: Array<{ rule: Record<string, unknown>; credentialId: string }> = [];
+			for (const b of list) {
+				if (((b.api_vendor as string | null) ?? null) !== vendor) continue;
+				for (const rule of (b.permissions as Array<Record<string, unknown>>) ?? []) {
+					pooled.push({ rule, credentialId: b.credential_id as string });
 				}
-				if (!matches) continue;
+			}
+			const method = body.method.toUpperCase();
+			for (let i = 0; i < pooled.length; i++) {
+				const { rule, credentialId } = pooled[i];
+				const methods = rule.methods as string[] | null;
+				const path = rule.path as string | null;
+				const operations = rule.operations as string[] | null;
+				// The broker skips a condition-less allow — it must not silently
+				// unlock a dry-run any more than it unlocks a real request.
+				if (!methods?.length && !path && !operations?.length && rule.effect === 'allow')
+					continue;
+				if (methods?.length && !methods.map((m) => m.toUpperCase()).includes(method))
+					continue;
+				if (path != null && path !== '') {
+					const mode = (rule.match_mode as string | undefined) ?? 'regex';
+					let matches = false;
+					if (mode === 'prefix') matches = body.path.startsWith(path);
+					else if (mode === 'exact') matches = body.path === path;
+					else {
+						try {
+							// `^(?:…)$` mirrors Python's re.fullmatch, including
+							// for alternations like `a|b`.
+							matches = new RegExp(`^(?:${path})$`).test(body.path);
+						} catch {
+							matches = false;
+						}
+					}
+					if (!matches) continue;
+				}
+				if (
+					operations?.length &&
+					(body.operation_id == null || !operations.includes(body.operation_id))
+				)
+					continue;
 				return HttpResponse.json({
 					allowed: rule.effect === 'allow',
 					matched: true,
 					effect: rule.effect,
 					rule_index: i,
 					is_system: Boolean(rule._system),
-					credential_id: params.credentialId,
+					credential_id: credentialId,
 				});
 			}
 			// No rule matched → default deny.
@@ -690,8 +751,26 @@ export const toolkitsHandlers = [
 		const url = new URL(request.url);
 		const toolkitId = url.searchParams.get('toolkit_id');
 		if (!toolkitId) return undefined; // Monitor's org-wide fixtures answer.
+		// Honour Monitor's filters too — this handler wins first-match over the
+		// monitor fixtures whenever the toolkit scope chip is active, so the
+		// deep-linked Executions view must keep its status/window/cursor
+		// behaviour instead of silently ignoring them.
+		const status = url.searchParams.get('status');
+		const from = url.searchParams.get('from');
+		const cursor = Number(url.searchParams.get('cursor') ?? 0);
 		const limit = Math.max(1, Number(url.searchParams.get('limit') ?? 25));
-		const rows = (executionsByToolkit[toolkitId] ?? []).slice(0, limit);
-		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+		let rows = executionsByToolkit[toolkitId] ?? [];
+		if (status) rows = rows.filter((r) => r.status === status);
+		if (from) {
+			const fromTs = Date.parse(from);
+			rows = rows.filter((r) => Date.parse(r.started_at as string) >= fromTs);
+		}
+		const page = rows.slice(cursor, cursor + limit);
+		const hasMore = cursor + limit < rows.length;
+		return HttpResponse.json({
+			data: page,
+			has_more: hasMore,
+			next_cursor: hasMore ? String(cursor + limit) : null,
+		});
 	}),
 ];

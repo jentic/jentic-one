@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, FlaskConical, Minus, Plus, Save } from 'lucide-react';
-import { Button, PermissionRuleEditor, isEmptyAllowRule } from '@/shared/ui';
+import { ArrowUpDown, ChevronDown, FlaskConical, Minus, Plus, Save } from 'lucide-react';
+import { Button, PermissionRuleEditor, cleanPermissionRule, isEmptyAllowRule } from '@/shared/ui';
 import { ruleSummary, type PermissionRule as DisplayRule } from '@/shared/lib';
 import { useReplacePermissions } from '@/modules/toolkits/api';
 import { RuleTester } from '@/modules/toolkits/components/detail/RuleTester';
@@ -10,14 +10,15 @@ import type { PermissionRule, PermissionRuleInput } from '@/modules/toolkits/api
 
 /**
  * Inline editor for the agent permission rules on one toolkit↔credential
- * binding. System safety rules (`_system: true`, appended by the backend on
- * every save) are filtered out of the editor so saving never persists them as
- * agent rules — the backend re-appends a fresh copy each time.
+ * binding. System safety rules (`_system: true`) are platform-managed — they
+ * are filtered out of the editor so saving never persists them as agent rules.
  *
  * The draft is diffed live against the saved rules into a "Pending changes"
  * panel (− removed / + added, in the same `ruleSummary` voice the platform
  * uses everywhere), so the operator sees exactly which grants a save will
- * revoke or introduce before committing. The broker dry-run tester is tucked
+ * revoke or introduce before committing. Because evaluation is first-match-wins,
+ * a pure reorder is also a change — dirtiness is order-sensitive and reorders
+ * get their own pending-changes line. The broker dry-run tester is tucked
  * behind a disclosure — present when needed, not competing with the editor.
  */
 export interface CredentialPermissionEditorProps {
@@ -29,42 +30,40 @@ export interface CredentialPermissionEditorProps {
 }
 
 function toInput(rule: PermissionRule): PermissionRuleInput {
-	// `effect` is two distinct generated string enums (read vs write schema) with
-	// identical 'allow'/'deny' values; TS treats string-enum members as assignable
+	// `effect`/`match_mode` are distinct generated string enums (read vs write
+	// schema) with identical values; TS treats string-enum members as assignable
 	// across them, so copying directly is type-safe (verified under `strict`).
 	return {
 		effect: rule.effect,
 		methods: rule.methods ?? undefined,
 		path: rule.path ?? undefined,
+		match_mode: rule.match_mode ?? undefined,
 		operations: rule.operations ?? undefined,
 	};
 }
 
 /** Drop empty conditions so the wire body (and the diff) never carries noise. */
-function cleanRule(rule: PermissionRuleInput): PermissionRuleInput {
-	const out: PermissionRuleInput = { effect: rule.effect };
-	if (Array.isArray(rule.methods) && rule.methods.length > 0) out.methods = rule.methods;
-	if (typeof rule.path === 'string' && rule.path.trim() !== '') out.path = rule.path.trim();
-	if (Array.isArray(rule.operations) && rule.operations.length > 0)
-		out.operations = rule.operations;
-	return out;
-}
+const cleanRule = cleanPermissionRule;
 
 function toDisplay(rule: PermissionRuleInput): DisplayRule {
+	const mode = String(rule.match_mode ?? 'regex');
 	return {
 		effect: String(rule.effect) === 'deny' ? 'deny' : 'allow',
 		methods: rule.methods ?? null,
 		path: rule.path ?? null,
+		match_mode: mode === 'prefix' || mode === 'exact' ? mode : null,
 		operations: rule.operations ?? null,
 	};
 }
 
-/** Order-insensitive canonical key for one rule (for the multiset diff). */
+/** Canonical key for one rule — order-insensitive over its CONDITIONS only. */
 function canon(rule: DisplayRule): string {
 	return JSON.stringify({
 		e: rule.effect,
 		m: [...(rule.methods ?? [])].sort(),
 		p: rule.path ?? null,
+		// regex is the backend default, so normalize it to null for comparison.
+		mm: rule.match_mode ?? null,
 		o: [...(rule.operations ?? [])].sort(),
 	});
 }
@@ -119,7 +118,14 @@ export function CredentialPermissionEditor({
 	const draftDisplay = clean.map(toDisplay);
 	const added = diffRules(draftDisplay, savedDisplay);
 	const removed = diffRules(savedDisplay, draftDisplay);
-	const dirty = added.length > 0 || removed.length > 0;
+	// First match wins, so ORDER is part of the grant: a pure permutation of the
+	// saved rules must be saveable (and announced), even though the multiset
+	// diff is empty.
+	const reordered =
+		added.length === 0 &&
+		removed.length === 0 &&
+		draftDisplay.map(canon).join('\u0000') !== savedDisplay.map(canon).join('\u0000');
+	const dirty = added.length > 0 || removed.length > 0 || reordered;
 
 	const save = () => {
 		if (hasInvalidRule || !dirty) return;
@@ -134,7 +140,7 @@ export function CredentialPermissionEditor({
 				</p>
 				<p className="text-muted-foreground mt-0.5 text-xs">
 					Rules are evaluated in order — first match wins, anything unmatched is denied.
-					System safety rules are always appended.
+					System safety rules, when present, are platform-managed and not edited here.
 				</p>
 			</div>
 
@@ -157,6 +163,18 @@ export function CredentialPermissionEditor({
 								</span>
 							</p>
 							<ul className="space-y-1 text-xs">
+								{reordered && (
+									<li className="text-foreground flex items-start gap-1.5">
+										<ArrowUpDown
+											className="mt-0.5 h-3 w-3 shrink-0"
+											aria-hidden="true"
+										/>
+										<span>
+											Rules reordered — evaluation is first-match-wins, so the
+											new order changes which rule decides a request.
+										</span>
+									</li>
+								)}
 								{removed.map((rule, i) => (
 									<li
 										key={`removed-${i}`}
@@ -209,11 +227,12 @@ export function CredentialPermissionEditor({
 			{/* Broker dry-run, behind a disclosure so it never competes with the
 			    editor for attention. */}
 			<div className="border-border/60 border-t pt-3">
-				<button
-					type="button"
+				<Button
+					variant="ghost"
+					size="sm"
 					onClick={() => setTesterOpen((prev) => !prev)}
 					aria-expanded={testerOpen}
-					className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs font-medium transition-colors"
+					className="text-muted-foreground hover:text-foreground -ml-2 gap-1.5 text-xs"
 				>
 					<FlaskConical className="h-3.5 w-3.5" aria-hidden="true" />
 					Test a request
@@ -224,7 +243,7 @@ export function CredentialPermissionEditor({
 					>
 						<ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
 					</motion.span>
-				</button>
+				</Button>
 				<AnimatePresence initial={false}>
 					{testerOpen && (
 						<motion.div {...panelMotion} className="overflow-hidden">

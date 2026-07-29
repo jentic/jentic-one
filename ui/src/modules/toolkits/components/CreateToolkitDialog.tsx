@@ -36,16 +36,18 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 	const [selectedCredIds, setSelectedCredIds] = useState<Set<string>>(new Set());
 	const [created, setCreated] = useState<CreatedToolkit | null>(null);
 
-	const reset = () => {
+	// Dialog-state lifecycle: the FORM draft survives casual dismissals and is
+	// reset only on the success path; the one-time plaintext key is the
+	// sensitive-data exception and is wiped on every close.
+	const resetForm = () => {
 		setName('');
 		setDescription('');
 		setSelectedCredIds(new Set());
-		setCreated(null); // wipe the one-time plaintext
-		createToolkit.reset();
 	};
 
 	const close = () => {
-		reset();
+		setCreated(null); // wipe the one-time plaintext
+		createToolkit.reset();
 		onClose();
 	};
 
@@ -66,7 +68,12 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 				description: description.trim() || null,
 				credential_ids: selectedCredIds.size > 0 ? [...selectedCredIds] : null,
 			},
-			{ onSuccess: (res) => setCreated(res) },
+			{
+				onSuccess: (res) => {
+					resetForm();
+					setCreated(res);
+				},
+			},
 		);
 	};
 
@@ -97,7 +104,7 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 							loading={createToolkit.isPending}
 							disabled={!name.trim()}
 						>
-							{createToolkit.isPending ? 'Creating...' : 'Create'}
+							{createToolkit.isPending ? 'Creating…' : 'Create'}
 						</Button>
 					</>
 				)
@@ -197,8 +204,9 @@ export function CreateToolkitDialog({ open, onClose, onGoToToolkit }: CreateTool
 								))}
 							</div>
 							<p className="text-muted-foreground mt-1 text-xs">
-								Inline binds start with zero rules — all calls are denied until you
-								add allow rules.
+								Inline binds start blocked (no rules) — grant access from the
+								toolkit's Access tab, the same way the bind wizard's "Start blocked"
+								option works.
 							</p>
 						</fieldset>
 					)}

@@ -4,11 +4,12 @@ import {
 	Activity as ActivityIcon,
 	Key,
 	LayoutDashboard,
+	SearchX,
 	Settings,
 	ShieldCheck,
 	ShieldOff,
 } from 'lucide-react';
-import { Button, TabNav } from '@/shared/ui';
+import { Button, EmptyState, TabNav } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
 import { OverviewTab } from '@/modules/toolkits/components/detail/OverviewTab';
 import { ActivityTab } from '@/modules/toolkits/components/detail/ActivityTab';
@@ -95,13 +96,16 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 
 	if (!toolkit)
 		return (
-			<div className="flex flex-col items-center justify-center gap-3 px-5 py-12 text-center">
-				<span className="text-2xl">🔍</span>
-				<p className="text-foreground font-medium">Toolkit not found</p>
-				<Button variant="secondary" onClick={onRequestClose}>
-					Back
-				</Button>
-			</div>
+			<EmptyState
+				icon={<SearchX className="h-6 w-6" />}
+				title="Toolkit not found"
+				description="It may have been deleted, or the link is stale."
+				action={
+					<Button variant="secondary" onClick={onRequestClose}>
+						All toolkits
+					</Button>
+				}
+			/>
 		);
 
 	const suspended = !toolkit.active;

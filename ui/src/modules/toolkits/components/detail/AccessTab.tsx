@@ -47,7 +47,7 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 				action={{
 					label: (
 						<>
-							<LinkIcon className="h-4 w-4" /> Bind API
+							<LinkIcon className="h-4 w-4" /> Bind credential
 						</>
 					),
 					onClick: () => setBindOpen(true),
@@ -56,7 +56,7 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 				{bindingsError && <ErrorAlert message="Failed to load bound credentials." />}
 				{!bindingsError && bindings.length === 0 ? (
 					<EmptyRow icon={<Key />}>
-						No credentials bound. Bind credentials to grant this toolkit API access.
+						No credentials bound. Bind a credential to grant this toolkit API access.
 					</EmptyRow>
 				) : (
 					<AnimatePresence initial={false}>
@@ -116,15 +116,15 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 												onConfirm={() =>
 													unbindCredential.mutate(cred.credential_id)
 												}
-												message="Unbind this API?"
-												confirmLabel="Unbind API"
+												message="Unbind this credential?"
+												confirmLabel="Unbind"
 											>
 												<Button
 													variant="danger"
 													size="sm"
 													className="inline-flex items-center gap-1 px-2 py-1 text-xs"
 												>
-													<Unlink className="h-3 w-3" /> Unbind API
+													<Unlink className="h-3 w-3" /> Unbind
 												</Button>
 											</InlineConfirm>
 										</div>
@@ -147,8 +147,8 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 														className="h-3.5 w-3.5 shrink-0"
 														aria-hidden="true"
 													/>
-													No rules — every operation is blocked until you
-													add allow rules.
+													All operations blocked — add an allow rule to
+													grant access.
 												</p>
 											)}
 										</div>

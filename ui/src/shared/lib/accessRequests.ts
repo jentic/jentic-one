@@ -60,6 +60,9 @@ export interface AccessRequestItem {
 /** Permission-rule effect — `require-approval` exists in the schema but is rarely shown. */
 export type PermissionRuleEffect = 'allow' | 'deny' | 'require-approval';
 
+/** How a rule's `path` is interpreted by the broker. Absent = `regex`. */
+export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact';
+
 /**
  * A single permission rule on a `credential.bind` item. On approval these are
  * written verbatim as the binding's `ToolkitPermissionRule`s (broker-enforced,
@@ -72,6 +75,11 @@ export interface PermissionRule {
 	methods?: string[] | null;
 	/** Path/regex the rule matches; null = any. */
 	path?: string | null;
+	/**
+	 * How `path` is matched (`regex` full-match, literal `prefix`, literal
+	 * `exact`). null/absent = regex — the backend default.
+	 */
+	match_mode?: PermissionRuleMatchMode | null;
 	/** OpenAPI operationIds the rule matches; null = any. */
 	operations?: string[] | null;
 }
@@ -369,6 +377,10 @@ export function parseItemRules(item: AccessRequestItem): PermissionRule[] {
 			effect,
 			methods: strings(r.methods),
 			path: typeof r.path === 'string' ? r.path : null,
+			match_mode:
+				r.match_mode === 'prefix' || r.match_mode === 'exact' || r.match_mode === 'regex'
+					? r.match_mode
+					: null,
 			operations: strings(r.operations),
 		});
 	}
@@ -423,8 +435,21 @@ export function ruleSummary(rules: PermissionRule[]): string {
 		}
 		const head = bits.length ? `${verb} ${bits.join(' on ')}` : `${verb} all requests`;
 		// Path is a separate scope, not another thing the methods/ops act "on" —
-		// append it with its own clause so the meaning stays unambiguous.
-		return rule.path ? `${head}, scoped to path ${rule.path}` : head;
+		// append it with its own clause, phrased per match mode so a prefix rule
+		// never reads like a regex (or vice versa).
+		return rule.path ? `${head}, ${pathClause(rule.path, rule.match_mode)}` : head;
 	});
 	return parts.join('; ') + '.';
+}
+
+/** The path-scope clause of a rule summary, phrased for the rule's match mode. */
+function pathClause(path: string, mode: PermissionRuleMatchMode | null | undefined): string {
+	switch (mode) {
+		case 'prefix':
+			return `scoped to paths starting with ${path}`;
+		case 'exact':
+			return `scoped to exactly path ${path}`;
+		default:
+			return `scoped to path ${path}`;
+	}
 }

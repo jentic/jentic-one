@@ -41,8 +41,12 @@ export const toolkitKeys = {
 		[...toolkitKeys.all, 'permissions', id, credentialId] as const,
 	agents: (id: string) => [...sharedQueryKeys.toolkitAgentsRoot, id] as const,
 	audit: (id: string) => [...toolkitKeys.all, 'audit', id] as const,
-	usage: (id: string) => [...toolkitKeys.all, 'usage', id] as const,
-	executions: (id: string) => [...toolkitKeys.all, 'executions', id] as const,
+	// Options are part of cache identity — two callers with different windows
+	// or limits must not share (and clobber) one entry.
+	usage: (id: string, sinceDays?: number) =>
+		[...toolkitKeys.all, 'usage', id, sinceDays ?? null] as const,
+	executions: (id: string, limit?: number) =>
+		[...toolkitKeys.all, 'executions', id, limit ?? null] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
 	usageByToolkit: () => [...toolkitKeys.all, 'usage-by-toolkit'] as const,
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,
@@ -389,7 +393,7 @@ export function useUnlinkAgentFromToolkit(toolkitId: string) {
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
 			// Unlinked agents become linkable again — refresh the picker candidates.
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.linkableAgents() });
-			toast({ title: 'Agent access revoked', variant: 'success' });
+			toast({ title: 'Agent unlinked', variant: 'success' });
 		},
 		onError: (err: Error) =>
 			toast({ title: 'Failed to revoke agent', description: err.message, variant: 'error' }),
@@ -416,7 +420,7 @@ export function useToolkitAudit(toolkitId: string | null, opts: { poll?: boolean
  */
 export function useToolkitUsage(toolkitId: string | null, opts: { sinceDays?: number } = {}) {
 	return useQuery({
-		queryKey: toolkitKeys.usage(toolkitId ?? ''),
+		queryKey: toolkitKeys.usage(toolkitId ?? '', opts.sinceDays),
 		queryFn: () => client.getToolkitUsage(toolkitId as string, opts),
 		enabled: toolkitId != null,
 		refetchInterval: STALE_POLL_MS,
@@ -426,7 +430,7 @@ export function useToolkitUsage(toolkitId: string | null, opts: { sinceDays?: nu
 /** Recent executions for the Activity feed (same `null`-for-non-admin gating). */
 export function useToolkitExecutions(toolkitId: string | null, opts: { limit?: number } = {}) {
 	return useQuery({
-		queryKey: toolkitKeys.executions(toolkitId ?? ''),
+		queryKey: toolkitKeys.executions(toolkitId ?? '', opts.limit),
 		queryFn: () => client.listToolkitExecutions(toolkitId as string, opts),
 		enabled: toolkitId != null,
 		refetchInterval: STALE_POLL_MS,

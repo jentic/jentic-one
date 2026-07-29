@@ -8,7 +8,7 @@ import {
 	Link as LinkIcon,
 	Unlink,
 } from 'lucide-react';
-import { ActorStatusBadge, AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
+import { ActorLabel, ActorStatusBadge, AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
 import {
 	useLinkAgentToToolkit,
@@ -36,7 +36,7 @@ import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
  * Bound Agents leads (issue #636 rationale preserved from the pre-tab layout):
  * "which agent can use this toolkit" sits closest to the kill switch. Bound
  * credentials sits beside it ("what can this toolkit call") with the SAME
- * primary affordance shape — Link agent / Bind API — so both halves of the
+ * primary affordance shape — Link agent / Bind credential — so both halves of the
  * wiring are one click from the landing tab. Rule *editing* stays on Access
  * (the Manage jump); the audit slice follows, so the tab answers "who can call
  * this", "what can it reach", and "what changed recently" without a click.
@@ -84,7 +84,9 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 							{' '}
 							by{' '}
 							<span className="text-foreground font-medium">
-								{toolkit.created_by}
+								{/* Resolve the raw actor id to a name, like every other
+								    attribution field on the platform. */}
+								<ActorLabel actorId={toolkit.created_by} />
 							</span>
 						</>
 					) : null}
@@ -149,7 +151,7 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 									<div className="ml-auto w-full sm:w-auto">
 										<InlineConfirm
 											onConfirm={() => unlinkAgent.mutate(agent.agent_id)}
-											message="Revoke this toolkit for the agent?"
+											message="Unlink this agent?"
 											confirmLabel="Unlink"
 										>
 											<Button
@@ -179,7 +181,7 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 								Manage
 							</Button>
 							<Button variant="secondary" size="sm" onClick={() => setBindOpen(true)}>
-								<LinkIcon className="h-4 w-4" /> Bind API
+								<LinkIcon className="h-4 w-4" /> Bind credential
 							</Button>
 						</div>
 					}
@@ -223,7 +225,7 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 									{displayRules.length === 0 && (
 										<span className="text-warning ml-auto inline-flex shrink-0 items-center gap-1 text-xs">
 											<AlertTriangle className="h-3 w-3" aria-hidden="true" />
-											all ops blocked
+											All operations blocked
 										</span>
 									)}
 								</div>

@@ -5,6 +5,7 @@ import {
 	Button,
 	Dialog,
 	PermissionRuleEditor,
+	cleanPermissionRule,
 	isEmptyAllowRule,
 	type PermissionRuleInput,
 } from '@/shared/ui';
@@ -16,7 +17,8 @@ import { CREDENTIAL_TYPE_LABELS } from '@/modules/toolkits/api/types';
 import { CredentialPicker } from '@/modules/toolkits/components/CredentialPicker';
 
 /**
- * Two-step "Bind API" dialog — pick a credential, then decide what it may do.
+ * Two-step "Bind credential" dialog — pick a credential, then decide what it
+ * may do.
  *
  * The old dialog bound on click with ZERO rules, silently landing the binding
  * in the broker's default-deny state ("all ops blocked") that the user then had
@@ -90,15 +92,9 @@ export function BindCredentialDialog({
 	const step: 'pick' | 'access' = selected ? 'access' : 'pick';
 
 	// Strip empty conditions the same way the permissions editor's save does, so
-	// the bind body never carries `methods: []` / `path: ""` noise.
-	const cleanRules = rules.map((rule) => {
-		const out: PermissionRuleInput = { effect: rule.effect };
-		if (Array.isArray(rule.methods) && rule.methods.length > 0) out.methods = rule.methods;
-		if (typeof rule.path === 'string' && rule.path.trim() !== '') out.path = rule.path.trim();
-		if (Array.isArray(rule.operations) && rule.operations.length > 0)
-			out.operations = rule.operations;
-		return out;
-	});
+	// the bind body never carries `methods: []` / `path: ""` noise (and prefix/
+	// exact match modes survive — one shared cleaner for every save/bind path).
+	const cleanRules = rules.map(cleanPermissionRule);
 	const customInvalid =
 		mode === 'custom' && (cleanRules.length === 0 || cleanRules.some(isEmptyAllowRule));
 
@@ -130,7 +126,7 @@ export function BindCredentialDialog({
 		<Dialog
 			open={open}
 			onClose={onClose}
-			title="Bind API"
+			title="Bind credential"
 			subtitle={
 				step === 'pick'
 					? 'Step 1 of 2 · pick a credential'
@@ -152,7 +148,7 @@ export function BindCredentialDialog({
 							loading={bindCredential.isPending}
 							disabled={customInvalid}
 						>
-							{bindCredential.isPending ? 'Binding…' : 'Bind API'}
+							{bindCredential.isPending ? 'Binding…' : 'Bind credential'}
 						</Button>
 					</>
 				)
@@ -172,9 +168,10 @@ export function BindCredentialDialog({
 			) : (
 				selected && (
 					<div className="space-y-4">
-						{/* Recap of step 1's choice, with the way back. */}
+						{/* Recap of step 1's choice, with the way back. Blue is the
+						    credential accent everywhere (yellow is API keys). */}
 						<div className="bg-muted/30 border-border flex items-center gap-3 rounded-lg border p-3">
-							<div className="bg-accent-yellow/10 text-accent-yellow flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+							<div className="bg-accent-blue/10 text-accent-blue flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 								<KeyRound className="h-4 w-4" />
 							</div>
 							<div className="min-w-0 flex-1">
@@ -193,7 +190,7 @@ export function BindCredentialDialog({
 						</div>
 
 						<div role="radiogroup" aria-label="Access level" className="space-y-2">
-							{MODE_OPTIONS.map(({ value, label, description, Icon, chip }) => {
+							{MODE_OPTIONS.map(({ value, label, description, Icon, chip }, i) => {
 								const active = mode === value;
 								return (
 									<button
@@ -201,7 +198,34 @@ export function BindCredentialDialog({
 										type="button"
 										role="radio"
 										aria-checked={active}
+										// ARIA radio pattern: one tab stop for the group,
+										// arrows move the selection.
+										tabIndex={active ? 0 : -1}
 										onClick={() => setMode(value)}
+										onKeyDown={(e) => {
+											const delta =
+												e.key === 'ArrowDown' || e.key === 'ArrowRight'
+													? 1
+													: e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+														? -1
+														: 0;
+											if (!delta) return;
+											e.preventDefault();
+											const next =
+												MODE_OPTIONS[
+													(i + delta + MODE_OPTIONS.length) %
+														MODE_OPTIONS.length
+												];
+											setMode(next.value);
+											(
+												e.currentTarget.parentElement?.querySelectorAll(
+													'[role="radio"]',
+												)?.[
+													(i + delta + MODE_OPTIONS.length) %
+														MODE_OPTIONS.length
+												] as HTMLElement | undefined
+											)?.focus();
+										}}
 										className={cn(
 											'flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors',
 											active

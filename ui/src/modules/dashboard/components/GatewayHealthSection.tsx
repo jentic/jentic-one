@@ -41,7 +41,7 @@ import {
 	type TopUsageRow,
 	type UsageResponse,
 } from '@/modules/dashboard/api';
-import { StatCard } from '@/modules/dashboard/components/StatCard';
+import { StatCard } from '@/shared/ui';
 import { SectionHeading } from '@/modules/dashboard/components/CardRow';
 import { usePermission, ORG_ADMIN } from '@/shared/auth';
 import {

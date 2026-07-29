@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Button } from '@/shared/ui';
+import { Button, Card, CardBody, CardHeader, CardTitle } from '@/shared/ui';
+import { cn } from '@/shared/lib/utils';
 import type { PermissionRule as DisplayRule } from '@/shared/lib';
 import type { PermissionRule } from '@/modules/toolkits/api/types';
 
@@ -20,14 +21,20 @@ import type { PermissionRule } from '@/modules/toolkits/api/types';
 export function toDisplayRules(rules: PermissionRule[] | null | undefined): DisplayRule[] {
 	return (rules ?? [])
 		.filter((rule) => !rule._system)
-		.map((rule) => ({
-			// The generated read enum and the display union share the same
-			// 'allow'/'deny' strings; String() bridges the nominal enum type.
-			effect: String(rule.effect) === 'deny' ? ('deny' as const) : ('allow' as const),
-			methods: rule.methods ?? null,
-			path: rule.path ?? null,
-			operations: rule.operations ?? null,
-		}));
+		.map((rule) => {
+			const mode = String(rule.match_mode ?? 'regex');
+			return {
+				// The generated read enum and the display union share the same
+				// 'allow'/'deny' strings; String() bridges the nominal enum type.
+				effect: String(rule.effect) === 'deny' ? ('deny' as const) : ('allow' as const),
+				methods: rule.methods ?? null,
+				path: rule.path ?? null,
+				// regex is the default; only non-default modes change how the path
+				// reads, so they alone survive into the display shape.
+				match_mode: mode === 'prefix' || mode === 'exact' ? mode : null,
+				operations: rule.operations ?? null,
+			};
+		});
 }
 
 export const rowMotion = {
@@ -83,7 +90,12 @@ interface DetailSectionProps {
 	children: ReactNode;
 }
 
-/** The card shell every toolkit-detail section renders inside. */
+/**
+ * The card shell every toolkit-detail section renders inside — the shared
+ * `Card` family with a header grammar (icon medallion + heading + right-slot)
+ * layered on top, so the section chrome stays one primitive with the rest of
+ * the product.
+ */
 export function DetailSection({
 	title,
 	icon,
@@ -95,28 +107,28 @@ export function DetailSection({
 	children,
 }: DetailSectionProps) {
 	return (
-		<div
-			className={`flex flex-col overflow-hidden rounded-xl border ${danger ? 'border-danger/50' : 'border-border'} bg-card ${className ?? ''}`}
-		>
-			<div
-				className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 sm:px-5 sm:py-4 ${
-					danger ? 'border-danger/30 bg-danger/5 border-b' : 'border-border border-b'
-				}`}
+		<Card className={cn('flex flex-col', danger && 'border-danger/50', className)}>
+			<CardHeader
+				className={cn(
+					'flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 sm:px-5 sm:py-4',
+					danger && 'border-danger/30 bg-danger/5',
+				)}
 			>
 				<div className="flex items-center gap-2.5">
 					{icon && (
 						<span
 							aria-hidden="true"
-							className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ${
+							className={cn(
+								'flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1',
 								danger
 									? 'bg-danger/10 text-danger ring-danger/25'
-									: 'bg-muted text-muted-foreground ring-border'
-							}`}
+									: 'bg-muted text-muted-foreground ring-border',
+							)}
 						>
 							{icon}
 						</span>
 					)}
-					<h3 className="font-heading text-foreground font-semibold">{title}</h3>
+					<CardTitle>{title}</CardTitle>
 					{titleExtra}
 				</div>
 				{action && (
@@ -129,9 +141,9 @@ export function DetailSection({
 					</Button>
 				)}
 				{trailing}
-			</div>
-			<div className="flex-1 space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">{children}</div>
-		</div>
+			</CardHeader>
+			<CardBody className="flex-1 space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">{children}</CardBody>
+		</Card>
 	);
 }
 
