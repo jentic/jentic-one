@@ -18,19 +18,6 @@ func testApp(t *testing.T) *App {
 	}
 }
 
-func TestBackupName(t *testing.T) {
-	cases := map[string]string{
-		"jentic-one.yaml": "jentic-one-old.yaml",
-		"config.yaml":     "config-old.yaml",
-		"noext":           "noext-old",
-	}
-	for in, want := range cases {
-		if got := backupName(in); got != want {
-			t.Errorf("backupName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func hasCommand(root *cobra.Command, name string) bool {
 	for _, c := range root.Commands() {
 		if c.Name() == name {

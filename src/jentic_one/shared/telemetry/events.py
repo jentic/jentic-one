@@ -55,6 +55,7 @@ class TelemetryEventName(StrEnum):
     SPEC_IMPORT_FAILED = "spec_import_failed"
     CREDENTIAL_CONNECTION_FAILED = "credential_connection_failed"
     CREDENTIAL_REFRESH_FAILED = "credential_refresh_failed"
+    CREDENTIAL_UNDECRYPTABLE = "credential_undecryptable"
 
 
 #: Allowlist: internal ``EventType`` → wire ``TelemetryEventName``. Only events
@@ -70,6 +71,7 @@ TELEMETRY_EVENTS: dict[str, TelemetryEventName] = {
     EventType.CREDENTIAL_CONNECTION_FAILED: TelemetryEventName.CREDENTIAL_CONNECTION_FAILED,
     EventType.CREDENTIAL_REFRESH_FAILED: TelemetryEventName.CREDENTIAL_REFRESH_FAILED,
     EventType.CREDENTIAL_NOT_PROVISIONED: TelemetryEventName.CREDENTIAL_NOT_PROVISIONED,
+    EventType.CREDENTIAL_UNDECRYPTABLE: TelemetryEventName.CREDENTIAL_UNDECRYPTABLE,
     EventType.CREDENTIAL_BOUND_TO_TOOLKIT: TelemetryEventName.CREDENTIAL_BOUND_TO_TOOLKIT,
     EventType.CREDENTIAL_UNBOUND_FROM_TOOLKIT: TelemetryEventName.CREDENTIAL_UNBOUND_FROM_TOOLKIT,
     EventType.TOOLKIT_CREATED: TelemetryEventName.TOOLKIT_CREATED,

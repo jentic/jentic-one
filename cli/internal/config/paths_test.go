@@ -84,6 +84,33 @@ func TestEnsureCreatesDir(t *testing.T) {
 	}
 }
 
+func TestBackupName(t *testing.T) {
+	cases := map[string]string{
+		"jentic-one.yaml": "jentic-one-old.yaml",
+		"config.yaml":     "config-old.yaml",
+		"noext":           "noext-old",
+	}
+	for in, want := range cases {
+		if got := BackupName(in); got != want {
+			t.Errorf("BackupName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestBackupNextTo(t *testing.T) {
+	cases := map[string]string{
+		"":                            "",
+		"/root/jentic-one.yaml":       "/root/jentic-one-old.yaml",
+		"jentic-one.yaml":             "jentic-one-old.yaml",
+		"/etc/jentic/jentic-one.yaml": "/etc/jentic/jentic-one-old.yaml",
+	}
+	for in, want := range cases {
+		if got := BackupNextTo(in); got != want {
+			t.Errorf("BackupNextTo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestAppURL(t *testing.T) {
 	cases := []struct {
 		name    string
