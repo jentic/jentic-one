@@ -40,9 +40,11 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 	// Open an existing toolkit's detail.
 	await page.getByRole('link', { name: /GitHub Tools/ }).click();
 	await expect(page.getByRole('heading', { name: 'GitHub Tools' })).toBeVisible();
-	await expect(page.getByText('CI runner')).toBeVisible();
 
-	// Create an API key and confirm the one-time plaintext key is revealed.
+	// Create an API key on the Keys tab and confirm the one-time plaintext key
+	// is revealed.
+	await page.getByRole('tab', { name: 'Keys' }).click();
+	await expect(page.getByText('CI runner')).toBeVisible();
 	await page.getByRole('button', { name: /create key/i }).click();
 	await page.getByRole('button', { name: /^generate$/i }).click();
 	await expect(page.getByText('New API Key Created')).toBeVisible();
@@ -54,7 +56,10 @@ test('suspended toolkit blocks key creation', async ({ page }) => {
 	await page.goto('/app/toolkits/tk_demo_billing');
 
 	await expect(page.getByRole('heading', { name: /Billing/ })).toBeVisible();
-	// Suspended banner is shown and the Create Key affordance is hidden.
+	// Suspended banner is shown above the tabs and the Keys tab hides the
+	// Create Key affordance (keys are blocked while suspended).
 	await expect(page.getByText(/suspended — all access blocked/i)).toBeVisible();
+	await page.getByRole('tab', { name: 'Keys' }).click();
+	await expect(page.getByText(/keys blocked/i)).toBeVisible();
 	await expect(page.getByRole('button', { name: /create key/i })).toHaveCount(0);
 });

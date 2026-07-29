@@ -10,11 +10,11 @@ import { ROUTES } from '@/shared/app/routes';
  *
  * Mirrors the `/agents/:agentId` layout: a shared `PageHeader` band (the
  * toolkit name as title + its own description as subtitle) sits at the top, a
- * `BackButton` row sits just beneath it, and the operational chrome + content
- * (id, kill switch, keys, credentials, agents) lives in the shared
- * `ToolkitDetailBody` (which owns all the queries/mutations). The header is read
- * from the same cached `useToolkit` query the body uses, so there is no extra
- * fetch.
+ * `BackButton` row sits just beneath it, and the operational chrome + tabbed
+ * content (id, kill switch, Overview/Access/Keys/Settings) lives in
+ * `ToolkitDetailBody`, whose tabs each own their queries/mutations. The header
+ * is read from the same cached `useToolkit` query the body uses, so there is
+ * no extra fetch.
  */
 export function ToolkitDetailPage() {
 	const { toolkitId } = useParams<{ toolkitId: string }>();
@@ -45,7 +45,6 @@ export function ToolkitDetailPage() {
 
 			<ToolkitDetailBody
 				toolkitId={toolkitId}
-				layout="page"
 				onRequestClose={() => navigate(ROUTES.toolkits)}
 			/>
 		</PageShell>

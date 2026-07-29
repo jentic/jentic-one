@@ -96,18 +96,34 @@ function seedAgents(opts: { bound: SeedAgent[]; workspace: SeedAgent[] }) {
 }
 
 describe('ToolkitDetailPage', () => {
-	it('renders the toolkit identity, keys, and bound credentials', async () => {
+	it('renders the identity chrome and tabbed sections (keys, credentials via tabs)', async () => {
+		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 
 		expect(await screen.findByRole('heading', { name: 'GitHub Tools' })).toBeInTheDocument();
 		expect(screen.getByText('tk_demo_github')).toBeInTheDocument();
-		// Keys card lists the seeded key.
-		expect(await screen.findByText('CI runner')).toBeInTheDocument();
-		// Bound credential row.
-		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
-		// Read-only, toolkit-scoped activity panel surfaces audit entries.
+
+		// Overview is the landing tab: audit slice renders without a click.
 		expect(await screen.findByRole('heading', { name: /activity/i })).toBeInTheDocument();
 		expect(await screen.findByText(/suspended pending review/i)).toBeInTheDocument();
+
+		// Keys tab lists the seeded key.
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		expect(await screen.findByText('CI runner')).toBeInTheDocument();
+
+		// Access tab lists the bound credential.
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
+	});
+
+	it('deep-links a tab through the ?tab= search param', async () => {
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		// The Keys panel content renders without any click…
+		expect(await screen.findByText('CI runner')).toBeInTheDocument();
+		// …and the Keys tab is the selected one.
+		expect(screen.getByRole('tab', { name: 'Keys' })).toHaveAttribute('aria-selected', 'true');
 	});
 
 	it('reuses the shared PageHeader pattern like /agents/:id', async () => {
@@ -123,17 +139,52 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.getByRole('button', { name: /all toolkits/i })).toBeInTheDocument();
 	});
 
+	it('saves identity edits from the Settings tab form', async () => {
+		let patched: { name?: string | null } | null = null;
+		worker.use(
+			http.patch('/toolkits/:toolkitId', async ({ params, request }) => {
+				patched = (await request.json()) as { name?: string | null };
+				return HttpResponse.json({
+					toolkit_id: params.toolkitId,
+					name: patched?.name ?? 'GitHub Tools',
+					description: null,
+					active: true,
+					key_count: 1,
+					credential_count: 1,
+					created_at: '2026-04-01T09:00:00Z',
+				});
+			}),
+		);
+
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+
+		// Save is a no-op until the draft actually diverges from the toolkit.
+		const save = screen.getByRole('button', { name: /save changes/i });
+		expect(save).toBeDisabled();
+
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Ops');
+		await waitFor(() => expect(save).toBeEnabled());
+
+		await user.click(save);
+		await waitFor(() => expect(patched).toMatchObject({ name: 'GitHub Ops' }));
+	});
+
 	it('has no critical accessibility violations', async () => {
 		const { container } = renderWithProviders(<ToolkitDetailPage />, {
 			route: ROUTE,
 			path: PATH,
 		});
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		// Wait for the seeded keys/credentials rows to mount, then let the
-		// framer-motion entrance fully settle so axe samples final (opaque)
-		// colours rather than mid-fade blended ones.
-		await screen.findByText('CI runner');
-		await screen.findByText('GitHub PAT');
+		// Landing tab: wait for the audit slice + bound-agent rows to mount, then
+		// let the framer-motion entrance fully settle so axe samples final
+		// (opaque) colours rather than mid-fade blended ones.
+		await screen.findByText(/suspended pending review/i);
 		await new Promise((resolve) => setTimeout(resolve, 600));
 		await checkA11y(container);
 	});
@@ -143,7 +194,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /create key/i }));
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+		await user.click(await screen.findByRole('button', { name: /create key/i }));
 		await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
 		expect(await screen.findByText('New API Key Created')).toBeInTheDocument();
@@ -173,7 +225,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
 
 		// Picker lists the unbound credential…
 		const stripeRow = await screen.findByText('Stripe key');
@@ -196,7 +249,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
+		await user.click(await screen.findByRole('button', { name: /^bind api$/i }));
 		await screen.findByText('AWS key');
 
 		await user.type(screen.getByLabelText('Filter credentials'), 'slack');
@@ -398,21 +452,25 @@ describe('ToolkitDetailPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		// Wait for the keys/bindings/agents the blast radius reads from.
-		await screen.findByText('CI runner');
-		await screen.findByText('GitHub PAT');
+		// Overview (landing) shows the bound agent the blast radius reads from.
 		await screen.findByText('Support Bot');
 
-		// Page-level Delete button (PageHeader area, not the kill switch).
-		await user.click(screen.getByRole('button', { name: 'Delete GitHub Tools' }));
+		// The Delete affordance lives in the Settings tab's danger zone; its
+		// blast-radius groups read the same cached keys/bindings/agents queries.
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Delete GitHub Tools' }));
 
 		// Dialog renders the blast-radius headline + each group's count line,
 		// and lists the dependent names underneath. The headline text is built
 		// from multiple inline children of a single <span>, so flatten via
-		// normalizer rather than a literal text-node match.
+		// normalizer rather than a literal text-node match. `findBy` also
+		// absorbs the Settings tab's own keys/bindings fetches resolving just
+		// after the dialog opens.
 		const dialog = await screen.findByRole('dialog', { name: /delete toolkit/i });
 		expect(
-			within(dialog).getByText(/Deleting this toolkit will also remove\s+3\s+dependents/),
+			await within(dialog).findByText(
+				/Deleting this toolkit will also remove\s+3\s+dependents/,
+			),
 		).toBeInTheDocument();
 		expect(within(dialog).getByText('1 agent grant')).toBeInTheDocument();
 		expect(within(dialog).getByText('1 API key')).toBeInTheDocument();
@@ -469,9 +527,9 @@ describe('ToolkitDetailPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		await screen.findByText('CI runner');
 
-		await user.click(screen.getByRole('button', { name: 'Delete GitHub Tools' }));
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Delete GitHub Tools' }));
 		const dialog = await screen.findByRole('dialog', { name: /delete toolkit/i });
 		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		const confirm = within(dialog).getByRole('button', { name: /^delete toolkit$/i });

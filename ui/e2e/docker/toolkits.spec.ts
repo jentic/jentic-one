@@ -49,7 +49,9 @@ test('open a toolkit detail page and create an API key (one-time reveal)', async
 	await page.goto(`/app/toolkits/${toolkitId}`);
 	await expect(page.getByRole('heading', { name })).toBeVisible();
 
-	// Create a key — the freshly-minted plaintext is revealed exactly once.
+	// Create a key on the Keys tab — the freshly-minted plaintext is revealed
+	// exactly once.
+	await page.getByRole('tab', { name: 'Keys' }).click();
 	await page.getByRole('button', { name: /create key/i }).click();
 	await page.getByRole('button', { name: /^generate$/i }).click();
 

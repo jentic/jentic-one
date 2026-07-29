@@ -1,0 +1,100 @@
+import type { ReactNode } from 'react';
+import { Button } from '@/shared/ui';
+
+/**
+ * Shared scaffolding for the toolkit detail tabs (see `ToolkitDetailBody`).
+ * Every tab renders one or more `DetailSection` cards; rows animate in/out
+ * with the same motion presets the pre-tab layout used, so the split does not
+ * change the page's feel.
+ */
+
+export const rowMotion = {
+	initial: { opacity: 0, y: -4, height: 0 },
+	animate: { opacity: 1, y: 0, height: 'auto' as const },
+	exit: { opacity: 0, y: -4, height: 0 },
+	transition: { duration: 0.18, ease: 'easeOut' as const },
+};
+
+export const panelMotion = {
+	initial: { opacity: 0, height: 0 },
+	animate: { opacity: 1, height: 'auto' as const },
+	exit: { opacity: 0, height: 0 },
+	transition: { duration: 0.2, ease: 'easeOut' as const },
+};
+
+export function RowSkeleton() {
+	return (
+		<div className="bg-muted/30 border-border/60 flex items-center gap-3 rounded-lg border p-3">
+			<div className="bg-muted h-8 w-8 shrink-0 animate-pulse rounded-lg" />
+			<div className="min-w-0 flex-1 space-y-1.5">
+				<div className="bg-muted h-3.5 w-1/3 animate-pulse rounded" />
+				<div className="bg-muted h-3 w-1/2 animate-pulse rounded" />
+			</div>
+		</div>
+	);
+}
+
+export interface SectionActionProps {
+	label: ReactNode;
+	onClick: () => void;
+	variant?: 'primary' | 'secondary';
+}
+
+interface DetailSectionProps {
+	/** Section heading (sentence-case, `font-heading font-semibold` ladder). */
+	title: ReactNode;
+	/** Extra inline content next to the title (e.g. a "Keys blocked" pill). */
+	titleExtra?: ReactNode;
+	/** Right-aligned header action button. */
+	action?: SectionActionProps;
+	/** Danger-tinted borders (suspended keys section). */
+	danger?: boolean;
+	children: ReactNode;
+}
+
+/** The card shell every toolkit-detail section renders inside. */
+export function DetailSection({ title, titleExtra, action, danger, children }: DetailSectionProps) {
+	return (
+		<div
+			className={`overflow-hidden rounded-xl border ${danger ? 'border-danger/50' : 'border-border'} bg-card`}
+		>
+			<div
+				className={`flex flex-wrap items-center justify-between gap-2 px-4 py-3.5 sm:px-5 sm:py-4 ${
+					danger ? 'border-danger/30 bg-danger/5 border-b' : 'border-border border-b'
+				}`}
+			>
+				<div className="flex items-center gap-2">
+					<h3 className="font-heading text-foreground font-semibold">{title}</h3>
+					{titleExtra}
+				</div>
+				{action && (
+					<Button
+						variant={action.variant ?? 'secondary'}
+						size="sm"
+						onClick={action.onClick}
+					>
+						{action.label}
+					</Button>
+				)}
+			</div>
+			<div className="space-y-2 px-4 py-3.5 sm:px-5 sm:py-4">{children}</div>
+		</div>
+	);
+}
+
+interface EmptyRowProps {
+	icon: ReactNode;
+	children: ReactNode;
+}
+
+/** Dashed empty-state panel used inside a `DetailSection`. */
+export function EmptyRow({ icon, children }: EmptyRowProps) {
+	return (
+		<div className="border-border/50 rounded-lg border border-dashed px-5 py-6 text-center">
+			<span className="text-muted-foreground/50 mx-auto block h-6 w-6 [&>svg]:h-6 [&>svg]:w-6">
+				{icon}
+			</span>
+			<p className="text-muted-foreground mt-2 text-sm">{children}</p>
+		</div>
+	);
+}
