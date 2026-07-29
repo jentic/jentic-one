@@ -1,26 +1,31 @@
 /**
  * Agents page — operator surface for the agent & service-account lifecycle.
  *
- * Two sections behind a segmented tab:
- *   - Agents: registrations created via RFC-7591 dynamic client registration.
- *     Operators approve/deny pending ones and disable/enable/archive the rest.
- *   - Service accounts: non-human callers; create + the same lifecycle.
+ * Two fleet tables behind a segmented tab (Agents / Service accounts), each:
+ *   - a toolbar (client-side name/id filter + status segments with counts),
+ *   - an "Awaiting approval" band with one-click Approve/Deny (the page's
+ *     most urgent job keeps top billing),
+ *   - the DataTable roster with per-row kebab lifecycle actions,
+ *   - cursor pagination ("Load more" through the backend's next_cursor).
  *
- * The lifecycle vocabulary is the backend `Actor*` enums (status + verbs). This
- * view owns the confirm-dialog orchestration and routes each action to the
- * matching hook; it never touches `@/shared/api` directly (ESLint-enforced).
+ * The lifecycle vocabulary is the backend `Actor*` enums (status + verbs).
+ * This view owns the confirm-dialog orchestration (via `LifecycleDialogs`)
+ * and routes each action to the matching hook; it never touches
+ * `@/shared/api` directly (ESLint-enforced).
  */
 import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Bot, Plus } from 'lucide-react';
 import {
 	Button,
-	CascadeDeleteDialog,
+	EmptyState,
+	ErrorAlert,
+	LoadingState,
 	PageShell,
 	PageHeader,
 	PageHelp,
 	SegmentedToggle,
-	ErrorAlert,
 } from '@/shared/ui';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 import {
 	useAgents,
 	useApproveAgent,
@@ -34,24 +39,31 @@ import {
 	useDisableServiceAccount,
 	useEnableServiceAccount,
 	useArchiveServiceAccount,
-	type AgentEntity,
-	type ServiceAccountEntity,
+	ACTOR_STATUSES,
+	STATUS_LABELS,
+	type ActorStatus,
 	type AgentAction,
 } from '@/modules/agents/api';
-import { AgentRoster, ServiceAccountRoster } from '@/modules/agents/components/ActorRoster';
+import { ActorTable, type ActorRow } from '@/modules/agents/components/ActorTable';
+import { ApprovalQueue } from '@/modules/agents/components/ApprovalQueue';
+import { ActorsToolbar, type ActorStatusFilter } from '@/modules/agents/components/ActorsToolbar';
+import {
+	LifecycleDialogs,
+	type PendingConfirm,
+} from '@/modules/agents/components/LifecycleDialogs';
 import { AgentCreateSheet } from '@/modules/agents/components/AgentCreateSheet';
 import { ServiceAccountCreateSheet } from '@/modules/agents/components/ServiceAccountCreateSheet';
-import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 
 type Tab = 'agents' | 'service-accounts';
 
-/** A pending lifecycle action awaiting confirmation in a dialog. */
-type PendingConfirm =
-	| { kind: 'deny'; id: string; name: string }
-	| { kind: 'disable'; id: string; name: string }
-	| { kind: 'archive'; id: string; name: string }
-	| null;
+/** Scan order for the fleet table: decisions first, then the working fleet. */
+const STATUS_ORDER: Record<ActorStatus, number> = {
+	pending: 0,
+	active: 1,
+	disabled: 2,
+	rejected: 3,
+	archived: 4,
+};
 
 export default function AgentsPage() {
 	const [tab, setTab] = useState<Tab>('agents');
@@ -140,7 +152,195 @@ export default function AgentsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Agents section
+// Generic fleet section (shared by both tabs)
+// ---------------------------------------------------------------------------
+
+/** The mutation objects a section wires into the queue/table/dialogs. */
+interface LifecycleMutations {
+	approve: { mutate: (id: string) => void; isPending: boolean; variables?: unknown };
+	deny: {
+		mutateAsync: (vars: { id: string; reason: string }) => Promise<unknown>;
+		isPending: boolean;
+		variables?: unknown;
+	};
+	disable: {
+		mutateAsync: (id: string) => Promise<unknown>;
+		isPending: boolean;
+		variables?: unknown;
+	};
+	enable: { mutate: (id: string) => void; isPending: boolean; variables?: unknown };
+	archive: {
+		mutateAsync: (id: string) => Promise<unknown>;
+		isPending: boolean;
+		variables?: unknown;
+		error: Error | null;
+	};
+}
+
+interface ActorsSectionProps<T extends ActorRow> {
+	query: ReturnType<typeof useAgents> | ReturnType<typeof useServiceAccounts>;
+	entities: T[];
+	mutations: LifecycleMutations;
+	entityType: 'agent' | 'service-account';
+	kindLabel: string;
+	nounPlural: string;
+	disableBody: string;
+	emptyTitle: string;
+	emptyBody: string;
+	detailHref: (item: T) => string;
+}
+
+function ActorsSection<T extends ActorRow>({
+	query,
+	entities,
+	mutations,
+	entityType,
+	kindLabel,
+	nounPlural,
+	disableBody,
+	emptyTitle,
+	emptyBody,
+	detailHref,
+}: ActorsSectionProps<T>) {
+	const [confirm, setConfirm] = useState<PendingConfirm>(null);
+	const [filterQuery, setFilterQuery] = useState('');
+	const [statusFilter, setStatusFilter] = useState<ActorStatusFilter>('all');
+
+	const { approve, deny, disable, enable, archive } = mutations;
+	const pendingId = activeId([approve, deny, disable, enable, archive]);
+
+	const counts = useMemo(() => {
+		const c: Record<ActorStatusFilter, number> = {
+			all: entities.length,
+			pending: 0,
+			active: 0,
+			rejected: 0,
+			disabled: 0,
+			archived: 0,
+		};
+		for (const e of entities) c[e.status] += 1;
+		return c;
+	}, [entities]);
+
+	const filtered = useMemo(() => {
+		const q = filterQuery.trim().toLowerCase();
+		return entities
+			.filter((e) => {
+				if (statusFilter !== 'all' && e.status !== statusFilter) return false;
+				if (!q) return true;
+				return e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q);
+			})
+			.sort(
+				(a, b) =>
+					STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+					b.createdAt.localeCompare(a.createdAt),
+			);
+	}, [entities, filterQuery, statusFilter]);
+
+	// The one-click band only shows on the "All" segment: selecting Pending
+	// puts the queue in the table itself, and a name filter means the operator
+	// is hunting, not triaging.
+	const queued = useMemo(
+		() =>
+			statusFilter === 'all' && !filterQuery.trim()
+				? entities.filter((e) => e.status === 'pending')
+				: [],
+		[entities, statusFilter, filterQuery],
+	);
+
+	function handleAction(item: T, action: AgentAction) {
+		switch (action) {
+			case 'approve':
+				approve.mutate(item.id);
+				break;
+			case 'enable':
+				enable.mutate(item.id);
+				break;
+			case 'deny':
+			case 'disable':
+			case 'archive':
+				setConfirm({ kind: action, id: item.id, name: item.name });
+				break;
+		}
+	}
+
+	if (query.error) {
+		return <ErrorAlert message={query.error as Error} />;
+	}
+
+	return (
+		<>
+			<ActorsToolbar
+				query={filterQuery}
+				onQueryChange={setFilterQuery}
+				filter={statusFilter}
+				onFilterChange={setStatusFilter}
+				counts={counts}
+				nounPlural={nounPlural}
+				disabled={entities.length === 0}
+				onRefresh={() => void query.refetch()}
+				refreshing={query.isFetching && !query.isFetchingNextPage}
+			/>
+
+			{/* Screen readers hear the fleet shape recompute after a decision. */}
+			<p className="sr-only" aria-live="polite">
+				{counts.all} total,{' '}
+				{ACTOR_STATUSES.map((s) => `${counts[s]} ${STATUS_LABELS[s]}`).join(', ')}
+			</p>
+
+			<ApprovalQueue
+				items={queued}
+				kindLabel={kindLabel}
+				pendingId={pendingId}
+				onAction={handleAction}
+				detailHref={detailHref}
+			/>
+
+			{query.isPending ? (
+				<LoadingState message={`Loading ${nounPlural}…`} />
+			) : entities.length === 0 ? (
+				<EmptyState
+					icon={<Bot className="h-6 w-6" />}
+					title={emptyTitle}
+					description={emptyBody}
+				/>
+			) : (
+				<ActorTable<T>
+					items={filtered}
+					kindLabel={kindLabel}
+					emptyMessage={`No ${nounPlural} match your filter.`}
+					pendingId={pendingId}
+					onAction={handleAction}
+					detailHref={detailHref}
+				/>
+			)}
+
+			{query.hasNextPage && (
+				<div className="flex justify-center">
+					<Button
+						variant="outline"
+						size="sm"
+						loading={query.isFetchingNextPage}
+						onClick={() => void query.fetchNextPage()}
+					>
+						Load more
+					</Button>
+				</div>
+			)}
+
+			<LifecycleDialogs
+				confirm={confirm}
+				onClose={() => setConfirm(null)}
+				entityType={entityType}
+				disableBody={disableBody}
+				mutations={{ deny, disable, archive }}
+			/>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Configured variants
 // ---------------------------------------------------------------------------
 
 function AgentsSection({
@@ -150,112 +350,38 @@ function AgentsSection({
 	createOpen: boolean;
 	setCreateOpen: (open: boolean) => void;
 }) {
-	const [confirm, setConfirm] = useState<PendingConfirm>(null);
+	const query = useAgents({ status: 'all' });
+	const entities = useMemo(
+		() => query.data?.pages.flatMap((p) => p.entities) ?? [],
+		[query.data],
+	);
 
-	const agents = useAgents({ status: 'all' });
-	const approve = useApproveAgent();
-	const deny = useDenyAgent();
-	const disable = useDisableAgent();
-	const enable = useEnableAgent();
-	const archive = useArchiveAgent();
-
-	const entities = useMemo(() => agents.data?.entities ?? [], [agents.data]);
-	const pendingId = activeId([approve, deny, disable, enable, archive]);
-
-	function handleAction(agent: AgentEntity, action: AgentAction) {
-		switch (action) {
-			case 'approve':
-				approve.mutate(agent.id);
-				break;
-			case 'enable':
-				enable.mutate(agent.id);
-				break;
-			case 'deny':
-				setConfirm({ kind: 'deny', id: agent.id, name: agent.name });
-				break;
-			case 'disable':
-				setConfirm({ kind: 'disable', id: agent.id, name: agent.name });
-				break;
-			case 'archive':
-				setConfirm({ kind: 'archive', id: agent.id, name: agent.name });
-				break;
-		}
-	}
+	const mutations: LifecycleMutations = {
+		approve: useApproveAgent(),
+		deny: useDenyAgent(),
+		disable: useDisableAgent(),
+		enable: useEnableAgent(),
+		archive: useArchiveAgent(),
+	};
 
 	return (
 		<>
-			{agents.error ? (
-				<ErrorAlert message={agents.error as Error} />
-			) : (
-				<AgentRoster
-					agents={entities}
-					isLoading={agents.isPending}
-					pendingId={pendingId}
-					onAction={handleAction}
-				/>
-			)}
-
+			<ActorsSection
+				query={query}
+				entities={entities}
+				mutations={mutations}
+				entityType="agent"
+				kindLabel="Agent"
+				nounPlural="agents"
+				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
+				emptyTitle="No agents registered yet"
+				emptyBody="Agents appear here the moment they register with this instance."
+				detailHref={(a) => ROUTE_PATHS.agent(a.id)}
+			/>
 			<AgentCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
-
-			<DenyDialog
-				open={confirm?.kind === 'deny'}
-				subjectName={confirm?.kind === 'deny' ? confirm.name : null}
-				pending={deny.isPending}
-				onConfirm={async (reason) => {
-					if (confirm?.kind !== 'deny') return;
-					try {
-						await deny.mutateAsync({ id: confirm.id, reason });
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			<ConfirmDialog
-				open={confirm?.kind === 'disable'}
-				title={confirm?.kind === 'disable' ? `Disable ${confirm.name}` : 'Disable'}
-				body="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
-				confirmLabel="Disable"
-				pending={disable.isPending}
-				onConfirm={async () => {
-					if (confirm?.kind !== 'disable') return;
-					try {
-						await disable.mutateAsync(confirm.id);
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			{confirm?.kind === 'archive' && (
-				<CascadeDeleteDialog
-					open
-					entityType="agent"
-					entityName={confirm.name}
-					loading={archive.isPending}
-					error={archive.error}
-					onConfirm={async () => {
-						try {
-							await archive.mutateAsync(confirm.id);
-							setConfirm(null);
-						} catch {
-							// onError toasts; keep the dialog open so the user can retry.
-						}
-					}}
-					onClose={() => setConfirm(null)}
-				/>
-			)}
 		</>
 	);
 }
-
-// ---------------------------------------------------------------------------
-// Service accounts section
-// ---------------------------------------------------------------------------
 
 function ServiceAccountsSection({
 	createOpen,
@@ -264,105 +390,35 @@ function ServiceAccountsSection({
 	createOpen: boolean;
 	setCreateOpen: (open: boolean) => void;
 }) {
-	const [confirm, setConfirm] = useState<PendingConfirm>(null);
+	const query = useServiceAccounts({ status: 'all' });
+	const entities = useMemo(
+		() => query.data?.pages.flatMap((p) => p.entities) ?? [],
+		[query.data],
+	);
 
-	const accounts = useServiceAccounts({ status: 'all' });
-	const approve = useApproveServiceAccount();
-	const deny = useDenyServiceAccount();
-	const disable = useDisableServiceAccount();
-	const enable = useEnableServiceAccount();
-	const archive = useArchiveServiceAccount();
-
-	const entities = useMemo(() => accounts.data?.entities ?? [], [accounts.data]);
-	const pendingId = activeId([approve, deny, disable, enable, archive]);
-
-	function handleAction(account: ServiceAccountEntity, action: AgentAction) {
-		switch (action) {
-			case 'approve':
-				approve.mutate(account.id);
-				break;
-			case 'enable':
-				enable.mutate(account.id);
-				break;
-			case 'deny':
-				setConfirm({ kind: 'deny', id: account.id, name: account.name });
-				break;
-			case 'disable':
-				setConfirm({ kind: 'disable', id: account.id, name: account.name });
-				break;
-			case 'archive':
-				setConfirm({ kind: 'archive', id: account.id, name: account.name });
-				break;
-		}
-	}
+	const mutations: LifecycleMutations = {
+		approve: useApproveServiceAccount(),
+		deny: useDenyServiceAccount(),
+		disable: useDisableServiceAccount(),
+		enable: useEnableServiceAccount(),
+		archive: useArchiveServiceAccount(),
+	};
 
 	return (
 		<>
-			{accounts.error ? (
-				<ErrorAlert message={accounts.error as Error} />
-			) : (
-				<ServiceAccountRoster
-					accounts={entities}
-					isLoading={accounts.isPending}
-					pendingId={pendingId}
-					onAction={handleAction}
-				/>
-			)}
-
+			<ActorsSection
+				query={query}
+				entities={entities}
+				mutations={mutations}
+				entityType="service-account"
+				kindLabel="Service account"
+				nounPlural="service accounts"
+				disableBody="Disabling immediately revokes this service account's access. You can re-enable it later."
+				emptyTitle="No service accounts yet"
+				emptyBody="Create a service account to give a non-human caller its own identity."
+				detailHref={(sa) => ROUTE_PATHS.serviceAccount(sa.id)}
+			/>
 			<ServiceAccountCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} />
-
-			<DenyDialog
-				open={confirm?.kind === 'deny'}
-				subjectName={confirm?.kind === 'deny' ? confirm.name : null}
-				pending={deny.isPending}
-				onConfirm={async (reason) => {
-					if (confirm?.kind !== 'deny') return;
-					try {
-						await deny.mutateAsync({ id: confirm.id, reason });
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			<ConfirmDialog
-				open={confirm?.kind === 'disable'}
-				title={confirm?.kind === 'disable' ? `Disable ${confirm.name}` : 'Disable'}
-				body="Disabling immediately revokes this service account's access. You can re-enable it later."
-				confirmLabel="Disable"
-				pending={disable.isPending}
-				onConfirm={async () => {
-					if (confirm?.kind !== 'disable') return;
-					try {
-						await disable.mutateAsync(confirm.id);
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			{confirm?.kind === 'archive' && (
-				<CascadeDeleteDialog
-					open
-					entityType="service-account"
-					entityName={confirm.name}
-					loading={archive.isPending}
-					error={archive.error}
-					onConfirm={async () => {
-						try {
-							await archive.mutateAsync(confirm.id);
-							setConfirm(null);
-						} catch {
-							// onError toasts; keep the dialog open so the user can retry.
-						}
-					}}
-					onClose={() => setConfirm(null)}
-				/>
-			)}
 		</>
 	);
 }

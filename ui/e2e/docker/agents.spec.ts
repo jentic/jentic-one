@@ -38,7 +38,9 @@ test('a service account created via the API shows up in the roster', async ({ pa
 	// Switch to the Service accounts tab where the seeded account lives.
 	await page.getByRole('button', { name: 'Service accounts' }).click();
 
-	await expect(page.getByText(name)).toBeVisible();
+	// The freshly created SA is pending → it renders in both the approval band
+	// and the fleet table; either occurrence proves the roster surfaced it.
+	await expect(page.getByText(name).first()).toBeVisible();
 });
 
 test('the service-account create sheet opens from the agents surface', async ({ page }) => {

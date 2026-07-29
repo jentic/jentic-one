@@ -10,7 +10,13 @@
  * disable/enable/archive return 204, so those invalidate the affected slices to
  * force a refetch.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { toast } from '@/shared/ui';
 import {
@@ -157,11 +163,24 @@ function notifyError(error: unknown, fallback: string): void {
 // Agents — queries
 // ---------------------------------------------------------------------------
 
-export function useAgents(params: { status?: string }) {
+/**
+ * The cursor-paginated agents list. An infinite query so the page can render
+ * the first 50-row page immediately and "Load more" through `next_cursor`
+ * (the backend caps `limit` at 200; we keep the default 50 per page). Status
+ * narrowing is client-side on the loaded pages (the page always fetches
+ * `all`), so one cache entry serves every status segment.
+ */
+export function useAgents(params: { status?: string } = {}) {
 	const status = params.status ?? 'all';
-	return useQuery<ListResult<AgentEntity>>({
+	return useInfiniteQuery<ListResult<AgentEntity>>({
 		queryKey: agentsKeys.list(status),
-		queryFn: () => listAgents({ status: status === 'all' ? null : status }),
+		queryFn: ({ pageParam }) =>
+			listAgents({
+				status: status === 'all' ? null : status,
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
 	});
 }
@@ -447,11 +466,19 @@ export function useGenerateServiceAccountApiKey() {
 // Service accounts
 // ---------------------------------------------------------------------------
 
-export function useServiceAccounts(params: { status?: string }) {
+/** Cursor-paginated service accounts — same infinite-query shape as
+ * {@link useAgents} so the page renders both tabs with one component. */
+export function useServiceAccounts(params: { status?: string } = {}) {
 	const status = params.status ?? 'all';
-	return useQuery<ListResult<ServiceAccountEntity>>({
+	return useInfiniteQuery<ListResult<ServiceAccountEntity>>({
 		queryKey: serviceAccountKeys.list(status),
-		queryFn: () => listServiceAccounts({ status: status === 'all' ? null : status }),
+		queryFn: ({ pageParam }) =>
+			listServiceAccounts({
+				status: status === 'all' ? null : status,
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
 	});
 }

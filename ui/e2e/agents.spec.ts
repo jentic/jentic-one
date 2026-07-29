@@ -20,10 +20,15 @@ test('approve a pending agent flips its status to active', async ({ page }) => {
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
-	const row = page.locator('div.group', { hasText: 'inbox-triage-bot' }).first();
+	// The pending agent sits in the approval queue band AND as a Pending row in
+	// the fleet table.
+	const row = page.getByRole('row').filter({ hasText: 'inbox-triage-bot' });
 	await expect(row.getByText('Pending', { exact: true })).toBeVisible();
 
-	await row.getByRole('button', { name: 'Approve inbox-triage-bot' }).click();
+	await page
+		.getByRole('region', { name: /Awaiting approval/i })
+		.getByRole('button', { name: 'Approve inbox-triage-bot' })
+		.click();
 
 	await expect(row.getByText('Active', { exact: true })).toBeVisible();
 });
@@ -46,8 +51,13 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 
 	await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
 
-	// Drill into a pending agent's detail page by clicking its roster row.
-	await page.getByText('release-notes-bot').click();
+	// Drill into a pending agent's detail page via its name link in the fleet
+	// table (the same name also links from the approval band — scope to the row).
+	await page
+		.getByRole('row')
+		.filter({ hasText: 'release-notes-bot' })
+		.getByRole('link', { name: 'release-notes-bot' })
+		.click();
 
 	await expect(page).toHaveURL(/\/app\/agents\/agnt_pending_2$/);
 	await expect(page.getByRole('heading', { name: 'release-notes-bot' })).toBeVisible();
