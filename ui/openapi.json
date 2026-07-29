@@ -8015,7 +8015,7 @@
       "name": "Jentic Platform Team",
       "url": "https://jentic.com/"
     },
-    "description": "## Overview ##\nThe **Jentic Control Plane API** is the unified HTTP surface of the\nJentic platform's control plane — every administrative and\nmetadata-facing endpoint outside the Broker data plane.\n\nThe control plane is the administrative counterpart to the\n[Broker](../broker/swagger) data plane: where the Broker executes\nupstream API calls on behalf of agents, the control plane is where\nhumans, operators, and agents configure *what* the Broker is\nallowed to do, *for whom*, *with which credentials*, *against\nwhich registered APIs*, and *with what telemetry retained*.\n\n## Components ##\nHigh-level components for the control plane API.\n- **[Core / Access](#tag/Credentials)** — credentials, toolkits,\n  and PBAC grants and runtime params. Owns *who can call what, with which secret*.\n- **[Registry](#tag/APIs)** — registered APIs, immutable\n  revisions, operations, search, lookup. Owns *what APIs are\n  registered for this deployment and what they look like at any\n  given revision*.\n- **[Admin / Audit](#tag/Users)** — users, permissions,\n  execution telemetry, async-job tracker, and dashboard event\n  stream. Owns *who can sign in with what permissions* together\n  with *what actually happened* — the human roster, the\n  append-only records of brokered executions, the unified\n  `Job` resource that both Registry imports and Broker\n  async-execution calls feed into, and a curated `/events`\n  surface for dashboards and operators.\n\n## Authentication ##\n\nToday the platform ships a local username + password identity\nprovider for human users, alongside agent identity (Dynamic Client\nRegistration + RFC 7523 JWT-bearer assertions) and service-account\nclient credentials — every authenticated operation expects\n`Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`\ntoken) except `GET /health`, `POST /auth/login`,\n`POST /users:create-admin`, and `POST /users:redeem-invite`.\nHuman tokens are issued by `POST /auth/login` with a fixed 1-hour\nTTL; agents and service accounts obtain tokens from\n`POST /oauth/token` (see `BearerAuth`). The `permissions` claim on a\ntoken is a snapshot at issue time; permission changes take effect at\nthe next re-issue (≤ 1 hour with the default TTL).\n\nThe platform ships **no default credentials**. On a fresh\ninstall the users table is empty, so `GET /health` returns\n`setup_required: true` with `next_step: create_admin`. The\noperator creates the first administrator with `POST\n/users:create-admin {email, password}` — a one-time,\nunauthenticated, self-closing endpoint: it succeeds only while\nthe users table is empty and returns `410 setup_already_complete`\nonce any user exists (a single-row setup sentinel is the\nconcurrency backstop, so two racing callers — even with different\nemails — cannot both bootstrap). It grants `org:admin`, sets the operator's chosen\npassword (so `must_change_password` is **false** — no forced\nrotation), and returns a ready-to-use `LoginResponse`\n(auto-login). After the first user exists `setup_required` flips\nto `false`. See the **Users** tag for the full onboarding\nwalkthrough.\n\nExternal SSO providers (Okta, AWS Cognito, Auth0, Azure AD)\nplug in via the `User.auth_provider: external` hook plus an\n`external_subject_id` mapping; no concrete provider ships in\nthis revision. Agent identity (separate from human users) uses\nDynamic Client Registration (`POST /register`) with the agent's\nJWKS, then RFC 7523 JWT-bearer assertions exchanged at\n`POST /oauth/token` for an opaque access token.\n\n## Cross-cutting conventions\n\n- Every API reference uses the loose\n  `APIReference(vendor, name, version)` data structure. There is no\n  foreign key between Core, Registry, and Admin / Audit — the\n  tuple is the only join.\n- **Error shape.** Every error response is RFC 9457 Problem\n  Details (`application/problem+json`) using the shared\n  `ProblemDetails` schema from\n  [jentic/api-problem-details](https://github.com/jentic/api-problem-details).\n  Field-level validation failures (`422`) populate `errors[]`;\n  transport-level conditions reuse the same shape with status-\n  and `type`-specific payloads.\n- **JSON casing.** Field names in request and response bodies are\n  `snake_case` throughout, including discriminator values\n  (`type: api_key`, `type: bearer_token`, …). The one historical\n  camelCase exception is the OpenAPI keyword `apiKey` itself when\n  it appears in re-exported `securitySchemes.type` values; that's\n  an OpenAPI artefact, not platform style.\n- **Pagination.** List endpoints are cursor-paginated with opaque\n  `next_cursor` round-trips. `has_more=false` means done. List\n  envelopes are intentionally slim — `{data, has_more,\n  next_cursor}` — and **do not** carry HAL-style `_links` (no\n  `self`, `next`, or `prev`); cursors are forward-only and\n  `next_cursor` already encodes the next page. Individual resource\n  responses still use `_links` where it carries non-trivial\n  information (e.g. `Job._links.result`, `AsyncQueuedResponse._links.self`,\n  `Event._links`).\n- **Authentication.** All operations require `Authorization:\n  Bearer <token>` — an opaque access token (prefixed `at_`, not a\n  JWT), obtained from `POST /oauth/token` (see `BearerAuth` for the\n  per-actor grants) — except the unauthenticated\n  `GET /health`, `POST /auth/login`, `POST /users:create-admin`,\n  and `POST /users:redeem-invite`. See the `Users` tag for the\n  first-run setup and invite-redemption flows.\n- **Header namespace.** All Jentic-specific HTTP headers — request\n  and response, broker and control-plane — live under the\n  `Jentic-*` namespace **without** the legacy `X-` prefix\n  (RFC 6648 deprecates `X-` for new protocols). `Jentic-*` is\n  unambiguously a platform header; anything else on a brokered\n  response belongs to the upstream API. Standard headers\n  (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,\n  `traceparent`, `tracestate`) keep their RFC names.\n- **Append-only audit.** Admin / Audit records are never mutated\n  after the fact; retention is enforced via purge policy, not\n  edit.\n- **Trace correlation.** Every Broker call records a W3C\n  `trace_id` on its `ExecutionRecord` and on any `Event` derived\n  from it. To walk all executions under one logical request, use\n  `GET /executions?trace_id=…`.\n- **Event stream.** The dashboard / operator UI consumes the\n  `/events` resource (paginated list + SSE stream). Some events\n  are informational, some require action — see the `Events` tag.\n- **Revision pinning.** Every `Api` carries one `published`\n  revision (`current_revision_id`) plus zero or more `draft` and\n  `archived` siblings. The Broker's hot path resolves against\n  `current_revision_id` by default; agents can target a specific\n  `draft` revision per call via the Broker's `Jentic-Revision`\n  header. Control-plane reads (`Search`, `Inspect`,\n  `Lookup`) accept matching `revision_id` / `revision_pins`\n  parameters so dashboards can preview an unpromoted revision\n  before flipping `:promote`.\n- **ID prefixes.** Resource identifiers use a stable short prefix.\n  Treat the prefix as part of the ID — never strip it. The\n  complete table:\n\n  | Prefix | Resource | Notes |\n  |---|---|---|\n  | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |\n  | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |\n  | `cred_` | Credential ID | |\n  | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |\n  | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |\n  | `evt_` | Event | ULID-shaped. |\n  | `op_` | Registered operation | |\n  | `rev_` | API revision | ULID-shaped. |\n  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |\n  | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |\n  | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |\n  | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |\n  | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |\n  | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |\n\n  Surfaces still being designed (agent identity, OAuth brokers)\n  will add their own prefixes when they land.\n",
+    "description": "## Overview ##\nThe **Jentic Control Plane API** is the unified HTTP surface of the\nJentic platform's control plane — every administrative and\nmetadata-facing endpoint outside the Broker data plane.\n\nThe control plane is the administrative counterpart to the\n[Broker](../broker/swagger) data plane: where the Broker executes\nupstream API calls on behalf of agents, the control plane is where\nhumans, operators, and agents configure *what* the Broker is\nallowed to do, *for whom*, *with which credentials*, *against\nwhich registered APIs*, and *with what telemetry retained*.\n\n## Components ##\nHigh-level components for the control plane API.\n- **[Core / Access](#tag/Credentials)** — credentials, toolkits,\n  and PBAC grants and runtime params. Owns *who can call what, with which secret*.\n- **[Registry](#tag/APIs)** — registered APIs, immutable\n  revisions, operations, search, lookup. Owns *what APIs are\n  registered for this deployment and what they look like at any\n  given revision*.\n- **[Admin / Audit](#tag/Users)** — users, permissions,\n  execution telemetry, async-job tracker, and dashboard event\n  stream. Owns *who can sign in with what permissions* together\n  with *what actually happened* — the human roster, the\n  append-only records of brokered executions, the unified\n  `Job` resource that both Registry imports and Broker\n  async-execution calls feed into, and a curated `/events`\n  surface for dashboards and operators.\n\n## Authentication ##\n\nToday the platform ships a local username + password identity\nprovider for human users, alongside agent identity (Dynamic Client\nRegistration + RFC 7523 JWT-bearer assertions) and service-account\nclient credentials — every authenticated operation expects\n`Authorization: Bearer <token>` (`BearerAuth`, an opaque `at_`\ntoken) except `GET /health`, `POST /auth/login`,\n`POST /users:create-admin`, and `POST /users:redeem-invite`.\nHuman tokens are issued by `POST /auth/login` with a fixed 1-hour\nTTL and can be re-minted before expiry via `POST /auth/refresh`\n(sliding session, bounded by an absolute window —\n`admin.auth.session_ttl_seconds`, 12 hours by default); agents and\nservice accounts obtain tokens from `POST /oauth/token` (see\n`BearerAuth`). The `permissions` claim on a token is a snapshot at\nissue time; permission changes take effect at the next re-issue —\nthe next refresh or re-login (≤ 1 hour with the default TTL).\n\nThe platform ships **no default credentials**. On a fresh\ninstall the users table is empty, so `GET /health` returns\n`setup_required: true` with `next_step: create_admin`. The\noperator creates the first administrator with `POST\n/users:create-admin {email, password}` — a one-time,\nunauthenticated, self-closing endpoint: it succeeds only while\nthe users table is empty and returns `410 setup_already_complete`\nonce any user exists (a single-row setup sentinel is the\nconcurrency backstop, so two racing callers — even with different\nemails — cannot both bootstrap). It grants `org:admin`, sets the operator's chosen\npassword (so `must_change_password` is **false** — no forced\nrotation), and returns a ready-to-use `LoginResponse`\n(auto-login). After the first user exists `setup_required` flips\nto `false`. See the **Users** tag for the full onboarding\nwalkthrough.\n\nExternal SSO providers (Okta, AWS Cognito, Auth0, Azure AD)\nplug in via the `User.auth_provider: external` hook plus an\n`external_subject_id` mapping; no concrete provider ships in\nthis revision. Agent identity (separate from human users) uses\nDynamic Client Registration (`POST /register`) with the agent's\nJWKS, then RFC 7523 JWT-bearer assertions exchanged at\n`POST /oauth/token` for an opaque access token.\n\n## Cross-cutting conventions\n\n- Every API reference uses the loose\n  `APIReference(vendor, name, version)` data structure. There is no\n  foreign key between Core, Registry, and Admin / Audit — the\n  tuple is the only join.\n- **Error shape.** Every error response is RFC 9457 Problem\n  Details (`application/problem+json`) using the shared\n  `ProblemDetails` schema from\n  [jentic/api-problem-details](https://github.com/jentic/api-problem-details).\n  Field-level validation failures (`422`) populate `errors[]`;\n  transport-level conditions reuse the same shape with status-\n  and `type`-specific payloads.\n- **JSON casing.** Field names in request and response bodies are\n  `snake_case` throughout, including discriminator values\n  (`type: api_key`, `type: bearer_token`, …). The one historical\n  camelCase exception is the OpenAPI keyword `apiKey` itself when\n  it appears in re-exported `securitySchemes.type` values; that's\n  an OpenAPI artefact, not platform style.\n- **Pagination.** List endpoints are cursor-paginated with opaque\n  `next_cursor` round-trips. `has_more=false` means done. List\n  envelopes are intentionally slim — `{data, has_more,\n  next_cursor}` — and **do not** carry HAL-style `_links` (no\n  `self`, `next`, or `prev`); cursors are forward-only and\n  `next_cursor` already encodes the next page. Individual resource\n  responses still use `_links` where it carries non-trivial\n  information (e.g. `Job._links.result`, `AsyncQueuedResponse._links.self`,\n  `Event._links`).\n- **Authentication.** All operations require `Authorization:\n  Bearer <token>` — an opaque access token (prefixed `at_`, not a\n  JWT), obtained from `POST /oauth/token` (see `BearerAuth` for the\n  per-actor grants) — except the unauthenticated\n  `GET /health`, `POST /auth/login`, `POST /users:create-admin`,\n  and `POST /users:redeem-invite`. See the `Users` tag for the\n  first-run setup and invite-redemption flows.\n- **Header namespace.** All Jentic-specific HTTP headers — request\n  and response, broker and control-plane — live under the\n  `Jentic-*` namespace **without** the legacy `X-` prefix\n  (RFC 6648 deprecates `X-` for new protocols). `Jentic-*` is\n  unambiguously a platform header; anything else on a brokered\n  response belongs to the upstream API. Standard headers\n  (`Authorization`, `Prefer`, `Idempotency-Key`, `Accept`,\n  `traceparent`, `tracestate`) keep their RFC names.\n- **Append-only audit.** Admin / Audit records are never mutated\n  after the fact; retention is enforced via purge policy, not\n  edit.\n- **Trace correlation.** Every Broker call records a W3C\n  `trace_id` on its `ExecutionRecord` and on any `Event` derived\n  from it. To walk all executions under one logical request, use\n  `GET /executions?trace_id=…`.\n- **Event stream.** The dashboard / operator UI consumes the\n  `/events` resource (paginated list + SSE stream). Some events\n  are informational, some require action — see the `Events` tag.\n- **Revision pinning.** Every `Api` carries one `published`\n  revision (`current_revision_id`) plus zero or more `draft` and\n  `archived` siblings. The Broker's hot path resolves against\n  `current_revision_id` by default; agents can target a specific\n  `draft` revision per call via the Broker's `Jentic-Revision`\n  header. Control-plane reads (`Search`, `Inspect`,\n  `Lookup`) accept matching `revision_id` / `revision_pins`\n  parameters so dashboards can preview an unpromoted revision\n  before flipping `:promote`.\n- **ID prefixes.** Resource identifiers use a stable short prefix.\n  Treat the prefix as part of the ID — never strip it. The\n  complete table:\n\n  | Prefix | Resource | Notes |\n  |---|---|---|\n  | `tk_` | Toolkit ID | Public; appears in URLs and logs. **Not** the toolkit secret. |\n  | `ck_` | Toolkit-key record | One toolkit can hold many keys; each `ck_…` is a key record (label, IP allowlist, revoked flag). The plaintext key value is `jntc_live_…`. |\n  | `cred_` | Credential ID | |\n  | `exec_` | Execution record | Returned in the `Jentic-Execution-Id` response header on every brokered call. |\n  | `job_` | Async job | UUIDs also accepted on inputs for backward compatibility. |\n  | `evt_` | Event | ULID-shaped. |\n  | `op_` | Registered operation | |\n  | `rev_` | API revision | ULID-shaped. |\n  | `usr_` | User | Org member. Resolves via `GET /users/{user_id}`. Used in `acknowledged_by`, `decided_by`, and similar audit references. |\n  | `inv_` | Invite token | One-time token issued at user creation. Plaintext value shown **once** at issue / re-issue; `:redeem-invite` consumes it. |\n  | `areq_` | Access request | Per-toolkit human-approval ticket; lives on the `Access Requests` sub-tag of `Toolkits`. |\n  | `note_` | Note | ULID-shaped. Free-form annotation attached to a registry resource — see the `Notes` tag. |\n  | `ovr_` | Overlay | ULID-shaped. OpenAPI Overlay 1.0 document attached to an `Api` aggregate — see the `Overlays` tag. |\n  | `jntc_live_` | Plaintext toolkit API key value | The secret. Returned **once** at toolkit creation / key issue. |\n\n  Surfaces still being designed (agent identity, OAuth brokers)\n  will add their own prefixes when they land.\n",
     "license": {
       "identifier": "Apache-2.0",
       "name": "Apache-2.0"
@@ -16929,6 +16929,141 @@
         },
         "security": [],
         "summary": "Log in",
+        "tags": [
+          "Users"
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "description": "Re-mint the caller's login JWT before it expires (sliding session).\n\nOnly user login JWTs are refreshable; permissions and the\n``must_change_password`` gate are re-read from the database at re-mint.\nRefusal modes: 401 ``session_expired`` once the original authentication is\nolder than the absolute window (``admin.auth.session_ttl_seconds``), 401\n``invalid_credentials`` for deactivated users, non-user tokens, or opaque\n(non-JWT) credentials. Clients should then send the user back to login.",
+        "operationId": "refreshSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Authentication is required or the bearer token is invalid.",
+                  "instance": "/example/path",
+                  "status": 401,
+                  "title": "Unauthorized",
+                  "type": "unauthorized"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The authenticated principal lacks the required permission.",
+                  "instance": "/example/path",
+                  "status": 403,
+                  "title": "Forbidden",
+                  "type": "forbidden"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Refresh session token",
         "tags": [
           "Users"
         ]
@@ -31228,7 +31363,7 @@
       "name": "Events"
     },
     {
-      "description": "Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).\n\n**First-run setup (no default credentials).** The platform ships with an empty users table — there is no seeded `admin@local` account. On a fresh install `GET /health` reports `setup_required: true` (with `next_step: create_admin`). The operator creates the first administrator via `POST /users:create-admin {email, password}`: a one-time, unauthenticated endpoint that succeeds only while no user exists, grants `org:admin`, and returns an auto-login `LoginResponse` with `must_change_password: false` (the operator chose the password, so there is no forced rotation). It **self-closes** — once any user exists it returns `410 setup_already_complete`, so it is safe to leave exposed during first boot; a single-row setup sentinel is the concurrency backstop against racing callers (even ones using different emails). After the first user exists, `setup_required` flips to `false`.\n\n**Onboarding flow.** Admins create new users via `POST /users` (no password supplied). The response carries a one-time `inv_…` invite token shown **once**; the admin hands it off out-of-band (Slack, 1Password, email — there is no platform-side email infrastructure in this revision). The new user redeems via `POST /users:redeem-invite {invite_token, password}` and is auto-logged-in via the returned `LoginResponse`. Tokens default to a 7-day TTL and are single-use; `:reissue-invite` issues a fresh one if the original is lost or expired.\n\n**Authentication.** Today only local (username + password) identity ships. The `User` schema carries `auth_provider: local | external` and an `external_subject_id` field reserved for future SSO integrations (Okta, Cognito, Azure AD); when SSO arrives, those users will be created via a separate provider-specific router. The on-the-wire token contract — `Authorization: Bearer <jwt>` — is unchanged either way.\n\n**Disabling and revocation.** `:disable` flips `active=false` and rejects subsequent `POST /auth/login`. **Existing JWTs keep working until they expire** (≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; sub-minute revocation would require a server-side session table.",
+      "description": "Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).\n\n**First-run setup (no default credentials).** The platform ships with an empty users table — there is no seeded `admin@local` account. On a fresh install `GET /health` reports `setup_required: true` (with `next_step: create_admin`). The operator creates the first administrator via `POST /users:create-admin {email, password}`: a one-time, unauthenticated endpoint that succeeds only while no user exists, grants `org:admin`, and returns an auto-login `LoginResponse` with `must_change_password: false` (the operator chose the password, so there is no forced rotation). It **self-closes** — once any user exists it returns `410 setup_already_complete`, so it is safe to leave exposed during first boot; a single-row setup sentinel is the concurrency backstop against racing callers (even ones using different emails). After the first user exists, `setup_required` flips to `false`.\n\n**Onboarding flow.** Admins create new users via `POST /users` (no password supplied). The response carries a one-time `inv_…` invite token shown **once**; the admin hands it off out-of-band (Slack, 1Password, email — there is no platform-side email infrastructure in this revision). The new user redeems via `POST /users:redeem-invite {invite_token, password}` and is auto-logged-in via the returned `LoginResponse`. Tokens default to a 7-day TTL and are single-use; `:reissue-invite` issues a fresh one if the original is lost or expired.\n\n**Authentication.** Today only local (username + password) identity ships. The `User` schema carries `auth_provider: local | external` and an `external_subject_id` field reserved for future SSO integrations (Okta, Cognito, Azure AD); when SSO arrives, those users will be created via a separate provider-specific router. The on-the-wire token contract — `Authorization: Bearer <jwt>` — is unchanged either way.\n\n**Disabling and revocation.** `:disable` flips `active=false` and rejects subsequent `POST /auth/login` **and** `POST /auth/refresh`. **Existing JWTs keep working until they expire** (≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; sub-minute revocation would require a server-side session table.\n\n**Session lifetime.** Login JWTs carry a 1-hour TTL. The UI keeps an active session alive by calling `POST /auth/refresh` before expiry (sliding session); refresh re-reads permissions and the `must_change_password` gate from the database and is refused with 401 `session_expired` once the original authentication is older than the absolute window (`admin.auth.session_ttl_seconds`, 12 hours by default), forcing a fresh login.",
       "name": "Users"
     },
     {

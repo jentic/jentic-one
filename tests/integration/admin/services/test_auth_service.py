@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
 import pytest
@@ -28,6 +29,7 @@ from jentic_one.admin.services.errors import (
     AccountLockedError,
     InvalidCredentialsError,
     InvalidInputError,
+    SessionExpiredError,
     SetupAlreadyCompleteError,
     UserEmailNotFoundError,
 )
@@ -516,3 +518,189 @@ async def test_change_password_remints_token_clearing_gate(
         )
         await UserRepository.update(session, user_id, must_change_password=False)
         await session.commit()
+
+
+# ── Session refresh (sliding session, absolute window) ─────────────────────
+
+
+def _decode(ctx: Context, token: str) -> dict[str, Any]:
+    return jwt.decode(
+        token, ctx.config.admin.auth.jwt_secret.get_secret_value(), algorithms=["HS256"]
+    )
+
+
+async def test_refresh_remints_with_fresh_permissions(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Refresh re-reads grants from the DB — permission changes take effect."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+
+    login = await service.login(LoginPayload(email=email, password="correct-password"))
+    assert "users:write" not in _decode(ctx, login.access_token)["permissions"]
+
+    # Widen the grants after the original mint.
+    async with ctx.admin_db.session() as session:
+        await UserPermissionGrantRepository.set_permissions(
+            session,
+            user_id,
+            permissions={"users:read", "users:write"},
+            granted_by=None,
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    refreshed = await service.refresh(login.access_token)
+    claims = _decode(ctx, refreshed.access_token)
+    assert "users:write" in claims["permissions"]
+    # The absolute window still anchors on the original login.
+    assert claims["auth_time"] == _decode(ctx, login.access_token)["auth_time"]
+
+
+async def test_refresh_legacy_token_without_auth_time_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Fail closed: pre-upgrade tokens (no auth_time) cannot refresh.
+
+    They expire at their natural TTL and the user signs in once more —
+    preferable to inferring a session window the token never declared.
+    """
+    user_id, _ = auth_user
+    ctx = integration_context
+    legacy_claims = {
+        "sub": user_id,
+        "email": "legacy@test.local",
+        "actor_type": "user",
+        "permissions": ["users:read"],
+        "must_change_password": False,
+        # No auth_time — pre-upgrade token shape.
+    }
+    token = issue_jwt(legacy_claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_past_absolute_window(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    user_id, _ = auth_user
+    ctx = integration_context
+    stale = int(datetime.now(UTC).timestamp()) - ctx.config.admin.auth.session_ttl_seconds - 60
+    claims = {
+        "sub": user_id,
+        "email": "stale@test.local",
+        "actor_type": "user",
+        "permissions": ["users:read"],
+        "must_change_password": False,
+        "auth_time": stale,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(SessionExpiredError):
+        await service.refresh(token)
+
+
+async def test_refresh_inactive_user_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Deactivation takes effect at the next refresh, not just the next login."""
+    user_id, email = auth_user
+    ctx = integration_context
+    service = AuthService(ctx)
+    login = await service.login(LoginPayload(email=email, password="correct-password"))
+
+    async with ctx.admin_db.session() as session:
+        await UserRepository.update(session, user_id, active=False)
+        await session.commit()
+
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(login.access_token)
+
+
+async def test_refresh_non_user_actor_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "agent@test.local",
+        "actor_type": "agent",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_missing_actor_type_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Fail closed: a token that doesn't declare actor_type is not refreshable."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "noactortype@test.local",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_unknown_actor_type_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """An unrecognised actor_type is refused with a 401-mapped error, not a 500."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "junkactortype@test.local",
+        "actor_type": "definitely-not-a-real-actor",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_opaque_token_rejected(integration_context: Context) -> None:
+    """Opaque platform-actor tokens (at_…) are not JWTs and cannot refresh."""
+    service = AuthService(integration_context)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh("at_notactuallyajwt")
+
+
+async def test_refresh_expired_jwt_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Defence in depth: an expired signature is refused inside the service too."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "expired@test.local",
+        "actor_type": "user",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), -10)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)

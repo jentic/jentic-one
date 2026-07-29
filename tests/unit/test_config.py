@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from jentic_one.shared.config import (
     AdminAuthConfig,
@@ -148,6 +148,43 @@ def test_empty_jwt_secret_rejected_in_production(blank: str):
         pytest.raises(ConfigError, match=r"admin\.auth\.jwt_secret"),
     ):
         AdminAuthConfig(jwt_secret=SecretStr(blank))
+
+
+def test_session_lifetime_defaults():
+    """Defaults: 1 h JWT, 12 h absolute session window."""
+    with patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False):
+        cfg = AdminAuthConfig()
+    assert cfg.jwt_ttl_seconds == 3600
+    assert cfg.session_ttl_seconds == 43200
+
+
+def test_session_lifetimes_env_override(config_file: Path):
+    env = {
+        "JENTIC__ADMIN__AUTH__JWT_TTL_SECONDS": "600",
+        "JENTIC__ADMIN__AUTH__SESSION_TTL_SECONDS": "7200",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert config.admin.auth.jwt_ttl_seconds == 600
+    assert config.admin.auth.session_ttl_seconds == 7200
+
+
+def test_session_window_shorter_than_jwt_ttl_rejected():
+    """A session window shorter than one JWT would break every refresh."""
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False),
+        pytest.raises(ValidationError, match="session_ttl_seconds"),
+    ):
+        AdminAuthConfig(jwt_ttl_seconds=3600, session_ttl_seconds=60)
+
+
+@pytest.mark.parametrize("field", ["jwt_ttl_seconds", "session_ttl_seconds"])
+def test_non_positive_session_lifetimes_rejected(field: str):
+    with (
+        patch.dict(os.environ, {"JENTIC_ENV": "development"}, clear=False),
+        pytest.raises(ValidationError, match=field),
+    ):
+        AdminAuthConfig.model_validate({field: 0})
 
 
 def test_default_invite_pepper_rejected_in_production():

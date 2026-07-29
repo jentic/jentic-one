@@ -11,8 +11,8 @@ from typing import Any
 
 import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
-from fastapi import APIRouter, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
@@ -35,6 +35,7 @@ from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
 from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
 from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
+from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
@@ -42,8 +43,37 @@ from jentic_one.shared.web.openapi_meta import (
 )
 from jentic_one.shared.web.openapi_responses import COMMON_ERROR_RESPONSES
 from jentic_one.shared.web.reference_router import get_reference_router
+from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 _logger = structlog.get_logger(__name__)
+
+
+async def spa_aware_problem_detail_handler(
+    request: Request, exc: ProblemDetailException
+) -> Response:
+    """Problem-details handler that lands anonymous HTML navigations in the SPA.
+
+    A human following a link to a protected URL after their session expired is
+    a *browser navigation*: ``GET``, ``Accept: text/html``, and — because the
+    web session token lives in the SPA's localStorage, never in a header the
+    browser sends on its own — no credential at all. Answering that with raw
+    ``application/problem+json`` strands the person on a JSON blob (#813), so
+    when an SPA is mounted we redirect into it and let the client-side auth
+    state take over (login screen or dashboard). Everything else — API clients
+    (JSON ``Accept``), requests that *did* present a credential, non-GETs —
+    keeps the RFC 9457 response byte-for-byte.
+    """
+    if (
+        exc.status_code == 401
+        and request.method == "GET"
+        and getattr(request.app.state, "spa_mounted", False)
+        and "text/html" in request.headers.get("accept", "")
+        and "authorization" not in request.headers
+        and API_KEY_HEADER not in request.headers
+    ):
+        return RedirectResponse(f"{SPA_MOUNT_PATH}/", status_code=302)
+    return await problem_detail_exception_handler(request, exc)
+
 
 SURFACE_MODULES = {
     "registry": "jentic_one.registry.web.app",
@@ -407,7 +437,7 @@ def create_surface_app(
     for installer in container.extra_installers:
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
-    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -453,7 +483,7 @@ def create_combined_app(
     if container.broker is not None:
         root.state.broker = container.broker
         root.state.broker_factory = lambda _runner: container.broker
-    root.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",
