@@ -180,16 +180,25 @@ writer, one source of truth, one pointer.
 ### Optional: passwordless launch
 
 Without this, each `jentic run` prompts for the operator's password (cached
-per-terminal ~5 min). A scoped `sudoers` drop-in, installed through `visudo` so a
-typo can never lock you out of sudo:
+per-terminal ~5 min). `bootstrap`/`wizard` offer this as a **consent gate during
+account setup** (defaulting to yes): accept it and the CLI installs a scoped
+`sudoers` drop-in; decline and you simply keep entering your login password on
+each launch. The rule it writes is exactly:
 
-```bash
-echo "$(whoami) ALL=($(whoami)-local-agent) NOPASSWD: /bin/bash" | sudo SUDO_EDITOR='tee -a' visudo -f /etc/sudoers.d/jentic-agent
+```
+<operator> ALL=(<operator>-local-agent) NOPASSWD: /bin/bash
 ```
 
-The `(<operator>-local-agent)` target scopes this to *becoming the agent user* —
-not a general root grant. On macOS you can instead enable Touch ID for sudo
-(`auth sufficient pam_tid.so` in `/etc/pam.d/sudo_local`).
+The `(<operator>-local-agent)` runas target scopes this to *becoming the agent
+user* — **not** a general root grant (the command is the login shell every agent
+invocation already runs under, `sudo -u <agent> -H bash -lc …`). The drop-in is
+written to `/etc/sudoers.d/jentic-agent` through a temp file **validated with
+`visudo -cf` before install**, so a malformed edit can never lock you out of
+sudo, and the exact line is appended only if absent (idempotent across re-runs
+and account reuse). `jentic reset` removes the agent's line from the drop-in
+(deleting the file when it becomes empty) as part of teardown. On macOS you can
+instead enable Touch ID for sudo (`auth sufficient pam_tid.so` in
+`/etc/pam.d/sudo_local`).
 
 ## `jentic run <agent>` — the daily driver
 

@@ -306,6 +306,55 @@ func TestRemoveSudoersIsSafe(t *testing.T) {
 	}
 }
 
+// TestSudoersRuleIsScopedNotRoot guards that the passwordless-launch rule grants
+// only "become the agent user to run the login shell" — never a root capability.
+func TestSudoersRuleIsScopedNotRoot(t *testing.T) {
+	rule := SudoersRule("alice", "alice-local-agent")
+	want := "alice ALL=(alice-local-agent) NOPASSWD: /bin/bash"
+	if rule != want {
+		t.Errorf("sudoers rule = %q, want %q", rule, want)
+	}
+	// The runas spec must name the unprivileged agent account, not root/ALL.
+	if strings.Contains(rule, "(root)") || strings.Contains(rule, "(ALL)") || strings.Contains(rule, "=(ALL:ALL)") {
+		t.Errorf("passwordless rule must not grant root: %q", rule)
+	}
+}
+
+// TestInstallSudoersIsSafeAndIdempotent guards that the install edits the fixed
+// drop-in, validates with visudo before writing (so a bad edit can't brick sudo),
+// and only appends the rule when it is not already present (idempotent re-run).
+func TestInstallSudoersIsSafeAndIdempotent(t *testing.T) {
+	joined := strings.Join(InstallSudoersCmd("alice", "alice-local-agent").Args, " ")
+	if !strings.Contains(joined, "/etc/sudoers.d/jentic-agent") {
+		t.Errorf("sudoers install must target the jentic-agent drop-in: %s", joined)
+	}
+	if !strings.Contains(joined, "visudo -cf") {
+		t.Errorf("sudoers install must validate with visudo before installing: %s", joined)
+	}
+	if !strings.Contains(joined, "grep -qxF") {
+		t.Errorf("sudoers install must be idempotent (only append when absent): %s", joined)
+	}
+	if !strings.Contains(joined, "install -m 0440") {
+		t.Errorf("sudoers drop-in must be installed mode 0440: %s", joined)
+	}
+}
+
+// TestRemoveSudoersDropsInstalledRule guards that the teardown grep-filter removes
+// exactly the line InstallSudoersCmd writes — i.e. reset undoes the install. The
+// removal filters on the agent user, which appears in the rule's runas spec.
+func TestRemoveSudoersDropsInstalledRule(t *testing.T) {
+	rule := SudoersRule("alice", "alice-local-agent")
+	remove := strings.Join(RemoveSudoersCmd("alice-local-agent").Args, " ")
+	// The removal script greps out lines matching the agent user; that token must
+	// be present in the installed rule so the filter catches it.
+	if !strings.Contains(rule, "alice-local-agent") {
+		t.Fatalf("installed rule must contain the agent user so removal matches it: %q", rule)
+	}
+	if !strings.Contains(remove, "alice-local-agent") {
+		t.Errorf("removal must filter on the agent user: %s", remove)
+	}
+}
+
 // TestMacLeafGrantIncludesDeleteBits guards against the macOS shorthand bug: a
 // "write" grant on a directory expands to add_file only, so the agent could
 // create but not delete/rename files (breaking write-to-temp-then-rename and

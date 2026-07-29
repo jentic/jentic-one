@@ -477,6 +477,49 @@ func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
 }
 
+// sudoersPath is the shared drop-in that holds the agents' passwordless-launch
+// rules, one line per agent user. It is installed and removed only ever through
+// `visudo -cf`-validated writes so a malformed edit can never brick sudo.
+const sudoersPath = "/etc/sudoers.d/jentic-agent"
+
+// agentLaunchShell is the command every agent invocation hands to sudo: the login
+// bash that agentBashArgs runs as the agent user (probe, grant, and the confined
+// launch all go through it). The passwordless rule is scoped to exactly this
+// command, so the grant is "run bash as the agent user without a password" — not
+// a general root grant. It is `/bin/bash` on both macOS and Linux (present in
+// sudo's default secure_path on both), matching the resolution of the unqualified
+// `bash` in agentBashArgs.
+const agentLaunchShell = "/bin/bash"
+
+// SudoersRule is the single sudoers line that lets operator become agentUser via
+// the launch shell with no password. The runas spec `(<agentUser>)` scopes it to
+// that one unprivileged account; there is no root capability here.
+func SudoersRule(operator, agentUser string) string {
+	return operator + " ALL=(" + agentUser + ") NOPASSWD: " + agentLaunchShell
+}
+
+// InstallSudoersCmd adds operator's passwordless-launch rule for agentUser to the
+// shared /etc/sudoers.d/jentic-agent drop-in. It is OPTIONAL and gated on explicit
+// operator consent (bootstrap's passwordless prompt): without it, every `jentic
+// run` prompts for the operator's password (cached per-terminal ~5 min); with it,
+// the operator can become the agent user (to launch it) with no prompt.
+//
+// The edit is idempotent (the exact rule line is added only if not already
+// present) and safe: it builds the new content in a temp file, validates it with
+// `visudo -cf` BEFORE installing, and only replaces the drop-in (mode 0440) if
+// validation passes — so a bad edit can never lock the operator out of sudo. Runs
+// as root. Mirrors RemoveSudoersCmd, the teardown that `jentic reset` runs.
+func InstallSudoersCmd(operator, agentUser string) *exec.Cmd {
+	rule := shellQuote(SudoersRule(operator, agentUser))
+	f := shellQuote(sudoersPath)
+	script := `f=` + f + `; tmp="$(mktemp)"; ` +
+		`[ -f "$f" ] && cat "$f" > "$tmp"; ` +
+		`grep -qxF ` + rule + ` "$tmp" 2>/dev/null || echo ` + rule + ` >> "$tmp"; ` +
+		`if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +
+		`rm -f "$tmp"`
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // operator/agentUser are shell-quoted; the script edits a fixed sudoers path via visudo validation.
+}
+
 // RemoveSudoersCmd drops the agent user's passwordless-launch lines from the
 // shared /etc/sudoers.d/jentic-agent drop-in, deleting the file if it becomes
 // empty. It edits through a temp file validated with `visudo -c` before install,
@@ -484,7 +527,7 @@ func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
 // absent (the passwordless drop-in is optional). Runs as root.
 func RemoveSudoersCmd(agentUser string) *exec.Cmd {
 	q := shellQuote(agentUser)
-	script := `f=/etc/sudoers.d/jentic-agent; [ -f "$f" ] || exit 0; ` +
+	script := `f=` + shellQuote(sudoersPath) + `; [ -f "$f" ] || exit 0; ` +
 		`tmp="$(mktemp)"; grep -v ` + q + ` "$f" > "$tmp" || true; ` +
 		`if [ -s "$tmp" ]; then ` +
 		`  if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +

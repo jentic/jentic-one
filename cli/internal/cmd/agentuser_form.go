@@ -46,6 +46,7 @@ func (a *App) promptAgentUserFields(fields *agentUserFields, configSrcs []string
 			providerSrcs,
 			&fields.portProvider,
 		),
+		passwordlessSelect(&fields.passwordless),
 	)).WithShowHelp(true).Run()
 }
 
@@ -82,6 +83,26 @@ func portSelect(title, why string, srcs []string, value *bool) *huh.Select[bool]
 	return huh.NewSelect[bool]().
 		Title(title).
 		Description(why+"\nWill copy: "+strings.Join(srcs, ", ")).
+		Value(value).
+		Options(huh.NewOption("Yes", true), huh.NewOption("No", false))
+}
+
+// passwordlessSelect builds the Yes/No consent toggle for passwordless launch,
+// defaulting to Yes. It installs a scoped sudoers rule that lets the operator
+// become the agent's Unix user (to launch it) without a password prompt; the rule
+// grants only "run the login shell as that one unprivileged account", never root.
+// Declining is fine — it just means each `jentic run` asks for the operator's
+// password (cached per-terminal for a few minutes).
+//
+// Value is set BEFORE Options for the same viewport reason documented on
+// portSelect: with Value-after-Options a Yes default renders scrolled one line
+// down until an arrow key resyncs it.
+func passwordlessSelect(value *bool) *huh.Select[bool] {
+	*value = true
+	return huh.NewSelect[bool]().
+		Title("Launch the agent without re-entering your password each time?").
+		Description("Adds a scoped sudoers rule to become the agent's user (never root).\n"+
+			"Decline and you'll enter your login password each time you run the agent.").
 		Value(value).
 		Options(huh.NewOption("Yes", true), huh.NewOption("No", false))
 }

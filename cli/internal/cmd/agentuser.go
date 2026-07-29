@@ -23,6 +23,9 @@ type agentUserFields struct {
 	homeDir      string
 	portConfig   bool
 	portProvider bool
+	// passwordless, when true, installs a scoped sudoers rule so the operator can
+	// launch the agent (become its Unix user) without re-entering their password.
+	passwordless bool
 }
 
 // agentSetup is the outcome of the agent-user step, returned to the caller
@@ -117,12 +120,14 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	provider := localagent.DetectProvider(operatorHome)
 	providerSrcs := localagent.ProviderConfigPaths(operatorHome, provider)
 
-	// Editable, prefilled dialog: account name, home, and the two port toggles.
+	// Editable, prefilled dialog: account name, home, the two port toggles, and
+	// the passwordless-launch consent (defaults to yes — see the form).
 	fields := agentUserFields{
 		name:         defaultName,
 		homeDir:      localagent.DefaultHomeDir(defaultName),
 		portConfig:   len(configSrcs) > 0,
 		portProvider: len(providerSrcs) > 0,
+		passwordless: true,
 	}
 	if err := a.promptAgentUserFields(&fields, configSrcs, provider.Name, providerSrcs); err != nil {
 		return agentSetup{}, err
@@ -220,6 +225,25 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 	// not. Real secrets keep their own 0700 modes regardless; the sensitivity rules
 	// (DangerReason) still gate what may be granted. See
 	// docs/security/local-agent/sandbox-exec-plan.md.
+
+	// Optional passwordless launch (per the operator's consent toggle): a scoped
+	// sudoers rule so `jentic run` need not prompt for the operator's password to
+	// become the agent user. Idempotent and visudo-validated, so re-running setup
+	// or reusing an account simply re-asserts the one rule. `jentic reset` removes
+	// it (RemoveSudoersCmd). Best-effort: a sudoers write failure must not abort an
+	// otherwise-successful account setup — the operator just keeps typing their
+	// password, which we tell them.
+	if fields.passwordless {
+		grant := localagent.InstallSudoersCmd(operator, fields.name)
+		grant.Stdout, grant.Stderr = a.Out, io.Discard
+		if err := grant.Run(); err != nil {
+			fmt.Fprintln(a.Out, theme.Warnf(
+				"could not enable passwordless launch — you'll be asked for your password on `jentic run`: %v", err))
+		} else {
+			fmt.Fprintln(a.Out, theme.Dim.Render(
+				"Passwordless launch enabled (scoped to becoming the agent user, never root)."))
+		}
+	}
 
 	// Seed config/provider per the operator's toggles — the same porting logic
 	// `jentic run` uses. The field bools drive the decision directly, so there is
