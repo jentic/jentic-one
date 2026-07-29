@@ -25,8 +25,11 @@ test('list → create toolkit → detail → create key', async ({ page }) => {
 		.click();
 	await expect(page.getByRole('heading', { name: 'Toolkits' })).toBeVisible();
 
-	// Seeded toolkits render.
+	// Seeded toolkits render, the busy card carries its 7d usage sparkline, and
+	// the Discover escape hatch is present.
 	await expect(page.getByText('GitHub Tools')).toBeVisible();
+	await expect(page.getByTestId('toolkit-card-usage')).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Import an API' })).toBeVisible();
 
 	// Create a new toolkit — the dialog now reveals the one-time key before
 	// handing off to the detail page.

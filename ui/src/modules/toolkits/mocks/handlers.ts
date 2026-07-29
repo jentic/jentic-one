@@ -21,7 +21,7 @@ type MockToolkit = {
 
 const now = () => new Date().toISOString();
 
-const toolkits: MockToolkit[] = [
+const seedToolkits = (): MockToolkit[] => [
 	{
 		toolkit_id: 'tk_demo_github',
 		name: 'GitHub Tools',
@@ -47,6 +47,21 @@ const toolkits: MockToolkit[] = [
 		updated_at: '2026-06-01T12:00:00Z',
 	},
 ];
+
+const toolkits: MockToolkit[] = seedToolkits();
+
+/**
+ * DEV+MSW-only e2e seeding hooks, aggregated by the shared MSW root
+ * (`src/mocks/handlers.ts` → `installE2eTestHooks`) — same additive-registry
+ * shape as `credentialsE2eHooks`. Lets a spec (or a screenshot script) reset
+ * the in-module store to the seed or to an arbitrary list (e.g. `[]` for the
+ * empty state). Tree-shaken from production builds.
+ */
+export const toolkitsE2eHooks = {
+	resetToolkitsStore(next?: MockToolkit[]) {
+		toolkits.splice(0, toolkits.length, ...(next ?? seedToolkits()));
+	},
+};
 
 const keysByToolkit: Record<string, Array<Record<string, unknown>>> = {
 	tk_demo_github: [
