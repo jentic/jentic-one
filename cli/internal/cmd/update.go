@@ -37,7 +37,10 @@ func newUpdateCmd(app *App) *cobra.Command {
 			"installed version against the latest release tag on GitHub, and (unless\n" +
 			"--check) rebuilds and replaces the jenticctl and jentic binaries in place,\n" +
 			"then rebuilds the installed stack. Use --cli-only or --stack-only to update\n" +
-			"just one half.",
+			"just one half.\n\n" +
+			"A Homebrew-installed CLI is never swapped in place: the CLI half runs\n" +
+			"`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n" +
+			"(--ref cannot pin a Homebrew-managed CLI).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.updateE(cmd.Context(), opts)
@@ -62,11 +65,20 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	installed := firstNonEmpty(manifest.Commit, commit)
 	cliVersion := firstNonEmpty(manifest.CLIVersion, version)
 
+	ctlTarget, err := resolveCtlTarget(manifest)
+	if err != nil {
+		return err
+	}
+	brewManaged := update.BrewManaged(ctlTarget)
+
 	fmt.Fprint(a.Out, a.brandHeader(opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
+	}
+	if brewManaged {
+		fmt.Fprintln(a.Out, theme.Field("managed by", "Homebrew — CLI updates delegate to `"+update.BrewUpgradeCommand+"`"))
 	}
 
 	// Resolve the update target. By default we track the latest release tag; an
@@ -99,17 +111,39 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	doCLI := !opts.stackOnly
 	doStack := !opts.cliOnly
 
-	// When the latest release is not newer than what's installed there's nothing
-	// to rebuild. A --ref override always proceeds (the user asked for a specific
-	// build); re-run with --ref to force a rebuild at a pinned version.
-	if !pinned && latestKnown && !update.NewerAvailable(cliVersion, latest) {
+	// A brew-managed CLI is never swapped by us — the CLI half delegates to
+	// `brew upgrade jentic` (flyctl-style) so brew's bookkeeping stays
+	// consistent. brew can only ship the latest release, so an explicit --ref
+	// cannot be honored for the CLI half and is refused rather than silently
+	// updating to something else.
+	if brewManaged && doCLI && pinned {
+		return errors.New("--ref cannot pin a Homebrew-managed CLI (brew only ships the latest release); use --stack-only, or reinstall from source via tools/install.sh")
+	}
+
+	// When the latest release is not newer than what's installed there's
+	// nothing to rebuild. Each requested half is gated on its own recorded
+	// version (see updateNeeded): they normally move in lockstep, but a
+	// brew-managed CLI is refreshed out-of-band by `brew upgrade` while the
+	// stack may lag behind, so the stack half must not key off the CLI binary.
+	// A --ref override always proceeds (the user asked for a specific build);
+	// re-run with --ref to force a rebuild at a pinned version.
+	stackVersion := firstNonEmpty(manifest.Ref, cliVersion)
+	if !pinned && latestKnown && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
 		return nil
 	}
 
+	// Only the stack lags: don't invoke brew for a CLI that is already at the
+	// latest release (brew would just report "already up to date").
+	if brewManaged && doCLI && latestKnown && !update.NewerAvailable(cliVersion, latest) {
+		doCLI = false
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Dim.Render("  CLI already at the latest release; updating the stack only."))
+	}
+
 	if !opts.yes {
-		ok, err := confirmApply(doCLI, doStack, repo, ref)
+		ok, err := confirmApply(doCLI, doStack, brewManaged, repo, ref)
 		if err != nil {
 			return err
 		}
@@ -120,7 +154,11 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 
 	if doCLI {
-		if err := a.updateCLI(ctx, manifest, repo, ref); err != nil {
+		if brewManaged {
+			if err := a.brewUpgradeCLI(ctx, latest, latestKnown); err != nil {
+				return err
+			}
+		} else if err := a.updateCLI(ctx, repo, ref, ctlTarget); err != nil {
 			return err
 		}
 	}
@@ -132,23 +170,70 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	return nil
 }
 
+// brewUpgradeCLI refreshes a Homebrew-managed CLI by delegating to
+// `brew upgrade jentic`, streaming brew's output. brew swaps both binaries
+// (they ship in one cask) and its bookkeeping stays consistent.
+//
+// brew can only install what the cask currently ships, and the cask bump lags
+// the GitHub release tag by a bit; inside that window `brew upgrade` is a
+// clean no-op, so success is only claimed after verifying the installed cask
+// actually reached latest.
+func (a *App) brewUpgradeCLI(ctx context.Context, latest string, latestKnown bool) error {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Heading.Render("Updating CLI via Homebrew"))
+	fmt.Fprintln(a.Out, theme.Dimf("  running: %s", update.BrewUpgradeCommand))
+	if err := update.BrewUpgrade(ctx, a.Out, a.Err); err != nil {
+		return err
+	}
+	if caskVersion := update.BrewCaskVersion(ctx); latestKnown && caskVersion != "" && update.NewerAvailable(caskVersion, latest) {
+		fmt.Fprintln(a.Out, theme.Warnf("Homebrew's jentic cask is still at %s (release %s not yet published to the tap) — re-run `%s` in a while.", caskVersion, latest, update.BrewUpgradeCommand))
+		return nil
+	}
+	fmt.Fprintln(a.Out, theme.Successf("CLI updated via Homebrew."))
+	return nil
+}
+
+// updateNeeded reports whether any requested update half is behind latest.
+// Each half is compared against its own recorded version: cliVersion is what
+// the installed binary reports, stackVersion is the ref the stack was last
+// built from (the two normally match, but a Homebrew-managed CLI is updated
+// out-of-band while the stack in ~/.jentic may lag behind).
+func updateNeeded(doCLI, doStack bool, cliVersion, stackVersion, latest string) bool {
+	return (doCLI && update.NewerAvailable(cliVersion, latest)) ||
+		(doStack && update.NewerAvailable(stackVersion, latest))
+}
+
+// resolveCtlTarget locates the installed jenticctl binary that an update would
+// replace: the manifest's recorded path when present, else the running
+// executable. Symlinks are resolved in both cases so the swap replaces the real
+// file rather than a PATH symlink pointing at it (e.g. Homebrew's bin link or
+// the link tools/install.sh drops into /usr/local/bin) — renaming over the
+// symlink would orphan the real install.
+func resolveCtlTarget(manifest *config.Manifest) (string, error) {
+	target := manifest.BinaryPath
+	if target == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("locate current binary: %w", err)
+		}
+		target = exe
+	}
+	// A dangling/missing path fails EvalSymlinks; keep it verbatim and let the
+	// swap create it fresh.
+	if resolved, err := filepath.EvalSymlinks(target); err == nil {
+		target = resolved
+	}
+	return target, nil
+}
+
 // updateCLI rebuilds and replaces both CLI binaries (jenticctl and jentic) by
 // delegating the build to tools/install.sh (single source of truth) into a
 // staging dir, then atomically swapping each into place with a .bak rollback
 // copy. jenticctl update is the sole updater for both binaries; they are
-// assumed co-located (install.sh installs both into the same dir).
-func (a *App) updateCLI(ctx context.Context, manifest *config.Manifest, repo, ref string) error {
-	ctlTarget := manifest.BinaryPath
-	if ctlTarget == "" {
-		exe, err := os.Executable()
-		if err != nil {
-			return fmt.Errorf("locate current binary: %w", err)
-		}
-		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = resolved
-		}
-		ctlTarget = exe
-	}
+// assumed co-located (install.sh installs both into the same dir). ctlTarget
+// is the symlink-resolved jenticctl location (see resolveCtlTarget); callers
+// must have already ruled out package-manager-owned locations.
+func (a *App) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error {
 	// The sibling jentic binary lives next to jenticctl (install.sh co-locates
 	// both in JENTIC_INSTALL_DIR).
 	installDir := filepath.Dir(ctlTarget)
@@ -369,23 +454,14 @@ func (a *App) restartLocalIfRunning() {
 	_ = a.startE(&startOptions{})
 }
 
-func confirmApply(doCLI, doStack bool, repo, ref string) (bool, error) {
-	var what string
-	switch {
-	case doCLI && doStack:
-		what = "the CLI and the stack"
-	case doCLI:
-		what = "the CLI"
-	default:
-		what = "the stack"
-	}
+func confirmApply(doCLI, doStack, brewCLI bool, repo, ref string) (bool, error) {
 	// This prompt is only reached when an update is available, so default the
 	// focused selection to "Yes, update": the user already invoked `update`, so
 	// a reflexive Enter should proceed rather than cancel (#765).
 	confirm := true
 	if err := install.RunConfirm(
 		huh.NewConfirm().
-			Title(fmt.Sprintf("Update %s to %s@%s?", what, repo, ref)).
+			Title(applyPromptTitle(doCLI, doStack, brewCLI, repo, ref)).
 			Affirmative("Yes, update").
 			Negative("Cancel").
 			Value(&confirm),
@@ -396,6 +472,24 @@ func confirmApply(doCLI, doStack bool, repo, ref string) (bool, error) {
 		return false, err
 	}
 	return confirm, nil
+}
+
+// applyPromptTitle words the confirmation prompt for the halves about to run.
+// A brew-managed CLI is updated by brew at brew's latest, not from repo@ref,
+// so the prompt must not promise a ref it cannot honor.
+func applyPromptTitle(doCLI, doStack, brewCLI bool, repo, ref string) string {
+	switch {
+	case brewCLI && doCLI && doStack:
+		return fmt.Sprintf("Update the CLI (via `%s`) and the stack (from %s@%s)?", update.BrewUpgradeCommand, repo, ref)
+	case brewCLI && doCLI:
+		return fmt.Sprintf("Update the CLI via `%s`?", update.BrewUpgradeCommand)
+	case doCLI && doStack:
+		return fmt.Sprintf("Update the CLI and the stack to %s@%s?", repo, ref)
+	case doCLI:
+		return fmt.Sprintf("Update the CLI to %s@%s?", repo, ref)
+	default:
+		return fmt.Sprintf("Update the stack to %s@%s?", repo, ref)
+	}
 }
 
 // printVerdict reports up-to-date / update-available based on the installed CLI

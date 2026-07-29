@@ -53,11 +53,11 @@ export function usageToOverview(usage: UsageResponse): UsageOverview {
  * Format a top-row key into a display label, per grouping dimension. The
  * backend composes keys/labels mechanically (see monitoring_repo.grouped_top):
  *   api     → "vendor/name" with NULL columns coalesced to "unknown"
- *   toolkit → the raw toolkit_id (nullable → SQL NULL key)
- *   agent   → "actor_type/actor_id" (NULL propagates: `||` yields NULL, so
- *              unattributed executions arrive as a single null-key row)
- * We strip the mechanical prefixes for display and surface null/unknown
- * groups as an explicit "Unattributed" bucket, matching jentic-mini.
+ *   toolkit → the raw toolkit_id (NOT NULL column)
+ *   agent   → "actor_type/actor_id" (both NOT NULL columns)
+ * Keys are therefore never NULL on the wire today; the null branches below
+ * are defensive display fallbacks (surfaced as "Unattributed", matching
+ * jentic-mini) rather than a backend contract.
  */
 function formatEntityLabel(groupBy: string, key: string | null | undefined): string {
 	if (!key) return 'Unattributed';
@@ -76,9 +76,9 @@ function formatEntityLabel(groupBy: string, key: string | null | undefined): str
 
 /**
  * Map the response's `top` rows into entity rows, sorted busiest-first.
- * Null-key rows are executions with no attribution (NULL toolkit/actor
- * columns) — surfaced as an explicit "Unattributed" bucket rather than
- * silently dropped, matching jentic-mini.
+ * The attribution columns are NOT NULL so keys are always present today;
+ * empty/missing keys are still mapped to an explicit "Unattributed" bucket
+ * as a display fallback rather than silently dropped, matching jentic-mini.
  */
 export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsageRow[] {
 	if (!usage) return [];
@@ -86,8 +86,6 @@ export function usageToEntityRows(usage: UsageResponse | undefined): EntityUsage
 		.map((row) => {
 			const total = row.total ?? 0;
 			const success = row.success ?? 0;
-			// The generated type says `key: string`, but the SQL key expression
-			// is nullable on the wire for toolkit/agent groupings.
 			const key = (row.key ?? null) as string | null;
 			return {
 				id: key || '__unattributed__',

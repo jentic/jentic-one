@@ -162,10 +162,25 @@ const USAGE_RECENT = [
 // the per-window `top` rows get scaled against.
 const USAGE_FIXTURE_TOTAL = 218;
 
+/**
+ * Redistribute an authored trend series into `numPoints` equal segments of the
+ * same window, attributing each source segment by its start instant — the
+ * conserving arithmetic MonitoringService uses. Mirrors the backend's
+ * window-derived trend length (one segment per bucket tier, not a fixed 12).
+ */
+function resampleTrend(trend: number[], numPoints: number): number[] {
+	const out = new Array<number>(numPoints).fill(0);
+	trend.forEach((v, i) => {
+		out[Math.min(numPoints - 1, Math.floor((i * numPoints) / trend.length))] += v;
+	});
+	return out;
+}
+
 // Per-group full-window `top` rows (each group sums to the 184/168/16 daily
-// split; the handler scales them to the requested window) with the 12-point
-// sparkline trends the Breakdown and bubble charts render. Key/label formats
-// mirror monitoring_repo.grouped_top:
+// split; the handler scales them to the requested window) with the sparkline
+// trends the Breakdown and bubble charts render (authored as 12 points; the
+// handler resamples them to the backend's window-derived segment count).
+// Key/label formats mirror monitoring_repo.grouped_top:
 // api rows are "vendor/name" (label identical to key), toolkit rows use the
 // raw toolkit_id as both key and label, agent rows are "actor_type/actor_id",
 // and unattributed executions surface as a null key/label (SQL `||` with a
@@ -436,7 +451,7 @@ export const monitorHandlers = [
 		// Enriched aggregation (jentic-one-internal#561). Mirrors the real
 		// MonitoringService semantics: `until` defaults to now floored to the
 		// minute, `since` defaults to a 24h window, `bucket_seconds` is derived
-		// from the window width (60s ≤1h, 1h ≤24h, 6h ≤7d, daily beyond),
+		// from the window width (60s ≤1h, 1h ≤24h, 6h ≤8d, daily beyond),
 		// non-enum `group_by` values are rejected (FastAPI 422), buckets stay
 		// sparse (only slots with data — no zero-fill), and `stats`/`top` are
 		// computed from the same window as the buckets (`stats.total === 0`
@@ -469,12 +484,17 @@ export const monitorHandlers = [
 		let bucketSeconds = 86_400;
 		if (windowSeconds <= 3_600) bucketSeconds = 60;
 		else if (windowSeconds <= 86_400) bucketSeconds = 3_600;
-		else if (windowSeconds <= 604_800) bucketSeconds = 21_600;
+		// ≤8 days keeps the 6h tier so a DST-stretched day-aligned 7d window
+		// (7d + 1h) doesn't drop to daily buckets — mirrors
+		// MonitoringService._compute_bucket_seconds.
+		else if (windowSeconds <= 8 * 86_400) bucketSeconds = 21_600;
 
 		// Raw fixture instants: the rebased daily points plus the last-24h
 		// activity anchored to `until`. Window-filter first, then floor each
-		// instant to the bucket tier and merge collisions — matching the
-		// backend's floor(epoch/step)*step GROUP BY.
+		// instant onto the since-anchored bucket grid and merge collisions —
+		// matching the backend's floor((epoch - since)/step)*step + since
+		// GROUP BY (anchored at `since`, like the trend segments, so buckets
+		// line up with day-aligned windows in any timezone).
 		const AVG_MS = [412, 380, 505, 460, 430, 395, 520];
 		const rawPoints = [
 			...USAGE_DAILY.map((b, i) => ({
@@ -495,7 +515,7 @@ export const monitorHandlers = [
 
 		const byBucket = new Map<number, (typeof rawPoints)[number]>();
 		for (const p of rawPoints) {
-			const ts = Math.floor(p.ts / bucketSeconds) * bucketSeconds;
+			const ts = since + Math.floor((p.ts - since) / bucketSeconds) * bucketSeconds;
 			const prev = byBucket.get(ts);
 			byBucket.set(
 				ts,
@@ -521,8 +541,12 @@ export const monitorHandlers = [
 		const avgMs = total ? buckets.reduce((sum, b) => sum + b.avg_ms * b.total, 0) / total : 0;
 
 		// Scale the full-window top rows (and their trend series — the backend
-		// computes both from the same windowed rows) so `top` and `stats` agree.
+		// computes both from the same windowed rows) so `top` and `stats`
+		// agree, then resample each trend to the window-derived segment count
+		// (`round(window / bucket_seconds)`, capped at 60 — mirroring
+		// MonitoringService._compute_trend_points).
 		const factor = total / USAGE_FIXTURE_TOTAL;
+		const numPoints = Math.max(1, Math.min(60, Math.round(windowSeconds / bucketSeconds)));
 		const top =
 			total === 0
 				? []
@@ -532,7 +556,10 @@ export const monitorHandlers = [
 							total: Math.max(1, Math.round((row.total as number) * factor)),
 							success: Math.round((row.success as number) * factor),
 							failed: Math.round((row.failed as number) * factor),
-							trend: (row.trend as number[]).map((v) => Math.round(v * factor)),
+							trend: resampleTrend(
+								(row.trend as number[]).map((v) => Math.round(v * factor)),
+								numPoints,
+							),
 						}))
 						.slice(0, topLimit);
 

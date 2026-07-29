@@ -133,7 +133,8 @@ export interface UsageStatsParams {
 /**
  * Full-parity usage aggregation (`GET /monitoring/usage`): overall stats
  * (incl. latency percentiles), time buckets for the volume chart, and top
- * api/toolkit/agent rows with 12-point sparkline trends.
+ * api/toolkit/agent rows with sparkline trends (one point per aggregate
+ * bucket in the window).
  */
 export async function getUsageStats(params: UsageStatsParams = {}): Promise<UsageResponse> {
 	try {

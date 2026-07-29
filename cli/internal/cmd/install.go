@@ -274,6 +274,12 @@ func (a *App) recordManifest(draft *install.Draft) {
 	}
 	if m.BinaryPath == "" {
 		if exe, err := os.Executable(); err == nil {
+			// Record the real file, not a PATH symlink to it (e.g. Homebrew's
+			// bin link), so later consumers of BinaryPath see the actual
+			// install location.
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = resolved
+			}
 			m.BinaryPath = exe
 		}
 	}
@@ -285,8 +291,8 @@ func (a *App) recordManifest(draft *install.Draft) {
 // writeCLIConfig points the `jentic` CLI at the freshly installed local stack by
 // persisting the control-plane base URL and the local broker target into
 // ~/.jentic/config.yaml. Without this, `jentic execute` / `jentic run` fall back
-// to the built-in cloud defaults (https://broker.jentic.ai) and every brokered
-// call leaves the machine. Existing values are preserved (so a re-install or a
+// to the built-in defaults (https://127.0.0.1:8100), which may not match this
+// install's broker scheme/port. Existing values are preserved (so a re-install or a
 // hand-edited config is not clobbered); only unset fields are filled in. A
 // failure here is non-fatal: the stack is installed regardless, and the user can
 // set these by hand.

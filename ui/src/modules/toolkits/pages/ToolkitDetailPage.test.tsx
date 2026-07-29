@@ -173,7 +173,7 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /bind existing/i }));
+		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
 
 		// Picker lists the unbound credential…
 		const stripeRow = await screen.findByText('Stripe key');
@@ -196,7 +196,7 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /bind existing/i }));
+		await user.click(screen.getByRole('button', { name: /^bind api$/i }));
 		await screen.findByText('AWS key');
 
 		await user.type(screen.getByLabelText('Filter credentials'), 'slack');

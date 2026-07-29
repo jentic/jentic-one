@@ -1,8 +1,10 @@
 /**
  * SparklineChart — tiny inline trend line. Promoted from
  * `modules/monitor/components/SparklineChart` (itself a 1:1 port of
- * jentic-mini's) so both Monitor and Dashboard can render the 12-point
- * `trend` arrays the usage endpoint returns per top row.
+ * jentic-mini's) so both Monitor and Dashboard can render the `trend`
+ * arrays the usage endpoint returns per top row (one point per aggregate
+ * bucket — 24/28/30 for the standard windows); the path scales to any
+ * length ≥ 2.
  *
  * Purely presentational: no axes, no labels. Decorative by default
  * (`aria-hidden`) — pair it with visible numbers in the consuming row.

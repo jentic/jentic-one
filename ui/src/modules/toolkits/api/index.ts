@@ -18,22 +18,25 @@ import type {
 } from '@/shared/api';
 import * as client from '@/modules/toolkits/api/client';
 import type { CreatedToolkit } from '@/modules/toolkits/api/types';
+import { sharedQueryKeys } from '@/shared/api';
 
-/** Stable query-key roots so callers/tests can target invalidation precisely. */
+/** Stable query-key roots so callers/tests can target invalidation precisely.
+ * `all` derives from the shared cross-module registry so the Agents module's
+ * agent-side bind/unbind (#607) can invalidate the toolkit-side "Bound Agents"
+ * card through `sharedQueryKeys.toolkitsRoot` without the two prefixes drifting. */
 export const toolkitKeys = {
-	all: ['toolkits'] as const,
+	all: sharedQueryKeys.toolkitsRoot,
 	list: (cursor: string | null) => [...toolkitKeys.all, 'list', cursor] as const,
 	detail: (id: string) => [...toolkitKeys.all, 'detail', id] as const,
 	keys: (id: string) => [...toolkitKeys.all, 'keys', id] as const,
 	bindings: (id: string) => [...toolkitKeys.all, 'bindings', id] as const,
 	permissions: (id: string, credentialId: string) =>
 		[...toolkitKeys.all, 'permissions', id, credentialId] as const,
-	agents: (id: string) => [...toolkitKeys.all, 'agents', id] as const,
+	agents: (id: string) => [...sharedQueryKeys.toolkitAgentsRoot, id] as const,
 	audit: (id: string) => [...toolkitKeys.all, 'audit', id] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,
 	linkableAgents: () => [...toolkitKeys.all, 'linkable-agents'] as const,
-	agentBindings: (agentId: string) => [...toolkitKeys.all, 'agent-bindings', agentId] as const,
 };
 
 const STALE_POLL_MS = 30_000;
@@ -78,6 +81,17 @@ export function useUpdateToolkit(toolkitId: string) {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
+			// A rename is the only toolkit-side change that alters a toolkit's
+			// display name, and the Agents module caches that name per bound row
+			// under the shared `toolkitNameRoot` (its own top-level root, not under
+			// `['toolkits']`). Invalidate it here — id-scoped so ONLY this toolkit's
+			// cached name refetches — so agent-side bound-row labels refresh
+			// instantly on rename instead of waiting out `useToolkitName`'s
+			// staleTime. (`useSetToolkitActive` toggles `active`, not `name`, so it
+			// deliberately does NOT touch this root.)
+			queryClient.invalidateQueries({
+				queryKey: [...sharedQueryKeys.toolkitNameRoot, toolkitId],
+			});
 		},
 	});
 }
@@ -310,15 +324,16 @@ export function useLinkAgentToToolkit(toolkitId: string) {
 	});
 }
 
-export function useAgentToolkits(agentId: string | null) {
-	return useQuery({
-		queryKey: toolkitKeys.agentBindings(agentId ?? ''),
-		queryFn: () => client.listAgentToolkits(agentId as string),
-		enabled: agentId != null,
-	});
-}
-
-export function useUnbindToolkitFromAgent(toolkitId: string) {
+/**
+ * Unlink an agent from *this toolkit* (mirror of the agents-module hook that
+ * unbinds a toolkit from an agent). The two hooks used to share a name and only
+ * differ by argument order, which was a real footgun: both took a ``string`` and
+ * their ``.mutate`` calls took a ``string``, so auto-importing the wrong one
+ * would compile cleanly and swap the ids at runtime. Renamed
+ * to make the direction unambiguous — this one binds the *toolkit* argument, and
+ * ``.mutate`` takes the *agent id* to unlink.
+ */
+export function useUnlinkAgentFromToolkit(toolkitId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (agentId: string) => client.unbindToolkitFromAgent(agentId, toolkitId),

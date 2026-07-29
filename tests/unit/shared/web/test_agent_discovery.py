@@ -152,6 +152,17 @@ def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> Non
     assert "300 seconds in the future" in body
 
 
+def test_llms_txt_disclaims_mcp_endpoint(client: TestClient) -> None:
+    """llms.txt tells agents there is no MCP endpoint on this deployment (#753).
+
+    Agents arriving from the Jentic cloud platform probe ``/mcp`` and then
+    misdiagnose the 404; the document must state the integration path is the
+    CLI + skill (or raw HTTP), not MCP.
+    """
+    body = client.get(LLMS_TXT_PATH).text
+    assert "no MCP endpoint" in body
+
+
 def test_render_llms_txt_stamps_base_everywhere() -> None:
     """No hardcoded host survives rendering; every link uses the given base."""
     body = render_llms_txt("https://example.test", assertion_max_ttl_seconds=300)

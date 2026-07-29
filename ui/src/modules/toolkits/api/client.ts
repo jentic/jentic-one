@@ -344,15 +344,6 @@ export async function listLinkableAgents(): Promise<ToolkitAgent[]> {
 	}
 }
 
-export async function listAgentToolkits(agentId: string): Promise<ToolkitBindingResponse[]> {
-	try {
-		const res = await AgentsService.listAgentToolkits({ agentId });
-		return res.data;
-	} catch (error) {
-		throw toToolkitsError(error, "Failed to load the agent's toolkits.");
-	}
-}
-
 export async function bindToolkitToAgent(
 	agentId: string,
 	toolkitId: string,
