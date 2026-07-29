@@ -173,6 +173,9 @@ class InviteService:
         claims = {
             "sub": token.user_id,
             "email": user.email,
+            # Explicit self-description so refresh can fail closed (see
+            # AuthService.refresh) instead of assuming a default actor type.
+            "actor_type": ActorType.USER.value,
             "permissions": perms_view.effective,
             "must_change_password": False,
             # Redeeming an invite sets the password — a fresh credential proof,

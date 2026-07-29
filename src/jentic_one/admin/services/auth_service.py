@@ -72,6 +72,9 @@ class AuthService:
         claims = {
             "sub": user_id,
             "email": email,
+            # Explicit self-description so privilege-granting consumers
+            # (refresh) can fail closed instead of assuming a default.
+            "actor_type": ActorType.USER.value,
             "permissions": perms_view.effective,
             "must_change_password": must_change_password,
             "auth_time": auth_time,
@@ -178,14 +181,16 @@ class AuthService:
 
         Takes the *raw* bearer token (not the resolved Identity) because the
         session-window claims (``auth_time``) are not part of the shared
-        ``Identity`` contract. Only user login JWTs are refreshable — agent /
-        service-account JWTs and opaque ``at_`` tokens are refused — and the
+        ``Identity`` contract. Fail-closed: only tokens that explicitly carry
+        ``actor_type: "user"`` and an ``auth_time`` are refreshable — agent /
+        service-account JWTs, opaque ``at_`` tokens, and pre-upgrade tokens
+        minted before these claims existed are refused (the latter simply
+        expire at their natural TTL and the user signs in once more). The
         re-mint is denied once the original authentication is older than
         ``admin.auth.session_ttl_seconds`` (absolute cap: a leaked token cannot
         be kept alive indefinitely; the final re-mint still carries a full JWT
         TTL, so the hard end of a session is at most ``session_ttl +
-        jwt_ttl``). Tokens minted before ``auth_time`` existed
-        fall back to ``iat``, so pre-upgrade sessions refresh seamlessly.
+        jwt_ttl``).
         """
         config = self._ctx.config.admin.auth
         try:
@@ -195,15 +200,17 @@ class AuthService:
             # auth gate normally rejects these first; this is defence in depth.
             raise InvalidCredentialsError("Token is not refreshable") from exc
 
-        if ActorType(claims.get("actor_type", ActorType.USER)) != ActorType.USER:
+        # Fail closed: refresh grants privilege, so a token must explicitly
+        # declare itself a user token. Missing or unrecognised values are
+        # refused rather than assumed USER (and comparing against the plain
+        # string means junk input can never make ActorType() raise a 500).
+        if claims.get("actor_type") != ActorType.USER.value:
             raise InvalidCredentialsError("Token is not refreshable")
 
-        # `auth_time` anchors the absolute window; pre-upgrade tokens fall back
-        # to `iat` (always present on self-minted JWTs — a validly-signed token
-        # missing both is foreign and not refreshable).
+        # Same posture for the window anchor: no explicit `auth_time`, no
+        # refresh. Pre-upgrade tokens lack both claims and end at their
+        # natural expiry — a one-time re-login after this feature ships.
         auth_time_claim = claims.get("auth_time")
-        if auth_time_claim is None:
-            auth_time_claim = claims.get("iat")
         if auth_time_claim is None:
             raise InvalidCredentialsError("Token is not refreshable")
         auth_time = int(auth_time_claim)

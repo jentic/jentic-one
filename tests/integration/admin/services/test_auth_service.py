@@ -558,10 +558,14 @@ async def test_refresh_remints_with_fresh_permissions(
     assert claims["auth_time"] == _decode(ctx, login.access_token)["auth_time"]
 
 
-async def test_refresh_legacy_token_falls_back_to_iat(
+async def test_refresh_legacy_token_without_auth_time_rejected(
     integration_context: Context, auth_user: tuple[str, str]
 ) -> None:
-    """Tokens minted before auth_time existed refresh seamlessly (iat fallback)."""
+    """Fail closed: pre-upgrade tokens (no auth_time) cannot refresh.
+
+    They expire at their natural TTL and the user signs in once more —
+    preferable to inferring a session window the token never declared.
+    """
     user_id, _ = auth_user
     ctx = integration_context
     legacy_claims = {
@@ -575,8 +579,8 @@ async def test_refresh_legacy_token_falls_back_to_iat(
     token = issue_jwt(legacy_claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
 
     service = AuthService(ctx)
-    refreshed = await service.refresh(token)
-    assert _decode(ctx, refreshed.access_token)["auth_time"] == _decode(ctx, token)["iat"]
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
 
 
 async def test_refresh_past_absolute_window(
@@ -626,6 +630,45 @@ async def test_refresh_non_user_actor_rejected(
         "sub": user_id,
         "email": "agent@test.local",
         "actor_type": "agent",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_missing_actor_type_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """Fail closed: a token that doesn't declare actor_type is not refreshable."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "noactortype@test.local",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, ctx.config.admin.auth.jwt_secret.get_secret_value(), 3600)
+
+    service = AuthService(ctx)
+    with pytest.raises(InvalidCredentialsError):
+        await service.refresh(token)
+
+
+async def test_refresh_unknown_actor_type_rejected(
+    integration_context: Context, auth_user: tuple[str, str]
+) -> None:
+    """An unrecognised actor_type is refused with a 401-mapped error, not a 500."""
+    user_id, _ = auth_user
+    ctx = integration_context
+    claims = {
+        "sub": user_id,
+        "email": "junkactortype@test.local",
+        "actor_type": "definitely-not-a-real-actor",
         "permissions": [],
         "must_change_password": False,
     }

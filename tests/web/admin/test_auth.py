@@ -244,7 +244,18 @@ def test_refresh_unknown_user_rejected(
     unauthed_client: TestClient, web_context: Context, admin_user_id: str
 ) -> None:
     """A token whose subject no longer exists cannot be refreshed."""
-    token = _mint_login_jwt(web_context, sub="usr_00000000000000000000000000")
+    now = int(datetime.now(UTC).timestamp())
+    token = _mint_login_jwt(web_context, sub="usr_00000000000000000000000000", auth_time=now)
+    resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
+    assert resp.status_code == 401
+    assert resp.json()["type"] == "invalid_credentials"
+
+
+def test_refresh_token_without_auth_time_rejected(
+    unauthed_client: TestClient, web_context: Context, admin_user_id: str
+) -> None:
+    """Fail closed: a token without the auth_time anchor is not refreshable."""
+    token = _mint_login_jwt(web_context, sub=admin_user_id)
     resp = unauthed_client.post("/auth/refresh", headers=_bearer(token))
     assert resp.status_code == 401
     assert resp.json()["type"] == "invalid_credentials"
