@@ -115,3 +115,15 @@ def test_jwt_with_out_of_range_exp_returns_401_not_500() -> None:
     client = _create_test_app()
     resp = client.post("/execute", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
+
+
+def test_jwt_with_non_finite_exp_returns_401_not_500() -> None:
+    """A signed ``exp: inf`` (OverflowError inside PyJWT decode) must be a 401, not a 500."""
+    token = jwt.encode(
+        {"sub": "x", "exp": float("inf"), "actor_type": "agent"},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
+    client = _create_test_app()
+    resp = client.post("/execute", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401

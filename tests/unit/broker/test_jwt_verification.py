@@ -178,6 +178,20 @@ def test_expired_token_rejected() -> None:
         _verifier({"k1": key.public_key()}).verify(token)
 
 
+def test_non_finite_exp_rejected() -> None:
+    """A signed ``exp: inf`` raises OverflowError inside PyJWT's decode; the hardened
+    verifier must map it to the typed error, not let it escape as a 500 (#880 review)."""
+    key = _ec_key()
+    token = jwt.encode(
+        {"iss": _ISS, "sub": "user-1", "aud": _AUD, "exp": float("inf")},
+        key,
+        algorithm="ES256",
+        headers={"kid": "k1"},
+    )
+    with pytest.raises(JwtVerificationError, match="jwt_invalid"):
+        _verifier({"k1": key.public_key()}).verify(token)
+
+
 def test_expiry_within_leeway_accepted() -> None:
     key = _ec_key()
     # Expired 5s ago, but leeway is 10s.

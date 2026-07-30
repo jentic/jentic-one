@@ -116,6 +116,12 @@ class JwtVerifier:
             )
         except jwt.InvalidTokenError as exc:
             raise TokenValidationError(f"jwt_invalid: {exc}") from exc
+        except (OverflowError, ValueError) as exc:
+            # PyJWT validates ``exp``/``nbf``/``iat`` with ``int(payload[...])``,
+            # so a signed non-finite/absurd numeric claim (e.g. ``exp: inf``)
+            # raises OverflowError/ValueError *inside* decode — upstream of the
+            # downstream ``fromtimestamp`` guard — and is not an InvalidTokenError.
+            raise TokenValidationError(f"jwt_invalid: {exc}") from exc
         return claims
 
 

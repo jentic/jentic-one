@@ -213,6 +213,21 @@ async def test_out_of_range_exp_is_typed_401() -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_finite_exp_is_typed_401() -> None:
+    """A signed ``exp: inf`` raises OverflowError inside PyJWT's decode, not fromtimestamp.
+
+    PyJWT validates ``exp`` with ``int(payload["exp"])`` *before* our downstream
+    guard runs, so this must be caught at the verifier and mapped to the typed
+    error rather than escaping as a 500 (#880 review residual).
+    """
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    token = _sign({"sub": "x", "exp": float("inf"), "actor_type": "agent"})
+
+    with pytest.raises(TokenValidationError, match="jwt_invalid"):
+        await validator.validate(token)
+
+
+@pytest.mark.asyncio
 async def test_claim_refusal_logs_single_jwt_refused_event() -> None:
     """Claim-level refusals log exactly one ``jwt_refused`` with a ``reason`` (#874)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
