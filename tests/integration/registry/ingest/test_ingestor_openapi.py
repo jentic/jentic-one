@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import structlog
 from sqlalchemy import select
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
@@ -63,6 +64,8 @@ SAMPLE_OPENAPI_SPEC: dict = {  # type: ignore[type-arg]
             }
         }
     },
+    # Document-level requirement — operations inherit it (issue #772).
+    "security": [{"bearerAuth": []}],
 }
 
 
@@ -118,6 +121,11 @@ async def test_ingest_full_pipeline(
 
         ops = (await session.execute(select(Operation))).unique().scalars().all()
         assert len(ops) == 3
+        # Document-level security must be resolved onto every operation's
+        # stored raw_operation (#772) — this is what tells downstream
+        # consumers the operation is authenticated.
+        for op in ops:
+            assert op.raw_operation["security"] == [{"bearerAuth": []}]
 
         servers = (await session.execute(select(Server))).unique().scalars().all()
         assert len(servers) >= 1
@@ -132,6 +140,62 @@ async def test_ingest_full_pipeline(
 
         url_entries = (await session.execute(select(OperationURLIndex))).unique().scalars().all()
         assert len(url_entries) >= 3
+
+
+async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """A spec with securitySchemes but no security requirement anywhere warns.
+
+    This is the silent state behind #772: scheme definitions import fine, but
+    no operation resolves an effective requirement, so authenticated calls go
+    out without credentials. The import must flag it.
+    """
+    no_requirement_spec = {
+        **SAMPLE_OPENAPI_SPEC,
+        "info": {"title": "Pet Store Unsecured", "version": "1.0.0"},
+    }
+    del no_requirement_spec["security"]
+    spec = IngestSpecification(
+        spec_type=SpecType.OPENAPI,
+        api_identifier=ApiIdentifier(vendor="petstore", name="pet-store-api", version="1.0.0"),
+        sha="warncase123",
+        content=no_requirement_spec,
+        source_type=ApiRevisionSourceType.INLINE,
+        source_url=None,
+        source_filename="openapi.json",
+        submitted_by="test-harness",
+    )
+
+    ingestor = Ingestor(ingest_context)
+    with structlog.testing.capture_logs() as logs:
+        await ingestor.ingest(spec, created_by="usr_test")
+
+    warnings = [log for log in logs if log["event"] == "security_schemes_unused"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert warnings[0]["scheme_names"] == ["bearerAuth"]
+    assert warnings[0]["operation_count"] == 3
+
+    # Operations import without a security key — absence is unambiguous.
+    async with registry_db.session() as session:
+        ops = (await session.execute(select(Operation))).unique().scalars().all()
+        assert all("security" not in op.raw_operation for op in ops)
+
+
+async def test_ingest_does_not_warn_when_document_security_resolves(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+) -> None:
+    """The document-level requirement resolving onto operations is not a warning."""
+    ingestor = Ingestor(ingest_context)
+    with structlog.testing.capture_logs() as logs:
+        await ingestor.ingest(_build_spec(), created_by="usr_test")
+
+    assert not [log for log in logs if log["event"] == "security_schemes_unused"]
 
 
 async def test_ingest_idempotent_reingest(

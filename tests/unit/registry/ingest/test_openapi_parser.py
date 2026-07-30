@@ -279,3 +279,87 @@ def test_operation_parameters_override_path_level_on_same_key() -> None:
     limit_params = [p for p in ops[0]["parameters"] if p["name"] == "limit"]
     assert len(limit_params) == 1
     assert limit_params[0]["required"] is True
+
+
+def test_operations_inherit_document_level_security() -> None:
+    # Regression for #772: a spec that declares auth globally (top-level
+    # `security`) must yield operations that carry the requirement — without
+    # it, nothing downstream knows the operation is authenticated and the
+    # broker forwards unauthenticated requests.
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/GetUserSites": {
+                "get": {"operationId": "getUserSites"},
+            },
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert ops[0]["security"] == [{"apiKey": []}]
+
+
+def test_operation_level_security_overrides_document_level() -> None:
+    # An operation-level requirement replaces the document-level one entirely
+    # (OpenAPI override semantics — no merging).
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/admin": {
+                "get": {
+                    "operationId": "adminOnly",
+                    "security": [{"oauth2": ["admin:read"]}],
+                },
+            },
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert ops[0]["security"] == [{"oauth2": ["admin:read"]}]
+
+
+def test_explicit_empty_security_opts_out_of_document_level() -> None:
+    # `security: []` on an operation is the OpenAPI idiom for "this operation
+    # is public" — it must not inherit the document-level requirement.
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "security": [{"apiKey": []}],
+        "paths": {
+            "/health": {
+                "get": {"operationId": "health", "security": []},
+            },
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert "security" not in ops[0]
+
+
+def test_omits_security_key_when_none_declared() -> None:
+    # No op-level and no document-level security → no empty key sprouts.
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "paths": {
+            "/things": {
+                "get": {"operationId": "listThings"},
+            },
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert "security" not in ops[0]
+
+
+def test_malformed_security_values_are_dropped() -> None:
+    # Malformed entries (non-dict requirements, non-list values) are dropped
+    # rather than polluting raw_operation; a malformed op-level value falls
+    # back to nothing, not to the document level (it was present, just bad).
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "security": [{"apiKey": []}, "not-a-dict"],
+        "paths": {
+            "/a": {"get": {"operationId": "inheritsSanitized"}},
+            "/b": {"get": {"operationId": "malformedOpLevel", "security": "oops"}},
+        },
+    }
+    ops = {op["operation_id"]: op for op in parser.extract_operations(spec)}
+    assert ops["inheritsSanitized"]["security"] == [{"apiKey": []}]
+    assert "security" not in ops["malformedOpLevel"]

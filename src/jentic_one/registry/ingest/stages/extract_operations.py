@@ -16,7 +16,7 @@ class ExtractOperationsStage(BasePipelineStage):
 
     name: ClassVar[str] = "ExtractOperationsStage"
     _requires: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
-    _produces: ClassVar[dict[str, type]] = {"operation_ids": set}
+    _produces: ClassVar[dict[str, type]] = {"operation_ids": set, "secured_operation_count": int}
 
     async def pre_run(self, ctx: PipelineContext) -> None:
         revision_id = ctx.require("revision_id", uuid.UUID)
@@ -49,3 +49,7 @@ class ExtractOperationsStage(BasePipelineStage):
             ctx.session, revision_id, inputs, created_by=ctx.created_by
         )
         ctx.produce("operation_ids", set(ids), set)
+        # Feeds the unresolved-security warning in ExtractSecuritySchemesStage
+        # (issue #772): how many operations resolved an effective requirement.
+        secured = sum(1 for op in raw_ops if op.get("security"))
+        ctx.produce("secured_operation_count", secured, int)

@@ -25,6 +25,7 @@ class OpenAPIOperationParser:
             spec_path_count.record(len(paths))
             logger.debug("paths_found", count=len(paths))
             operations: list[dict[str, Any]] = []
+            document_security = self._sanitize_security(spec.get("security"))
 
             for path, path_item in paths.items():
                 if not isinstance(path_item, dict):
@@ -42,7 +43,7 @@ class OpenAPIOperationParser:
                         continue
 
                     op = self._process_operation(
-                        path, method, operation, path_servers, path_parameters
+                        path, method, operation, path_servers, path_parameters, document_security
                     )
                     operations.append(op)
 
@@ -56,6 +57,7 @@ class OpenAPIOperationParser:
         operation: dict[str, Any],
         path_servers: list[dict[str, Any]],
         path_parameters: list[dict[str, Any]],
+        document_security: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
         """Process a single operation into the canonical output shape.
 
@@ -68,6 +70,15 @@ class OpenAPIOperationParser:
         they are merged in here with operation-level entries taking precedence
         on the same ``(name, in)`` key, mirroring the OpenAPI merge semantics
         already used by the catalogue preview projector.
+
+        Retains the operation's *effective* ``security`` — the operation-level
+        requirement when the key is present (including an explicit ``[]``
+        opt-out), else the document-level requirement (issue #772). Without
+        this, specs that declare auth globally (a very common pattern) import
+        with no per-operation security at all, so nothing downstream knows the
+        operation is authenticated and the broker forwards unauthenticated
+        requests. Same override-else-inherit semantics as the catalogue
+        preview projector.
         """
         operation_servers: list[dict[str, Any]] = operation.get("servers", [])
         servers = operation_servers if operation_servers else path_servers
@@ -89,7 +100,29 @@ class OpenAPIOperationParser:
         if "requestBody" in operation:
             result["requestBody"] = operation["requestBody"]
 
+        operation_security = operation.get("security")
+        effective_security = (
+            self._sanitize_security(operation_security)
+            if operation_security is not None
+            else document_security
+        )
+        if effective_security:
+            result["security"] = effective_security
+
         return result
+
+    @staticmethod
+    def _sanitize_security(security: Any) -> list[dict[str, Any]] | None:
+        """Coerce a ``security`` value into a clean requirement list.
+
+        Returns only the dict entries of a list value (each maps scheme name →
+        scopes); a malformed value (non-list, e.g. a bare string) yields
+        ``None`` so it neither pollutes ``raw_operation`` nor masks the
+        document-level requirement.
+        """
+        if not isinstance(security, list):
+            return None
+        return [req for req in security if isinstance(req, dict)]
 
     @staticmethod
     def _merge_parameters(
