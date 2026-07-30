@@ -172,6 +172,17 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
 	return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
+/**
+ * Extract the trailing id from a HAL link like `/executions/{id}` or
+ * `/jobs/{id}` (query/hash stripped). The backend surfaces the linked
+ * execution/job only as such a link, not as a `data` field — see `adaptEvent`.
+ */
+function idFromLink(link: string | null | undefined): string | undefined {
+	if (!link) return undefined;
+	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
+	return id.length > 0 ? id : undefined;
+}
+
 /** Build the grouping key. Consecutive same-key events collapse in the feed. */
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
@@ -203,13 +214,18 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
 			? e.actor_id
 			: undefined;
+	// The linked execution/job is surfaced as a HAL link (`_links.execution` =
+	// `/executions/{id}`, `_links.job` = `/jobs/{id}`), NOT as a `data` entry —
+	// so parse the id out of the link (last path segment) and prefer it over the
+	// `data` fallback. Without this the "View execution/job" deep-link never
+	// appeared for real events (their `data` carries no id). See issue #617.
 	const tokens: StreamTokens = {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
 		operation_id: stringField(data, 'operation_id'),
 		credential_id: stringField(data, 'credential_id'),
-		job_id: stringField(data, 'job_id'),
-		execution_id: stringField(data, 'execution_id'),
+		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
+		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
 		// Precedence matters: explicit `data.agent_id` first, then the top-level

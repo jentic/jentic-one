@@ -141,6 +141,33 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		expect(ev.links.execution).toBe('/executions/exec_9');
 	});
 
+	it('adaptEvent lifts execution_id/job_id from _links when absent from data (#617)', () => {
+		// The regressed real-world case: the backend surfaces the linked execution
+		// ONLY as `_links.execution` (= /executions/{id}); `data` is empty. The
+		// deep-link token must still resolve so "View execution" appears.
+		const exec = adaptEvent(
+			wireEvent({
+				event_id: 'evt_link_exec',
+				type: 'execution.failed',
+				requires_action: true,
+				trace_id: null,
+				data: {},
+				_links: { self: '/events/evt_link_exec', execution: '/executions/exec_link' },
+			}),
+		);
+		expect(exec.tokens.execution_id).toBe('exec_link');
+
+		const job = adaptEvent(
+			wireEvent({
+				event_id: 'evt_link_job',
+				type: 'import.completed',
+				data: {},
+				_links: { self: '/events/evt_link_job', job: '/jobs/job_link' },
+			}),
+		);
+		expect(job.tokens.job_id).toBe('job_link');
+	});
+
 	it('adaptEvent falls back to now (not 1970) for a missing/unparseable timestamp', () => {
 		const before = Date.now();
 		const ev = adaptEvent(

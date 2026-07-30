@@ -90,10 +90,14 @@ function parseSeverities(raw: string | null): Set<EventSeverity> {
 
 /**
  * Drill-in ids for an event, so a "critical/failed" event is clickable through
- * to its execution trace (issue #617: the flagged event was a dead end). Prefers
- * the top-level `trace_id`; otherwise lifts `execution_id`/`trace_id` out of the
- * free-form `data` payload (where the executor stamps them). Returns nulls when
- * the event references no execution — the row is then rendered non-clickable.
+ * to its execution trace (issue #617: the flagged event was a dead end).
+ *
+ * The backend surfaces the linked execution as a HAL link — `_links.execution`
+ * = `/executions/{id}` — NOT as a top-level field or a `data.execution_id`
+ * entry, so that link is the primary source; `data` is only a fallback for
+ * events that stamp the id there. `trace_id` comes from the top-level field
+ * (again falling back to `data`). Returns nulls when the event references no
+ * execution — the row is then rendered non-clickable.
  */
 function drillInFor(row: EventResponse): { traceId: string | null; executionId: string | null } {
 	const data = (row.data ?? {}) as Record<string, unknown>;
@@ -101,9 +105,15 @@ function drillInFor(row: EventResponse): { traceId: string | null; executionId: 
 		const v = data[key];
 		return typeof v === 'string' && v.length > 0 ? v : null;
 	};
+	// `_links.execution` is `/executions/{execution_id}` — take the last path
+	// segment as the id (strip any query/hash defensively).
+	const execLink = row._links?.execution ?? null;
+	const executionIdFromLink = execLink
+		? decodeURIComponent(execLink.split(/[?#]/)[0].split('/').pop() ?? '') || null
+		: null;
 	return {
 		traceId: row.trace_id ?? dataStr('trace_id'),
-		executionId: dataStr('execution_id'),
+		executionId: executionIdFromLink ?? dataStr('execution_id'),
 	};
 }
 

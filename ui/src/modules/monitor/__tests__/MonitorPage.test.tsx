@@ -561,6 +561,55 @@ describe('Monitor inter-linking', () => {
 		).not.toBeInTheDocument();
 	});
 
+	it('Events row → a failure with only a _links.execution (no trace) opens by execution_id (#617)', async () => {
+		// The exact real-world case that regressed: the backend surfaces the
+		// linked execution ONLY as `_links.execution` (= /executions/{id}) — it is
+		// NOT stamped into `data` and there is no usable trace. The row must still
+		// be clickable and open the sheet by execution_id.
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/events', () =>
+				HttpResponse.json({
+					data: [
+						{
+							_links: {
+								self: '/events/evt_link',
+								execution: '/executions/exec_99',
+								job: null,
+								action: null,
+							},
+							acknowledged: false,
+							acknowledged_at: null,
+							acknowledged_by: null,
+							created_at: new Date().toISOString(),
+							data: {},
+							detail: 'Upstream 401 from api.example.com',
+							event_id: 'evt_link',
+							requires_action: true,
+							severity: 'error',
+							summary: 'Execution failed: example-api',
+							trace_id: null,
+							type: 'execution.failed',
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderMonitor('/app/monitor?tab=events');
+
+		const row = await screen.findByRole('link', {
+			name: /Open execution for Execution failed: example-api/,
+		});
+		await user.click(row);
+
+		await waitFor(() => {
+			expect(currentParams().get('execution_id')).toBe('exec_99');
+		});
+		expect(currentParams().get('trace_id')).toBeNull();
+	});
+
 	it('rail-style deep-link (execution_id) on the Events tab opens the sheet (#617)', async () => {
 		// The rail's "View execution" now emits the underscore vocabulary; landing
 		// on the Executions tab with it must open the sheet.
