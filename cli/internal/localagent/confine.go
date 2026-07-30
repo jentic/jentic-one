@@ -30,28 +30,158 @@ import (
 // back to an unconfined session, which would silently reinstate the leak now that
 // the operator home is no longer force-locked to 700.
 
-// ConfinementAvailable reports whether this machine can run a locked-down agent
-// session, and if not, a short human-readable reason. macOS uses Seatbelt via
-// `sandbox-exec`; Linux uses bubblewrap (`bwrap`) over an unprivileged user+mount
-// namespace. Any other platform is unsupported.
-func ConfinementAvailable() (bool, string) {
+// Prereq is one prerequisite the agent-as-Unix-user model needs on this machine,
+// with whether it is satisfied and — when it is not — a human-readable reason and
+// an actionable hint (how to install/enable it). It is the single unit the whole
+// CLI reasons about when deciding "can this machine run an isolated agent".
+type Prereq struct {
+	// Name is a short label for the missing capability ("bubblewrap (bwrap)").
+	Name string
+	// OK reports whether the prerequisite is satisfied on this machine.
+	OK bool
+	// Reason explains, when !OK, what is missing (shown to the operator).
+	Reason string
+	// Hint is the actionable fix, when !OK — an install command or a pointer to
+	// the setup docs. Empty when OK.
+	Hint string
+}
+
+// AgentUserPrereqs reports every prerequisite the agent-as-Unix-user lifecycle
+// needs on THIS machine — account creation, the ACL grants/revokes, and the
+// per-session confinement launch all depend on them, so the CLI checks them ONCE,
+// up front, before it starts creating a Unix user it could never launch. The list
+// is returned in check order; callers use MissingPrereqs to filter to the
+// unsatisfied ones.
+//
+//	macOS  — Seatbelt (`sandbox-exec`) for confinement; ACLs are built into the
+//	         filesystem tooling, so nothing extra is required.
+//	Linux  — bubblewrap (`bwrap`) + unprivileged user namespaces for confinement,
+//	         and the `acl` package (`setfacl`/`getfacl`) for the directory grants.
+//
+// On an unsupported platform a single unsatisfied Prereq is returned.
+func AgentUserPrereqs() []Prereq {
 	switch runtime.GOOS {
 	case "darwin":
-		if _, err := exec.LookPath("sandbox-exec"); err != nil {
-			return false, "sandbox-exec is not available on this macOS"
-		}
-		return true, ""
+		return []Prereq{lookPathPrereq(
+			"sandbox-exec", "sandbox-exec",
+			"sandbox-exec is not available on this macOS",
+			"sandbox-exec ships with macOS; see docs/security/local-agent/local-agent-isolation.md",
+		)}
 	case "linux":
-		if _, err := exec.LookPath("bwrap"); err != nil {
-			return false, "bubblewrap (bwrap) is not installed"
+		return []Prereq{
+			lookPathPrereq(
+				"bubblewrap (bwrap)", "bwrap",
+				"bubblewrap (bwrap) is not installed",
+				linuxInstallHint,
+			),
+			usernsPrereq(),
+			aclPrereq(),
 		}
-		if !unprivilegedUserNSEnabled() {
-			return false, "unprivileged user namespaces are disabled on this kernel"
-		}
-		return true, ""
 	default:
-		return false, "process confinement is not supported on " + runtime.GOOS
+		return []Prereq{{
+			Name:   "process confinement",
+			Reason: "process confinement is not supported on " + runtime.GOOS,
+		}}
 	}
+}
+
+// linuxInstallHint is the distro-specific one-liner for the Linux prerequisites,
+// resolved from whichever package manager is on PATH. bubblewrap and the acl
+// package are named together because both are required and both are commonly
+// absent on a minimal install; installing them in one command is the fix.
+var linuxInstallHint = resolveLinuxInstallHint()
+
+// MissingPrereqs returns only the unsatisfied prerequisites from AgentUserPrereqs
+// — the set an operator must resolve before the agent-as-Unix-user model can run.
+// An empty slice means this machine is fully ready.
+func MissingPrereqs() []Prereq {
+	var missing []Prereq
+	for _, p := range AgentUserPrereqs() {
+		if !p.OK {
+			missing = append(missing, p)
+		}
+	}
+	return missing
+}
+
+// ConfinementAvailable reports whether this machine can run a locked-down agent
+// session, and if not, a short human-readable reason. It is the launch-time gate
+// (see run.go): confinement is REQUIRED, so an unsatisfied prerequisite here means
+// the launch is refused. It shares AgentUserPrereqs with the setup-time gate so
+// the two can never disagree about what this machine can do.
+func ConfinementAvailable() (bool, string) {
+	for _, p := range MissingPrereqs() {
+		return false, p.Reason
+	}
+	return true, ""
+}
+
+// lookPathPrereq builds a Prereq satisfied iff bin is resolvable on PATH.
+func lookPathPrereq(name, bin, reason, hint string) Prereq {
+	if _, err := exec.LookPath(bin); err != nil {
+		return Prereq{Name: name, Reason: reason, Hint: hint}
+	}
+	return Prereq{Name: name, OK: true}
+}
+
+// usernsPrereq reports whether the kernel permits unprivileged user namespaces,
+// which bubblewrap needs to build its mount namespace without root.
+func usernsPrereq() Prereq {
+	if !unprivilegedUserNSEnabled() {
+		return Prereq{
+			Name:   "unprivileged user namespaces",
+			Reason: "unprivileged user namespaces are disabled on this kernel",
+			Hint:   "enable them: sudo sysctl -w kernel.unprivileged_userns_clone=1 (persist in /etc/sysctl.d/)",
+		}
+	}
+	return Prereq{Name: "unprivileged user namespaces", OK: true}
+}
+
+// aclPrereq reports whether the `acl` tooling (setfacl AND getfacl) is present —
+// the directory grants/revokes and the reset teardown all shell out to it, so a
+// missing acl package silently breaks every grant. Both binaries ship in the same
+// package, so one hint covers both.
+func aclPrereq() Prereq {
+	for _, bin := range []string{"setfacl", "getfacl"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			return Prereq{
+				Name:   "acl (setfacl/getfacl)",
+				Reason: bin + " is not installed (the acl package provides directory grants)",
+				Hint:   linuxInstallHint,
+			}
+		}
+	}
+	return Prereq{Name: "acl (setfacl/getfacl)", OK: true}
+}
+
+// resolveLinuxInstallHint returns the install command for bubblewrap + acl using
+// whichever package manager is on PATH, falling back to a generic instruction
+// when none is recognised. Package/binary names: Debian/Ubuntu use `bubblewrap`
+// + `acl`; Fedora/RHEL `dnf` the same; Arch `pacman` uses `bubblewrap` + `acl`;
+// openSUSE `zypper` likewise. The two are named together because both are needed.
+func resolveLinuxInstallHint() string {
+	switch {
+	case hasBinary("apt"):
+		return "install them: sudo apt install bubblewrap acl"
+	case hasBinary("apt-get"):
+		return "install them: sudo apt-get install bubblewrap acl"
+	case hasBinary("dnf"):
+		return "install them: sudo dnf install bubblewrap acl"
+	case hasBinary("yum"):
+		return "install them: sudo yum install bubblewrap acl"
+	case hasBinary("pacman"):
+		return "install them: sudo pacman -S bubblewrap acl"
+	case hasBinary("zypper"):
+		return "install them: sudo zypper install bubblewrap acl"
+	default:
+		return "install the bubblewrap and acl packages with your distro's package manager"
+	}
+}
+
+// hasBinary reports whether bin resolves on PATH.
+func hasBinary(bin string) bool {
+	_, err := exec.LookPath(bin)
+	return err == nil
 }
 
 // ConfineLaunchCmd builds the interactive launch: become the agent user in a login

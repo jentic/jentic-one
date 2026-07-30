@@ -1,6 +1,9 @@
 package localagent
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -244,5 +247,100 @@ func TestBwrapArgsSeparatesForwardedFlags(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-- /usr/bin/claude --model opus") {
 		t.Errorf("forwarded flags must follow `-- <binary>`, got:\n%s", joined)
+	}
+}
+
+// ── prerequisite preflight ──────────────────────────────────────────────────
+
+// stubBinsOnPath points PATH at a fresh dir holding an executable stub for each
+// named binary, so lookPathPrereq/hasBinary resolve exactly the given set and
+// nothing else. Returns the dir. POSIX-only (executable-bit stubs).
+func stubBinsOnPath(t *testing.T, bins ...string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH-stub technique is POSIX-only")
+	}
+	dir := t.TempDir()
+	for _, b := range bins {
+		if err := os.WriteFile(filepath.Join(dir, b), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write stub %q: %v", b, err)
+		}
+	}
+	t.Setenv("PATH", dir)
+	return dir
+}
+
+// lookPathPrereq reports missing when the binary is absent from PATH, with the
+// supplied reason and hint, and OK when present.
+func TestLookPathPrereqReportsPresence(t *testing.T) {
+	stubBinsOnPath(t) // empty PATH: nothing resolves
+
+	missing := lookPathPrereq("thing", "definitely-not-a-real-bin", "it is missing", "install it")
+	if missing.OK {
+		t.Fatal("expected missing prereq for an absent binary")
+	}
+	if missing.Reason != "it is missing" || missing.Hint != "install it" {
+		t.Errorf("reason/hint not carried through: %+v", missing)
+	}
+
+	stubBinsOnPath(t, "present-bin")
+	ok := lookPathPrereq("thing", "present-bin", "unused", "unused")
+	if !ok.OK {
+		t.Errorf("expected satisfied prereq for a present binary, got %+v", ok)
+	}
+	if ok.Reason != "" || ok.Hint != "" {
+		t.Errorf("a satisfied prereq must carry no reason/hint, got %+v", ok)
+	}
+}
+
+// aclPrereq is unsatisfied unless BOTH setfacl and getfacl resolve.
+func TestACLPrereqRequiresBothBinaries(t *testing.T) {
+	stubBinsOnPath(t, "setfacl") // getfacl absent
+	if p := aclPrereq(); p.OK {
+		t.Error("acl prereq must be missing when getfacl is absent")
+	}
+
+	stubBinsOnPath(t, "setfacl", "getfacl")
+	if p := aclPrereq(); !p.OK {
+		t.Errorf("acl prereq must be satisfied when both binaries resolve, got %+v", p)
+	}
+}
+
+// The Linux install hint names both bubblewrap and acl, and picks a command that
+// matches whichever package manager is on PATH.
+func TestResolveLinuxInstallHintMatchesPackageManager(t *testing.T) {
+	stubBinsOnPath(t, "apt")
+	hint := resolveLinuxInstallHint()
+	if !strings.Contains(hint, "apt install") || !strings.Contains(hint, "bubblewrap") || !strings.Contains(hint, "acl") {
+		t.Errorf("apt hint should install bubblewrap+acl via apt, got %q", hint)
+	}
+
+	stubBinsOnPath(t, "dnf")
+	if hint := resolveLinuxInstallHint(); !strings.Contains(hint, "dnf install") {
+		t.Errorf("dnf hint expected, got %q", hint)
+	}
+
+	stubBinsOnPath(t) // no package manager
+	if hint := resolveLinuxInstallHint(); !strings.Contains(hint, "package manager") {
+		t.Errorf("generic fallback hint expected with no pkg manager, got %q", hint)
+	}
+}
+
+// ConfinementAvailable is the launch gate; it must agree with MissingPrereqs —
+// available exactly when nothing is missing — so the setup-time and launch-time
+// gates can never disagree.
+func TestConfinementAvailableAgreesWithMissingPrereqs(t *testing.T) {
+	ok, reason := ConfinementAvailable()
+	missing := MissingPrereqs()
+	if ok && len(missing) != 0 {
+		t.Errorf("available but %d prereqs missing", len(missing))
+	}
+	if !ok {
+		if len(missing) == 0 {
+			t.Error("unavailable but no prereqs reported missing")
+		}
+		if reason != missing[0].Reason {
+			t.Errorf("ConfinementAvailable reason %q != first missing prereq reason %q", reason, missing[0].Reason)
+		}
 	}
 }
