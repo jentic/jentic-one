@@ -17,11 +17,14 @@ from jentic_one.shared.config import (
     AppConfig,
     ConfigError,
     CredentialsConfig,
+    DirectOAuth2ProviderConfig,
     EgressConfig,
     EncryptionConfig,
     RuntimeConfig,
     _csv_to_list,
     _deep_merge,
+    check_public_url_consistency,
+    effective_auth_base_url,
     load_config,
 )
 
@@ -498,3 +501,116 @@ def test_egress_empty_string_produces_empty_list():
 def test_csv_to_list_rejects_non_string_non_list():
     with pytest.raises(TypeError, match="expected list or comma-separated string"):
         _csv_to_list(123)
+
+
+# --- server.public_base_url + derived-URL consolidation (issue #818) ---------
+
+
+def _min_dbs() -> dict[str, Any]:
+    return {
+        "registry": {"name": "reg"},
+        "admin": {"name": "admin"},
+        "control": {"name": "ctrl"},
+    }
+
+
+def _load(tmp_path: Path, extra: dict[str, Any]) -> AppConfig:
+    data: dict[str, Any] = {"databases": _min_dbs(), **extra}
+    path = tmp_path / "cfg.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return load_config(path)
+
+
+def test_public_base_url_default_empty(tmp_path: Path):
+    config = _load(tmp_path, {})
+    assert config.server.public_base_url == ""
+
+
+def test_public_base_url_from_yaml(tmp_path: Path):
+    config = _load(tmp_path, {"server": {"public_base_url": "https://jentic.example.com/"}})
+    # normalized: trailing slash stripped
+    assert config.server.public_base_url == "https://jentic.example.com"
+
+
+def test_public_base_url_env_override(tmp_path: Path):
+    with patch.dict(os.environ, {"JENTIC__SERVER__PUBLIC_BASE_URL": "http://127.0.0.1:8020"}):
+        config = _load(tmp_path, {})
+    assert config.server.public_base_url == "http://127.0.0.1:8020"
+
+
+def test_public_base_url_rejects_userinfo(tmp_path: Path):
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"server": {"public_base_url": "http://user:pw@host"}})
+
+
+def test_redirect_uri_now_optional(tmp_path: Path):
+    config = _load(
+        tmp_path,
+        {"credentials": {"providers": {"direct_oauth2": {"kind": "direct_oauth2"}}}},
+    )
+    pc = config.credentials.providers["direct_oauth2"]
+    assert isinstance(pc, DirectOAuth2ProviderConfig)
+    assert pc.redirect_uri is None
+
+
+def test_effective_auth_base_url_precedence(tmp_path: Path):
+    # explicit auth canonical wins over public_base_url
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "https://public.example.com"},
+            "auth": {"canonical_base_url": "https://auth.example.com"},
+        },
+    )
+    assert effective_auth_base_url(config) == "https://auth.example.com"
+
+    # public_base_url alone flows through
+    config = _load(tmp_path, {"server": {"public_base_url": "https://public.example.com"}})
+    assert effective_auth_base_url(config) == "https://public.example.com"
+
+    # both unset ≡ empty (today's behaviour)
+    config = _load(tmp_path, {})
+    assert effective_auth_base_url(config) == ""
+
+
+def test_check_public_url_consistency(tmp_path: Path):
+    # unset fields self-derive → no mismatch
+    config = _load(tmp_path, {"server": {"host": "127.0.0.1", "port": 8020}})
+    assert check_public_url_consistency(config) == []
+
+    # loopback-equivalent explicit URL against a 0.0.0.0 bind → no mismatch
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "0.0.0.0", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8020"},
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+    # port mismatch against the serving bind → exactly one entry
+    config = _load(
+        tmp_path,
+        {
+            "server": {"host": "127.0.0.1", "port": 8020},
+            "auth": {"canonical_base_url": "http://127.0.0.1:8000"},
+        },
+    )
+    mismatches = check_public_url_consistency(config)
+    assert len(mismatches) == 1
+    assert mismatches[0].field == "auth.canonical_base_url"
+
+    # public_base_url explains the origin → no mismatch even when it differs
+    # from the bind
+    config = _load(
+        tmp_path,
+        {
+            "server": {
+                "host": "0.0.0.0",
+                "port": 8020,
+                "public_base_url": "https://gw.example.com",
+            },
+            "auth": {"canonical_base_url": "https://gw.example.com"},
+        },
+    )
+    assert check_public_url_consistency(config) == []

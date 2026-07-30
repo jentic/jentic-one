@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse
 
 from jentic_one.auth.services.authorize_service import AuthorizeService
 from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -91,7 +92,7 @@ async def authorize_endpoint(
     If an external IdP is configured, redirects to the upstream provider.
     Otherwise returns an error (direct login requires a separate credential exchange).
     """
-    if not _is_allowed_redirect_uri(redirect_uri, ctx.config.auth.canonical_base_url):
+    if not _is_allowed_redirect_uri(redirect_uri, effective_auth_base_url(ctx.config)):
         return RedirectResponse(url="/error?error=invalid_redirect_uri", status_code=302)
 
     if response_type != "code":

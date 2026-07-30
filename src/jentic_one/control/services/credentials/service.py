@@ -81,8 +81,16 @@ class CredentialService:
                 session, agent_id=identity.sub
             )
 
-    def list_providers(self) -> list[ProviderDiscoveryEntry]:
-        """Return discovery metadata for all configured providers."""
+    def list_providers(
+        self, *, default_callback_url: str | None = None
+    ) -> list[ProviderDiscoveryEntry]:
+        """Return discovery metadata for all configured providers.
+
+        ``default_callback_url`` is the request-derived OAuth callback URL the
+        web layer would use when a provider has no explicit ``redirect_uri``
+        configured. Passing it keeps the discovery response in lockstep with
+        what ``begin_connect`` actually sends to the IdP.
+        """
         provider_configs = self._ctx.config.credentials.providers
         entries: list[ProviderDiscoveryEntry] = []
         for provider_id, provider in self._ctx.providers.list_all().items():
@@ -90,7 +98,7 @@ class CredentialService:
             callback_url: str | None = None
             pc = provider_configs.get(provider_id)
             if isinstance(pc, DirectOAuth2ProviderConfig):
-                callback_url = pc.redirect_uri
+                callback_url = pc.redirect_uri or default_callback_url
             entries.append(
                 ProviderDiscoveryEntry(
                     id=provider_id,

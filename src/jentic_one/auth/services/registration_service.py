@@ -17,6 +17,7 @@ from jentic_one.admin.repos import ActorScopeGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models import ActorType
@@ -155,7 +156,7 @@ class RegistrationService:
         # The RAT is generated above so its plaintext stays stable across a retry.
         agent = await self._ctx.admin_db.run_in_transaction(_write)
 
-        base_url = self._ctx.config.auth.canonical_base_url
+        base_url = effective_auth_base_url(self._ctx.config)
         return RegisterResult(
             client_id=agent.id,
             registration_access_token=rat_plain,

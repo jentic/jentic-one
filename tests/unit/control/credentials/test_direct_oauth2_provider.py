@@ -32,6 +32,7 @@ from jentic_one.control.services.credentials.schemas.provision import (
     APIReference,
     OAuthTokenView,
 )
+from jentic_one.control.services.credentials.state import decode_state
 from jentic_one.shared.config import (
     AppConfig,
     ConnectConfig,
@@ -603,3 +604,146 @@ async def test_begin_connect_raises_without_credential_id() -> None:
             api=_begin_connect_api_ref(),
             request=ConnectRequest(scopes=["read"], extra={}),
         )
+
+
+def _provider_without_redirect() -> DirectOAuth2Provider:
+    return DirectOAuth2Provider(
+        DirectOAuth2ProviderConfig(default_scopes=["read", "write"], expiry_skew_seconds=60)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_begin_connect_uses_request_redirect_uri_when_unconfigured() -> None:
+    """With no configured redirect_uri, the request-derived one is used and
+    embedded in the signed state (so the token exchange can replay it)."""
+    provider = _provider_without_redirect()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    request = ConnectRequest(
+        scopes=["read", "write"],
+        extra={"credential_id": "cred_123", "actor_id": "user_1", "actor_type": "user"},
+        redirect_uri="http://127.0.0.1:8020/credentials/oauth/callback",
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeOCCForBegin(),
+        ),
+    ):
+        challenge = await provider.begin_connect(ctx, api=_begin_connect_api_ref(), request=request)
+
+    params = _parse_authorize_url_params(challenge.authorize_url)
+    assert params["redirect_uri"] == ["http://127.0.0.1:8020/credentials/oauth/callback"]
+    # The state carries the same value for the token exchange.
+    state_secret = ctx.config.credentials.connect.state_secret.get_secret_value()
+    decoded = decode_state(state_secret, params["state"][0])
+    assert decoded.redirect_uri == "http://127.0.0.1:8020/credentials/oauth/callback"
+
+
+@pytest.mark.asyncio()
+async def test_begin_connect_configured_redirect_uri_wins_over_request() -> None:
+    provider = _make_provider()  # configured https://app.example.com/...
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    request = ConnectRequest(
+        scopes=["read", "write"],
+        extra={"credential_id": "cred_123", "actor_id": "user_1"},
+        redirect_uri="http://127.0.0.1:8020/credentials/oauth/callback",
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeOCCForBegin(),
+        ),
+    ):
+        challenge = await provider.begin_connect(ctx, api=_begin_connect_api_ref(), request=request)
+
+    params = _parse_authorize_url_params(challenge.authorize_url)
+    assert params["redirect_uri"] == ["https://app.example.com/credentials/oauth/callback"]
+
+
+@pytest.mark.asyncio()
+async def test_begin_connect_raises_when_no_redirect_uri_available() -> None:
+    provider = _provider_without_redirect()
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    request = ConnectRequest(
+        scopes=["read"],
+        extra={"credential_id": "cred_123"},
+        redirect_uri=None,
+    )
+
+    with (
+        patch(
+            "jentic_one.control.repos.CredentialRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=_FakeOCCForBegin(),
+        ),
+        pytest.raises(ProviderError, match="No redirect_uri available"),
+    ):
+        await provider.begin_connect(ctx, api=_begin_connect_api_ref(), request=request)
+
+
+@pytest.mark.asyncio()
+async def test_complete_connect_replays_state_redirect_uri_in_exchange() -> None:
+    """The token exchange must send the exact redirect_uri from the state
+    (RFC 6749 §4.1.3), not the provider's configured value."""
+    provider = _make_provider()  # configured https://app.example.com/...
+    ctx = Context(_make_config())
+    ctx._control_db = _mock_control_db()
+    encrypted_secret = ctx.encryption.encrypt("my-client-secret")
+
+    class FakeOCC:
+        token_url = "https://idp.example.com/token"
+        client_id = "client-abc"
+        encrypted_client_secret = encrypted_secret
+
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce="test-nonce",
+        redirect_uri="http://127.0.0.1:8020/credentials/oauth/callback",
+    )
+    callback = ConnectCallback(code="auth-code-xyz")
+
+    with (
+        patch(
+            "jentic_one.control.repos.OAuthClientCredentialRepository.get_by_credential",
+            new_callable=AsyncMock,
+            return_value=FakeOCC(),
+        ),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        )
+        mock_client_cls.return_value = mock_client
+
+        await provider.complete_connect(ctx, state=state, callback=callback)
+
+        sent_data = mock_client.post.await_args.kwargs["data"]
+        assert sent_data["redirect_uri"] == "http://127.0.0.1:8020/credentials/oauth/callback"

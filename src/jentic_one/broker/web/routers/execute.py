@@ -901,7 +901,7 @@ async def _handle_async(
         )
 
     metadata = _metadata_headers(ctx_req, execution_id)
-    base = ctx.config.broker.jobs_api_base_url
+    base = ctx.config.broker.jobs_api_base_url or ctx.config.server.public_base_url or None
     job_url = f"{base}/jobs/{job_id}" if base else f"/jobs/{job_id}"
 
     resp_body = AsyncQueuedResponse(

@@ -48,9 +48,10 @@ _IDENTITY = Identity(
 )
 
 
-def _ctx(*, account_linking_base_url: str | None = None) -> MagicMock:
+def _ctx(*, account_linking_base_url: str | None = None, public_base_url: str = "") -> MagicMock:
     ctx = MagicMock()
     ctx.config.broker.account_linking_base_url = account_linking_base_url
+    ctx.config.server.public_base_url = public_base_url
 
     @asynccontextmanager
     async def _noop_transaction() -> Any:
@@ -140,6 +141,26 @@ async def test_not_provisioned_without_base_url_keeps_directive_omits_url(
     params = exc.value.directive.parameters  # type: ignore[union-attr]
     assert "provisioning_url" not in params
     assert params["intent_id"].startswith("intent_")
+
+
+@pytest.mark.asyncio
+async def test_not_provisioned_falls_back_to_public_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Issue #818: with no broker.account_linking_base_url but a
+    # server.public_base_url set, the provisioning_url derives from the latter.
+    _patch_resolver(monkeypatch, ResolveNotProvisioned("stripe", "", ""))
+
+    with pytest.raises(CredentialNotProvisionedError) as exc:
+        await CredentialService(
+            _ctx(account_linking_base_url=None, public_base_url="https://gw.example.com")
+        ).inject(api_vendor="stripe", api_name="", api_version="", identity=_IDENTITY)
+
+    params = exc.value.directive.parameters  # type: ignore[union-attr]
+    intent_id = params["intent_id"]
+    assert params["provisioning_url"] == (
+        f"https://gw.example.com/connect/stripe?actor=agent_42&intent={intent_id}"
+    )
 
 
 @pytest.mark.asyncio

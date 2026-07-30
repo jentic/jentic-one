@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -22,6 +23,7 @@ from pydantic import (
 )
 
 from jentic_one.shared.state.factory import StateBackendConfig
+from jentic_one.shared.url import normalize_base_url, origins_equivalent
 
 _logger = structlog.get_logger(__name__)
 
@@ -52,6 +54,19 @@ def _require_production_secret(value: SecretStr, *, field_path: str) -> None:
 
 class ConfigError(Exception):
     """Raised when configuration is invalid or incomplete."""
+
+
+def _normalize_optional_base_url(value: str | None) -> str | None:
+    """Validator for optional public base-URL fields.
+
+    Leaves ``""``/``None`` untouched (unset = "derive it"); otherwise
+    normalizes (strip trailing slash, require http(s), reject userinfo) via the
+    shared helper. Reused across every config field that holds a public origin
+    so they can never disagree on shape.
+    """
+    if not value:
+        return value
+    return normalize_base_url(value)
 
 
 class DatabaseConfig(BaseModel):
@@ -263,6 +278,10 @@ class AuthConfig(BaseModel):
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)
     idp: IdpConfig = Field(default_factory=IdpConfig)
 
+    _normalize_canonical_base_url = field_validator("canonical_base_url")(
+        _normalize_optional_base_url
+    )
+
 
 _KEY_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -292,7 +311,13 @@ class DirectOAuth2ProviderConfig(BaseModel):
     """Configuration for a direct OAuth2 provider (full settings land in M5)."""
 
     kind: Literal["direct_oauth2"] = "direct_oauth2"
-    redirect_uri: str
+    # Explicit OAuth callback URL registered with the IdP. When unset (the
+    # default), the connect flow derives it per request as
+    # ``{server.public_base_url or request origin}/credentials/oauth/callback``,
+    # so a deployment on any port works without pinning this. Set it only to
+    # override that — e.g. behind a reverse proxy whose public origin the app
+    # can't see, and only if it differs from ``server.public_base_url``.
+    redirect_uri: str | None = None
     default_scopes: list[str] = Field(default_factory=list)
     expiry_skew_seconds: int = 60
     # Extra query params appended to every authorize URL.
@@ -318,6 +343,8 @@ class DirectOAuth2ProviderConfig(BaseModel):
     authorize_extra_params: dict[str, str] = Field(
         default_factory=lambda: {"prompt": "consent", "access_type": "offline"}
     )
+
+    _normalize_redirect_uri = field_validator("redirect_uri")(_normalize_optional_base_url)
 
 
 class PipedreamProviderConfig(BaseModel):
@@ -368,6 +395,10 @@ class AccessRequestsConfig(BaseModel):
 
     ttl_days: int = 7
     canonical_base_url: str = ""
+
+    _normalize_canonical_base_url = field_validator("canonical_base_url")(
+        _normalize_optional_base_url
+    )
 
 
 class ControlSurfaceConfig(BaseModel):
@@ -712,6 +743,10 @@ class BrokerConfig(BaseModel):
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     egress: EgressConfig = Field(default_factory=EgressConfig)
 
+    _normalize_public_urls = field_validator("jobs_api_base_url", "account_linking_base_url")(
+        _normalize_optional_base_url
+    )
+
 
 class SearchConfig(BaseModel):
     """Search configuration.
@@ -772,6 +807,22 @@ class ServerConfig(BaseModel):
     hosted install run elsewhere (e.g. Jentic Cloud). A hint for clients to tell
     which backend they reached — not an authorization signal. Defaults to
     ``local``; the hosted platform sets ``remote`` in its own config."""
+
+    public_base_url: str = ""
+    """The single public origin of this deployment (e.g.
+    ``https://jentic.example.com`` or ``http://127.0.0.1:8020``).
+
+    Every absolute URL the app builds for external consumption — the OAuth
+    connect ``redirect_uri``, the OIDC issuer / JWT-Bearer audience, the DCR
+    ``registration_client_uri``, access-request approval links, async-job
+    ``_links.self``, and the 424 ``provisioning_url`` — falls back to this when
+    its own more specific knob is unset. Set it once instead of pinning each
+    place to the serving port. Explicit per-field values still win (needed
+    behind a reverse proxy that fronts multiple surfaces on distinct origins).
+    Left unset, request-scoped consumers derive from the incoming request's
+    origin, so zero-config local dev on any port just works."""
+
+    _normalize_public_base_url = field_validator("public_base_url")(_normalize_optional_base_url)
 
 
 class TelemetryConfig(BaseModel):
@@ -848,6 +899,67 @@ class AppConfig(BaseModel):
     def extension(self, name: str) -> BaseModel | None:
         """Return a registered extension config by section name (None if absent)."""
         return self.extensions.get(name)
+
+
+def effective_auth_base_url(config: AppConfig) -> str:
+    """The auth surface's public base URL: its own canonical, else the shared one.
+
+    Request-less callers (issuer, JWT-Bearer audience, DCR, the authorize
+    same-origin check, ``GET /instance``) use this. ``""`` is preserved so those
+    consumers keep their existing "unset" behaviour (empty issuer / fail-closed
+    redirect check) exactly as before ``server.public_base_url`` existed.
+    """
+    return config.auth.canonical_base_url or config.server.public_base_url or ""
+
+
+def effective_access_requests_base_url(config: AppConfig) -> str:
+    """Access-request approval-link base: its own canonical, else the shared one."""
+    return config.control.access_requests.canonical_base_url or config.server.public_base_url or ""
+
+
+@dataclass(frozen=True, slots=True)
+class PublicUrlMismatch:
+    """One explicitly-configured public URL whose origin doesn't match serving."""
+
+    field: str
+    configured: str
+    expected: str
+
+
+def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
+    """Find explicitly-set public URLs whose origin disagrees with the server's.
+
+    For each field that holds an absolute public URL and is actually set, its
+    origin is compared (loopback/bind-host aware) against
+    ``server.public_base_url`` when set, else the serving bind
+    (``http://{host}:{port}``). Unset fields are skipped — they self-derive and
+    cannot be wrong. Pure and side-effect-free so ``_serve`` only has to log the
+    result. Never raises: a bad-shaped configured value simply won't compare
+    equal and is reported, matching the "warn, don't crash" contract.
+    """
+    expected = config.server.public_base_url or f"http://{config.server.host}:{config.server.port}"
+    candidates: list[tuple[str, str | None]] = [
+        ("auth.canonical_base_url", config.auth.canonical_base_url),
+        (
+            "control.access_requests.canonical_base_url",
+            config.control.access_requests.canonical_base_url,
+        ),
+        ("broker.jobs_api_base_url", config.broker.jobs_api_base_url),
+        ("broker.account_linking_base_url", config.broker.account_linking_base_url),
+    ]
+    for provider_id, pc in config.credentials.providers.items():
+        if isinstance(pc, DirectOAuth2ProviderConfig) and pc.redirect_uri:
+            candidates.append(
+                (f"credentials.providers.{provider_id}.redirect_uri", pc.redirect_uri)
+            )
+
+    mismatches: list[PublicUrlMismatch] = []
+    for field_path, value in candidates:
+        if value and not origins_equivalent(value, expected):
+            mismatches.append(
+                PublicUrlMismatch(field=field_path, configured=value, expected=expected)
+            )
+    return mismatches
 
 
 # --- Extension config registry -----------------------------------------------

@@ -173,6 +173,43 @@ async def test_direct_oauth2_connect_and_callback_stores_tokens(
         assert credential.updated_at > updated_at_before
 
 
+async def test_direct_oauth2_derived_redirect_uri_round_trips(
+    integration_context: Context, clean_connect_tables: None
+) -> None:
+    """Issue #818: with no configured redirect_uri, a request-derived callback
+    (e.g. a non-default port) flows from begin_connect into the token exchange."""
+    ctx = integration_context
+    credential_id = await _create_oauth2_credential(ctx, provider="my_oauth")
+
+    # Provider configured WITHOUT a redirect_uri — it must derive per request.
+    provider = DirectOAuth2Provider(DirectOAuth2ProviderConfig(default_scopes=["read", "write"]))
+    _patch_provider_registry(ctx, "my_oauth", provider)
+    await _attach_oauth_client(ctx, credential_id)
+
+    svc = ConnectService(ctx)
+    derived = "http://127.0.0.1:8020/credentials/oauth/callback"
+    challenge = await svc.begin(
+        credential_id, ConnectRequest(scopes=["read"]), redirect_uri=derived
+    )
+    # The non-default port made it into the authorize URL.
+    assert "8020" in challenge.authorize_url
+
+    with patch("httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(
+            return_value=httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        )
+        mock_client_cls.return_value = mock_client
+
+        await svc.complete(challenge.state, ConnectCallback(code="auth-code-xyz"))
+
+        # The token exchange replays the derived redirect_uri byte-identically.
+        sent_data = mock_client.post.await_args.kwargs["data"]
+        assert sent_data["redirect_uri"] == derived
+
+
 async def test_direct_oauth2_replay_rejected(
     integration_context: Context, clean_connect_tables: None
 ) -> None:

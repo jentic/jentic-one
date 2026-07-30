@@ -361,7 +361,14 @@ class ProviderDiscoveryEntryResponse(BaseModel):
         description="Whether the provider is fully configured and operational."
     )
     callback_url: str | None = Field(
-        default=None, description="OAuth2 redirect URI for providers that require it."
+        default=None,
+        description=(
+            "OAuth2 redirect URI for providers that require it. When no explicit "
+            "redirect_uri is configured, this is derived from the deployment's "
+            "public origin (server.public_base_url or the request origin), so it "
+            "reflects the exact callback the connect flow will register with the "
+            "IdP. Add this URL to your OAuth app's allowed redirect URIs."
+        ),
     )
 
 

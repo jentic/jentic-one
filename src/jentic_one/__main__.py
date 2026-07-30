@@ -21,7 +21,7 @@ from jentic_one.admin.services.errors import (
     UserEmailNotFoundError,
 )
 from jentic_one.auth.web.app import install_on_app as _install_auth_verifier
-from jentic_one.shared.config import load_config
+from jentic_one.shared.config import check_public_url_consistency, load_config
 from jentic_one.shared.context import Context
 from jentic_one.shared.logging import configure_logging
 from jentic_one.shared.metrics import configure_metrics
@@ -97,6 +97,32 @@ def create_app() -> FastAPI:
 def _serve() -> None:
     """Load config, build context, and run the server."""
     config = load_config()
+    # Configure logging up front so any startup warnings below (URL-consistency,
+    # SQLite-reload) are emitted in the standard structured format. The reload
+    # branch re-execs into uvicorn factory workers that configure their own
+    # logging; the single-process path skips re-configuring since it's done here.
+    configure_logging(config)
+    logger = structlog.get_logger(__name__)
+
+    # Warn (never fail) when an explicitly configured public URL's origin does
+    # not match the serving origin — the classic "OAuth redirect points at the
+    # wrong port" misconfiguration (issue #818). Unset URLs self-derive and are
+    # skipped. Behind a reverse proxy the operator sets server.public_base_url,
+    # which then becomes the expected origin — no false positive.
+    for mismatch in check_public_url_consistency(config):
+        logger.warning(
+            "public_url_origin_mismatch",
+            field=mismatch.field,
+            configured=mismatch.configured,
+            expected=mismatch.expected,
+            detail=(
+                "configured public URL origin does not match the serving origin; "
+                "links/callbacks built from it may be unreachable. Set "
+                "server.public_base_url to the deployment's public origin, or "
+                "align this field with it."
+            ),
+        )
+
     # Reload mode spawns multiple uvicorn worker processes. A SQLite admin DB is a
     # single file that does not support concurrent writer processes, so reload
     # against it reintroduces the `database is locked` contention this fix targets
@@ -106,11 +132,6 @@ def _serve() -> None:
     # contend, but that is out of scope here.
     reload_enabled = config.server.reload
     if reload_enabled and config.databases.admin.backend == "sqlite":
-        # Configure logging up front so the warning is emitted in the standard
-        # format; the reload branch returns before the single-process path, while
-        # the fallthrough below skips re-configuring when we've already done so.
-        configure_logging(config)
-        logger = structlog.get_logger(__name__)
         logger.warning(
             "reload_disabled_sqlite_admin_db",
             detail=(
@@ -119,9 +140,6 @@ def _serve() -> None:
             ),
         )
         reload_enabled = False
-        logging_configured = True
-    else:
-        logging_configured = False
 
     if reload_enabled:
         uvicorn.run(
@@ -133,8 +151,6 @@ def _serve() -> None:
         )
         return
 
-    if not logging_configured:
-        configure_logging(config)
     configure_tracing(_service_name(), config.observability.tracing)
     configure_metrics(_service_name(), config.observability.metrics)
     apps = config.apps

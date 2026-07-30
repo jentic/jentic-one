@@ -136,6 +136,38 @@ credentials, so a tool call answered by the *other* backend looks like data loss
 ("APIs disappeared", "credentials vanished", ID-format mismatches) when the
 systems are simply different.
 
+### The deployment's public origin (`server.public_base_url`)
+
+Several externally-visible URLs must point at the origin clients actually use
+to reach the deployment: the OAuth connect `redirect_uri`, the OIDC issuer and
+JWT-Bearer audience, the DCR `registration_client_uri`, access-request approval
+links, async-job `_links.self`, and the 424 `provisioning_url`. Set them all at
+once with a single knob:
+
+```yaml
+server:
+  public_base_url: "https://jentic.example.com"   # scheme + host [+ port]
+```
+
+Resolution, per URL:
+
+1. its own specific override if set (`auth.canonical_base_url`,
+   `control.access_requests.canonical_base_url`, `broker.jobs_api_base_url`,
+   `broker.account_linking_base_url`, `credentials.providers.<id>.redirect_uri`),
+   then
+2. `server.public_base_url`, then
+3. for request-scoped URLs (OAuth callback, issuer), the **incoming request's
+   origin**.
+
+Because of (3), local development on any port works with **zero** configuration
+— the OAuth callback tracks whatever host/port you actually browsed to, fixing
+the "connect breaks on any port but 8000" trap. Set `public_base_url` (or an
+override) only when the app can't infer its public origin from the request,
+i.e. behind a reverse proxy / ingress. At startup, any *explicitly configured*
+public URL whose origin disagrees with the serving origin (and isn't explained
+by `public_base_url`) logs a `public_url_origin_mismatch` warning — the server
+still starts.
+
 ### The `GET /instance` identity probe
 
 Every `jentic-one` install exposes an unauthenticated backend-identity endpoint
@@ -159,11 +191,13 @@ curl -s http://127.0.0.1:8000/instance
   default) for a self-hosted install on your own machine/network, `remote` for a
   hosted install run elsewhere. It is a hint for humans/agents, not an
   authorization signal.
-- `canonical_base_url` / `host` come from `auth.canonical_base_url` (set in
+- `canonical_base_url` / `host` reflect the deployment's public origin —
+  `server.public_base_url` (or the advanced per-surface override
+  `auth.canonical_base_url` when set). Set `server.public_base_url` in
   `config/local.yaml` to `http://127.0.0.1:8000` for local runs; a hosted
-  platform sets its own). This is the instance describing *itself*, so it is
-  the value to trust over any client-side assumption. Any userinfo embedded in
-  the configured URL is stripped before echoing.
+  platform sets its own public URL. This is the instance describing *itself*,
+  so it is the value to trust over any client-side assumption. Any userinfo
+  embedded in the configured URL is stripped before echoing.
 - `instance_id` is an opaque digest *derived from* the telemetry instance id
   (never the id itself). It only disambiguates two installs sharing a host when
   both have telemetry enabled — it is `null` whenever telemetry has not
