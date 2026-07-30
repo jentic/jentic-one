@@ -5,8 +5,9 @@
  * filters), so the panel ends in a pre-filtered "Open in Monitor" deep-link
  * rather than re-implementing any of that here.
  *
- * Both sources are admin-gated: a 403 resolves to `null` (not an error) and
- * the panel renders one quiet permission note instead of charts.
+ * Both sources are permission-gated (usage behind `org:admin`, executions
+ * behind `executions:read`): a 403 resolves to `null` (not an error) and the
+ * panel renders one quiet permission note instead of charts.
  */
 import { Activity, ArrowRight } from 'lucide-react';
 import {
@@ -23,7 +24,7 @@ import {
 	type Column,
 	type StackedBarDatum,
 } from '@/shared/ui';
-import { ROUTES } from '@/shared/app';
+import { ROUTE_PATHS } from '@/shared/app';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	useActorExecutions,
@@ -77,21 +78,33 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 	const usage = useActorUsageDetail(actorId);
 	const executions = useActorExecutions(actorId);
 
-	// Monitor's Executions lens, pre-filtered to this actor. The `?tab=` /
-	// `actor_id` vocabulary is Monitor's URL contract (modules/monitor/lib/links).
-	const monitorLink = `${ROUTES.monitor}?tab=executions&actor_id=${encodeURIComponent(actorId)}&actor_type=${actorType}`;
+	// Monitor's Executions lens, pre-filtered to this actor — built by the
+	// shared route helper so the param vocabulary can't drift across modules.
+	const monitorLink = ROUTE_PATHS.monitorExecutions({ actorId, actorType });
 
 	if (usage.isPending || executions.isPending) {
 		return <LoadingState size="sm" message="Loading activity…" />;
 	}
 
-	// Both sources 403'd → the viewer can't see monitoring data at all.
+	// `null` is the client's explicit 403 sentinel; only when BOTH sources are
+	// permission-gated does the panel read as "you can't see this". An errored
+	// query resolves `data === undefined` and must not masquerade as a
+	// permission gate.
+	if (usage.data === null && executions.data === null) {
+		return (
+			<EmptyState
+				icon={<Activity className="text-muted-foreground h-6 w-6" />}
+				title="Activity requires elevated access"
+				description="Execution history and usage statistics require monitoring permissions."
+			/>
+		);
+	}
 	if (usage.data == null && executions.data == null) {
 		return (
 			<EmptyState
 				icon={<Activity className="text-muted-foreground h-6 w-6" />}
-				title="Activity requires admin access"
-				description="Execution history and usage statistics are only visible to administrators."
+				title="Couldn't load activity"
+				description="Something went wrong while loading this actor's activity. Try again."
 			/>
 		);
 	}

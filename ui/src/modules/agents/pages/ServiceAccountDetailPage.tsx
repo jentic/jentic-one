@@ -28,7 +28,6 @@ import {
 	LayoutDashboard,
 	Settings,
 	ShieldCheck,
-	TriangleAlert,
 } from 'lucide-react';
 import {
 	ActorLabel,
@@ -58,6 +57,7 @@ import {
 	useEnableServiceAccount,
 	useArchiveServiceAccount,
 	useGenerateServiceAccountApiKey,
+	AgentsApiError,
 	STATUS_DOT,
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
@@ -75,7 +75,12 @@ import {
 } from '@/modules/agents/components/LifecycleDialogs';
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
-import { ROUTES } from '@/shared/app/routes';
+import {
+	DangerZone,
+	MetaItem,
+	type DangerZoneItem,
+} from '@/modules/agents/components/detail/shared';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
@@ -95,18 +100,6 @@ function isDetailTab(value: string | null): value is DetailTab {
 
 const tabId = (tab: string) => `sa-tab-${tab}`;
 const panelId = (tab: string) => `sa-panel-${tab}`;
-
-/** A compact label/value pair used in the attribution meta grid. */
-function MetaItem({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-muted-foreground/70 text-[10px] tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{value}</dd>
-		</div>
-	);
-}
 
 /**
  * The Keys tab body. Service-account responses expose no key metadata or
@@ -141,8 +134,12 @@ function SaKeysPanel({
 					disabled={account.status !== 'active' || generateApiKey.isPending}
 					loading={generateApiKey.isPending}
 					onClick={async () => {
-						const result = await generateApiKey.mutateAsync(account.id);
-						onKey(result.key);
+						try {
+							const result = await generateApiKey.mutateAsync(account.id);
+							onKey(result.key);
+						} catch {
+							// The hook toasts the failure; nothing to reveal.
+						}
 					}}
 					aria-label={`Generate API key for ${account.name}`}
 				>
@@ -174,8 +171,30 @@ function SaSettingsPanel({
 	lifecyclePending: boolean;
 }) {
 	const actions = ACTIONS_FOR_STATUS[account.status];
-	const canDisable = actions.includes('disable');
-	const canArchive = actions.includes('archive');
+	const dangerItems: DangerZoneItem[] = [
+		...(actions.includes('disable')
+			? [
+					{
+						action: 'disable' as const,
+						title: 'Disable service account',
+						description:
+							'Immediately revokes this account’s access. Reversible — you can re-enable it later.',
+						ariaLabel: `Disable ${account.name}`,
+					},
+				]
+			: []),
+		...(actions.includes('archive')
+			? [
+					{
+						action: 'archive' as const,
+						title: 'Archive service account',
+						description:
+							'Removes this account from the fleet and cascades to its grants. This cannot be undone.',
+						ariaLabel: `Archive ${account.name}`,
+					},
+				]
+			: []),
+	];
 
 	return (
 		<div className="space-y-4">
@@ -192,64 +211,7 @@ function SaSettingsPanel({
 				</CardBody>
 			</Card>
 
-			{(canDisable || canArchive) && (
-				<Card className="border-danger/30">
-					<CardHeader>
-						<CardTitle className="text-danger flex items-center gap-2">
-							<TriangleAlert className="h-4 w-4" aria-hidden />
-							Danger zone
-						</CardTitle>
-					</CardHeader>
-					<CardBody className="divide-border/60 divide-y">
-						{canDisable && (
-							<div className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-								<div className="min-w-0">
-									<p className="text-foreground text-sm font-medium">
-										Disable service account
-									</p>
-									<p className="text-muted-foreground text-xs">
-										Immediately revokes this account’s access. Reversible — you
-										can re-enable it later.
-									</p>
-								</div>
-								<Button
-									size="sm"
-									variant="outline"
-									className="border-danger/40 text-danger hover:bg-danger/10 shrink-0"
-									disabled={lifecyclePending}
-									onClick={() => onLifecycle('disable')}
-									aria-label={`Disable ${account.name}`}
-								>
-									Disable
-								</Button>
-							</div>
-						)}
-						{canArchive && (
-							<div className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-								<div className="min-w-0">
-									<p className="text-foreground text-sm font-medium">
-										Archive service account
-									</p>
-									<p className="text-muted-foreground text-xs">
-										Removes this account from the fleet and cascades to its
-										grants. This cannot be undone.
-									</p>
-								</div>
-								<Button
-									size="sm"
-									variant="danger"
-									className="shrink-0"
-									disabled={lifecyclePending}
-									onClick={() => onLifecycle('archive')}
-									aria-label={`Archive ${account.name}`}
-								>
-									Archive
-								</Button>
-							</div>
-						)}
-					</CardBody>
-				</Card>
-			)}
+			<DangerZone items={dangerItems} pending={lifecyclePending} onAction={onLifecycle} />
 		</div>
 	);
 }
@@ -276,6 +238,9 @@ export default function ServiceAccountDetailPage() {
 	const [apiKey, setApiKey] = useState<string | null>(null);
 
 	function setTab(tab: string) {
+		// Pushed (not replaced) so the browser back button walks tabs — same
+		// contract as the agent and toolkit consoles; the back link below is
+		// static for exactly that reason.
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -283,7 +248,7 @@ export default function ServiceAccountDetailPage() {
 				else next.set('tab', tab);
 				return next;
 			},
-			{ replace: true },
+			{ replace: false },
 		);
 	}
 
@@ -295,7 +260,26 @@ export default function ServiceAccountDetailPage() {
 		);
 	}
 
-	// 404 / unknown id → honest not-found, not a fake account.
+	// Only a 404 (or a missing route param) means "no such account" — anything
+	// else (403, 500, network) is a load failure and must not masquerade as
+	// not-found.
+	const errorStatus =
+		accountQuery.error instanceof AgentsApiError ? accountQuery.error.status : null;
+	if (accountQuery.error && errorStatus !== 404) {
+		return (
+			<PageShell>
+				<PageHeader
+					title="Couldn't load service account"
+					subtitle={
+						errorStatus === 403
+							? 'You do not have permission to view this service account.'
+							: 'Something went wrong while loading this service account. Try again.'
+					}
+				/>
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
+			</PageShell>
+		);
+	}
 	if (accountQuery.error || !accountQuery.data) {
 		return (
 			<PageShell>
@@ -305,7 +289,7 @@ export default function ServiceAccountDetailPage() {
 						id ? `No service account with id ${id}.` : 'Missing service account id.'
 					}
 				/>
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 			</PageShell>
 		);
 	}
@@ -361,9 +345,12 @@ export default function ServiceAccountDetailPage() {
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 				<AppLink
-					href={ROUTES.monitor}
+					href={ROUTE_PATHS.monitorExecutions({
+						actorId: account.id,
+						actorType: 'service_account',
+					})}
 					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium transition-colors"
 				>
 					<ActivityIcon className="h-3.5 w-3.5" /> Open Monitor
@@ -394,7 +381,10 @@ export default function ServiceAccountDetailPage() {
 								<span className="text-foreground text-lg font-semibold tracking-tight">
 									{account.name}
 								</span>
-								<ActorStatusBadge status={account.status} />
+								<ActorStatusBadge
+									status={account.status}
+									data-testid="detail-status-badge"
+								/>
 							</div>
 							<div className="mt-1 flex items-center gap-1.5">
 								<code className="text-muted-foreground/80 truncate font-mono text-[11px]">
@@ -444,10 +434,11 @@ export default function ServiceAccountDetailPage() {
 							</p>
 						</div>
 					)}
-
-					<KpiStrip usage={usage.data} lastActivityAt={lastActivityAt} />
 				</CardBody>
 			</Card>
+
+			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
+			<KpiStrip usage={usage.data} lastActivityAt={lastActivityAt} />
 
 			<TabNav<DetailTab>
 				options={TAB_OPTIONS}
@@ -462,7 +453,8 @@ export default function ServiceAccountDetailPage() {
 				role="tabpanel"
 				id={panelId(activeTab)}
 				aria-labelledby={tabId(activeTab)}
-				className="space-y-4"
+				tabIndex={0}
+				className="space-y-4 focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && (
 					<Card>

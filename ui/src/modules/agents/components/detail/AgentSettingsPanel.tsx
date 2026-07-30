@@ -11,8 +11,7 @@
  *     buttons defer to the page-level {@link LifecycleDialogs} via
  *     `onLifecycle` — this panel never mutates lifecycle state itself.
  */
-import { useState } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Card, CardBody, CardHeader, CardTitle, Input, Label, Textarea } from '@/shared/ui';
 import {
 	useUpdateAgent,
@@ -20,6 +19,7 @@ import {
 	type AgentEntity,
 	type AgentPatch,
 } from '@/modules/agents/api';
+import { DangerZone, type DangerZoneItem } from '@/modules/agents/components/detail/shared';
 
 interface AgentSettingsPanelProps {
 	agent: AgentEntity;
@@ -40,6 +40,20 @@ export function AgentSettingsPanel({
 	const [description, setDescription] = useState(agent.description ?? '');
 	const [ownerId, setOwnerId] = useState(agent.ownerId ?? '');
 	const [nameError, setNameError] = useState<string | null>(null);
+
+	// Seed-from-props syncs only when the entity itself changed — never on
+	// re-renders of the same agent, or a background refetch would clobber the
+	// user's draft. Without this, a warm detail cache could carry agent A's
+	// draft onto agent B and PATCH the wrong row.
+	const seededIdRef = useRef(agent.id);
+	useEffect(() => {
+		if (seededIdRef.current === agent.id) return;
+		seededIdRef.current = agent.id;
+		setName(agent.name);
+		setDescription(agent.description ?? '');
+		setOwnerId(agent.ownerId ?? '');
+		setNameError(null);
+	}, [agent.id, agent.name, agent.description, agent.ownerId]);
 
 	const trimmedName = name.trim();
 	const dirty =
@@ -76,8 +90,30 @@ export function AgentSettingsPanel({
 	}
 
 	const actions = ACTIONS_FOR_STATUS[agent.status];
-	const canDisable = actions.includes('disable');
-	const canArchive = actions.includes('archive');
+	const dangerItems: DangerZoneItem[] = [
+		...(actions.includes('disable')
+			? [
+					{
+						action: 'disable' as const,
+						title: 'Disable agent',
+						description:
+							'Immediately revokes this agent’s ability to authenticate. Reversible — you can re-enable it later.',
+						ariaLabel: `Disable ${agent.name}`,
+					},
+				]
+			: []),
+		...(actions.includes('archive')
+			? [
+					{
+						action: 'archive' as const,
+						title: 'Archive agent',
+						description:
+							'Removes this agent from the fleet and cascades to its bindings. This cannot be undone.',
+						ariaLabel: `Archive ${agent.name}`,
+					},
+				]
+			: []),
+	];
 
 	return (
 		<div className="space-y-4">
@@ -134,64 +170,7 @@ export function AgentSettingsPanel({
 				</CardBody>
 			</Card>
 
-			{(canDisable || canArchive) && (
-				<Card className="border-danger/30">
-					<CardHeader>
-						<CardTitle className="text-danger flex items-center gap-2">
-							<TriangleAlert className="h-4 w-4" aria-hidden />
-							Danger zone
-						</CardTitle>
-					</CardHeader>
-					<CardBody className="divide-border/60 divide-y">
-						{canDisable && (
-							<div className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-								<div className="min-w-0">
-									<p className="text-foreground text-sm font-medium">
-										Disable agent
-									</p>
-									<p className="text-muted-foreground text-xs">
-										Immediately revokes this agent’s ability to authenticate.
-										Reversible — you can re-enable it later.
-									</p>
-								</div>
-								<Button
-									size="sm"
-									variant="outline"
-									className="border-danger/40 text-danger hover:bg-danger/10 shrink-0"
-									disabled={lifecyclePending}
-									onClick={() => onLifecycle('disable')}
-									aria-label={`Disable ${agent.name}`}
-								>
-									Disable
-								</Button>
-							</div>
-						)}
-						{canArchive && (
-							<div className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-								<div className="min-w-0">
-									<p className="text-foreground text-sm font-medium">
-										Archive agent
-									</p>
-									<p className="text-muted-foreground text-xs">
-										Removes this agent from the fleet and cascades to its
-										bindings. This cannot be undone.
-									</p>
-								</div>
-								<Button
-									size="sm"
-									variant="danger"
-									className="shrink-0"
-									disabled={lifecyclePending}
-									onClick={() => onLifecycle('archive')}
-									aria-label={`Archive ${agent.name}`}
-								>
-									Archive
-								</Button>
-							</div>
-						)}
-					</CardBody>
-				</Card>
-			)}
+			<DangerZone items={dangerItems} pending={lifecyclePending} onAction={onLifecycle} />
 		</div>
 	);
 }

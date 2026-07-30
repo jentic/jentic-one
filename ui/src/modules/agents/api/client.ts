@@ -583,6 +583,11 @@ export interface ActorUsage {
  * Backend `top` keys are mechanical `actor_type/actor_id` strings; rows for
  * other actor types (users, unattributed NULLs) are dropped here. Returns
  * `null` on 403 — the caller renders no activity columns for non-admins.
+ *
+ * The aggregate is a top-N leaderboard capped at 50 by the backend
+ * (`GET /monitoring/usage` validates `top_limit <= 50`), so actors absent
+ * from the map are "not in the top 50", NOT "zero executions" — callers must
+ * render the distinction (em-dash, not 0).
  */
 export async function fetchActorsUsage(
 	actorType: 'agent' | 'service_account',
@@ -592,8 +597,7 @@ export async function fetchActorsUsage(
 		const res = await MonitoringService.getUsageStats({
 			since: Math.floor(Date.now() / 1000) - sinceDays * 86400,
 			groupBy: GroupBy.AGENT,
-			// The fleet table joins every loaded row, not a top-10 leaderboard.
-			topLimit: 200,
+			topLimit: 50,
 		});
 		const prefix = `${actorType}/`;
 		const usage = new Map<string, ActorUsage>();

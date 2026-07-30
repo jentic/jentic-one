@@ -30,18 +30,7 @@ import {
 } from '@/modules/agents/api';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
 import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
-
-/** A compact label/value pair used in the key meta grid. */
-function MetaItem({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-muted-foreground/70 text-[10px] tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{value}</dd>
-		</div>
-	);
-}
+import { MetaItem } from '@/modules/agents/components/detail/shared';
 
 export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const apiKeyInfo = useAgentApiKeyInfo(agent.id);
@@ -106,8 +95,12 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 								disabled={mutating}
 								loading={generateApiKey.isPending}
 								onClick={async () => {
-									const result = await generateApiKey.mutateAsync(agent.id);
-									setApiKey(result.key);
+									try {
+										const result = await generateApiKey.mutateAsync(agent.id);
+										setApiKey(result.key);
+									} catch {
+										// The hook toasts the failure; nothing to reveal.
+									}
 								}}
 								aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
 							>

@@ -9,6 +9,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
@@ -131,7 +132,9 @@ describe('AgentDetailPage', () => {
 		renderDetail('agnt_active_1');
 		expect(await screen.findByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
 		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
-		expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+		// Pin the status to the identity header's badge — a bare text query would
+		// also match e.g. a toolkit "Active" pill and mask a wrong-status bug.
+		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		expect(screen.getByText('Registered')).toBeInTheDocument();
 	});
 
@@ -181,9 +184,7 @@ describe('AgentDetailPage', () => {
 		expect(within(strip).getByText('Bound toolkits')).toBeInTheDocument();
 	});
 
-	it('renders em-dashes in the KPI strip when monitoring is admin-gated (403)', async () => {
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
+	it('hides the KPI strip when monitoring is admin-gated (403)', async () => {
 		worker.use(
 			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
 			createErrorHandler('get', '/executions', { status: 403 }),
@@ -191,10 +192,13 @@ describe('AgentDetailPage', () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		const strip = await screen.findByRole('group', { name: 'Key metrics' });
-		// Executions + success + last-activity all degrade to em-dashes; the
-		// toolkit count (not admin-gated) still renders.
-		await waitFor(() => expect(within(strip).getAllByText('—').length).toBe(3));
+		// The usage query resolves to the 403 sentinel and the strip unmounts
+		// entirely (same contract as the toolkit console's UsageStrip) — a
+		// permission gate is not an error, so no alert either.
+		await waitFor(() =>
+			expect(screen.queryByTestId('kpi-strip-loading')).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByRole('group', { name: 'Key metrics' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 
@@ -219,8 +223,6 @@ describe('AgentDetailPage', () => {
 
 	it('shows a quiet permission note on the Activity tab for non-admins (403)', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(
 			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
 			createErrorHandler('get', '/executions', { status: 403 }),
@@ -230,7 +232,7 @@ describe('AgentDetailPage', () => {
 
 		await user.click(screen.getByRole('tab', { name: 'Activity' }));
 
-		expect(await screen.findByText('Activity requires admin access')).toBeInTheDocument();
+		expect(await screen.findByText('Activity requires elevated access')).toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 
@@ -274,8 +276,6 @@ describe('AgentDetailPage', () => {
 
 	it('keeps the deny dialog open and toasts when the deny fails', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));
 
 		renderDetail('agnt_pending_1');
@@ -299,7 +299,7 @@ describe('AgentDetailPage', () => {
 
 		expect(await screen.findByText('Agent approved')).toBeInTheDocument();
 		await waitFor(() => {
-			expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		});
 	});
 
@@ -318,18 +318,14 @@ describe('AgentDetailPage', () => {
 
 	it('renames an agent from the Settings tab, sending only the dirty field', async () => {
 		const user = userEvent.setup();
-		// Capture the PATCH body to pin real PATCH semantics: only changed keys.
+		// Spy on the PATCH body to pin real PATCH semantics (only changed keys),
+		// then fall through to the module's stateful mock — the hook invalidates
+		// the detail cache, so the refetch must serve the renamed row.
 		let patchBody: Record<string, unknown> | null = null;
 		worker.use(
 			http.patch('/agents/:id', async ({ request }) => {
-				patchBody = (await request.json()) as Record<string, unknown>;
-				return HttpResponse.json({
-					id: 'agnt_active_1',
-					name: 'support-agent-v2',
-					description: 'Handles support tickets end to end.',
-					status: 'active',
-					created_at: '2026-05-01T09:00:00Z',
-				});
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
 			}),
 		);
 		renderDetail('agnt_active_1');
@@ -350,7 +346,7 @@ describe('AgentDetailPage', () => {
 		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
 		// Only the renamed field crossed the wire — no description/owner echo.
 		expect(patchBody).toEqual({ name: 'support-agent-v2' });
-		// The detail cache re-seeds from the PATCH response → header updates.
+		// The detail cache invalidates and refetches → header updates.
 		expect(
 			await screen.findByRole('heading', { name: 'support-agent-v2' }),
 		).toBeInTheDocument();
@@ -361,14 +357,8 @@ describe('AgentDetailPage', () => {
 		let patchBody: Record<string, unknown> | null = null;
 		worker.use(
 			http.patch('/agents/:id', async ({ request }) => {
-				patchBody = (await request.json()) as Record<string, unknown>;
-				return HttpResponse.json({
-					id: 'agnt_active_1',
-					name: 'support-agent',
-					description: null,
-					status: 'active',
-					created_at: '2026-05-01T09:00:00Z',
-				});
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
 			}),
 		);
 		renderDetail('agnt_active_1');
@@ -383,9 +373,57 @@ describe('AgentDetailPage', () => {
 		expect(patchBody).toEqual({ description: null });
 	});
 
+	it('assigns an owner from the Settings tab, sending only owner_id', async () => {
+		const user = userEvent.setup();
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
+			}),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const ownerInput = await screen.findByLabelText('Owner');
+		await user.clear(ownerInput);
+		await user.type(ownerInput, 'usr_new_owner');
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		// The camelCase draft crosses the wire as the API's snake_case owner_id,
+		// and untouched fields (name/description) don't echo along.
+		expect(patchBody).toEqual({ owner_id: 'usr_new_owner' });
+	});
+
+	it('disables an active agent through the danger-zone confirm flow', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Disable support-agent' }));
+
+		// The danger zone never mutates directly — it routes through the
+		// page-level confirm dialog first.
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/Disable support-agent/)).toBeInTheDocument();
+		await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
+
+		expect(await screen.findByText('Agent disabled')).toBeInTheDocument();
+		// Detail cache invalidates → the header badge flips and the header now
+		// offers the constructive Enable action.
+		await waitFor(() => {
+			expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Disabled');
+		});
+		expect(
+			await screen.findByRole('button', { name: 'Enable support-agent' }),
+		).toBeInTheDocument();
+	});
+
 	it('keeps the draft and toasts when the PATCH fails', async () => {
 		const user = userEvent.setup();
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('patch', '/agents/:id', { status: 500 }));
 
 		renderDetail('agnt_active_1');

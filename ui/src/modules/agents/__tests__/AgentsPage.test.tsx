@@ -237,7 +237,9 @@ describe('AgentsPage — agents lifecycle', () => {
 
 	it('pages through the cursor list with Load more', async () => {
 		const user = userEvent.setup();
-		const page = (id: string, name: string) => ({
+		// Named to avoid shadowing the `page` viewport helper imported from
+		// @vitest/browser/context above.
+		const agentRow = (id: string, name: string) => ({
 			id,
 			name,
 			description: null,
@@ -257,13 +259,13 @@ describe('AgentsPage — agents lifecycle', () => {
 				const cursor = new URL(request.url).searchParams.get('cursor');
 				if (cursor === 'cursor-2') {
 					return HttpResponse.json({
-						data: [page('agnt_p2', 'second-page-bot')],
+						data: [agentRow('agnt_p2', 'second-page-bot')],
 						has_more: false,
 						next_cursor: null,
 					});
 				}
 				return HttpResponse.json({
-					data: [page('agnt_p1', 'first-page-bot')],
+					data: [agentRow('agnt_p1', 'first-page-bot')],
 					has_more: true,
 					next_cursor: 'cursor-2',
 				});
@@ -303,10 +305,13 @@ describe('AgentsPage — agents lifecycle', () => {
 		});
 		expect(within(active).getByText(/^\d+(\.\d+)?%$/)).toBeInTheDocument();
 
-		// Actors without usage rows read as genuinely idle, not broken.
+		// Actors absent from the top-50 aggregate are UNKNOWN, not idle — the
+		// three activity columns degrade to em-dashes (f2: the backend caps
+		// `top_limit` at 50, so absence never proves zero executions). Plus the
+		// pending row's empty Approved cell → 4 dashes total.
 		const pending = tableRowFor('inbox-triage-bot');
-		expect(within(pending).getByText('idle')).toBeInTheDocument();
-		expect(within(pending).getByText('—')).toBeInTheDocument();
+		expect(within(pending).queryByText('idle')).not.toBeInTheDocument();
+		expect(within(pending).getAllByText('—')).toHaveLength(4);
 	});
 
 	it('renders the plain roster when the usage aggregate is admin-gated (403)', async () => {
@@ -332,11 +337,12 @@ describe('AgentsPage — agents lifecycle', () => {
 		renderPage();
 
 		expect(await screen.findByText('No agents registered yet')).toBeInTheDocument();
-		// First-run guidance: a manual-create CTA plus a copyable POST /register curl.
+		// First-run guidance: a manual-create CTA plus a copyable CLI register command
+		// (raw POST /register needs an Ed25519 JWKS, so the CLI is the teachable path).
 		expect(screen.getByRole('button', { name: /Create one manually/ })).toBeInTheDocument();
 		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
-		expect(screen.getByText(/curl -X POST/)).toBeInTheDocument();
-		expect(screen.getByText(/"client_name": "my-first-agent"/)).toBeInTheDocument();
+		expect(screen.getByText(/jentic register --base-url/)).toBeInTheDocument();
+		expect(screen.getByText(/--name my-first-agent/)).toBeInTheDocument();
 	});
 
 	// --- Phase 4: create sheet with optional initial scopes ----------------

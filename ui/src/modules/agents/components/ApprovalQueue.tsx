@@ -37,8 +37,13 @@ export function ApprovalQueue<T extends ActorRow>({
 
 	return (
 		<section className="space-y-2" aria-label={`Awaiting approval (${items.length})`}>
-			<h2 className="text-warning flex items-center gap-2 text-[10px] font-semibold tracking-wider uppercase">
-				<span className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full" aria-hidden />
+			{/* Section-title ladder: sentence-case font-heading, never the eyebrow
+			    caption style (page-scaffold rule); the warning tint carries urgency. */}
+			<h2 className="font-heading text-warning flex items-center gap-2 text-sm font-semibold">
+				<span
+					className="bg-warning h-1.5 w-1.5 animate-pulse rounded-full motion-reduce:animate-none"
+					aria-hidden
+				/>
 				Awaiting approval ({items.length})
 			</h2>
 			<Card className="border-warning/30 bg-card divide-border/60 divide-y">

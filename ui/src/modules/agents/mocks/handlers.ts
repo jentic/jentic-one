@@ -389,6 +389,26 @@ function genId(prefix: string): string {
 const SCOPE_PATTERN = /^[a-zA-Z0-9_:./-]{1,64}$/;
 
 /**
+ * The default baseline `AgentService.create` grants when the payload carries
+ * no scopes (mirror of `shared/scopes.py` DEFAULT_AGENT_SCOPES). Service
+ * accounts get NO baseline — grants only when provided.
+ */
+const DEFAULT_AGENT_SCOPES_MOCK = [
+	'capabilities:execute',
+	'capabilities:read',
+	'apis:read',
+	'catalog:import',
+	'executions:read',
+	'jobs:read',
+	'events:read',
+	'owner:resources:read',
+	'owner:toolkits:read',
+	'owner:agents:read',
+	'owner:credentials:read',
+	'owner:access-requests:read',
+] as const;
+
+/**
  * Validate a replacement scope set the way the real backend actually does.
  *
  * IMPORTANT: `PUT /agents/{id}/scopes` and `PUT /service-accounts/{id}/scopes`
@@ -722,6 +742,14 @@ export const agentsHandlers = [
 			description?: string | null;
 			scopes?: string[] | null;
 		};
+		// Validate BEFORE mutating the store — the real backend rejects via
+		// Pydantic before anything is created (no phantom row on a 422).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
+			const check = validateScopes(body.scopes);
+			if (!check.ok) {
+				return HttpResponse.json({ detail: check.detail }, { status: check.status });
+			}
+		}
 		const row = seedAgent({
 			id: genId('agnt'),
 			name: body.name ?? 'unnamed',
@@ -730,26 +758,28 @@ export const agentsHandlers = [
 			created_at: now(),
 		});
 		agents.unshift(row);
-		// Optional initial grants (POST /agents accepts scopes[]).
-		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
-			const check = validateScopes(body.scopes);
-			if (!check.ok) {
-				return HttpResponse.json({ detail: check.detail }, { status: check.status });
-			}
-			actorScopes[row.id] = [...new Set(body.scopes)];
-		}
+		// `AgentService.create` grants the requested scopes verbatim, or the
+		// DEFAULT_AGENT_SCOPES baseline when the payload carries none — a fresh
+		// manual agent never has an empty Scopes card (shared/scopes.py).
+		actorScopes[row.id] =
+			Array.isArray(body.scopes) && body.scopes.length > 0
+				? [...new Set(body.scopes)]
+				: [...DEFAULT_AGENT_SCOPES_MOCK];
 		return HttpResponse.json(row, { status: 201 });
 	}),
-	// Partial in-place edit — name / description / owner_id.
+	// Partial in-place edit — name / description / owner_id. Mirrors
+	// `AgentService.update_agent`: archived rows reject with 409
+	// (InvalidTransitionError), and set fields pass through un-trimmed.
 	http.patch('/agents/:id', async ({ params, request }) => {
 		const row = agents.find((a) => a.id === params.id);
 		if (!row) return new HttpResponse(null, { status: 404 });
+		if (row.status === 'archived') return new HttpResponse(null, { status: 409 });
 		const body = (await request.json().catch(() => ({}))) as {
 			name?: string | null;
 			description?: string | null;
 			owner_id?: string | null;
 		};
-		if (typeof body.name === 'string' && body.name.trim()) row.name = body.name.trim();
+		if (typeof body.name === 'string') row.name = body.name;
 		if (body.description !== undefined) row.description = body.description;
 		if (body.owner_id !== undefined) row.owner_id = body.owner_id;
 		return HttpResponse.json(row);
@@ -862,19 +892,29 @@ export const agentsHandlers = [
 			description?: string | null;
 			scopes?: string[] | null;
 		};
-		const row = seedSa({
-			id: genId('sva'),
-			name: body.name ?? 'unnamed',
-			description: body.description ?? null,
-			status: 'pending',
-			created_at: now(),
-		});
-		serviceAccounts.unshift(row);
+		// Validate BEFORE mutating the store — the real backend rejects via
+		// Pydantic before anything is created (no phantom row on a 422).
 		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
 			const check = validateScopes(body.scopes);
 			if (!check.ok) {
 				return HttpResponse.json({ detail: check.detail }, { status: check.status });
 			}
+		}
+		const row = seedSa({
+			id: genId('sva'),
+			name: body.name ?? 'unnamed',
+			description: body.description ?? null,
+			// ServiceAccountService.create approves inside the create
+			// transaction — a fresh SA is active, never pending.
+			status: 'active',
+			created_at: now(),
+			approved_by: ADMIN,
+			approved_at: now(),
+		});
+		serviceAccounts.unshift(row);
+		// Unlike agents, SAs get no default baseline — grants only when provided
+		// (ServiceAccountService.create).
+		if (Array.isArray(body.scopes) && body.scopes.length > 0) {
 			actorScopes[row.id] = [...new Set(body.scopes)];
 		}
 		return HttpResponse.json(row, { status: 201 });

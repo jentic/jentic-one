@@ -12,6 +12,7 @@
  * the per-tab todos; this page owns the shell + tab switching.
  */
 import { useSearchParams } from 'react-router';
+import type { ReactNode } from 'react';
 import {
 	Activity as ActivityIcon,
 	BellRing,
@@ -28,14 +29,24 @@ import { EventsTab } from '@/modules/monitor/components/EventsTab';
 import { AuditTab } from '@/modules/monitor/components/AuditTab';
 import { MonitorFilterBar } from '@/modules/monitor/components/MonitorFilterBar';
 
-/** Lens options — same underline TabNav grammar as the detail consoles. */
-const TAB_OPTIONS: TabNavOption<MonitorTab>[] = [
-	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
-	{ value: 'executions', label: 'Executions', icon: <ActivityIcon className="h-4 w-4" /> },
-	{ value: 'jobs', label: 'Jobs', icon: <ListTodo className="h-4 w-4" /> },
-	{ value: 'events', label: 'Events', icon: <BellRing className="h-4 w-4" /> },
-	{ value: 'audit', label: 'Audit', icon: <ScrollText className="h-4 w-4" /> },
-];
+/**
+ * Lens options — same underline TabNav grammar as the detail consoles.
+ * Derived from a `Record` keyed by `MonitorTab` so adding a lens to the union
+ * without wiring its label/icon fails the type-check instead of silently
+ * disappearing from the UI.
+ */
+const TAB_META: Record<MonitorTab, { label: string; icon: ReactNode }> = {
+	overview: { label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+	executions: { label: 'Executions', icon: <ActivityIcon className="h-4 w-4" /> },
+	jobs: { label: 'Jobs', icon: <ListTodo className="h-4 w-4" /> },
+	events: { label: 'Events', icon: <BellRing className="h-4 w-4" /> },
+	audit: { label: 'Audit', icon: <ScrollText className="h-4 w-4" /> },
+};
+
+const TAB_OPTIONS: TabNavOption<MonitorTab>[] = MONITOR_TABS.map((tab) => ({
+	value: tab,
+	...TAB_META[tab],
+}));
 
 const tabId = (tab: string) => `monitor-tab-${tab}`;
 const panelId = (tab: string) => `monitor-panel-${tab}`;

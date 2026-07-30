@@ -41,7 +41,9 @@ describe('ServiceAccountDetailPage', () => {
 			await screen.findByRole('heading', { name: 'metrics-exporter' }),
 		).toBeInTheDocument();
 		expect(screen.getByText('sva_active_1')).toBeInTheDocument();
-		expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+		// Pin the status to the identity header's badge — a bare text query could
+		// match any other "Active" on the page and mask a wrong-status bug.
+		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 	});
 
 	it('renders a Scopes card with the granted scopes on the Access tab', async () => {

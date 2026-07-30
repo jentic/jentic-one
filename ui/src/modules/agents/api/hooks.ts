@@ -439,17 +439,21 @@ export function useCreateAgent() {
 
 /**
  * Partial in-place edit (PATCH /agents/{id}): rename, re-describe, or
- * reassign the owner from the detail page's Settings tab. Seeds the detail
- * cache from the response (the PATCH returns the full row) and refreshes the
- * roster so the fleet table picks the new name up immediately.
+ * reassign the owner from the detail page's Settings tab. Invalidates the
+ * detail cache rather than seeding it from the PATCH response — the response
+ * row is built without the `has_api_key` join (always false), so seeding it
+ * would make the Keys tab forget an existing key. The roster refresh lets the
+ * fleet table pick the new name up immediately, and the dashboard root covers
+ * the pending-agents tile, which renders agent names.
  */
 export function useUpdateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: ({ id, patch }: { id: string; patch: AgentPatch }) => updateAgent(id, patch),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
+			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
 			toast({
 				title: 'Agent updated',
 				description: `${agent.name} saved.`,
@@ -530,9 +534,11 @@ export function useCreateServiceAccount() {
 			createServiceAccount(input),
 		onSuccess: (sa) => {
 			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
+			// Unlike agents, service accounts are approved at creation (the
+			// backend calls set_approval inside the create transaction).
 			toast({
 				title: 'Service account created',
-				description: `${sa.name} is pending approval.`,
+				description: `${sa.name} is ready to use.`,
 				variant: 'success',
 			});
 		},

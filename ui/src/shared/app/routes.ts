@@ -56,6 +56,25 @@ export const ROUTE_PATHS = {
 	agent: (agentId: string) => `${ROUTES.agents}/${encodeURIComponent(agentId)}`,
 	serviceAccount: (serviceAccountId: string) =>
 		`${ROUTES.agents}/service-accounts/${encodeURIComponent(serviceAccountId)}`,
+	/**
+	 * Monitor's Executions lens, optionally pre-filtered. The `tab` /
+	 * `actor_id` / `actor_type` / `toolkit_id` names are Monitor's URL
+	 * vocabulary (read by `modules/monitor/lib/useMonitorFilters`); the
+	 * builder lives here because cross-module deep-links (agents / toolkits
+	 * consoles → Monitor) must agree on it, and modules can't import from
+	 * each other. Monitor's own richer builder is `modules/monitor/lib/links`.
+	 */
+	monitorExecutions: (filter?: {
+		actorId?: string;
+		actorType?: 'agent' | 'service_account' | 'user';
+		toolkitId?: string;
+	}) => {
+		const q = new URLSearchParams({ tab: 'executions' });
+		if (filter?.actorId) q.set('actor_id', filter.actorId);
+		if (filter?.actorType) q.set('actor_type', filter.actorType);
+		if (filter?.toolkitId) q.set('toolkit_id', filter.toolkitId);
+		return `${ROUTES.monitor}?${q.toString()}`;
+	},
 } as const;
 
 /**

@@ -12,7 +12,7 @@
  * `onAction`. On phones the table swaps to stacked identity cards
  * (`renderCard`) so nothing horizontally scrolls.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import {
 	AgentBadge,
@@ -21,9 +21,8 @@ import {
 	Card,
 	CardBody,
 	DataTable,
-	MenuPanel,
+	AnchoredMenuPanel,
 	menuItemClass,
-	useDismissable,
 	ActorStatusBadge,
 	SparklineChart,
 	type Column,
@@ -37,6 +36,7 @@ import {
 	type ActorUsage,
 	type AgentAction,
 } from '@/modules/agents/api';
+import { successShare } from '@/modules/agents/components/detail/shared';
 
 /** The minimal shape the fleet table needs from an actor entity. */
 export interface ActorRow {
@@ -58,7 +58,9 @@ interface ActorTableProps<T extends ActorRow> {
 	/**
 	 * Per-actor execution stats keyed by id (trailing 7 days). `undefined` or
 	 * `null` (still loading / non-admin 403 / degraded) renders the roster
-	 * without the activity columns — never an error state.
+	 * without the activity columns — never an error state. The map is a
+	 * backend-capped top-50 leaderboard, so an actor missing from it means
+	 * "unknown", not "zero" — those cells render an em-dash.
 	 */
 	usage?: Map<string, ActorUsage> | null;
 	onAction: (item: T, action: AgentAction) => void;
@@ -78,13 +80,16 @@ function RowActionsMenu<T extends ActorRow>({
 	onAction: (item: T, action: AgentAction) => void;
 }) {
 	const [open, setOpen] = useState(false);
-	const ref = useDismissable<HTMLDivElement>(open, () => setOpen(false));
+	// The trigger sits inside the Card/DataTable overflow chrome, which clips
+	// absolutely-positioned panels — so the panel portals out via
+	// AnchoredMenuPanel instead of the in-flow MenuPanel.
+	const triggerRef = useRef<HTMLDivElement>(null);
 	const actions = ACTIONS_FOR_STATUS[item.status];
 
 	if (actions.length === 0) return null;
 
 	return (
-		<div ref={ref} className="relative inline-block">
+		<div ref={triggerRef} className="relative inline-block">
 			<Button
 				variant="ghost"
 				size="sm"
@@ -98,7 +103,12 @@ function RowActionsMenu<T extends ActorRow>({
 				<MoreHorizontal className="h-4 w-4" aria-hidden="true" />
 			</Button>
 			{open && (
-				<MenuPanel align="right" className="min-w-[150px]">
+				<AnchoredMenuPanel
+					anchorRef={triggerRef}
+					onClose={() => setOpen(false)}
+					align="right"
+					className="min-w-[150px]"
+				>
 					{actions.map((action) => (
 						<button
 							key={action}
@@ -117,7 +127,7 @@ function RowActionsMenu<T extends ActorRow>({
 							{ACTION_LABEL[action]}
 						</button>
 					))}
-				</MenuPanel>
+				</AnchoredMenuPanel>
 			)}
 		</div>
 	);
@@ -160,12 +170,6 @@ function timeCell(value: string | null) {
 	);
 }
 
-/** "99.2%" success share, or an em-dash for actors with no traffic. */
-function successShare(u: ActorUsage | undefined): string {
-	if (!u || u.total === 0) return '—';
-	return `${((u.success / u.total) * 100).toFixed(1).replace(/\.0$/, '')}%`;
-}
-
 export function ActorTable<T extends ActorRow>({
 	items,
 	kindLabel,
@@ -201,9 +205,11 @@ export function ActorTable<T extends ActorRow>({
 						header: 'Activity (7d)',
 						className: 'w-32 whitespace-nowrap',
 						render: (row) => {
-							const trend = usage.get(row.id)?.trend;
-							return trend?.some((v) => v > 0) ? (
-								<SparklineChart data={trend} className="text-primary" />
+							const u = usage.get(row.id);
+							// Missing from the top-50 aggregate: unknown, not idle.
+							if (!u) return <span aria-hidden>—</span>;
+							return u.trend.some((v) => v > 0) ? (
+								<SparklineChart data={u.trend} className="text-primary" />
 							) : (
 								<span className="text-muted-foreground text-xs">idle</span>
 							);
@@ -213,31 +219,37 @@ export function ActorTable<T extends ActorRow>({
 						key: 'executions',
 						header: 'Executions',
 						className: 'w-28 text-right',
-						render: (row) => (
-							<span className="font-mono text-xs tabular-nums">
-								{(usage.get(row.id)?.total ?? 0).toLocaleString()}
-							</span>
-						),
+						render: (row) => {
+							const u = usage.get(row.id);
+							if (!u) return <span aria-hidden>—</span>;
+							return (
+								<span className="font-mono text-xs tabular-nums">
+									{u.total.toLocaleString()}
+								</span>
+							);
+						},
 					},
 					{
 						key: 'success',
 						header: 'Success',
 						className: 'w-24 text-right',
-						render: (row) => (
-							<span className="text-muted-foreground font-mono text-xs tabular-nums">
-								{successShare(usage.get(row.id))}
-							</span>
-						),
+						render: (row) => {
+							const u = usage.get(row.id);
+							return (
+								<span className="text-muted-foreground font-mono text-xs tabular-nums">
+									{u ? successShare(u.success, u.total) : '—'}
+								</span>
+							);
+						},
 					},
 				] satisfies Column<T>[])
-			: ([
-					{
-						key: 'approvedAt',
-						header: 'Approved',
-						className: 'w-32',
-						render: (row) => timeCell(row.approvedAt),
-					},
-				] satisfies Column<T>[])),
+			: []),
+		{
+			key: 'approvedAt',
+			header: 'Approved',
+			className: 'w-32',
+			render: (row) => timeCell(row.approvedAt),
+		},
 		{
 			key: 'createdAt',
 			header: 'Registered',
@@ -281,7 +293,8 @@ export function ActorTable<T extends ActorRow>({
 							<ActorStatusBadge status={row.status} />
 							{u && u.total > 0 && (
 								<span className="text-muted-foreground font-mono text-[11px] tabular-nums">
-									{u.total.toLocaleString()} runs · {successShare(u)} ok
+									{u.total.toLocaleString()} runs ·{' '}
+									{successShare(u.success, u.total)} ok
 								</span>
 							)}
 							<span className="text-muted-foreground text-[11px]">

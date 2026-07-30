@@ -63,9 +63,9 @@ test('open the agent detail page and approve from it', async ({ page }) => {
 	await expect(page.getByRole('heading', { name: 'release-notes-bot' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Bound toolkits' })).toBeVisible();
 
-	// Approve from the detail page → status badge flips to Active.
+	// Approve from the detail page → the identity header's badge flips to Active.
 	await page.getByRole('button', { name: 'Approve release-notes-bot' }).click();
-	await expect(page.getByText('Active', { exact: true }).first()).toBeVisible();
+	await expect(page.getByTestId('detail-status-badge')).toHaveText('Active');
 
 	// Back to the list works.
 	await page.getByTestId('back-button').click();

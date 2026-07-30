@@ -64,7 +64,9 @@ export function InitialScopesField({ selected, onChange, idPrefix }: InitialScop
 				type="button"
 				className="text-foreground hover:bg-accent/40 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
 				aria-expanded={open}
-				aria-controls={bodyId}
+				// Only reference the body while it's mounted — a dangling
+				// aria-controls id is an a11y smell when collapsed.
+				aria-controls={open ? bodyId : undefined}
 				onClick={() => setOpen((v) => !v)}
 			>
 				<span>

@@ -53,6 +53,7 @@ import {
 	useDisableAgent,
 	useEnableAgent,
 	useArchiveAgent,
+	AgentsApiError,
 	STATUS_DOT,
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
@@ -67,11 +68,12 @@ import {
 	type PendingConfirm,
 } from '@/modules/agents/components/LifecycleDialogs';
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
+import { MetaItem } from '@/modules/agents/components/detail/shared';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
 type DetailTab = (typeof DETAIL_TABS)[number];
@@ -91,18 +93,6 @@ function isDetailTab(value: string | null): value is DetailTab {
 
 const tabId = (tab: string) => `agent-tab-${tab}`;
 const panelId = (tab: string) => `agent-panel-${tab}`;
-
-/** A compact label/value pair used in the attribution meta grid. */
-function MetaItem({ label, value }: { label: string; value: React.ReactNode }) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-muted-foreground/70 text-[10px] tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{value}</dd>
-		</div>
-	);
-}
 
 export default function AgentDetailPage() {
 	const { agentId } = useParams<{ agentId: string }>();
@@ -126,6 +116,9 @@ export default function AgentDetailPage() {
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
 
 	function setTab(tab: string) {
+		// Pushed (not replaced) so the browser back button walks tabs — same
+		// contract as the toolkit console; the back link below is static for
+		// exactly that reason.
 		setSearchParams(
 			(prev) => {
 				const next = new URLSearchParams(prev);
@@ -133,7 +126,7 @@ export default function AgentDetailPage() {
 				else next.set('tab', tab);
 				return next;
 			},
-			{ replace: true },
+			{ replace: false },
 		);
 	}
 
@@ -145,7 +138,25 @@ export default function AgentDetailPage() {
 		);
 	}
 
-	// 404 / unknown id → honest not-found, not a fake agent.
+	// Only a 404 (or a missing route param) means "no such agent" — anything
+	// else (403, 500, network) is a load failure and must not masquerade as
+	// not-found.
+	const errorStatus = agentQuery.error instanceof AgentsApiError ? agentQuery.error.status : null;
+	if (agentQuery.error && errorStatus !== 404) {
+		return (
+			<PageShell>
+				<PageHeader
+					title="Couldn't load agent"
+					subtitle={
+						errorStatus === 403
+							? 'You do not have permission to view this agent.'
+							: 'Something went wrong while loading this agent. Try again.'
+					}
+				/>
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
+			</PageShell>
+		);
+	}
 	if (agentQuery.error || !agentQuery.data) {
 		return (
 			<PageShell>
@@ -153,7 +164,7 @@ export default function AgentDetailPage() {
 					title="Agent not found"
 					subtitle={id ? `No agent with id ${id}.` : 'Missing agent id.'}
 				/>
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 			</PageShell>
 		);
 	}
@@ -172,18 +183,19 @@ export default function AgentDetailPage() {
 		enable.isPending ||
 		archive.isPending;
 
-	/** Which specific action is in flight (drives the per-button spinner). */
+	/**
+	 * Which specific header action is in flight (drives the per-button
+	 * spinner). Only constructive verbs render in the header — disable /
+	 * archive run behind the Settings danger zone's confirm dialogs, which
+	 * own their own pending state.
+	 */
 	const pendingAction: AgentAction | null = approve.isPending
 		? 'approve'
 		: deny.isPending
 			? 'deny'
-			: disable.isPending
-				? 'disable'
-				: enable.isPending
-					? 'enable'
-					: archive.isPending
-						? 'archive'
-						: null;
+			: enable.isPending
+				? 'enable'
+				: null;
 
 	function handleAction(action: AgentAction) {
 		switch (action) {
@@ -215,9 +227,9 @@ export default function AgentDetailPage() {
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 				<AppLink
-					href={ROUTES.monitor}
+					href={ROUTE_PATHS.monitorExecutions({ actorId: agent.id, actorType: 'agent' })}
 					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium transition-colors"
 				>
 					<ActivityIcon className="h-3.5 w-3.5" /> Open Monitor
@@ -243,7 +255,10 @@ export default function AgentDetailPage() {
 								<span className="text-foreground text-lg font-semibold tracking-tight">
 									{agent.name}
 								</span>
-								<ActorStatusBadge status={agent.status} />
+								<ActorStatusBadge
+									status={agent.status}
+									data-testid="detail-status-badge"
+								/>
 							</div>
 							<div className="mt-1 flex items-center gap-1.5">
 								<code className="text-muted-foreground/80 truncate font-mono text-[11px]">
@@ -293,14 +308,15 @@ export default function AgentDetailPage() {
 							</p>
 						</div>
 					)}
-
-					<KpiStrip
-						usage={usage.data}
-						lastActivityAt={lastActivityAt}
-						toolkitCount={toolkits.data?.length}
-					/>
 				</CardBody>
 			</Card>
+
+			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
+			<KpiStrip
+				usage={usage.data}
+				lastActivityAt={lastActivityAt}
+				toolkitCount={toolkits.data?.length}
+			/>
 
 			<TabNav<DetailTab>
 				options={TAB_OPTIONS}
@@ -315,7 +331,8 @@ export default function AgentDetailPage() {
 				role="tabpanel"
 				id={panelId(activeTab)}
 				aria-labelledby={tabId(activeTab)}
-				className="space-y-4"
+				tabIndex={0}
+				className="space-y-4 focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && (
 					<>

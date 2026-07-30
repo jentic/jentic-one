@@ -96,10 +96,11 @@ export {
 	useDismissable,
 	useViewportClamp,
 	MenuPanel,
+	AnchoredMenuPanel,
 	MenuSeparator,
 	menuItemClass,
 } from '@/shared/ui/Menu';
-export type { MenuPanelProps } from '@/shared/ui/Menu';
+export type { MenuPanelProps, AnchoredMenuPanelProps } from '@/shared/ui/Menu';
 
 export { Markdown } from '@/shared/ui/Markdown';
 
