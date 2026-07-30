@@ -54,7 +54,7 @@ func (a *App) offerWorkspaceGrants(ctx context.Context, desc localagent.Descript
 			fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("  Skipping %s — %s.", ws, v.Reason)))
 			continue
 		}
-		if err := a.grantDir(ctx, cfg, agentID, agentUser, ws); err != nil {
+		if err := a.grantDir(ctx, cfg, agentUser, ws); err != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("could not grant %s: %v", ws, err))
 			continue
 		}

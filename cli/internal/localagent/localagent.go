@@ -492,6 +492,17 @@ func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
 }
 
+// RemoveAgentProfileCmd deletes a single profile directory (key, tokens, metadata)
+// from the shared agent account's home — <configDir>/profiles/<name>. It is the
+// per-profile counterpart of RemoveAgentIdentityCmd, used by `jentic reset
+// <profile>` when the named profile is agent-owned: the files are owned by the
+// agent uid, so removal is privileged. The account itself, its grants, and its
+// other profiles are untouched.
+func RemoveAgentProfileCmd(configDir, name string) *exec.Cmd {
+	dir := filepath.Join(configDir, "profiles", name)
+	return exec.Command("sudo", "rm", "-rf", dir) //nolint:gosec // configDir is config-recorded; name is a discovered profile dir name.
+}
+
 // sudoersPath is the shared drop-in that holds the agents' passwordless-launch
 // rules, one line per agent user. It is installed and removed only ever through
 // `visudo -cf`-validated writes so a malformed edit can never brick sudo.

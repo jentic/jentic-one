@@ -59,16 +59,23 @@ func ConfinementAvailable() (bool, string) {
 // dir (or the agent's home), and exec the agent binary wrapped in the platform
 // confinement mechanism. operatorHome + grantedDirs drive the deny/re-allow set;
 // agentArgs are the operator's `--`-forwarded arguments, appended verbatim (each
-// shell-quoted) to the agent's argv. The caller wires os.Stdin/out/err. Callers
-// MUST have checked ConfinementAvailable first — on an unsupported platform
-// confineExec adds no wrapper, so reaching here unconfined is a programming error,
-// not a security posture.
-func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome string, grantedDirs, agentArgs []string) *exec.Cmd {
+// shell-quoted) to the agent's argv. profile, when non-empty, is exported as
+// JENTIC_PROFILE inside the confined session so the agent (and any `jentic`
+// command it runs) acts on the operator's checked-out agent profile without a
+// flag. The caller wires os.Stdin/out/err. Callers MUST have checked
+// ConfinementAvailable first — on an unsupported platform confineExec adds no
+// wrapper, so reaching here unconfined is a programming error, not a security
+// posture.
+func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome, profile string, grantedDirs, agentArgs []string) *exec.Cmd {
 	cd := `cd "$HOME"`
 	if dir != "" {
 		cd = "cd " + shellQuote(dir)
 	}
-	inner := cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
+	prefix := ""
+	if profile != "" {
+		prefix = "export JENTIC_PROFILE=" + shellQuote(profile) + " && "
+	}
+	inner := prefix + cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
 	return agentCmdContext(ctx, agentUser, inner)
 }
 

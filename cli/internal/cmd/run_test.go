@@ -137,8 +137,8 @@ func TestRunListGrantsEmpty(t *testing.T) {
 func TestRunListGrantsShowsRecorded(t *testing.T) {
 	app := testApp(t)
 	cfg, _ := config.Load(app.Paths)
-	cfg.SetLocalAgent("claude", config.LocalAgent{User: "x-local-agent"})
-	cfg.AddGrantedDir("claude", "/Users/Shared/x-local-agent/work")
+	cfg.SetAgentAccount(config.AgentAccount{User: "x-local-agent", AccountCreated: true, Enabled: true})
+	cfg.AddGrantedDir("/Users/Shared/x-local-agent/work")
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save: %v", err)
 	}

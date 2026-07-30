@@ -15,6 +15,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
+	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +26,7 @@ type runOptions struct {
 	noAllowDir   bool
 	yes          bool
 	agentUser    string
+	profile      string
 	listGrants   bool
 	grant        string
 	revoke       string
@@ -83,6 +85,8 @@ func newRunCmd(app *App) *cobra.Command {
 		"assume the safe default for every prompt (never grants a flagged-dangerous dir)")
 	cmd.Flags().StringVar(&opts.agentUser, "agent-user", "",
 		"override the derived <operator>-local-agent account")
+	cmd.Flags().StringVar(&opts.profile, "profile", "",
+		"launch with this agent profile checked out for the session (overrides the checked-out default)")
 	cmd.Flags().BoolVar(&opts.listGrants, "list-grants", false,
 		"list the directories the agent has been granted, then exit")
 	cmd.Flags().StringVar(&opts.grant, "grant", "",
@@ -138,20 +142,32 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return err
 	}
 
-	// 1. Resolve the agent user (config entry, --agent-user, or the default).
-	entry, hasEntry := cfg.LocalAgent(agentID)
-	agentUser := resolveAgentUser(opts.agentUser, entry)
+	// 1. Resolve the shared agent account (config record, --agent-user, or the
+	// default). The binary is always the descriptor's — <agent> selects the
+	// binary, never the account (there is one account for every agent).
+	acct, hasAcct := cfg.AgentAccount()
+	agentUser := resolveAgentUser(opts.agentUser, acct)
 	binary := desc.Binary
-	if hasEntry && entry.Binary != "" {
-		binary = entry.Binary
+
+	// Without a provisioned, enabled agent account there is no Unix user to
+	// isolate into. The grant/account management shortcuts have nothing to act on,
+	// and a launch simply runs the agent binary directly as the operator — the CLI
+	// behaves exactly as it does for someone who never enabled isolation. The
+	// --agent-user override is the one way to still target an account explicitly.
+	if !cfg.HasAgentUser() && opts.agentUser == "" {
+		if opts.listGrants || opts.grant != "" || opts.revoke != "" {
+			return errors.New("no agent account is set up, so there are no directory grants to manage — " +
+				"run `jentic bootstrap` to create the isolated agent user first")
+		}
+		return a.runSameUser(ctx, cfg, desc, opts, posArgs, agentArgs)
 	}
 
 	// Management shortcuts: list/revoke operate on the recorded grants.
 	if opts.listGrants {
-		return a.runListGrants(agentID, agentUser, entry, hasEntry)
+		return a.runListGrants(agentID, agentUser, acct, hasAcct)
 	}
 	if opts.revoke != "" {
-		return a.runRevoke(ctx, cfg, agentID, agentUser, opts.revoke)
+		return a.runRevoke(ctx, cfg, agentUser, opts.revoke)
 	}
 
 	if !localagent.UserExists(ctx, agentUser) {
@@ -169,14 +185,6 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	// prompt appears (subsequent sudo calls reuse the cached credential).
 	if err := a.ensureCanRunAsAgent(ctx, agentUser); err != nil {
 		return err
-	}
-
-	// Record/refresh the entry so subsequent runs never re-derive the account.
-	if !hasEntry {
-		cfg.SetLocalAgent(agentID, config.LocalAgent{User: agentUser, Binary: binary})
-		if saveErr := cfg.Save(a.Paths); saveErr != nil {
-			return saveErr
-		}
 	}
 
 	// Management shortcut: grant a directory and exit (mirrors --revoke). It
@@ -220,18 +228,97 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return err
 	}
 
+	// 3a. Resolve the profile to check out for this session: --profile if given,
+	// else the agent account's own checked-out default. It is injected as
+	// JENTIC_PROFILE so the launched agent (and any `jentic` it runs) acts on the
+	// right profile without the operator passing a flag inside the session.
+	sessionProfile, err := a.resolveSessionProfile(opts.profile, acct)
+	if err != nil {
+		return err
+	}
+
 	// 4. Launch (confined — see launchAgent for the error-closed contract).
-	return a.launchAgent(ctx, cfg, agentID, agentUser, binary, dir, agentArgs)
+	return a.launchAgent(ctx, acct, agentUser, binary, dir, sessionProfile, agentArgs)
+}
+
+// resolveSessionProfile picks the profile injected as JENTIC_PROFILE into the
+// confined session: the --profile override if given (validated against the agent
+// home's profile store), else the account's own checked-out profile (the agent
+// home's default_profile, which register/bootstrap set on check-out). Returns ""
+// when nothing is checked out and no override was given, so the agent falls back
+// to its own default.
+func (a *App) resolveSessionProfile(flag string, acct config.AgentAccount) (string, error) {
+	if acct.ConfigDir == "" {
+		return flag, nil
+	}
+	agentPaths := config.Paths{Root: acct.ConfigDir}
+	if flag != "" {
+		names, err := profile.List(agentPaths)
+		if err != nil {
+			return "", err
+		}
+		for _, n := range names {
+			if n == flag {
+				return flag, nil
+			}
+		}
+		return "", fmt.Errorf("profile %q is not registered for the agent account; "+
+			"run `jentic profile list` to see the agent's profiles", flag)
+	}
+	agentCfg, err := config.Load(agentPaths)
+	if err != nil {
+		return "", err
+	}
+	return agentCfg.DefaultProfile, nil
+}
+
+// runSameUser launches the agent binary directly as the operator, with no Unix
+// user, no confinement, and no ACL grants. This is the path for an operator who
+// never enabled agent-user isolation (HasAgentUser is false): `jentic run` is
+// then just a convenient launcher that resolves the binary and injects the
+// operator's active profile as JENTIC_PROFILE. The working directory is the path
+// argument if given, else the current directory (there is nothing to grant — the
+// agent already runs with the operator's own filesystem access).
+func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
+	binary, err := exec.LookPath(desc.Binary)
+	if err != nil {
+		return fmt.Errorf("%s is not installed or not on your PATH; install it, then re-run "+
+			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary)
+	}
+
+	dir := ""
+	if !opts.home && len(posArgs) > 1 {
+		abs, aerr := filepath.Abs(posArgs[1])
+		if aerr != nil {
+			return aerr
+		}
+		dir = filepath.Clean(abs)
+	}
+
+	c := exec.CommandContext(ctx, binary, agentArgs...)
+	c.Dir = dir
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// The operator's own active profile (flag < JENTIC_PROFILE < config default)
+	// carries into the session so the agent's `jentic` calls act on it.
+	c.Env = append(os.Environ(), config.ProfileEnv+"="+cfg.ResolvedProfileName(opts.profile))
+	if err := c.Run(); err != nil {
+		var exit interface{ ExitCode() int }
+		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
+			return &exitCodeError{code: exit.ExitCode()}
+		}
+		return fmt.Errorf("launch %s: %w", desc.Binary, err)
+	}
+	return nil
 }
 
 // resolveAgentUser applies the precedence: --agent-user flag, then the recorded
-// config entry, then the <operator>-local-agent default.
-func resolveAgentUser(flag string, entry config.LocalAgent) string {
+// account, then the <operator>-local-agent default.
+func resolveAgentUser(flag string, acct config.AgentAccount) string {
 	if flag != "" {
 		return flag
 	}
-	if entry.User != "" {
-		return entry.User
+	if acct.User != "" {
+		return acct.User
 	}
 	operator := "user"
 	if u, err := user.Current(); err == nil && u.Username != "" {
@@ -428,7 +515,7 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 		return "", nil
 	}
 
-	if err := a.grantDir(ctx, cfg, agentID, agentUser, abs); err != nil {
+	if err := a.grantDir(ctx, cfg, agentUser, abs); err != nil {
 		return "", err
 	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("  Granted (persists across sessions; `jentic run "+agentID+" --list-grants` to review)."))
@@ -445,7 +532,7 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 // process-confinement layer (see localagent/confine.go), not by an ACL deny sweep.
 // All grants are scoped to the agent user and never touch the operator's own
 // permissions.
-func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, abs string) error {
+func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
 	home := localagent.OperatorHome()
 
 	if home != "" && localagent.IsUnderHome(home, abs) {
@@ -462,7 +549,7 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentID, age
 	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
 		return err
 	}
-	if cfg.AddGrantedDir(agentID, abs) {
+	if cfg.AddGrantedDir(abs) {
 		if err := cfg.Save(a.Paths); err != nil {
 			return err
 		}
@@ -634,7 +721,7 @@ var errCancelled = errors.New("cancelled")
 // the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.
-func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, binary, dir string, agentArgs []string) error {
+func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir, sessionProfile string, agentArgs []string) error {
 	if ok, reason := localagent.ConfinementAvailable(); !ok {
 		return fmt.Errorf("fully locked-down agent sessions aren't available on this machine (%s).\n"+
 			"  jentic run won't start an unconfined session, because that would expose the operator's\n"+
@@ -643,12 +730,8 @@ func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, 
 			"docs/security/local-agent/sandbox-exec-plan.md", reason)
 	}
 
-	var grantedDirs []string
-	var agentHome string
-	if entry, ok := cfg.LocalAgent(agentID); ok {
-		grantedDirs = entry.GrantedDirs
-		agentHome = entry.HomeDir
-	}
+	grantedDirs := acct.GrantedDirs
+	agentHome := acct.HomeDir
 	if agentHome == "" {
 		// Fall back to the conventional default so the sandbox re-allows the
 		// agent's own home even if config predates HomeDir being recorded.
@@ -660,7 +743,7 @@ func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, 
 		where = "the agent's home"
 	}
 	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
-	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, grantedDirs, agentArgs)
+	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, sessionProfile, grantedDirs, agentArgs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }
@@ -674,15 +757,15 @@ func (a *App) launchAgent(ctx context.Context, cfg *config.FileConfig, agentID, 
 
 // ── management: --list-grants / --revoke ─────────────────────────────────────
 
-func (a *App) runListGrants(agentID, agentUser string, entry config.LocalAgent, hasEntry bool) error {
+func (a *App) runListGrants(agentID, agentUser string, acct config.AgentAccount, hasAcct bool) error {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Directory grants"))
 	fmt.Fprintln(a.Out, "  "+theme.Field("agent", agentID))
 	fmt.Fprintln(a.Out, "  "+theme.Field("user", agentUser))
-	if !hasEntry || len(entry.GrantedDirs) == 0 {
+	if !hasAcct || len(acct.GrantedDirs) == 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no directories granted"))
 		return nil
 	}
-	for _, d := range entry.GrantedDirs {
+	for _, d := range acct.GrantedDirs {
 		danger := localagent.DangerReason(d, localagent.OperatorHome())
 		line := "  " + theme.Field("dir", d)
 		if danger != "" {
@@ -690,7 +773,7 @@ func (a *App) runListGrants(agentID, agentUser string, entry config.LocalAgent, 
 		}
 		fmt.Fprintln(a.Out, line)
 	}
-	a.printRevokeHint(agentID)
+	a.printRevokeHint()
 	return nil
 }
 
@@ -724,14 +807,14 @@ func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 		fmt.Fprintln(a.Out, theme.Dim.Render("Not granted."))
 		return nil
 	}
-	if err := a.grantDir(ctx, cfg, agentID, agentUser, abs); err != nil {
+	if err := a.grantDir(ctx, cfg, agentUser, abs); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Granted (persists across sessions; `jentic run %s --list-grants` to review).", agentID))
 	return nil
 }
 
-func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentID, agentUser, dir string) error {
+func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentUser, dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -751,7 +834,7 @@ func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentID, ag
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"  (some entries had no matching grant to remove — that's expected; continuing)"))
 	}
-	if cfg.RemoveGrantedDir(agentID, abs) {
+	if cfg.RemoveGrantedDir(abs) {
 		if err := cfg.Save(a.Paths); err != nil {
 			return err
 		}
