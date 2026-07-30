@@ -344,6 +344,7 @@ async def test_update_sigv4_rotates_keypair(
     before = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
     assert isinstance(before.details, Sigv4Redacted)
     old_preview = before.details.secret_preview
+    old_updated_at = before.updated_at
 
     updated = await svc.update(
         created.credential_id,
@@ -357,6 +358,11 @@ async def test_update_sigv4_rotates_keypair(
     assert isinstance(updated.details, Sigv4Redacted)
     assert updated.details.access_key_id == "AKIANEWKEY000000"
     assert updated.details.secret_preview != old_preview
+    # A key rotation is a real mutation: updated_at must advance (honest signal,
+    # #881) and it must leave an audit trail — both are gated on ``changed``.
+    assert old_updated_at is not None
+    assert updated.updated_at is not None
+    assert updated.updated_at > old_updated_at
 
 
 async def test_update_sigv4_half_keypair_rejected(

@@ -132,6 +132,8 @@ export interface CredentialDetails {
 	aws_region?: string;
 	/** sigv4: signing service (e.g. aoss, execute-api). */
 	aws_service?: string;
+	/** sigv4: whether a session token is currently stored (never its value). */
+	has_session_token?: boolean;
 	/** A redacted hint (e.g. last-N chars) — never the secret. */
 	hint?: string;
 	[key: string]: unknown;

@@ -55,9 +55,19 @@ class SigV4SigningRunner(UpstreamRunner):
             body=request.body,
             material=request.signing,
         )
-        # Merge signed headers over the outbound set; drop the now-consumed
-        # signing material so it never travels further or lands in a repr.
-        return replace(request, headers={**request.headers, **sig_headers}, signing=None)
+        # Merge signed headers over the outbound set, matching header names
+        # case-insensitively: a forwarded ``Authorization`` (capital A) must be
+        # *replaced* by our ``authorization``, not duplicated into two headers
+        # that AWS would reject. Then drop the now-consumed signing material so it
+        # never travels further or lands in a repr.
+        signed_lower = {name.lower() for name in sig_headers}
+        merged = {
+            name: value
+            for name, value in request.headers.items()
+            if name.lower() not in signed_lower
+        }
+        merged.update(sig_headers)
+        return replace(request, headers=merged, signing=None)
 
     async def run(self, request: RunnerRequest) -> RunnerResult:
         return await self._inner.run(self._signed(request))
@@ -65,6 +75,13 @@ class SigV4SigningRunner(UpstreamRunner):
     @contextlib.asynccontextmanager
     async def stream(self, request: RunnerRequest) -> AsyncIterator[StreamingResult]:
         inner = self._inner
-        assert isinstance(inner, StreamingUpstreamRunner)
+        if not isinstance(inner, StreamingUpstreamRunner):
+            # Control-flow guard, not a debug check: an explicit raise survives
+            # ``python -O`` (which strips ``assert``). Reaching here means the
+            # runner chain was composed with a non-streaming inner runner.
+            raise TypeError(
+                f"{type(inner).__name__} does not support streaming; "
+                "SigV4SigningRunner.stream requires a StreamingUpstreamRunner"
+            )
         async with inner.stream(self._signed(request)) as result:
             yield result

@@ -12,6 +12,7 @@ import {
 	seedServerVars,
 	validateCreate,
 	validateServerVars,
+	validateUpdate,
 } from '@/shared/credentials/lib/formBody';
 
 describe('buildCreateBody', () => {
@@ -206,6 +207,28 @@ describe('buildUpdateBody', () => {
 		expect(both.secret_access_key).toBe('newsecret');
 	});
 
+	it('sends clear_session_token when the clear flag is set (no new token)', () => {
+		const body = buildUpdateBody(
+			CredentialType.SIGV4,
+			{ ...EMPTY_FORM, name: 'K', clearSessionToken: true },
+			'K',
+		) as Record<string, unknown>;
+		expect(body.clear_session_token).toBe(true);
+		expect(body.session_token).toBeUndefined();
+	});
+
+	it('prefers a new session token over the clear flag', () => {
+		// A replacement value and a clear request are mutually exclusive; the
+		// replacement wins so we never both set and delete in one request.
+		const body = buildUpdateBody(
+			CredentialType.SIGV4,
+			{ ...EMPTY_FORM, name: 'K', sessionToken: 'fresh-tok', clearSessionToken: true },
+			'K',
+		) as Record<string, unknown>;
+		expect(body.session_token).toBe('fresh-tok');
+		expect(body.clear_session_token).toBeUndefined();
+	});
+
 	it('omits field_name/location for api_key (immutable after create, #589)', () => {
 		const body = buildUpdateBody(
 			CredentialType.API_KEY,
@@ -354,6 +377,39 @@ describe('validateCreate', () => {
 			authorizeUrl: '',
 		});
 		expect(errors.authorizeUrl).toBeUndefined();
+	});
+});
+
+describe('validateUpdate', () => {
+	it('flags a half-filled sigv4 keypair instead of silently dropping it', () => {
+		const onlyKey = validateUpdate(CredentialType.SIGV4, {
+			...EMPTY_FORM,
+			accessKeyId: 'AKIANEW',
+		});
+		expect(onlyKey.secretAccessKey).toBeTruthy();
+
+		const onlySecret = validateUpdate(CredentialType.SIGV4, {
+			...EMPTY_FORM,
+			secretAccessKey: 'shh',
+		});
+		expect(onlySecret.accessKeyId).toBeTruthy();
+	});
+
+	it('accepts both halves or neither', () => {
+		expect(
+			validateUpdate(CredentialType.SIGV4, {
+				...EMPTY_FORM,
+				accessKeyId: 'AKIANEW',
+				secretAccessKey: 'shh',
+			}),
+		).toEqual({});
+		expect(validateUpdate(CredentialType.SIGV4, { ...EMPTY_FORM })).toEqual({});
+	});
+
+	it('imposes no keypair rule on non-sigv4 types', () => {
+		expect(validateUpdate(CredentialType.BEARER_TOKEN, { ...EMPTY_FORM, token: 'x' })).toEqual(
+			{},
+		);
 	});
 });
 

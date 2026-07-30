@@ -187,10 +187,13 @@ export function buildUpdateBody(
 			return { type, ...namePatch, ...svPatch };
 		case CredentialType.SIGV4: {
 			// Key rotation must send both halves together; the access key id
-			// alone is meaningless without its secret (backend rejects it).
+			// alone is meaningless without its secret (backend rejects it, and
+			// `validateUpdate` surfaces that rule before we get here).
 			const newAccessKey = state.accessKeyId.trim();
 			const newSecret = secret(state.secretAccessKey);
 			const rotatingKeypair = Boolean(newAccessKey) && Boolean(newSecret);
+			// A fresh session-token value takes precedence over the clear flag.
+			const newSession = secret(state.sessionToken);
 			return {
 				type,
 				...namePatch,
@@ -198,7 +201,10 @@ export function buildUpdateBody(
 				...(rotatingKeypair
 					? { access_key_id: newAccessKey, secret_access_key: newSecret }
 					: {}),
-				session_token: secret(state.sessionToken),
+				session_token: newSession,
+				// Drop an expired STS token without rotating the keypair. Only sent
+				// when set (and never alongside a replacement token value).
+				...(state.clearSessionToken && !newSession ? { clear_session_token: true } : {}),
 				aws_region: state.awsRegion.trim() || undefined,
 				aws_service: state.awsService.trim() || undefined,
 			};
@@ -260,6 +266,31 @@ export function validateCreate(
 			if (!state.awsRegion.trim()) errors.awsRegion = 'Region is required.';
 			if (!state.awsService.trim()) errors.awsService = 'Service is required.';
 			break;
+	}
+	return errors;
+}
+
+/**
+ * Validate an edit before submit. Unlike create, every field is optional (a
+ * blank secret means "keep current"), so this only enforces cross-field rules
+ * that would otherwise fail opaquely at the backend. Today that is the sigv4
+ * keypair-atomicity rule: an access key id and its secret rotate together, so a
+ * half-filled pair is surfaced as an inline error rather than silently dropped
+ * (the backend rejects it with a 400 either way).
+ */
+export function validateUpdate(
+	type: CredentialType,
+	state: CredentialFormState,
+): Partial<Record<keyof CredentialFormState, string>> {
+	const errors: Partial<Record<keyof CredentialFormState, string>> = {};
+	if (type === CredentialType.SIGV4) {
+		const hasAccessKey = Boolean(state.accessKeyId.trim());
+		const hasSecret = Boolean(state.secretAccessKey.trim());
+		if (hasAccessKey !== hasSecret) {
+			const message = 'Rotate the access key ID and secret together, or leave both blank.';
+			if (hasAccessKey) errors.secretAccessKey = message;
+			else errors.accessKeyId = message;
+		}
 	}
 	return errors;
 }

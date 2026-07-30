@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { CopyButton, Input, Label, Select, ScopePicker } from '@/shared/ui';
+import { Checkbox, CopyButton, Input, Label, Select, ScopePicker } from '@/shared/ui';
 import {
 	CredentialType,
 	KEY_LOCATIONS,
@@ -40,6 +40,12 @@ export interface CredentialFormState {
 	accessKeyId: string;
 	secretAccessKey: string;
 	sessionToken: string;
+	/**
+	 * Edit-only: request deletion of a stored (expired) STS session token
+	 * without rotating the keypair. Maps to `clear_session_token` on the wire.
+	 * A new `sessionToken` value takes precedence over this flag.
+	 */
+	clearSessionToken: boolean;
 	awsRegion: string;
 	awsService: string;
 	/**
@@ -72,6 +78,7 @@ export const EMPTY_FORM: CredentialFormState = {
 	accessKeyId: '',
 	secretAccessKey: '',
 	sessionToken: '',
+	clearSessionToken: false,
 	awsRegion: '',
 	awsService: '',
 	serverVars: {},
@@ -114,6 +121,12 @@ interface FieldsProps {
 	 * name (a wrong binding causes upstream 401s — #589).
 	 */
 	fieldNameWarning?: string;
+	/**
+	 * sigv4 edit-only: whether the loaded credential currently stores a session
+	 * token. When true, the form offers a "Clear session token" control so an
+	 * expired STS token can be dropped without a full keypair rotation.
+	 */
+	hasStoredSessionToken?: boolean;
 }
 
 /** Scope-picker wiring lifted to the parent (owns selection + auto-select). */
@@ -143,6 +156,7 @@ export function CredentialTypeFields({
 	callbackUrl,
 	providers,
 	fieldNameWarning,
+	hasStoredSessionToken,
 }: FieldsProps) {
 	const secretHint = mode === 'edit' ? 'Leave blank to keep the current value.' : undefined;
 	// The api_key parameter binding (field name + location) is derived from the
@@ -299,9 +313,31 @@ export function CredentialTypeFields({
 						showPasswordToggle
 						autoComplete="off"
 						value={state.sessionToken}
-						onChange={(e): void => onChange({ sessionToken: e.target.value })}
+						onChange={(e): void =>
+							onChange({
+								sessionToken: e.target.value,
+								// Typing a replacement supersedes a pending clear.
+								...(e.target.value ? { clearSessionToken: false } : {}),
+							})
+						}
+						disabled={state.clearSessionToken}
 					/>
 				</Field>
+				{mode === 'edit' && hasStoredSessionToken && (
+					<Checkbox
+						checked={state.clearSessionToken}
+						onChange={(checked): void =>
+							onChange({
+								clearSessionToken: checked,
+								// Clearing and rotating the token are mutually exclusive.
+								...(checked ? { sessionToken: '' } : {}),
+							})
+						}
+						size="sm"
+					>
+						Clear the stored session token (for an expired STS token)
+					</Checkbox>
+				)}
 				<Field label="Region" required={mode === 'create'} error={errors.awsRegion}>
 					<Input
 						value={state.awsRegion}

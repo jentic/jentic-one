@@ -17,7 +17,7 @@ import {
 	EMPTY_FORM,
 	type CredentialFormState,
 } from '@/shared/credentials/components/CredentialTypeFields';
-import { buildUpdateBody } from '@/shared/credentials/lib/formBody';
+import { buildUpdateBody, validateUpdate } from '@/shared/credentials/lib/formBody';
 
 interface EditCredentialSheetProps {
 	credentialId: string | null;
@@ -58,6 +58,12 @@ export function EditCredentialSheet({
 	const [initialState, setInitialState] = useState<CredentialFormState>(EMPTY_FORM);
 
 	const originalName = cred?.name ?? '';
+	// sigv4: does the stored credential currently carry a session token? Drives
+	// the "Clear session token" affordance in the edit form.
+	const hasStoredSessionToken = useMemo(
+		() => Boolean(cred && credentialDetails(cred).has_session_token),
+		[cred],
+	);
 
 	// Prefill non-secret fields whenever a (different) credential loads.
 	useEffect(() => {
@@ -91,6 +97,12 @@ export function EditCredentialSheet({
 	const handleSubmit = (e: React.FormEvent): void => {
 		e.preventDefault();
 		if (!cred || !credentialId || !dirty) return;
+		const validation = validateUpdate(cred.type, state);
+		if (Object.keys(validation).length > 0) {
+			setErrors(validation);
+			return;
+		}
+		setErrors({});
 		updateMutation.mutate(buildUpdateBody(cred.type, state, originalName), {
 			onSuccess: () => {
 				toast({ title: 'Credential updated', variant: 'success' });
@@ -192,6 +204,7 @@ export function EditCredentialSheet({
 									errors={errors}
 									mode="edit"
 									providers={providersQuery.data?.providers}
+									hasStoredSessionToken={hasStoredSessionToken}
 								/>
 							</div>
 
@@ -269,6 +282,15 @@ function formStatesEqual(a: CredentialFormState, b: CredentialFormState): boolea
 		'tokenUrl',
 		'authorizeUrl',
 		'scopes',
+		// sigv4: access key id / region / service are editable, plus the secret,
+		// session token, and the clear-session-token flag. Omitting these left the
+		// Save button disabled after a sigv4-only edit.
+		'accessKeyId',
+		'secretAccessKey',
+		'sessionToken',
+		'clearSessionToken',
+		'awsRegion',
+		'awsService',
 	];
 	for (const k of keys) {
 		if (a[k] !== b[k]) return false;

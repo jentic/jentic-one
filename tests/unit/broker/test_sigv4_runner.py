@@ -130,6 +130,50 @@ async def test_capabilities_forwarded_from_inner() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_forwarded_authorization_is_replaced_case_insensitively() -> None:
+    # A stray capital-A ``Authorization`` on the outbound set must be replaced by
+    # our signed ``authorization`` — not left to produce two auth headers that
+    # AWS would reject with SignatureDoesNotMatch.
+    inner = _CapturingRunner()
+    runner = SigV4SigningRunner(inner)
+    req = RunnerRequest(
+        method="GET",
+        url="https://x.aoss.amazonaws.com/",
+        headers={"Authorization": "Bearer stale", "accept": "application/json"},
+        signing=_MATERIAL,
+    )
+
+    await runner.run(req)
+
+    assert inner.seen is not None
+    auth_headers = [k for k in inner.seen.headers if k.lower() == "authorization"]
+    assert auth_headers == ["authorization"]
+    assert inner.seen.headers["authorization"].startswith("AWS4-HMAC-SHA256 ")
+    assert inner.seen.headers["accept"] == "application/json"
+
+
+class _NonStreamingRunner:
+    """A runner that implements ``run`` but not ``stream``."""
+
+    def capabilities(self) -> object:
+        return HTTP_RUNNER_CAPABILITIES
+
+    async def run(self, request: RunnerRequest) -> RunnerResult:
+        return RunnerResult(status_code=200, body=b"", headers={}, content_type=None, duration_ms=1)
+
+
+@pytest.mark.asyncio()
+async def test_stream_raises_when_inner_not_streaming() -> None:
+    # The guard must be a real raise (survives ``python -O``), not a bare assert.
+    runner = SigV4SigningRunner(_NonStreamingRunner())
+    req = RunnerRequest(method="GET", url="https://x.aoss.amazonaws.com/", signing=_MATERIAL)
+
+    with pytest.raises(TypeError, match="does not support streaming"):
+        async with runner.stream(req):
+            pass
+
+
+@pytest.mark.asyncio()
 async def test_stream_signs_request() -> None:
     inner = _CapturingRunner()
     runner = SigV4SigningRunner(inner)

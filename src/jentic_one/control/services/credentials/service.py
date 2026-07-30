@@ -521,6 +521,7 @@ class CredentialService:
                         region=payload.aws_region,
                         service=payload.aws_service,
                     )
+                    changed = True
 
             credential = await CredentialRepository.get_by_id(session, credential_id)
             assert credential is not None

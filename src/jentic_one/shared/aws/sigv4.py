@@ -23,13 +23,19 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, quote, urlsplit
+from posixpath import normpath
+from urllib.parse import quote, unquote, urlsplit
 
 _ALGORITHM = "AWS4-HMAC-SHA256"
 _AWS4_REQUEST = "aws4_request"
 # sha256 of the empty byte string — the payload hash for a body-less request.
 _EMPTY_PAYLOAD_HASH = hashlib.sha256(b"").hexdigest()
 _DEFAULT_PORTS = {"http": "80", "https": "443"}
+# S3 is the one service that single-encodes the canonical path and does not
+# normalise it (object keys are opaque and may legitimately contain ``.``/``..``
+# and ``//``). Every other service double-encodes and normalises. See the AWS
+# SigV4 spec, "Create a canonical request", CanonicalURI.
+_S3_SERVICES = frozenset({"s3", "s3-object-lambda"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +64,7 @@ class SigV4Material:
 
 
 def _uri_encode(value: str, *, is_path: bool) -> str:
-    """RFC 3986 encoding per the SigV4 spec.
+    """RFC 3986 percent-encoding per the SigV4 spec.
 
     Unreserved chars (``A-Za-z0-9-_.~``) are never encoded; everything else is
     percent-encoded. In the path, ``/`` is preserved as a segment separator.
@@ -67,23 +73,77 @@ def _uri_encode(value: str, *, is_path: bool) -> str:
     return quote(value, safe=safe + "-_.~")
 
 
-def _canonical_uri(path: str) -> str:
+def _normalize_path(path: str) -> str:
+    """RFC 3986 ``remove_dot_segments`` (``.``/``..``/``//``), preserving trailing ``/``.
+
+    AWS's verifier normalises the canonical path for every service except S3, so
+    the signer must too. ``posixpath.normpath`` does the segment resolution but
+    drops a trailing slash that RFC 3986 keeps: a path ending in ``/``, ``/.`` or
+    ``/..`` normalises to a directory (trailing slash), e.g. ``/foo/bar/..`` ->
+    ``/foo/``. We restore that slash to match AWS (and Java's ``URI.normalize``).
+    """
     if not path:
         return "/"
-    # ``quote`` may re-encode already-encoded octets; the broker forwards decoded
-    # paths, so encoding once here matches what httpx puts on the wire.
-    return _uri_encode(path, is_path=True)
+    normalized = normpath(path)
+    keeps_trailing_slash = path.endswith(("/", "/.", "/.."))
+    if keeps_trailing_slash and not normalized.endswith("/"):
+        normalized += "/"
+    # POSIX ``normpath`` deliberately preserves a leading ``//`` (implementation-
+    # defined per POSIX); AWS collapses it, so squeeze any leading run to one.
+    if normalized.startswith("//"):
+        normalized = "/" + normalized.lstrip("/")
+    # normpath can return "." for an empty/relative path.
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
+    return normalized
+
+
+def _canonical_uri(path: str, *, is_s3: bool) -> str:
+    """CanonicalURI for the SigV4 canonical request.
+
+    ``path`` is the **decoded** absolute path component (what ``urlsplit`` yields
+    and what AWS SDKs canonicalise from — they build both the wire request and the
+    signature from the same decoded path). For non-S3 services the path is
+    RFC 3986-normalised then URI-encoded **twice**; for S3 it is encoded **once**
+    and never normalised (object keys are opaque and ``.``/``..``/``//`` are
+    significant). Verified byte-for-byte against the official
+    ``aws-sig-v4-test-suite`` ``get-space``/``get-utf8``/``normalize-path`` vectors.
+    """
+    if not path:
+        return "/"
+    if is_s3:
+        return _uri_encode(path, is_path=True)
+    normalized = _normalize_path(path)
+    return _uri_encode(_uri_encode(normalized, is_path=True), is_path=True)
 
 
 def _canonical_query(query: str) -> str:
+    """CanonicalQueryString from the raw query string.
+
+    We split on ``&``/``=`` and ``unquote`` (never ``unquote_plus``) so a literal
+    ``+`` is signed as ``+`` — decoding ``+`` to a space (what ``parse_qsl`` does)
+    would sign a value the target never received. Each name/value is re-encoded
+    and the pairs sorted by (key, value). Verified against the official
+    ``aws-sig-v4-test-suite`` query vectors.
+    """
     if not query:
         return ""
-    # keep_blank_values so ``?flag=`` and ``?flag`` survive; sort by (key, value).
-    pairs = parse_qsl(query, keep_blank_values=True)
-    encoded = sorted(
-        (_uri_encode(k, is_path=False), _uri_encode(v, is_path=False)) for k, v in pairs
-    )
-    return "&".join(f"{k}={v}" for k, v in encoded)
+    pairs: list[tuple[str, str]] = []
+    for part in query.split("&"):
+        if not part:
+            continue
+        key, _, value = part.partition("=")
+        # ``partition`` gives an empty value for a bare ``?flag`` and for ``?flag=``
+        # alike, so both canonicalise to ``flag=`` — matching AWS's rule that a
+        # value-less parameter still emits an explicit ``=``.
+        pairs.append(
+            (
+                _uri_encode(unquote(key), is_path=False),
+                _uri_encode(unquote(value), is_path=False),
+            )
+        )
+    pairs.sort()
+    return "&".join(f"{k}={v}" for k, v in pairs)
 
 
 def sign_request(
@@ -122,10 +182,11 @@ def sign_request(
     signed_header_names = ";".join(sorted(signed))
     canonical_headers = "".join(f"{k}:{signed[k]}\n" for k in sorted(signed))
 
+    is_s3 = material.service.lower() in _S3_SERVICES
     canonical_request = "\n".join(
         [
             method.upper(),
-            _canonical_uri(split.path),
+            _canonical_uri(split.path, is_s3=is_s3),
             _canonical_query(split.query),
             canonical_headers,
             signed_header_names,
