@@ -459,7 +459,39 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			severity: 'critical',
 			tokens: { execution_id: 'exec x', trace_id: 'tr_1' },
 		});
-		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=executions&execution=exec%20x');
+		// The detail param is the underscore vocabulary the Executions tab reads —
+		// `execution`/`trace` aliases switched the tab but left the sheet closed (#617).
+		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=executions&execution_id=exec%20x');
+	});
+
+	it('primaryDestinationFor falls back to trace_id when an execution has no execution_id', () => {
+		const ev = makeEvent({
+			type: 'execution.failed',
+			kind: 'execution',
+			severity: 'error',
+			tokens: { trace_id: 'tr_9' },
+		});
+		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=executions&trace_id=tr_9');
+	});
+
+	it('primaryDestinationFor never deep-links a placeholder "unknown" trace', () => {
+		const ev = makeEvent({
+			type: 'execution.failed',
+			kind: 'execution',
+			severity: 'error',
+			tokens: { trace_id: 'unknown' },
+		});
+		expect(primaryDestinationFor(ev)).toBeNull();
+	});
+
+	it('primaryDestinationFor routes import events to the jobs tab by job_id', () => {
+		const ev = makeEvent({
+			type: 'import.completed',
+			kind: 'import',
+			severity: 'info',
+			tokens: { job_id: 'job_7' },
+		});
+		expect(primaryDestinationFor(ev)).toBe('/monitor?tab=jobs&job_id=job_7');
 	});
 
 	it('primaryDestinationFor routes credential events to the credential detail', () => {

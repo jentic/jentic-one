@@ -831,17 +831,37 @@ export type InlineActionSpec = {
 	requiresReason?: boolean;
 };
 
-/** Resolve a HAL `_links` URL or token into a router-relative monitor route. */
+/**
+ * Resolve a HAL `_links` URL or token into a router-relative monitor route.
+ *
+ * The detail-param vocabulary MUST match what the Monitor tabs read off the URL:
+ * the Executions tab opens its trace/execution sheet from `trace_id`/`execution_id`
+ * and the Jobs tab from `job_id` (the underscore names — see
+ * `modules/monitor/lib/links.ts` and the tabs' `searchParams.get(...)`). Emitting
+ * the short `trace`/`execution`/`job` aliases here switched the tab but left the
+ * detail sheet closed, so a rail "View execution" click looked like a dead end
+ * (issue #617). `trace_id="unknown"` is a placeholder for header-less runs and
+ * can't open a sheet, so it's never emitted as a trace link.
+ */
+const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
+	traceId != null && traceId !== '' && traceId !== 'unknown';
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
-		ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null,
+		hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null,
 	execution: (ev: StreamEvent) => {
 		const id = ev.tokens.execution_id;
-		if (id) return `/monitor?tab=executions&execution=${encodeURIComponent(id)}`;
-		return ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null;
+		if (id) return `/monitor?tab=executions&execution_id=${encodeURIComponent(id)}`;
+		return hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null;
 	},
 	job: (ev: StreamEvent) =>
-		ev.tokens.job_id ? `/monitor?tab=jobs&job=${encodeURIComponent(ev.tokens.job_id)}` : null,
+		ev.tokens.job_id
+			? `/monitor?tab=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
+			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
 };
