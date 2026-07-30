@@ -145,15 +145,25 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 
-	if err := a.createAgentAccount(ctx, operator, fields, desc); err != nil {
+	if err := a.createAgentAccount(ctx, operator, fields); err != nil {
 		return agentSetup{}, err
 	}
 
-	// The agent's own jentic config lives in its home — this is where the platform
-	// identity is written and owned (see agentSetup / ConfigDir), so the operator's
-	// config need only reference it.
+	// The privileged half (Unix user, home, ACLs, sudoers) now exists, so RECORD the
+	// account immediately — before the best-effort seeding below. Seeding can fail (a
+	// provider-config copy hiccup, a home-lookup race) and recording only afterwards
+	// would leave a fully-provisioned account with NO config entry: invisible residue
+	// that `jentic reset` — which keys off the recorded account — could never tear
+	// down. Recording first makes every created account reclaimable even if a later
+	// step errors. The agent's own jentic config lives in its home (see agentSetup /
+	// ConfigDir), so the operator's config need only reference it.
 	configDir := localagent.AgentConfigDir(fields.homeDir)
 	a.recordAgentAccount(fields.name, fields.homeDir, configDir, true)
+
+	// Seed config/provider per the operator's toggles — best-effort, since the account
+	// is already usable without it (the operator can re-seed on `jentic run`) and a
+	// copy failure must neither abort setup nor un-record the account above.
+	a.seedAgentConfig(ctx, fields, desc)
 
 	// Offer to bring the operator's trusted workspaces (from the agent's own config)
 	// over to the new agent in one step, rather than making them re-grant each
@@ -226,9 +236,14 @@ func (a *App) agentUserPrereqGate(agentID, defaultName string, missing []localag
 	return agentSetup{agentID: agentID, agentUser: defaultName}, nil
 }
 
-// createAgentAccount runs the privileged account-creation recipe (idempotently),
-// locks the operator's own home, and seeds config/provider per the field toggles.
-func (a *App) createAgentAccount(ctx context.Context, operator string, fields agentUserFields, desc localagent.Descriptor) error {
+// createAgentAccount runs the privileged account-creation recipe (idempotently):
+// it creates (or safely reuses) the agent's Unix account and home, re-owns the home
+// to the agent, grants the operator recursive access into it, and installs the
+// optional passwordless-launch sudoers rule. Config/provider seeding is NOT done
+// here — the caller records the account first, then seeds best-effort (see
+// seedAgentConfig), so a seeding failure can't leave an unrecorded, un-reclaimable
+// account behind.
+func (a *App) createAgentAccount(ctx context.Context, operator string, fields agentUserFields) error {
 	// Re-validate at the point of use, not just in the form: a hand-edited
 	// config.yaml or a future non-form caller could otherwise thread an unsafe
 	// name/home into the privileged commands built below (sudo runas, sudoers rule,
@@ -338,15 +353,27 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 		}
 	}
 
-	// Seed config/provider per the operator's toggles — the same porting logic
-	// `jentic run` uses. The field bools drive the decision directly, so there is
-	// no second prompt; the warnings still print after each copy.
+	return nil
+}
+
+// seedAgentConfig ports the operator's agent and provider config into the agent's
+// home per the field toggles — the same porting logic `jentic run` uses. It runs
+// AFTER the account has been recorded and is deliberately best-effort: the account
+// is fully usable without seeding (the operator can re-seed later on `jentic run`),
+// so a copy failure is warned about, not fatal, and must never un-record or block
+// the setup the operator came for. The field bools drive the decision directly, so
+// there is no second prompt; the per-copy warnings still print.
+func (a *App) seedAgentConfig(ctx context.Context, fields agentUserFields, desc localagent.Descriptor) {
 	prefs := seedPrefs{forceSeed: fields.portConfig, interactive: false}
 	if err := a.ensureAgentConfig(ctx, prefs, fields.name, desc); err != nil {
-		return err
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"could not seed the agent config (the account is set up; re-seed later with `jentic run`): %v", err))
 	}
 	provPrefs := seedPrefs{forceSeed: fields.portProvider, interactive: false}
-	return a.ensureProviderConfig(ctx, provPrefs, fields.name)
+	if err := a.ensureProviderConfig(ctx, provPrefs, fields.name); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"could not seed the provider config (the account is set up; re-seed later with `jentic run`): %v", err))
+	}
 }
 
 // recordAgentAccount persists the single shared agent-account entry, including
