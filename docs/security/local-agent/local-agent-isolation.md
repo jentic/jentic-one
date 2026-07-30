@@ -183,6 +183,45 @@ sudo useradd -m -d "$AGENT_HOME_DIR" -s /bin/bash "$AGENT"
 sudo setfacl -R -m u:"$USER":rwX "$AGENT_HOME_DIR" && sudo setfacl -R -d -m u:"$USER":rwX "$AGENT_HOME_DIR"
 ```
 
+#### Prerequisites — checked before any privileged step
+
+Because per-session confinement (below) is the actual isolation guarantee, an
+account that can never be launched under confinement would be a dead end. So the
+moment the operator opts into isolation — **before** the first `sudo` runs —
+`bootstrap`/`wizard` checks that this machine has what the model needs and,
+crucially, treats a missing prerequisite as *non-blocking for everything else*:
+
+| Platform | Prerequisites |
+| --- | --- |
+| macOS  | `sandbox-exec` (ships with macOS) |
+| Linux  | `bubblewrap` (`bwrap`), unprivileged user namespaces, and the `acl` package (`setfacl`/`getfacl`, which back the directory grants) |
+
+If something is missing, the account-creation path **stops there** and prints the
+exact install command for the detected package manager — for example, on
+Debian/Ubuntu:
+
+```bash
+sudo apt install bubblewrap acl
+```
+
+(`dnf`/`yum`/`pacman`/`zypper` are detected and named accordingly; unprivileged
+user namespaces, if disabled, are re-enabled with
+`sudo sysctl -w kernel.unprivileged_userns_clone=1`, persisted under
+`/etc/sysctl.d/`). We **never run a package manager ourselves** — the command is
+printed, not executed. The operator then has two clearly-offered choices:
+
+1. **Continue same-user now** — bootstrap proceeds without an isolated account
+   (recorded as `account_created=false`, exactly like declining isolation), so a
+   missing dependency never blocks the identity/skill provisioning they came for.
+2. **Install the prerequisites and re-run** — the printed command, then
+   `jentic bootstrap` (or `jentic run <agent>`) again to isolate the agent.
+
+The same check is the launch-time gate in `jentic run`: `launchAgent` refuses to
+start an unconfined session and prints the same per-dependency breakdown, so the
+setup-time and launch-time gates read from one source
+(`localagent.AgentUserPrereqs`) and can never disagree about what this machine can
+do.
+
 Three things worth calling out, because they're the load-bearing parts:
 
 - **Per-session process confinement is the isolation guarantee.** `jentic run`
