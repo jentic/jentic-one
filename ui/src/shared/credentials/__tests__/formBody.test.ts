@@ -108,6 +108,40 @@ describe('buildCreateBody', () => {
 		});
 		expect((withoutGrant as Record<string, unknown>).grant_type).toBeUndefined();
 	});
+
+	it('builds a sigv4 body and omits a blank session token', () => {
+		const body = buildCreateBody(CredentialType.SIGV4, {
+			...EMPTY_FORM,
+			name: 'AWS',
+			apiVendor: 'amazonaws.com',
+			accessKeyId: 'AKIA123',
+			secretAccessKey: 'shh',
+			awsRegion: 'us-east-1',
+			awsService: 'aoss',
+		});
+		expect(body).toMatchObject({
+			type: 'sigv4',
+			access_key_id: 'AKIA123',
+			secret_access_key: 'shh',
+			aws_region: 'us-east-1',
+			aws_service: 'aoss',
+		});
+		expect((body as Record<string, unknown>).session_token).toBeUndefined();
+	});
+
+	it('forwards a sigv4 session token when provided', () => {
+		const body = buildCreateBody(CredentialType.SIGV4, {
+			...EMPTY_FORM,
+			name: 'AWS',
+			apiVendor: 'amazonaws.com',
+			accessKeyId: 'ASIA123',
+			secretAccessKey: 'shh',
+			sessionToken: 'tok-value',
+			awsRegion: 'eu-west-1',
+			awsService: 'execute-api',
+		});
+		expect((body as Record<string, unknown>).session_token).toBe('tok-value');
+	});
 });
 
 describe('isValidHttpUrl', () => {
@@ -152,6 +186,25 @@ describe('buildUpdateBody', () => {
 			password: 'p',
 		});
 	});
+
+	it('only rotates a sigv4 keypair when BOTH halves are supplied', () => {
+		const halfOnly = buildUpdateBody(
+			CredentialType.SIGV4,
+			{ ...EMPTY_FORM, name: 'K', accessKeyId: 'AKIANEW', secretAccessKey: '' },
+			'K',
+		) as Record<string, unknown>;
+		// access key id alone must not be sent — it's meaningless without its secret.
+		expect(halfOnly.access_key_id).toBeUndefined();
+		expect(halfOnly.secret_access_key).toBeUndefined();
+
+		const both = buildUpdateBody(
+			CredentialType.SIGV4,
+			{ ...EMPTY_FORM, name: 'K', accessKeyId: 'AKIANEW', secretAccessKey: 'newsecret' },
+			'K',
+		) as Record<string, unknown>;
+		expect(both.access_key_id).toBe('AKIANEW');
+		expect(both.secret_access_key).toBe('newsecret');
+	});
 });
 
 describe('validateCreate', () => {
@@ -171,6 +224,27 @@ describe('validateCreate', () => {
 			apiVendor: 'acme',
 			key: 'abc',
 			fieldName: 'X-Api-Key',
+		});
+		expect(errors).toEqual({});
+	});
+
+	it('flags missing required sigv4 fields', () => {
+		const errors = validateCreate(CredentialType.SIGV4, { ...EMPTY_FORM });
+		expect(errors.accessKeyId).toBeTruthy();
+		expect(errors.secretAccessKey).toBeTruthy();
+		expect(errors.awsRegion).toBeTruthy();
+		expect(errors.awsService).toBeTruthy();
+	});
+
+	it('passes a fully-specified sigv4 form', () => {
+		const errors = validateCreate(CredentialType.SIGV4, {
+			...EMPTY_FORM,
+			name: 'AWS',
+			apiVendor: 'amazonaws.com',
+			accessKeyId: 'AKIA123',
+			secretAccessKey: 'shh',
+			awsRegion: 'us-east-1',
+			awsService: 'aoss',
 		});
 		expect(errors).toEqual({});
 	});

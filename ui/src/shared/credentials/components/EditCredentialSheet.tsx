@@ -72,6 +72,11 @@ export function EditCredentialSheet({
 			apiVersion: cred.api.version ?? '',
 			fieldName: typeof details.field_name === 'string' ? details.field_name : '',
 			location: (details.location as CredentialKeyLocation) === 'query' ? 'query' : 'header',
+			// sigv4: the access key id / region / service are non-secret and come
+			// back on the redacted details, so surface them in the edit form.
+			accessKeyId: typeof details.access_key_id === 'string' ? details.access_key_id : '',
+			awsRegion: typeof details.aws_region === 'string' ? details.aws_region : '',
+			awsService: typeof details.aws_service === 'string' ? details.aws_service : '',
 			serverVars: cred.server_variables ?? {},
 		};
 		setState(seeded);

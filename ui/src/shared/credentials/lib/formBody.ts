@@ -123,6 +123,16 @@ export function buildCreateBody(
 		case CredentialType.NO_AUTH:
 			// No secret to carry — the API is called without authentication.
 			return { ...base, type };
+		case CredentialType.SIGV4:
+			return {
+				...base,
+				type,
+				access_key_id: state.accessKeyId.trim(),
+				secret_access_key: state.secretAccessKey,
+				session_token: state.sessionToken.trim() || undefined,
+				aws_region: state.awsRegion.trim(),
+				aws_service: state.awsService.trim(),
+			};
 	}
 }
 
@@ -174,6 +184,24 @@ export function buildUpdateBody(
 		case CredentialType.NO_AUTH:
 			// Nothing to rotate — only name/server-variable edits apply.
 			return { type, ...namePatch, ...svPatch };
+		case CredentialType.SIGV4: {
+			// Key rotation must send both halves together; the access key id
+			// alone is meaningless without its secret (backend rejects it).
+			const newAccessKey = state.accessKeyId.trim();
+			const newSecret = secret(state.secretAccessKey);
+			const rotatingKeypair = Boolean(newAccessKey) && Boolean(newSecret);
+			return {
+				type,
+				...namePatch,
+				...svPatch,
+				...(rotatingKeypair
+					? { access_key_id: newAccessKey, secret_access_key: newSecret }
+					: {}),
+				session_token: secret(state.sessionToken),
+				aws_region: state.awsRegion.trim() || undefined,
+				aws_service: state.awsService.trim() || undefined,
+			};
+		}
 	}
 }
 
@@ -224,6 +252,12 @@ export function validateCreate(
 					errors.authorizeUrl = 'Authorize URL must be a valid http(s) URL.';
 				}
 			}
+			break;
+		case CredentialType.SIGV4:
+			if (!state.accessKeyId.trim()) errors.accessKeyId = 'Access key ID is required.';
+			if (!state.secretAccessKey) errors.secretAccessKey = 'Secret access key is required.';
+			if (!state.awsRegion.trim()) errors.awsRegion = 'Region is required.';
+			if (!state.awsService.trim()) errors.awsService = 'Service is required.';
 			break;
 	}
 	return errors;

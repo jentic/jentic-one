@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
     from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
     from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+    from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
     from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 
 
@@ -79,6 +80,12 @@ class Credential(AuditableMixin, ControlBase):
         lazy="selectin",
     )
     oauth_token: Mapped[OAuthToken | None] = relationship(
+        back_populates="credential",
+        cascade="all, delete-orphan",
+        uselist=False,
+        lazy="selectin",
+    )
+    sigv4_credential: Mapped[Sigv4Credential | None] = relationship(
         back_populates="credential",
         cascade="all, delete-orphan",
         uselist=False,

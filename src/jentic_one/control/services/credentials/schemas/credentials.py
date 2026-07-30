@@ -50,6 +50,13 @@ class CredentialCreate(BaseModel):
     client_secret: str | None = None
     scopes: list[str] | None = None
 
+    # sigv4 fields
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    aws_region: str | None = None
+    aws_service: str | None = None
+
 
 class CredentialUpdate(BaseModel):
     """Payload for updating/rotating a credential."""
@@ -75,6 +82,14 @@ class CredentialUpdate(BaseModel):
     client_secret: str | None = None
     token_url: str | None = None
     scopes: list[str] | None = None
+
+    # sigv4 rotation/update
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
 
 
 class BearerTokenFull(BaseModel):
@@ -112,6 +127,16 @@ class NoAuthFull(BaseModel):
     """Placeholder detail block for a no-auth credential (no secret)."""
 
 
+class Sigv4Full(BaseModel):
+    """Full SigV4 details (shown once on create)."""
+
+    access_key_id: str
+    secret_access_key: str
+    session_token: str | None = None
+    aws_region: str
+    aws_service: str
+
+
 class BearerTokenRedacted(BaseModel):
     """Redacted bearer token details."""
 
@@ -145,6 +170,16 @@ class NoAuthRedacted(BaseModel):
     """Redacted detail block for a no-auth credential (no secret)."""
 
 
+class Sigv4Redacted(BaseModel):
+    """Redacted SigV4 details — identifier + preview, never the secret."""
+
+    access_key_id: str
+    secret_preview: str | None = None
+    has_session_token: bool = False
+    aws_region: str
+    aws_service: str
+
+
 class CredentialFullView(BaseModel):
     """Create response — echoes the secret block once."""
 
@@ -156,7 +191,7 @@ class CredentialFullView(BaseModel):
     active: bool
     created_at: datetime
     server_variables: dict[str, str] | None = None
-    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull
+    secret: BearerTokenFull | ApiKeyFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
 
 
 class CredentialRedactedView(BaseModel):
@@ -173,7 +208,12 @@ class CredentialRedactedView(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     details: (
-        BearerTokenRedacted | ApiKeyRedacted | BasicAuthRedacted | OAuth2Redacted | NoAuthRedacted
+        BearerTokenRedacted
+        | ApiKeyRedacted
+        | BasicAuthRedacted
+        | OAuth2Redacted
+        | NoAuthRedacted
+        | Sigv4Redacted
     )
     server_variables: dict[str, str] | None = None
 

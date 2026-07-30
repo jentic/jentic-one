@@ -169,6 +169,7 @@ class CredentialService:
                 server_variables=resolved.server_variables,
                 credential_id=resolved.credential_id,
                 credential_name=resolved.name,
+                signing=result.signing,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(

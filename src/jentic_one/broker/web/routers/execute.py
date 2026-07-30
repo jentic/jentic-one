@@ -730,6 +730,7 @@ async def _handle(
             actor_type=identity.actor_type.value,
             origin=identity.origin.value,
             security_config=ctx.config.security,
+            signing=injection.signing,
         )
 
     response = _assemble_response(outcome, ctx_req)
@@ -785,6 +786,7 @@ async def _handle_streaming(
         headers=forwarded,
         body=body,
         timeout_s=ctx.config.broker.upstream_timeout_s,
+        signing=injection.signing,
     )
 
     async def _persist_callback(outcome: StreamingOutcome) -> None:

@@ -36,6 +36,12 @@ export interface CredentialFormState {
 	authorizeUrl: string;
 	grantType: string;
 	scopes: string;
+	// sigv4 (AWS Signature V4)
+	accessKeyId: string;
+	secretAccessKey: string;
+	sessionToken: string;
+	awsRegion: string;
+	awsService: string;
 	/**
 	 * Values for OpenAPI server variables (e.g. Atlassian `{your-domain}`),
 	 * keyed by variable name. Collected from the spec's `servers[].variables`
@@ -63,6 +69,11 @@ export const EMPTY_FORM: CredentialFormState = {
 	authorizeUrl: '',
 	grantType: '',
 	scopes: '',
+	accessKeyId: '',
+	secretAccessKey: '',
+	sessionToken: '',
+	awsRegion: '',
+	awsService: '',
 	serverVars: {},
 };
 
@@ -221,6 +232,66 @@ export function CredentialTypeFields({
 						autoComplete="off"
 						value={state.password}
 						onChange={(e): void => onChange({ password: e.target.value })}
+					/>
+				</Field>
+			</>
+		);
+	}
+
+	if (type === CredentialType.SIGV4) {
+		return (
+			<>
+				<Field
+					label="Access key ID"
+					required={mode === 'create'}
+					error={errors.accessKeyId}
+				>
+					<Input
+						autoComplete="off"
+						value={state.accessKeyId}
+						onChange={(e): void => onChange({ accessKeyId: e.target.value })}
+						placeholder="AKIA…"
+					/>
+				</Field>
+				<Field
+					label="Secret access key"
+					required={mode === 'create'}
+					hint={secretHint}
+					error={errors.secretAccessKey}
+				>
+					<Input
+						type="password"
+						showPasswordToggle
+						autoComplete="off"
+						value={state.secretAccessKey}
+						onChange={(e): void => onChange({ secretAccessKey: e.target.value })}
+					/>
+				</Field>
+				<Field
+					label="Session token"
+					hint="Optional — only for temporary (STS) credentials. Expires; re-save when it does."
+					error={errors.sessionToken}
+				>
+					<Input
+						type="password"
+						showPasswordToggle
+						autoComplete="off"
+						value={state.sessionToken}
+						onChange={(e): void => onChange({ sessionToken: e.target.value })}
+					/>
+				</Field>
+				<Field label="Region" required={mode === 'create'} error={errors.awsRegion}>
+					<Input
+						value={state.awsRegion}
+						onChange={(e): void => onChange({ awsRegion: e.target.value })}
+						placeholder="us-east-1"
+					/>
+				</Field>
+				<Field label="Service" required={mode === 'create'} error={errors.awsService}>
+					<Input
+						value={state.awsService}
+						onChange={(e): void => onChange({ awsService: e.target.value })}
+						placeholder="aoss, execute-api, s3…"
 					/>
 				</Field>
 			</>

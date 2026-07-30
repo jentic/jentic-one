@@ -1759,6 +1759,7 @@ components:
       - basic
       - oauth2
       - no_auth
+      - sigv4
       title: CredentialType
       type: string
     CurrentUserResponse:
@@ -4218,6 +4219,129 @@ components:
       required:
       - permissions
       title: SetPermissionsRequest
+      type: object
+    Sigv4CreateRequest:
+      description: Create request for sigv4 (AWS Signature V4) credentials.
+      properties:
+        access_key_id:
+          description: AWS access key id (public identifier).
+          title: Access Key Id
+          type: string
+        api:
+          $ref: '#/components/schemas/APIReferenceRequest'
+          description: Loose (vendor, name, version) API identity tuple.
+        aws_region:
+          description: Signing region, e.g. 'us-east-1'.
+          title: Aws Region
+          type: string
+        aws_service:
+          description: Signing service, e.g. 'aoss', 'execute-api', 's3'.
+          title: Aws Service
+          type: string
+        name:
+          description: Human-readable label for the credential.
+          title: Name
+          type: string
+        provider:
+          default: static
+          description: Credential provider; 'static' for stored secrets.
+          title: Provider
+          type: string
+        runtime_config:
+          anyOf:
+          - $ref: '#/components/schemas/RuntimeConfig'
+          - type: 'null'
+        secret_access_key:
+          description: AWS secret access key. Stored encrypted; never returned after create.
+          title: Secret Access Key
+          type: string
+        server_variables:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Server Variables
+        session_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Optional temporary-credential session token (STS). Expires; re-save when it does.
+          title: Session Token
+        type:
+          const: sigv4
+          title: Type
+          type: string
+      required:
+      - type
+      - name
+      - api
+      - access_key_id
+      - secret_access_key
+      - aws_region
+      - aws_service
+      title: Sigv4CreateRequest
+      type: object
+    Sigv4UpdateRequest:
+      description: Update request for sigv4 credentials (key rotation / scope edit).
+      properties:
+        access_key_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Access Key Id
+        active:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Active
+        aws_region:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Aws Region
+        aws_service:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Aws Service
+        clear_session_token:
+          default: false
+          title: Clear Session Token
+          type: boolean
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        runtime_config:
+          anyOf:
+          - $ref: '#/components/schemas/RuntimeConfig'
+          - type: 'null'
+        secret_access_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Secret Access Key
+        server_variables:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Server Variables
+        session_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Session Token
+        type:
+          const: sigv4
+          title: Type
+          type: string
+      required:
+      - type
+      title: Sigv4UpdateRequest
       type: object
     TokenRequest:
       description: Token endpoint request (JSON body — not RFC 6749 form-encoded).
@@ -10265,6 +10389,7 @@ paths:
                   bearer_token: '#/components/schemas/BearerTokenCreateRequest'
                   no_auth: '#/components/schemas/NoAuthCreateRequest'
                   oauth2: '#/components/schemas/OAuth2CreateRequest'
+                  sigv4: '#/components/schemas/Sigv4CreateRequest'
                 propertyName: type
               oneOf:
               - $ref: '#/components/schemas/BearerTokenCreateRequest'
@@ -10272,6 +10397,7 @@ paths:
               - $ref: '#/components/schemas/BasicAuthCreateRequest'
               - $ref: '#/components/schemas/OAuth2CreateRequest'
               - $ref: '#/components/schemas/NoAuthCreateRequest'
+              - $ref: '#/components/schemas/Sigv4CreateRequest'
               title: Body
         required: true
       responses:
@@ -10632,12 +10758,14 @@ paths:
                   basic: '#/components/schemas/BasicAuthUpdateRequest'
                   bearer_token: '#/components/schemas/BearerTokenUpdateRequest'
                   oauth2: '#/components/schemas/OAuth2UpdateRequest'
+                  sigv4: '#/components/schemas/Sigv4UpdateRequest'
                 propertyName: type
               oneOf:
               - $ref: '#/components/schemas/BearerTokenUpdateRequest'
               - $ref: '#/components/schemas/ApiKeyUpdateRequest'
               - $ref: '#/components/schemas/BasicAuthUpdateRequest'
               - $ref: '#/components/schemas/OAuth2UpdateRequest'
+              - $ref: '#/components/schemas/Sigv4UpdateRequest'
               title: Body
         required: true
       responses:

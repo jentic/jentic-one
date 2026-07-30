@@ -96,3 +96,16 @@ def test_is_refreshable_api_key() -> None:
 
 def test_is_refreshable_basic_auth() -> None:
     assert is_refreshable(StoredCredentialType.BASIC_AUTH) is False
+
+
+def test_to_stored_sigv4() -> None:
+    assert to_stored(CredentialType.SIGV4) == StoredCredentialType.AWS_SIGV4
+
+
+def test_to_wire_aws_sigv4() -> None:
+    assert to_wire(StoredCredentialType.AWS_SIGV4) == CredentialType.SIGV4
+
+
+def test_is_refreshable_aws_sigv4() -> None:
+    # v1 stores static keys (+ optional session token); no request-time refresh.
+    assert is_refreshable(StoredCredentialType.AWS_SIGV4) is False
