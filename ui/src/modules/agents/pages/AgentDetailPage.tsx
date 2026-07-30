@@ -384,7 +384,7 @@ export default function AgentDetailPage() {
 								</dl>
 							</CardBody>
 						</Card>
-						<BoundToolkitsCard agentId={agent.id} />
+						<BoundToolkitsCard agentId={agent.id} agentStatus={agent.status} />
 					</>
 				)}
 

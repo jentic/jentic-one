@@ -163,7 +163,18 @@ describe('AgentDetailPage', () => {
 	it('shows an honest empty state when no toolkits are bound', async () => {
 		renderDetail('agnt_pending_1');
 		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
-		expect(await screen.findByText(/No toolkits bound to this agent\./)).toBeInTheDocument();
+		// A pending agent additionally explains the approval gate (no bind CTA).
+		expect(
+			await screen.findByText(/No toolkits bound\. Approve this agent first/),
+		).toBeInTheDocument();
+	});
+
+	it('gates toolkit binding to active agents (no Bind button while pending)', async () => {
+		renderDetail('agnt_pending_1');
+		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
+		// The approval queue is where a human vouches for an agent — a pending
+		// one must not accumulate capabilities beforehand.
+		expect(screen.queryByRole('button', { name: 'Bind toolkit' })).not.toBeInTheDocument();
 	});
 
 	it('renders a not-found surface for an unknown id', async () => {
@@ -373,28 +384,16 @@ describe('AgentDetailPage', () => {
 		expect(patchBody).toEqual({ description: null });
 	});
 
-	it('assigns an owner from the Settings tab, sending only owner_id', async () => {
+	it('does not expose an owner editor — ownership is not routine metadata', async () => {
 		const user = userEvent.setup();
-		let patchBody: Record<string, unknown> | null = null;
-		worker.use(
-			http.patch('/agents/:id', async ({ request }) => {
-				patchBody = (await request.clone().json()) as Record<string, unknown>;
-				return undefined;
-			}),
-		);
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
 		await user.click(screen.getByRole('tab', { name: 'Settings' }));
-		const ownerInput = await screen.findByLabelText('Owner');
-		await user.clear(ownerInput);
-		await user.type(ownerInput, 'usr_new_owner');
-		await user.click(screen.getByRole('button', { name: 'Save changes' }));
-
-		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
-		// The camelCase draft crosses the wire as the API's snake_case owner_id,
-		// and untouched fields (name/description) don't echo along.
-		expect(patchBody).toEqual({ owner_id: 'usr_new_owner' });
+		await screen.findByLabelText('Name');
+		// Reassigning the accountable human is an administrative act; the
+		// Settings form deliberately only edits name + description.
+		expect(screen.queryByLabelText('Owner')).not.toBeInTheDocument();
 	});
 
 	it('disables an active agent through the danger-zone confirm flow', async () => {

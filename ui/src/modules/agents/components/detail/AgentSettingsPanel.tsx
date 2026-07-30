@@ -2,9 +2,11 @@
  * AgentSettingsPanel — the "Settings" tab of the agent detail console.
  *
  * Two concerns, deliberately separated (canvas plan, phase 4):
- *   - Editable metadata → name / description / owner via PATCH /agents/{id}.
- *     Only dirty fields are sent (real PATCH semantics), and Save stays
- *     disabled until something actually changed.
+ *   - Editable metadata → name / description via PATCH /agents/{id}. Only
+ *     dirty fields are sent (real PATCH semantics), and Save stays disabled
+ *     until something actually changed. Ownership is intentionally NOT
+ *     editable here — reassigning an agent's accountable human is an
+ *     administrative act, not routine metadata upkeep.
  *   - Danger zone → the destructive lifecycle actions (Disable / Archive)
  *     move here from the identity header, so the header only ever offers
  *     constructive actions (Approve / Deny / Enable). Both destructive
@@ -38,7 +40,6 @@ export function AgentSettingsPanel({
 
 	const [name, setName] = useState(agent.name);
 	const [description, setDescription] = useState(agent.description ?? '');
-	const [ownerId, setOwnerId] = useState(agent.ownerId ?? '');
 	const [nameError, setNameError] = useState<string | null>(null);
 
 	// Seed-from-props syncs only when the entity itself changed — never on
@@ -51,15 +52,11 @@ export function AgentSettingsPanel({
 		seededIdRef.current = agent.id;
 		setName(agent.name);
 		setDescription(agent.description ?? '');
-		setOwnerId(agent.ownerId ?? '');
 		setNameError(null);
-	}, [agent.id, agent.name, agent.description, agent.ownerId]);
+	}, [agent.id, agent.name, agent.description]);
 
 	const trimmedName = name.trim();
-	const dirty =
-		trimmedName !== agent.name ||
-		description.trim() !== (agent.description ?? '') ||
-		ownerId.trim() !== (agent.ownerId ?? '');
+	const dirty = trimmedName !== agent.name || description.trim() !== (agent.description ?? '');
 
 	async function handleSave() {
 		if (!trimmedName) {
@@ -74,16 +71,12 @@ export function AgentSettingsPanel({
 		if (description.trim() !== (agent.description ?? '')) {
 			patch.description = description.trim() || null;
 		}
-		if (ownerId.trim() !== (agent.ownerId ?? '')) {
-			patch.ownerId = ownerId.trim() || null;
-		}
 		try {
 			const next = await update.mutateAsync({ id: agent.id, patch });
 			// Re-seed the drafts from the server's canonical row so the form
 			// goes back to a clean (non-dirty) state.
 			setName(next.name);
 			setDescription(next.description ?? '');
-			setOwnerId(next.ownerId ?? '');
 		} catch {
 			// The hook toasts the failure; keep the draft so the user can retry.
 		}
@@ -122,7 +115,7 @@ export function AgentSettingsPanel({
 					<CardTitle>General</CardTitle>
 				</CardHeader>
 				<CardBody className="space-y-4">
-					<div className="max-w-md space-y-1.5">
+					<div className="space-y-1.5">
 						<Label htmlFor="agent-settings-name">Name</Label>
 						<Input
 							id="agent-settings-name"
@@ -132,7 +125,7 @@ export function AgentSettingsPanel({
 							maxLength={255}
 						/>
 					</div>
-					<div className="max-w-md space-y-1.5">
+					<div className="space-y-1.5">
 						<Label htmlFor="agent-settings-description">Description</Label>
 						<Textarea
 							id="agent-settings-description"
@@ -142,20 +135,6 @@ export function AgentSettingsPanel({
 							rows={3}
 							maxLength={1024}
 						/>
-					</div>
-					<div className="max-w-md space-y-1.5">
-						<Label htmlFor="agent-settings-owner">Owner</Label>
-						<Input
-							id="agent-settings-owner"
-							value={ownerId}
-							onChange={(e) => setOwnerId(e.target.value)}
-							placeholder="usr_… (leave empty for no owner)"
-							className="font-mono"
-						/>
-						<p className="text-muted-foreground text-xs">
-							The user accountable for this agent. Clearing the field removes the
-							owner.
-						</p>
 					</div>
 					<div className="flex justify-end">
 						<Button

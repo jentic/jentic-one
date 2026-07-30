@@ -3,6 +3,13 @@
  * tab: real bindings (GET /agents/{id}/toolkits) with agent-side bind/unbind
  * (#607) mirroring the toolkit page's "Link agent". Self-contained: owns the
  * picker dialog and the inline unbind confirm.
+ *
+ * Binding is gated to ACTIVE agents in the UI: the approval queue is the
+ * moment a human vouches for an agent, so a pending/rejected/disabled agent
+ * must not accumulate capabilities beforehand (the backend does not enforce
+ * this on POST /agents/{id}/toolkits today — UI gate documented there).
+ * Unbinding stays available in every status: removing capability is always
+ * safe.
  */
 import { useMemo, useState } from 'react';
 import { ArrowRight, KeyRound, Link as LinkIcon, Shield, Unlink } from 'lucide-react';
@@ -23,6 +30,7 @@ import {
 	useToolkitName,
 	useBindToolkitToAgent,
 	useUnbindToolkitFromAgent,
+	type AgentEntity,
 	type ToolkitBindingEntity,
 } from '@/modules/agents/api';
 import { ToolkitPicker } from '@/modules/agents/components/ToolkitPicker';
@@ -131,13 +139,22 @@ function BoundToolkitRow({
 	);
 }
 
-export function BoundToolkitsCard({ agentId }: { agentId: string }) {
+export function BoundToolkitsCard({
+	agentId,
+	agentStatus,
+}: {
+	agentId: string;
+	agentStatus: AgentEntity['status'];
+}) {
 	const toolkits = useAgentToolkits(agentId);
 	const bindToolkit = useBindToolkitToAgent(agentId);
 	const unbindToolkit = useUnbindToolkitFromAgent(agentId);
 
 	const [bindToolkitOpen, setBindToolkitOpen] = useState(false);
 	const [unlinkToolkitId, setUnlinkToolkitId] = useState<string | null>(null);
+
+	// Approval gate: only a vouched-for (active) agent may gain capabilities.
+	const canBind = agentStatus === 'active';
 
 	// Memoised so ToolkitPicker's internal useMemos (available list, candidate
 	// count) don't invalidate on every parent re-render — a fresh ``new Set`` on
@@ -155,9 +172,15 @@ export function BoundToolkitsCard({ agentId }: { agentId: string }) {
 						<Shield className="text-primary h-4 w-4" />
 						<CardTitle>Bound toolkits</CardTitle>
 					</div>
-					<Button variant="secondary" size="sm" onClick={() => setBindToolkitOpen(true)}>
-						<LinkIcon className="h-4 w-4" /> Bind toolkit
-					</Button>
+					{canBind && (
+						<Button
+							variant="secondary"
+							size="sm"
+							onClick={() => setBindToolkitOpen(true)}
+						>
+							<LinkIcon className="h-4 w-4" /> Bind toolkit
+						</Button>
+					)}
 				</CardHeader>
 				<CardBody className="space-y-2">
 					{toolkits.isPending ? (
@@ -166,8 +189,11 @@ export function BoundToolkitsCard({ agentId }: { agentId: string }) {
 						<ErrorAlert message={toolkits.error as Error} />
 					) : !toolkits.data || toolkits.data.length === 0 ? (
 						<div className="text-muted-foreground border-border/60 rounded-lg border border-dashed p-4 text-center text-sm">
-							No toolkits bound to this agent. Bind one to let this agent call its
-							APIs.
+							{canBind
+								? 'No toolkits bound to this agent. Bind one to let this agent call its APIs.'
+								: agentStatus === 'pending'
+									? 'No toolkits bound. Approve this agent first — toolkits can only be bound to active agents.'
+									: 'No toolkits bound. Toolkits can only be bound to active agents.'}
 						</div>
 					) : (
 						toolkits.data.map((t) => (
