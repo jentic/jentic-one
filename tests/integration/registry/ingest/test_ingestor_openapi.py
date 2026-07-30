@@ -125,6 +125,7 @@ async def test_ingest_full_pipeline(
         # stored raw_operation (#772) — this is what tells downstream
         # consumers the operation is authenticated.
         for op in ops:
+            assert op.raw_operation is not None
             assert op.raw_operation["security"] == [{"bearerAuth": []}]
 
         servers = (await session.execute(select(Server))).unique().scalars().all()
@@ -181,7 +182,8 @@ async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
     # Operations import without a security key — absence is unambiguous.
     async with registry_db.session() as session:
         ops = (await session.execute(select(Operation))).unique().scalars().all()
-        assert all("security" not in op.raw_operation for op in ops)
+        assert all(op.raw_operation is not None for op in ops)
+        assert all("security" not in (op.raw_operation or {}) for op in ops)
 
 
 async def test_ingest_does_not_warn_when_document_security_resolves(

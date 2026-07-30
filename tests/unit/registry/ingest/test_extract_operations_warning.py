@@ -12,7 +12,7 @@ from jentic_one.registry.ingest.stages.extract_operations import ExtractOperatio
 REVISION_ID = uuid.uuid4()
 
 
-def _warn(content: dict[str, Any], raw_ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _warn(content: dict[str, Any], raw_ops: list[dict[str, Any]]) -> list[Any]:
     with structlog.testing.capture_logs() as logs:
         ExtractOperationsStage._warn_if_security_unresolved(REVISION_ID, content, raw_ops)
     return [log for log in logs if log["event"] == "security_schemes_unused"]
