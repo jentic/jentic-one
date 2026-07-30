@@ -178,7 +178,6 @@ async def test_ingest_warns_when_schemes_declared_but_nothing_resolves(
     assert warnings[0]["log_level"] == "warning"
     assert warnings[0]["scheme_names"] == ["bearerAuth"]
     assert warnings[0]["operation_count"] == 3
-
     # Operations import without a security key — absence is unambiguous.
     async with registry_db.session() as session:
         ops = (await session.execute(select(Operation))).unique().scalars().all()

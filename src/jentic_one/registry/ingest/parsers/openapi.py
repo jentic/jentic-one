@@ -75,10 +75,9 @@ class OpenAPIOperationParser:
         requirement when the key is present (including an explicit ``[]``
         opt-out), else the document-level requirement (issue #772). Without
         this, specs that declare auth globally (a very common pattern) import
-        with no per-operation security at all, so nothing downstream knows the
-        operation is authenticated and the broker forwards unauthenticated
-        requests. Same override-else-inherit semantics as the catalogue
-        preview projector.
+        with no per-operation security at all, so nothing downstream can tell
+        the operation requires auth. Same override-else-inherit semantics as
+        the catalogue preview projector (keep the two aligned).
         """
         operation_servers: list[dict[str, Any]] = operation.get("servers", [])
         servers = operation_servers if operation_servers else path_servers

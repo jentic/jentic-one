@@ -363,3 +363,31 @@ def test_malformed_security_values_are_dropped() -> None:
     ops = {op["operation_id"]: op for op in parser.extract_operations(spec)}
     assert ops["inheritsSanitized"]["security"] == [{"apiKey": []}]
     assert "security" not in ops["malformedOpLevel"]
+
+
+def test_empty_requirement_object_is_retained() -> None:
+    # `security: [{}]` is the OpenAPI idiom for "auth is optional here" — it is
+    # a non-empty list of a (empty) requirement dict, so it is retained as-is
+    # and counts as a declared requirement.
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "paths": {
+            "/maybe": {"get": {"operationId": "optionalAuth", "security": [{}]}},
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert ops[0]["security"] == [{}]
+
+
+def test_root_empty_security_is_not_inherited() -> None:
+    # An explicit root `security: []` means "no default requirement"; a
+    # sanitized empty list is falsy, so operations inherit nothing.
+    parser = OpenAPIOperationParser()
+    spec: dict[str, Any] = {
+        "security": [],
+        "paths": {
+            "/x": {"get": {"operationId": "noDefault"}},
+        },
+    }
+    ops = parser.extract_operations(spec)
+    assert "security" not in ops[0]
