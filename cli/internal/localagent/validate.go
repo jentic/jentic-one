@@ -108,6 +108,30 @@ func ValidateAccount(name, homeDir string) error {
 	return ValidateHomeDir(homeDir)
 }
 
+// ValidateConfigDir reports whether configDir is the agent home's own jentic
+// config dir — exactly AgentConfigDir(homeDir). It is the guard every DESTRUCTIVE
+// path op on the recorded config dir must pass first: `jentic reset` does
+// `rm -rf <config_dir>` and the identity hand-off does `chown -R <config_dir>`, so
+// a hand-edited config.yaml that pointed config_dir at /etc or the operator's own
+// ~/.jentic would otherwise turn a reset into a privileged wipe of the wrong tree.
+// Requiring it to be the derived child of an already-validated home means the only
+// directory these commands can ever touch is the one the tooling itself created.
+func ValidateConfigDir(homeDir, configDir string) error {
+	if err := ValidateHomeDir(homeDir); err != nil {
+		return err
+	}
+	if configDir == "" {
+		return errors.New("agent config directory is empty")
+	}
+	if err := rejectControlChars("agent config directory", configDir); err != nil {
+		return err
+	}
+	if want := AgentConfigDir(homeDir); filepath.Clean(configDir) != want {
+		return fmt.Errorf("agent config directory %q must be the agent home's own .jentic (%q)", configDir, want)
+	}
+	return nil
+}
+
 // rejectControlChars returns an error if s contains any ASCII control character
 // (including newline, carriage return, and tab). These are the characters that
 // let a value break out of a single line — into a second SBPL rule, a second

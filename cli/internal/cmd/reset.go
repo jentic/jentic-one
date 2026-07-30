@@ -414,6 +414,35 @@ func (a *App) printConfigResetPlan(names []string, defaultProfile string) {
 // shared execution tail for both a full `jentic reset` and the optional
 // account-teardown offered after removing the last agent-owned profile.
 func (a *App) execAccountReset(paths config.Paths, cfg *config.FileConfig, plan resetPlan, deleteHome bool) error {
+	// Re-validate every operator-editable path the teardown is about to hand to a
+	// privileged command BEFORE the first one runs. The steps do `rm -rf
+	// <configDir>`, chown/`rm -rf <homeDir>`, and ACL edits on each grant dir; a
+	// hand-edited config.yaml that pointed home_dir/config_dir at a system tree
+	// would otherwise make reset a privileged wipe of the wrong directory. Failing
+	// closed here leaves the record intact so nothing is touched.
+	if err := localagent.ValidateAgentUser(plan.user); err != nil {
+		return fmt.Errorf("refusing to reset: recorded agent user is invalid: %w", err)
+	}
+	// homeDir/configDir may be empty on a legacy account recorded before they were
+	// tracked (buildResetSteps skips the steps that use them); validate only what is
+	// set. But if EITHER is set, both must be — and the config dir must be the home's
+	// own .jentic — so a partial or mismatched record can't reach `rm -rf`.
+	if plan.homeDir != "" {
+		if err := localagent.ValidateHomeDir(plan.homeDir); err != nil {
+			return fmt.Errorf("refusing to reset: %w", err)
+		}
+	}
+	if plan.configDir != "" {
+		if err := localagent.ValidateConfigDir(plan.homeDir, plan.configDir); err != nil {
+			return fmt.Errorf("refusing to reset: %w", err)
+		}
+	}
+	for _, acl := range plan.acls {
+		if err := localagent.ValidateGrantPath(acl.dir); err != nil {
+			return fmt.Errorf("refusing to reset: recorded grant path is invalid: %w", err)
+		}
+	}
+
 	// Act. Steps run in a fixed order (ACLs → home → sudoers → account); a failure
 	// stops the run with the config entry still recorded so a re-run can finish.
 	// A best-effort step (settling the agent home) is the exception: a macOS home

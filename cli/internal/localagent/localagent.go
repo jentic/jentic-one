@@ -445,9 +445,13 @@ func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
 // delete). The `-f` suppresses per-file errors on the SIP/TCC-protected template
 // files a macOS home carries (Library/Mail, Library/Containers, …) that nobody
 // can chown; the command still re-owns everything it can, and reset treats it as
-// best-effort so those unavoidable entries don't abort the teardown. Runs as root.
+// best-effort so those unavoidable entries don't abort the teardown. The `-h`
+// (no-dereference) is a security boundary, not a nicety: the tree is agent-owned,
+// so the agent could plant a symlink to a file OUTSIDE it (e.g. /etc/passwd) and a
+// dereferencing recursive chown would re-own that target to the operator. With
+// `-h` chown acts on the link itself, never its target. Runs as root.
 func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-Rf", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
+	return exec.Command("sudo", "chown", "-Rfh", operator, homeDir) //nolint:gosec // operator is the login user; homeDir is a resolved path.
 }
 
 // ReclaimAgentHomeCmd (re-)establishes the agent as the owner of its whole home
@@ -461,18 +465,23 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 // SIP/TCC-protected template files nobody can chown, so it re-owns everything it
 // can and the caller treats the residual non-zero exit as best-effort. Extended
 // ACLs (the operator's inherited read/write grant) survive chown on both macOS and
-// Linux, so this doesn't cost the operator access. Runs as root.
+// Linux, so this doesn't cost the operator access. The `-h` (no-dereference)
+// matches ReownHomeCmd: an existing agent-owned home can contain agent-planted
+// symlinks, and a dereferencing recursive chown would re-own their targets outside
+// the tree. Runs as root.
 func ReclaimAgentHomeCmd(agentUser, homeDir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-Rf", agentUser, homeDir) //nolint:gosec // agentUser is a config account name; homeDir is a resolved path.
+	return exec.Command("sudo", "chown", "-Rfh", agentUser, homeDir) //nolint:gosec // agentUser is a config account name; homeDir is a resolved path.
 }
 
 // ChownToAgentCmd gives the agent ownership of dir (recursively). It is used after
 // the operator writes the agent's jentic identity into the agent's ~/.jentic:
 // files the operator creates there are operator-owned, but the agent's 0600 key
 // and tokens must be readable by the agent when it later runs as itself, so we
-// hand the whole config dir to the agent. Runs as root.
+// hand the whole config dir to the agent. The `-h` (no-dereference) keeps the
+// recursive chown from following a symlink out of the config dir and re-owning its
+// target — the same boundary ReownHomeCmd/ReclaimAgentHomeCmd hold. Runs as root.
 func ChownToAgentCmd(agentUser, dir string) *exec.Cmd {
-	return exec.Command("sudo", "chown", "-R", agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path under the agent's home.
+	return exec.Command("sudo", "chown", "-Rh", agentUser, dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path under the agent's home.
 }
 
 // DeleteHomeCmd permanently removes the agent's home tree. `jentic reset` runs it

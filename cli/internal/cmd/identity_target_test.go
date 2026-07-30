@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -178,5 +180,42 @@ func TestTranslateOperatorProfileOperatorTargetNoop(t *testing.T) {
 	moved, err := app.translateOperatorProfile(identityTarget{paths: app.Paths}, "x")
 	if err != nil || moved {
 		t.Fatalf("operator target must be a no-op, got moved=%v err=%v", moved, err)
+	}
+}
+
+// TestTranslateOperatorProfileRefusesSymlinkAndKeepsOriginal proves the hand-off is
+// all-or-nothing: a symlink inside the operator profile dir aborts the copy, and
+// because the copy failed the operator's original must NOT be deleted (the delete is
+// irreversible — losing it would take the key/tokens with it).
+func TestTranslateOperatorProfileRefusesSymlinkAndKeepsOriginal(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "linky", "agnt_link")
+
+	// Plant a symlink inside the operator profile dir.
+	profDir := filepath.Join(app.Paths.ProfilesDir(), "linky")
+	if err := os.Symlink("/etc/passwd", filepath.Join(profDir, "evil")); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+
+	agentRoot := t.TempDir()
+	target := identityTarget{paths: config.Paths{Root: agentRoot}, agentUser: "a", configDir: agentRoot, agentOwned: true}
+
+	moved, err := app.translateOperatorProfile(target, "linky")
+	if err == nil {
+		t.Fatal("expected translation to fail on a symlink in the profile dir")
+	}
+	if moved {
+		t.Fatal("a failed translation must not report moved=true")
+	}
+	// The operator's original survives the failed copy.
+	opNames, _ := profile.List(app.Paths)
+	found := false
+	for _, n := range opNames {
+		if n == "linky" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("operator original must be kept when the copy fails")
 	}
 }

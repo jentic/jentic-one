@@ -27,6 +27,10 @@ type identityTarget struct {
 	// configDir is the agent's ~/.jentic that is handed over after writing (empty
 	// when operator-owned).
 	configDir string
+	// homeDir is the agent account's home, recorded independently of configDir so
+	// the hand-off can verify configDir really is that home's own .jentic before a
+	// privileged recursive chown touches it (empty when operator-owned).
+	homeDir string
 	// agentOwned reports whether this target is the shared agent account's home.
 	agentOwned bool
 }
@@ -42,6 +46,7 @@ func (a *App) resolveIdentityTarget(cfg *config.FileConfig) identityTarget {
 			paths:      config.Paths{Root: acct.ConfigDir},
 			agentUser:  acct.User,
 			configDir:  acct.ConfigDir,
+			homeDir:    acct.HomeDir,
 			agentOwned: true,
 		}
 	}
@@ -79,6 +84,14 @@ func (a *App) checkOutProfile(target identityTarget, profileName string, activat
 // a chown failure is reported, not fatal (the identity is already provisioned).
 func (a *App) handOffToAgent(target identityTarget) {
 	if !target.agentOwned || target.configDir == "" {
+		return
+	}
+	// The hand-off does `chown -R <configDir>`; guard the recorded path before it
+	// reaches root, exactly as the reset teardown does, so a hand-edited config_dir
+	// can't redirect the recursive chown onto the wrong tree. Best-effort, like the
+	// chown itself: warn and skip rather than abort a completed provisioning.
+	if err := localagent.ValidateConfigDir(target.homeDir, target.configDir); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("skipping agent config hand-off: %v", err))
 		return
 	}
 	chown := localagent.ChownToAgentCmd(target.agentUser, target.configDir)
@@ -135,6 +148,14 @@ func (a *App) translateOperatorProfile(target identityTarget, name string) (bool
 	if err := copyTree(src, dst); err != nil {
 		return false, fmt.Errorf("translate profile %q into the agent home: %w", name, err)
 	}
+	// Verify the copy actually landed before removing the operator's original: the
+	// delete is irreversible (it takes the profile's key and tokens with it), so we
+	// re-open the copy from the agent store and confirm it carries an identity. If
+	// the copy is missing or unreadable we KEEP the operator original and fail loudly
+	// rather than delete the only good copy.
+	if err := verifyProfileCopied(target.paths, name); err != nil {
+		return false, fmt.Errorf("translate profile %q: copy verification failed, keeping the operator original: %w", name, err)
+	}
 	// Remove the operator's original: the profile is being handed over to the
 	// isolated account, not duplicated across both stores.
 	if op, oerr := profile.Open(a.Paths, name); oerr == nil {
@@ -146,13 +167,47 @@ func (a *App) translateOperatorProfile(target identityTarget, name string) (bool
 	return true, nil
 }
 
+// verifyProfileCopied confirms the profile named name is present and readable in
+// the destination store before translateOperatorProfile deletes the operator's
+// original. It re-lists the store (so a partial copy that left the dir but not the
+// profile metadata is caught) and opens the profile (so an unreadable/corrupt copy
+// is caught) — the delete that follows is irreversible, so this must fail closed.
+func verifyProfileCopied(paths config.Paths, name string) error {
+	names, err := profile.List(paths)
+	if err != nil {
+		return fmt.Errorf("re-list the agent store: %w", err)
+	}
+	found := false
+	for _, n := range names {
+		if n == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("profile %q is not present in the agent store after the copy", name)
+	}
+	if _, err := profile.Open(paths, name); err != nil {
+		return fmt.Errorf("open the copied profile %q: %w", name, err)
+	}
+	return nil
+}
+
 // copyTree recursively copies the file tree at src to dst, preserving each entry's
 // permission bits (profiles hold 0600 secrets under a 0700 dir). It creates dst and
-// any parents. Symlinks are not expected in a profile dir and are skipped.
+// any parents. It uses Lstat (never Stat) so a symlink is seen as a symlink, and
+// REFUSES any symlink it encounters — the caller deletes the operator original
+// after this returns, so silently skipping a symlink would drop content before the
+// delete AND a symlink in a profile dir is unexpected (a sign of tampering, or a
+// link whose target sits outside the store). Failing closed keeps the translation
+// all-or-nothing.
 func copyTree(src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to copy symlink %q: profile dirs must not contain symlinks", src)
 	}
 	if info.IsDir() {
 		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
@@ -164,13 +219,16 @@ func copyTree(src, dst string) error {
 		}
 		for _, e := range entries {
 			if e.Type()&os.ModeSymlink != 0 {
-				continue
+				return fmt.Errorf("refusing to copy symlink %q: profile dirs must not contain symlinks", filepath.Join(src, e.Name()))
 			}
 			if err := copyTree(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
 				return err
 			}
 		}
 		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("refusing to copy non-regular file %q", src)
 	}
 	return copyFile(src, dst, info.Mode().Perm())
 }

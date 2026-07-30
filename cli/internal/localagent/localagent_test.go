@@ -105,6 +105,33 @@ func TestCreateAccountCmds(t *testing.T) {
 }
 
 // TestGrantOperatorHomeCmd guards the standalone operator-grant builder used on
+// The three recursive chowns must all pass -h (no-dereference) so a symlink the
+// agent planted in a tree it owns can't redirect a privileged recursive chown onto
+// a target outside the tree (e.g. /etc/passwd). This is a priv-esc boundary, so
+// assert the flag is present on every one.
+func TestRecursiveChownsDoNotDereferenceSymlinks(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"ReownHomeCmd", ReownHomeCmd("alice", home).Args},
+		{"ReclaimAgentHomeCmd", ReclaimAgentHomeCmd("alice-local-agent", home).Args},
+		{"ChownToAgentCmd", ChownToAgentCmd("alice-local-agent", AgentConfigDir(home)).Args},
+	}
+	for _, c := range cases {
+		// The chown flag token is args[2] (sudo, chown, <flags>, owner, path); it must
+		// be recursive AND carry the no-dereference 'h'.
+		if len(c.args) < 3 || c.args[0] != "sudo" || c.args[1] != "chown" {
+			t.Fatalf("%s: unexpected shape %v", c.name, c.args)
+		}
+		flag := c.args[2]
+		if !strings.HasPrefix(flag, "-") || !strings.ContainsRune(flag, 'R') || !strings.ContainsRune(flag, 'h') {
+			t.Errorf("%s: chown flags %q must be recursive (R) and no-dereference (h)", c.name, flag)
+		}
+	}
+}
+
 // the account-reuse path: sudo-fronted, names the operator + home, RECURSIVE (so
 // agent-owned profiles under <home>/.jentic stay operator-readable), inherited,
 // and (on macOS) carrying the directory-mutation bits so `mkdir <home>/.jentic`
@@ -258,22 +285,23 @@ func TestTeardownCmdShape(t *testing.T) {
 		t.Error("traverse grant and revoke must not be identical commands")
 	}
 
-	// ReownHomeCmd must use `chown -Rf`: -R to re-own the whole tree, -f to
+	// ReownHomeCmd must use `chown -Rfh`: -R to re-own the whole tree, -f to
 	// suppress per-file errors on the SIP/TCC-protected template files a macOS home
 	// carries (which nobody can chown) so the command still processes everything
-	// else. reset marks this step best-effort, so a residual non-zero exit is
-	// reported, not fatal.
+	// else, and -h (no-dereference) so an agent-planted symlink can't redirect the
+	// recursive chown onto a target outside the tree. reset marks this step
+	// best-effort, so a residual non-zero exit is reported, not fatal.
 	reown := strings.Join(ReownHomeCmd("alice", homeDir).Args, " ")
-	if !strings.Contains(reown, "chown -Rf ") {
-		t.Errorf("re-own must use `chown -Rf` to survive un-chownable protected files: %s", reown)
+	if !strings.Contains(reown, "chown -Rfh ") {
+		t.Errorf("re-own must use `chown -Rfh` (recursive, force, no-dereference): %s", reown)
 	}
 
 	// ReclaimAgentHomeCmd is the inverse: it re-owns the home to the AGENT (used when
 	// reusing a home a prior reset handed back to the operator). It must be
-	// sudo-fronted, name the agent user + home, and use `-Rf` for the same reason.
+	// sudo-fronted, name the agent user + home, and use `-Rfh` for the same reasons.
 	reclaim := strings.Join(ReclaimAgentHomeCmd("alice-local-agent", homeDir).Args, " ")
-	if !strings.Contains(reclaim, "chown -Rf ") {
-		t.Errorf("reclaim must use `chown -Rf`: %s", reclaim)
+	if !strings.Contains(reclaim, "chown -Rfh ") {
+		t.Errorf("reclaim must use `chown -Rfh`: %s", reclaim)
 	}
 	if !strings.Contains(reclaim, "alice-local-agent") || !strings.Contains(reclaim, homeDir) {
 		t.Errorf("reclaim must name the agent user and home: %s", reclaim)
