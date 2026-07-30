@@ -72,6 +72,7 @@ import {
 	isPlanGranted,
 	planChains,
 	planDenialReason,
+	slugifyApiField,
 	type PlanApiReference,
 	type PlanChain,
 } from '@/shared/lib/provisioningPlan';
@@ -533,15 +534,17 @@ export function ProvisioningRequestDialog({
 
 	// The operator's existing toolkits, fetched lazily the first time a toolkit
 	// step is shown — they feed the "use an existing toolkit" picker so manual
-	// setups can be adopted instead of duplicated (issue #826). One page is
-	// plenty for a picker; empty (or failed) collapses the section entirely.
+	// setups can be adopted instead of duplicated (issue #826). Suspended
+	// toolkits are excluded (adopting one would wire the agent to a dead end).
+	// One page is plenty for a picker; empty (or failed) collapses the section
+	// entirely.
 	const [existingToolkits, setExistingToolkits] = useState<ToolkitResponse[] | null>(null);
 	useEffect(() => {
 		if (!open || step !== 'toolkit' || existingToolkits !== null) return;
 		let cancelled = false;
 		void ToolkitsService.listToolkits({ limit: 100 })
 			.then((res) => {
-				if (!cancelled) setExistingToolkits(res.data);
+				if (!cancelled) setExistingToolkits(res.data.filter((tk) => tk.active));
 			})
 			.catch(() => {
 				if (!cancelled) setExistingToolkits([]);
@@ -553,8 +556,10 @@ export function ProvisioningRequestDialog({
 
 	// Existing credentials for the CURRENT chain's API vendor, cached per
 	// vendor. Vendor-filtered server-side so the picker only offers
-	// credentials that can actually serve this chain.
-	const chainVendor = chain?.apiRef.vendor;
+	// credentials that can actually serve this chain — the filter is an exact
+	// match against slugified rows, so the raw filed vendor must be slugified
+	// first (issue #656's mismatch). Disabled credentials are excluded.
+	const chainVendor = chain ? slugifyApiField(chain.apiRef.vendor) : undefined;
 	const [existingCredentials, setExistingCredentials] = useState<
 		Record<string, CredentialRedactedResponse[]>
 	>({});
@@ -565,7 +570,10 @@ export function ProvisioningRequestDialog({
 		void CredentialsService.listCredentials({ vendor: chainVendor, limit: 100 })
 			.then((res) => {
 				if (!cancelled) {
-					setExistingCredentials((prev) => ({ ...prev, [chainVendor]: res.data }));
+					setExistingCredentials((prev) => ({
+						...prev,
+						[chainVendor]: res.data.filter((c) => c.active),
+					}));
 				}
 			})
 			.catch(() => {
@@ -610,7 +618,13 @@ export function ProvisioningRequestDialog({
 		});
 	}, [chain, chains, agentName, updateChain]);
 
-	/** Adopt an existing credential — already connected, so no connect flow. */
+	/**
+	 * Adopt an existing credential — reused as-is, no connect flow. The picker
+	 * only offers active credentials; whether an OAuth credential actually
+	 * completed its sign-in is not observable from the redacted listing, so
+	 * adoption trusts the operator's choice (a broken pick fails at execute
+	 * time, same as it would for the manual setup being adopted).
+	 */
 	const handleAdoptCredential = useCallback(
 		(credentialId: string) => {
 			const cred = chainCredentialOptions?.find((c) => c.credential_id === credentialId);
@@ -1274,11 +1288,13 @@ export function ProvisioningRequestDialog({
 												// #826: the agent is ALREADY bound to a toolkit
 												// serving this API — the operator most likely set
 												// it up manually. Nudge towards adopting it
-												// instead of minting a duplicate.
+												// instead of minting a duplicate. Don't promise
+												// the picker: it only renders once the toolkit
+												// list has loaded non-empty.
 												<div className="border-warning/40 bg-warning/5 mb-3 rounded-lg border p-3 text-sm">
 													This agent is already wired to a toolkit serving{' '}
-													{chainLabel} — pick that existing toolkit below
-													instead of creating another one.
+													{chainLabel} — prefer adopting that existing
+													toolkit over creating another one.
 												</div>
 											)}
 										<Label htmlFor="pw-toolkit-name">Toolkit name</Label>
@@ -1379,7 +1395,7 @@ export function ProvisioningRequestDialog({
 														credentialLabel ??
 														'credential'}
 												</span>{' '}
-												— no sign-in needed.
+												— reused as-is.
 											</span>
 										</div>
 										<Button
@@ -1407,10 +1423,10 @@ export function ProvisioningRequestDialog({
 										</Button>
 										{chainCredentialOptions !== null &&
 											chainCredentialOptions.length > 0 && (
-												// Adopt-existing path (#826): a credential the
-												// operator already provisioned for this vendor
-												// can be reused as-is — no connect flow (it is
-												// already usable) and no orphan discard.
+												// Adopt-existing path (#826): an active credential
+												// the operator already provisioned for this vendor
+												// can be reused as-is — no connect flow and no
+												// orphan discard.
 												<div className="space-y-1.5 pt-2">
 													<Label htmlFor="pw-existing-credential">
 														Or use an existing credential for{' '}
@@ -1576,13 +1592,15 @@ export function ProvisioningRequestDialog({
 															{summarizeRules(cs?.rules ?? [])}
 														</SummaryRow>
 														{chainAlreadyWired(c) && (
+															// Honest per-path copy: adoption reuses the
+															// detected setup; creating anyway wires the
+															// NEW toolkit alongside it.
 															<SummaryRow label="Note">
 																<span className="text-muted-foreground">
-																	Parts of this API are already
-																	wired for this agent (an
-																	existing binding was detected) —
-																	approving records the grant
-																	without duplicating anything.
+																	{cs?.toolkitAdopted ||
+																	cs?.credentialAdopted
+																		? 'Parts of this API are already wired for this agent — approving records the grant against the existing setup without duplicating anything.'
+																		: 'This agent already has a toolkit wired for this API — approving will bind the new objects created here alongside that existing setup.'}
 																</span>
 															</SummaryRow>
 														)}

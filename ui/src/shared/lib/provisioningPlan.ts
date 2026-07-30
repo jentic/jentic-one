@@ -56,6 +56,25 @@ export interface PlanApiReference {
 }
 
 /**
+ * Normalize an API vendor/name field to its canonical slug form.
+ *
+ * Mirror of the backend's `slugify_api_field`: lowercase, strip, collapse
+ * runs of non-`[a-z0-9-]` to a single hyphen, trim hyphens, truncate.
+ * Plan items carry the reference as the agent filed it (raw domains like
+ * `httpbin.org`), while stored rows are slugified on write — any exact-match
+ * server-side filter (e.g. the credential list's `vendor` param) needs the
+ * slug, not the raw value.
+ */
+export function slugifyApiField(value: string): string {
+	return value
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9-]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 100);
+}
+
+/**
  * Extract the API reference the plan is about, preferring the toolkit:create
  * item (always present) and falling back to any item carrying a reference.
  */

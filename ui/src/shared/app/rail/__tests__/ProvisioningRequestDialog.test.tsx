@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
 import {
@@ -605,7 +605,11 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 	/** Stub the pickers' list endpoints + the amend/decide submit path. */
 	function stubAdoption(
 		request: AccessRequest,
-		opts?: { onAmend?: (body: unknown) => void; onDecide?: (body: unknown) => void },
+		opts?: {
+			onAmend?: (body: unknown) => void;
+			onDecide?: (body: unknown) => void;
+			onCredentialQuery?: (vendor: string | null) => void;
+		},
 	) {
 		stubDirectoryAndRequest(request);
 		worker.use(
@@ -623,13 +627,26 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 							credential_count: 1,
 							key_count: 0,
 						},
+						{
+							// Suspended — must never be offered for adoption.
+							toolkit_id: 'tk_suspended',
+							name: 'Suspended toolkit',
+							description: null,
+							active: false,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 0,
+							key_count: 0,
+						},
 					],
 					has_more: false,
 					next_cursor: null,
 				}),
 			),
-			http.get('/credentials', () =>
-				HttpResponse.json({
+			http.get('/credentials', ({ request: httpReq }) => {
+				opts?.onCredentialQuery?.(new URL(httpReq.url).searchParams.get('vendor'));
+				return HttpResponse.json({
 					data: [
 						{
 							credential_id: 'cred_exist',
@@ -641,11 +658,22 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 							created_at: '2026-01-01T00:00:00Z',
 							updated_at: null,
 						},
+						{
+							// Disabled for injection — must never be offered.
+							credential_id: 'cred_disabled',
+							name: 'Old disabled key',
+							type: 'api_key',
+							provider: 'manual',
+							active: false,
+							api: { vendor: 'open-meteo-com', name: 'forecast', version: null },
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+						},
 					],
 					has_more: false,
 					next_cursor: null,
-				}),
-			),
+				});
+			}),
 			http.post('/credentials', () =>
 				HttpResponse.json({ credential: { credential_id: 'cred_noauth_1' } }),
 			),
@@ -792,6 +820,53 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
 		expect(byItem.get('i3')?.resource_id).toBe('cred_exist');
 	});
+
+	it('slugifies the raw filed vendor and hides inactive artifacts in the pickers', async () => {
+		// Agents file references with raw domains ('Open-Meteo.com'); stored
+		// rows carry the slug ('open-meteo-com') and the credential list's
+		// vendor filter is an exact match — an unslugged query would silently
+		// collapse the picker (issue #656's mismatch).
+		let queriedVendor: string | null | undefined;
+		const base = authPlanRequest();
+		const rawRef = { vendor: 'Open-Meteo.com', name: 'forecast' };
+		const request = {
+			...base,
+			items: base.items.map((it) => ({
+				...it,
+				resource_reference: { ...it.resource_reference, ...rawRef },
+			})),
+		};
+		stubAdoption(request, { onCredentialQuery: (v) => (queriedVendor = v) });
+		worker.use(
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Toolkit picker: the suspended toolkit is never offered.
+		const toolkitPicker = await screen.findByLabelText(/use an existing toolkit/i);
+		expect(within(toolkitPicker).getByRole('option', { name: 'Ops toolkit' })).toBeVisible();
+		expect(
+			within(toolkitPicker).queryByRole('option', { name: 'Suspended toolkit' }),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+
+		// Credential picker: queried with the slug, disabled rows filtered out.
+		const credPicker = await screen.findByLabelText(/use an existing credential/i);
+		expect(queriedVendor).toBe('open-meteo-com');
+		expect(within(credPicker).getByRole('option', { name: /Weather key/ })).toBeVisible();
+		expect(
+			within(credPicker).queryByRole('option', { name: /Old disabled key/ }),
+		).not.toBeInTheDocument();
+	});
 });
 
 describe('ProvisioningRequestDialog — already-in-place hints (#826)', () => {
@@ -854,9 +929,14 @@ describe('ProvisioningRequestDialog — already-in-place hints (#826)', () => {
 		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
-		// Chain 1 carries the existing-binding note; the satisfied scope grant
+		// Chain 1 carries the existing-binding note — the operator created a
+		// NEW toolkit despite the detected wiring, so the note is honest about
+		// binding it alongside the existing setup. The satisfied scope grant
 		// is labelled as already in place.
-		expect(await screen.findByText(/already wired for this agent/i)).toBeInTheDocument();
+		expect(
+			await screen.findByText(/already has a toolkit wired for this API/i),
+		).toBeInTheDocument();
+		expect(screen.getByText(/alongside that existing setup/i)).toBeInTheDocument();
 		expect(screen.getByText(/already in place — approving records it/i)).toBeInTheDocument();
 	});
 });

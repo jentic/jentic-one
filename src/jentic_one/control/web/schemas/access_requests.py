@@ -148,9 +148,10 @@ class AccessRequestItemResponse(BaseModel):
             "Populated on single-request GETs for pending credential:bind, "
             "toolkit:bind, and scope:grant items; null when not computed "
             "(list endpoints, decided items, fulfilment-only intents, or an "
-            "item whose target cannot be determined). Toolkit references are "
+            "item whose target cannot be determined). Toolkit REFERENCES are "
             "resolved under the caller's visibility, mirroring decide-time "
-            "resolution."
+            "resolution, so False can also mean 'satisfied by a toolkit this "
+            "caller cannot see'; explicit-id targets are probed directly."
         ),
     )
 

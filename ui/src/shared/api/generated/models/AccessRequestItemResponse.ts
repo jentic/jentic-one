@@ -8,7 +8,7 @@
 export type AccessRequestItemResponse = {
     action: string;
     /**
-     * Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, or an item whose target cannot be determined). Toolkit references are resolved under the caller's visibility, mirroring decide-time resolution.
+     * Whether this item's outcome is already in effect (the binding or grant it asks for already exists), letting a reviewer approve manually-fulfilled work instead of re-doing it in the wizard. Populated on single-request GETs for pending credential:bind, toolkit:bind, and scope:grant items; null when not computed (list endpoints, decided items, fulfilment-only intents, or an item whose target cannot be determined). Toolkit REFERENCES are resolved under the caller's visibility, mirroring decide-time resolution, so False can also mean 'satisfied by a toolkit this caller cannot see'; explicit-id targets are probed directly.
      */
     already_satisfied?: (boolean | null);
     applied_effects?: (Record<string, any> | null);
