@@ -89,8 +89,6 @@ export interface BindableCredential {
 	name: string;
 	type: string;
 	vendor: string | null;
-	/** Null/empty ⇒ the credential is vendor-wide (covers every sub-API) (#744). */
-	api_name: string | null;
 	provider: string | null;
 }
 

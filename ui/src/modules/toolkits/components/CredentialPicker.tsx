@@ -146,7 +146,6 @@ function CredentialRow({
 	disabled?: boolean;
 }) {
 	const subtitle = cred.vendor ?? cred.provider ?? cred.credential_id;
-	const vendorWide = !cred.api_name;
 	return (
 		<button
 			type="button"
@@ -169,11 +168,6 @@ function CredentialRow({
 			<Badge variant="default" className="shrink-0 text-[10px]">
 				{CREDENTIAL_TYPE_LABELS[cred.type] ?? cred.type}
 			</Badge>
-			{vendorWide && (
-				<Badge variant="default" className="shrink-0 text-[10px]">
-					vendor-wide
-				</Badge>
-			)}
 			<ChevronRight className="text-muted-foreground group-hover:text-foreground h-4 w-4 shrink-0 transition-colors" />
 		</button>
 	);

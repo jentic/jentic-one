@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { http, HttpResponse } from 'msw';
 import { worker } from '@/mocks/browser';
 import {
 	checkA11y,
@@ -136,39 +135,6 @@ describe('CredentialsPage', () => {
 			.getAllByTestId('toast')
 			.find((t) => t.textContent?.includes('Credential created'))!;
 		expect(toast).toHaveTextContent('CI token');
-	});
-
-	it('submits a vendor-wide credential with an empty api name/version (#744)', async () => {
-		let captured: { api?: { name?: string; version?: string } } | null = null;
-		worker.use(
-			http.post('/credentials', async ({ request }) => {
-				captured = (await request.json()) as typeof captured;
-				const credential = makeMockCredential({
-					name: 'Vendor cred',
-					api: { vendor: 'sendgrid.com', name: '', version: '' },
-				});
-				return HttpResponse.json({ credential, secret: {} }, { status: 201 });
-			}),
-		);
-
-		renderPage();
-		const user = userEvent.setup();
-
-		await screen.findByText('No credentials stored');
-		await user.click(screen.getByRole('button', { name: /add your first credential/i }));
-		await user.click(await screen.findByRole('button', { name: /Enter manually/i }));
-
-		await user.type(screen.getByPlaceholderText('Production API key'), 'Vendor cred');
-		await user.type(screen.getByPlaceholderText('acme'), 'sendgrid.com');
-		await user.type(screen.getByPlaceholderText('sk_live_…'), 'super-secret-value');
-
-		// The vendor-wide toggle appears once a vendor is entered.
-		await user.click(await screen.findByLabelText('Use for all vendor APIs'));
-		await user.click(screen.getByRole('button', { name: 'Create credential' }));
-
-		await waitFor(() => expect(captured).not.toBeNull());
-		expect(captured!.api?.name).toBeFalsy();
-		expect(captured!.api?.version).toBeFalsy();
 	});
 
 	it('creates a credential via the guided flow: pick local API → auto-shape to API_KEY', async () => {

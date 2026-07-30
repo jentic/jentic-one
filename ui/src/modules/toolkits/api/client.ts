@@ -259,7 +259,6 @@ export async function listBindableCredentials(): Promise<BindableCredential[]> {
 			name: c.name,
 			type: c.type,
 			vendor: c.api?.vendor ?? null,
-			api_name: c.api?.name ?? null,
 			provider: c.provider ?? null,
 		}));
 	} catch (error) {
