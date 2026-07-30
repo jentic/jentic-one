@@ -284,10 +284,17 @@ of maintainers for the whole community.
 
 ### 9. FALLBACK — apply the same overlay locally (only if the user is blocked)
 
-Offer this **only if the user says they can't wait for maintainer approval**. It applies the
+Offer this **only if the user says they can't wait for maintainer approval**. It submits the
 *same overlay document* to the locally-registered API via the Jentic registry's native overlay
-API, so the fix is usable through the local broker immediately. The PR stays open — do not close
-it; this is not a fork.
+API. The PR stays open — do not close it; this is not a fork.
+
+> **Honesty note (current platform behaviour):** the registry stores and confirms overlays,
+> but **does not yet apply them** — the `overlays=true` flag on the spec download endpoints is
+> a documented no-op, and the broker executes from the operation data extracted at import.
+> Confirming an overlay today records intent (auditable, ready for when application lands);
+> it does **not** change the served spec or broker behaviour. Until overlay application ships,
+> verification of the fix is the applied `openapi.json` on the PR branch (steps 4–6), not a
+> local execution. Tell the user this explicitly if they ask for the local fallback.
 
 The API must already exist in the local registry (import it from the catalog first if needed:
 `jentic catalog import <api_id>`). Then submit and confirm the overlay against the local control
@@ -309,9 +316,10 @@ curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```
 
-Then verify locally, e.g. `jentic apis spec $V/$N/$VER` reflects the fix, or run the operation
-through `jentic execute`. Tell the user: the local registry now has the fix, and PR
-`<url>` is still the path for the community — nothing here replaces it.
+Then verify the submission was recorded (`GET $BASE/apis/$V/$N/$VER/overlays` lists it as
+`confirmed`). Do **not** claim the local broker now has the fix — per the honesty note above,
+application is not implemented yet. Tell the user: the overlay is registered locally and PR
+`<url>` is the path for the community — nothing here replaces it.
 
 ## Guardrails
 
@@ -323,4 +331,3 @@ through `jentic execute`. Tell the user: the local registry now has the fix, and
   `False` or lint shows any error / new finding code.
 - **Reserve the local apply for genuine impatience.** If the user is fine waiting, the PR alone is
   the outcome.
-```
