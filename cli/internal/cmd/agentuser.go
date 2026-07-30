@@ -355,26 +355,26 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 // recorded grants. Enabled tracks AccountCreated: creating the account enables it,
 // and recording a declined (created=false) account leaves it disabled.
 func (a *App) recordAgentAccount(userName, homeDir, configDir string, created bool) {
-	cfg, err := config.Load(a.Paths)
-	if err != nil {
-		fmt.Fprintln(a.Out, theme.Warnf("could not record the agent account: %v", err))
-		return
-	}
-	acct, existed := cfg.AgentAccount()
-	acct.User = userName
-	acct.AccountCreated = created
-	acct.Enabled = created
-	if homeDir != "" {
-		acct.HomeDir = homeDir
-	}
-	if configDir != "" {
-		acct.ConfigDir = configDir
-	}
-	if !existed || acct.CreatedAt == "" {
-		acct.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-	cfg.SetAgentAccount(acct)
-	if err := cfg.Save(a.Paths); err != nil {
+	// Route through Mutate: it reloads under the config lock before applying, so a
+	// concurrent grant that appended a dir to GrantedDirs isn't clobbered by this
+	// record write (which preserves whatever grants the reloaded config carries).
+	if _, err := config.Mutate(a.Paths, func(cfg *config.FileConfig) error {
+		acct, existed := cfg.AgentAccount()
+		acct.User = userName
+		acct.AccountCreated = created
+		acct.Enabled = created
+		if homeDir != "" {
+			acct.HomeDir = homeDir
+		}
+		if configDir != "" {
+			acct.ConfigDir = configDir
+		}
+		if !existed || acct.CreatedAt == "" {
+			acct.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		cfg.SetAgentAccount(acct)
+		return nil
+	}); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not save the agent account: %v", err))
 	}
 }

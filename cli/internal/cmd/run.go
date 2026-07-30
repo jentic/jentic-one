@@ -561,11 +561,18 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, a
 	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
 		return err
 	}
-	if cfg.AddGrantedDir(abs) {
-		if err := cfg.Save(a.Paths); err != nil {
-			return err
-		}
+	// Record the grant under the config lock, reloading first, so a concurrent
+	// `jentic run` granting a different directory can't drop this one (each would
+	// otherwise load, append its own dir, and the last Save would win). Mutate
+	// returns the committed config; adopt it so the in-memory cfg stays current.
+	updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
+		c.AddGrantedDir(abs)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
+	*cfg = *updated
 	return nil
 }
 
@@ -854,11 +861,14 @@ func (a *App) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, di
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"  (some entries had no matching grant to remove — that's expected; continuing)"))
 	}
-	if cfg.RemoveGrantedDir(abs) {
-		if err := cfg.Save(a.Paths); err != nil {
-			return err
-		}
+	updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
+		c.RemoveGrantedDir(abs)
+		return nil
+	})
+	if err != nil {
+		return err
 	}
+	*cfg = *updated
 	fmt.Fprintln(a.Out, theme.Successf("Revoked."))
 	return nil
 }

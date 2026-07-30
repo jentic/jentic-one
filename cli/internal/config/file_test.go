@@ -261,3 +261,76 @@ func TestAgentAccountRoundTrip(t *testing.T) {
 		t.Errorf("granted dirs after remove = %v", acct.GrantedDirs)
 	}
 }
+
+// TestMutateReloadsBeforeApplying proves Mutate does a fresh read UNDER the lock,
+// so a mutation applied to a STALE in-memory config (one loaded before another
+// writer committed) doesn't clobber the committed change. Here a first Mutate adds
+// grant A; a second Mutate — driven from a config loaded before A existed — adds
+// grant B. Both must survive, because the second reloads (seeing A) before adding
+// B rather than saving its stale two-grant-less snapshot.
+func TestMutateReloadsBeforeApplying(t *testing.T) {
+	paths := Paths{Root: t.TempDir()}
+	base := &FileConfig{}
+	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
+	if err := base.Save(paths); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	// Writer 1 commits grant A.
+	if _, err := Mutate(paths, func(c *FileConfig) error {
+		c.AddGrantedDir("/opt/a/A")
+		return nil
+	}); err != nil {
+		t.Fatalf("mutate A: %v", err)
+	}
+
+	// Writer 2 adds grant B. Even though it's a fresh Mutate, its fn reloads the
+	// on-disk config first, so it sees A and appends B rather than replacing.
+	got, err := Mutate(paths, func(c *FileConfig) error {
+		c.AddGrantedDir("/opt/a/B")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("mutate B: %v", err)
+	}
+	acct, _ := got.AgentAccount()
+	if len(acct.GrantedDirs) != 2 {
+		t.Fatalf("expected both grants to survive, got %v", acct.GrantedDirs)
+	}
+}
+
+// TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
+// the on-disk config is unchanged when fn returns an error.
+func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
+	paths := writeConfig(t, "default_profile: keep\n")
+	_, err := Mutate(paths, func(c *FileConfig) error {
+		c.DefaultProfile = "clobbered"
+		return os.ErrInvalid
+	})
+	if err == nil {
+		t.Fatal("expected Mutate to propagate the fn error")
+	}
+	got, _ := Load(paths)
+	if got.DefaultProfile != "keep" {
+		t.Errorf("failed Mutate must not persist changes, got %q", got.DefaultProfile)
+	}
+}
+
+// TestSaveLeavesNoTempFile proves the atomic write cleans up its temp file, so a
+// successful Save leaves only config.yaml (plus the lock file if Mutate ran) and
+// no stray .config-*.tmp.
+func TestSaveLeavesNoTempFile(t *testing.T) {
+	paths := Paths{Root: t.TempDir()}
+	if err := (&FileConfig{DefaultProfile: "x"}).Save(paths); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	entries, err := os.ReadDir(paths.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if len(e.Name()) >= 8 && e.Name()[:8] == ".config-" {
+			t.Errorf("stray temp file left behind: %s", e.Name())
+		}
+	}
+}

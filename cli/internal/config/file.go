@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -204,6 +205,13 @@ func Load(paths Paths) (*FileConfig, error) {
 // fields, so any hand-added comments in an existing file are not preserved —
 // this is the CLI's own settings file, written by commands like `jentic profile
 // use`.
+//
+// The write is ATOMIC: it lands in a temp file in the same directory, fsyncs it,
+// then renames it over config.yaml (rename is atomic on POSIX). A crash mid-write
+// therefore leaves either the old file or the new one, never a half-written config
+// that would fail to parse and orphan the agent account record. Concurrent writers
+// should hold the lock via Mutate; the atomic rename here bounds the damage when
+// two writes race regardless.
 func (c *FileConfig) Save(paths Paths) error {
 	if _, err := paths.Ensure(paths.Dir()); err != nil {
 		return err
@@ -212,22 +220,89 @@ func (c *FileConfig) Save(paths Paths) error {
 	if err != nil {
 		return err
 	}
-	path := paths.ConfigPath()
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
+	return writeFileAtomic(paths.ConfigPath(), data, 0o600)
+}
+
+// writeFileAtomic writes data to path via a same-directory temp file that is
+// fsynced and then renamed over path, so a reader (or a crash) never observes a
+// partial write. The temp file is created with perm and removed on any error
+// before the rename.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config in %s: %w", dir, err)
 	}
+	tmpName := tmp.Name()
+	// Clean up the temp file on any failure path before the successful rename.
+	defer func() {
+		if tmpName != "" {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp config over %s: %w", path, err)
+	}
+	tmpName = "" // renamed successfully — nothing to clean up
 	return nil
+}
+
+// Mutate performs a race-safe read-modify-write of config.yaml: it takes an
+// exclusive file lock, reloads the config from disk UNDER that lock (so it sees
+// any change a concurrent writer committed since the caller last loaded), applies
+// fn, and saves atomically before releasing the lock. Every path that changes the
+// persisted agent-account record — grant/revoke a directory, record or clear the
+// account — must go through this rather than the load-mutate-Save it did before,
+// where two concurrent `jentic run` grants could each load the same config, add
+// their own dir, and the second Save would drop the first's. fn receives the
+// freshly-reloaded config and mutates it in place; the reloaded config is also
+// returned so callers can observe the committed result.
+func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
+	if _, err := paths.Ensure(paths.Dir()); err != nil {
+		return nil, err
+	}
+	unlock, err := lockConfig(paths)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	cfg, err := Load(paths)
+	if err != nil {
+		return nil, err
+	}
+	if err := fn(cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Save(paths); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }
 
 // SetDefaultProfile loads config.yaml, sets default_profile to name, and saves.
 // It is the persisting half of `jentic profile use`.
 func SetDefaultProfile(paths Paths, name string) error {
-	cfg, err := Load(paths)
-	if err != nil {
-		return err
-	}
-	cfg.DefaultProfile = name
-	return cfg.Save(paths)
+	_, err := Mutate(paths, func(cfg *FileConfig) error {
+		cfg.DefaultProfile = name
+		return nil
+	})
+	return err
 }
 
 // AgentAccount returns the configured agent account and whether one is recorded.

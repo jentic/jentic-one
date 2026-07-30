@@ -158,7 +158,7 @@ func (a *App) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetO
 			}
 			deleteHome = accepted
 		}
-		if err := a.execAccountReset(a.Paths, cfg, plan, deleteHome); err != nil {
+		if err := a.execAccountReset(a.Paths, plan, deleteHome); err != nil {
 			return err
 		}
 	}
@@ -254,7 +254,7 @@ func (a *App) resetProfile(ctx context.Context, cfg *config.FileConfig, opts *re
 			}
 			deleteHome = accepted
 		}
-		return a.execAccountReset(a.Paths, cfg, plan, deleteHome)
+		return a.execAccountReset(a.Paths, plan, deleteHome)
 	}
 	return nil
 }
@@ -297,12 +297,19 @@ func (a *App) execProfileRemoval(_ context.Context, cfg *config.FileConfig, ref 
 	if err := p.Delete(); err != nil {
 		return err
 	}
-	// Clear the operator's default_profile if it named this profile.
+	// Clear the operator's default_profile if it named this profile (under the
+	// config lock so it can't race a concurrent grant write).
 	if cfg.DefaultProfile == ref.name {
-		cfg.DefaultProfile = ""
-		if err := cfg.Save(a.Paths); err != nil {
+		updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
+			if c.DefaultProfile == ref.name {
+				c.DefaultProfile = ""
+			}
+			return nil
+		})
+		if err != nil {
 			return err
 		}
+		*cfg = *updated
 	}
 	return nil
 }
@@ -369,10 +376,12 @@ func (a *App) execConfigWipe(names []string, cfg *config.FileConfig) error {
 	}
 
 	// Clear the default_profile pointer so the config no longer references a
-	// profile that no longer exists.
+	// profile that no longer exists (under the config lock).
 	if cfg.DefaultProfile != "" {
-		cfg.DefaultProfile = ""
-		if err := cfg.Save(a.Paths); err != nil {
+		if _, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
+			c.DefaultProfile = ""
+			return nil
+		}); err != nil {
 			return err
 		}
 	}
@@ -413,7 +422,7 @@ func (a *App) printConfigResetPlan(names []string, defaultProfile string) {
 // already-confirmed agent account and clears its config record last. It is the
 // shared execution tail for both a full `jentic reset` and the optional
 // account-teardown offered after removing the last agent-owned profile.
-func (a *App) execAccountReset(paths config.Paths, cfg *config.FileConfig, plan resetPlan, deleteHome bool) error {
+func (a *App) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bool) error {
 	// Re-validate every operator-editable path the teardown is about to hand to a
 	// privileged command BEFORE the first one runs. The steps do `rm -rf
 	// <configDir>`, chown/`rm -rf <homeDir>`, and ACL edits on each grant dir; a
@@ -488,9 +497,12 @@ func (a *App) execAccountReset(paths config.Paths, cfg *config.FileConfig, plan 
 	}
 
 	// Clear the account record LAST, so a mid-way failure above leaves the record
-	// of what still needs cleaning for the next run.
-	cfg.ClearAgentAccount()
-	if err := cfg.Save(paths); err != nil {
+	// of what still needs cleaning for the next run. Under the config lock (Mutate)
+	// so it can't race a concurrent grant write.
+	if _, err := config.Mutate(paths, func(c *config.FileConfig) error {
+		c.ClearAgentAccount()
+		return nil
+	}); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))
