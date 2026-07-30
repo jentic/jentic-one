@@ -805,6 +805,7 @@ components:
           anyOf:
           - type: string
           - type: 'null'
+          description: Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the parameter name.
           title: Field Name
         key:
           anyOf:
@@ -815,6 +816,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/CredentialLocation'
           - type: 'null'
+          description: Immutable after create. Accepted for backward compatibility; if provided it must equal the stored value, otherwise the request is rejected. Recreate the credential to change the injection binding.
         name:
           anyOf:
           - type: string

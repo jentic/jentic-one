@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowLeft, Download, Info, Loader2 } from 'lucide-react';
-import { Button, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
+import { Button, Checkbox, Dialog, ErrorAlert, Input, Label, Skeleton, toast } from '@/shared/ui';
 import {
 	CREDENTIAL_TYPE_ORDER,
 	CredentialType,
@@ -30,6 +30,7 @@ import { ApiPicker } from '@/shared/credentials/components/ApiPicker';
 import { AuthTypeCards } from '@/shared/credentials/components/AuthTypeCards';
 import { ServerVariablesSection } from '@/shared/credentials/components/ServerVariablesSection';
 import {
+	apiKeyFieldsFromScheme,
 	oauth2FlowsFromSchemes,
 	schemeTypeToCredentialType,
 	type OAuth2FlowDef,
@@ -101,6 +102,9 @@ export function CreateCredentialDialog({
 	const [step, setStep] = useState<Step>('pick');
 	const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
 	const [manualMode, setManualMode] = useState(false);
+	// When true, the credential is stored vendor-wide (name/version cleared to
+	// NULL) so it covers every sub-API the vendor publishes (#744).
+	const [vendorWide, setVendorWide] = useState(false);
 	const [type, setType] = useState<CredentialType>(initialType ?? CredentialType.BEARER_TOKEN);
 	/** When non-null, the spec drove the type (UI hides the manual toggle). */
 	const [activeScheme, setActiveScheme] = useState<SchemeOption | null>(null);
@@ -221,6 +225,7 @@ export function CreateCredentialDialog({
 		setStep('pick');
 		setSelectedApi(null);
 		setManualMode(false);
+		setVendorWide(false);
 		setActiveScheme(null);
 		setState(EMPTY_FORM);
 		setErrors({});
@@ -246,6 +251,7 @@ export function CreateCredentialDialog({
 	const handlePickApi = (api: SelectedApi): void => {
 		setSelectedApi(api);
 		setManualMode(false);
+		setVendorWide(false);
 		setState((s) => seedFormFromSelectedApi(s, api, nameDirty.current));
 		setStep('form');
 	};
@@ -253,6 +259,7 @@ export function CreateCredentialDialog({
 	const handleManualEntry = (): void => {
 		setSelectedApi(null);
 		setManualMode(true);
+		setVendorWide(false);
 		setState(EMPTY_FORM);
 		setStep('form');
 	};
@@ -288,6 +295,20 @@ export function CreateCredentialDialog({
 	// `state.scopes` stays the space-separated source of truth; these helpers
 	// edit it as a set and flag manual interaction so auto-select backs off.
 	const isOAuth2 = type === CredentialType.OAUTH2;
+
+	// Non-blocking warning when the typed api_key field name diverges from the
+	// spec's declared parameter name (a wrong binding causes upstream 401s —
+	// #589). Only meaningful in spec mode with an apiKey scheme resolved.
+	const fieldNameWarning = useMemo(() => {
+		if (manualMode || type !== CredentialType.API_KEY || activeScheme == null) return undefined;
+		const { fieldName: expected } = apiKeyFieldsFromScheme(
+			schemesResult.schemes,
+			activeScheme.name,
+		);
+		const typed = state.fieldName.trim();
+		if (!expected || !typed || typed === expected) return undefined;
+		return `The API spec expects "${expected}" — a different name will likely fail authentication.`;
+	}, [manualMode, type, activeScheme, schemesResult.schemes, state.fieldName]);
 
 	// OAuth2 scopes declared by the spec — drives the grouped scope picker.
 	// Enhanced with display metadata + recommended-by-default flags.
@@ -358,7 +379,12 @@ export function CreateCredentialDialog({
 		setServerVarErrors(svErrors);
 		if (Object.keys(validation).length > 0 || Object.keys(svErrors).length > 0) return;
 
-		const body = buildCreateBody(type, state);
+		const body = buildCreateBody(
+			type,
+			// Vendor-wide: clear name/version so the credential covers every
+			// sub-API of the vendor (apiRef omits the empty axes → NULL) (#744).
+			vendorWide ? { ...state, apiName: '', apiVersion: '' } : state,
+		);
 
 		// Catalog APIs the user just picked may not be in the local registry
 		// yet — fire the async import first. The import resolves the same
@@ -584,6 +610,27 @@ export function CreateCredentialDialog({
 						</fieldset>
 					)}
 
+					{state.apiVendor.trim() && (
+						<label className="border-border bg-muted/20 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3">
+							<Checkbox
+								checked={vendorWide}
+								onChange={setVendorWide}
+								size="sm"
+								ariaLabel="Use for all vendor APIs"
+							/>
+							<span className="min-w-0 flex-1">
+								<span className="text-foreground block text-sm font-medium">
+									Use for all {state.apiVendor.trim()} APIs
+								</span>
+								<span className="text-muted-foreground mt-0.5 block text-xs">
+									One credential covers every API this vendor publishes (e.g. all
+									SendGrid sub-APIs). The most specific credential still wins if
+									you later add a pinned one.
+								</span>
+							</span>
+						</label>
+					)}
+
 					<div className="space-y-2">
 						<FormSectionLabel>Credential details</FormSectionLabel>
 						<div className="space-y-1.5">
@@ -694,6 +741,7 @@ export function CreateCredentialDialog({
 										onFlowChange={isOAuth2 ? handleFlowChange : undefined}
 										callbackUrl={isOAuth2 ? callbackUrl : undefined}
 										providers={providersQuery.data?.providers}
+										fieldNameWarning={fieldNameWarning}
 									/>
 								</div>
 
