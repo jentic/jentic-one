@@ -64,7 +64,11 @@ func (a *App) ensureAgentConfig(ctx context.Context, prefs seedPrefs, agentUser 
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Seeding %s's %s config into %s ...", desc.ID, desc.Binary, agentUser))
-	c := localagent.CopyConfigCmd(agentUser, home, srcs)
+	agentHome, err := localagent.LookupHomeDir(agentUser)
+	if err != nil {
+		return err
+	}
+	c := localagent.CopyConfigCmd(agentUser, agentHome, home, srcs)
 	c.Stdout, c.Stderr = a.Out, a.Err
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("seed agent config: %w", err)
@@ -115,7 +119,11 @@ func (a *App) ensureProviderConfig(ctx context.Context, prefs seedPrefs, agentUs
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Seeding %s provider config into %s ...", pc.Name, agentUser))
-	c := localagent.CopyConfigCmd(agentUser, home, srcs)
+	agentHome, err := localagent.LookupHomeDir(agentUser)
+	if err != nil {
+		return err
+	}
+	c := localagent.CopyConfigCmd(agentUser, agentHome, home, srcs)
 	c.Stdout, c.Stderr = a.Out, a.Err
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("seed provider config: %w", err)

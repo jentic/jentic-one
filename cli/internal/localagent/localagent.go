@@ -14,8 +14,10 @@ package localagent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -711,15 +713,34 @@ func OperatorBinaryPath(ctx context.Context, binary string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// LookupHomeDir resolves the agent account's home directory from the OS account
+// database (os/user), returning an error if the account does not exist. This is
+// the authoritative home — it replaces the old `$(eval echo ~<user>)` shell
+// expansion, which spliced the account name into a command line where a crafted
+// name could have escaped into arbitrary shell. Resolving in Go means the name is
+// never interpreted by a shell at all.
+func LookupHomeDir(agentUser string) (string, error) {
+	u, err := user.Lookup(agentUser)
+	if err != nil {
+		return "", fmt.Errorf("resolve home of agent user %q: %w", agentUser, err)
+	}
+	if u.HomeDir == "" {
+		return "", fmt.Errorf("agent user %q has no home directory recorded", agentUser)
+	}
+	return u.HomeDir, nil
+}
+
 // CopyBinaryCmd copies the operator's binary at src into the agent user's
 // ~/.local/bin and chowns it to the agent. It runs as root (sudo sh -c) so it
-// can write into the agent's home and change ownership in one step.
-func CopyBinaryCmd(agentUser, src, binary string) *exec.Cmd {
-	// Resolve the agent's home and place the copy at ~/.local/bin/<binary>.
-	dest := "$(eval echo ~" + agentUser + ")/.local/bin"
-	script := "mkdir -p " + dest + " && cp " + shellQuote(src) + " " + dest + "/" + shellQuote(binary) +
-		" && chown -R " + shellQuote(agentUser) + ": " + dest + "/" + shellQuote(binary)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary are config/descriptor-derived, shell-quoted.
+// can write into the agent's home and change ownership in one step. agentHome is
+// resolved by the caller in Go (LookupHomeDir) — never via shell expansion of the
+// account name — so the name can't reach a shell as anything but a quoted literal.
+func CopyBinaryCmd(agentUser, agentHome, src, binary string) *exec.Cmd {
+	dest := shellQuote(agentHome + "/.local/bin")
+	binName := shellQuote(binary)
+	script := "mkdir -p " + dest + " && cp " + shellQuote(src) + " " + dest + "/" + binName +
+		" && chown -R " + shellQuote(agentUser) + ": " + dest + "/" + binName
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/src/binary/agentHome are config/descriptor-derived and Go-resolved, shell-quoted.
 }
 
 // InstallBinaryCmd runs an agent's documented fresh-install command as the
@@ -765,19 +786,18 @@ func ExistingConfigPaths(operatorHome string, desc Descriptor) []string {
 // CAUTION: these files may carry provider-specific secrets (e.g. an API key the
 // operator saved in the agent's own config). This deliberately hands the agent
 // a copy of those; it is the operator's settings the agent is meant to inherit.
-func CopyConfigCmd(agentUser, operatorHome string, srcs []string) *exec.Cmd {
-	agentHome := "$(eval echo ~" + agentUser + ")"
+func CopyConfigCmd(agentUser, agentHome, operatorHome string, srcs []string) *exec.Cmd {
 	var b strings.Builder
 	for _, src := range srcs {
 		rel := strings.TrimPrefix(src, filepath.Clean(operatorHome)+string(filepath.Separator))
-		dest := agentHome + "/" + shellQuote(rel)
+		dest := shellQuote(filepath.Join(agentHome, rel))
 		// Recreate the parent dir, copy recursively (dir or file), then chown.
 		b.WriteString("mkdir -p \"$(dirname " + dest + ")\" && ")
 		b.WriteString("cp -R " + shellQuote(src) + " " + dest + " && ")
 		b.WriteString("chown -R " + shellQuote(agentUser) + ": " + dest + " && ")
 	}
 	script := strings.TrimSuffix(b.String(), " && ")
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived, shell-quoted.
+	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
 }
 
 // ProviderConfig describes the LLM provider an operator's Claude Code setup

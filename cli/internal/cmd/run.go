@@ -427,7 +427,11 @@ func (a *App) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *run
 			return fmt.Errorf("no operator copy of %s found to copy; re-run and choose install", desc.Binary)
 		}
 		fmt.Fprintln(a.Out, theme.Infof("Copying %s → %s ...", opBin, agentUser))
-		cp := localagent.CopyBinaryCmd(agentUser, opBin, desc.Binary)
+		agentHome, err := localagent.LookupHomeDir(agentUser)
+		if err != nil {
+			return err
+		}
+		cp := localagent.CopyBinaryCmd(agentUser, agentHome, opBin, desc.Binary)
 		cp.Stdout, cp.Stderr = a.Out, a.Err
 		if err := cp.Run(); err != nil {
 			return fmt.Errorf("copy binary: %w", err)
