@@ -155,7 +155,9 @@ def plan_governance_for_items(
       ``(vendor, name)`` matches the bind's ``resource_reference``. Version is
       not part of the key — an intent for ``vendor/name`` covers all versions.
       A bind for a different API is *not* governed and resolves normally by
-      its reference.
+      its reference. A bind with an *unattributable* reference (missing or
+      vendor-less) is governed conservatively: it can never resolve by
+      reference, so the plan-aware denial beats the bare resolution error.
     - A ``credential:bind`` is governed whenever any live intent exists in
       the request: agents never carry credential ids at file time, so a
       credential-bind sharing a request with an intent is always the wizard's
@@ -208,8 +210,17 @@ def plan_governance_for_items(
         # reference) is treated as covering all bind targets to preserve the
         # pre-#778 conservative behaviour for that edge case.
         bind_key = _canonical_api_key(item.resource_reference)
+        if bind_key is None:
+            # An unattributable bind (no reference, or a vendor-less one) can
+            # never resolve by reference — letting it fall to the plain
+            # contract would surface a bare ValueError from resolution (a 500
+            # that strands the request pending) instead of a legible denial.
+            # Treat it as governed by every live intent, the conservative
+            # pre-#778 behaviour for malformed refs inside a plan.
+            governance[item.id] = PlanGovernance(governing_intent_ids=all_live_intent_ids)
+            continue
         matching_intent_ids: list[str] = list(untargeted_intent_ids)
-        if bind_key is not None and bind_key in intents_by_api:
+        if bind_key in intents_by_api:
             matching_intent_ids.extend(intents_by_api[bind_key])
         if matching_intent_ids:
             governance[item.id] = PlanGovernance(

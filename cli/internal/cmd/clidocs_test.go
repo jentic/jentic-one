@@ -37,14 +37,11 @@ func TestCLIReferenceShape(t *testing.T) {
 		t.Error("jentic binary missing tagline/short")
 	}
 
-	// profile has subcommands; assert the tree recursed.
-	var profile *CommandDoc
-	for i := range jentic.Commands {
-		if jentic.Commands[i].Name == "profile" {
-			profile = &jentic.Commands[i]
-		}
-	}
-	if profile == nil {
+	// profile has subcommands; assert the tree recursed. Value-typed lookup
+	// (not a *CommandDoc guarded by t.Fatal) — staticcheck's SA5011 in CI
+	// doesn't always see t.Fatal as terminating and flags the derefs.
+	profile, ok := findCommand(jentic.Commands, "profile")
+	if !ok {
 		t.Fatal("jentic missing profile command")
 		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
@@ -56,13 +53,8 @@ func TestCLIReferenceShape(t *testing.T) {
 	}
 
 	// endpoints should inherit/carry the --profile flag.
-	var endpoints *CommandDoc
-	for i := range jentic.Commands {
-		if jentic.Commands[i].Name == "endpoints" {
-			endpoints = &jentic.Commands[i]
-		}
-	}
-	if endpoints == nil {
+	endpoints, ok := findCommand(jentic.Commands, "endpoints")
+	if !ok {
 		t.Fatal("jentic missing endpoints command")
 		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
@@ -73,6 +65,15 @@ func TestCLIReferenceShape(t *testing.T) {
 	if _, ok := byName["jenticctl"]; !ok {
 		t.Fatal("missing jenticctl binary")
 	}
+}
+
+func findCommand(commands []CommandDoc, name string) (CommandDoc, bool) {
+	for _, c := range commands {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return CommandDoc{}, false
 }
 
 func hasFlag(flags []FlagDoc, name string) bool {
