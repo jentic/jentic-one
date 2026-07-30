@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -27,13 +28,13 @@ func (a *App) promptAgentUserFields(fields *agentUserFields, configSrcs []string
 			Title("Agent account name").
 			Description("The dedicated Unix user the agent runs as.").
 			Value(&fields.name).
-			Validate(notEmptyField("account name")),
+			Validate(localagent.ValidateAgentUser),
 		install.Input().
 			Title("Agent home directory").
 			Description("Lives under a shared parent so you can be granted in without widening your home.\n"+
 				"This directory will be owned by the agent's Unix account ("+fields.name+").").
 			Value(&fields.homeDir).
-			Validate(notEmptyField("home directory")),
+			Validate(localagent.ValidateHomeDir),
 		portSelect(
 			"Copy your operator config into the agent's home?",
 			"Gives the agent your settings. May include provider API keys stored locally.",

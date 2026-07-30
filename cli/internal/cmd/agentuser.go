@@ -229,6 +229,17 @@ func (a *App) agentUserPrereqGate(agentID, defaultName string, missing []localag
 // createAgentAccount runs the privileged account-creation recipe (idempotently),
 // locks the operator's own home, and seeds config/provider per the field toggles.
 func (a *App) createAgentAccount(ctx context.Context, operator string, fields agentUserFields, desc localagent.Descriptor) error {
+	// Re-validate at the point of use, not just in the form: a hand-edited
+	// config.yaml or a future non-form caller could otherwise thread an unsafe
+	// name/home into the privileged commands built below (sudo runas, sudoers rule,
+	// ACL entries, --home). This is the choke point every privileged step is behind.
+	if err := localagent.ValidateAccount(fields.name, fields.homeDir); err != nil {
+		return err
+	}
+	if err := localagent.ValidateAgentUser(operator); err != nil {
+		return fmt.Errorf("operator name %q is not a valid Unix username: %w", operator, err)
+	}
+
 	reused := localagent.UserExists(ctx, fields.name)
 	if reused {
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("Account %q already exists — reusing it.", fields.name)))

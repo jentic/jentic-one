@@ -162,6 +162,14 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return a.runSameUser(ctx, cfg, desc, opts, posArgs, agentArgs)
 	}
 
+	// Every step below threads agentUser into a privileged command (sudo -u, the
+	// ACL grants, the confined launch). Validate it here — before the first one is
+	// built — so a malformed --agent-user or a hand-edited config account name is
+	// rejected up front rather than reaching a shell as an injection vector.
+	if err := localagent.ValidateAgentUser(agentUser); err != nil {
+		return err
+	}
+
 	// Management shortcuts: list/revoke operate on the recorded grants.
 	if opts.listGrants {
 		return a.runListGrants(agentID, agentUser, acct, hasAcct)
