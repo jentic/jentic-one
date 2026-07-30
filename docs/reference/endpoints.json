@@ -1331,6 +1331,23 @@
       "typical_caller": null
     },
     {
+      "actor_types": [
+        "user"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "refreshSession",
+      "path": "/auth/refresh",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Refresh session token",
+      "surface": "auth",
+      "typical_caller": "operator"
+    },
+    {
       "actor_types": [],
       "auth_note": null,
       "authenticated": false,
@@ -1902,6 +1919,21 @@
       "summary": "Inspect operation",
       "surface": "inspect",
       "typical_caller": "agent"
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getInstance",
+      "path": "/instance",
+      "public": true,
+      "required_scopes": [],
+      "summary": "Backend identity",
+      "surface": "instance",
+      "typical_caller": null
     },
     {
       "actor_types": [
@@ -4479,5 +4511,5 @@
     ],
     "total": 30
   },
-  "total": 151
+  "total": 153
 }

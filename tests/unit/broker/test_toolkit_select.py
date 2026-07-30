@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -17,11 +18,16 @@ from jentic_one.broker.core.exceptions import (
     no_toolkit_binding_directive,
 )
 from jentic_one.broker.web.errors import install_broker_error_handlers
-from jentic_one.broker.web.routers.execute import select_toolkit
+from jentic_one.broker.web.routers.execute import (
+    _emit_toolkit_binding_unserved,
+    _is_unserved_no_toolkit_binding,
+    select_toolkit,
+)
 from jentic_one.shared.access_guidance import no_toolkit_serves_api_reason
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import IdentityMismatch, ToolkitDerivation
 from jentic_one.shared.models import ActorType
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.schemas import APIReference
 
 _API = APIReference(vendor="acme", name="widgets", version="1.0.0")
@@ -344,3 +350,81 @@ def test_no_toolkit_binding_credential_first_directive_and_denial_reason_agree()
     assert "credential" in denial_reason
     assert "provision" in denial_reason
     assert "no toolkit serves" in denial_reason
+
+
+# --- unserved-API operator event (theme 3 residual) --------------------------
+
+
+def _no_toolkit_binding_error(*, serves: bool) -> ActionDeniedError:
+    return ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=_INSTANCE,
+        directive=no_toolkit_binding_directive(
+            vendor=_API.vendor, name=_API.name, version=_API.version, toolkit_serves_api=serves
+        ),
+    )
+
+
+def test_is_unserved_no_toolkit_binding_true_when_serves_false() -> None:
+    assert _is_unserved_no_toolkit_binding(_no_toolkit_binding_error(serves=False)) is True
+
+
+def test_is_unserved_no_toolkit_binding_false_when_serves_true() -> None:
+    # A toolkit exists, the caller just isn't bound → agent-recoverable via a
+    # bind access request; we deliberately do NOT emit the operator event here.
+    assert _is_unserved_no_toolkit_binding(_no_toolkit_binding_error(serves=True)) is False
+
+
+def test_is_unserved_no_toolkit_binding_false_for_other_error_types() -> None:
+    other = ActionDeniedError("denied", type="action_denied", instance=_INSTANCE, directive=None)
+    assert _is_unserved_no_toolkit_binding(other) is False
+
+
+def test_is_unserved_no_toolkit_binding_false_without_directive() -> None:
+    exc = ActionDeniedError(
+        "No toolkit binding for this API",
+        type="no_toolkit_binding",
+        instance=_INSTANCE,
+        directive=None,
+    )
+    assert _is_unserved_no_toolkit_binding(exc) is False
+
+
+async def test_emit_toolkit_binding_unserved_writes_event() -> None:
+    ctx = MagicMock()
+    session = AsyncMock()
+    ctx.admin_db.transaction.return_value.__aenter__ = AsyncMock(return_value=session)
+    ctx.admin_db.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+    identity = Identity(sub="agnt_001", actor_type=ActorType.AGENT, permissions=[])
+
+    with patch(
+        "jentic_one.broker.web.routers.execute.emit_event_best_effort",
+        new_callable=AsyncMock,
+    ) as mock_emit:
+        await _emit_toolkit_binding_unserved(ctx, api=_API, identity=identity)
+
+    mock_emit.assert_awaited_once()
+    call = mock_emit.await_args
+    assert call is not None
+    kwargs = call.kwargs
+    assert kwargs["type"] == EventType.TOOLKIT_BINDING_UNSERVED
+    assert kwargs["severity"] is EventSeverity.WARNING
+    assert kwargs["actor_id"] == "agnt_001"
+    assert kwargs["actor_type"] == ActorType.AGENT.value
+    assert kwargs["data"]["api"] == {
+        "vendor": _API.vendor,
+        "name": _API.name,
+        "version": _API.version,
+    }
+    assert "acme/widgets" in kwargs["summary"]
+
+
+async def test_emit_toolkit_binding_unserved_swallows_errors() -> None:
+    # Telemetry is best-effort: an admin-DB failure must not surface to the
+    # execute request (which is already returning 403 anyway).
+    ctx = MagicMock()
+    ctx.admin_db.transaction.side_effect = RuntimeError("db down")
+    identity = Identity(sub="agnt_001", actor_type=ActorType.AGENT, permissions=[])
+
+    await _emit_toolkit_binding_unserved(ctx, api=_API, identity=identity)  # must not raise

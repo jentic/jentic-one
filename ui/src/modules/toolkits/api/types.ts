@@ -15,6 +15,10 @@ import type {
 	PermissionRuleReadSchema,
 	ToolkitBindingResponse,
 	AuditResponse,
+	UsageResponse,
+	UsageBucket,
+	BindingWarningSchema,
+	PermissionTestResponse,
 } from '@/shared/api';
 
 /** A toolkit as rendered by the list/detail UI. */
@@ -99,4 +103,57 @@ export interface ToolkitAgent {
 	agent_name: string;
 	status: string;
 	bound_at: string | null;
+}
+
+/**
+ * Per-toolkit usage aggregation (`GET /monitoring/usage?toolkit_id=…`) — the
+ * detail page's KPI strip and Activity chart. Admin-gated: the repository maps
+ * 401/403 to `null` so the surfaces hide rather than error for non-admins.
+ */
+export type ToolkitUsage = UsageResponse;
+
+/** One time bucket of the usage aggregation (unix-second `ts`). */
+export type ToolkitUsageBucket = UsageBucket;
+
+/**
+ * Minimal projection of an execution record for the toolkit Activity feed —
+ * just what a feed row renders. Sourced from the admin `GET /executions`
+ * surface via the repository tier (401/403 → `null`, same gating as usage).
+ */
+export interface ToolkitExecution {
+	execution_id: string;
+	trace_id: string;
+	status: string;
+	operation_id: string | null;
+	api_label: string | null;
+	actor_id: string;
+	actor_type: string;
+	http_status: number | null;
+	duration_ms: number | null;
+	error: string | null;
+	started_at: string;
+}
+
+/**
+ * Non-fatal bind-time signal on a credential binding (e.g. "zero rules — the
+ * broker denies by default"). Returned by both the bind call and the bindings
+ * list; rendered verbatim on the Access tab.
+ */
+export type BindingWarning = BindingWarningSchema;
+
+/**
+ * Broker dry-run verdict from `POST …/permissions:test`. Vendor pooling means
+ * `credential_id` may name a *different* binding than the one tested against.
+ */
+export type PermissionTestResult = PermissionTestResponse;
+
+/**
+ * One toolkit's slice of the `group_by=toolkit` usage aggregation — the list
+ * page's card sparklines (7d volume trend + totals).
+ */
+export interface ToolkitUsageSummary {
+	total: number;
+	success: number;
+	failed: number;
+	trend: number[];
 }

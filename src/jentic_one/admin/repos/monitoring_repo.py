@@ -247,9 +247,17 @@ class MonitoringRepository:
         filters: UsageQueryFilters | None = None,
     ) -> list[TimeBucketRow]:
         epoch_expr = _epoch_seconds(session)
-        bucket_ts = (func.floor(epoch_expr / bucket_seconds) * literal(bucket_seconds)).label(
-            "bucket_ts"
-        )
+        # Anchor the bucket grid at `cutoff` (like grouped_trend's segments)
+        # rather than the UTC epoch: a UTC-aligned grid straddles the caller's
+        # day-aligned bounds in non-UTC timezones, so aggregate buckets and
+        # per-entity trend segments would disagree about which day a count
+        # belongs to.
+        cutoff_epoch = int(cutoff.timestamp())
+        bucket_ts = (
+            func.floor((epoch_expr - literal(cutoff_epoch)) / bucket_seconds)
+            * literal(bucket_seconds)
+            + literal(cutoff_epoch)
+        ).label("bucket_ts")
         stmt = (
             select(
                 cast(bucket_ts, Text).label("bucket_ts_text"),
@@ -363,7 +371,7 @@ class MonitoringRepository:
         if not keys:
             return {}
 
-        cutoff_epoch = cutoff.timestamp()
+        cutoff_epoch = int(cutoff.timestamp())
         until_epoch = until.timestamp()
         segment_seconds = (until_epoch - cutoff_epoch) / num_points
 

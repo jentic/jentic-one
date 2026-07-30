@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { createPlanToolkit, createNoAuthCredential } from '@/shared/lib/provisioningFulfilment';
+import {
+	createPlanToolkit,
+	createNoAuthCredential,
+	suggestToolkitName,
+} from '@/shared/lib/provisioningFulfilment';
 import { ApiError, ToolkitsService, CredentialsService, CredentialType } from '@/shared/api';
 
 function conflict(): ApiError {
@@ -16,6 +20,37 @@ function ok(id: string, name: string) {
 		ReturnType<typeof ToolkitsService.createToolkit>
 	>;
 }
+
+describe('suggestToolkitName — agent-first naming', () => {
+	it('leads with the requesting agent when its name is known', () => {
+		expect(suggestToolkitName('Claude Code', 'posthog-com', 'posthog-api')).toBe(
+			'Claude Code toolkit',
+		);
+	});
+
+	it('falls back to an API-based toolkit name while the agent is unresolved', () => {
+		// Even the fallback must READ like a toolkit name — a bare API slug in
+		// the field looks like a bug, not a suggestion.
+		expect(suggestToolkitName(undefined, 'posthog-com', 'posthog-api')).toBe(
+			'posthog-com/posthog-api toolkit',
+		);
+		expect(suggestToolkitName(undefined, 'httpbin-org')).toBe('httpbin-org toolkit');
+	});
+
+	it('treats a blank agent name as unresolved', () => {
+		expect(suggestToolkitName('   ', 'posthog-com', 'posthog-api')).toBe(
+			'posthog-com/posthog-api toolkit',
+		);
+	});
+
+	it('clamps a very long agent name so the toolkit name never exceeds 255 chars', () => {
+		// Agent names can be up to 255 chars themselves; the suggestion must
+		// leave headroom for " toolkit" + a possible "-NN" 409 suffix.
+		const suggested = suggestToolkitName('a'.repeat(255), 'v', 'n');
+		expect(suggested).toBe(`${'a'.repeat(240)} toolkit`);
+		expect(suggested.length + '-20'.length).toBeLessThanOrEqual(255);
+	});
+});
 
 describe('createPlanToolkit — 409 name disambiguation', () => {
 	let spy: ReturnType<typeof vi.spyOn>;

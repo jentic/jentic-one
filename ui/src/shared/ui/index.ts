@@ -27,6 +27,10 @@ export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
+export { StatCard } from '@/shared/ui/StatCard';
+export type { StatAccent } from '@/shared/ui/StatCard';
+export { TabNav } from '@/shared/ui/TabNav';
+export type { TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 
@@ -88,7 +92,13 @@ export type { KeyboardShortcut, KeyboardShortcutsBarProps } from '@/shared/ui/Ke
 export { JenticLogo } from '@/shared/ui/Logo';
 export type { JenticLogoProps } from '@/shared/ui/Logo';
 
-export { useDismissable, MenuPanel, MenuSeparator, menuItemClass } from '@/shared/ui/Menu';
+export {
+	useDismissable,
+	useViewportClamp,
+	MenuPanel,
+	MenuSeparator,
+	menuItemClass,
+} from '@/shared/ui/Menu';
 export type { MenuPanelProps } from '@/shared/ui/Menu';
 
 export { Markdown } from '@/shared/ui/Markdown';
@@ -127,10 +137,18 @@ export type { ScopeGroupProps } from '@/shared/ui/ScopeGroup';
 export { ActorLabel } from '@/shared/ui/ActorLabel';
 export type { ActorLabelProps } from '@/shared/ui/ActorLabel';
 
+export { SparklineChart } from '@/shared/ui/charts/SparklineChart';
+export { TrendLineChart } from '@/shared/ui/charts/TrendLineChart';
+export type { TrendPoint } from '@/shared/ui/charts/TrendLineChart';
+export { StackedBarChart } from '@/shared/ui/charts/StackedBarChart';
+export type { StackedBarDatum, StackedBarSegment } from '@/shared/ui/charts/StackedBarChart';
+
 export {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
+	cleanPermissionRule,
 	PERMISSION_EFFECTS,
+	PERMISSION_MATCH_MODES,
 } from '@/shared/ui/PermissionRuleEditor';
 export type {
 	PermissionRuleEditorProps,

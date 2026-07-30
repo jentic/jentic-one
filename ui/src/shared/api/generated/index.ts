@@ -11,6 +11,7 @@ export type { AccessRequestFileRequest } from './models/AccessRequestFileRequest
 export { AccessRequestItemRequest } from './models/AccessRequestItemRequest';
 export type { AccessRequestItemResponse } from './models/AccessRequestItemResponse';
 export type { AccessRequestListResponse } from './models/AccessRequestListResponse';
+export type { AccessRequestOwnerResponse } from './models/AccessRequestOwnerResponse';
 export type { AccessRequestResponse } from './models/AccessRequestResponse';
 export type { ActorListResponse } from './models/ActorListResponse';
 export type { ActorSummaryResponse } from './models/ActorSummaryResponse';
@@ -82,6 +83,7 @@ export type { ExecutionResponse } from './models/ExecutionResponse';
 export type { ExecutionStatsResponse } from './models/ExecutionStatsResponse';
 export { GroupBy } from './models/GroupBy';
 export type { HealthResponse } from './models/HealthResponse';
+export { InstanceIdentityResponse } from './models/InstanceIdentityResponse';
 export type { IntrospectRequest } from './models/IntrospectRequest';
 export type { IntrospectResponse } from './models/IntrospectResponse';
 export type { InviteIssuedResponse } from './models/InviteIssuedResponse';

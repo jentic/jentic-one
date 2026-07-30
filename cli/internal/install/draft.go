@@ -100,10 +100,24 @@ type Draft struct {
 
 	// Generated secrets, populated by FillSecrets before rendering. Never
 	// prompted for; always freshly generated so installs are secure by default.
+	//
+	// On a reinstall over an existing config or its uninstall backup, ReuseSecrets
+	// pre-seeds these fields so FillSecrets (fill-only-empty) leaves them alone
+	// and the config's on-disk data stays readable across the rewrite.
 	EncryptionKey      string
 	AdminJWTSecret     string
 	AdminInvitePepper  string
 	ConnectStateSecret string
+
+	// EncryptionKeyset is a verbatim carry-over of an existing config's
+	// `credentials.encryption` block, populated by ReuseSecrets on a reinstall.
+	// When non-nil, render.go writes it out unchanged; EncryptionKey is
+	// ignored. Preserves a hand-rotated multi-key keyset (active_id: v2 +
+	// v1/v2 entries) — flattening it back to a single v1 entry would silently
+	// invalidate rows encrypted with a retired key on the next rotation. Nil
+	// on a fresh install; render.go emits the current default single-v1
+	// layout from EncryptionKey in that case.
+	EncryptionKeyset *encryptionOut
 
 	// Telemetry consent decision, stamped onto the draft by the install command
 	// (from the consent prompt) before rendering. When TelemetryEnabled is true

@@ -59,6 +59,14 @@ class Evaluation(BaseModel):
     checks: list[EvaluationCheck]
 
 
+class FilerOwnerView(BaseModel):
+    """Display info for the filer's human owner, resolved cross-DB (labelling only)."""
+
+    id: str
+    email: str
+    display_name: str | None = None
+
+
 class AccessRequestView(BaseModel):
     """View model for an access request envelope."""
 
@@ -74,6 +82,7 @@ class AccessRequestView(BaseModel):
     expires_at: dt.datetime
     created_by: str
     filer_owner_id: str | None
+    filer_owner: FilerOwnerView | None = None
     items: list[AccessRequestItemView]
     evaluation: Evaluation | None = None
 

@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.23.0](https://github.com/jentic/jentic-one/compare/v0.22.0...v0.23.0) (2026-07-29)
+
+
+### Features
+
+* **broker:** execute credential attribution + upstream passthrough fidelity ([#791](https://github.com/jentic/jentic-one/issues/791)) ([0379a0d](https://github.com/jentic/jentic-one/commit/0379a0d6a38227fdca65d3d2c499685c444db8a3))
+* **control:** expose public GET /instance backend-identity endpoint ([#702](https://github.com/jentic/jentic-one/issues/702)) ([#733](https://github.com/jentic/jentic-one/issues/733)) ([0a2fed7](https://github.com/jentic/jentic-one/commit/0a2fed767a6c0804726c8710809b2409da4e84a7))
+* **release:** publish app image to GHCR + document self-hosted deploy ([#732](https://github.com/jentic/jentic-one/issues/732)) ([7ac00a0](https://github.com/jentic/jentic-one/commit/7ac00a0ef197943caf5d9017229010f6df96ba30))
+* theme-3 access-request residuals + broker visibility ([#778](https://github.com/jentic/jentic-one/issues/778)) ([#792](https://github.com/jentic/jentic-one/issues/792)) ([d4a6408](https://github.com/jentic/jentic-one/commit/d4a64082de1baf18d97c455d226253d9b7cd91b4))
+* **toolkits:** rebuild the toolkit pages as a tabbed safety console ([1ab0e34](https://github.com/jentic/jentic-one/commit/1ab0e34a31db6344b18a65444aae3c952ab4cdf6))
+
+
+### Bug Fixes
+
+* **cli/install,broker:** reuse secrets on reinstall; map DecryptionError to 424 ([#794](https://github.com/jentic/jentic-one/issues/794)) ([3138814](https://github.com/jentic/jentic-one/commit/313881404c78a5ac3a4c36fa0f0d4ff245728f86))
+
+## [0.22.0](https://github.com/jentic/jentic-one/compare/v0.21.0...v0.22.0) (2026-07-29)
+
+
+### Features
+
+* **access-requests:** filer-owner enrichment, widened UI type, shared queue helpers ([#858](https://github.com/jentic/jentic-one/issues/858)) ([5c55059](https://github.com/jentic/jentic-one/commit/5c550594eba0edd4fca0c5bab657d8916d1947ea))
+* **ui:** rebuild dashboard into layered gateway-health overview ([#859](https://github.com/jentic/jentic-one/issues/859)) ([1c22567](https://github.com/jentic/jentic-one/commit/1c225675f316cf300857803784dd6f076bc62bc1))
+
+
+### Bug Fixes
+
+* **auth:** fail closed on missing or unknown actor_type in verify_token ([#863](https://github.com/jentic/jentic-one/issues/863)) ([ecd5c17](https://github.com/jentic/jentic-one/commit/ecd5c179b4bf6ce1e78450a69fbe393227c05dd6))
+* **auth:** repair expired-token login race and add sliding web sessions ([#857](https://github.com/jentic/jentic-one/issues/857)) ([d716c15](https://github.com/jentic/jentic-one/commit/d716c1505d8e1c4478265f6cb76f630b08e44059))
+
+## [0.21.0](https://github.com/jentic/jentic-one/compare/v0.20.0...v0.21.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** delegate Homebrew-managed CLI updates to `brew upgrade` ([#855](https://github.com/jentic/jentic-one/issues/855)) ([a6cdd4e](https://github.com/jentic/jentic-one/commit/a6cdd4ea886fe2233a2c1cb73bbfbc1b71251a04))
+* **cli:** refuse self-update of Homebrew-managed installs ([#854](https://github.com/jentic/jentic-one/issues/854)) ([c9375ca](https://github.com/jentic/jentic-one/commit/c9375cafe19a6bd9ea9b323733187626ce10bb79))
+* **ui:** reorder toolkit hierarchy and enable two-way agent↔toolkit binding ([#797](https://github.com/jentic/jentic-one/issues/797)) ([ccd9441](https://github.com/jentic/jentic-one/commit/ccd944174d4d28f75891d2d6cdd21caee3f50896)), closes [#636](https://github.com/jentic/jentic-one/issues/636) [#637](https://github.com/jentic/jentic-one/issues/637) [#607](https://github.com/jentic/jentic-one/issues/607) [#591](https://github.com/jentic/jentic-one/issues/591)
+
+
+### Bug Fixes
+
+* **cli:** skill-install funnel — honest list, non-TTY default, ratified scopes ([#824](https://github.com/jentic/jentic-one/issues/824)) ([a4fdedb](https://github.com/jentic/jentic-one/commit/a4fdedb8872c750619bc1a5367606a17ce6f4937))
+* **monitor:** show exact day-aligned windows in the Execution Volume chart ([f8963e3](https://github.com/jentic/jentic-one/commit/f8963e3735d7b192c60c1609096b6c3cdf853232))
+
+
+### Documentation
+
+* **monitor:** correct stale trend-length and NULL-key comments ([0a60457](https://github.com/jentic/jentic-one/commit/0a6045776acd64c64cc620583921d9bcf2fc5332))
+* **onboarding:** disambiguate self-hosted Jentic One from the Jentic cloud platform ([#851](https://github.com/jentic/jentic-one/issues/851)) ([2a5ccfd](https://github.com/jentic/jentic-one/commit/2a5ccfdeed8ebd2e6dcc6df785e9aee46aedfd85))
+* **skill:** stopped-instance branch, backend-identity check, honest rule proposals ([#843](https://github.com/jentic/jentic-one/issues/843)) ([45444f3](https://github.com/jentic/jentic-one/commit/45444f3846782731adb85335188319545b4bc59e))
+
+## [0.20.0](https://github.com/jentic/jentic-one/compare/v0.19.0...v0.20.0) (2026-07-27)
+
+
+### Features
+
+* **ui:** live agent-registration surfaces, agent-named toolkits, generated reference docs ([#807](https://github.com/jentic/jentic-one/issues/807)) ([cb0a20a](https://github.com/jentic/jentic-one/commit/cb0a20ace99d8562b80b4b2a977af2f289a978a5))
+* **ui:** port the jentic-mini Monitor Overview onto GET /monitoring/usage ([#808](https://github.com/jentic/jentic-one/issues/808)) ([ba30d1f](https://github.com/jentic/jentic-one/commit/ba30d1fce715faa5a6334f8654a459e9c70eafc0)), closes [#386](https://github.com/jentic/jentic-one/issues/386)
+* **web:** serve the onboarding skill and llms.txt from the deployment ([#810](https://github.com/jentic/jentic-one/issues/810)) ([463d583](https://github.com/jentic/jentic-one/commit/463d58366a47da96ec0a0d4b06f1c4cc0585fdc1))
+
+
+### Bug Fixes
+
+* **deploy,app,tests:** make the Helm smoke matrix green and gate releases on it ([#793](https://github.com/jentic/jentic-one/issues/793)) ([72df0f3](https://github.com/jentic/jentic-one/commit/72df0f3f46c3aac4a0bbe6af1e1d607aaea780b3))
+* **smoke:** skip harness tests when smoke-upstream is not deployed ([77554a4](https://github.com/jentic/jentic-one/commit/77554a4a1129ce9557d3b747622c27eaae51bd33))
+* **ui:** upgrade react-router to v8 ([#811](https://github.com/jentic/jentic-one/issues/811)) ([af6fd24](https://github.com/jentic/jentic-one/commit/af6fd24bb560f0f521973dd0197d1bf38ace8210))
+* **web:** sync the served onboarding skill with the CLI embed ([#822](https://github.com/jentic/jentic-one/issues/822)) ([7fb89f6](https://github.com/jentic/jentic-one/commit/7fb89f629442ee386c25d8a932a25730f1c87c60))
+
 ## [0.19.0](https://github.com/jentic/jentic-one/compare/v0.18.0...v0.19.0) (2026-07-24)
 
 

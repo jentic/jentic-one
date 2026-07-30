@@ -63,6 +63,37 @@ async def test_register_happy_path(mock_repo: MagicMock) -> None:
     assert result.registration_client_uri == "https://auth.example.com/register/agnt_test123"
 
 
+@patch("jentic_one.auth.services.registration_service.emit_event_best_effort")
+@patch("jentic_one.auth.services.registration_service.AgentRepository")
+async def test_register_emits_actionable_event_with_agent_tokens(
+    mock_repo: MagicMock, mock_emit: AsyncMock
+) -> None:
+    """The self-registration event must be actionable and carry the agent id.
+
+    The UI rail/dashboard key off ``requires_action`` to surface the pending
+    approval, and off ``data.agent_id`` to deep-link the operator to the
+    agent's approval page — regressing either silently kills the live surface.
+    """
+    ctx = _make_ctx()
+    agent = MagicMock()
+    agent.id = "agnt_test123"
+    agent.status = "pending"
+    mock_repo.create_dcr = AsyncMock(return_value=agent)
+
+    svc = RegistrationService(ctx)
+    await svc.register("my-agent", _valid_jwks())
+
+    mock_emit.assert_awaited_once()
+    assert mock_emit.await_args is not None
+    kwargs = mock_emit.await_args.kwargs
+    assert kwargs["requires_action"] is True
+    assert kwargs["data"] == {"agent_id": "agnt_test123", "agent_name": "my-agent"}
+    assert kwargs["actor_id"] == "agnt_test123"
+    # The settlement query in agent_service filters on actor_type == "agent";
+    # emitting with a different actor_type would orphan the alert forever.
+    assert kwargs["actor_type"] == "agent"
+
+
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
 async def test_register_rejects_invalid_jwks_no_ed25519(mock_repo: MagicMock) -> None:
     ctx = _make_ctx()

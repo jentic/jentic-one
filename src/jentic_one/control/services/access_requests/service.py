@@ -13,14 +13,18 @@ from jentic_one.control.core.schema.access_request_items import RULE_BEARING_COM
 from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
+from jentic_one.control.repos.effects_repo import EffectsRepository
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
 from jentic_one.control.repos.toolkit_repo import ToolkitRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.access_requests.effects import (
+    PLAN_INTENT_COMBINATIONS,
+    UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
     admin_effect_keys,
     classify_effect,
+    plan_governance_for_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     AccessRequestNotFoundError,
@@ -46,16 +50,18 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
     CollectedResourceIds,
     Evaluation,
     EvaluationCheck,
+    FilerOwnerView,
     ResolvedNames,
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import (
     AccessRequestItemStatus,
     AccessRequestStatus,
 )
+from jentic_one.shared.models.api_identity import slugify_api_field
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.scopes import AGENTS_WRITE, ORG_ADMIN
@@ -80,13 +86,15 @@ _UNFULFILLABLE_BIND_TARGET: tuple[type[Exception], ...] = (
     ProvisioningPlanNotFulfilledError,
 )
 
-# The fulfilment-only intent item types that mark a request as a provisioning
-# plan. Their presence means the bind items are fulfilled out-of-band by the
-# setup wizard (create toolkit + credential, then amend their ids), so a plain
-# approval of an unfulfilled bind must be denied with a plan-aware reason rather
-# than half-approving into a guaranteed-broken state.
-_PLAN_INTENT_COMBINATIONS: frozenset[tuple[str, str]] = frozenset(
-    {("toolkit", "create"), ("credential", "provision")}
+# Statuses in which a request has been decided and its actionable
+# `access_request.filed` alert must be settled. PENDING (partial decision)
+# keeps the alert live; WITHDRAWN settles via withdraw()'s own path.
+_SETTLED_STATUSES: frozenset[AccessRequestStatus] = frozenset(
+    {
+        AccessRequestStatus.APPROVED,
+        AccessRequestStatus.PARTIALLY_APPROVED,
+        AccessRequestStatus.DENIED,
+    }
 )
 
 
@@ -160,6 +168,155 @@ class AccessRequestService:
                 )
         except Exception:
             logger.warning("emit_event_failed", request_id=request_id, type=type, exc_info=True)
+
+    async def _settle_filed_alerts(self, request_id: str, *, acknowledged_by: str) -> int:
+        """Acknowledge the actionable ``access_request.filed`` alert for a settled request.
+
+        Filed events carry the request id in ``data.request_id`` (the top-level
+        actor is the requesting agent, which may have many open requests), so
+        the match is on the data payload. Best-effort in its own short admin
+        transaction — alert bookkeeping must never fail the decision, which is
+        already durable in the control DB by the time this runs.
+
+        Returns the number of alerts settled (0 on failure). Settlement is
+        idempotent, so a non-zero count doubles as the durable "this decision
+        was never announced" marker that lets ``decide()`` recover the decision
+        event on the reconcile/retry path.
+        """
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                return await settle_actionable_events(
+                    session,
+                    event_type=EventType.ACCESS_REQUEST_FILED,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="request settled",
+                    data_match={"request_id": request_id},
+                )
+        except Exception:
+            logger.warning("settle_filed_alerts_failed", request_id=request_id, exc_info=True)
+            return 0
+
+    async def _advise_unserved_bind_references(
+        self,
+        *,
+        items: list[dict[str, Any]],
+        filer_owner_id: str,
+        identity: Identity,
+        request_id: str,
+    ) -> None:
+        """Emit a best-effort ``TOOLKIT_BINDING_UNSERVED`` for unfulfillable filings.
+
+        A plain (non-plan) ``toolkit:bind`` filed by ``vendor/name`` reference
+        will typically deny on approval with
+        :class:`ToolkitReferenceUnresolvedError` when no toolkit owned by the
+        filer's owner currently serves that API. (Approval-time resolution
+        runs under the *decider's* scope — an org-admin can resolve toolkits
+        the filer's owner doesn't hold, so this owner-scoped check is a
+        heuristic, not a promise of denial.) Surfacing it at file time gives
+        operators an early signal — symmetric to the broker's own emit for
+        the same event on execute-time denials (see
+        ``execute._emit_toolkit_binding_unserved``).
+
+        Deliberately silent when:
+
+        - the item names a specific ``resource_id``/``to_id`` (fulfilment is by
+          id, not by reference — no cheap file-time check applies);
+        - the request also carries fulfilment intents (a *provisioning plan*
+          creates the toolkit that will serve the API, so "nothing serves it
+          yet" is expected);
+        - a toolkit already serves the API for this owner (the plain-approve
+          path will resolve cleanly).
+
+        Never blocks the filing — the emit is best-effort and any lookup
+        failure logs and continues.
+
+        The plan check here is deliberately request-wide (any intent item
+        silences all binds), unlike :func:`plan_governance_for_items`'s
+        per-item scoping used at approval time: at file() everything is
+        pending and a request carrying any fulfilment intent is wizard-bound,
+        where the operator will see unfulfillable binds up close anyway —
+        a coarser, quieter heuristic is the right trade-off for an advisory.
+        """
+        if any(
+            (it.get("resource_type"), it.get("action")) in PLAN_INTENT_COMBINATIONS for it in items
+        ):
+            return
+
+        actor_type_value = identity.actor_type.value if identity.actor_type is not None else None
+        for item in items:
+            if (item.get("resource_type"), item.get("action")) != ("toolkit", "bind"):
+                continue
+            if item.get("resource_id") or item.get("to_id"):
+                continue
+            reference = item.get("resource_reference") or {}
+            raw_vendor = reference.get("vendor")
+            if not raw_vendor:
+                continue
+            # ``resource_reference`` is schema-typed ``dict[str, Any]`` — coerce
+            # the fields once so a non-string value can't raise past the
+            # best-effort guards below (the filing is already committed here;
+            # an escape would 500 the request and skip its audit record).
+            # Emit the canonical slug forms (matching the broker's emit, which
+            # uses the resolved APIReference) so the same API correlates across
+            # the two emit sites — a raw `httpbin.org` filing and the broker's
+            # `httpbin-org` denial are the same problem.
+            vendor = slugify_api_field(str(raw_vendor))
+            raw_name = reference.get("name")
+            name = slugify_api_field(str(raw_name)) if raw_name is not None else None
+            raw_version = reference.get("version")
+            version = str(raw_version) if raw_version is not None else None
+            try:
+                async with self._ctx.control_db.session() as session:
+                    candidates = await EffectsRepository.resolve_toolkits_for_api(
+                        session,
+                        vendor=vendor,
+                        name=name,
+                        version=version,
+                        owner_ids=[filer_owner_id],
+                    )
+            except Exception:
+                logger.warning(
+                    "unserved_binding_check_failed",
+                    request_id=request_id,
+                    vendor=vendor,
+                    exc_info=True,
+                )
+                continue
+
+            if candidates:
+                continue
+
+            api_id = "/".join(part for part in (vendor, name) if part) or vendor
+            summary = (
+                f"Access request {request_id} names API '{api_id}' but no owned "
+                "toolkit serves it yet — provision a credential to enable binding."
+            )
+            try:
+                async with self._ctx.admin_db.transaction() as session:
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.TOOLKIT_BINDING_UNSERVED,
+                        severity=EventSeverity.WARNING,
+                        summary=summary,
+                        created_by=identity.sub,
+                        actor_id=identity.sub,
+                        actor_type=actor_type_value,
+                        data={
+                            "request_id": request_id,
+                            "api": {
+                                "vendor": vendor,
+                                "name": name,
+                                "version": version,
+                            },
+                        },
+                    )
+            except Exception:
+                logger.warning(
+                    "telemetry_emit_failed",
+                    event_type=EventType.TOOLKIT_BINDING_UNSERVED,
+                    request_id=request_id,
+                    exc_info=True,
+                )
 
     async def file(
         self,
@@ -251,6 +408,14 @@ class AccessRequestService:
             actor_id=created_by,
             actor_type=identity.actor_type,
         )
+        # File-time fulfillability advisory: a plain (non-plan) toolkit:bind
+        # referenced by vendor/name that no owned toolkit currently serves will
+        # deny on approval with ToolkitReferenceUnresolvedError. Emit an
+        # operator-visible signal *now* so the operator sees the gap before an
+        # approve/deny cycle. Best-effort — never blocks the file() commit.
+        await self._advise_unserved_bind_references(
+            items=items, filer_owner_id=filer_owner_id, identity=identity, request_id=view.id
+        )
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.CREATE,
@@ -274,7 +439,8 @@ class AccessRequestService:
             names = await self._resolve_names(session, [request])
             view = self._to_view(request, names=names)
             view.evaluation = self._compute_evaluation(request, identity)
-            return view
+        await self._resolve_filer_owners([view])
+        return view
 
     async def list_all(
         self,
@@ -314,7 +480,44 @@ class AccessRequestService:
                 last = rows[-1]
                 next_cursor = encode_cursor(last.filed_at, last.id)
 
+        await self._resolve_filer_owners(data)
         return AccessRequestPage(data=data, has_more=has_more, next_cursor=next_cursor)
+
+    async def _resolve_filer_owners(self, views: list[AccessRequestView]) -> None:
+        """Stamp ``filer_owner`` display info onto views (cross-DB, best-effort).
+
+        ``filer_owner_id`` is a bare string (no cross-DB FK to the admin
+        ``users`` table), so consumers historically had to join it against a
+        separately-fetched roster client-side — which requires ``users:read``
+        just to label a row. Resolving here (one batched admin-DB lookup per
+        page, mirroring ``_resolve_names``) lets any viewer see the owner
+        label for requests they can already read. Ids that aren't users
+        (service-account filers) or no longer resolve stay ``None`` — the
+        wire field is optional by design.
+
+        Rows without a ``filer_owner_id`` (nullable column; legacy rows) fall
+        back to ``created_by`` — the same fallback consumers render — so a
+        user-filed row still gets its label when only the creator is recorded.
+        """
+
+        def owner_key(view: AccessRequestView) -> str:
+            return view.filer_owner_id or view.created_by
+
+        owner_ids = sorted({owner_key(v) for v in views if owner_key(v)})
+        if not owner_ids:
+            return
+        async with self._ctx.admin_db.session() as session:
+            displays = await PrerequisiteRepository.get_user_displays(session, user_ids=owner_ids)
+        for view in views:
+            row = displays.get(owner_key(view))
+            if row is None:
+                continue
+            name = " ".join(part for part in (row.first_name, row.last_name) if part).strip()
+            view.filer_owner = FilerOwnerView(
+                id=row.user_id,
+                email=row.email,
+                display_name=name or None,
+            )
 
     async def decide(
         self,
@@ -363,12 +566,17 @@ class AccessRequestService:
                 raise NotAReviewerError(request_id)
 
             items_by_id = {item.id: item for item in request.items}
-            # A request is a provisioning plan when it carries fulfilment intents;
-            # its bind items are only satisfiable after the wizard fulfils them, so
-            # validate() denies an unfulfilled bind with a plan-aware reason.
-            is_plan = any(
-                (it.resource_type, it.action) in _PLAN_INTENT_COMBINATIONS for it in request.items
-            )
+            # Provisioning-plan governance is per-item (issue #778): a bind is
+            # only held to the "must resolve by id (wizard-stamped)" contract
+            # when a live intent in the same request actually targets it. An
+            # independent reference-only toolkit:bind for a different API in
+            # the same request stays on the plain contract and resolves by its
+            # reference; a withdrawn/denied intent no longer governs. See
+            # ``plan_governance_for_items`` for the full rule. The mapping
+            # carries a per-item ``PlanGovernance`` value (intent ids + api
+            # tuple, or the empty default for non-plan items) so ``validate()``
+            # gets the *reason* an item is governed rather than a coarse bool.
+            plan_governance = plan_governance_for_items(request.items)
             control_effect_items: list[tuple[str, Any]] = []
 
             for decision in item_decisions:
@@ -403,7 +611,7 @@ class AccessRequestService:
                                 existing,
                                 identity=identity,
                                 control_session=session,
-                                is_provisioning_plan=is_plan,
+                                plan_governance=plan_governance.get(existing.id, UNGOVERNED_PLAN),
                             )
                         except _UNFULFILLABLE_BIND_TARGET as exc:
                             verdict = AccessRequestItemStatus.DENIED
@@ -440,7 +648,7 @@ class AccessRequestService:
                         target,
                         identity=identity,
                         control_session=session,
-                        is_provisioning_plan=is_plan,
+                        plan_governance=plan_governance.get(target.id, UNGOVERNED_PLAN),
                     )
 
                 phase = classify_effect(target.resource_type, target.action)
@@ -477,7 +685,23 @@ class AccessRequestService:
             names = await self._resolve_names(session, [refreshed])
             view = self._to_view(refreshed, names=names)
 
-        if any_transition:
+        # Announce the decision. `any_transition` alone is NOT a sufficient
+        # gate: decide() is documented as safe to retry, and if a first attempt
+        # crashed after the control commit (or `_reconcile_admin_effects`
+        # raised), the decision is durable but was never announced — a retry
+        # transitions nothing, so gating purely on transitions would skip the
+        # decision event AND leave the actionable `access_request.filed` alert
+        # live forever. The still-unacknowledged filed alert is the durable
+        # marker for that lost announcement: settlement is idempotent, and a
+        # non-zero settle count on a no-transition call means the first
+        # attempt's announcement never completed, so emit it now. (A crash
+        # between settle and emit can still drop the passive decision event on
+        # the next retry, but the actionable alert — the operator-facing bug —
+        # is settled by then; event history is best-effort.)
+        settled = 0
+        if view.status in _SETTLED_STATUSES:
+            settled = await self._settle_filed_alerts(view.id, acknowledged_by=decided_by)
+        if any_transition or settled:
             await self._emit_decision(view, decided_by=decided_by, identity=identity)
         return view
 
@@ -676,6 +900,9 @@ class AccessRequestService:
             actor_id=identity.sub,
             actor_type=identity.actor_type,
         )
+        # A withdrawn request no longer needs review — settle its filed alert
+        # so the operator attention surfaces drop the dead row.
+        await self._settle_filed_alerts(view.id, acknowledged_by=identity.sub)
         await record_audit_best_effort(
             self._ctx,
             action=AuditAction.REVOKE,

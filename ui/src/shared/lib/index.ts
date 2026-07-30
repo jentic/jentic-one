@@ -19,11 +19,14 @@ export {
 	isSpecificResource,
 	isScopeGrant,
 	scopeLabel,
+	summarizeAccessRequest,
+	ACCESS_REQUEST_STATUS_VARIANT,
 	rulesAreEnforceable,
 	parseItemRules,
 	ruleSummary,
 	isUnrestrictedAllow,
 	type AccessRequest,
+	type AccessRequestOwner,
 	type AccessRequestItem,
 	type AccessRequestEvaluation,
 	type AccessRequestEvaluationCheck,
@@ -33,6 +36,7 @@ export {
 	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
+	type PermissionRuleMatchMode,
 } from '@/shared/lib/accessRequests';
 
 // Provisioning-plan classification/shape helpers — used by the fulfilment

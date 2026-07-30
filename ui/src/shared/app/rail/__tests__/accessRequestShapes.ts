@@ -45,6 +45,11 @@ function req(
 		status,
 		reason: reason ?? null,
 		requested_by: AGENT,
+		created_by: AGENT,
+		// An owner id with no `filer_owner` enrichment — models the valid
+		// backend case where the id doesn't resolve to an admin-DB user.
+		filer_owner_id: OWNER,
+		approve_url: `https://app.example.test/access-requests/${id}`,
 		filed_at: '2026-07-23T09:00:00Z',
 		expires_at: '2026-07-30T09:00:00Z',
 		items,

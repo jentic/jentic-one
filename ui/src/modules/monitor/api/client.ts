@@ -34,9 +34,10 @@ import {
 	type EventSeverity,
 	type ExecutionListResponse,
 	type ExecutionResponse,
-	type ExecutionStatsResponse,
+	type GroupBy,
 	type JobListResponse,
 	type JobResponse,
+	type UsageResponse,
 } from '@/shared/api';
 
 /**
@@ -111,19 +112,42 @@ export async function getExecution(executionId: string): Promise<ExecutionRespon
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview stats (aggregation endpoint, jentic-one#386)              */
+/* Overview usage (enriched aggregation, jentic-one-internal#561)      */
 /* ------------------------------------------------------------------ */
 
-export interface ExecutionStatsParams {
-	/** Trailing window in days (1–30); the endpoint defaults to 7. */
-	days?: number;
+export interface UsageStatsParams {
+	/** Unix-second window lower bound; the endpoint defaults to until-24h. */
+	since?: number | null;
+	/** Unix-second window upper bound; the endpoint defaults to now (floored to the minute). */
+	until?: number | null;
+	/** Top-rows grouping dimension; the endpoint defaults to `api`. */
+	groupBy?: GroupBy | null;
+	/** How many top rows to return (1–50); the endpoint defaults to 10. */
+	topLimit?: number;
+	toolkitId?: string | null;
+	apiId?: string | null;
+	agentId?: string | null;
+	status?: string | null;
 }
 
-export async function getExecutionStats(
-	params: ExecutionStatsParams = {},
-): Promise<ExecutionStatsResponse> {
+/**
+ * Full-parity usage aggregation (`GET /monitoring/usage`): overall stats
+ * (incl. latency percentiles), time buckets for the volume chart, and top
+ * api/toolkit/agent rows with sparkline trends (one point per aggregate
+ * bucket in the window).
+ */
+export async function getUsageStats(params: UsageStatsParams = {}): Promise<UsageResponse> {
 	try {
-		return await MonitoringService.getExecutionStats({ days: params.days ?? 7 });
+		return await MonitoringService.getUsageStats({
+			since: params.since ?? null,
+			until: params.until ?? null,
+			groupBy: params.groupBy ?? null,
+			topLimit: params.topLimit ?? 10,
+			toolkitId: params.toolkitId ?? null,
+			apiId: params.apiId ?? null,
+			agentId: params.agentId ?? null,
+			status: params.status ?? null,
+		});
 	} catch (error) {
 		throw toMonitorError(error, 'Failed to load usage statistics.');
 	}

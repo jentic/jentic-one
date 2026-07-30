@@ -25,7 +25,7 @@ import { sharedQueryKeys } from '@/shared/api/queryKeys';
 import { ChevronLeft } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { toast } from '@/shared/ui';
-import { AccessRequestDialog } from '@/shared/app/rail/AccessRequestDialog';
+import { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { RailFeed } from '@/shared/app/rail/RailFeed';
 import type { RailFeedFilters } from '@/shared/app/rail/RailFeed';
@@ -124,7 +124,15 @@ export function AgentRail() {
 	const [frozenIds, setFrozenIds] = useState<Set<string> | null>(null);
 
 	useEffect(() => {
-		if (feedFrozen && frozenIds === null) setFrozenIds(new Set(events.map((e) => e.id)));
+		// Never freeze an EMPTY feed: if the cursor happens to rest over the rail
+		// while it mounts (page load, or the shared pointer in browser-mode CI),
+		// `mouseenter` fires before the backlog fetch resolves — snapshotting
+		// zero ids would hold every event back indefinitely and the feed would
+		// sit at "Holding · N" with nothing rendered. Wait for the first events
+		// to land, then snapshot.
+		if (feedFrozen && frozenIds === null && events.length > 0) {
+			setFrozenIds(new Set(events.map((e) => e.id)));
+		}
 		if (!feedFrozen && frozenIds !== null) setFrozenIds(null);
 	}, [feedFrozen, frozenIds, events]);
 
@@ -334,22 +342,29 @@ export function AgentRail() {
 				onAudioToggle={() => setAudioOnCritical((v) => !v)}
 			/>
 
-			<AccessRequestDialog
-				open={requestDialog !== null}
-				requestId={requestDialog?.requestId ?? null}
-				eventId={requestDialog?.eventId ?? null}
-				onClose={() => setRequestDialog(null)}
-				onResolved={(eventId) => resolveEvent(eventId)}
-				onDecided={() => {
-					// A per-item decision from the dialog changes the durable queue
-					// + dashboard counts + the nav badge. Invalidate the shared roots
-					// (shared-layer code, no cross-module key imports) so every
-					// approval surface refreshes — not just the nav badge, which was
-					// the original stale-dashboard bug.
-					queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
-					queryClient.invalidateQueries({ queryKey: sharedQueryKeys.accessRequestsRoot });
-				}}
-			/>
+			{/* Routed through the shared decision wrapper (fetches the request by
+			    id) so a provisioning plan opens the setup wizard from the rail —
+			    exactly like the dashboard queue — instead of the plain dialog's
+			    "open it from Access Requests" dead end. */}
+			{requestDialog !== null && (
+				<AccessRequestDecisionDialog
+					requestId={requestDialog.requestId}
+					eventId={requestDialog.eventId}
+					onClose={() => setRequestDialog(null)}
+					onResolved={(eventId) => resolveEvent(eventId)}
+					onDecided={() => {
+						// A decision changes the durable queue + dashboard counts +
+						// the nav badge. Invalidate the shared roots (shared-layer
+						// code, no cross-module key imports) so every approval
+						// surface refreshes — not just the nav badge, which was
+						// the original stale-dashboard bug.
+						queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+						queryClient.invalidateQueries({
+							queryKey: sharedQueryKeys.accessRequestsRoot,
+						});
+					}}
+				/>
+			)}
 		</aside>
 	);
 }

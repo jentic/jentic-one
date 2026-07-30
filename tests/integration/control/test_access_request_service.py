@@ -390,6 +390,139 @@ async def test_decide_all_denied(
     assert view.status == "denied"
 
 
+async def _filed_alert(admin_db: DatabaseSession, request_id: str) -> Event | None:
+    async with admin_db.session() as session:
+        rows = await EventRepository.list_all(
+            session, event_type=["access_request.filed"], limit=100
+        )
+    return next((e for e in rows if (e.data or {}).get("request_id") == request_id), None)
+
+
+async def test_decide_settles_filed_alert(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Deciding a request acknowledges its actionable `access_request.filed` alert.
+
+    The filed event is what puts the "review this request" row on the rail and
+    dashboard. The decision IS that review — leaving the alert live keeps a
+    stale actionable row whose buttons then fail on "already decided". Only the
+    decided request's alert may be touched (scoped by data.request_id).
+    """
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    other = await svc.file(
+        actor_id=FILER_SUB,
+        reason=None,
+        items=[
+            {
+                "resource_type": "credential",
+                "action": "write",
+                "resource_id": "cred_other",
+                "to_type": "toolkit",
+                "to_id": "tk_target",
+            }
+        ],
+        identity=filer,
+    )
+
+    reviewer = _owner_identity()
+    await svc.decide(
+        filed.id,
+        identity=reviewer,
+        item_decisions=[{"item_id": filed.items[0].id, "decision": "approved"}],
+    )
+
+    settled = await _filed_alert(admin_db, filed.id)
+    assert settled is not None
+    assert settled.acknowledged is True
+    assert settled.acknowledged_by == OWNER_SUB
+
+    untouched = await _filed_alert(admin_db, other.id)
+    assert untouched is not None
+    assert untouched.acknowledged is False
+
+
+async def test_withdraw_settles_filed_alert(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Withdrawing a request also settles its filed alert — nothing left to review."""
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+
+    await svc.withdraw(filed.id, identity=filer)
+
+    settled = await _filed_alert(admin_db, filed.id)
+    assert settled is not None
+    assert settled.acknowledged is True
+
+
+async def test_decide_retry_after_post_commit_crash_still_announces(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """A decide() retry recovers a decision that committed but was never announced.
+
+    decide() is documented as safe to retry: phase 1 (the decision) commits to
+    the control DB, then post-commit work (admin-effect reconcile, decision
+    event, filed-alert settlement) runs. If the process dies between the two,
+    the decision is durable but unannounced. Pre-fix, the retry gated the
+    announcement purely on ``any_transition`` — which a retry never has — so the
+    decision event was never emitted and the actionable ``access_request.filed``
+    alert stayed live forever (a stale "review this request" row whose buttons
+    then fail on "already decided"). The still-unsettled alert is the durable
+    marker: a retry that settles it must also emit the decision event.
+    """
+    filer = _filer_identity()
+    filed = await svc.file(actor_id=FILER_SUB, reason=None, items=_base_items(), identity=filer)
+    reviewer = _owner_identity()
+    decisions = [{"item_id": filed.items[0].id, "decision": "approved"}]
+
+    # First attempt: the control-DB commit lands, then the post-commit
+    # reconcile "crashes" — the decision is durable but never announced.
+    original = svc._reconcile_admin_effects
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated crash after phase-1 commit")
+
+    svc._reconcile_admin_effects = boom  # type: ignore[method-assign]
+    try:
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
+    finally:
+        svc._reconcile_admin_effects = original  # type: ignore[method-assign]
+
+    live = await _filed_alert(admin_db, filed.id)
+    assert live is not None
+    assert live.acknowledged is False
+
+    # Retry with the same decisions: nothing transitions, but the announcement
+    # must be recovered — alert settled AND decision event emitted.
+    view = await svc.decide(filed.id, identity=reviewer, item_decisions=decisions)
+    assert view.status == "approved"
+
+    settled = await _filed_alert(admin_db, filed.id)
+    assert settled is not None
+    assert settled.acknowledged is True
+
+    async with admin_db.session() as session:
+        rows = await EventRepository.list_all(
+            session, event_type=["access_request.approved"], limit=100
+        )
+    decision_events = [e for e in rows if (e.data or {}).get("request_id") == filed.id]
+    assert len(decision_events) == 1
+
+
 async def test_decide_approve_unresolvable_toolkit_ref_denies_not_pending(
     svc: AccessRequestService,
     clean_access_requests: None,
@@ -1281,3 +1414,217 @@ async def test_decide_conflict_raises_item_not_pending(
             identity=reviewer,
             item_decisions=[{"item_id": filed.items[0].id, "decision": "denied"}],
         )
+
+
+# --- file-time fulfillability advisory (theme 3 residual) ---
+
+
+async def _list_events_by_type(admin_db: DatabaseSession, event_type: str) -> list[Event]:
+    async with admin_db.session() as session:
+        return await EventRepository.list_all(session, event_type=[event_type])
+
+
+async def test_file_emits_unserved_advisory_for_plain_toolkit_bind_with_no_serving_toolkit(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """A plain `toolkit:bind` by reference with no serving toolkit emits an advisory."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind me to a not-yet-served api",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "no-such-vendor", "name": "no-such-api"},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"  # advisory doesn't block the filing
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert len(matching) == 1
+    event = matching[0]
+    assert event.severity == "warning"
+    assert event.data["api"] == {
+        "vendor": "no-such-vendor",
+        "name": "no-such-api",
+        "version": None,
+    }
+    assert "no-such-vendor/no-such-api" in event.summary
+
+
+async def test_file_survives_non_string_reference_fields(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Non-string reference values must never escape the advisory (post-commit 500).
+
+    ``resource_reference`` is schema-typed ``dict[str, Any]``, so a caller can
+    put an int/list where ``name``/``version`` are expected. The advisory runs
+    after the filing has committed; an uncaught TypeError here would fail the
+    request *and* skip its CREATE audit record. Values are coerced to strings
+    instead.
+    """
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="crafted non-string reference fields",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "no-such-vendor", "name": 123, "version": 4},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert len(matching) == 1
+    assert matching[0].data["api"] == {
+        "vendor": "no-such-vendor",
+        "name": "123",
+        "version": "4",
+    }
+
+
+async def test_file_skips_unserved_advisory_when_toolkit_serves_api(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    control_db: DatabaseSession,
+    admin_db: DatabaseSession,
+) -> None:
+    """When a toolkit already serves the referenced API, no advisory fires."""
+    async with control_db.transaction() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, created_by) "
+                "VALUES (:id, :name, :created_by) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {
+                "id": "tk_served",
+                "name": "served-toolkit",
+                "created_by": OWNER_SUB,
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO credentials "
+                "(id, type, name, api_vendor, api_name, created_by) "
+                "VALUES (:id, 'token', :name, :vendor, :api_name, :created_by) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {
+                "id": "cred_served_001",
+                "name": "served-cred",
+                "vendor": "servedvendor",
+                "api_name": "widgets",
+                "created_by": OWNER_SUB,
+            },
+        )
+        await EffectsRepository.bind_credential_to_toolkit(
+            session,
+            toolkit_id="tk_served",
+            credential_id="cred_served_001",
+            created_by=OWNER_SUB,
+        )
+
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind me to a served api",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "servedvendor", "name": "widgets"},
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []
+
+
+async def test_file_skips_unserved_advisory_when_request_carries_fulfilment_intent(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """Plans expect nothing to serve the API yet — the advisory must stay silent."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="provision then bind",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "create",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+            {
+                "resource_type": "credential",
+                "action": "provision",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_reference": {"vendor": "brandnew", "name": "widgets"},
+            },
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []
+
+
+async def test_file_skips_unserved_advisory_when_bind_names_toolkit_by_id(
+    svc: AccessRequestService,
+    clean_access_requests: None,
+    clean_events: None,
+    seed_binding: None,
+    admin_db: DatabaseSession,
+) -> None:
+    """A `toolkit:bind` with an explicit id (not a reference) is not by-name — no advisory."""
+    filer = _filer_identity()
+    filed = await svc.file(
+        actor_id=FILER_SUB,
+        reason="bind by id",
+        items=[
+            {
+                "resource_type": "toolkit",
+                "action": "bind",
+                "resource_id": "tk_target",
+            }
+        ],
+        identity=filer,
+    )
+    assert filed.status == "pending"
+
+    events = await _list_events_by_type(admin_db, "broker.toolkit_binding_unserved")
+    matching = [e for e in events if e.data.get("request_id") == filed.id]
+    assert matching == []

@@ -75,6 +75,25 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
+	it('scopes Executions to a toolkit via the ?toolkit_id deep-link and clears it from the chip', async () => {
+		const user = userEvent.setup();
+		// The deep-link the toolkit detail's "Open in Monitor" writes.
+		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_payments');
+
+		// Only the tk_payments rows render (tk_dev's github row is filtered out).
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.queryByText('GET /repos/{owner}/{repo}')).not.toBeInTheDocument();
+
+		// The scope is visible as a removable chip in the filter bar (the rows
+		// also print the toolkit id, so assert on multiple occurrences).
+		expect(screen.getAllByText('tk_payments').length).toBeGreaterThanOrEqual(2);
+		await user.click(screen.getByRole('button', { name: 'Clear toolkit filter' }));
+
+		// Cleared: the full log returns and the param leaves the URL.
+		expect(await screen.findByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
+	});
+
 	it('filters Executions by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
@@ -112,22 +131,44 @@ describe('MonitorPage', () => {
 		expect(screen.getByText('Execution failed: github-api')).toBeInTheDocument();
 	});
 
-	it('renders the Overview health strip + volume chart + breakdown from the stats endpoint (#386)', async () => {
+	it('renders the Overview health strip + volume chart + breakdown from the usage endpoint (#561)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();
 		await screen.findByText('POST /v1/charges');
 
 		await user.click(screen.getByRole('tab', { name: 'Overview' }));
 
-		// HealthStrip pill + the Execution Volume chart render from the
-		// aggregation endpoint — no more "coming soon" gate. The fixture's
-		// ~91% success rate maps to the "Degraded" health pill.
+		// HealthStrip pills + the Execution Volume chart render from the enriched
+		// usage endpoint (GET /monitoring/usage) — no more "coming soon" gate. The
+		// fixture's ~91% success rate maps to the "Degraded" health pill; the
+		// latency pill renders alongside it (fixture avg ~450ms → "Normal").
 		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
 		expect(screen.getByText('Degraded')).toBeInTheDocument();
+		expect(screen.getAllByText('Normal').length).toBeGreaterThanOrEqual(1);
 
-		// Breakdown panel lists the busiest operations.
+		// Breakdown table lists the busiest APIs (also present in the bubble
+		// chart + HealthStrip cluster, so assert at least one occurrence).
 		expect(screen.getByText('Breakdown')).toBeInTheDocument();
-		expect(screen.getByText('POST /v1/refunds')).toBeInTheDocument();
+		expect(screen.getAllByText('stripe-api').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('github-api').length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('regroups the Breakdown by Agents and surfaces the Unattributed bucket', async () => {
+		const user = userEvent.setup();
+		renderMonitor('/app/monitor');
+		await screen.findByText('Breakdown');
+
+		// Both the bubble chart and the Breakdown carry an APIs/Toolkits/Agents
+		// toggle; flip the Breakdown's (the last one). The agent grouping was
+		// prefetched, so rows swap without a spinner. Backend agent keys are
+		// mechanical "actor_type/actor_id" strings — the UI strips the type
+		// prefix for display — and NULL actor columns arrive as a null key that
+		// must surface as "Unattributed" rather than being dropped.
+		const agentToggles = screen.getAllByRole('button', { name: 'Agents' });
+		await user.click(agentToggles[agentToggles.length - 1]);
+
+		expect(await screen.findByText('agent_billing')).toBeInTheDocument();
+		expect(screen.getByText('Unattributed')).toBeInTheDocument();
 	});
 
 	it('reloads Overview stats when the window selector changes', async () => {
@@ -137,9 +178,17 @@ describe('MonitorPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Overview' }));
 		await screen.findByText('Execution Volume');
 
-		// Switching the window re-queries (days=30) and keeps the chart mounted.
+		// Switching the window re-queries with a tighter `since` and keeps the
+		// chart mounted (subtitle reflects the wider window).
 		await user.click(screen.getByRole('button', { name: '30d' }));
-		expect(await screen.findByText('Execution Volume')).toBeInTheDocument();
+		expect(await screen.findByText(/Last 30 days, colored by/)).toBeInTheDocument();
+
+		// The 24h window exercises the sub-day path: the mock serves recent
+		// points inside the last 24h, so the chart renders bars instead of
+		// falling into the empty state.
+		await user.click(screen.getByRole('button', { name: '24h' }));
+		expect(await screen.findByText(/Last 24 hours, colored by/)).toBeInTheDocument();
+		expect(screen.queryByText('No executions yet')).not.toBeInTheDocument();
 	});
 
 	it('switches to the Jobs tab', async () => {

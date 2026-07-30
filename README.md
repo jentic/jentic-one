@@ -37,6 +37,9 @@ curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/instal
 
 AI agents increasingly need to call real third-party APIs — but handing an agent your raw API keys is a security problem. Jentic One is a **self-hosted gateway** that keeps that from happening: you register the APIs an agent may use, store the credentials once, and the agent calls out through the Broker. The Broker injects the right credential at execution time and forwards the request, so **secrets never leave your infrastructure** and never reach the agent. Every call is governed by fine-grained permissions and recorded in an append-only audit log.
 
+> [!NOTE]
+> **Jentic One is not the Jentic cloud platform.** The hosted platform at `app.jentic.com` / `api.jentic.com` (with its remote MCP server) is a separate product with separate state; a self-hosted deployment exposes **no MCP endpoint** — agents integrate through the `jentic` CLI + generated skill, or raw HTTP via `/llms.txt`. Using both, or migrating? Read [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) first.
+
 ## Architecture
 
 The system deploys as two peer units — **App** (the control plane, combining Registry + Admin + Control surfaces) and **Broker** (the data plane) — above a shared PostgreSQL database layer.
@@ -110,7 +113,11 @@ Full reference: [`cli/README.md`](cli/README.md).
 | Guide | Description |
 | ----- | ----------- |
 | [Build & Deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, local kind cluster, and observability |
+| [Self-hosted deployment](deploy/README.md#self-hosted-containers--external-postgres) | Pull the published container image and run it against an external Postgres — the "no Kubernetes" production-shaped path |
+| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
 | [API Specs](openapi/) | OpenAPI specifications (broker, control) |
+| [Endpoint & scope reference](docs/reference/endpoints.md) | Generated map of every HTTP route, its scope, and who may call it |
+| Reference docs (in-app) | Open `/app/docs` on a running deployment for the rendered HTTP API, Broker API, and CLI references — all generated from code (`/docs` serves the interactive Swagger UI) |
 
 ## Development & testing
 

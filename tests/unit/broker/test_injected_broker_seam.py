@@ -37,7 +37,7 @@ from jentic_one.broker.adapters.runners.base import (
     UpstreamRunner,
 )
 from jentic_one.broker.adapters.runners.registry import RunnerRegistry
-from jentic_one.broker.services.execution.executor import PipelineExecutor
+from jentic_one.broker.services.execution.executor import PipelineExecutor, _ctx_from_metadata
 from jentic_one.broker.web.routers.execute import _resolve_broker
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.broker.execution import (
@@ -216,3 +216,36 @@ async def test_async_path_invokes_injected_broker() -> None:
     assert len(spy.calls) == 1, "injected broker must be invoked on the async path"
     assert result.status_code == 200
     assert result.body == b"spy"
+
+
+def test_ctx_from_metadata_rebuilds_credential_attribution() -> None:
+    """The worker's opaque metadata carries credential attribution (#740) into
+    the rebuilt request context, so the pipeline persists the same
+    credential_id/name on async execution records as the sync router does —
+    and omitting it leaves both None ("no credential used")."""
+    base_metadata: dict[str, Any] = {
+        "execution_id": "exec_test0000000000000000",
+        "trace_id": "a" * 32,
+        "actor_id": "agt_abc123",
+        "actor_type": "agent",
+    }
+
+    def _request(metadata: dict[str, Any]) -> UpstreamExecRequest:
+        return UpstreamExecRequest(
+            method="GET",
+            url="https://api.example.com/v1/things",
+            headers={},
+            body=None,
+            timeout_s=30.0,
+            metadata=metadata,
+        )
+
+    attributed = _ctx_from_metadata(
+        _request({**base_metadata, "credential_id": "cred_abc", "credential_name": "stripe-live"})
+    )
+    assert attributed.credential_id == "cred_abc"
+    assert attributed.credential_name == "stripe-live"
+
+    bare = _ctx_from_metadata(_request(base_metadata))
+    assert bare.credential_id is None
+    assert bare.credential_name is None

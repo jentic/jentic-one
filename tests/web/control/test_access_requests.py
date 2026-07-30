@@ -175,6 +175,95 @@ def test_list_respects_limit(filer_client: TestClient) -> None:
     assert resp.status_code == 200
 
 
+# --- Filer-owner enrichment ---
+
+
+@pytest.fixture()
+async def seed_owner_user(web_context: Context) -> AsyncGenerator[None, None]:
+    """Seed the filer's owner (OWNER_SUB) as a real admin-DB user for enrichment.
+
+    Raw SQL rather than ``UserService`` deliberately, mirroring the
+    ``seed_binding`` precedent in conftest: these web tests exercise the
+    control app, and booting the admin service stack just to plant one roster
+    row would couple them to admin bootstrapping. Teardown only removes the
+    row if this fixture actually inserted it (the seed is a no-op when a
+    concurrent suite already owns the id).
+    """
+    async with web_context.admin_db.session() as session:
+        existing = await session.execute(
+            text("SELECT 1 FROM users WHERE id = :id"), {"id": OWNER_SUB}
+        )
+        created = existing.scalar_one_or_none() is None
+        if created:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, first_name, last_name) "
+                    "VALUES (:id, :email, :first, :last)"
+                ),
+                {"id": OWNER_SUB, "email": "owner@test.local", "first": "Olive", "last": "Owner"},
+            )
+        await session.commit()
+    yield
+    if created:
+        async with web_context.admin_db.session() as session:
+            await session.execute(text("DELETE FROM users WHERE id = :id"), {"id": OWNER_SUB})
+            await session.commit()
+
+
+def test_list_and_get_enrich_filer_owner(filer_client: TestClient, seed_owner_user: None) -> None:
+    """When filer_owner_id resolves to a user, list/get carry its display info."""
+    data = _file_request(filer_client)
+    listed = filer_client.get("/access-requests").json()["data"][0]
+    assert listed["filer_owner_id"] == OWNER_SUB
+    assert listed["filer_owner"] == {
+        "id": OWNER_SUB,
+        "email": "owner@test.local",
+        "display_name": "Olive Owner",
+    }
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["filer_owner"] == listed["filer_owner"]
+
+
+def test_filer_owner_absent_when_id_does_not_resolve(filer_client: TestClient) -> None:
+    """No admin-DB user behind filer_owner_id → the optional field stays null."""
+    data = _file_request(filer_client)
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["filer_owner_id"] == OWNER_SUB
+    assert got["filer_owner"] is None
+
+
+async def test_filer_owner_falls_back_to_created_by(
+    owner_client: TestClient,
+    seed_owner_user: None,
+    web_context: Context,
+) -> None:
+    """Null filer_owner_id (legacy rows) resolves via created_by — the same
+    fallback consumers render — so the label doesn't silently vanish."""
+    # A toolkit bind: user-filed (created_by == OWNER_SUB, a real admin-DB
+    # user) and exempt from the credential-bind prerequisite check.
+    filed = owner_client.post(
+        "/access-requests",
+        json={
+            "items": [{"resource_type": "toolkit", "action": "bind", "resource_id": "tk_target"}]
+        },
+    )
+    assert filed.status_code == 202, filed.text
+    request_id = filed.json()["id"]
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("UPDATE access_requests SET filer_owner_id = NULL WHERE id = :id"),
+            {"id": request_id},
+        )
+        await session.commit()
+    got = owner_client.get(f"/access-requests/{request_id}").json()
+    assert got["filer_owner_id"] is None
+    assert got["filer_owner"] == {
+        "id": OWNER_SUB,
+        "email": "owner@test.local",
+        "display_name": "Olive Owner",
+    }
+
+
 # --- Get ---
 
 

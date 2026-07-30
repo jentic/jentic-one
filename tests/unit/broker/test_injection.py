@@ -25,6 +25,7 @@ def _make_ctx(decrypt_map: dict[str, str]) -> MagicMock:
 def test_inject_bearer_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_1",
+        name="cred1",
         wire_type=CredentialType.BEARER_TOKEN,
         stored_type=StoredCredentialType.STATIC_BEARER_TOKEN,
         provider="static",
@@ -41,6 +42,7 @@ def test_inject_bearer_token() -> None:
 def test_inject_api_key_header() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_2",
+        name="cred2",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -59,6 +61,7 @@ def test_inject_api_key_header() -> None:
 def test_inject_api_key_query() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_3",
+        name="cred3",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -78,6 +81,7 @@ def test_inject_api_key_query() -> None:
 def test_inject_api_key_cookie() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_3c",
+        name="cred3c",
         wire_type=CredentialType.API_KEY,
         stored_type=StoredCredentialType.API_KEY,
         provider="static",
@@ -97,6 +101,7 @@ def test_inject_api_key_cookie() -> None:
 def test_inject_basic_auth() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_4",
+        name="cred4",
         wire_type=CredentialType.BASIC,
         stored_type=StoredCredentialType.BASIC_AUTH,
         provider="static",
@@ -115,6 +120,7 @@ def test_inject_basic_auth() -> None:
 def test_inject_oauth2_with_access_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_5",
+        name="cred5",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider="direct_oauth2",
@@ -131,6 +137,7 @@ def test_inject_oauth2_with_access_token() -> None:
 def test_inject_oauth2_raises_without_access_token() -> None:
     resolved = ResolvedCredential(
         credential_id="cred_6",
+        name="cred6",
         wire_type=CredentialType.OAUTH2,
         stored_type=StoredCredentialType.OAUTH2_CLIENT_CREDENTIALS,
         provider="direct_oauth2",
@@ -153,6 +160,7 @@ def test_inject_no_auth_injects_nothing() -> None:
     # A no-auth credential carries no secret — injection is a no-op (#603).
     resolved = ResolvedCredential(
         credential_id="cred_noauth",
+        name="noauth",
         wire_type=CredentialType.NO_AUTH,
         stored_type=StoredCredentialType.NO_AUTH,
         provider="static",

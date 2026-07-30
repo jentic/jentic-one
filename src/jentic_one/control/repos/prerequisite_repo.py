@@ -1,7 +1,8 @@
-"""Cross-database prerequisite queries for access request validation.
+"""Cross-database reads against admin tables for the control module.
 
-Uses raw SQL (text()) to avoid importing admin ORM models — the control module
-must not import from the admin module.
+Existence checks (access-request prerequisites) and labelling lookups (display
+enrichment) share one seam: raw SQL (text()) so the control module never
+imports admin ORM models.
 """
 
 from __future__ import annotations
@@ -24,8 +25,17 @@ class BoundAgentRow(NamedTuple):
     bound_at: datetime
 
 
+class UserDisplayRow(NamedTuple):
+    """Display fields for a user, resolved cross-DB for labelling only."""
+
+    user_id: str
+    email: str
+    first_name: str | None
+    last_name: str | None
+
+
 class PrerequisiteRepository:
-    """Checks existence of bindings in the admin database without admin imports."""
+    """Cross-DB reads (existence checks + labelling lookups) without admin imports."""
 
     @staticmethod
     async def active_user_exists(session: AsyncSession, *, user_id: str) -> bool:
@@ -40,6 +50,30 @@ class PrerequisiteRepository:
             {"user_id": user_id},
         )
         return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def get_user_displays(
+        session: AsyncSession, *, user_ids: list[str]
+    ) -> dict[str, UserDisplayRow]:
+        """Batch-resolve user display info by id (admin DB), keyed by user id.
+
+        Labelling only — never authorization. Ids that don't resolve (agents,
+        service accounts, deleted rows) are simply absent from the result, so
+        callers degrade to showing the raw id. Deactivated users ARE returned:
+        a decided request whose owner was later offboarded should still show
+        who owned it.
+        """
+        if not user_ids:
+            return {}
+        placeholders = ", ".join(f":uid_{i}" for i in range(len(user_ids)))
+        params: dict[str, object] = {f"uid_{i}": uid for i, uid in enumerate(user_ids)}
+        result = await session.execute(
+            text(
+                f"SELECT id, email, first_name, last_name FROM users WHERE id IN ({placeholders})"
+            ),
+            params,
+        )
+        return {row[0]: UserDisplayRow(*row) for row in result.fetchall()}
 
     @staticmethod
     async def agent_toolkit_binding_exists(

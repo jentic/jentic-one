@@ -170,6 +170,7 @@ def _make_token(ctx: Context, user_id: str, email: str, permissions: list[str]) 
     claims = {
         "sub": user_id,
         "email": email,
+        "actor_type": "user",
         "permissions": permissions,
         "must_change_password": False,
     }

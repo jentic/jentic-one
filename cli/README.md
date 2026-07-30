@@ -17,9 +17,17 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
-| `jenticctl` | **Setup & lifecycle** | `install` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, and teardown. |
-| `jentic` | **Identity & access** | `register` · `profile` · `logout` | Each profile is an agent. Register it (Ed25519 + Dynamic Client Registration), switch the active profile, and clear cached tokens. |
-| `jentic` | **APIs** | `catalog` · `apis` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. |
+| `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
+| `jentic` | **Identity & access** | `register` · `bootstrap` · `profile` · `logout` | Each profile is an agent. Register it (Ed25519 + Dynamic Client Registration), switch the active profile, and clear cached tokens. |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference. |
+| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `skill` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …). |
+| `jentic` | **Administration** | `admin` | Manage OAuth provider config. |
+
+The table mirrors the CLI's own command groups (what `jentic` with no args
+prints). The **complete command + flag reference** is generated from these
+cobra definitions (`make cli-reference`) and rendered in the platform docs —
+open `/app/docs` on your deployment (Reference → CLI). This README covers
+building, onboarding, and operating; it does not duplicate per-flag docs.
 
 **New here?** Run `jenticctl install` to set up locally, then `jentic register`
 to create an agent.
@@ -204,6 +212,28 @@ After running, `~/.jentic` contains only the backups:
 ├── jentic-one-old.yaml   # was jentic-one.yaml
 └── config-old.yaml       # was config.yaml
 ```
+
+### Reinstalling over existing data
+
+On a Docker install `uninstall` **preserves** the database volume by default
+(the "reinstall reattaches your data" contract in `--keep-data`'s help), and
+a plain re-`install` never touches it. The next `jenticctl install` reuses
+secrets from an existing `jentic-one.yaml` at `--out` (or the
+`jentic-one-old.yaml` backup beside it) so the fresh config's encryption key
+matches the one that encrypted the credentials, invite pepper, OAuth tokens
+etc. in the preserved data:
+
+- Reused: `credentials.encryption` (whole keyset — a hand-rotated
+  `active_id: v2` + `v1`/`v2` layout survives verbatim), `admin.auth.jwt_secret`,
+  `admin.invite.pepper`, `credentials.connect.state_secret`,
+  `auth.id_signing`, `telemetry.instance_id`.
+- Not reused: wizard-owned settings (ports, backend, apps list, etc.) — the
+  operator may be legitimately changing them.
+- **Don't delete `jentic-one-old.yaml` by hand** if you plan to reinstall
+  and keep the data — that file holds the encryption key that makes the
+  preserved credentials decryptable.
+- Pass `--fresh-secrets` to `jenticctl install` for deliberate rotation
+  (invalidates existing sessions, invites, and stored ciphertexts).
 
 ### Wizard structure
 

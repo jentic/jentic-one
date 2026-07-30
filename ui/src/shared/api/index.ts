@@ -59,6 +59,9 @@ export type { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema 
 export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema as PermissionRuleSchemaNS } from '@/shared/api/generated/models/jentic_one__control__web__schemas__toolkits__PermissionRuleSchema';
 export type { PermissionRuleListResponse } from '@/shared/api/generated/models/PermissionRuleListResponse';
 export type { PermissionsPatchRequest } from '@/shared/api/generated/models/PermissionsPatchRequest';
+export type { PermissionTestRequest } from '@/shared/api/generated/models/PermissionTestRequest';
+export type { PermissionTestResponse } from '@/shared/api/generated/models/PermissionTestResponse';
+export type { BindingWarningSchema } from '@/shared/api/generated/models/BindingWarningSchema';
 export type { ToolkitBindingResponse } from '@/shared/api/generated/models/ToolkitBindingResponse';
 export type { ToolkitBindingListResponse } from '@/shared/api/generated/models/ToolkitBindingListResponse';
 export type { ToolkitBindRequest } from '@/shared/api/generated/models/ToolkitBindRequest';
@@ -203,13 +206,20 @@ export type { ServiceAccountScopesResponse } from '@/shared/api/generated/models
 export type { JobResponse } from '@/shared/api/generated/models/JobResponse';
 export type { JobListResponse } from '@/shared/api/generated/models/JobListResponse';
 
-// Monitor Overview: the aggregation endpoint (GET /monitoring/executions,
-// `MonitoringService.getExecutionStats`) added by jentic-one#386. Powers the
-// Overview usage charts + top-operations panel.
+// Monitor Overview parity: the enriched usage-aggregation endpoint
+// (GET /monitoring/usage, `MonitoringService.getUsageStats`) added by
+// jentic-one-internal#561; it superseded the coarser #386 stats endpoint
+// (GET /monitoring/executions), whose models are no longer consumed by the UI.
+// Powers the full jentic-mini Overview port — bubble chart, per-row sparkline
+// trends, latency pills, and the api/toolkit/agent grouping toggle. `GroupBy`
+// is exported as a *value* because callers pass the enum members as the
+// `group_by` query param.
 export { MonitoringService } from '@/shared/api/generated/services/MonitoringService';
-export type { ExecutionStatsResponse } from '@/shared/api/generated/models/ExecutionStatsResponse';
-export type { DailyExecutionBucket } from '@/shared/api/generated/models/DailyExecutionBucket';
-export type { TopOperation } from '@/shared/api/generated/models/TopOperation';
+export { GroupBy } from '@/shared/api/generated/models/GroupBy';
+export type { UsageResponse } from '@/shared/api/generated/models/UsageResponse';
+export type { UsageStatsBlock } from '@/shared/api/generated/models/UsageStatsBlock';
+export type { UsageBucket } from '@/shared/api/generated/models/UsageBucket';
+export type { UsageTopRow } from '@/shared/api/generated/models/UsageTopRow';
 
 // Monitor global filter bar: the actor directory (GET /actors,
 // `ActorsService.listActors`) hydrates the actor picker shared across the
@@ -222,3 +232,12 @@ export { ActorsService } from '@/shared/api/generated/services/ActorsService';
 export { ActorType } from '@/shared/api/generated/models/ActorType';
 export type { ActorListResponse } from '@/shared/api/generated/models/ActorListResponse';
 export type { ActorSummaryResponse } from '@/shared/api/generated/models/ActorSummaryResponse';
+
+// Session lifecycle (#610/#608): expiry-aware token adoption + proactive
+// refresh scheduling + the one-shot "session expired" login notice.
+export {
+	setSession,
+	getSessionExpiresAt,
+	consumeSessionExpiredNotice,
+} from '@/shared/api/token-store';
+export type { ClearTokenReason } from '@/shared/api/token-store';
