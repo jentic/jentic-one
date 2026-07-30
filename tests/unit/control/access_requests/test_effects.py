@@ -9,11 +9,14 @@ import pytest
 
 from jentic_one.control.repos.effects_repo import BindTargetMissingError
 from jentic_one.control.services.access_requests.effects import (
+    UNGOVERNED_PLAN,
     EffectApplicator,
     EffectPhase,
+    PlanGovernance,
     admin_effect_keys,
     classify_effect,
     is_admin_effect,
+    plan_governance_for_items,
 )
 from jentic_one.control.services.access_requests.errors import (
     CredentialNotFoundForBindError,
@@ -70,6 +73,7 @@ def _make_item(
     actor_id: str = "agnt_001",
     rules: list[dict[str, Any]] | None = None,
     item_id: str = "arqi_001",
+    status: str = "pending",
 ) -> MagicMock:
     item = MagicMock()
     item.id = item_id
@@ -80,6 +84,7 @@ def _make_item(
     item.to_id = to_id
     item.actor_id = actor_id
     item.rules = rules
+    item.status = status
     return item
 
 
@@ -875,19 +880,26 @@ async def test_validate_fulfilment_only_intent_with_rules_is_rejected() -> None:
 
 async def test_validate_credential_bind_in_plan_denies_when_unfulfilled() -> None:
     # In a provisioning plan a credential:bind that the wizard hasn't fulfilled
-    # (missing to_id AND/OR resource_id) must be denied with the plan-aware error.
+    # (missing to_id AND/OR resource_id) must be denied with the plan-aware error,
+    # and the error must name the intent the wizard is still awaiting so the
+    # DENY-reason surfaces enough context to close the loop.
     ctx = _make_ctx()
     session = _make_session()
     applicator = EffectApplicator(ctx)
+    plan_governance = PlanGovernance(governing_intent_ids=frozenset({"arqi_intent_1"}))
     for to_id, resource_id in ((None, None), ("tk_001", None), (None, "cred_001")):
         item = _make_item(action="bind", to_id=to_id, resource_id=resource_id)
-        with pytest.raises(ProvisioningPlanNotFulfilledError):
+        with pytest.raises(ProvisioningPlanNotFulfilledError) as exc_info:
             await applicator.validate(
                 item,
                 identity=_make_identity(),
                 control_session=session,
-                is_provisioning_plan=True,
+                plan_governance=plan_governance,
             )
+        assert exc_info.value.governing_intent_ids == frozenset({"arqi_intent_1"})
+        # credential:bind carries no governing_api — it's the "any-intent-lives" rule.
+        assert exc_info.value.governing_api is None
+        assert "arqi_intent_1" in str(exc_info.value)
 
 
 @patch(f"{_MODULE}.CredentialRepository")
@@ -902,26 +914,25 @@ async def test_validate_credential_bind_in_plan_passes_when_fulfilled(
     session = _make_session()
     applicator = EffectApplicator(ctx)
     item = _make_item(action="bind", to_id="tk_001", resource_id="cred_001")
+    plan_governance = PlanGovernance(governing_intent_ids=frozenset({"arqi_intent_1"}))
     # Should not raise the plan error (a DB-validator raise would be a different type).
     try:
         await applicator.validate(
             item,
             identity=_make_identity(),
             control_session=session,
-            is_provisioning_plan=True,
+            plan_governance=plan_governance,
         )
     except ProvisioningPlanNotFulfilledError:  # pragma: no cover - failure path
         pytest.fail("a fulfilled credential:bind must not raise ProvisioningPlanNotFulfilledError")
 
 
-@patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled(
-    effects_repo: MagicMock,
-) -> None:
-    # A CHAIN-OWNED reference-only toolkit:bind (its reference matches a
-    # fulfilment intent's) targets the toolkit the wizard is yet to create —
-    # deny with the plan-aware reason, without attempting resolution.
-    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=[])
+async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
+    # A reference-only toolkit:bind in a plan (no resolved id) must be denied —
+    # it can't resolve by the not-yet-visible credential->toolkit join. The
+    # error carries both the intent id(s) and the (vendor, name) tuple that
+    # tied the plan to this bind, so the DENY reason names the API the wizard
+    # is still expected to fulfil.
     ctx = _make_ctx()
     session = _make_session()
     applicator = EffectApplicator(ctx)
@@ -932,25 +943,32 @@ async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled(
         to_id=None,
         resource_reference={"vendor": "acme", "name": "widgets"},
     )
-    with pytest.raises(ProvisioningPlanNotFulfilledError):
+    plan_governance = PlanGovernance(
+        governing_intent_ids=frozenset({"arqi_intent_1"}),
+        governing_api=("acme", "widgets"),
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError) as exc_info:
         await applicator.validate(
             item,
             identity=_make_identity(),
             control_session=session,
-            is_provisioning_plan=True,
-            plan_chain_refs=frozenset({("acme", "widgets", None)}),
+            plan_governance=plan_governance,
         )
-    effects_repo.resolve_toolkits_for_api.assert_not_awaited()
+    assert exc_info.value.governing_intent_ids == frozenset({"arqi_intent_1"})
+    assert exc_info.value.governing_api == ("acme", "widgets")
+    assert "acme/widgets" in str(exc_info.value)
+    assert "arqi_intent_1" in str(exc_info.value)
 
 
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_chain_owned_bind_never_half_wires_to_preexisting_toolkit(
+async def test_validate_governed_bind_never_half_wires_to_preexisting_toolkit(
     effects_repo: MagicMock,
 ) -> None:
-    # Even when a PRE-EXISTING toolkit serves the same API, a chain-owned bind
+    # Even when a PRE-EXISTING toolkit serves the same API, a governed bind
     # must NOT resolve to it: approving it plain would wire the agent to the
     # old toolkit while the rest of its chain (the new toolkit + credential)
-    # is denied — a half-wired grant. The plan-aware denial must win.
+    # is denied — a half-wired grant. The plan-aware denial must win, without
+    # resolution ever being attempted.
     effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_preexisting"])
     ctx = _make_ctx()
     session = _make_session()
@@ -967,20 +985,22 @@ async def test_validate_chain_owned_bind_never_half_wires_to_preexisting_toolkit
             item,
             identity=_make_identity(),
             control_session=session,
-            is_provisioning_plan=True,
-            plan_chain_refs=frozenset({("acme", "widgets", None)}),
+            plan_governance=PlanGovernance(
+                governing_intent_ids=frozenset({"arqi_intent_1"}),
+                governing_api=("acme", "widgets"),
+            ),
         )
     effects_repo.resolve_toolkits_for_api.assert_not_awaited()
 
 
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_toolkit_bind_in_plan_passes_when_reference_resolves(
+async def test_validate_ungoverned_bind_in_composite_passes_when_reference_resolves(
     effects_repo: MagicMock,
 ) -> None:
     # A composite request can mix plan chains with PLAIN reference binds to
-    # toolkits that already exist. A bind whose API no chain provisions is
-    # satisfiable exactly as filed, so the plan context must not auto-deny it
-    # (the mixed-composite fix).
+    # toolkits that already exist. A bind whose API no chain provisions gets
+    # UNGOVERNED_PLAN from decide() and is satisfiable exactly as filed — the
+    # plan context must not auto-deny it (the mixed-composite fix).
     effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_existing"])
     ctx = _make_ctx()
     session = _make_session()
@@ -996,13 +1016,12 @@ async def test_validate_toolkit_bind_in_plan_passes_when_reference_resolves(
         item,
         identity=_make_identity(),
         control_session=session,
-        is_provisioning_plan=True,
-        plan_chain_refs=frozenset({("othercorp", "api", None)}),
+        plan_governance=UNGOVERNED_PLAN,
     )
 
 
 @patch(f"{_MODULE}.EffectsRepository")
-async def test_validate_plain_bind_in_composite_keeps_ambiguity_pending(
+async def test_validate_ungoverned_bind_in_composite_keeps_ambiguity_pending(
     effects_repo: MagicMock,
 ) -> None:
     # An AMBIGUOUS plain reference inside a composite keeps the documented
@@ -1024,31 +1043,253 @@ async def test_validate_plain_bind_in_composite_keeps_ambiguity_pending(
             item,
             identity=_make_identity(),
             control_session=session,
-            is_provisioning_plan=True,
-            plan_chain_refs=frozenset({("othercorp", "api", None)}),
+            plan_governance=UNGOVERNED_PLAN,
         )
 
 
-async def test_validate_vendorless_bind_in_plan_denies_with_plan_reason() -> None:
-    # A malformed (vendor-less) reference can't be attributed to a chain OR
-    # resolved. It must get the plan-aware denial — never a bare ValueError,
-    # which would escape decide()'s deny-with-reason handling and strand the
-    # whole request pending behind a server error.
-    ctx = _make_ctx()
-    session = _make_session()
-    applicator = EffectApplicator(ctx)
-    item = _make_item(
-        resource_type="toolkit",
-        action="bind",
+# --- plan governance (issue #778) --------------------------------------------
+#
+# ``plan_governance_for_items`` is the pure function that replaced the
+# request-wide ``is_plan`` flag. It returns a per-item mapping to
+# :class:`PlanGovernance` values (which live intent ids govern this bind, and
+# for ``toolkit:bind`` the ``(vendor, name)`` slug key that made those intents
+# relevant). Bind items not in the mapping are ungoverned.
+#
+# These tests exercise the four things the flag used to get wrong:
+#
+#   1. an intent for API X should not govern an independent bind for API Y;
+#   2. non-live (withdrawn/denied) intents should not govern anything;
+#   3. the CLI's 4-item plan bundle (all items target the same API) still has
+#      every bind governed — the CLI behaviour is preserved;
+#   4. slug normalization ("httpbin.org" vs "httpbin-org") does not defeat
+#      governance.
+#
+# They also cover the extra facts the value object now carries: the
+# ``governing_intent_ids`` set, the ``governing_api`` tuple for toolkit binds,
+# and the ``is_governed`` boolean the ``validate()`` call-site branches on.
+
+
+def _intent(
+    *,
+    kind: str = "toolkit_create",
+    vendor: str = "acme",
+    name: str | None = "widgets",
+    item_id: str = "arqi_intent",
+    status: str = "pending",
+) -> MagicMock:
+    combos = {
+        "toolkit_create": ("toolkit", "create"),
+        "credential_provision": ("credential", "provision"),
+    }
+    resource_type, action = combos[kind]
+    ref: dict[str, Any] = {"vendor": vendor}
+    if name is not None:
+        ref["name"] = name
+    return _make_item(
+        resource_type=resource_type,
+        action=action,
         resource_id=None,
+        resource_reference=ref,
         to_id=None,
-        resource_reference={"name": "widgets"},
+        item_id=item_id,
+        status=status,
     )
-    with pytest.raises(ProvisioningPlanNotFulfilledError):
-        await applicator.validate(
-            item,
-            identity=_make_identity(),
-            control_session=session,
-            is_provisioning_plan=True,
-            plan_chain_refs=frozenset({("acme", "widgets", None)}),
-        )
+
+
+def test_plan_governance_empty_when_no_intents() -> None:
+    bind = _make_item(item_id="arqi_bind_1")
+    assert plan_governance_for_items([bind]) == {}
+
+
+def test_plan_governance_matches_cli_four_item_bundle() -> None:
+    # The CLI's typical 4-item plan bundle: intents + binds all for the same API.
+    # Every bind should be governed and cite the intent(s) that put it under
+    # the plan.
+    items = [
+        _intent(kind="toolkit_create", vendor="acme", name="widgets", item_id="arqi_i1"),
+        _intent(kind="credential_provision", vendor="acme", name="widgets", item_id="arqi_i2"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind",
+        ),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert set(governance.keys()) == {"arqi_cbind", "arqi_tbind"}
+    assert governance["arqi_cbind"].is_governed
+    # credential:bind is a "any-intent-lives" rule, so it names every live intent.
+    assert governance["arqi_cbind"].governing_intent_ids == frozenset({"arqi_i1", "arqi_i2"})
+    # governing_api is intentionally None on credential:bind (§778 review comment):
+    # the rule isn't tied to a specific API tuple.
+    assert governance["arqi_cbind"].governing_api is None
+    # toolkit:bind is api-scoped, so both facts are populated.
+    assert governance["arqi_tbind"].governing_intent_ids == frozenset({"arqi_i1", "arqi_i2"})
+    assert governance["arqi_tbind"].governing_api == ("acme", "widgets")
+
+
+def test_plan_governance_leaves_independent_toolkit_bind_ungoverned() -> None:
+    # #778 core case: one intent for API X + an independent reference-only
+    # toolkit:bind for API Y must not flip the Y bind onto the plan contract.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_intent"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "other", "name": "thing"},
+            item_id="arqi_independent_bind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    # The Y bind isn't in the mapping — it stays on the plain contract. The
+    # credential-bind absence is expected (there is no credential-bind here).
+    assert "arqi_independent_bind" not in governance
+
+
+def test_plan_governance_governs_unattributable_toolkit_bind_conservatively() -> None:
+    # A toolkit:bind with a vendor-less (or missing) reference can never
+    # resolve by reference — the plain contract would surface a bare
+    # ValueError (500, stranding the request pending). Inside a plan it is
+    # governed by every live intent so the operator gets a legible plan-aware
+    # denial instead.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"name": "widgets"},  # no vendor
+            item_id="arqi_vendorless_bind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert governance["arqi_vendorless_bind"].is_governed
+    assert governance["arqi_vendorless_bind"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert governance["arqi_vendorless_bind"].governing_api is None
+
+
+def test_plan_governance_governs_all_credential_binds_when_any_intent_lives() -> None:
+    # A credential:bind sharing a request with a live intent is always
+    # wizard-fulfilled: agents never carry credential ids at file time.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind_any",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert set(governance.keys()) == {"arqi_cbind_any"}
+    assert governance["arqi_cbind_any"].governing_intent_ids == frozenset({"arqi_i1"})
+
+
+def test_plan_governance_ignores_withdrawn_intents() -> None:
+    # An abandoned plan must not carry over: subsequent binds revert to the
+    # plain contract on the next decide().
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="withdrawn"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    assert plan_governance_for_items(items) == {}
+
+
+def test_plan_governance_ignores_denied_intents() -> None:
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_dead", status="denied"),
+        _make_item(
+            resource_type="credential",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            item_id="arqi_cbind",
+        ),
+    ]
+    assert plan_governance_for_items(items) == {}
+
+
+def test_plan_governance_normalizes_slug_vs_raw_domain() -> None:
+    # An agent files a reference with a raw domain (``httpbin.org``); the
+    # intent may have been stored slugified. Governance must match either way,
+    # and the ``governing_api`` field records the *slug* form so a diagnostic
+    # renders the canonical tuple rather than whichever spelling first arrived.
+    items = [
+        _intent(vendor="httpbin-org", name=None, item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "httpbin.org"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert set(governance.keys()) == {"arqi_tbind"}
+    assert governance["arqi_tbind"].governing_api == ("httpbin-org", None)
+
+
+def test_plan_governance_intent_name_wildcards_all_versions() -> None:
+    # An intent's (vendor, name) matches a bind for the same API regardless
+    # of version — the intent covers all versions of that API.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets", "version": "1.0.0"},
+            item_id="arqi_tbind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert set(governance.keys()) == {"arqi_tbind"}
+    assert governance["arqi_tbind"].governing_intent_ids == frozenset({"arqi_i1"})
+
+
+def test_plan_governance_excludes_already_decided_binds() -> None:
+    # decide() only re-validates PENDING or APPROVED items; a DENIED/WITHDRAWN
+    # bind is never re-validated so its governance doesn't matter and we omit
+    # it to keep the mapping tight against actual decide() behaviour.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"vendor": "acme", "name": "widgets"},
+            item_id="arqi_dead_bind",
+            status="denied",
+        ),
+    ]
+    assert plan_governance_for_items(items) == {}
+
+
+def test_plan_governance_default_is_not_governed() -> None:
+    """Sanity: the empty-default value is what ``validate()`` branches on for the plain path."""
+    assert not UNGOVERNED_PLAN.is_governed
+    assert not PlanGovernance().is_governed
+    assert PlanGovernance(governing_intent_ids=frozenset({"arqi_1"})).is_governed

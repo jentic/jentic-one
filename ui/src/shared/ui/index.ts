@@ -27,6 +27,10 @@ export type { SearchInputProps } from '@/shared/ui/SearchInput';
 
 export { SegmentedToggle } from '@/shared/ui/SegmentedToggle';
 export type { SegmentedToggleOption } from '@/shared/ui/SegmentedToggle';
+export { StatCard } from '@/shared/ui/StatCard';
+export type { StatAccent } from '@/shared/ui/StatCard';
+export { TabNav } from '@/shared/ui/TabNav';
+export type { TabNavOption } from '@/shared/ui/TabNav';
 
 export { Kbd } from '@/shared/ui/Kbd';
 
@@ -142,7 +146,9 @@ export type { StackedBarDatum, StackedBarSegment } from '@/shared/ui/charts/Stac
 export {
 	PermissionRuleEditor,
 	isEmptyAllowRule,
+	cleanPermissionRule,
 	PERMISSION_EFFECTS,
+	PERMISSION_MATCH_MODES,
 } from '@/shared/ui/PermissionRuleEditor';
 export type {
 	PermissionRuleEditorProps,

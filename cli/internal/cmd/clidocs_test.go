@@ -43,6 +43,7 @@ func TestCLIReferenceShape(t *testing.T) {
 	profile, ok := findCommand(jentic.Commands, "profile")
 	if !ok {
 		t.Fatal("jentic missing profile command")
+		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
 	if len(profile.Subcommands) == 0 {
 		t.Error("profile should expose subcommands (list/use/add-key)")
@@ -55,6 +56,7 @@ func TestCLIReferenceShape(t *testing.T) {
 	endpoints, ok := findCommand(jentic.Commands, "endpoints")
 	if !ok {
 		t.Fatal("jentic missing endpoints command")
+		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
 	if !hasFlag(endpoints.Flags, "profile") || !hasFlag(endpoints.Flags, "scope") {
 		t.Errorf("endpoints flags = %+v, want profile + scope", endpoints.Flags)

@@ -1,21 +1,32 @@
 # Release pipeline — runs on a vX.Y.Z tag (created by merging the release-please
-# Release PR). Three gated stages:
+# Release PR). Gated stages:
 #
-#   1. gate   — build the app + run every migration on a FRESH ephemeral SQLite
-#               DB (no Postgres, no real secrets — the bundled local-dev key) and
-#               assert /health serves the tag version. Nothing publishes if this
-#               fails.
-#   2. smoke  — the full Helm smoke matrix (combined / parts / broker / +obs) on
-#               a kind cluster, reusing smoke-helm.yml. The same matrix runs
-#               post-merge on main, but that run doesn't block anything — this
-#               one does: a release cannot ship while any deployment mode is red.
-#   3. release — GoReleaser builds the signed, checksummed jenticctl + jentic
-#               binaries (cosign keyless via OIDC + syft SBOMs) and pushes the
-#               Homebrew cask. This is the install (see docs/releasing.md).
+#   1. gate          — build the app + run every migration on a FRESH ephemeral
+#                      SQLite DB (no Postgres, no real secrets — the bundled
+#                      local-dev key) and assert /health serves the tag version.
+#                      Nothing publishes if this fails.
+#   2. smoke         — the full Helm smoke matrix (combined / parts / broker /
+#                      +obs) on a kind cluster, reusing smoke-helm.yml. The same
+#                      matrix runs post-merge on main, but that run doesn't
+#                      block anything — this one does: a release cannot ship
+#                      while any deployment mode is red.
+#   3. publish-image — build the `app` container image and push it to GHCR
+#                      (ghcr.io/<owner>/jentic-one-app). One image serves every
+#                      surface via JENTIC__APPS; this is the image self-hosters
+#                      pull (see deploy/README.md "Self-hosted"). Needs gate +
+#                      smoke: the image is part of the release, so it must not
+#                      publish (nor move :latest) while any deployment mode is
+#                      red.
+#   4. release       — GoReleaser builds the signed, checksummed jenticctl +
+#                      jentic binaries (cosign keyless via OIDC + syft SBOMs) and
+#                      pushes the Homebrew cask. This is the install (see
+#                      docs/releasing.md). Needs gate + smoke + publish-image so
+#                      a release never half-ships (binaries without the image).
 #
 # Only tags trigger this; branch CI stays in ci.yml. GITHUB_TOKEN can create the
 # release assets here because we're already ON the tag (no downstream trigger
 # needed — release-please used the App token to make the tag that started us).
+# GITHUB_TOKEN also has packages:write for the GHCR push (scoped per-job).
 name: release
 
 on:
@@ -121,9 +132,130 @@ jobs:
       contents: read
     uses: ./.github/workflows/smoke-helm.yml
 
+  publish-image:
+    name: Publish app image to GHCR
+    # Needs smoke too: the image (and :latest) is part of the release, so it
+    # must not publish while any deployment mode is red — same bar as the
+    # binaries.
+    needs: [gate, smoke]
+    runs-on: ubuntu-latest
+    # Serialize image publishes across concurrently pushed tags so two runs
+    # can't interleave their :latest pushes (last-writer-wins is still the
+    # contract for :latest — digest pins are the real guarantee — but at least
+    # each run's push+sign sequence is atomic with respect to the other's).
+    concurrency:
+      group: release-publish-image
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write # push the app image to GHCR (ghcr.io/<owner>/jentic-one-app)
+      id-token: write # cosign keyless signing (fulcio/OIDC), mirroring the CLI binaries
+    steps:
+      - uses: actions/checkout@v7
+
+      # Install the third-party tooling BEFORE `docker login` writes the
+      # packages:write-scoped token to ~/.docker/config.json: a compromised
+      # installer action must never execute with the registry credential on
+      # disk (it could push — and with this job's id-token grant, even sign —
+      # a malicious image as this repo's release identity). Post-hooks run in
+      # reverse order, so login-action's logout also fires before the
+      # installers' post-steps.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One `app` image serves every surface — the surface set is chosen at
+      # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
+      # see deploy/README.md "Self-hosted"). A single published `app` image
+      # therefore covers the whole self-hosted app + broker topology.
+      #
+      # We build the same way `make build-app` does (build-base first, then the
+      # app image that FROMs the python-base:runtime / :builder stages by tag),
+      # then push to GHCR. github.repository_owner preserves case but GHCR repos
+      # must be lower-case, so lower-case the owner for the image name.
+      # Single-arch (amd64) for now; multi-arch is a documented follow-up
+      # (deploy/README.md "What's deferred").
+      #
+      # Only the version + SHA tags push here — :latest waits until AFTER the
+      # digest is signed (next steps), so a cosign/syft failure can never
+      # strand the floating tag on an unsigned image.
+      #
+      # The pushed digest is echoed (and is the thing that gets signed): tags
+      # are floating, so the digest is the only true pin — deploy/README.md
+      # "Reproducibility" tells self-hosters to pin to it. RepoDigests is
+      # filtered by our image name rather than blindly taking index 0.
+      - name: Build and push the app image (version + SHA tags)
+        id: push
+        run: |
+          set -euo pipefail
+          OWNER="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
+          IMAGE="ghcr.io/${OWNER}/jentic-one-app"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SHA="$(git rev-parse --short HEAD)"
+          make build-base
+          docker build -f deploy/docker/app.Dockerfile \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${SHA}" .
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:${SHA}"
+          DIGEST="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE}:${VERSION}" \
+            | grep "^${IMAGE}@" | head -n1 | cut -d@ -f2)"
+          test -n "${DIGEST}"
+          echo "Image digest: ${DIGEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
+      # does for the CLI binaries (cosign keyless via the job's OIDC identity +
+      # syft SBOM). Both target the immutable digest, never a floating tag.
+      # Self-hosters verify with `cosign verify` (deploy/README.md "Verify the
+      # image signature").
+      - name: Sign the image and attest its SBOM (cosign keyless + syft)
+        env:
+          COSIGN_YES: "true"
+          IMAGE: ${{ steps.push.outputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign "${IMAGE}@${DIGEST}"
+          syft "${IMAGE}@${DIGEST}" -o spdx-json > sbom.spdx.json
+          cosign attest --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${DIGEST}"
+
+      # :latest moves LAST, only on stable releases (vX.Y.Z exactly, so a
+      # prerelease tag like v1.2.3-rc.1 can never hijack the tag self-hosters
+      # float on), and only after the digest above was signed — a red run
+      # anywhere earlier leaves :latest untouched.
+      - name: Move :latest (stable releases only, after signing)
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+          VERSION: ${{ steps.push.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+            echo "Moved ${IMAGE}:latest to ${VERSION}"
+          else
+            echo "Prerelease tag — not moving :latest"
+          fi
+
   release:
     name: GoReleaser (signed CLI binaries)
-    needs: [gate, smoke]
+    # publish-image gates the binaries too: a release must not exist in a state
+    # where the CLI shipped but the container image it documents did not (or
+    # vice versa). If either publish half fails, the whole release run is red
+    # and gets re-run from the tag.
+    needs: [gate, smoke, publish-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write # attach artifacts to the GitHub Release

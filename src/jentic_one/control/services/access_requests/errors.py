@@ -225,15 +225,42 @@ class ProvisioningPlanNotFulfilledError(AccessRequestServiceError):
     the cryptic "to_id missing" / "no toolkit serves API" a plain approval would
     otherwise produce. This error is in ``_UNFULFILLABLE_BIND_TARGET`` so the
     ``--wait`` loop closes with a legible message.
+
+    ``governing_intent_ids`` — populated by the caller from the ``PlanGovernance``
+    value ``decide()`` computed — names the specific fulfilment intents whose
+    approval the wizard is still waiting on. For a ``toolkit:bind``,
+    ``governing_api`` additionally names the canonical ``(vendor, name)`` slug
+    key that tied the plan to this bind. Both are ``None``/empty when the caller
+    doesn't have the richer context (older call-sites, tests that construct the
+    error directly), keeping the constructor backwards-compatible.
     """
 
-    def __init__(self, resource_type: str, action: str) -> None:
-        super().__init__(
+    def __init__(
+        self,
+        resource_type: str,
+        action: str,
+        *,
+        governing_intent_ids: frozenset[str] | None = None,
+        governing_api: tuple[str, str | None] | None = None,
+    ) -> None:
+        base = (
             f"{resource_type}:{action} is part of a provisioning plan that has not been "
             "fulfilled yet. Approve this request from the setup wizard, which creates the "
             "toolkit and credential and wires them before granting — a plain approval cannot "
             "complete a plan."
         )
+        details: list[str] = []
+        if governing_api is not None:
+            vendor, name = governing_api
+            api_label = f"{vendor}/{name}" if name else vendor
+            details.append(f"governing api: {api_label}")
+        if governing_intent_ids:
+            details.append("awaiting intent(s): " + ", ".join(sorted(governing_intent_ids)))
+        if details:
+            base = f"{base} ({'; '.join(details)})"
+        super().__init__(base)
+        self.governing_intent_ids: frozenset[str] = frozenset(governing_intent_ids or ())
+        self.governing_api: tuple[str, str | None] | None = governing_api
         self.resource_type = resource_type
         self.action = action
 

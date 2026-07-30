@@ -42,6 +42,7 @@ class EventType:
     CREDENTIAL_CONNECTION_FAILED = "credential.connection_failed"
     CREDENTIAL_REFRESH_FAILED = "credential.refresh_failed"
     CREDENTIAL_NOT_PROVISIONED = "credential.not_provisioned"
+    CREDENTIAL_UNDECRYPTABLE = "credential.undecryptable"
     CREDENTIAL_BOUND_TO_TOOLKIT = "credential.bound_to_toolkit"
     CREDENTIAL_UNBOUND_FROM_TOOLKIT = "credential.unbound_from_toolkit"
     TOOLKIT_CREATED = "toolkit.created"
@@ -54,6 +55,17 @@ class EventType:
     AGENT_REGISTRATION_APPROVED = "agent.registration_approved"
     AGENT_REGISTRATION_DENIED = "agent.registration_denied"
     PBAC_DENIED = "broker.pbac_denied"
+    # Emitted when the broker denies an execute with 403 ``no_toolkit_binding``
+    # AND no toolkit yet serves the requested API — the caller's next step is
+    # for an operator to provision a credential (which is what makes a toolkit
+    # serve the API). Distinct from ``CREDENTIAL_NOT_PROVISIONED`` (424, fires
+    # when a bound toolkit's credential is unresolvable at inject time): this
+    # event is the *pre-binding* signal, giving operators visibility into
+    # agent-needed APIs before a doomed access request appears. Despite the
+    # ``broker.`` namespace, the control plane also emits it as a file-time
+    # advisory for the same condition (see
+    # ``AccessRequestService._advise_unserved_bind_references``).
+    TOOLKIT_BINDING_UNSERVED = "broker.toolkit_binding_unserved"
 
     ALL: frozenset[str] = frozenset(
         {
@@ -79,6 +91,7 @@ class EventType:
             CREDENTIAL_CONNECTION_FAILED,
             CREDENTIAL_REFRESH_FAILED,
             CREDENTIAL_NOT_PROVISIONED,
+            CREDENTIAL_UNDECRYPTABLE,
             CREDENTIAL_BOUND_TO_TOOLKIT,
             CREDENTIAL_UNBOUND_FROM_TOOLKIT,
             TOOLKIT_CREATED,
@@ -91,6 +104,7 @@ class EventType:
             AGENT_REGISTRATION_APPROVED,
             AGENT_REGISTRATION_DENIED,
             PBAC_DENIED,
+            TOOLKIT_BINDING_UNSERVED,
         }
     )
 

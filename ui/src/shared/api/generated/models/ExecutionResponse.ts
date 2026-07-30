@@ -13,6 +13,8 @@ export type ExecutionResponse = {
     actor_type: string;
     api?: (ApiInfoResponse | null);
     created_at: string;
+    credential_id?: (string | null);
+    credential_name?: (string | null);
     duration_ms?: (number | null);
     error?: (string | null);
     execution_id: string;

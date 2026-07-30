@@ -116,14 +116,26 @@ describe('parseItemRules', () => {
 				rules: [
 					{ effect: 'allow', methods: ['GET', 'POST'], operations: ['repos/get'] },
 					{ effect: 'deny' },
-					{ effect: 'require-approval', path: '/admin/*' },
+					{ effect: 'require-approval', path: '/admin/*', match_mode: 'prefix' },
 				],
 			}),
 		);
 		expect(rules).toEqual<PermissionRule[]>([
-			{ effect: 'allow', methods: ['GET', 'POST'], path: null, operations: ['repos/get'] },
-			{ effect: 'deny', methods: null, path: null, operations: null },
-			{ effect: 'require-approval', methods: null, path: '/admin/*', operations: null },
+			{
+				effect: 'allow',
+				methods: ['GET', 'POST'],
+				path: null,
+				match_mode: null,
+				operations: ['repos/get'],
+			},
+			{ effect: 'deny', methods: null, path: null, match_mode: null, operations: null },
+			{
+				effect: 'require-approval',
+				methods: null,
+				path: '/admin/*',
+				match_mode: 'prefix',
+				operations: null,
+			},
 		]);
 	});
 
@@ -139,7 +151,7 @@ describe('parseItemRules', () => {
 			}),
 		);
 		expect(rules).toEqual<PermissionRule[]>([
-			{ effect: 'allow', methods: null, path: null, operations: null },
+			{ effect: 'allow', methods: null, path: null, match_mode: null, operations: null },
 		]);
 	});
 
@@ -156,7 +168,13 @@ describe('parseItemRules', () => {
 			}),
 		);
 		expect(rules).toEqual<PermissionRule[]>([
-			{ effect: 'allow', methods: ['GET', 'POST'], path: null, operations: ['repos/get'] },
+			{
+				effect: 'allow',
+				methods: ['GET', 'POST'],
+				path: null,
+				match_mode: null,
+				operations: ['repos/get'],
+			},
 		]);
 	});
 });

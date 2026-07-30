@@ -75,6 +75,25 @@ describe('MonitorPage', () => {
 		expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
 	});
 
+	it('scopes Executions to a toolkit via the ?toolkit_id deep-link and clears it from the chip', async () => {
+		const user = userEvent.setup();
+		// The deep-link the toolkit detail's "Open in Monitor" writes.
+		renderMonitor('/app/monitor?tab=executions&toolkit_id=tk_payments');
+
+		// Only the tk_payments rows render (tk_dev's github row is filtered out).
+		expect(await screen.findByText('POST /v1/charges')).toBeInTheDocument();
+		expect(screen.queryByText('GET /repos/{owner}/{repo}')).not.toBeInTheDocument();
+
+		// The scope is visible as a removable chip in the filter bar (the rows
+		// also print the toolkit id, so assert on multiple occurrences).
+		expect(screen.getAllByText('tk_payments').length).toBeGreaterThanOrEqual(2);
+		await user.click(screen.getByRole('button', { name: 'Clear toolkit filter' }));
+
+		// Cleared: the full log returns and the param leaves the URL.
+		expect(await screen.findByText('GET /repos/{owner}/{repo}')).toBeInTheDocument();
+		expect(screen.getByTestId('location-search').textContent).not.toContain('toolkit_id');
+	});
+
 	it('filters Executions by terminal status (backend accepts only completed/failed)', async () => {
 		const user = userEvent.setup();
 		renderMonitor();

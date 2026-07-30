@@ -5,10 +5,10 @@ SERVICES := app registry admin control broker
 
 BUILD_DIR := build
 
-.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
+.PHONY: help install sync lock upgrade fmt format fix lint typecheck test test-unit test-fast test-integration test-integration-sqlite test-integration-all test-arch test-smoke cov cov-all check score openapi openapi-parity endpoints cli-reference broker-reference hooks clean dev start-fixtures stop-fixtures destroy-fixtures start-app start-registry start-admin start-control start-broker build-wheel build-base build-all save-all images release-image $(addprefix build-,$(SERVICES)) $(addprefix push-,$(SERVICES)) $(addprefix save-,$(SERVICES))
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
 install: sync ui-setup hooks ## Full dev setup: sync deps, install UI deps, install lefthook hooks
 
@@ -182,6 +182,9 @@ build-base: ## Build the Python base Docker image (builder + runtime stages)
 
 # Per-service build / push / save rules generated explicitly (no pattern rules,
 # so this works on GNU Make 3.81 — Apple's bundled version).
+# NOTE: push-<svc> pushes the local per-service names ($(IMG_PREFIX)/<svc>) for
+# dev/fork registries; the published-release path is `release-image` below,
+# which pushes the differently named <REGISTRY>/jentic-one-app.
 define SERVICE_RULES
 build-$(1): build-base ## Build Docker image for $(1)
 	docker build -f deploy/docker/$(1).Dockerfile -t $(IMG_PREFIX)/$(1):$(VERSION) -t $(IMG_PREFIX)/$(1):$(GIT_SHA) .
@@ -204,3 +207,40 @@ save-all: $(addprefix save-,$(SERVICES)) ## Save all built images as tarballs un
 
 images: ## List locally built jentic-one images
 	@docker images "$(IMG_PREFIX)/*"
+
+# ─── Release (publish the app image to a real registry) ───────────────────
+# One `app` image serves every surface — the surface set is chosen at runtime
+# via JENTIC__APPS (see deploy/README.md "Self-hosted"). So publishing the
+# single `app` image is enough for a self-hosted app + broker deployment.
+#
+#   make release-image REGISTRY=ghcr.io/jentic
+#
+# builds deploy/docker/app.Dockerfile and pushes it to
+# $(REGISTRY)/jentic-one-app tagged with the pyproject version and the short
+# git SHA. `latest` only moves when the version is a stable X.Y.Z (no
+# prerelease suffix), mirroring CI's guard so a dev/rc push can never hijack
+# the tag self-hosters float on. Requires `docker login <registry>` first. CI
+# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml)
+# with its own inline script rather than this target: CI must interleave
+# signing between the version and :latest pushes (and lower-case the GHCR
+# owner), which this all-in-one target can't express.
+REGISTRY ?=
+RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
+
+release-image: build-base ## Build + push the app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "ERROR: set REGISTRY, e.g. make release-image REGISTRY=ghcr.io/jentic"; exit 1; \
+	fi
+	docker build -f deploy/docker/app.Dockerfile \
+		-t $(RELEASE_IMAGE):$(VERSION) \
+		-t $(RELEASE_IMAGE):$(GIT_SHA) .
+	docker push $(RELEASE_IMAGE):$(VERSION)
+	docker push $(RELEASE_IMAGE):$(GIT_SHA)
+	@if echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
+		docker tag $(RELEASE_IMAGE):$(VERSION) $(RELEASE_IMAGE):latest; \
+		docker push $(RELEASE_IMAGE):latest; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"; \
+	else \
+		echo "Prerelease version — not moving :latest"; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA))"; \
+	fi

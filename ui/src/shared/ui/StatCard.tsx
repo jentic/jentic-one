@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 import { AlertTriangle, ArrowUpRight } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Card, Skeleton, AppLink } from '@/shared/ui';
+import { Card } from '@/shared/ui/Card';
+import { Skeleton } from '@/shared/ui/Skeleton';
+import { AppLink } from '@/shared/ui/AppLink';
 import { cn } from '@/shared/lib/utils';
 
 /** Accent tone for a tile — drives the icon medallion + hairline glow. */
-export type StatAccent = 'neutral' | 'primary' | 'orange' | 'green' | 'blue' | 'pink';
+export type StatAccent = 'neutral' | 'primary' | 'orange' | 'green' | 'blue' | 'pink' | 'danger';
 
 const ACCENT_MEDALLION: Record<StatAccent, string> = {
 	neutral: 'bg-muted text-muted-foreground ring-border',
@@ -14,6 +16,7 @@ const ACCENT_MEDALLION: Record<StatAccent, string> = {
 	green: 'bg-accent-green/12 text-accent-green ring-accent-green/20',
 	blue: 'bg-accent-blue/12 text-accent-blue ring-accent-blue/20',
 	pink: 'bg-accent-pink/12 text-accent-pink ring-accent-pink/20',
+	danger: 'bg-danger/12 text-danger ring-danger/20',
 };
 
 interface StatCardProps {
@@ -34,6 +37,8 @@ interface StatCardProps {
 	isLoading?: boolean;
 	/** When set, the card shows a compact degraded state instead of the value. */
 	error?: string | null;
+	/** Extra classes on the value span (e.g. a success/danger tint). */
+	valueClassName?: string;
 	className?: string;
 }
 
@@ -60,6 +65,7 @@ export function StatCard({
 	href,
 	isLoading,
 	error,
+	valueClassName,
 	className,
 }: StatCardProps) {
 	const prefersReducedMotion = useReducedMotion();
@@ -97,7 +103,10 @@ export function StatCard({
 						initial={prefersReducedMotion ? false : { y: 6 }}
 						animate={{ y: 0 }}
 						transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-						className="font-heading text-foreground text-2xl leading-none font-bold tabular-nums"
+						className={cn(
+							'font-heading text-foreground text-2xl leading-none font-bold whitespace-nowrap tabular-nums',
+							valueClassName,
+						)}
 					>
 						{value}
 					</motion.span>

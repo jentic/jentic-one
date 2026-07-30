@@ -156,6 +156,11 @@ jentic access request --provision stripe.com/api \
   credential (account) is connected. Filing an access request will **not** fix
   this; the directive carries a `provisioning_url` — hand it to your operator to
   connect the account, then retry.
+- **`credential_undecryptable` (424)** — a credential *is* connected, but its
+  stored secret can no longer be decrypted (typically the deployment's
+  encryption key rotated underneath it, e.g. a reinstall over existing data).
+  Neither an access request nor retrying will fix this — ask your operator to
+  remove and re-add the credential, then retry.
 - **`credential_identity_mismatch` (403)** — a toolkit *is* bound and a
   credential *is* connected, but that credential's stored identity doesn't cover
   this API (e.g. it targets a different name/version, or was stored in a
@@ -297,6 +302,26 @@ need no request — an approved agent already holds `apis:read` and
 `catalog:import` by default, so just import and search again. Don't file an
 access request for a made-up "catalog read" scope.
 
+**Before concluding "the data is gone", confirm which backend you're on.** If
+APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
+unfamiliar — you may be talking to a **different** backend than you expect. A
+hosted (`remote`) Jentic install and a `local` self-hosted one have independent
+registries and credentials, and the CLI, an agent, or an MCP server can each be
+bound to a different one. Check the backend your base URL serves before
+diagnosing data loss:
+
+```
+jentic profile list        # shows each profile's base_url
+curl -s "<base-url>/instance"   # e.g. http://127.0.0.1:8000/instance on a default local install
+```
+
+The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
+the install's declared `server.backend`), `canonical_base_url`, `host`, and an
+opaque `instance_id` (null when telemetry is off). If it's not the backend you
+meant to use (e.g. an MCP server still on a remote backend while you imported
+locally), repoint that client at the right base URL rather than
+importing/searching again.
+
 ### 4. Inspect the operation's contract
 
 Resolve an operation to its method, path, parameters, and schemas before
@@ -408,9 +433,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
   missing or broken, check where each surface points — `jentic profile list`
-  shows this CLI's `base_url`; ask your operator which backend the MCP
-  server was configured against — and stick to one surface for the whole
-  task.
+  shows this CLI's `base_url`, and `curl -s <base-url>/instance` reports
+  which backend serves it (see "confirm which backend you're on" in step 3);
+  ask your operator which backend the MCP server was configured against —
+  and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
   means the **broker target** is misconfigured (see step 5); connection
   refused on a **local** target usually means the instance is **stopped** —
@@ -429,6 +455,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).
+  - **424 `credential_undecryptable`** → the connected credential's secret
+    can't be decrypted anymore; retrying won't help — ask your operator to
+    remove and re-add the credential.
   - **403 `credential_identity_mismatch`** → a bound credential exists but its
     identity doesn't cover this API (`parameters.expected` vs
     `parameters.found`). An access request won't help — ask your operator to fix

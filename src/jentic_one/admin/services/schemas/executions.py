@@ -38,6 +38,8 @@ class ExecutionView(BaseModel):
     actor_id: str
     actor_type: str
     origin: str | None = None
+    credential_id: str | None = None
+    credential_name: str | None = None
 
 
 class ExecutionFilter(BaseModel):

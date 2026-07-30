@@ -201,6 +201,10 @@ def test_html_post_401_keeps_problem_details(ctx: Context) -> None:
 def test_html_get_401_without_spa_keeps_problem_details(ctx: Context) -> None:
     """Headless deployments (no UI bundle) never redirect."""
     app = create_combined_app(ctx, ["admin"])
+    # Force headless: a developer's local `ui/dist` build would otherwise get
+    # auto-mounted and flip this test into the redirect path (mirror of the
+    # `spa_mounted = True` forcing in the redirect tests above).
+    app.state.spa_mounted = False
     client = TestClient(app, raise_server_exceptions=False, follow_redirects=False)
     resp = client.get("/users", headers=_html_headers())
     assert resp.status_code == 401
