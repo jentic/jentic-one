@@ -611,9 +611,10 @@ export const toolkitsHandlers = [
 		const url = new URL(request.url);
 		const targetType = url.searchParams.get('target_type');
 		const targetId = url.searchParams.get('target_id');
-		if (targetType !== 'toolkit') {
-			return HttpResponse.json({ data: [], has_more: false, next_cursor: null });
-		}
+		// Only the toolkit-scoped lens belongs to this module — other targets
+		// (agents, service accounts, the org-wide Monitor lens) fall through to
+		// their owners' handlers further down the root table.
+		if (targetType !== 'toolkit') return undefined;
 		const data = [
 			{
 				id: 'aud_2',

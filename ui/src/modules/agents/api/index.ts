@@ -37,11 +37,24 @@ export {
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
 	useActorAccessRequests,
+	useActorsUsage,
+	useActorUsageDetail,
+	useActorExecutions,
+	useActorAudit,
+	useUpdateAgent,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
 } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
+export type {
+	ActorAuditEntry,
+	ActorUsage,
+	ActorUsageDetail,
+	ActorExecutionEntity,
+	UsageBucketEntity,
+	AgentPatch,
+} from '@/modules/agents/api/client';
 
 export {
 	ACTOR_STATUSES,

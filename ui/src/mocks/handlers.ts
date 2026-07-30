@@ -80,6 +80,16 @@ const actorDirectorySeed = [
 		created_at: '2026-01-01T00:00:00Z',
 	},
 	{
+		// The admin id the agents-module fixtures stamp on approvals / audit
+		// rows (approved_by, audit actor_id) — must resolve or the detail
+		// consoles' "Approved by" and "Recent changes" show a raw id.
+		id: 'usr_000000000000000000000admin',
+		actor_type: 'user',
+		name: 'Admin User',
+		active: true,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
 		id: 'sva_active_1',
 		actor_type: 'service_account',
 		name: 'metrics-exporter',

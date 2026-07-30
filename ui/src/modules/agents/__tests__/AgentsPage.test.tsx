@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { page } from '@vitest/browser/context';
 import { Routes, Route } from 'react-router';
 import {
 	renderWithProviders,
@@ -25,63 +27,98 @@ function renderPage() {
 }
 
 /**
- * The roster row wrapper that contains the given agent name. Scopes to the
- * row heading (`<h3>`) so it stays unambiguous even when a confirm dialog is
- * open and echoes the same name in its body / type-to-confirm prompt.
+ * The fleet-table `<tr>` containing the given actor name. Scopes to elements
+ * inside a `tr` so it stays unambiguous when the same name also appears in
+ * the approval-queue band or an open confirm dialog.
  */
-function rowFor(name: string): HTMLElement {
-	const heading = screen.getAllByText(name).find((el) => el.tagName === 'H3');
-	if (!heading) throw new Error(`No roster row heading found for "${name}"`);
-	return heading.closest('div.group') as HTMLElement;
+function tableRowFor(name: string): HTMLElement {
+	const inRow = screen.getAllByText(name).find((el) => el.closest('tr'));
+	if (!inRow) throw new Error(`No fleet-table row found for "${name}"`);
+	return inRow.closest('tr') as HTMLElement;
+}
+
+/** The "Awaiting approval" band (absent when nothing is pending). */
+function approvalQueue(): HTMLElement {
+	return screen.getByRole('region', { name: /Awaiting approval/i });
+}
+
+/** Opens the kebab row menu for an actor and clicks the given lifecycle verb. */
+async function actFromKebab(user: ReturnType<typeof userEvent.setup>, name: string, verb: string) {
+	await user.click(
+		within(tableRowFor(name)).getByRole('button', { name: `Actions for ${name}` }),
+	);
+	await user.click(screen.getByRole('menuitem', { name: `${verb} ${name}` }));
 }
 
 describe('AgentsPage — agents lifecycle', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
+		// The fleet table swaps to stacked cards below `sm` (640px); these specs
+		// assert the desktop table grammar, so pin a desktop viewport.
+		await page.viewport(1280, 900);
 		setToken('test-token');
 		resetAgentsStore();
 	});
 
-	it('lists agents grouped by lifecycle status', async () => {
+	it('lists every agent in the fleet table with status segments and counts', async () => {
 		renderPage();
-		expect(await screen.findByText('inbox-triage-bot')).toBeInTheDocument();
-		expect(screen.getByText('support-agent')).toBeInTheDocument();
-		// Awaiting-approval section surfaces pending agents first.
-		expect(screen.getByRole('heading', { name: /Awaiting approval/i })).toBeInTheDocument();
-		expect(screen.getAllByText('Pending').length).toBeGreaterThanOrEqual(1);
+		// Pending names render in both the approval band and the table.
+		await screen.findAllByText('inbox-triage-bot');
+		// All five seeded agents are table rows regardless of status.
+		for (const name of [
+			'inbox-triage-bot',
+			'release-notes-bot',
+			'support-agent',
+			'legacy-scraper',
+			'spammy-bot',
+		]) {
+			expect(tableRowFor(name)).toBeInTheDocument();
+		}
+		// Segment labels carry live counts of the loaded fleet.
+		expect(screen.getByRole('button', { name: 'All 5' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Pending 2' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Active 1' })).toBeInTheDocument();
+	});
+
+	it('surfaces pending agents in the approval queue band first', async () => {
+		renderPage();
+		await screen.findAllByText('inbox-triage-bot');
+		const queue = approvalQueue();
+		expect(within(queue).getByText('inbox-triage-bot')).toBeInTheDocument();
+		expect(within(queue).getByText('release-notes-bot')).toBeInTheDocument();
+		// Settled agents stay out of the band.
+		expect(within(queue).queryByText('support-agent')).not.toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {
 		const { container } = renderPage();
-		await screen.findByText('inbox-triage-bot');
+		await screen.findAllByText('inbox-triage-bot');
 		await checkA11y(container);
 	});
 
-	it('approves a pending agent → status flips to active', async () => {
+	it('approves a pending agent from the queue → status flips to active', async () => {
 		const user = userEvent.setup();
 		renderPage();
-		await screen.findByText('inbox-triage-bot');
+		await screen.findAllByText('inbox-triage-bot');
 
 		await user.click(
-			within(rowFor('inbox-triage-bot')).getByRole('button', {
-				name: 'Approve inbox-triage-bot',
-			}),
+			within(approvalQueue()).getByRole('button', { name: 'Approve inbox-triage-bot' }),
 		);
 
 		await waitFor(() => {
-			expect(within(rowFor('inbox-triage-bot')).getByText('Active')).toBeInTheDocument();
+			expect(within(tableRowFor('inbox-triage-bot')).getByText('Active')).toBeInTheDocument();
 		});
 		expect(await screen.findByText('Agent approved')).toBeInTheDocument();
+		// The queue now only holds the other pending agent.
+		expect(within(approvalQueue()).queryByText('inbox-triage-bot')).not.toBeInTheDocument();
 	});
 
 	it('denies a pending agent → requires a reason → status flips to rejected', async () => {
 		const user = userEvent.setup();
 		renderPage();
-		await screen.findByText('release-notes-bot');
+		await screen.findAllByText('release-notes-bot');
 
 		await user.click(
-			within(rowFor('release-notes-bot')).getByRole('button', {
-				name: 'Deny release-notes-bot',
-			}),
+			within(approvalQueue()).getByRole('button', { name: 'Deny release-notes-bot' }),
 		);
 
 		const dialog = await screen.findByRole('dialog');
@@ -93,43 +130,62 @@ describe('AgentsPage — agents lifecycle', () => {
 		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
 
 		await waitFor(() => {
-			// Rejected agents drop out of the awaiting-approval section and gain a
-			// Rejected status pill (kept in the collapsed "Declined" section).
-			expect(within(rowFor('release-notes-bot')).getByText('Rejected')).toBeInTheDocument();
+			expect(
+				within(tableRowFor('release-notes-bot')).getByText('Rejected'),
+			).toBeInTheDocument();
 		});
 	});
 
-	it('disables an active agent then re-enables it', async () => {
+	it('disables an active agent from the kebab menu then re-enables it', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findByText('support-agent');
 
-		await user.click(
-			within(rowFor('support-agent')).getByRole('button', {
-				name: 'Disable support-agent',
-			}),
-		);
-
+		await actFromKebab(user, 'support-agent', 'Disable');
 		const dialog = await screen.findByRole('dialog');
 		await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
 
 		await waitFor(() => {
-			expect(
-				within(rowFor('support-agent')).getAllByText('Disabled').length,
-			).toBeGreaterThanOrEqual(1);
+			expect(within(tableRowFor('support-agent')).getByText('Disabled')).toBeInTheDocument();
 		});
 
-		await user.click(
-			within(rowFor('support-agent')).getByRole('button', {
-				name: 'Enable support-agent',
-			}),
-		);
+		await actFromKebab(user, 'support-agent', 'Enable');
 		await waitFor(() => {
-			expect(within(rowFor('support-agent')).getByText('Active')).toBeInTheDocument();
+			expect(within(tableRowFor('support-agent')).getByText('Active')).toBeInTheDocument();
 		});
 	});
 
-	it('navigates to the agent detail page from a row', async () => {
+	it('filters the fleet by name and hides the approval band while hunting', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.type(screen.getByLabelText('Filter agents'), 'support');
+
+		expect(tableRowFor('support-agent')).toBeInTheDocument();
+		expect(screen.queryByText('legacy-scraper')).not.toBeInTheDocument();
+		// A name filter means the operator is hunting, not triaging.
+		expect(
+			screen.queryByRole('region', { name: /Awaiting approval/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it('narrows the fleet with the status segments', async () => {
+		const user = userEvent.setup();
+		renderPage();
+		await screen.findByText('spammy-bot');
+
+		await user.click(screen.getByRole('button', { name: 'Rejected 1' }));
+
+		expect(tableRowFor('spammy-bot')).toBeInTheDocument();
+		expect(screen.queryByText('support-agent')).not.toBeInTheDocument();
+		// Off the "All" segment the queue band folds into the table itself.
+		expect(
+			screen.queryByRole('region', { name: /Awaiting approval/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it('navigates to the agent detail page from the name link', async () => {
 		const user = userEvent.setup();
 		renderWithProviders(
 			<Routes>
@@ -139,30 +195,25 @@ describe('AgentsPage — agents lifecycle', () => {
 		);
 		await screen.findByText('support-agent');
 
-		await user.click(screen.getByText('support-agent'));
+		await user.click(
+			within(tableRowFor('support-agent')).getByRole('link', { name: 'support-agent' }),
+		);
 
 		expect(await screen.findByText('detail-page-marker')).toBeInTheDocument();
 	});
 
-	it('archives an active agent → it leaves the active section into Removed', async () => {
+	it('archives an active agent via the kebab → type-to-confirm → status flips', async () => {
 		const user = userEvent.setup();
 		renderPage();
 		await screen.findByText('support-agent');
 
-		await user.click(
-			within(rowFor('support-agent')).getByRole('button', {
-				name: 'Archive support-agent',
-			}),
-		);
-
+		await actFromKebab(user, 'support-agent', 'Archive');
 		const dialog = await screen.findByRole('dialog');
 		await user.type(within(dialog).getByLabelText(/to confirm/i), 'archive');
 		await user.click(within(dialog).getByRole('button', { name: 'Archive agent' }));
 
-		// The collapsible "Removed agents" disclosure appears with the row in it.
-		expect(await screen.findByText('Removed agents')).toBeInTheDocument();
 		await waitFor(() => {
-			expect(within(rowFor('support-agent')).getByText('Archived')).toBeInTheDocument();
+			expect(within(tableRowFor('support-agent')).getByText('Archived')).toBeInTheDocument();
 		});
 	});
 
@@ -172,11 +223,7 @@ describe('AgentsPage — agents lifecycle', () => {
 		renderPage();
 		await screen.findByText('support-agent');
 
-		await user.click(
-			within(rowFor('support-agent')).getByRole('button', {
-				name: 'Archive support-agent',
-			}),
-		);
+		await actFromKebab(user, 'support-agent', 'Archive');
 		const dialog = await screen.findByRole('dialog');
 		await user.type(within(dialog).getByLabelText(/to confirm/i), 'archive');
 		await user.click(within(dialog).getByRole('button', { name: 'Archive agent' }));
@@ -185,20 +232,187 @@ describe('AgentsPage — agents lifecycle', () => {
 		// agent remains active (not optimistically archived).
 		expect(await screen.findByText('Failed to archive the agent.')).toBeInTheDocument();
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
-		expect(within(rowFor('support-agent')).getByText('Active')).toBeInTheDocument();
+		expect(within(tableRowFor('support-agent')).getByText('Active')).toBeInTheDocument();
 	});
 
-	it('renders declined and removed agents in collapsed sections', async () => {
+	it('pages through the cursor list with Load more', async () => {
+		const user = userEvent.setup();
+		// Named to avoid shadowing the `page` viewport helper imported from
+		// @vitest/browser/context above.
+		const agentRow = (id: string, name: string) => ({
+			id,
+			name,
+			description: null,
+			status: 'active',
+			owner_id: null,
+			registered_by: 'self',
+			parent_agent_id: null,
+			approved_by: null,
+			denial_reason: null,
+			denied_by: null,
+			created_at: new Date().toISOString(),
+			approved_at: new Date().toISOString(),
+			has_api_key: false,
+		});
+		worker.use(
+			http.get('*/agents', ({ request }) => {
+				const cursor = new URL(request.url).searchParams.get('cursor');
+				if (cursor === 'cursor-2') {
+					return HttpResponse.json({
+						data: [agentRow('agnt_p2', 'second-page-bot')],
+						has_more: false,
+						next_cursor: null,
+					});
+				}
+				return HttpResponse.json({
+					data: [agentRow('agnt_p1', 'first-page-bot')],
+					has_more: true,
+					next_cursor: 'cursor-2',
+				});
+			}),
+		);
 		renderPage();
-		await screen.findByText('inbox-triage-bot');
-		// Seeded rejected agent lives under the "Declined registrations" disclosure.
-		expect(screen.getByText('Declined registrations')).toBeInTheDocument();
-		expect(within(rowFor('spammy-bot')).getByText('Rejected')).toBeInTheDocument();
+
+		await screen.findByText('first-page-bot');
+		expect(screen.queryByText('second-page-bot')).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+		expect(await screen.findByText('second-page-bot')).toBeInTheDocument();
+		// Both pages stay mounted and the pager disappears at the end.
+		expect(screen.getByText('first-page-bot')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
 	});
 
 	it('surfaces an error when the list fails', async () => {
 		worker.use(createErrorHandler('get', '/agents', { status: 500 }));
 		renderPage();
 		expect(await screen.findByRole('alert')).toBeInTheDocument();
+	});
+
+	it('enriches rows with 7-day activity columns from the usage aggregate', async () => {
+		renderPage();
+		await screen.findByText('support-agent');
+
+		// The usage query resolves after the roster; wait for the columns.
+		expect(await screen.findByText('Activity (7d)')).toBeInTheDocument();
+		// The mock windows totals by `since`, so assert shape not exact counts:
+		// a busy agent gets a nonzero execution count and a success share.
+		const active = tableRowFor('support-agent');
+		await waitFor(() => {
+			const [count] = within(active).getAllByText(/^[\d,]+$/);
+			expect(Number(count.textContent!.replace(/,/g, ''))).toBeGreaterThan(0);
+		});
+		expect(within(active).getByText(/^\d+(\.\d+)?%$/)).toBeInTheDocument();
+
+		// Actors absent from the top-50 aggregate are UNKNOWN, not idle — the
+		// three activity columns degrade to em-dashes (f2: the backend caps
+		// `top_limit` at 50, so absence never proves zero executions). Plus the
+		// pending row's empty Approved cell → 4 dashes total.
+		const pending = tableRowFor('inbox-triage-bot');
+		expect(within(pending).queryByText('idle')).not.toBeInTheDocument();
+		expect(within(pending).getAllByText('—')).toHaveLength(4);
+	});
+
+	it('renders the plain roster when the usage aggregate is admin-gated (403)', async () => {
+		worker.use(createErrorHandler('get', '/monitoring/usage', { status: 403 }));
+		renderPage();
+		await screen.findByText('support-agent');
+
+		// No activity enrichment for non-admins — and no error either; the
+		// lifecycle columns take the space back.
+		expect(screen.queryByText('Activity (7d)')).not.toBeInTheDocument();
+		expect(screen.getByText('Approved')).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	// --- Phase 5: first-run empty state with DCR quickstart ----------------
+
+	it('shows the DCR quickstart when no agents are registered', async () => {
+		worker.use(
+			http.get('/agents', () =>
+				HttpResponse.json({ data: [], has_more: false, next_cursor: null }),
+			),
+		);
+		renderPage();
+
+		expect(await screen.findByText('No agents registered yet')).toBeInTheDocument();
+		// First-run guidance: a manual-create CTA plus a copyable CLI register command
+		// (raw POST /register needs an Ed25519 JWKS, so the CLI is the teachable path).
+		expect(screen.getByRole('button', { name: /Create one manually/ })).toBeInTheDocument();
+		expect(screen.getByText('Register an agent from the command line')).toBeInTheDocument();
+		expect(screen.getByText(/jentic register --base-url/)).toBeInTheDocument();
+		expect(screen.getByText(/--name my-first-agent/)).toBeInTheDocument();
+	});
+
+	// --- Phase 4: create sheet with optional initial scopes ----------------
+
+	it('creates an agent with initial scopes included in the POST body', async () => {
+		const user = userEvent.setup();
+		let postBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/agents', async ({ request }) => {
+				postBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json(
+					{
+						id: 'agnt_new',
+						name: postBody.name,
+						description: postBody.description ?? null,
+						status: 'active',
+						created_at: new Date().toISOString(),
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		await user.type(within(sheet).getByLabelText('Name'), 'scoped-agent');
+
+		// The scopes section is an optional, collapsed disclosure.
+		await user.click(within(sheet).getByRole('button', { name: /Initial scopes/ }));
+		// Expand the Capabilities group, then tick one grantable scope.
+		await user.click(await within(sheet).findByRole('button', { name: /Capabilities scopes/ }));
+		await user.click(within(sheet).getByRole('checkbox', { name: 'capabilities:execute' }));
+
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		expect(postBody).toMatchObject({
+			name: 'scoped-agent',
+			scopes: ['capabilities:execute'],
+		});
+	});
+
+	it('omits scopes from the POST body when none are selected', async () => {
+		const user = userEvent.setup();
+		let postBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.post('/agents', async ({ request }) => {
+				postBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json(
+					{
+						id: 'agnt_new',
+						name: postBody.name,
+						status: 'active',
+						created_at: new Date().toISOString(),
+					},
+					{ status: 201 },
+				);
+			}),
+		);
+		renderPage();
+		await screen.findByText('support-agent');
+
+		await user.click(screen.getByRole('button', { name: 'New agent' }));
+		const sheet = await screen.findByRole('dialog', { name: 'Create agent' });
+		await user.type(within(sheet).getByLabelText('Name'), 'plain-agent');
+		await user.click(within(sheet).getByRole('button', { name: 'Create' }));
+
+		expect(await screen.findByText('Agent created')).toBeInTheDocument();
+		// The client normalises an empty selection to `scopes: null`.
+		expect(postBody).toMatchObject({ name: 'plain-agent', scopes: null });
 	});
 });
