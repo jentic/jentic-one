@@ -213,6 +213,12 @@ func copyTree(src, dst string) error {
 		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
 			return err
 		}
+		// MkdirAll's mode is masked by umask and leaves a pre-existing dir's mode
+		// untouched; chmod pins it to exactly the source perm (profile dirs are
+		// 0700 and must not widen), so a loose umask can't publish the secrets dir.
+		if err := os.Chmod(dst, info.Mode().Perm()); err != nil {
+			return err
+		}
 		entries, err := os.ReadDir(src)
 		if err != nil {
 			return err
@@ -233,7 +239,12 @@ func copyTree(src, dst string) error {
 	return copyFile(src, dst, info.Mode().Perm())
 }
 
-// copyFile copies a single regular file, creating dst with perm.
+// copyFile copies a single regular file, creating dst with perm and forcing that
+// perm even if dst already existed. It fsyncs the copy before returning so the
+// bytes are durably on disk before translateOperatorProfile deletes the operator's
+// original — without the fsync a crash between copy and delete could leave neither
+// a durable copy nor the original (the delete's metadata op can reach disk before
+// the copy's data).
 func copyFile(src, dst string, perm os.FileMode) error {
 	in, err := os.Open(src) //nolint:gosec // src is a resolved path under the operator's own ~/.jentic/profiles.
 	if err != nil {
@@ -244,7 +255,18 @@ func copyFile(src, dst string, perm os.FileMode) error {
 	if err != nil {
 		return err
 	}
+	// O_CREATE honours perm only for a NEW file and is masked by umask; chmod pins
+	// the mode exactly (0600 for the profile's key/tokens) regardless of umask or a
+	// pre-existing dst.
+	if err := out.Chmod(perm); err != nil {
+		_ = out.Close()
+		return err
+	}
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
 		_ = out.Close()
 		return err
 	}

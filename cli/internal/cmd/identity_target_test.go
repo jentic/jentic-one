@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -140,6 +141,42 @@ func TestTranslateOperatorProfileMovesIntoAgentHome(t *testing.T) {
 		if n == "carryover" {
 			t.Error("operator original must be removed after translation")
 		}
+	}
+}
+
+// TestCopyTreePinsPermsUnderLooseUmask proves the copy lands with exactly the
+// source's perms (0700 dir, 0600 file) even when the process umask is 0, so a
+// loose umask can never publish the profile's secrets. Without the explicit
+// chmod, MkdirAll/O_CREATE modes are masked by umask.
+func TestCopyTreePinsPermsUnderLooseUmask(t *testing.T) {
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+
+	src := t.TempDir()
+	if err := os.Mkdir(filepath.Join(src, "prof"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "prof", "key"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "prof")
+	if err := copyTree(filepath.Join(src, "prof"), dst); err != nil {
+		t.Fatalf("copyTree: %v", err)
+	}
+	di, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != 0o700 {
+		t.Errorf("copied dir perm = %o, want 700", di.Mode().Perm())
+	}
+	fi, err := os.Stat(filepath.Join(dst, "key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("copied file perm = %o, want 600", fi.Mode().Perm())
 	}
 }
 
