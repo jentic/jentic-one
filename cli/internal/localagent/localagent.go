@@ -813,6 +813,33 @@ func LookupHomeDir(agentUser string) (string, error) {
 	return u.HomeDir, nil
 }
 
+// VerifyManagedHome confirms that the OS account agentUser is genuinely a
+// jentic-managed agent account whose home is exactly recordedHome. It requires
+// recordedHome to be a valid managed home (a strict descendant of AgentHomeRoot)
+// AND the account's LIVE home in the OS database to equal it. This is the guard in
+// front of every privileged reclaim/reown/delete of the home: reusing or tearing
+// down an account name that happens to collide with a pre-existing human or system
+// account (whose home is a real person's home, not /opt/<name> or
+// /Users/Shared/<name>), or acting on a hand-edited config whose home_dir has
+// drifted from the account's real home, would otherwise let root chown or rm the
+// wrong directory. Fails closed: any mismatch, missing account, or invalid path is
+// an error, so the caller touches nothing.
+func VerifyManagedHome(agentUser, recordedHome string) error {
+	if err := ValidateHomeDir(recordedHome); err != nil {
+		return err
+	}
+	actual, err := LookupHomeDir(agentUser)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(actual) != recordedHome {
+		return fmt.Errorf("agent account %q has home %q, not the expected managed home %q — "+
+			"refusing to touch it (it may be a pre-existing account, not the jentic-managed one)",
+			agentUser, actual, recordedHome)
+	}
+	return nil
+}
+
 // CopyBinaryCmd copies the operator's binary at src into the agent user's
 // ~/.local/bin and chowns it to the agent. It runs as root (sudo sh -c) so it
 // can write into the agent's home and change ownership in one step. agentHome is

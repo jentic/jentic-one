@@ -242,6 +242,14 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 
 	reused := localagent.UserExists(ctx, fields.name)
 	if reused {
+		// The name resolves to a PRE-EXISTING OS account. Only reuse it if it is
+		// genuinely a jentic-managed agent account — its live home must be the
+		// managed home under /opt or /Users/Shared. Otherwise the name has collided
+		// with a real human or system account, and the reclaim/chown/grant steps
+		// below would re-own and widen ACLs on that person's actual home. Fail closed.
+		if err := localagent.VerifyManagedHome(fields.name, fields.homeDir); err != nil {
+			return fmt.Errorf("refusing to reuse existing account %q: %w", fields.name, err)
+		}
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("Account %q already exists — reusing it.", fields.name)))
 	} else {
 		fmt.Fprintln(a.Out, theme.Infof("Creating agent account %q (home %s) ...", fields.name, fields.homeDir))

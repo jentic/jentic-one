@@ -431,6 +431,18 @@ func (a *App) execAccountReset(paths config.Paths, cfg *config.FileConfig, plan 
 		if err := localagent.ValidateHomeDir(plan.homeDir); err != nil {
 			return fmt.Errorf("refusing to reset: %w", err)
 		}
+		// If the Unix account still exists, its LIVE home must match the recorded
+		// home before we reown/delete it — a hand-edited config whose home_dir has
+		// drifted from the account's real home, or a name that has since been
+		// reassigned to a different account, would otherwise make reset chown or
+		// `rm -rf` the wrong directory. When the account is already gone we cannot
+		// look it up; the ValidateHomeDir check above (managed root) then stands
+		// alone for reowning the orphaned home.
+		if plan.accountExists {
+			if err := localagent.VerifyManagedHome(plan.user, plan.homeDir); err != nil {
+				return fmt.Errorf("refusing to reset: %w", err)
+			}
+		}
 	}
 	if plan.configDir != "" {
 		if err := localagent.ValidateConfigDir(plan.homeDir, plan.configDir); err != nil {

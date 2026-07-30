@@ -3,6 +3,7 @@ package localagent
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -696,6 +697,29 @@ func TestCopyConfigCmdDoesNotDereferenceSymlinks(t *testing.T) {
 	}
 	if !strings.Contains(joined, "chown -Rh ") {
 		t.Errorf("chown must use `chown -Rh` (no symlink deref): %s", joined)
+	}
+}
+
+func TestVerifyManagedHome(t *testing.T) {
+	// A recorded home outside the managed root is refused before any account
+	// lookup — this is a real human home, never a jentic-managed one.
+	if err := VerifyManagedHome("root", "/home/alice"); err == nil {
+		t.Error("expected a non-managed recorded home to be refused")
+	}
+	// A managed-looking home for an account that does not exist is refused
+	// (lookup fails), so reset/reuse never proceed against a phantom account.
+	if err := VerifyManagedHome("nope-no-such-agent-xyz", AgentHomeRoot()+"/nope-no-such-agent-xyz"); err == nil {
+		t.Error("expected a missing account to be refused")
+	}
+	// An EXISTING account whose live home differs from the recorded managed home
+	// is refused — the name has collided with a different account. We use the
+	// current user (which exists but whose home is NOT the managed path).
+	me, err := user.Current()
+	if err != nil {
+		t.Skip("cannot resolve current user")
+	}
+	if err := VerifyManagedHome(me.Username, AgentHomeRoot()+"/"+me.Username); err == nil {
+		t.Error("expected a home mismatch against an existing account to be refused")
 	}
 }
 
