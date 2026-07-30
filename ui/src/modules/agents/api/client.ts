@@ -13,6 +13,8 @@
 import {
 	ApiError,
 	AgentsService,
+	AuditService,
+	AuditTargetType,
 	ExecutionsService,
 	GroupBy,
 	MonitoringService,
@@ -20,6 +22,7 @@ import {
 	ServiceAccountsService,
 	ToolkitsService,
 	type AgentResponse,
+	type AuditResponse,
 	type ServiceAccountResponse,
 } from '@/shared/api';
 import {
@@ -739,5 +742,41 @@ export async function fetchActorAccessRequests(
 		return page.data;
 	} catch (error) {
 		throw toAgentsError(error, "Failed to load the actor's access requests.");
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Audit (read-only actor-scoped lens on the shared /audit endpoint).
+// ---------------------------------------------------------------------------
+
+/** One audit-log row targeting this actor — the generated model, re-exported
+ * so hooks/components never touch the facade directly. */
+export type ActorAuditEntry = AuditResponse;
+
+/**
+ * Actor-scoped audit entries — the lifecycle trail recorded against this
+ * agent / service account as the TARGET (register, approve/deny, disable/
+ * enable, key rotation, toolkit grant/revoke). Mirrors the toolkit console's
+ * `listToolkitAudit`. Requires `org:admin`; 401/403 map to an empty list so
+ * the "Recent changes" panel degrades gracefully for non-admins.
+ */
+export async function listActorAudit(
+	actorKind: 'agent' | 'service-account',
+	actorId: string,
+	limit = 25,
+): Promise<AuditResponse[]> {
+	try {
+		const res = await AuditService.listAuditEntries({
+			targetType:
+				actorKind === 'agent' ? AuditTargetType.AGENT : AuditTargetType.SERVICE_ACCOUNT,
+			targetId: actorId,
+			limit,
+		});
+		return res.data;
+	} catch (error) {
+		if (error instanceof ApiError && (error.status === 403 || error.status === 401)) {
+			return [];
+		}
+		throw toAgentsError(error, 'Failed to load the audit log.');
 	}
 }

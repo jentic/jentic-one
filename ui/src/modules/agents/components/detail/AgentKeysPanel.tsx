@@ -40,6 +40,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 	const [apiKey, setApiKey] = useState<string | null>(null);
 	const [confirmRevoke, setConfirmRevoke] = useState(false);
+	const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
 	if (apiKeyInfo.isPending) {
 		return <LoadingState size="sm" message="Loading API key…" />;
@@ -48,6 +49,17 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 	const info = apiKeyInfo.data;
 	const history = apiKeyHistory.data ?? [];
 	const mutating = generateApiKey.isPending || revokeApiKey.isPending;
+
+	async function generate() {
+		try {
+			const result = await generateApiKey.mutateAsync(agent.id);
+			setConfirmRegenerate(false);
+			setApiKey(result.key);
+		} catch {
+			// The hook toasts the failure; nothing to reveal. If the confirm
+			// dialog is open, it stays open so the user can retry.
+		}
+	}
 
 	return (
 		<div className="space-y-4">
@@ -88,25 +100,7 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					)}
 
 					{agent.status === 'active' ? (
-						<div className="flex flex-wrap gap-2">
-							<Button
-								size="sm"
-								variant="outline"
-								disabled={mutating}
-								loading={generateApiKey.isPending}
-								onClick={async () => {
-									try {
-										const result = await generateApiKey.mutateAsync(agent.id);
-										setApiKey(result.key);
-									} catch {
-										// The hook toasts the failure; nothing to reveal.
-									}
-								}}
-								aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
-							>
-								<KeyRound className="h-3.5 w-3.5" />
-								{agent.hasApiKey ? 'Regenerate API Key' : 'Generate API Key'}
-							</Button>
+						<div className="flex flex-wrap justify-end gap-2">
 							{agent.hasApiKey && (
 								<Button
 									size="sm"
@@ -120,6 +114,24 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 									Revoke API Key
 								</Button>
 							)}
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={mutating}
+								loading={!confirmRegenerate && generateApiKey.isPending}
+								onClick={() => {
+									// Regenerating rotates the credential — the current key
+									// stops working the moment the new one is issued, so it
+									// confirms first. A first issue destroys nothing and
+									// generates directly.
+									if (agent.hasApiKey) setConfirmRegenerate(true);
+									else void generate();
+								}}
+								aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
+							>
+								<KeyRound className="h-3.5 w-3.5" />
+								{agent.hasApiKey ? 'Regenerate API Key' : 'Generate API Key'}
+							</Button>
 						</div>
 					) : (
 						<p className="text-muted-foreground text-xs">
@@ -168,6 +180,16 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 					</CardBody>
 				</Card>
 			)}
+
+			<ConfirmDialog
+				open={confirmRegenerate}
+				title={`Regenerate API key for ${agent.name}`}
+				body="This rotates the credential: the current API key stops working immediately and anything still using it will fail to authenticate until it's updated with the new key."
+				confirmLabel="Regenerate"
+				pending={generateApiKey.isPending}
+				onConfirm={generate}
+				onClose={() => setConfirmRegenerate(false)}
+			/>
 
 			<ConfirmDialog
 				open={confirmRevoke}

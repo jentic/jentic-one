@@ -613,6 +613,78 @@ const ACTOR_EXECUTIONS: Record<string, ReturnType<typeof executionRow>[]> = {
 	],
 };
 
+/** One actor-targeted audit row (shape mirrors the generated `AuditResponse`). */
+function auditRow(opts: {
+	id: string;
+	targetId: string;
+	action: string;
+	minutesAgo: number;
+	reason?: string;
+}) {
+	return {
+		action: opts.action,
+		actor_id: ADMIN,
+		actor_session_id: null,
+		actor_type: 'user',
+		after: null,
+		before: null,
+		diff: null,
+		id: opts.id,
+		ip_address: null,
+		job_id: null,
+		occurred_at: now(-opts.minutesAgo),
+		reason: opts.reason ?? null,
+		request_id: null,
+		target_id: opts.targetId,
+		target_parent_id: null,
+		target_type: opts.targetId.startsWith('sva_') ? 'service_account' : 'agent',
+		trace_id: null,
+		user_agent: null,
+	};
+}
+
+/**
+ * Per-actor audit fixture (`GET /audit?target_type=…&target_id=…`) — the
+ * detail console's "Recent changes" panel. Only for ids in THIS store; other
+ * targets fall through to the monitor module's org-wide fixture.
+ */
+const ACTOR_AUDIT: Record<string, ReturnType<typeof auditRow>[]> = {
+	agnt_active_1: [
+		auditRow({
+			id: 'aud_agnt_3',
+			targetId: 'agnt_active_1',
+			action: 'rotate',
+			minutesAgo: 240,
+		}),
+		auditRow({
+			id: 'aud_agnt_2',
+			targetId: 'agnt_active_1',
+			action: 'approve',
+			minutesAgo: 60 * 24 * 6,
+		}),
+		auditRow({
+			id: 'aud_agnt_1',
+			targetId: 'agnt_active_1',
+			action: 'register',
+			minutesAgo: 60 * 24 * 6 + 30,
+		}),
+	],
+	sva_active_1: [
+		auditRow({
+			id: 'aud_sva_2',
+			targetId: 'sva_active_1',
+			action: 'approve',
+			minutesAgo: 60 * 24 * 12,
+		}),
+		auditRow({
+			id: 'aud_sva_1',
+			targetId: 'sva_active_1',
+			action: 'create',
+			minutesAgo: 60 * 24 * 12,
+		}),
+	],
+};
+
 export const agentsHandlers = [
 	// ---- Platform permission catalogue (#615) ----
 	http.get('/permissions', () => HttpResponse.json({ data: PERMISSION_CATALOGUE })),
@@ -666,6 +738,25 @@ export const agentsHandlers = [
 		if (!actorId || !findActor(actorId)) return undefined;
 		const rows = ACTOR_EXECUTIONS[actorId] ?? [];
 		return HttpResponse.json({ data: rows, has_more: false, next_cursor: null });
+	}),
+	// Actor-scoped audit slice ("Recent changes"): answer only for targets in
+	// THIS store, else fall through to the monitor module's org-wide fixture.
+	http.get('/audit', ({ request }) => {
+		const url = new URL(request.url);
+		const targetType = url.searchParams.get('target_type');
+		const targetId = url.searchParams.get('target_id');
+		if (
+			(targetType !== 'agent' && targetType !== 'service_account') ||
+			!targetId ||
+			!findActor(targetId)
+		) {
+			return undefined;
+		}
+		return HttpResponse.json({
+			data: ACTOR_AUDIT[targetId] ?? [],
+			has_more: false,
+			next_cursor: null,
+		});
 	}),
 
 	// ---- Agents ----

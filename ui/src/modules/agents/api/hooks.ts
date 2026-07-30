@@ -57,6 +57,8 @@ import {
 	fetchActorsUsage,
 	fetchActorUsageDetail,
 	fetchActorExecutions,
+	listActorAudit,
+	type ActorAuditEntry,
 	type ActorUsage,
 	type ActorUsageDetail,
 	type ActorExecutionEntity,
@@ -733,5 +735,21 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
 		queryFn: () => fetchActorAccessRequests(actorId as string, status),
 		enabled: actorId != null,
+	});
+}
+
+/**
+ * Actor-scoped audit trail for the detail console's "Recent changes" panel —
+ * the lifecycle events recorded against this agent / service account as the
+ * TARGET. Mirrors the toolkit console's `useToolkitAudit`. Non-admins resolve
+ * to an empty list (the client maps 401/403), so the panel renders its
+ * graceful "no entries" state instead of erroring.
+ */
+export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: string | null) {
+	return useQuery<ActorAuditEntry[]>({
+		queryKey: ['agents', 'audit', actorKind, actorId],
+		queryFn: () => listActorAudit(actorKind, actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
 	});
 }

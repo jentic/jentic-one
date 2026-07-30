@@ -70,6 +70,7 @@ import {
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
 import { MetaItem } from '@/modules/agents/components/detail/shared';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
+import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
 import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
 import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
 import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
@@ -385,6 +386,9 @@ export default function AgentDetailPage() {
 							</CardBody>
 						</Card>
 						<BoundToolkitsCard agentId={agent.id} agentStatus={agent.status} />
+						{/* Actor-scoped audit slice — same "Recent changes" grammar as
+						    the toolkit console (admin only; empty for non-admins). */}
+						<ActorAuditPanel actorKind="agent" actorId={agent.id} />
 					</>
 				)}
 

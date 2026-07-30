@@ -92,6 +92,15 @@ describe('ServiceAccountDetailPage', () => {
 		expect(await screen.findByText('Service account approved')).toBeInTheDocument();
 	});
 
+	it('shows the actor-scoped "Recent changes" audit slice on Overview', async () => {
+		renderDetail('sva_active_1');
+		await screen.findByRole('heading', { name: 'metrics-exporter' });
+		// Same audit grammar as the agent + toolkit consoles.
+		expect(await screen.findByText('Recent changes')).toBeInTheDocument();
+		expect(await screen.findByText('create')).toBeInTheDocument();
+		expect(screen.getByText('approve')).toBeInTheDocument();
+	});
+
 	// --- Phase 5: SA adopts the identity-console shell ----------------------
 
 	it('renders the KPI strip from the per-actor usage aggregate', async () => {
@@ -135,8 +144,16 @@ describe('ServiceAccountDetailPage', () => {
 		await user.click(
 			screen.getByRole('button', { name: 'Generate API key for metrics-exporter' }),
 		);
+		// Because SA responses expose no key metadata, we can't know whether a
+		// key already exists — generating always confirms first (a regenerate
+		// silently invalidates the previous key).
+		const confirm = await screen.findByRole('dialog');
+		expect(
+			within(confirm).getByText(/stops working the moment the new one is issued/),
+		).toBeInTheDocument();
+		await user.click(within(confirm).getByRole('button', { name: 'Generate' }));
 		// The one-time reveal dialog opens (the key itself renders in an input).
-		const dialog = await screen.findByRole('dialog');
+		const dialog = await screen.findByRole('dialog', { name: 'API key generated' });
 		expect(within(dialog).getByText('API key generated')).toBeInTheDocument();
 	});
 

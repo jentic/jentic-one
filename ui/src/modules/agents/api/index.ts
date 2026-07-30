@@ -40,6 +40,7 @@ export {
 	useActorsUsage,
 	useActorUsageDetail,
 	useActorExecutions,
+	useActorAudit,
 	useUpdateAgent,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
@@ -47,6 +48,7 @@ export {
 
 export { AgentsApiError } from '@/modules/agents/api/client';
 export type {
+	ActorAuditEntry,
 	ActorUsage,
 	ActorUsageDetail,
 	ActorExecutionEntity,

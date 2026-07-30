@@ -12,7 +12,7 @@
  * safe.
  */
 import { useMemo, useState } from 'react';
-import { ArrowRight, KeyRound, Link as LinkIcon, Shield, Unlink } from 'lucide-react';
+import { ArrowRight, Link as LinkIcon, Shield, Unlink } from 'lucide-react';
 import {
 	AppLink,
 	Button,
@@ -23,6 +23,7 @@ import {
 	Dialog,
 	ErrorAlert,
 	LoadingState,
+	ToolkitGlyph,
 } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
@@ -69,9 +70,11 @@ function BoundToolkitRow({
 	return (
 		<div
 			data-testid="bound-toolkit-row"
-			className="group border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2"
+			className="group border-border/60 bg-background/40 flex items-center gap-3 rounded-lg border px-3 py-2"
 		>
-			<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+			{/* Same identity tile as the toolkit list cards — the toolkit reads
+			    with one consistent visual identity across the product. */}
+			<ToolkitGlyph name={name} size="sm" />
 			<AppLink
 				href={ROUTE_PATHS.toolkit(toolkit.toolkitId)}
 				className="hover:text-primary flex min-w-0 flex-1 items-center gap-2 transition-colors"

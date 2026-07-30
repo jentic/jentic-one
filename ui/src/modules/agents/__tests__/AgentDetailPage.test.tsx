@@ -150,6 +150,17 @@ describe('AgentDetailPage', () => {
 		await waitFor(() => expect(within(row).getAllByText('github')).toHaveLength(1));
 	});
 
+	it('shows the actor-scoped "Recent changes" audit slice on Overview', async () => {
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		// Same audit grammar as the toolkit console: lifecycle events recorded
+		// against this agent as the target, newest first.
+		expect(await screen.findByText('Recent changes')).toBeInTheDocument();
+		expect(await screen.findByText('rotate')).toBeInTheDocument();
+		expect(screen.getByText('approve')).toBeInTheDocument();
+		expect(screen.getByText('register')).toBeInTheDocument();
+	});
+
 	it('shows the pending access requests this agent has filed (#619)', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
@@ -263,6 +274,39 @@ describe('AgentDetailPage', () => {
 		);
 
 		// Plaintext shows exactly once via the ApiKeyDialog.
+		expect(
+			await screen.findByRole('dialog', { name: 'API key generated' }),
+		).toBeInTheDocument();
+	});
+
+	it('confirms before regenerating an existing API key', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+
+		// First issue destroys nothing → generates directly (no confirm step).
+		await user.click(
+			await screen.findByRole('button', { name: 'Generate API key for support-agent' }),
+		);
+		const reveal = await screen.findByRole('dialog', { name: 'API key generated' });
+		await user.click(within(reveal).getByRole('button', { name: 'Done' }));
+
+		// Now a key exists → the action reads Regenerate and confirms first,
+		// because rotating invalidates the current key immediately.
+		await user.click(
+			await screen.findByRole('button', {
+				name: 'Regenerate API key for support-agent',
+			}),
+		);
+		const confirm = await screen.findByRole('dialog', {
+			name: 'Regenerate API key for support-agent',
+		});
+		expect(
+			within(confirm).getByText(/current API key stops working immediately/),
+		).toBeInTheDocument();
+		await user.click(within(confirm).getByRole('button', { name: 'Regenerate' }));
+
 		expect(
 			await screen.findByRole('dialog', { name: 'API key generated' }),
 		).toBeInTheDocument();

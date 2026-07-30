@@ -67,6 +67,7 @@ import {
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
 import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
+import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
 import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
 import {
@@ -75,6 +76,7 @@ import {
 } from '@/modules/agents/components/LifecycleDialogs';
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
+import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
 import {
 	DangerZone,
 	MetaItem,
@@ -105,6 +107,8 @@ const panelId = (tab: string) => `sa-panel-${tab}`;
  * The Keys tab body. Service-account responses expose no key metadata or
  * rotation history (unlike agents — a documented backend gap), so this is a
  * single generate action that surfaces the plaintext once via ApiKeyDialog.
+ * Because we can't know whether a key already exists, generating ALWAYS
+ * confirms first — a regenerate silently invalidates the previous key.
  */
 function SaKeysPanel({
 	account,
@@ -114,6 +118,7 @@ function SaKeysPanel({
 	onKey: (key: string) => void;
 }) {
 	const generateApiKey = useGenerateServiceAccountApiKey();
+	const [confirmGenerate, setConfirmGenerate] = useState(false);
 	return (
 		<Card>
 			<CardHeader>
@@ -128,30 +133,42 @@ function SaKeysPanel({
 					shown once — store it securely. jentic-one doesn’t expose key metadata or
 					rotation history for service accounts yet.
 				</p>
-				<Button
-					size="sm"
-					variant="outline"
-					disabled={account.status !== 'active' || generateApiKey.isPending}
-					loading={generateApiKey.isPending}
-					onClick={async () => {
-						try {
-							const result = await generateApiKey.mutateAsync(account.id);
-							onKey(result.key);
-						} catch {
-							// The hook toasts the failure; nothing to reveal.
-						}
-					}}
-					aria-label={`Generate API key for ${account.name}`}
-				>
-					<KeyRound className="h-3.5 w-3.5" />
-					Generate API Key
-				</Button>
+				<div className="flex justify-end">
+					<Button
+						size="sm"
+						variant="outline"
+						disabled={account.status !== 'active' || generateApiKey.isPending}
+						loading={generateApiKey.isPending}
+						onClick={() => setConfirmGenerate(true)}
+						aria-label={`Generate API key for ${account.name}`}
+					>
+						<KeyRound className="h-3.5 w-3.5" />
+						Generate API Key
+					</Button>
+				</div>
 				{account.status !== 'active' && (
 					<p className="text-muted-foreground text-xs">
 						Keys can only be generated for active service accounts.
 					</p>
 				)}
 			</CardBody>
+			<ConfirmDialog
+				open={confirmGenerate}
+				title={`Generate API key for ${account.name}`}
+				body="If this service account already has an API key, it stops working the moment the new one is issued — anything still using it will fail to authenticate until updated."
+				confirmLabel="Generate"
+				pending={generateApiKey.isPending}
+				onConfirm={async () => {
+					try {
+						const result = await generateApiKey.mutateAsync(account.id);
+						setConfirmGenerate(false);
+						onKey(result.key);
+					} catch {
+						// The hook toasts the failure; the dialog stays open to retry.
+					}
+				}}
+				onClose={() => setConfirmGenerate(false)}
+			/>
 		</Card>
 	);
 }
@@ -457,46 +474,53 @@ export default function ServiceAccountDetailPage() {
 				className="space-y-4 focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && (
-					<Card>
-						<CardBody>
-							<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
-								<MetaItem
-									label="Created"
-									value={formatTimestamp(account.createdAt)}
-								/>
-								{account.attribution.registeredBy ? (
+					<>
+						<Card>
+							<CardBody>
+								<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
 									<MetaItem
-										label="Created by"
-										value={
-											<ActorLabel
-												actorId={account.attribution.registeredBy}
-											/>
-										}
+										label="Created"
+										value={formatTimestamp(account.createdAt)}
 									/>
-								) : null}
-								{account.approvedAt ? (
-									<MetaItem
-										label="Approved"
-										value={formatTimestamp(account.approvedAt)}
-									/>
-								) : null}
-								{account.attribution.approvedBy ? (
-									<MetaItem
-										label="Approved by"
-										value={
-											<ActorLabel actorId={account.attribution.approvedBy} />
-										}
-									/>
-								) : null}
-								{account.ownerId ? (
-									<MetaItem
-										label="Owner"
-										value={<ActorLabel actorId={account.ownerId} />}
-									/>
-								) : null}
-							</dl>
-						</CardBody>
-					</Card>
+									{account.attribution.registeredBy ? (
+										<MetaItem
+											label="Created by"
+											value={
+												<ActorLabel
+													actorId={account.attribution.registeredBy}
+												/>
+											}
+										/>
+									) : null}
+									{account.approvedAt ? (
+										<MetaItem
+											label="Approved"
+											value={formatTimestamp(account.approvedAt)}
+										/>
+									) : null}
+									{account.attribution.approvedBy ? (
+										<MetaItem
+											label="Approved by"
+											value={
+												<ActorLabel
+													actorId={account.attribution.approvedBy}
+												/>
+											}
+										/>
+									) : null}
+									{account.ownerId ? (
+										<MetaItem
+											label="Owner"
+											value={<ActorLabel actorId={account.ownerId} />}
+										/>
+									) : null}
+								</dl>
+							</CardBody>
+						</Card>
+						{/* Actor-scoped audit slice — same "Recent changes" grammar as
+						    the agent + toolkit consoles (admin only). */}
+						<ActorAuditPanel actorKind="service-account" actorId={account.id} />
+					</>
 				)}
 
 				{activeTab === 'activity' && (
