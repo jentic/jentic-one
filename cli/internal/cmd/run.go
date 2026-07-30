@@ -722,12 +722,20 @@ var errCancelled = errors.New("cancelled")
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.
 func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir, sessionProfile string, agentArgs []string) error {
-	if ok, reason := localagent.ConfinementAvailable(); !ok {
-		return fmt.Errorf("fully locked-down agent sessions aren't available on this machine (%s).\n"+
-			"  jentic run won't start an unconfined session, because that would expose the operator's\n"+
-			"  home beyond the directories granted. To run this agent in isolation instead, consider\n"+
-			"  containerising it (e.g. run it inside Docker). See "+
-			"docs/security/local-agent/sandbox-exec-plan.md", reason)
+	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
+		var b strings.Builder
+		b.WriteString("fully locked-down agent sessions aren't available on this machine:\n")
+		for _, p := range missing {
+			fmt.Fprintf(&b, "  • %s\n", p.Reason)
+			if p.Hint != "" {
+				fmt.Fprintf(&b, "    %s\n", p.Hint)
+			}
+		}
+		b.WriteString("  jentic run won't start an unconfined session, because that would expose the operator's\n")
+		b.WriteString("  home beyond the directories granted. Install the prerequisites above and re-run, or run\n")
+		b.WriteString("  this agent in isolation another way (e.g. inside Docker). See ")
+		b.WriteString("docs/security/local-agent/sandbox-exec-plan.md")
+		return errors.New(b.String())
 	}
 
 	grantedDirs := acct.GrantedDirs
