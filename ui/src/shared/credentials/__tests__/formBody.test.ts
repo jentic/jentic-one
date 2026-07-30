@@ -204,6 +204,8 @@ describe('buildUpdateBody', () => {
 		) as Record<string, unknown>;
 		expect(both.access_key_id).toBe('AKIANEW');
 		expect(both.secret_access_key).toBe('newsecret');
+	});
+
 	it('omits field_name/location for api_key (immutable after create, #589)', () => {
 		const body = buildUpdateBody(
 			CredentialType.API_KEY,
