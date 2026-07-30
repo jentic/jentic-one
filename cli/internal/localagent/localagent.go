@@ -642,13 +642,65 @@ func agentBashArgsNoLogin(agentUser, snippet string) []string {
 	return []string{"-u", agentUser, "-H", "bash", "-c", snippet}
 }
 
+// sensitiveEnvVars are environment variables that must never carry from the
+// operator's session into the agent's: they hand the agent a live channel back to
+// the operator's own credentials or agents. SSH_AUTH_SOCK / SSH_AGENT_PID would let
+// the agent authenticate as the operator over SSH via the forwarded agent socket;
+// the GPG equivalents do the same for signing/decryption. The confined launch
+// unsets these in the snippet (see ConfineLaunchCmd) so the scrub does not depend
+// on the machine's sudoers env_keep configuration.
+var sensitiveEnvVars = []string{
+	"SSH_AUTH_SOCK", "SSH_AGENT_PID", "SSH_CONNECTION", "SSH_CLIENT",
+	"GPG_AGENT_INFO", "GPG_TTY",
+}
+
+// UnsetSensitiveEnvSnippet is a shell prefix that unsets every sensitiveEnvVar. It
+// is prepended to the confined launch so the agent session starts with no inherited
+// handle to the operator's SSH/GPG agents, regardless of how sudo's env_reset /
+// env_keep is configured on this machine.
+func UnsetSensitiveEnvSnippet() string {
+	return "unset " + strings.Join(sensitiveEnvVars, " ") + " && "
+}
+
+// launchEnvAllowlist are the ONLY environment variable names the launch forwards
+// from the operator to the sudo invocation — a defence-in-depth allowlist for the
+// case where sudoers has env_reset disabled (env_reset normally rebuilds the
+// environment itself). It is limited to what an interactive TUI agent genuinely
+// needs: the terminal type and the locale/encoding. Everything else — including any
+// operator secret exported into the shell — is dropped.
+var launchEnvAllowlist = []string{
+	"TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TERM_PROGRAM",
+}
+
+// launchEnv returns the curated environment the launch hands to sudo: only the
+// allowlisted names that are actually set in the operator's environment. sudo with
+// env_reset (the default) rebuilds HOME/USER/PATH/etc. for the target account
+// itself, so this deliberately carries no PATH or HOME — just the terminal/locale
+// hints — and serves as the backstop when env_reset is off.
+func launchEnv() []string {
+	var out []string
+	for _, name := range launchEnvAllowlist {
+		if v, ok := os.LookupEnv(name); ok {
+			out = append(out, name+"="+v)
+		}
+	}
+	return out
+}
+
 // agentCmdContextNoLogin is agentCmdContext with a NON-login outer shell — the
 // launch path (see ConfineLaunchCmd). Working directory is pinned to "/" for the
 // same reason as agentCmd: the parent cwd is typically inside the operator's home,
-// unreadable by the agent uid.
+// unreadable by the agent uid. Its environment is the curated launchEnv allowlist,
+// not the operator's full environment.
 func agentCmdContextNoLogin(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sudo", agentBashArgsNoLogin(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
 	cmd.Dir = "/"
+	// Hand sudo only the curated allowlist, not the operator's full environment.
+	// sudo's env_reset (default) rebuilds the target account's environment; this is
+	// the backstop for a machine where env_reset is disabled. sudo is resolved from
+	// the process PATH when the command was built, so an empty PATH here can't stop
+	// it launching.
+	cmd.Env = launchEnv()
 	return cmd
 }
 

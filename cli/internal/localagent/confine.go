@@ -227,9 +227,12 @@ func resolveWrapperPath(bin, fallback string) string {
 // first — on an unsupported platform confineExec adds no wrapper, so reaching here
 // unconfined is a programming error, not a security posture.
 func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome, profile string, grantedDirs, agentArgs []string) *exec.Cmd {
-	prefix := ""
+	// Scrub the operator's SSH/GPG agent handles first (see UnsetSensitiveEnvSnippet)
+	// so a compromised agent can't authenticate as the operator over a forwarded
+	// agent socket. Done in the snippet, so it holds regardless of sudoers env_keep.
+	prefix := UnsetSensitiveEnvSnippet()
 	if profile != "" {
-		prefix = "export JENTIC_PROFILE=" + shellQuote(profile) + " && "
+		prefix += "export JENTIC_PROFILE=" + shellQuote(profile) + " && "
 	}
 	// The OUTER shell is deliberately NON-login (agentCmdContextNoLogin → `bash
 	// -c`): it must source no agent-owned rc, so no agent code runs in the window

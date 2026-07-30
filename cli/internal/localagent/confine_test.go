@@ -1,6 +1,7 @@
 package localagent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -163,6 +164,46 @@ func TestSbplPathEscaping(t *testing.T) {
 	want := `"/tmp/a\"b\\c"`
 	if got != want {
 		t.Errorf("sbplPath escaping: got %s want %s", got, want)
+	}
+}
+
+// The confined launch must scrub the operator's SSH/GPG agent handles before any
+// agent code runs, so a prompt-injected agent can't reach back through a forwarded
+// agent socket and act as the operator.
+func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
+	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
+		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+	// The snippet is the last sudo arg (…-c <snippet>).
+	snippet := cmd.Args[len(cmd.Args)-1]
+	for _, v := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO"} {
+		if !strings.Contains(snippet, v) {
+			t.Errorf("launch snippet must unset %s:\n%s", v, snippet)
+		}
+	}
+	if !strings.HasPrefix(snippet, "unset ") {
+		t.Errorf("the scrub must run first (snippet must start with `unset`):\n%s", snippet)
+	}
+}
+
+// launchEnv forwards only the allowlisted terminal/locale hints, and never a
+// sensitive or arbitrary operator variable.
+func TestLaunchEnvIsAllowlisted(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/agent.sock")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "leak-me")
+
+	env := launchEnv()
+	var sawTerm bool
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "TERM=") {
+			sawTerm = true
+		}
+		if strings.HasPrefix(kv, "SSH_AUTH_SOCK=") || strings.HasPrefix(kv, "AWS_SECRET_ACCESS_KEY=") {
+			t.Errorf("launchEnv leaked a non-allowlisted var: %q", kv)
+		}
+	}
+	if !sawTerm {
+		t.Errorf("launchEnv should forward TERM when set, got %v", env)
 	}
 }
 
