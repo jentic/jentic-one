@@ -567,11 +567,14 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 		}
 		dir = cwd
 	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
+	if _, err := filepath.Abs(dir); err != nil {
 		return "", err
 	}
-	abs = filepath.Clean(abs)
+	// Canonicalize (absolute + cleaned + symlinks resolved) so the ban check, the
+	// access probe, the ACL grant, and the recorded path all name the same on-disk
+	// directory — a symlink can't be classified as safe here yet have its real
+	// (banned) target stamped by the recursive grant.
+	abs := localagent.Canonicalize(dir)
 
 	// Already accessible (agent's home, an earlier grant, a shared workspace)?
 	if localagent.DirAccess(ctx, agentUser, abs) {
@@ -607,7 +610,9 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 // All grants are scoped to the agent user and never touch the operator's own
 // permissions.
 func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
-	home := localagent.OperatorHome()
+	// Canonicalize home to match abs (already canonical from the callers): the
+	// under-home test and ancestor walk must reason about the same resolved tree.
+	home := localagent.Canonicalize(localagent.OperatorHome())
 
 	if home != "" && localagent.IsUnderHome(home, abs) {
 		// Layer 1: open traverse on the ancestors the agent can't yet pass through.
@@ -886,11 +891,10 @@ func (a *App) runListGrants(agentID, agentUser string, acct config.AgentAccount,
 // danger-confirmation and scoped-ACL grant (grantDir) as `jentic run <agent>
 // <path>` would, and records it.
 func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser, dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
+	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}
-	abs = filepath.Clean(abs)
+	abs := localagent.Canonicalize(dir)
 
 	if localagent.DirAccess(ctx, agentUser, abs) {
 		fmt.Fprintln(a.Out, theme.Dim.Render(agentUser+" already has access to "+abs+"."))
@@ -918,11 +922,13 @@ func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 }
 
 func (a *App) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, dir string) error {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
+	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}
-	abs = filepath.Clean(abs)
+	// Canonicalize to match the form grants are recorded in, so revoking by the
+	// symlink or a relative path still finds and drops the recorded (resolved)
+	// entry rather than leaving it orphaned.
+	abs := localagent.Canonicalize(dir)
 
 	fmt.Fprintln(a.Out, theme.Infof("Revoking %s access to %s ...", agentUser, abs))
 	r := localagent.LeafRevokeCmd(agentUser, abs)

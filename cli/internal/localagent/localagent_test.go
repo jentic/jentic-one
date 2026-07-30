@@ -204,6 +204,80 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// TestClassifyResolvesSymlinkIntoBannedSubtree proves a symlink whose real target
+// sits inside a HardBanned subtree is caught: classifying the LINK must return the
+// same verdict as classifying its target, because the recursive ACL grant operates
+// on the resolved directory. A lexical-only check (Abs+Clean) would call the link
+// NotBanned and then stamp ~/.ssh.
+func TestClassifyResolvesSymlinkIntoBannedSubtree(t *testing.T) {
+	home := t.TempDir()
+	ssh := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(ssh, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "innocent-looking")
+	if err := os.Symlink(ssh, link); err != nil {
+		t.Fatal(err)
+	}
+	// Symlink transparency: the link must classify identically to its resolved
+	// target (both HardBan), so no cased/symlinked alias can present as safe while
+	// the ACL grant lands on the real .ssh.
+	linkV, targetV := Classify(link, home), Classify(ssh, home)
+	if linkV.Class != HardBan || targetV.Class != HardBan {
+		t.Fatalf("want both HardBan: link=%v target=%v", linkV.Class, targetV.Class)
+	}
+	if Canonicalize(link) != Canonicalize(ssh) {
+		t.Fatalf("Canonicalize(link)=%q should equal Canonicalize(.ssh)=%q", Canonicalize(link), Canonicalize(ssh))
+	}
+}
+
+// TestClassifyConfigRootIsSoftBanChildrenHardBan pins the refined ~/.config model:
+// the shared XDG root is a SoftBan (can't be granted whole — a recursive grant
+// would sweep in the credential children), its credential children are HardBanned,
+// and an innocuous child like ~/.config/nvim is freely grantable.
+func TestClassifyConfigRootIsSoftBanChildrenHardBan(t *testing.T) {
+	// Synthetic home (not created on disk) so classification stays lexical and the
+	// test isn't dependent on the temp dir living under a canonicalized system tree
+	// (macOS puts t.TempDir under /private/var).
+	home := "/Users/alice"
+	cases := []struct {
+		name string
+		rel  string
+		want BanClass
+	}{
+		{"config root", ".config", SoftBan},
+		{"gcloud creds", ".config/gcloud", HardBan},
+		{"gh creds", ".config/gh", HardBan},
+		{"chrome profile", ".config/google-chrome", HardBan},
+		{"deep under gcloud", ".config/gcloud/legacy_credentials", HardBan},
+		{"innocuous editor config", ".config/nvim", NotBanned},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(home, tc.rel)
+			if v := Classify(dir, home); v.Class != tc.want {
+				t.Fatalf("Classify(%s).Class = %v, want %v (reason %q)", tc.rel, v.Class, tc.want, v.Reason)
+			}
+		})
+	}
+}
+
+// TestClassifyCaseInsensitiveBanOnDarwin proves a cased alias of a banned dotdir
+// (~/.SSH for ~/.ssh) is still HardBanned on macOS, whose default volume is
+// case-insensitive so both names the same directory. On a case-sensitive OS the
+// alias is a distinct path and NOT banned, which is correct there.
+func TestClassifyCaseInsensitiveBanOnDarwin(t *testing.T) {
+	home := "/Users/alice"
+	v := Classify("/Users/alice/.SSH", home)
+	if runtime.GOOS == "darwin" {
+		if v.Class != HardBan {
+			t.Fatalf("on darwin Classify(.SSH) = %v, want HardBan", v.Class)
+		}
+	} else if v.Class == HardBan {
+		t.Fatalf("on a case-sensitive OS Classify(.SSH) should not be HardBan, got %v", v.Class)
+	}
+}
+
 // TestGrantCmdsForceCLocale guards that the two grant commands whose stderr is
 // parsed to distinguish a benign mid-scan race from a real failure
 // (classifyGrantStderr) run under LC_ALL=C, so their diagnostics stay English on a
