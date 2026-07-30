@@ -1,6 +1,7 @@
 """Shared identity/auth primitives: schemas, JWT helpers, token verification."""
 
 from jentic_one.shared.auth.api_key_resolver import ApiKeyResolver
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import (
     ChangePasswordPayload,
     Identity,
@@ -18,6 +19,7 @@ __all__ = [
     "Identity",
     "LoginPayload",
     "TokenBundle",
+    "TokenValidationError",
     "decode_jwt",
     "issue_jwt",
     "resolve_agent_key",

@@ -29,13 +29,19 @@ import jwt
 import structlog
 from jwt import PyJWKClient
 
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.config import JwtVerificationConfig, TrustedIssuerConfig
 
 logger = structlog.get_logger(__name__)
 
 
-class JwtVerificationError(ValueError):
-    """Raised when a JWT fails any hardened-verification check."""
+class JwtVerificationError(TokenValidationError):
+    """Raised when a JWT fails any hardened-verification check.
+
+    Subclasses the shared :class:`TokenValidationError` so the broker edge can
+    catch every token refusal with one typed clause and map it to a uniform
+    401 (jentic-one#866).
+    """
 
 
 @dataclass
