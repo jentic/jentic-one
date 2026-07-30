@@ -216,8 +216,8 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	root, agentHome, grant := existingHomeRoot(t)
 	// Each returned token is individually shell-quoted; unquote for structural
 	// assertions on the command shape.
-	quoted := bwrapArgs("/usr/bin/claude", grant, agentHome,
-		[]string{grant, "/opt/outside"}, nil)
+	cmdArgv := []string{"/bin/bash", "-lc", "cd x && exec /usr/bin/claude"}
+	quoted := bwrapArgs(agentHome, []string{grant, "/opt/outside"}, cmdArgv)
 	args := make([]string, len(quoted))
 	for i, q := range quoted {
 		args[i] = strings.Trim(q, "'")
@@ -225,7 +225,8 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	joined := strings.Join(args, " ")
 
 	for _, want := range []string{
-		"bwrap --die-with-parent",
+		// the wrapper is invoked by its ABSOLUTE path (can't be PATH-shadowed)
+		bwrapPath + " --die-with-parent",
 		// hide the human-home root behind a tmpfs...
 		"--tmpfs " + root,
 		// ...then re-bind the agent home and the in-home grant over it
@@ -233,16 +234,15 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 		"--bind " + grant + " " + grant,
 		// exec routes re-mounted read-only (/usr/bin exists everywhere)
 		"--ro-bind /usr/bin /usr/bin",
-		"--chdir " + grant,
-		// the binary is introduced by bwrap's `--` end-of-options marker
-		"-- /usr/bin/claude",
+		// the command to run is introduced by bwrap's `--` end-of-options marker
+		"-- /bin/bash -lc",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("bwrap args missing %q\ngot: %s", want, joined)
 		}
 	}
-	if args[len(args)-1] != "/usr/bin/claude" {
-		t.Errorf("binary must be the final arg, got %q", args[len(args)-1])
+	if !filepath.IsAbs(strings.Trim(quoted[0], "'")) {
+		t.Errorf("bwrap must be invoked by an absolute path, got %q", quoted[0])
 	}
 	// The out-of-home grant needs no bind — it stays visible through the root bind.
 	if strings.Contains(joined, "--bind /opt/outside /opt/outside") {
@@ -258,41 +258,77 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	}
 }
 
-// Forwarded agent arguments are appended verbatim after the binary on every
-// platform, each shell-quoted so spaces and quotes survive as single tokens.
-func TestConfineExecForwardsAgentArgs(t *testing.T) {
-	got := confineExec("/usr/bin/claude", "/work", "/Users/Shared/bot", nil,
+// confinedLoginSnippet is what the confined LOGIN shell runs: cd into the working
+// directory then exec the binary with its forwarded args, each shell-quoted so
+// spaces and quotes survive as single tokens.
+func TestConfinedLoginSnippetForwardsAgentArgs(t *testing.T) {
+	got := confinedLoginSnippet("/usr/bin/claude", "/work",
 		[]string{"--model", "opus", "-p", "hello world"})
 
-	// The binary comes first, then each arg in order.
-	iBin := strings.Index(got, "/usr/bin/claude")
+	// cd's into the working directory, then execs the binary, then each arg in order.
+	iCd := strings.Index(got, "cd "+shellQuote("/work"))
+	iBin := strings.Index(got, "exec "+shellQuote("/usr/bin/claude"))
 	iModel := strings.Index(got, "--model")
 	iOpus := strings.Index(got, "opus")
-	if iBin < 0 || iModel < iBin || iOpus < iModel {
-		t.Fatalf("args must follow the binary in order, got:\n%s", got)
+	if iCd < 0 || iBin < iCd || iModel < iBin || iOpus < iModel {
+		t.Fatalf("snippet must cd, then exec binary, then args in order, got:\n%s", got)
 	}
 	// A multi-word argument is a single quoted token, not two.
 	if !strings.Contains(got, shellQuote("hello world")) {
 		t.Errorf("multi-word arg must be one quoted token, got:\n%s", got)
 	}
-	// No args → no trailing junk after the binary/wrapper.
-	if bare := confineExec("/usr/bin/claude", "", "/Users/Shared/bot", nil, nil); strings.HasSuffix(bare, " ") {
-		t.Errorf("no-args exec must not leave a trailing separator: %q", bare)
+	// No dir → cd into the agent's own $HOME; no args → no trailing separator.
+	bare := confinedLoginSnippet("/usr/bin/claude", "", nil)
+	if !strings.HasPrefix(bare, `cd "$HOME" &&`) {
+		t.Errorf("no-dir snippet must cd into $HOME, got: %q", bare)
+	}
+	if strings.HasSuffix(bare, " ") {
+		t.Errorf("no-args snippet must not leave a trailing separator: %q", bare)
 	}
 }
 
-// A forwarded flag must not be parsed as a bwrap option: bwrapArgs ends its own
-// options with `--` before the binary, so `--model` reaches the agent.
-func TestBwrapArgsSeparatesForwardedFlags(t *testing.T) {
-	quoted := bwrapArgs("/usr/bin/claude", "", "/Users/Shared/bot", nil, []string{"--model", "opus"})
+// confineExec wraps the login shell in the ABSOLUTE-path confinement wrapper, so
+// the agent's own PATH can never shadow the wrapper and shed the sandbox, and the
+// login shell (which sources agent rc) runs INSIDE it.
+func TestConfineExecUsesAbsoluteWrapperAndConfinedLoginShell(t *testing.T) {
+	got := confineExec("/usr/bin/claude", "/work", "/Users/Shared/bot", nil,
+		[]string{"--model", "opus"})
+
+	// The wrapper is invoked by an absolute path (platform-specific).
+	var wrapper string
+	switch runtime.GOOS {
+	case "darwin":
+		wrapper = sandboxExecPath
+	case "linux":
+		wrapper = bwrapPath
+	default:
+		t.Skip("no confinement wrapper on this platform")
+	}
+	if !filepath.IsAbs(wrapper) {
+		t.Fatalf("wrapper path must be absolute, got %q", wrapper)
+	}
+	if !strings.HasPrefix(got, shellQuote(wrapper)) && !strings.Contains(got, shellQuote(wrapper)+" ") {
+		t.Errorf("confineExec must invoke the absolute wrapper %q, got:\n%s", wrapper, got)
+	}
+	// The login shell runs INSIDE the wrapper (so agent rc is sourced confined).
+	if !strings.Contains(got, shellQuote(agentLaunchShell)+" -lc ") {
+		t.Errorf("confineExec must run a login shell (%s -lc) inside the wrapper, got:\n%s", agentLaunchShell, got)
+	}
+}
+
+// A flag in the inner command must not be parsed as a bwrap option: bwrapArgs ends
+// its own options with `--` before the command argv, so `-lc` reaches bash.
+func TestBwrapArgsSeparatesInnerCommand(t *testing.T) {
+	cmdArgv := []string{"/bin/bash", "-lc", "exec /usr/bin/claude --model opus"}
+	quoted := bwrapArgs("/Users/Shared/bot", nil, cmdArgv)
 	args := make([]string, len(quoted))
 	for i, q := range quoted {
 		args[i] = strings.Trim(q, "'")
 	}
-	// `--` immediately precedes the binary, and the forwarded flag comes after it.
+	// `--` immediately precedes the inner command, so `-lc` is bash's, not bwrap's.
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "-- /usr/bin/claude --model opus") {
-		t.Errorf("forwarded flags must follow `-- <binary>`, got:\n%s", joined)
+	if !strings.Contains(joined, "-- /bin/bash -lc") {
+		t.Errorf("inner command must follow bwrap's `--` marker, got:\n%s", joined)
 	}
 }
 
@@ -302,9 +338,9 @@ func TestBwrapArgsSeparatesForwardedFlags(t *testing.T) {
 // re-bound. This is the Linux analog of the /Users/Shared case above and the
 // end-to-end guarantee behind an /opt home reaching through confinement.
 func TestBwrapArgsLinuxOptHomeStaysVisible(t *testing.T) {
-	quoted := bwrapArgs("/usr/bin/claude", "/home/alice/projects/api",
-		"/opt/alice-local-agent",
-		[]string{"/home/alice/projects/api"}, nil)
+	cmdArgv := []string{"/bin/bash", "-lc", "cd /home/alice/projects/api && exec /usr/bin/claude"}
+	quoted := bwrapArgs("/opt/alice-local-agent",
+		[]string{"/home/alice/projects/api"}, cmdArgv)
 	args := make([]string, len(quoted))
 	for i, q := range quoted {
 		args[i] = strings.Trim(q, "'")
@@ -320,9 +356,10 @@ func TestBwrapArgsLinuxOptHomeStaysVisible(t *testing.T) {
 	if !strings.Contains(joined, "--bind /home/alice/projects/api /home/alice/projects/api") {
 		t.Errorf("a /home grant must be re-bound over the tmpfs mask:\n%s", joined)
 	}
-	// The chdir into the grant must still be emitted (the launch cd's there).
-	if !strings.Contains(joined, "--chdir /home/alice/projects/api") {
-		t.Errorf("expected --chdir into the working directory:\n%s", joined)
+	// The cd into the grant now lives inside the login snippet (bwrap no longer
+	// emits --chdir); the snippet cd's there before exec'ing the agent.
+	if strings.Contains(joined, "--chdir") {
+		t.Errorf("bwrap should no longer emit --chdir (cd is inside the login snippet):\n%s", joined)
 	}
 	// SessionAccess (the shared source both platforms consume) reports the /opt
 	// home as read/write, so the display can't claim the agent lacks its own home.

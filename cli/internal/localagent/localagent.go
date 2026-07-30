@@ -621,6 +621,28 @@ func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 	return cmd
 }
 
+// agentBashArgsNoLogin builds the sudo argv that runs snippet as agentUser in a
+// NON-login bash (`bash -c`, no `-l`). It exists for the confined launch: the
+// outer shell must source NO agent-owned rc, so no agent code runs before the
+// confinement wrapper takes hold. The login shell (which sources rc, honouring the
+// agent's ~/.local/bin PATH export) is run INSIDE the wrapper by confineExec, so
+// rc is honoured but only under confinement. The sudoers passwordless rule is
+// scoped to the /bin/bash command path (not its arguments), so login vs non-login
+// makes no difference to what the rule matches.
+func agentBashArgsNoLogin(agentUser, snippet string) []string {
+	return []string{"-u", agentUser, "-H", "bash", "-c", snippet}
+}
+
+// agentCmdContextNoLogin is agentCmdContext with a NON-login outer shell — the
+// launch path (see ConfineLaunchCmd). Working directory is pinned to "/" for the
+// same reason as agentCmd: the parent cwd is typically inside the operator's home,
+// unreadable by the agent uid.
+func agentCmdContextNoLogin(ctx context.Context, agentUser, snippet string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sudo", agentBashArgsNoLogin(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
+	cmd.Dir = "/"
+	return cmd
+}
+
 // EnsureLocalBinOnPathCmd makes ~/.local/bin resolvable for the agent user by
 // appending an idempotent export line to the agent's login profiles. It runs as
 // the agent user so the files are created owned by the agent, and it covers the

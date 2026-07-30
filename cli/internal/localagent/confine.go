@@ -184,29 +184,62 @@ func hasBinary(bin string) bool {
 	return err == nil
 }
 
-// ConfineLaunchCmd builds the interactive launch: become the agent user in a login
-// shell (`sudo -u <user> -H bash -lc`, fresh env, HOME at the agent's home), cd to
-// dir (or the agent's home), and exec the agent binary wrapped in the platform
-// confinement mechanism. operatorHome + grantedDirs drive the deny/re-allow set;
-// agentArgs are the operator's `--`-forwarded arguments, appended verbatim (each
-// shell-quoted) to the agent's argv. profile, when non-empty, is exported as
-// JENTIC_PROFILE inside the confined session so the agent (and any `jentic`
-// command it runs) acts on the operator's checked-out agent profile without a
-// flag. The caller wires os.Stdin/out/err. Callers MUST have checked
-// ConfinementAvailable first — on an unsupported platform confineExec adds no
-// wrapper, so reaching here unconfined is a programming error, not a security
-// posture.
-func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome, profile string, grantedDirs, agentArgs []string) *exec.Cmd {
-	cd := `cd "$HOME"`
-	if dir != "" {
-		cd = "cd " + shellQuote(dir)
+// sandboxExecPath and bwrapPath are the ABSOLUTE paths to the confinement
+// wrappers, resolved ONCE in the operator's own (trusted) process at start-up.
+// This is a security boundary, not a convenience: the wrapper command is embedded
+// in a snippet that runs as the agent user, so if it were an unqualified name
+// (`sandbox-exec`, `bwrap`) the agent's own login PATH — which the agent controls
+// via its rc files — could shadow it with a no-op and shed confinement entirely.
+// An absolute path can't be hijacked that way. Resolution prefers the operator
+// PATH (via LookPath, so a non-standard install is honoured) but only when it
+// yields an absolute path, and otherwise falls back to the canonical system
+// location. Both wrappers live in system bin dirs that the profile marks
+// read-only, so the agent can't rewrite them either.
+var (
+	sandboxExecPath = resolveWrapperPath("sandbox-exec", "/usr/bin/sandbox-exec")
+	bwrapPath       = resolveWrapperPath("bwrap", "/usr/bin/bwrap")
+)
+
+// resolveWrapperPath returns the absolute path to a confinement wrapper: the
+// operator-PATH resolution when it is absolute, else the canonical fallback. It is
+// evaluated in the operator process (never the agent's), so the PATH consulted is
+// the trusted operator PATH.
+func resolveWrapperPath(bin, fallback string) string {
+	if p, err := exec.LookPath(bin); err == nil && filepath.IsAbs(p) {
+		return p
 	}
+	return fallback
+}
+
+// ConfineLaunchCmd builds the interactive launch. It becomes the agent user in a
+// NON-login outer shell (`sudo -u <user> -H bash -c`, fresh env, HOME at the
+// agent's home) that sources no agent-owned rc — so no agent code runs before
+// confinement takes hold — and immediately execs the platform confinement wrapper
+// by its ABSOLUTE path (so the agent's own PATH can't shadow it). The wrapper runs
+// a LOGIN shell INSIDE the sandbox, which sources the agent's rc (honouring its
+// ~/.local/bin PATH export), cd's to dir (or the agent's home), and execs the agent
+// binary. agentHome + grantedDirs drive the deny/re-allow set; agentArgs are the
+// operator's `--`-forwarded arguments, appended verbatim (each shell-quoted) to the
+// agent's argv. profile, when non-empty, is exported as JENTIC_PROFILE before the
+// wrapper exec so it carries into the confined session (the agent, and any `jentic`
+// it runs, acts on the operator's checked-out agent profile without a flag). The
+// caller wires os.Stdin/out/err. Callers MUST have checked ConfinementAvailable
+// first — on an unsupported platform confineExec adds no wrapper, so reaching here
+// unconfined is a programming error, not a security posture.
+func ConfineLaunchCmd(ctx context.Context, agentUser, binary, dir, agentHome, profile string, grantedDirs, agentArgs []string) *exec.Cmd {
 	prefix := ""
 	if profile != "" {
 		prefix = "export JENTIC_PROFILE=" + shellQuote(profile) + " && "
 	}
-	inner := prefix + cd + " && exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
-	return agentCmdContext(ctx, agentUser, inner)
+	// The OUTER shell is deliberately NON-login (agentCmdContextNoLogin → `bash
+	// -c`): it must source no agent-owned rc, so no agent code runs in the window
+	// before the confinement wrapper takes hold. It only exports JENTIC_PROFILE and
+	// execs the wrapper. The wrapper then runs a LOGIN shell (see confineExec), so
+	// the agent's rc — and the PATH export that finds its binary in ~/.local/bin —
+	// is still honoured, but now CONFINED. JENTIC_PROFILE is exported before the
+	// exec so it carries through the wrapper into the confined session.
+	inner := prefix + "exec " + confineExec(binary, dir, agentHome, grantedDirs, agentArgs)
+	return agentCmdContextNoLogin(ctx, agentUser, inner)
 }
 
 // AccessKind classifies how a confined session can reach a directory.
@@ -275,22 +308,44 @@ func roExecDirs(agentHome string, grantedDirs []string) []string {
 	return out
 }
 
-// confineExec builds the `sandbox-exec …`/`bwrap …` prefix plus the agent binary
-// and its forwarded arguments, already shell-quoted for embedding in the
-// login-shell snippet. agentArgs are appended verbatim after the binary on both
-// platforms so the confinement wrapper execs `<binary> <args...>`.
+// confineExec builds the confinement command that the outer NON-login shell execs:
+// the ABSOLUTE-path wrapper (`/usr/bin/sandbox-exec …` / `<abs>/bwrap …`) running a
+// LOGIN bash inside it, which in turn cd's into the working directory and execs the
+// agent binary with its forwarded arguments. Putting the login shell INSIDE the
+// wrapper is deliberate: the agent's rc files (and the PATH export that finds its
+// binary in ~/.local/bin) are sourced under confinement, never in an unconfined
+// pre-exec window. The wrapper path is absolute so the agent's own PATH can't
+// shadow it and shed the sandbox. agentArgs are appended verbatim after the binary.
 func confineExec(binary, dir, agentHome string, grantedDirs, agentArgs []string) string {
+	login := confinedLoginSnippet(binary, dir, agentArgs)
 	switch runtime.GOOS {
 	case "darwin":
 		profile := SandboxProfile(agentHome, grantedDirs)
-		return "sandbox-exec -p " + shellQuote(profile) + " " + shellQuote(binary) + quotedArgsSuffix(agentArgs)
+		return shellQuote(sandboxExecPath) + " -p " + shellQuote(profile) +
+			" " + shellQuote(agentLaunchShell) + " -lc " + shellQuote(login)
 	case "linux":
-		return strings.Join(bwrapArgs(binary, dir, agentHome, grantedDirs, agentArgs), " ")
+		return strings.Join(bwrapArgs(agentHome, grantedDirs,
+			[]string{agentLaunchShell, "-lc", login}), " ")
 	default:
 		// Unsupported — no confinement to add. Callers gate on
 		// ConfinementAvailable, so reaching here means the launch was not guarded.
-		return shellQuote(binary) + quotedArgsSuffix(agentArgs)
+		// Still run the login shell so PATH resolution matches the confined path.
+		return shellQuote(agentLaunchShell) + " -lc " + shellQuote(login)
 	}
+}
+
+// confinedLoginSnippet is the command the confined LOGIN bash runs: cd into the
+// working directory (the agent's home when none was chosen) and exec the agent
+// binary with its forwarded arguments. It runs after the agent's rc has been
+// sourced (so ~/.local/bin is on PATH) but wholly inside the confinement wrapper.
+// Each argument is shell-quoted so spaces/globs/quotes reach the agent as single
+// literal tokens.
+func confinedLoginSnippet(binary, dir string, agentArgs []string) string {
+	cd := `cd "$HOME"`
+	if dir != "" {
+		cd = "cd " + shellQuote(dir)
+	}
+	return cd + " && exec " + shellQuote(binary) + quotedArgsSuffix(agentArgs)
 }
 
 // quotedArgsSuffix renders agentArgs as a leading-space-separated, shell-quoted
@@ -469,20 +524,26 @@ func isControlChar(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // ── Linux: bubblewrap ─────────────────────────────────────────────────────────
 
-// bwrapArgs builds the `bwrap … <binary>` argv (each token shell-quoted) that
-// mirrors the macOS profile: bind the whole host read/write (DAC still applies
-// inside the namespace — bwrap grants no privilege), then hide EVERY human-home
-// root (/Users, /home) behind a tmpfs and re-bind only the agent's own home and
-// the granted dirs over the top. Grants outside those roots stay visible through
-// the root bind. Finally the executable routes are re-mounted read-only so the
-// agent can't rewrite the binaries it runs. --die-with-parent tears the namespace
-// (and its mounts) down when the session exits.
+// bwrapArgs builds the `bwrap … -- <cmdArgv...>` argv (each token shell-quoted)
+// that mirrors the macOS profile: use the ABSOLUTE bwrap path (so the agent's own
+// PATH can't shadow it and shed confinement), bind the whole host read/write (DAC
+// still applies inside the namespace — bwrap grants no privilege), then hide EVERY
+// human-home root (/Users, /home) behind a tmpfs and re-bind only the agent's own
+// home and the granted dirs over the top. Grants outside those roots stay visible
+// through the root bind. Finally the executable routes are re-mounted read-only so
+// the agent can't rewrite the binaries it runs. --die-with-parent tears the
+// namespace (and its mounts) down when the session exits.
+//
+// cmdArgv is the command bwrap runs inside the namespace — the confined LOGIN shell
+// (`/bin/bash -lc <snippet>`), which cd's to the working directory and execs the
+// agent. Running the login shell here means the agent's rc is sourced UNDER
+// confinement, never in an unconfined pre-exec window.
 //
 // Order matters: bwrap applies mounts left-to-right, so the tmpfs masks come
 // first, the re-binds land on top, and the read-only exec-route binds come LAST so
 // they hold even if a grant re-bound an overlapping path.
-func bwrapArgs(binary, dir, agentHome string, grantedDirs, agentArgs []string) []string {
-	args := []string{"bwrap", "--die-with-parent", "--dev-bind", "/", "/"}
+func bwrapArgs(agentHome string, grantedDirs, cmdArgv []string) []string {
+	args := []string{bwrapPath, "--die-with-parent", "--dev-bind", "/", "/"}
 	for _, root := range humanHomeRoots {
 		if info, err := os.Stat(root); err == nil && info.IsDir() {
 			args = append(args, "--tmpfs", root)
@@ -496,14 +557,11 @@ func bwrapArgs(binary, dir, agentHome string, grantedDirs, agentArgs []string) [
 	for _, d := range roExecDirs(agentHome, grantedDirs) {
 		args = append(args, "--ro-bind", d, d)
 	}
-	if dir != "" {
-		args = append(args, "--chdir", dir)
-	}
-	// The agent binary and its forwarded arguments end the argv; `--` is bwrap's
-	// own end-of-options marker so a forwarded flag (e.g. `--model`) is never
-	// mistaken for a bwrap option.
-	args = append(args, "--", binary)
-	args = append(args, agentArgs...)
+	// The command to run inside the namespace ends the argv; `--` is bwrap's own
+	// end-of-options marker so a flag in cmdArgv is never mistaken for a bwrap
+	// option.
+	args = append(args, "--")
+	args = append(args, cmdArgv...)
 	quoted := make([]string, len(args))
 	for i, a := range args {
 		quoted[i] = shellQuote(a)
