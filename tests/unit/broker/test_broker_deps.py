@@ -11,16 +11,19 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import jwt
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.testclient import TestClient
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
-from jentic_one.broker.services.auth import DualTokenValidator
+from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
 from jentic_one.broker.web.deps import RequireToolkitAccess
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
+
+_JWT_SECRET = "broker-deps-test-secret-32-bytes-long!!"  # pragma: allowlist secret
 
 
 def _make_identity(
@@ -58,9 +61,10 @@ def _create_test_app(resolver_return: Identity | None | object = _SENTINEL) -> T
     mock_resolver = AsyncMock()
     mock_resolver.resolve_access_token = AsyncMock(return_value=effective_return)
     opaque = CachedTokenValidator(resolver=mock_resolver, cache_ttl_seconds=60.0)
-    app.state.broker_token_validator = DualTokenValidator(opaque=opaque, jwt=None)
+    jwt_validator = JwtTokenValidator(verifier=JwtVerifier(secret=_JWT_SECRET))
+    app.state.broker_token_validator = DualTokenValidator(opaque=opaque, jwt=jwt_validator)
 
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_returns_200_with_valid_token_and_scope() -> None:
@@ -92,3 +96,22 @@ def test_returns_403_with_insufficient_scope() -> None:
     resp = client.post("/execute", headers={"Authorization": "Bearer at_limited"})
     assert resp.status_code == 403
     assert resp.json()["type"] == "insufficient_scope"
+
+
+def test_malformed_jwt_shaped_token_returns_401_not_500() -> None:
+    """A JWT-shaped but undecodable token must not escape as a 500 (#880 review, finding #1)."""
+    client = _create_test_app()
+    resp = client.post("/execute", headers={"Authorization": "Bearer aaa.bbb.ccc"})
+    assert resp.status_code == 401
+
+
+def test_jwt_with_out_of_range_exp_returns_401_not_500() -> None:
+    """A validly-signed token with an absurd ``exp`` must be a 401, not a 500 (finding #2)."""
+    token = jwt.encode(
+        {"sub": "x", "exp": 10**20, "actor_type": "agent"},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
+    client = _create_test_app()
+    resp = client.post("/execute", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 401

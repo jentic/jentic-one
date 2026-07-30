@@ -15,6 +15,7 @@ from jentic_one.broker.services.auth import (
     JwtVerifier,
     looks_like_jwt,
 )
+from jentic_one.broker.services.auth.token_validation import _LOG_FIELD_MAXLEN
 from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
@@ -191,8 +192,29 @@ async def test_allowed_actor_types_validate(actor_type: str, expected: ActorType
 
 
 @pytest.mark.asyncio
-async def test_refusal_is_logged_without_token_material() -> None:
-    """Each refusal emits one WARNING with structured context, never the raw token (#874)."""
+async def test_malformed_jwt_shaped_token_is_typed_401() -> None:
+    """A 3-segment but undecodable token is refused typed, not a bare DecodeError (#880 review)."""
+    # ``looks_like_jwt`` is True for this (three non-empty dot segments), so it
+    # routes to the JWT path; ``get_unverified_header`` would raise jwt.DecodeError.
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+
+    with pytest.raises(TokenValidationError, match="jwt_malformed"):
+        await validator.validate("aaa.bbb.ccc")
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_exp_is_typed_401() -> None:
+    """A validly-signed token with an absurd ``exp`` is refused, not a 500 (#880 review)."""
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    token = _sign({"sub": "x", "exp": 10**20, "actor_type": "agent"})
+
+    with pytest.raises(TokenValidationError, match="jwt_exp_invalid"):
+        await validator.validate(token)
+
+
+@pytest.mark.asyncio
+async def test_claim_refusal_logs_single_jwt_refused_event() -> None:
+    """Claim-level refusals log exactly one ``jwt_refused`` with a ``reason`` (#874)."""
     validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
     exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
     token = _sign({"sub": "agnt_jwt", "iss": "issuer-a", "exp": exp, "actor_type": "gibberish"})
@@ -206,11 +228,50 @@ async def test_refusal_is_logged_without_token_material() -> None:
     warnings = [e for e in logs if e["log_level"] == "warning"]
     assert len(warnings) == 1
     event = warnings[0]
-    assert event["event"] == "jwt_actor_type_unknown"
+    assert event["event"] == "jwt_refused"
+    assert event["reason"] == "jwt_actor_type_unknown"
     assert event["iss"] == "issuer-a"
     assert event["sub"] == "agnt_jwt"
     assert event["actor_type"] == "gibberish"
-    assert not any(token in str(v) for v in event.values())
+
+
+@pytest.mark.asyncio
+async def test_verifier_refusal_logs_single_jwt_refused_event() -> None:
+    """A verifier-level refusal (bad signature) uses the same event shape (#880 review)."""
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    token = _sign({"sub": "x", "exp": exp, "actor_type": "agent"}, secret="wrong-secret")
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError),
+    ):
+        await validator.validate(token)
+
+    warnings = [e for e in logs if e["log_level"] == "warning"]
+    assert len(warnings) == 1
+    assert warnings[0]["event"] == "jwt_refused"
+    assert "reason" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_oversized_claim_values_are_truncated_in_logs() -> None:
+    """Attacker-influenced iss/sub/actor_type are bounded before hitting the log stream (#874)."""
+    validator = JwtTokenValidator(verifier=JwtVerifier(secret=_SECRET))
+    exp = int((datetime.now(UTC) + timedelta(minutes=5)).timestamp())
+    big = "z" * 500
+    token = _sign({"sub": big, "iss": big, "exp": exp, "actor_type": big})
+
+    with (
+        structlog.testing.capture_logs() as logs,
+        pytest.raises(TokenValidationError),
+    ):
+        await validator.validate(token)
+
+    event = next(e for e in logs if e["log_level"] == "warning")
+    assert len(event["iss"]) == _LOG_FIELD_MAXLEN
+    assert len(event["sub"]) == _LOG_FIELD_MAXLEN
+    assert len(event["actor_type"]) == _LOG_FIELD_MAXLEN
 
 
 @pytest.mark.asyncio
