@@ -1,8 +1,22 @@
 # Switching to an agent-owned profile should run operations as the agent
 
-> **Status:** deferred plan (not implemented). **Merge prerequisite:** this must
-> land before the local-agent-isolation branch merges — today the operator can
-> *see* an agent-owned profile but not switch to one.
+> **Status:** implemented, via a simpler approach than the re-exec design this
+> document originally proposed. Superseded by
+> [`single-agent-user-plan.md`](single-agent-user-plan.md) (Phase 5). See
+> **What actually shipped** below; the re-exec/confinement discussion further
+> down is retained as design history.
+>
+> **What actually shipped:** switching to an agent-owned profile is no longer
+> refused. `profile use <agent-profile>` sets the operator's own
+> `default_profile` to that name; profile-scoped commands then resolve *that
+> profile's* tokens from the agent store (`sessionPaths` → `agentSession`) and
+> call the control-plane **in-process as the operator** — loopback + the agent's
+> bearer token. Because these are authenticated HTTP calls that write nothing
+> outside the agent home (over which the operator holds a recursive rwX ACL),
+> **no re-exec as the agent Unix user and no filesystem confinement are
+> required** — the boundary that re-exec+confinement protects (the agent
+> mutating the operator's files) does not arise. `profile list`/`view`/picker
+> mark an active agent-owned profile like an operator one.
 
 ## Where we are today
 

@@ -356,6 +356,18 @@ Why the operator needs it:
   tree (`profile view`, `run <agent> --list-grants`) closes with a one-line footer
   showing how to take a grant back (`jentic run <agent> --revoke <dir>`), so
   revocation is always one command away from wherever access is shown.
+- **Run-as needs no re-exec because of this recursive ACL.** Switching the
+  operator's active profile to an agent-owned one (`jentic profile use
+  <agent-profile>`) is no longer refused: it sets the operator's own
+  `default_profile` to that name, and profile-scoped commands (`execute`, catalog)
+  then resolve *that* profile's tokens from the agent store and call the
+  control-plane **in-process as the operator** (loopback + the agent's bearer
+  token). Because the operator already holds this recursive **rwX** ACL over the
+  agent home, a token refresh writing back to `<agent-home>/.jentic/profiles` is a
+  legitimate operator write — so run-as needs **no** re-exec as the agent Unix user
+  and **no** filesystem confinement. This is distinct from `jentic run`, which
+  *does* launch the agent binary as the agent Unix user under the confinement
+  profile.
 
 This grant is **additive and idempotent** — re-applying only ever widens — so it
 is re-asserted on the account-reuse path where a prior `reset` may have left a
@@ -376,17 +388,19 @@ automatic.
 | **Grant** | in-launch **Allow**, or `jentic run <agent> --grant <dir>` | lays down Layer-1 traverse on new ancestors + Layer-2 rwx-leaf on the target |
 | **List** | `jentic run <agent> --list-grants` | none — shows recorded grants (danger-flagged) so access can't quietly sprawl |
 | **Revoke** | `jentic run <agent> --revoke <dir>` | drops the **leaf** allow only; **ancestor traverse grants stay** (kept for the next grant). With the leaf gone the agent can't read/write the dir — and, unless world-readable, can't reach its contents |
-| **Reset (named)** | `jentic reset <agent>` | full teardown of that agent: walks the ancestor chain and drops the traverse grants **too**, settles the home, removes the account + its config link |
-| **Reset (full)** | `jentic reset` | every configured agent, then the operator's own `~/.jentic` |
+| **Reset (profile)** | `jentic reset <profile>` | removes just that profile; the account's grants stay in place — **unless** it was the last agent-owned profile, in which case reset offers to tear the whole account down (walking the ancestor chain and dropping the traverse grants **too**, settling the home, removing the account) |
+| **Reset (full)** | `jentic reset` | the whole shared account (all ACLs, sudoers, Unix user, home, every agent profile), then the operator's own `~/.jentic` |
 
 The key revoke-vs-reset distinction: **`--revoke` intentionally leaves ancestor
 traverse ACLs in place** (so re-granting a sibling later is cheap), whereas a
-**full reset walks the ancestor chain and removes them**, returning the path to
-its pristine 700-closed state.
+**full account teardown walks the ancestor chain and removes them**, returning the
+path to its pristine 700-closed state.
 
-Recorded grants live in the operator's `~/.jentic/config.yaml` under the agent's
-entry; `reset`'s survey re-scans the on-disk ACLs live and flags any **drift**
-between what's recorded and what's actually present.
+Recorded grants live in the operator's `~/.jentic/config.yaml` as the single
+`agent_account:` object's `granted_dirs` list — one consolidated list, because the
+grants are one uid's ACLs regardless of which agent binary made them. `reset`'s
+survey re-scans the on-disk ACLs live and flags any **drift** between what's
+recorded and what's actually present.
 
 ---
 
