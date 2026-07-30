@@ -194,43 +194,36 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	// Registration is deliberately AFTER the agent-user decision: only now do we
-	// know WHERE to write the identity. For a freshly-created self-user agent it
-	// goes into the agent's own ~/.jentic (owned by the agent); otherwise into the
-	// operator's config as usual.
-	idPaths := a.Paths
-	if setup.created && setup.configDir != "" {
-		idPaths = config.Paths{Root: setup.configDir}
+	// know WHERE to write the identity. Reload config so an account just created by
+	// setupAgentUser is seen; resolveIdentityTarget then sends the identity to the
+	// shared agent home (chowned + checked out) whenever an account exists — whether
+	// created in this run or an earlier one — and to the operator's ~/.jentic
+	// otherwise. An identity already registered operator-side is translated over
+	// first, so enabling isolation carries an existing registration across.
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	target := a.resolveIdentityTarget(cfg)
+	if _, err := a.translateOperatorProfile(target, profileName); err != nil {
+		return err
 	}
 
 	// Step 1+2: register (DCR) and wait for human approval, reusing the exact
 	// register plumbing so behaviour stays identical.
-	tokens, err := a.bootstrapIdentity(ctx, idPaths, profileName, baseURL, opts)
+	tokens, err := a.bootstrapIdentity(ctx, target.paths, profileName, baseURL, opts)
 	if err != nil {
 		return err
 	}
 
-	// Step 3: make this the active profile so bare `jentic` commands use it — in
-	// the same config the identity was written to.
-	if !opts.noActive {
-		if err := config.SetDefaultProfile(idPaths, profileName); err != nil {
-			return fmt.Errorf("set default profile: %w", err)
-		}
-		fmt.Fprintln(a.Out, theme.Successf("Active profile set to %q", profileName))
+	// Step 3: check out the profile. For an agent-owned target this always sets the
+	// agent home's default (what `jentic run` injects) and never the operator's own
+	// default; for an operator-owned target it sets the operator default unless
+	// --no-activate. Then hand the agent its config dir.
+	if err := a.checkOutProfile(target, profileName, !opts.noActive); err != nil {
+		return err
 	}
-
-	// Hand the just-written identity to the agent: files the operator created in
-	// the agent's config dir are operator-owned, but the agent's 0600 key and
-	// tokens must be readable when it runs as itself. Best-effort — a chown failure
-	// is reported, not fatal (the identity is already provisioned).
-	if setup.created && setup.configDir != "" {
-		chown := localagent.ChownToAgentCmd(setup.agentUser, setup.configDir)
-		chown.Stdout, chown.Stderr = a.Out, a.Err
-		if err := chown.Run(); err != nil {
-			fmt.Fprintln(a.Out, theme.Warnf("could not hand the agent config to %s: %v", setup.agentUser, err))
-		} else {
-			fmt.Fprintln(a.Out, theme.Dim.Render("Agent identity written to its own config: "+setup.configDir))
-		}
-	}
+	a.handOffToAgent(target)
 
 	// Step 4: write the skill into the operator's native layout, reusing the
 	// shared skill-writing body. A user-edited managed block is reported but
@@ -289,14 +282,20 @@ func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
 
 	// Launch in the agent's own home (dir "" → login shell starts in $HOME). No
 	// working-dir grant is involved here, but launchAgent still loads the recorded
-	// grants to build the confinement profile, so pass the current config.
+	// grants to build the confinement profile, so pass the current account. The
+	// checked-out profile (agent-home default) is injected as JENTIC_PROFILE.
 	desc, _ := localagent.Lookup(setup.agentID)
 	binary := desc.Binary
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		return err
 	}
-	return a.launchAgent(ctx, cfg, setup.agentID, setup.agentUser, binary, "", nil)
+	acct, _ := cfg.AgentAccount()
+	sessionProfile, err := a.resolveSessionProfile("", acct)
+	if err != nil {
+		return err
+	}
+	return a.launchAgent(ctx, acct, setup.agentUser, binary, "", sessionProfile, nil)
 }
 
 // bootstrapIdentity registers the agent if needed and resolves a token pair. It

@@ -111,12 +111,26 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 		opts.profile, opts.baseURL, opts.name = profileName, baseURL, name
 	}
 
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
 	profileName, baseURL, err := a.resolveIdentity(opts.profile, opts.baseURL)
 	if err != nil {
 		return err
 	}
 
-	sess, err := agentauth.Open(a.Paths, profileName, baseURL)
+	// When a shared agent account exists, a new identity is provisioned into the
+	// agent's own home (chowned + checked out) rather than the operator's ~/.jentic.
+	// An identity that already exists operator-side is translated over first, so
+	// enabling isolation carries an existing registration across instead of minting
+	// a fresh agent_id that would need re-approval.
+	target := a.resolveIdentityTarget(cfg)
+	if _, err := a.translateOperatorProfile(target, profileName); err != nil {
+		return err
+	}
+
+	sess, err := agentauth.Open(target.paths, profileName, baseURL)
 	if err != nil {
 		return err
 	}
@@ -133,6 +147,13 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	if err != nil {
 		return err
 	}
+
+	// Check out the profile (agent-home default when agent-owned; register never
+	// touches the operator's own default) and hand the agent its config.
+	if err := a.checkOutProfile(target, profileName, false); err != nil {
+		return err
+	}
+	a.handOffToAgent(target)
 
 	fmt.Fprintln(a.Out, theme.Successf("Tokens saved to %s", sess.Profile.Dir()))
 	fmt.Fprintln(a.Out, theme.Field("access", shorten(tokens.AccessToken)))
