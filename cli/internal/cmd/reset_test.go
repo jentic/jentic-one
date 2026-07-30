@@ -151,7 +151,7 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	if idxIdentity < 0 || !strings.Contains(joined, "/Users/Shared/alice-local-agent/.jentic") {
 		t.Errorf("expected the agent identity dir to be torn down, got:\n%s", joined)
 	}
-	if !(idxLeaf >= 0 && idxLeaf < idxTraverse && idxTraverse < idxIdentity && idxIdentity < idxHome && idxHome < idxSudoers && idxSudoers < idxAccount) {
+	if idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
 		t.Fatalf("steps out of order: leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
 			idxLeaf, idxTraverse, idxIdentity, idxHome, idxSudoers, idxAccount, whats)
 	}
@@ -172,10 +172,12 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 
 	// Delete: the home step deletes instead of re-owning.
 	delSteps := buildResetSteps(plan, true)
-	delJoined := ""
+	var delBuilder strings.Builder
 	for _, s := range delSteps {
-		delJoined += s.What + "\n"
+		delBuilder.WriteString(s.What)
+		delBuilder.WriteString("\n")
 	}
+	delJoined := delBuilder.String()
 	if !strings.Contains(delJoined, "delete the agent's home") {
 		t.Errorf("delete-home run must delete the home, got:\n%s", delJoined)
 	}

@@ -273,7 +273,7 @@ func ownerTag(ref profileRef) string {
 // removed with sudo (the files are owned by the agent uid). When the removed
 // profile was the account's checked-out one, the agent-home default_profile
 // pointer is cleared so nothing references a profile that no longer exists.
-func (a *App) execProfileRemoval(ctx context.Context, cfg *config.FileConfig, ref profileRef, acct config.AgentAccount) error {
+func (a *App) execProfileRemoval(_ context.Context, cfg *config.FileConfig, ref profileRef, acct config.AgentAccount) error {
 	if ref.owned() {
 		c := localagent.RemoveAgentProfileCmd(acct.ConfigDir, ref.name)
 		c.Stdout, c.Stderr = a.Out, a.Err
@@ -651,12 +651,12 @@ func (a *App) printResetPlan(plan resetPlan) {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Directory ACLs to remove (agent access granted by jentic run):"))
-	any := false
+	found := false
 	for _, acl := range plan.acls {
 		if !acl.present {
 			continue
 		}
-		any = true
+		found = true
 		kind := "leaf grant"
 		if acl.traverse {
 			kind = "traverse   "
@@ -670,7 +670,7 @@ func (a *App) printResetPlan(plan resetPlan) {
 		}
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("    - (already gone) leaf grant  %s — recorded in config but no ACL on disk", acl.dir)))
 	}
-	if !any {
+	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("    - none found on disk"))
 	}
 

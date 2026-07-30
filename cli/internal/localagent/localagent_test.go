@@ -73,10 +73,12 @@ func TestCreateAccountCmds(t *testing.T) {
 	} else if !strings.Contains(joined, "useradd") {
 		t.Errorf("first Linux step should be useradd: %v", steps[0].Cmd.Args)
 	}
-	all := ""
+	var allBuilder strings.Builder
 	for _, s := range steps {
-		all += strings.Join(s.Cmd.Args, " ") + "\n"
+		allBuilder.WriteString(strings.Join(s.Cmd.Args, " "))
+		allBuilder.WriteString("\n")
 	}
+	all := allBuilder.String()
 	if !strings.Contains(all, "alice") {
 		t.Error("expected the operator to be granted access somewhere in the recipe")
 	}

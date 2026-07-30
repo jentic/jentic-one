@@ -295,7 +295,7 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 		dir = filepath.Clean(abs)
 	}
 
-	c := exec.CommandContext(ctx, binary, agentArgs...)
+	c := exec.CommandContext(ctx, binary, agentArgs...) //nolint:gosec // binary is resolved from the agent descriptor registry; agentArgs are the operator's own pass-through args for their coding agent.
 	c.Dir = dir
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// The operator's own active profile (flag < JENTIC_PROFILE < config default)
@@ -342,7 +342,7 @@ func (a *App) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
 		return fmt.Errorf("couldn't switch to the agent user %q — the launch needs to run as that "+
 			"account (every step uses `sudo -u %s`).\n"+
 			"  If you were asked for your password and cancelled, re-run and enter it. To skip the\n"+
-			"  prompt each time, enable passwordless launch during `jentic bootstrap` (or re-run it).",
+			"  prompt each time, enable passwordless launch during `jentic bootstrap` (or re-run it)",
 			agentUser, agentUser)
 	}
 	return nil
@@ -483,7 +483,7 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 		return "", nil // login shell starts in the agent's home
 	}
 
-	dir := ""
+	var dir string
 	if len(args) > 1 {
 		dir = args[1]
 	} else {
@@ -814,7 +814,7 @@ func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 	return nil
 }
 
-func (a *App) runRevoke(ctx context.Context, cfg *config.FileConfig, agentUser, dir string) error {
+func (a *App) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err

@@ -836,7 +836,7 @@ func readClaudeEnv(operatorHome string) map[string]string {
 	if operatorHome == "" {
 		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(operatorHome, ".claude", "settings.json"))
+	data, err := os.ReadFile(filepath.Join(operatorHome, ".claude", "settings.json")) //nolint:gosec // operatorHome is the current user's resolved home dir, not user input.
 	if err != nil {
 		return nil
 	}
@@ -1001,8 +1001,10 @@ func Classify(dir, operatorHome string) DangerVerdict {
 		for _, d := range sensitiveDotDirs {
 			root := filepath.Join(home, d)
 			if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
-				return DangerVerdict{HardBan,
-					"this is inside a sensitive dir in the operator's home (" + d + ") holding keys/credentials"}
+				return DangerVerdict{
+					HardBan,
+					"this is inside a sensitive dir in the operator's home (" + d + ") holding keys/credentials",
+				}
 			}
 		}
 	}
@@ -1017,8 +1019,10 @@ func Classify(dir, operatorHome string) DangerVerdict {
 	// SoftBan: the operator's own home root — holds secrets directly, but a
 	// subdirectory below it may still be granted.
 	if operatorHome != "" && abs == filepath.Clean(operatorHome) {
-		return DangerVerdict{SoftBan,
-			"this is the operator's home — granting here re-opens the credential boundary (keys, browser profile, SSH)"}
+		return DangerVerdict{
+			SoftBan,
+			"this is the operator's home — granting here re-opens the credential boundary (keys, browser profile, SSH)",
+		}
 	}
 
 	// SoftBan: any other human's home root (/Users/<name> or /home/<name>
@@ -1162,7 +1166,7 @@ func topLevelWorkspaces(dirs []string) []string {
 // the projects the operator has trusted (hasTrustDialogAccepted). Returns nil when
 // the file is absent or malformed — bringing workspaces over is best-effort.
 func readClaudeTrustedProjects(operatorHome string) []string {
-	data, err := os.ReadFile(filepath.Join(operatorHome, ".claude.json"))
+	data, err := os.ReadFile(filepath.Join(operatorHome, ".claude.json")) //nolint:gosec // operatorHome is the current user's resolved home dir, not user input.
 	if err != nil {
 		return nil
 	}
