@@ -101,9 +101,6 @@ describe('DiscoverPage', () => {
 		const user = userEvent.setup();
 		const scrollSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 		try {
-			// renderWithProviders wraps in <StrictMode> (matching src/main.tsx), so
-			// its dev-only double effect invocation must not defeat the initial-mount
-			// guard — a boolean "have I mounted" ref would fire scrollTo here.
 			renderWithProviders(<DiscoverPage />);
 			await screen.findByText('stripe.com');
 
