@@ -431,13 +431,41 @@ func execRouteDirs() []string {
 	return out
 }
 
-// sbplPath renders a filesystem path as an SBPL double-quoted string literal,
-// escaping the two characters that are special inside one (backslash and quote).
+// sbplPath renders a filesystem path as an SBPL double-quoted string literal. It
+// escapes the two characters special inside one (backslash and quote) AND strips
+// every ASCII control character — most importantly the newline, which would
+// otherwise end the current `(allow …)`/`(deny …)` form and let the remainder of
+// the path be parsed as a NEW top-level rule (e.g. a `(allow file* (subpath "/"))`
+// that reopens everything the profile just denied). The account name and grant
+// paths that reach here are already control-char-free (ValidateHomeDir /
+// ValidateGrantPath), so stripping is a belt-and-braces guarantee at the sink
+// itself: no unvalidated caller can turn a path into extra SBPL.
 func sbplPath(p string) string {
+	p = stripControlChars(p)
 	p = strings.ReplaceAll(p, `\`, `\\`)
 	p = strings.ReplaceAll(p, `"`, `\"`)
 	return `"` + p + `"`
 }
+
+// stripControlChars removes every ASCII control character (0x00–0x1f and 0x7f,
+// which includes newline, carriage return, and tab) from s. These are the
+// characters that let a value break out of a single SBPL rule line.
+func stripControlChars(s string) string {
+	if !strings.ContainsFunc(s, isControlChar) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if !isControlChar(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isControlChar reports whether r is an ASCII control character.
+func isControlChar(r rune) bool { return r < 0x20 || r == 0x7f }
 
 // ── Linux: bubblewrap ─────────────────────────────────────────────────────────
 

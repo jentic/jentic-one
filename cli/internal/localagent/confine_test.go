@@ -166,6 +166,33 @@ func TestSbplPathEscaping(t *testing.T) {
 	}
 }
 
+// A newline in a path must never survive into the profile: it would end the
+// current SBPL form and let the remainder parse as a new top-level rule. sbplPath
+// strips it (and every other control character) so the result is always a single
+// quoted literal on one line.
+func TestSbplPathStripsControlChars(t *testing.T) {
+	got := sbplPath("/tmp/a\n(allow file* (subpath \"/\"))\t\r/b")
+	// Newline, tab, and CR are removed; the injected rule text is now inert
+	// content inside a single quoted literal, not a second rule.
+	want := `"/tmp/a(allow file* (subpath \"/\"))/b"`
+	if got != want {
+		t.Errorf("sbplPath control-char stripping: got %s want %s", got, want)
+	}
+	if strings.Contains(got, "\n") {
+		t.Errorf("sbplPath result must not contain a newline: %q", got)
+	}
+}
+
+// Building a full profile from a path carrying a newline must not emit a second
+// line that re-allows anything — the whole point of stripping in sbplPath.
+func TestSandboxProfileNeutralisesNewlineInjection(t *testing.T) {
+	evil := "/Users/Shared/agent\n(allow file* (subpath \"/\"))"
+	p := SandboxProfile(evil, nil)
+	if strings.Contains(p, "\n(allow file* (subpath \"/\"))\n") {
+		t.Errorf("newline in agent home injected a standalone re-allow rule:\n%s", p)
+	}
+}
+
 // existingHomeRoot returns a human-home root that actually exists on the running
 // platform (/Users on macOS, /home on Linux) plus the two paths under it the test
 // uses. bwrapArgs only emits `--tmpfs <root>` for a root that Stat-exists, so a
