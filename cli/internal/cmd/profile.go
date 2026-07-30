@@ -84,24 +84,24 @@ func newProfileUseCmd(app *App) *cobra.Command {
 }
 
 // profileRef locates one discovered profile: its name, the Paths root the
-// profile store lives under, and (for an agent-owned profile) the agent id whose
-// home holds it. Operator-owned profiles have an empty agentID.
+// profile store lives under, and whether it lives in the shared agent account's
+// home. Operator-owned profiles have agent=false.
 type profileRef struct {
-	name    string
-	paths   config.Paths
-	agentID string
+	name  string
+	paths config.Paths
+	agent bool
 }
 
-// owned reports whether this profile lives in an agent user's home rather than
-// the operator's own ~/.jentic.
-func (r profileRef) owned() bool { return r.agentID != "" }
+// owned reports whether this profile lives in the agent account's home rather
+// than the operator's own ~/.jentic.
+func (r profileRef) owned() bool { return r.agent }
 
 // discoverProfiles returns every profile visible to the operator: those in the
-// operator's own ~/.jentic/profiles, plus those an agent registered as its own
-// Unix user wrote into its home (<ConfigDir>/profiles). The operator can read the
-// latter because account creation grants a recursive, inherited ACL over the
-// agent home (see localagent.GrantOperatorHomeCmd). A name that exists in more
-// than one source is kept as distinct refs, disambiguated for display by owner.
+// operator's own ~/.jentic/profiles, plus those written into the shared agent
+// account's home (<ConfigDir>/profiles) once that account exists. The operator
+// can read the latter because account creation grants a recursive, inherited ACL
+// over the agent home (see localagent.GrantOperatorHomeCmd). A name that exists
+// in both sources is kept as distinct refs, disambiguated for display by owner.
 func (a *App) discoverProfiles(cfg *config.FileConfig) ([]profileRef, error) {
 	var refs []profileRef
 
@@ -113,20 +113,16 @@ func (a *App) discoverProfiles(cfg *config.FileConfig) ([]profileRef, error) {
 		refs = append(refs, profileRef{name: n, paths: a.Paths})
 	}
 
-	// Agent-owned profiles, one source per configured agent with a ConfigDir.
-	for id, agent := range cfg.LocalAgents {
-		if agent.ConfigDir == "" {
-			continue // same-user agent: its identity is in the operator's config
-		}
-		ap := config.Paths{Root: agent.ConfigDir}
+	// Agent-owned profiles live in the single shared account's home.
+	if acct, ok := cfg.AgentAccount(); ok && acct.ConfigDir != "" {
+		ap := config.Paths{Root: acct.ConfigDir}
 		agentNames, aerr := profile.List(ap)
 		if aerr != nil {
 			// An unreadable agent home shouldn't sink the whole listing.
-			fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf("  (skipping agent %s profiles: %v)", id, aerr)))
-			continue
+			fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf("  (skipping agent profiles: %v)", aerr)))
 		}
 		for _, n := range agentNames {
-			refs = append(refs, profileRef{name: n, paths: ap, agentID: id})
+			refs = append(refs, profileRef{name: n, paths: ap, agent: true})
 		}
 	}
 
@@ -134,9 +130,33 @@ func (a *App) discoverProfiles(cfg *config.FileConfig) ([]profileRef, error) {
 		if refs[i].name != refs[j].name {
 			return refs[i].name < refs[j].name
 		}
-		return refs[i].agentID < refs[j].agentID
+		return !refs[i].agent && refs[j].agent
 	})
 	return refs, nil
+}
+
+// activeRef resolves the currently active profile name to the ref that commands
+// actually act on — the SAME precedence sessionPaths uses, so display marking
+// never diverges from run-as routing. An operator-owned profile wins a name tie.
+// Returns a zero ref (agent=false, empty name) when nothing is active or the
+// active name resolves to no discovered profile.
+func (a *App) activeRef(cfg *config.FileConfig) profileRef {
+	active := cfg.ResolvedProfileName("")
+	if active == "" {
+		return profileRef{}
+	}
+	ref, found, err := a.findProfileRef(cfg, active)
+	if err != nil || !found {
+		return profileRef{name: active}
+	}
+	return ref
+}
+
+// isActive reports whether ref is the one activeRef resolved to, comparing both
+// name and owner so an operator-owned and agent-owned profile of the same name
+// are never both marked active.
+func isActive(ref, active profileRef) bool {
+	return ref.name == active.name && ref.agent == active.agent && active.name != ""
 }
 
 // findProfileRef resolves a profile name to its ref among the discovered
@@ -177,14 +197,18 @@ func (a *App) profileList() error {
 		return nil
 	}
 
-	active := cfg.ResolvedProfileName("")
+	active := a.activeRef(cfg)
 	for _, ref := range refs {
-		// Only an operator-owned profile can be the active one (the active
-		// profile governs the operator's own commands).
-		a.printProfileRow(ref, ref.name == active && !ref.owned())
+		// The active profile can now be operator- OR agent-owned: checking out an
+		// agent-owned profile runs subsequent commands in-process as that agent.
+		a.printProfileRow(ref, isActive(ref, active))
 	}
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("active: ")+theme.Command.Render(active))
+	label := active.name
+	if active.owned() {
+		label += " (agent)"
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render("active: ")+theme.Command.Render(label))
 	return nil
 }
 
@@ -197,7 +221,7 @@ func (a *App) printProfileRow(ref profileRef, active bool) {
 	}
 	header := glyph + " " + theme.Accent.Render(ref.name)
 	if ref.owned() {
-		header += " " + theme.Dim.Render("(agent: "+ref.agentID+")")
+		header += " " + theme.Dim.Render("(agent)")
 	}
 	fmt.Fprintln(a.Out, header)
 
@@ -261,58 +285,35 @@ func (a *App) profileView(name string) error {
 	}
 
 	// Header + details (reuse the same summary the list row prints).
-	active := cfg.ResolvedProfileName("")
-	a.printProfileRow(ref, ref.name == active && !ref.owned())
+	a.printProfileRow(ref, isActive(ref, a.activeRef(cfg)))
 
-	// Which agent's access does this profile represent? An agent-owned profile
-	// names its agent directly; an operator profile is matched to a configured
-	// agent by its registered agent id, if any.
-	agentID, agent, ok := a.resolveProfileAgent(cfg, ref)
+	// Filesystem access is a property of the single shared agent account, not of
+	// the individual profile: whichever profile is checked out, a `jentic run`
+	// session reaches the same directories (the account's home + its grants). Show
+	// that access whenever an account exists.
+	acct, ok := cfg.AgentAccount()
 	fmt.Fprintln(a.Out)
-	if !ok {
-		fmt.Fprintln(a.Out, theme.Dim.Render("No local agent account is linked to this profile — no filesystem access to show."))
+	if !ok || !acct.AccountCreated {
+		fmt.Fprintln(a.Out, theme.Dim.Render("No local agent account is set up — no filesystem access to show."))
 		return nil
 	}
 
-	fmt.Fprintln(a.Out, theme.Heading.Render("Filesystem access")+" "+theme.Dim.Render("(agent: "+agentID+")"))
-	dirs := localagent.SessionAccess(agent.HomeDir, agent.GrantedDirs)
+	fmt.Fprintln(a.Out, theme.Heading.Render("Filesystem access")+" "+theme.Dim.Render("(agent: "+acct.User+")"))
+	dirs := localagent.SessionAccess(acct.HomeDir, acct.GrantedDirs)
 	fmt.Fprint(a.Out, renderAccessTree(dirs))
-	a.printRevokeHint(agentID)
+	a.printRevokeHint()
 	return nil
 }
 
 // printRevokeHint prints a small footer, under any directory-access tree, telling
 // the operator how to take a grant away again. It mirrors the "Granted (…)" line
 // the grant flow prints, so revocation is always one command away from wherever
-// access is shown. Kept generic (agentID may be empty) so callers that don't know
-// the agent still get the shape of the command.
-func (a *App) printRevokeHint(agentID string) {
-	id := agentID
-	if id == "" {
-		id = "<agent>"
-	}
+// access is shown. Grants are account-scoped (one set for every agent binary), so
+// the hint is generic over which `<agent>` binary the operator names.
+func (a *App) printRevokeHint() {
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("To take a directory away: `jentic run "+id+" --revoke <dir>` "+
+	fmt.Fprintln(a.Out, theme.Dim.Render("To take a directory away: `jentic run <agent> --revoke <dir>` "+
 		"(`--list-grants` to review)."))
-}
-
-// resolveProfileAgent finds the local-agent config entry whose access the profile
-// represents: for an agent-owned profile that is the owning agent; for an
-// operator profile it is the agent whose registered AgentID matches the profile's
-// metadata (if any). Returns the agent id (the LocalAgents key), the entry, and
-// whether a match was found.
-func (a *App) resolveProfileAgent(cfg *config.FileConfig, ref profileRef) (string, config.LocalAgent, bool) {
-	if ref.owned() {
-		entry, ok := cfg.LocalAgent(ref.agentID)
-		return ref.agentID, entry, ok
-	}
-	// An operator profile has no explicit agent link; the best-effort match is a
-	// configured local agent whose id equals the profile name (the common case,
-	// since `jentic run <id>` and the profile are usually named alike).
-	if entry, ok := cfg.LocalAgent(ref.name); ok && entry.User != "" {
-		return ref.name, entry, true
-	}
-	return "", config.LocalAgent{}, false
 }
 
 // renderAccessTree draws a high-level ASCII directory tree of everything a
@@ -395,19 +396,19 @@ func topLevelDirs(paths []string) []string {
 	return tops
 }
 
-// profileSwitch persists the default profile. With no name it opens the
-// interactive picker on a terminal, or errors on a pipe/CI. It works off the
+// profileSwitch persists the operator's default profile. With no name it opens
+// the interactive picker on a terminal, or errors on a pipe/CI. It works off the
 // same discovered set as `profile list` — operator-owned and agent-owned
-// profiles alike are listed.
+// profiles alike are listed and selectable.
 //
-// Selecting an AGENT-OWNED profile is not yet a completed action: making it the
-// operator's active profile is meant to run every subsequent operation AS the
-// agent's Unix user (a run-as mechanism). That is a substantial change tracked
-// as a merge prerequisite in
-// docs/security/local-agent/profile-run-as-agent-plan.md; until it lands, an
-// agent-owned profile is viewable and selectable in the picker but the switch
-// is refused with a pointer, rather than silently setting a default that would
-// not run-as.
+// Selecting an AGENT-OWNED profile checks it out for run-as: the operator's own
+// default_profile is set to that name, and profile-scoped commands (`execute`,
+// catalog) then resolve THAT profile's tokens from the agent store and call the
+// control-plane in-process as the operator (loopback + the agent's bearer; see
+// sessionPaths). The operator already holds a recursive ACL over the agent home,
+// so this needs no re-exec or confinement. This is independent of the agent
+// home's own default_profile, which is what `jentic run` injects as
+// $JENTIC_PROFILE when launching the agent under its own Unix user.
 func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
@@ -421,7 +422,7 @@ func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 		return errors.New("no profiles found — run `jentic register` to create one")
 	}
 
-	active := cfg.ResolvedProfileName("")
+	active := a.activeRef(cfg)
 
 	var chosen profileRef
 	if name == "" {
@@ -448,18 +449,14 @@ func (a *App) profileSwitch(_ *cobra.Command, name string) error {
 		chosen = ref
 	}
 
-	// Deferred: running operations as the agent user. See the plan doc above.
-	if chosen.owned() {
-		return fmt.Errorf("profile %q belongs to agent %q. Switching to it so operations run as that "+
-			"agent isn't supported yet — see docs/security/local-agent/profile-run-as-agent-plan.md. "+
-			"View it with `jentic profile view %s`", chosen.name, chosen.agentID, chosen.name)
-	}
-
 	if err := config.SetDefaultProfile(a.Paths, chosen.name); err != nil {
 		return err
 	}
 	name = chosen.name
 	fmt.Fprintln(a.Out, theme.Successf("Active profile set to %q", name))
+	if chosen.owned() {
+		fmt.Fprintln(a.Out, theme.Dim.Render("This is an agent-owned profile; commands run in-process as that agent."))
+	}
 	if env := os.Getenv(config.ProfileEnv); env != "" && env != name {
 		fmt.Fprintln(a.Out, theme.Warnf("note: $%s=%q overrides this for the current shell", config.ProfileEnv, env))
 	}
@@ -474,13 +471,13 @@ var errProfilePickAborted = errors.New("profile selection cancelled")
 // left and the highlighted profile's details on the right. It lists the same
 // discovered set as `profile list` (operator- and agent-owned alike),
 // pre-selects the active profile, and returns the chosen ref (or
-// errProfilePickAborted). Only an operator-owned profile matches `active`.
-func (a *App) pickProfile(refs []profileRef, active string) (profileRef, error) {
+// errProfilePickAborted). The active profile may itself be agent-owned.
+func (a *App) pickProfile(refs []profileRef, active profileRef) (profileRef, error) {
 	items := make([]profileItem, 0, len(refs))
 	start := 0
 	for i, r := range refs {
 		items = append(items, a.loadProfileItem(r))
-		if r.name == active && !r.owned() {
+		if isActive(r, active) {
 			start = i
 		}
 	}
@@ -497,12 +494,11 @@ func (a *App) pickProfile(refs []profileRef, active string) (profileRef, error) 
 }
 
 // profileItem is a profile's display summary, loaded once before the picker runs
-// so cursor movement re-renders without touching disk. owner is the agent id for
-// an agent-owned profile (empty for operator-owned), used to tag the row and
-// detail pane.
+// so cursor movement re-renders without touching disk. owned marks a profile that
+// lives in the shared agent account's home, used to tag the row and detail pane.
 type profileItem struct {
 	name       string
-	owner      string
+	owned      bool
 	registered bool
 	apiKey     bool
 	baseURL    string
@@ -513,10 +509,10 @@ type profileItem struct {
 }
 
 // loadProfileItem reads a profile's metadata and token state for the detail
-// pane, from the store the ref points at (the operator's ~/.jentic or an agent's
-// home).
+// pane, from the store the ref points at (the operator's ~/.jentic or the shared
+// agent account's home).
 func (a *App) loadProfileItem(ref profileRef) profileItem {
-	it := profileItem{name: ref.name, owner: ref.agentID}
+	it := profileItem{name: ref.name, owned: ref.agent}
 	p, err := profile.Open(ref.paths, ref.name)
 	if err != nil {
 		return it
@@ -552,7 +548,7 @@ const profileListWidth = 24
 type profilePicker struct {
 	items        []profileItem
 	cursor       int
-	active       string
+	active       profileRef
 	cursorAtDone int
 	aborted      bool
 	done         bool
@@ -611,13 +607,16 @@ func (p *profilePicker) View() string {
 
 // row renders one profile in the left list: a filled ring + accent name for the
 // hovered row, a hollow ring otherwise. An agent-owned profile carries an
-// "(agent: id)" tag; the persisted operator profile carries "(active)".
+// "(agent)" tag; the persisted active profile carries "(active)" (which may be
+// the agent-owned one once it is checked out for run-as).
 func (p *profilePicker) row(i int, it profileItem) string {
 	tag := ""
-	if it.owner != "" {
-		tag = " " + theme.Dim.Render("(agent: "+it.owner+")")
-	} else if it.name == p.active {
-		tag = " " + theme.Dim.Render("(active)")
+	isActiveRow := it.name == p.active.name && it.owned == p.active.agent && p.active.name != ""
+	if it.owned {
+		tag = " " + theme.Dim.Render("(agent)")
+	}
+	if isActiveRow {
+		tag += " " + theme.Dim.Render("(active)")
 	}
 	if i == p.cursor {
 		return theme.Success.Render(theme.SelectOn) + " " + theme.Accent.Render(it.name) + tag
@@ -628,8 +627,8 @@ func (p *profilePicker) row(i int, it profileItem) string {
 // profileDetailView renders the right-hand details for the hovered profile.
 func profileDetailView(it profileItem) string {
 	out := theme.Heading.Render(it.name)
-	if it.owner != "" {
-		out += " " + theme.Dim.Render("(agent: "+it.owner+")")
+	if it.owned {
+		out += " " + theme.Dim.Render("(agent)")
 	}
 	if !it.registered {
 		return out + "\n" + theme.Dim.Render("not registered — run `jentic register`")

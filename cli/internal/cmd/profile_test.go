@@ -66,7 +66,7 @@ func TestProfileListDiscoversAgentOwnedProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load cfg: %v", err)
 	}
-	cfg.SetLocalAgent("mybot", config.LocalAgent{User: "mybot-agent", ConfigDir: agentRoot})
+	cfg.SetAgentAccount(config.AgentAccount{User: "mybot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save cfg: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestProfileListDiscoversAgentOwnedProfiles(t *testing.T) {
 		t.Fatalf("profileList: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"botprofile", "agnt_bot", "(agent: mybot)"} {
+	for _, want := range []string{"botprofile", "agnt_bot", "(agent)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output missing agent-owned profile marker %q\n---\n%s", want, got)
 		}
@@ -129,10 +129,12 @@ func TestProfileViewShowsAccessTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load cfg: %v", err)
 	}
-	cfg.SetLocalAgent("bot", config.LocalAgent{
-		User:        "bot-agent",
-		HomeDir:     "/Users/Shared/bot-agent",
-		GrantedDirs: []string{"/opt/data", "/Users/alice/projects/api"},
+	cfg.SetAgentAccount(config.AgentAccount{
+		User:           "bot-agent",
+		AccountCreated: true,
+		Enabled:        true,
+		HomeDir:        "/Users/Shared/bot-agent",
+		GrantedDirs:    []string{"/opt/data", "/Users/alice/projects/api"},
 	})
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save cfg: %v", err)
@@ -152,9 +154,10 @@ func TestProfileViewShowsAccessTree(t *testing.T) {
 		// dev box and is a sanctioned exec route.
 		"/usr/bin/*",
 		"read-only",
-		// The access tree always tells the operator how to take access back, naming
-		// the agent so the command is copy-pasteable.
-		"jentic run bot --revoke",
+		// The access tree always tells the operator how to take access back. Grants
+		// are account-scoped (one set for every agent binary), so the hint is generic
+		// over which `<agent>` binary is named.
+		"jentic run <agent> --revoke",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("profile view missing %q\n---\n%s", want, got)
@@ -174,10 +177,12 @@ func TestProfileViewNoNameShowsActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load cfg: %v", err)
 	}
-	cfg.SetLocalAgent("bot", config.LocalAgent{
-		User:        "bot-agent",
-		HomeDir:     "/Users/Shared/bot-agent",
-		GrantedDirs: []string{"/opt/data"},
+	cfg.SetAgentAccount(config.AgentAccount{
+		User:           "bot-agent",
+		AccountCreated: true,
+		Enabled:        true,
+		HomeDir:        "/Users/Shared/bot-agent",
+		GrantedDirs:    []string{"/opt/data"},
 	})
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save cfg: %v", err)
@@ -188,7 +193,7 @@ func TestProfileViewNoNameShowsActive(t *testing.T) {
 		t.Fatalf("profileView(\"\"): %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"Filesystem access", "/opt/data/*", "jentic run bot --revoke"} {
+	for _, want := range []string{"Filesystem access", "/opt/data/*", "jentic run <agent> --revoke"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("bare profile view missing %q\n---\n%s", want, got)
 		}
@@ -243,11 +248,10 @@ func TestProfileUseMissingErrors(t *testing.T) {
 	}
 }
 
-// Switching to an agent-owned profile is refused until the run-as mechanism
-// lands (see docs/security/local-agent/profile-run-as-agent-plan.md): the
-// operator can view it but not make it active, and the operator's default must
-// be left unchanged.
-func TestProfileSwitchAgentOwnedRefused(t *testing.T) {
+// Switching to an agent-owned profile checks it out for run-as: the operator's
+// own default_profile is set to that name, so subsequent profile-scoped commands
+// resolve it from the agent store and run in-process as the agent.
+func TestProfileSwitchAgentOwnedChecksOut(t *testing.T) {
 	app := testApp(t)
 	seedProfile(t, app, "default", "")
 
@@ -263,21 +267,30 @@ func TestProfileSwitchAgentOwnedRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load cfg: %v", err)
 	}
-	cfg.SetLocalAgent("mybot", config.LocalAgent{User: "mybot-agent", ConfigDir: agentRoot})
+	cfg.SetAgentAccount(config.AgentAccount{User: "mybot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save cfg: %v", err)
 	}
 
-	err = app.profileSwitch(nil, "botprofile")
-	if err == nil || !strings.Contains(err.Error(), "run as that") {
-		t.Fatalf("expected run-as-deferred error, got %v", err)
+	if err := app.profileSwitch(nil, "botprofile"); err != nil {
+		t.Fatalf("switch to agent-owned profile: %v", err)
 	}
 	reloaded, err := config.Load(app.Paths)
 	if err != nil {
 		t.Fatalf("reload cfg: %v", err)
 	}
-	if reloaded.DefaultProfile == "botprofile" {
-		t.Errorf("agent-owned profile must not become the operator default")
+	if reloaded.DefaultProfile != "botprofile" {
+		t.Errorf("agent-owned profile should become the operator default, got %q", reloaded.DefaultProfile)
+	}
+
+	// The active profile now resolves to the agent store, so a session opens
+	// against the agent home rather than the operator's ~/.jentic.
+	paths, err := app.sessionPaths("botprofile")
+	if err != nil {
+		t.Fatalf("sessionPaths: %v", err)
+	}
+	if paths.Root != agentRoot {
+		t.Errorf("sessionPaths for a checked-out agent profile = %q, want agent home %q", paths.Root, agentRoot)
 	}
 }
 

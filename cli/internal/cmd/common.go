@@ -30,6 +30,29 @@ func (a *App) resolveIdentity(profileFlag, baseURLFlag string) (profileName, bas
 	return cfg.ResolvedProfileName(profileFlag), cfg.ResolvedBaseURLOr(baseURLFlag), nil
 }
 
+// sessionPaths resolves WHICH profile store the active profile lives in — the
+// operator's own ~/.jentic or the shared agent account's home. This is the
+// in-process run-as: when the checked-out/active profile is agent-owned, the
+// operator (who already has recursive ACL read on the agent home) opens the
+// session against the agent store — reading the agent's key/tokens and calling the
+// control-plane in-process as itself — with no re-exec or confinement, since these
+// are plain authenticated HTTP calls that write nothing to disk. An operator-owned
+// (or not-yet-created) profile resolves to the operator's own store as before.
+func (a *App) sessionPaths(profileName string) (config.Paths, error) {
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return config.Paths{}, err
+	}
+	ref, found, err := a.findProfileRef(cfg, profileName)
+	if err != nil {
+		return config.Paths{}, err
+	}
+	if found {
+		return ref.paths, nil
+	}
+	return a.Paths, nil
+}
+
 // agentSession resolves the active profile, opens its agent session, and
 // returns the resolved control-plane base URL plus a valid access token. It
 // fails with an actionable error when the profile has no registered agent or
@@ -39,7 +62,11 @@ func (a *App) agentSession(ctx context.Context, ident *identityOptions) (baseURL
 	if err != nil {
 		return "", "", err
 	}
-	sess, err := agentauth.Open(a.Paths, profileName, base)
+	paths, err := a.sessionPaths(profileName)
+	if err != nil {
+		return "", "", err
+	}
+	sess, err := agentauth.Open(paths, profileName, base)
 	if err != nil {
 		return "", "", err
 	}
@@ -62,7 +89,11 @@ func (a *App) agentSessionOpen(ident *identityOptions) (*agentauth.Session, stri
 	if err != nil {
 		return nil, "", err
 	}
-	sess, err := agentauth.Open(a.Paths, profileName, base)
+	paths, err := a.sessionPaths(profileName)
+	if err != nil {
+		return nil, "", err
+	}
+	sess, err := agentauth.Open(paths, profileName, base)
 	if err != nil {
 		return nil, "", err
 	}
