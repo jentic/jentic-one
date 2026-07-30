@@ -168,6 +168,10 @@ describe('AgentDetailPage', () => {
 		expect(await screen.findByText('rotate')).toBeInTheDocument();
 		expect(screen.getByText('approve')).toBeInTheDocument();
 		expect(screen.getByText('register')).toBeInTheDocument();
+		// The acting user resolves through the actor directory (ActorLabel) —
+		// a raw usr_… id in the feed means the directory wiring regressed.
+		expect(await screen.findAllByText(/Admin User/)).not.toHaveLength(0);
+		expect(screen.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
 	});
 
 	it('shows the pending access requests this agent has filed (#619)', async () => {
