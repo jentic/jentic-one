@@ -27,6 +27,7 @@ from jentic_one.admin.repos.refresh_token_repo import RefreshTokenRepository
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.repos.token_resolver import InProcessTokenResolver
 from jentic_one.broker.services.auth import DualTokenValidator, JwtTokenValidator, JwtVerifier
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
 
@@ -91,7 +92,12 @@ async def test_signed_jwt_validates_without_db_lookup(
     # No row seeded — a JWT must validate purely by signature.
     exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
     token = jwt.encode(
-        {"sub": "agnt_jwt", "exp": exp, "scopes": [BROKER_EXECUTE_SCOPE]},
+        {
+            "sub": "agnt_jwt",
+            "exp": exp,
+            "actor_type": "agent",
+            "scopes": [BROKER_EXECUTE_SCOPE],
+        },
         _JWT_SECRET,
         algorithm="HS256",
     )
@@ -105,8 +111,34 @@ async def test_signed_jwt_validates_without_db_lookup(
 async def test_unknown_opaque_token_is_rejected(
     admin_db: DatabaseSession, clean_access_tokens: None
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(TokenValidationError):
         await _dual(admin_db).validate("at_does_not_exist")
+
+
+async def test_jwt_without_actor_type_fails_closed(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A validly-signed JWT missing ``actor_type`` is refused, not assumed AGENT (#864)."""
+    exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
+    token = jwt.encode({"sub": "agnt_jwt", "exp": exp}, _JWT_SECRET, algorithm="HS256")
+
+    with pytest.raises(TokenValidationError, match="jwt_actor_type_missing"):
+        await _dual(admin_db).validate(token)
+
+
+async def test_jwt_claiming_toolkit_actor_type_is_rejected(
+    admin_db: DatabaseSession, clean_access_tokens: None
+) -> None:
+    """A signed JWT can't mint a toolkit identity with zero DB backing (#868)."""
+    exp = int((datetime.now(UTC) + timedelta(minutes=2)).timestamp())
+    token = jwt.encode(
+        {"sub": "tk_x", "exp": exp, "actor_type": "toolkit"},
+        _JWT_SECRET,
+        algorithm="HS256",
+    )
+
+    with pytest.raises(TokenValidationError, match="jwt_actor_type_not_allowed"):
+        await _dual(admin_db).validate(token)
 
 
 async def _seed_pair_and_grants(
