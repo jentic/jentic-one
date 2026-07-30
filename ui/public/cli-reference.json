@@ -1363,6 +1363,11 @@
               "usage": "never copy the operator's agent config into the agent's home"
             },
             {
+              "name": "profile",
+              "type": "string",
+              "usage": "launch with this agent profile checked out for the session (overrides the checked-out default)"
+            },
+            {
               "name": "revoke",
               "type": "string",
               "usage": "revoke the agent's access to the given directory, then exit"
@@ -1385,10 +1390,10 @@
         {
           "name": "reset",
           "path": "jentic reset",
-          "use": "reset [agent]",
-          "short": "Tear down a local agent: account, home, ACLs, sudoers, and config entry",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`:\nit removes the system state a local agent accumulated — the dedicated Unix\naccount, the named-user ACLs stamped across the operator's home (both the\nleaf read/write grants and the execute-only ancestor traverse grants), the\npasswordless-launch sudoers drop-in, and the local_agents entry in your\nconfig. The agent's home is PRESERVED by default (re-owned to you); deleting\nit takes a separate, explicit confirmation.\n\nScope follows the argument. `jentic reset \u003cagent\u003e` tears down just that\nagent and removes only its links from your config. `jentic reset` with no\nagent is a full clean slate: it tears down EVERY configured local agent and\nthen also wipes your OWN jentic CLI config — every profile (keys, tokens,\nregistration) under ~/.jentic/profiles and the default profile. That last\npart destroys your own identity, so it takes its own separate confirmation\nand is scoped to the account you run reset from.\n\nDeleting an account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
-          "example": "  jentic reset                              # full clean slate: every agent + your own config\n  jentic reset claude                       # just this agent and its config links\n  jentic reset claude --force               # non-interactive; keeps the home\n  jentic reset claude --force --delete-home # non-interactive; deletes the home",
+          "use": "reset [profile]",
+          "short": "Tear down the agent account, or remove a single profile",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`.\nThere is ONE dedicated agent Unix account shared by every profile, so reset\nworks at two granularities.\n\n`jentic reset` with no argument is a full clean slate: it tears down the\nagent account — the dedicated Unix user, the named-user ACLs stamped across\nyour home (both the leaf read/write grants and the execute-only ancestor\ntraverse grants), the passwordless-launch sudoers drop-in, and every agent\nprofile in the account's home — and then also wipes your OWN jentic CLI\nconfig: every profile (keys, tokens, registration) under ~/.jentic/profiles\nand the default profile. The account's home is PRESERVED by default (re-owned\nto you); deleting it takes a separate, explicit confirmation.\n\n`jentic reset \u003cprofile\u003e` removes just that one profile. If it is an\nagent-owned profile and the LAST one in the account, reset offers to also\ntear down the whole account (grants, sudoers, Unix user, home) — otherwise\nthe account and its grants are left in place.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "example": "  jentic reset                              # full clean slate: the account + your own config\n  jentic reset work                         # just the 'work' profile\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
             {
