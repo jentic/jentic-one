@@ -12,7 +12,15 @@
 import { useMemo, useState } from 'react';
 import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, Link as LinkIcon, SearchX, Shield } from 'lucide-react';
-import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
+import {
+	AppLink,
+	Badge,
+	EmptyState,
+	ErrorAlert,
+	LoadingState,
+	SearchInput,
+	ToolkitGlyph,
+} from '@/shared/ui';
 import { useLinkableToolkits } from '@/modules/agents/api';
 import type { LinkableToolkit } from '@/modules/agents/api';
 import { ROUTES } from '@/shared/app/routes';
@@ -164,9 +172,12 @@ function ToolkitRow({
 			data-suspended={isSuspended || undefined}
 			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
 		>
-			<div className="bg-primary/10 text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-				<Shield className="h-4 w-4" />
-			</div>
+			{/* Same identity tile as the toolkit list cards. */}
+			<ToolkitGlyph
+				name={toolkit.name}
+				size="sm"
+				className={isSuspended ? 'opacity-50 grayscale' : undefined}
+			/>
 			<div className="min-w-0 flex-1">
 				<span className="text-foreground block truncate text-sm font-medium">
 					{toolkit.name}

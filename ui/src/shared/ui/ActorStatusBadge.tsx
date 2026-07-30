@@ -11,6 +11,7 @@
  *
  * The values mirror the backend's `ActorStatus` enum (`shared/models/actors.py`).
  */
+import type { HTMLAttributes } from 'react';
 import { Badge } from '@/shared/ui/Badge';
 import type { Variant as BadgeVariant } from '@/shared/ui/Badge';
 
@@ -65,13 +66,14 @@ export function toActorStatus(status: string): ActorStatus {
 export function ActorStatusBadge({
 	status,
 	className,
+	...props
 }: {
 	status: ActorStatus | string;
 	className?: string;
-}) {
+} & HTMLAttributes<HTMLSpanElement>) {
 	const s = toActorStatus(status);
 	return (
-		<Badge variant={STATUS_BADGE_VARIANT[s]} className={className}>
+		<Badge variant={STATUS_BADGE_VARIANT[s]} className={className} {...props}>
 			{STATUS_LABELS[s]}
 		</Badge>
 	);

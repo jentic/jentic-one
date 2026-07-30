@@ -187,8 +187,22 @@ class ApiKeyUpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     key: str | None = None
-    location: CredentialLocation | None = None
-    field_name: str | None = None
+    location: CredentialLocation | None = Field(
+        default=None,
+        description=(
+            "Immutable after create. Accepted for backward compatibility; if "
+            "provided it must equal the stored value, otherwise the request is "
+            "rejected. Recreate the credential to change the injection binding."
+        ),
+    )
+    field_name: str | None = Field(
+        default=None,
+        description=(
+            "Immutable after create. Accepted for backward compatibility; if "
+            "provided it must equal the stored value, otherwise the request is "
+            "rejected. Recreate the credential to change the parameter name."
+        ),
+    )
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 

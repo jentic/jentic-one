@@ -64,7 +64,7 @@ export interface ScopesCardProps {
 const HIGH_PRIVILEGE_SCOPES = new Set<string>(['org:admin']);
 
 /** Map the platform permission catalogue into the picker's scope shape. */
-function catalogueToScopes(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
+export function catalogueToScopes(catalogue: PermissionCatalogEntry[]): EnhancedScope[] {
 	return catalogue.map((p) => ({
 		scope: p.name,
 		description: p.description,

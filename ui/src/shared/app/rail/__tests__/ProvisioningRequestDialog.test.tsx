@@ -309,3 +309,267 @@ describe('ProvisioningRequestDialog — cancel with orphans', () => {
 		expect(createCalls).toBe(1);
 	});
 });
+
+/** A composite: two no-auth chains + a scope grant, as the CLI now files it. */
+function compositeRequest(): AccessRequest {
+	const refA = { vendor: 'open-meteo-com', name: 'forecast' };
+	const refB = { vendor: 'country-is', name: 'country-is' };
+	const chain = (ref: { vendor: string; name: string }, p: string) => [
+		{
+			id: `${p}1`,
+			resource_type: 'toolkit',
+			action: 'create',
+			status: 'pending',
+			resource_reference: ref,
+		},
+		{
+			id: `${p}2`,
+			resource_type: 'credential',
+			action: 'provision',
+			status: 'pending',
+			resource_reference: { ...ref, security_scheme: 'no_auth' },
+		},
+		{
+			id: `${p}3`,
+			resource_type: 'credential',
+			action: 'bind',
+			status: 'pending',
+			resource_reference: ref,
+		},
+		{
+			id: `${p}4`,
+			resource_type: 'toolkit',
+			action: 'bind',
+			status: 'pending',
+			resource_reference: ref,
+		},
+	];
+	return {
+		id: 'arq_composite',
+		actor_id: AGENT_ID,
+		status: 'pending',
+		requested_by: AGENT_ID,
+		created_by: AGENT_ID,
+		approve_url: 'https://app.example.test/access-requests/arq_composite',
+		reason: 'two APIs, one job',
+		filed_at: new Date().toISOString(),
+		expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+		items: [
+			...chain(refA, 'a'),
+			...chain(refB, 'b'),
+			{
+				id: 's1',
+				resource_type: 'scope',
+				action: 'grant',
+				status: 'pending',
+				resource_id: 'catalog:import',
+			},
+		],
+	} as AccessRequest;
+}
+
+describe('ProvisioningRequestDialog — multi-chain composite', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		resetProvisioningWizardDrafts();
+	});
+	afterEach(() => clearToken());
+
+	function stubComposite(opts?: {
+		onAmend?: (body: unknown) => void;
+		onDecide?: (body: unknown) => void;
+	}) {
+		const request = compositeRequest();
+		let created = 0;
+		stubDirectoryAndRequest(request);
+		worker.use(
+			http.post('/toolkits', () => {
+				created += 1;
+				return HttpResponse.json({
+					toolkit: {
+						toolkit_id: `tk_chain_${created}`,
+						name: `Chain toolkit ${created}`,
+					},
+					api_key: 'k',
+				});
+			}),
+			// Both chains are no-auth: the submit path auto-creates a NO_AUTH
+			// credential per fulfilled chain.
+			http.post('/credentials', () =>
+				HttpResponse.json({
+					credential: { credential_id: `cred_noauth_${created}` },
+				}),
+			),
+			http.post('/access-requests/*', async ({ request: httpReq }) => {
+				const url = new URL(httpReq.url);
+				const body = await httpReq.json();
+				if (url.pathname.endsWith(':amend')) {
+					opts?.onAmend?.(body);
+					return HttpResponse.json(request);
+				}
+				if (url.pathname.endsWith(':decide')) {
+					opts?.onDecide?.(body);
+					const decisions = (body as { items: { item_id: string; decision: string }[] })
+						.items;
+					const byId = new Map(decisions.map((d) => [d.item_id, d.decision]));
+					return HttpResponse.json({
+						...request,
+						status: decisions.every((d) => d.decision === 'approved')
+							? 'approved'
+							: 'partially_approved',
+						items: request.items.map((it) => ({
+							...it,
+							status: byId.get(it.id) ?? it.status,
+						})),
+					});
+				}
+				return new HttpResponse(null, { status: 404 });
+			}),
+		);
+		return request;
+	}
+
+	it('walks both chains, then approves everything in one amend + one decide', async () => {
+		let amendBody: unknown;
+		let decideBody: unknown;
+		const request = stubComposite({
+			onAmend: (b) => (amendBody = b),
+			onDecide: (b) => (decideBody = b),
+		});
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Chain 1 (no-auth): toolkit → rules → "Next API".
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /Next API/ }));
+
+		// Chain 2: toolkit → rules → Review.
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+
+		// Review lists both chains and the extra scope grant. (The APIs also
+		// appear as subtitle badges, so assert on multiplicity, not uniqueness.)
+		expect((await screen.findAllByText('open-meteo-com/forecast')).length).toBeGreaterThan(1);
+		expect(screen.getAllByText('country-is/country-is').length).toBeGreaterThan(1);
+		expect(screen.getByText(/scope catalog:import/)).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// One amend carrying BOTH chains' bind items, each keyed to its own
+		// toolkit — never cross-wired.
+		const amendments = (
+			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
+		).items;
+		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
+		expect(byItem.get('a3')?.to_id).toBe('tk_chain_1');
+		expect(byItem.get('a4')?.resource_id).toBe('tk_chain_1');
+		expect(byItem.get('b3')?.to_id).toBe('tk_chain_2');
+		expect(byItem.get('b4')?.resource_id).toBe('tk_chain_2');
+
+		// One decide approving every pending item, the scope grant included.
+		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
+		expect(decisions).toHaveLength(9);
+		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
+	});
+
+	it('skipping a chain denies its items and grants the rest', async () => {
+		let amendBody: unknown;
+		let decideBody: unknown;
+		const request = stubComposite({
+			onAmend: (b) => (amendBody = b),
+			onDecide: (b) => (decideBody = b),
+		});
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Fulfil chain 1, then SKIP chain 2 straight from its first step.
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /Next API/ }));
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
+
+		// Review flags the skipped chain and still allows submitting.
+		expect(await screen.findByText(/skipped — will be denied/)).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// Only chain 1 was amended…
+		const amendments = (amendBody as { items: { item_id: string }[] }).items;
+		expect(amendments.map((a) => a.item_id).sort()).toEqual(['a3', 'a4']);
+		// …and the decide denies exactly chain 2's four items.
+		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
+		const denied = decisions.filter((d) => d.decision === 'denied').map((d) => d.item_id);
+		expect(denied.sort()).toEqual(['b1', 'b2', 'b3', 'b4']);
+		expect(decisions.filter((d) => d.decision === 'approved')).toHaveLength(5);
+	});
+
+	it('backing into a skipped chain lets the operator include it again', async () => {
+		let decideBody: unknown;
+		const request = stubComposite({ onDecide: (b) => (decideBody = b) });
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Fulfil chain 1, skip chain 2, then change your mind from review.
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /Next API/ }));
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Skip this API/ }));
+		await screen.findByText(/skipped — will be denied/);
+		await user.click(screen.getByRole('button', { name: /Back/ }));
+
+		// The skipped chain's step offers the un-skip affordance; taking it
+		// restores the normal create flow, and fulfilment proceeds as usual.
+		await user.click(await screen.findByRole('button', { name: /Include this API/ }));
+		await user.click(await screen.findByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+		expect(screen.queryByText(/skipped — will be denied/)).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// Nothing is denied — the un-skipped chain was fulfilled and approved.
+		const decisions = (decideBody as { items: { decision: string }[] }).items;
+		expect(decisions).toHaveLength(9);
+		expect(decisions.every((d) => d.decision === 'approved')).toBe(true);
+	});
+
+	it('persists the draft to sessionStorage so a same-tab redirect can resume', async () => {
+		const request = stubComposite();
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await screen.findByRole('button', { name: /Next API/ });
+
+		// The draft (with the created toolkit id) must be in sessionStorage —
+		// a module-scoped map would not survive the OAuth popup-blocked
+		// same-tab redirect fallback. (The persist effect is passive; wait
+		// for it to flush.)
+		await waitFor(() => {
+			expect(sessionStorage.getItem('jentic.provisioningWizardDrafts')).not.toBeNull();
+		});
+		const raw = sessionStorage.getItem('jentic.provisioningWizardDrafts');
+		const stored = JSON.parse(raw!) as Record<
+			string,
+			{ chains: { key: string; toolkitId: string | null }[] }
+		>;
+		const draft = stored[request.id];
+		expect(draft).toBeDefined();
+		expect(draft.chains[0].toolkitId).toBe('tk_chain_1');
+		expect(draft.chains[0].key).toContain('open-meteo-com');
+	});
+});

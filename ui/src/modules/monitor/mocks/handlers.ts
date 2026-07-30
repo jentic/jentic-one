@@ -263,6 +263,37 @@ const USAGE_TOP: Record<string, Array<Record<string, unknown>>> = {
 			avg_ms: 520,
 			trend: [2, 3, 2, 4, 2, 3, 2, 3, 2, 3, 2, 2],
 		},
+		// Keys mirroring the agents-module store seeds (agnt_*/sva_*) so the
+		// fleet table's activity columns (which read this same aggregate with
+		// group_by=agent) light up in mocked dev and tests. Extra rows here are
+		// harmless to the Monitor Breakdown — it just lists more actors.
+		{
+			key: 'agent/agnt_active_1',
+			label: 'agent/agnt_active_1',
+			total: 1204,
+			success: 1192,
+			failed: 12,
+			avg_ms: 410,
+			trend: [64, 82, 71, 96, 88, 104, 91, 118, 97, 122, 133, 138],
+		},
+		{
+			key: 'agent/agnt_disabled_1',
+			label: 'agent/agnt_disabled_1',
+			total: 96,
+			success: 71,
+			failed: 25,
+			avg_ms: 980,
+			trend: [22, 18, 15, 12, 10, 8, 6, 3, 2, 0, 0, 0],
+		},
+		{
+			key: 'service_account/sva_active_1',
+			label: 'service_account/sva_active_1',
+			total: 336,
+			success: 334,
+			failed: 2,
+			avg_ms: 210,
+			trend: [28, 28, 27, 29, 28, 28, 27, 28, 29, 28, 28, 29],
+		},
 		// Rows with NULL actor columns: `actor_type || '/' || actor_id` is SQL
 		// NULL, so the key/label arrive as null. The UI must surface these as
 		// an "Unattributed" bucket, not drop them.

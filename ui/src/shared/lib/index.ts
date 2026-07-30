@@ -47,11 +47,17 @@ export {
 	planAuthType,
 	planIsNoAuth,
 	planSteps,
+	planChains,
+	chainAuthType,
+	chainIsNoAuth,
+	chainItems,
 	findItem,
 	itemKey,
 	FULFILMENT_ITEM_TYPES,
 	type PlanApiReference,
 	type PlanStep,
+	type PlanChain,
+	type PlanShape,
 } from '@/shared/lib/provisioningPlan';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope

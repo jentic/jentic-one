@@ -3,12 +3,13 @@
  *
  * A Sheet (not a Dialog) keeps the list context visible while filling the form.
  * Fields reset only after a successful create; a
- * dismissal preserves the draft. The new account lands in `pending` and must be
- * approved from the table.
+ * dismissal preserves the draft. Unlike agents, service accounts are approved
+ * inside the create transaction — the new account is active immediately.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Textarea, SheetPrimitive } from '@/shared/ui';
 import { useCreateServiceAccount } from '@/modules/agents/api';
+import { InitialScopesField } from '@/modules/agents/components/InitialScopesField';
 
 interface ServiceAccountCreateSheetProps {
 	open: boolean;
@@ -18,6 +19,7 @@ interface ServiceAccountCreateSheetProps {
 export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreateSheetProps) {
 	const [name, setName] = useState('');
 	const [description, setDescription] = useState('');
+	const [scopes, setScopes] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const nameRef = useRef<HTMLInputElement>(null);
 	const create = useCreateServiceAccount();
@@ -36,9 +38,11 @@ export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreat
 			await create.mutateAsync({
 				name: trimmed,
 				description: description.trim() || null,
+				scopes,
 			});
 			setName('');
 			setDescription('');
+			setScopes([]);
 			setError(null);
 			onClose();
 		} catch {
@@ -58,8 +62,8 @@ export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreat
 			<header className="border-border border-b p-5">
 				<h2 className="text-foreground text-lg font-semibold">Create service account</h2>
 				<p className="text-muted-foreground mt-1 text-sm">
-					Service accounts represent non-human callers. New accounts start as pending and
-					need approval.
+					Service accounts represent non-human callers. New accounts are approved at
+					creation and ready to use immediately.
 				</p>
 			</header>
 
@@ -87,6 +91,7 @@ export function ServiceAccountCreateSheet({ open, onClose }: ServiceAccountCreat
 						maxLength={1024}
 					/>
 				</div>
+				<InitialScopesField selected={scopes} onChange={setScopes} idPrefix="sa-create" />
 			</div>
 
 			<footer className="border-border flex items-center justify-end gap-2 border-t p-5">

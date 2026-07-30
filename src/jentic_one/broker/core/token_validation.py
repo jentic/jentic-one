@@ -8,6 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.broker.protocols import TokenResolverProtocol
 
@@ -50,7 +51,11 @@ class CachedTokenValidator:
             raise ValueError("max_entries must be >= 1")
 
     async def validate(self, token: str) -> Identity:
-        """Resolve and validate a token. Raises ValueError if inactive/expired/unknown."""
+        """Resolve and validate a token.
+
+        Raises ``TokenValidationError`` if the token is inactive, expired, or
+        unknown — the broker edge maps that to a uniform 401.
+        """
         cache_key = hashlib.sha256(token.encode()).hexdigest()
         now = time.monotonic()
 
@@ -73,11 +78,11 @@ class CachedTokenValidator:
 
     def _check_active(self, resolved: Identity | None) -> Identity:
         if resolved is None:
-            raise ValueError("unknown_token")
+            raise TokenValidationError("unknown_token")
         if not resolved.active:
-            raise ValueError("token_inactive")
+            raise TokenValidationError("token_inactive")
         if resolved.expires_at is not None and resolved.expires_at <= datetime.now(UTC):
-            raise ValueError("token_expired")
+            raise TokenValidationError("token_expired")
         return resolved
 
     def invalidate(self, token: str) -> None:

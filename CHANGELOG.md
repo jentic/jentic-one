@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.0](https://github.com/jentic/jentic-one/compare/v0.22.0...v0.23.0) (2026-07-29)
+
+
+### Features
+
+* **broker:** execute credential attribution + upstream passthrough fidelity ([#791](https://github.com/jentic/jentic-one/issues/791)) ([0379a0d](https://github.com/jentic/jentic-one/commit/0379a0d6a38227fdca65d3d2c499685c444db8a3))
+* **control:** expose public GET /instance backend-identity endpoint ([#702](https://github.com/jentic/jentic-one/issues/702)) ([#733](https://github.com/jentic/jentic-one/issues/733)) ([0a2fed7](https://github.com/jentic/jentic-one/commit/0a2fed767a6c0804726c8710809b2409da4e84a7))
+* **release:** publish app image to GHCR + document self-hosted deploy ([#732](https://github.com/jentic/jentic-one/issues/732)) ([7ac00a0](https://github.com/jentic/jentic-one/commit/7ac00a0ef197943caf5d9017229010f6df96ba30))
+* theme-3 access-request residuals + broker visibility ([#778](https://github.com/jentic/jentic-one/issues/778)) ([#792](https://github.com/jentic/jentic-one/issues/792)) ([d4a6408](https://github.com/jentic/jentic-one/commit/d4a64082de1baf18d97c455d226253d9b7cd91b4))
+* **toolkits:** rebuild the toolkit pages as a tabbed safety console ([1ab0e34](https://github.com/jentic/jentic-one/commit/1ab0e34a31db6344b18a65444aae3c952ab4cdf6))
+
+
+### Bug Fixes
+
+* **cli/install,broker:** reuse secrets on reinstall; map DecryptionError to 424 ([#794](https://github.com/jentic/jentic-one/issues/794)) ([3138814](https://github.com/jentic/jentic-one/commit/313881404c78a5ac3a4c36fa0f0d4ff245728f86))
+
 ## [0.22.0](https://github.com/jentic/jentic-one/compare/v0.21.0...v0.22.0) (2026-07-29)
 
 
