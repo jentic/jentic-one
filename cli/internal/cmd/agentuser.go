@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/user"
@@ -110,6 +111,17 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
 	}
 
+	// The operator opted into isolation, so the machine must be able to confine the
+	// agent's sessions BEFORE any privileged account-creation runs — a created
+	// account that can never be launched under confinement is a dead end. If a
+	// prerequisite is missing we stop the account-creation path here with the exact
+	// install command, then offer to continue same-user now rather than force a full
+	// re-run. Either branch records AccountCreated=false and returns cleanly, so the
+	// missing dependency never blocks the rest of bootstrap (identity, skills).
+	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
+		return a.agentUserPrereqGate(agentID, defaultName, missing)
+	}
+
 	// Resolve WHICH operator files each toggle would port, so the dialog can show
 	// the operator exactly what will be copied instead of a generic prompt. Both
 	// are resolved from the operator's home up front (the same sources the seeding
@@ -157,6 +169,61 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		homeDir:   fields.homeDir,
 		configDir: configDir,
 	}, nil
+}
+
+// agentUserPrereqGate handles the "operator wants isolation but the machine is
+// missing a prerequisite" case. It prints each missing dependency with the exact
+// install command, then offers — inline — to continue same-user right now so the
+// operator need not re-run the whole flow just to proceed. The alternative it
+// spells out is to install the dependency and re-run for full agent isolation.
+//
+// It never runs a package manager itself (install commands are printed, not
+// executed) and never returns a hard error for the missing dependency: whichever
+// branch the operator picks, the account is recorded as not-created and setup
+// hands back cleanly so the rest of bootstrap continues.
+func (a *App) agentUserPrereqGate(agentID, defaultName string, missing []localagent.Prereq) (agentSetup, error) {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Warnf(
+		"Can't isolate the agent yet — this machine is missing what full agent isolation needs:"))
+	for _, p := range missing {
+		fmt.Fprintln(a.Out, theme.Dim.Render("  • "+p.Reason))
+		if p.Hint != "" {
+			fmt.Fprintln(a.Out, theme.Dim.Render("    "+p.Hint))
+		}
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render(
+		"Install the above and re-run to isolate the agent, or continue same-user now."))
+
+	// Record the declined-by-necessity account up front so that even an aborted
+	// prompt (Ctrl-C) leaves the same consistent not-created state as an explicit
+	// "no".
+	a.recordAgentAccount(defaultName, "", "", false)
+
+	sameUser := true
+	if err := install.RunConfirm(huh.NewConfirm().
+		Title("Continue same-user for now?").
+		Description("You can install the prerequisites later and re-run to isolate the agent.").
+		Affirmative("Yes, continue same-user").
+		Negative("No, I'll install and re-run").
+		Value(&sameUser)); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			// Aborting the follow-up prompt is not a failure of the step; treat it
+			// like declining to continue and exit the isolation path cleanly.
+			return agentSetup{agentID: agentID, agentUser: defaultName}, nil
+		}
+		return agentSetup{}, err
+	}
+
+	// Either choice continues bootstrap same-user (the account was not created);
+	// only the parting message differs so the operator's intent is reflected back.
+	if sameUser {
+		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
+			"Keeping same-user. Once the prerequisites are installed, isolate with `jentic run %s`.", agentID)))
+	} else {
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"Install the prerequisites above, then re-run to isolate the agent."))
+	}
+	return agentSetup{agentID: agentID, agentUser: defaultName}, nil
 }
 
 // createAgentAccount runs the privileged account-creation recipe (idempotently),
