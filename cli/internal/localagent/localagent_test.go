@@ -649,6 +649,56 @@ func TestProviderConfigPaths(t *testing.T) {
 	}
 }
 
+func TestSafeSeedSourcesRejectsSourcesEscapingHome(t *testing.T) {
+	home := t.TempDir()
+	// A real config dir under the home — safe.
+	awsDir := filepath.Join(home, ".aws")
+	if err := os.MkdirAll(awsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink under the home that points OUTSIDE it — unsafe: EvalSymlinks
+	// resolves it to the outside target, which is not under the home.
+	outside := t.TempDir()
+	escaping := filepath.Join(home, ".config")
+	if err := os.Symlink(outside, escaping); err != nil {
+		t.Fatal(err)
+	}
+	// An absolute path fully outside the home (e.g. GOOGLE_APPLICATION_CREDENTIALS
+	// pointing at /etc) — unsafe.
+	extern := filepath.Join(outside, "key.json")
+	if err := os.WriteFile(extern, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	safe, skipped := SafeSeedSources(home, []string{awsDir, escaping, extern})
+	if len(safe) != 1 || safe[0] != awsDir {
+		t.Fatalf("safe = %v, want only %q", safe, awsDir)
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("skipped = %v, want the escaping symlink and the external path", skipped)
+	}
+}
+
+func TestSafeSeedSourcesRefusesAllWhenHomeUnresolvable(t *testing.T) {
+	// A home that doesn't exist can't establish the boundary, so nothing is safe.
+	safe, skipped := SafeSeedSources(filepath.Join(t.TempDir(), "gone"), []string{"/tmp/x"})
+	if len(safe) != 0 || len(skipped) != 1 {
+		t.Fatalf("safe=%v skipped=%v, want everything skipped", safe, skipped)
+	}
+}
+
+func TestCopyConfigCmdDoesNotDereferenceSymlinks(t *testing.T) {
+	joined := strings.Join(CopyConfigCmd("agent", "/opt/agent", "/Users/alice", []string{"/Users/alice/.aws"}).Args, " ")
+	// cp must copy symlinks as links (-P), and chown must re-own the link, not
+	// its target (-h) — otherwise a link nested in the tree re-owns /etc/shadow.
+	if !strings.Contains(joined, "cp -RP ") {
+		t.Errorf("copy must use `cp -RP` (no symlink deref): %s", joined)
+	}
+	if !strings.Contains(joined, "chown -Rh ") {
+		t.Errorf("chown must use `chown -Rh` (no symlink deref): %s", joined)
+	}
+}
+
 func TestIsUnderHome(t *testing.T) {
 	home := "/Users/alice"
 	if !IsUnderHome(home, "/Users/alice/projects/api") {

@@ -861,10 +861,47 @@ func ExistingConfigPaths(operatorHome string, desc Descriptor) []string {
 	return found
 }
 
+// SafeSeedSources partitions candidate seed sources into those whose real path
+// still resolves under the operator's home and those that escape it. It is the
+// gate every provider/config copy passes before the tree leaves the operator's
+// home: a source is only safe if its fully-resolved path (symlinks followed) is
+// the operator home or a descendant. This catches a `~/.aws` that is actually a
+// symlink to /etc, and a GOOGLE_APPLICATION_CREDENTIALS that points at an
+// arbitrary absolute path outside the home — either of which would otherwise let
+// the copy pull a file the operator never meant to hand the agent (and, run as
+// root, read something even the operator can't). A source that cannot be resolved
+// (broken symlink, vanished race) is treated as unsafe. skipped is returned so the
+// caller can warn about exactly what it declined to copy rather than failing the
+// whole seed.
+func SafeSeedSources(operatorHome string, srcs []string) (safe, skipped []string) {
+	realHome, err := filepath.EvalSymlinks(filepath.Clean(operatorHome))
+	if err != nil || realHome == "" {
+		// Can't establish the boundary — refuse everything rather than guess.
+		return nil, srcs
+	}
+	for _, src := range srcs {
+		resolved, err := filepath.EvalSymlinks(src)
+		if err != nil || !IsUnderHome(realHome, resolved) {
+			skipped = append(skipped, src)
+			continue
+		}
+		safe = append(safe, src)
+	}
+	return safe, skipped
+}
+
 // CopyConfigCmd copies the operator's agent config paths (already expanded to
 // absolute paths under the operator's home) into the agent user's home at the
 // same tilde-relative location, then chowns them to the agent. It runs as root
 // so it can read out of the operator's 700 home and write into the agent's.
+//
+// Symlink safety: it copies with `cp -RP` (never dereference a symlink — copy it
+// as a link) and chowns with `chown -Rh` (re-own the link itself, not its
+// target). A symlink nested inside a copied tree therefore lands in the agent's
+// home as a symlink owned by the agent; it can never cause root to copy the
+// contents of, or re-own, whatever the link points at (e.g. /etc/shadow). The
+// top-level source is already constrained to the operator's home by
+// SafeSeedSources; this closes the same hole for links buried in the tree.
 //
 // CAUTION: these files may carry provider-specific secrets (e.g. an API key the
 // operator saved in the agent's own config). This deliberately hands the agent
@@ -874,10 +911,11 @@ func CopyConfigCmd(agentUser, agentHome, operatorHome string, srcs []string) *ex
 	for _, src := range srcs {
 		rel := strings.TrimPrefix(src, filepath.Clean(operatorHome)+string(filepath.Separator))
 		dest := shellQuote(filepath.Join(agentHome, rel))
-		// Recreate the parent dir, copy recursively (dir or file), then chown.
+		// Recreate the parent dir, copy recursively without following symlinks
+		// (-P), then chown without dereferencing them (-h).
 		b.WriteString("mkdir -p \"$(dirname " + dest + ")\" && ")
-		b.WriteString("cp -R " + shellQuote(src) + " " + dest + " && ")
-		b.WriteString("chown -R " + shellQuote(agentUser) + ": " + dest + " && ")
+		b.WriteString("cp -RP " + shellQuote(src) + " " + dest + " && ")
+		b.WriteString("chown -Rh " + shellQuote(agentUser) + ": " + dest + " && ")
 	}
 	script := strings.TrimSuffix(b.String(), " && ")
 	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.

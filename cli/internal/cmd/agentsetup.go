@@ -52,6 +52,7 @@ func (a *App) ensureAgentConfig(ctx context.Context, prefs seedPrefs, agentUser 
 	}
 	home := localagent.OperatorHome()
 	srcs := localagent.ExistingConfigPaths(home, desc)
+	srcs = a.safeSeedSources(home, srcs)
 	if len(srcs) == 0 {
 		return nil // operator has nothing to seed
 	}
@@ -76,6 +77,20 @@ func (a *App) ensureAgentConfig(ctx context.Context, prefs seedPrefs, agentUser 
 	fmt.Fprintln(a.Out, theme.Dim.Render("  These are the operator's settings; the agent still authenticates as itself on first launch."))
 	a.printProviderSecretWarning()
 	return nil
+}
+
+// safeSeedSources keeps only the seed sources whose real path resolves under the
+// operator's home and warns about any it drops. A source that is (or contains a
+// top-level) symlink escaping the home — e.g. a `~/.aws` linked to /etc, or a
+// GOOGLE_APPLICATION_CREDENTIALS pointing at an arbitrary absolute path — is
+// skipped rather than copied, so the root-run copy never pulls a file from
+// outside the operator's own home into the agent's.
+func (a *App) safeSeedSources(operatorHome string, srcs []string) []string {
+	safe, skipped := localagent.SafeSeedSources(operatorHome, srcs)
+	for _, s := range skipped {
+		fmt.Fprintln(a.Out, theme.Warnf("Skipping %s: it resolves outside your home directory and won't be copied to the agent.", s))
+	}
+	return safe
 }
 
 // printProviderSecretWarning is the shared caveat shown after seeding either the
@@ -107,6 +122,7 @@ func (a *App) ensureProviderConfig(ctx context.Context, prefs seedPrefs, agentUs
 		return nil // Anthropic default (or unknown) — nothing separate to seed
 	}
 	srcs := localagent.ProviderConfigPaths(home, pc)
+	srcs = a.safeSeedSources(home, srcs)
 	if len(srcs) == 0 {
 		return nil // provider selected but its config isn't on disk
 	}
