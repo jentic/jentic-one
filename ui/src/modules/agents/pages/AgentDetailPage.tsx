@@ -2,17 +2,20 @@
  * Agent detail page — the identity console for a single agent at
  * `/agents/:agentId` (router `basename` adds the `/app` prefix).
  *
- * Layout (canvas plan, phase 3): identity header (badge, status, lifecycle
- * actions) + KPI strip, then four tab panels:
- *   - Overview  → attribution meta + bound toolkits (GET /agents/{id},
- *                 GET /agents/{id}/toolkits)
+ * Layout mirrors the toolkit console exactly: a shared `PageHeader` band (the
+ * agent's badge as icon, its name as title, its own description as subtitle,
+ * and the constructive lifecycle actions — Approve / Deny / Enable — in the
+ * header action slot), a back row, a denial banner when rejected, the KPI
+ * strip, then five tab panels:
+ *   - Overview  → attribution meta + bound toolkits + audit slice
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
  *                 with a pre-filtered "Open in Monitor" deep-link
  *   - Access    → platform scopes (#615) + filed access requests (#619)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
- *   - Settings  → editable metadata (PATCH /agents/{id}) + danger zone hosting
- *                 the destructive lifecycle actions (Disable / Archive)
+ *   - Settings  → the copyable agent id + editable metadata (PATCH
+ *                 /agents/{id}) + danger zone hosting the destructive
+ *                 lifecycle actions (Disable / Archive)
  *
  * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
  * shareable and back-button friendly. Activity/KPI sources are admin-gated:
@@ -26,6 +29,7 @@ import {
 	LayoutDashboard,
 	Settings,
 	ShieldCheck,
+	ShieldX,
 } from 'lucide-react';
 import {
 	AgentBadge,
@@ -35,7 +39,6 @@ import {
 	Button,
 	Card,
 	CardBody,
-	CopyButton,
 	LoadingState,
 	PageHeader,
 	PageShell,
@@ -222,9 +225,43 @@ export default function AgentDetailPage() {
 
 	return (
 		<PageShell>
+			{/* Same header grammar as the toolkit console: badge as the icon,
+			    the agent's own description as subtitle, status pinned beside the
+			    constructive lifecycle actions. No second identity card below —
+			    the header IS the identity surface. */}
 			<PageHeader
 				title={agent.name}
-				subtitle="Identity, activity, access, and credentials for this agent."
+				subtitle={agent.description ?? undefined}
+				icon={
+					<div className="relative">
+						<AgentBadge id={agent.id} name={agent.name} size="lg" />
+						<span
+							className={cn(
+								'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
+								STATUS_DOT[agent.status],
+							)}
+							aria-hidden
+						/>
+					</div>
+				}
+				actions={
+					<>
+						<ActorStatusBadge status={agent.status} data-testid="detail-status-badge" />
+						{headerActions.map((action) => (
+							<Button
+								key={action}
+								size="sm"
+								variant={ACTION_VARIANT[action]}
+								disabled={actionPending}
+								loading={pendingAction === action}
+								onClick={() => handleAction(action)}
+								aria-label={`${ACTION_LABEL[action]} ${agent.name}`}
+							>
+								{ACTION_LABEL[action]}
+							</Button>
+						))}
+					</>
+				}
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
@@ -237,80 +274,31 @@ export default function AgentDetailPage() {
 				</AppLink>
 			</div>
 
-			{/* Identity header: who this is + lifecycle actions + KPI strip. */}
-			<Card>
-				<CardBody className="space-y-4 p-5">
-					<div className="flex flex-wrap items-start gap-4">
-						<div className="relative shrink-0">
-							<AgentBadge id={agent.id} name={agent.name} size="lg" />
-							<span
-								className={cn(
-									'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
-									STATUS_DOT[agent.status],
-								)}
-								aria-hidden
-							/>
-						</div>
-						<div className="min-w-0 flex-1">
-							<div className="flex flex-wrap items-center gap-2">
-								<span className="text-foreground text-lg font-semibold tracking-tight">
-									{agent.name}
-								</span>
-								<ActorStatusBadge
-									status={agent.status}
-									data-testid="detail-status-badge"
-								/>
-							</div>
-							<div className="mt-1 flex items-center gap-1.5">
-								<code className="text-muted-foreground/80 truncate font-mono text-[11px]">
-									{agent.id}
-								</code>
-								<CopyButton value={agent.id} />
-							</div>
-							{agent.description && (
-								<p className="text-muted-foreground mt-2 text-sm">
-									{agent.description}
-								</p>
-							)}
-						</div>
-
-						{/* Constructive lifecycle actions — destructive ones are in Settings. */}
-						{headerActions.length > 0 && (
-							<div className="flex shrink-0 flex-wrap gap-2">
-								{headerActions.map((action) => (
-									<Button
-										key={action}
-										size="sm"
-										variant={ACTION_VARIANT[action]}
-										disabled={actionPending}
-										loading={pendingAction === action}
-										onClick={() => handleAction(action)}
-										aria-label={`${ACTION_LABEL[action]} ${agent.name}`}
-									>
-										{ACTION_LABEL[action]}
-									</Button>
-								))}
-							</div>
-						)}
+			{/* Denial banner — the same full-width alert grammar as the toolkit
+			    console's suspended banner. */}
+			{agent.status === 'rejected' && (
+				<div
+					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
+					role="alert"
+				>
+					<div className="bg-danger/15 text-danger flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+						<ShieldX className="h-5 w-5" />
 					</div>
-
-					{agent.status === 'rejected' && (
-						<div className="border-danger/30 bg-danger/5 rounded-lg border p-3">
-							<p className="text-danger text-xs font-semibold tracking-wider uppercase">
-								Denial reason
-							</p>
-							<p className="text-foreground/90 mt-1 text-sm">
-								{agent.denialReason ?? '—'}
-								{agent.attribution.deniedBy && (
-									<span className="text-muted-foreground block text-xs">
-										by <ActorLabel actorId={agent.attribution.deniedBy} />
-									</span>
-								)}
-							</p>
-						</div>
-					)}
-				</CardBody>
-			</Card>
+					<div className="min-w-0 flex-1">
+						<p className="text-danger font-heading text-sm font-semibold">
+							Registration denied
+						</p>
+						<p className="text-foreground/90 mt-0.5 text-sm">
+							{agent.denialReason ?? 'No reason recorded.'}
+							{agent.attribution.deniedBy && (
+								<span className="text-muted-foreground block text-xs">
+									by <ActorLabel actorId={agent.attribution.deniedBy} />
+								</span>
+							)}
+						</p>
+					</div>
+				</div>
+			)}
 
 			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
 			<KpiStrip

@@ -4,30 +4,34 @@
  * adds `/app`).
  *
  * Phase 5 of the agents-rebuild plan: adopts the SAME console shell as the
- * agent detail page (identity header + KPI strip + `?tab=` panels) so the two
- * actor kinds read identically, minus what jentic-one doesn't serve for SAs:
- *   - Overview  → attribution meta (GET /service-accounts/{id}); no toolkit
- *                 bindings exist for SAs, so no Bound-toolkits card
+ * agent detail page (PageHeader-as-identity + KPI strip + `?tab=` panels) so
+ * the two actor kinds read identically, minus what jentic-one doesn't serve
+ * for SAs:
+ *   - Overview  → attribution meta (GET /service-accounts/{id}) + audit
+ *                 slice; no toolkit bindings exist for SAs, so no
+ *                 Bound-toolkits card
  *   - Activity  → execution volume + recent executions (same per-actor
  *                 monitoring reads; SA ids are actor ids)
  *   - Access    → platform scopes (#615) + filed access requests (#619)
  *   - Keys      → generate only; SA responses expose no key metadata/history
  *                 (backend gap, documented inline)
- *   - Settings  → danger zone only; there is no PATCH /service-accounts
- *                 (backend gap, documented inline)
+ *   - Settings  → the copyable account id + danger zone; there is no PATCH
+ *                 /service-accounts (backend gap, documented inline)
  *
- * The identity header only offers constructive actions (Approve / Deny /
- * Enable); destructive ones (Disable / Archive) live in Settings' danger zone.
+ * The PageHeader only offers constructive actions (Approve / Deny / Enable);
+ * destructive ones (Disable / Archive) live in Settings' danger zone.
  */
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import {
 	Activity as ActivityIcon,
+	Fingerprint,
 	Key,
 	KeyRound,
 	LayoutDashboard,
 	Settings,
 	ShieldCheck,
+	ShieldX,
 } from 'lucide-react';
 import {
 	ActorLabel,
@@ -174,9 +178,10 @@ function SaKeysPanel({
 }
 
 /**
- * The Settings tab body. There is no PATCH /service-accounts in jentic-one
- * (backend gap), so — unlike the agent page — there's no metadata form here;
- * only the danger zone hosting the destructive lifecycle actions.
+ * The Settings tab body. Hosts the immutable, copyable account id (same
+ * placement as the toolkit console's Toolkit ID) and the danger zone. There
+ * is no PATCH /service-accounts in jentic-one (backend gap), so — unlike the
+ * agent page — there's no metadata form here.
  */
 function SaSettingsPanel({
 	account,
@@ -219,7 +224,20 @@ function SaSettingsPanel({
 				<CardHeader>
 					<CardTitle>General</CardTitle>
 				</CardHeader>
-				<CardBody>
+				<CardBody className="space-y-4">
+					{/* The immutable account id — what API calls and audit rows
+					    reference. Lives here (not in the page chrome), same as the
+					    toolkit console's Toolkit ID. */}
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+							<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+							Account ID
+						</span>
+						<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
+							{account.id}
+							<CopyButton value={account.id} size="icon" variant="ghost" />
+						</span>
+					</div>
 					<p className="text-muted-foreground text-sm">
 						Renaming or re-describing a service account isn’t supported yet — jentic-one
 						has no PATCH /service-accounts endpoint. Create a replacement account if the
@@ -356,9 +374,50 @@ export default function ServiceAccountDetailPage() {
 
 	return (
 		<PageShell>
+			{/* Same header grammar as the agent + toolkit consoles: badge as the
+			    icon, description as subtitle, status beside the constructive
+			    lifecycle actions. No second identity card. */}
 			<PageHeader
 				title={account.name}
-				subtitle="Identity, activity, access, and credentials for this service account."
+				subtitle={account.description ?? undefined}
+				icon={
+					<div className="relative">
+						<AgentBadge
+							id={account.id}
+							name={account.name}
+							kind="Service account"
+							size="lg"
+						/>
+						<span
+							className={cn(
+								'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
+								STATUS_DOT[account.status],
+							)}
+							aria-hidden
+						/>
+					</div>
+				}
+				actions={
+					<>
+						<ActorStatusBadge
+							status={account.status}
+							data-testid="detail-status-badge"
+						/>
+						{headerActions.map((action) => (
+							<Button
+								key={action}
+								size="sm"
+								variant={ACTION_VARIANT[action]}
+								disabled={actionPending}
+								loading={pendingAction === action}
+								onClick={() => handleAction(action)}
+								aria-label={`${ACTION_LABEL[action]} ${account.name}`}
+							>
+								{ACTION_LABEL[action]}
+							</Button>
+						))}
+					</>
+				}
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
@@ -374,85 +433,31 @@ export default function ServiceAccountDetailPage() {
 				</AppLink>
 			</div>
 
-			{/* Identity header: who this is + lifecycle actions + KPI strip. */}
-			<Card>
-				<CardBody className="space-y-4 p-5">
-					<div className="flex flex-wrap items-start gap-4">
-						<div className="relative shrink-0">
-							<AgentBadge
-								id={account.id}
-								name={account.name}
-								kind="Service account"
-								size="lg"
-							/>
-							<span
-								className={cn(
-									'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
-									STATUS_DOT[account.status],
-								)}
-								aria-hidden
-							/>
-						</div>
-						<div className="min-w-0 flex-1">
-							<div className="flex flex-wrap items-center gap-2">
-								<span className="text-foreground text-lg font-semibold tracking-tight">
-									{account.name}
-								</span>
-								<ActorStatusBadge
-									status={account.status}
-									data-testid="detail-status-badge"
-								/>
-							</div>
-							<div className="mt-1 flex items-center gap-1.5">
-								<code className="text-muted-foreground/80 truncate font-mono text-[11px]">
-									{account.id}
-								</code>
-								<CopyButton value={account.id} />
-							</div>
-							{account.description && (
-								<p className="text-muted-foreground mt-2 text-sm">
-									{account.description}
-								</p>
-							)}
-						</div>
-
-						{/* Constructive lifecycle actions — destructive ones are in Settings. */}
-						{headerActions.length > 0 && (
-							<div className="flex shrink-0 flex-wrap gap-2">
-								{headerActions.map((action) => (
-									<Button
-										key={action}
-										size="sm"
-										variant={ACTION_VARIANT[action]}
-										disabled={actionPending}
-										loading={pendingAction === action}
-										onClick={() => handleAction(action)}
-										aria-label={`${ACTION_LABEL[action]} ${account.name}`}
-									>
-										{ACTION_LABEL[action]}
-									</Button>
-								))}
-							</div>
-						)}
+			{/* Denial banner — full-width alert grammar shared with the agent
+			    console's denial banner and the toolkit suspension banner. */}
+			{account.status === 'rejected' && (
+				<div
+					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
+					role="alert"
+				>
+					<div className="bg-danger/15 text-danger flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+						<ShieldX className="h-5 w-5" />
 					</div>
-
-					{account.status === 'rejected' && (
-						<div className="border-danger/30 bg-danger/5 rounded-lg border p-3">
-							<p className="text-danger text-xs font-semibold tracking-wider uppercase">
-								Denial reason
-							</p>
-							<p className="text-foreground/90 mt-1 text-sm">
-								{account.denialReason ?? '—'}
-								{account.attribution.deniedBy && (
-									<span className="text-muted-foreground block text-xs">
-										by <ActorLabel actorId={account.attribution.deniedBy} />
-									</span>
-								)}
-							</p>
-						</div>
-					)}
-				</CardBody>
-			</Card>
+					<div className="min-w-0 flex-1">
+						<p className="text-danger font-heading text-sm font-semibold">
+							Registration denied
+						</p>
+						<p className="text-foreground/90 mt-0.5 text-sm">
+							{account.denialReason ?? 'No reason recorded.'}
+							{account.attribution.deniedBy && (
+								<span className="text-muted-foreground block text-xs">
+									by <ActorLabel actorId={account.attribution.deniedBy} />
+								</span>
+							)}
+						</p>
+					</div>
+				</div>
+			)}
 
 			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
 			<KpiStrip usage={usage.data} lastActivityAt={lastActivityAt} />

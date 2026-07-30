@@ -1,7 +1,11 @@
 /**
  * AgentSettingsPanel — the "Settings" tab of the agent detail console.
  *
- * Two concerns, deliberately separated (canvas plan, phase 4):
+ * Three concerns, deliberately separated (same grammar as the toolkit
+ * console's Settings tab):
+ *   - Identity → the immutable, copyable agent id. It lives here (not in the
+ *     page chrome) so the header stays clean — exactly where the toolkit
+ *     console keeps its toolkit id.
  *   - Editable metadata → name / description via PATCH /agents/{id}. Only
  *     dirty fields are sent (real PATCH semantics), and Save stays disabled
  *     until something actually changed. Ownership is intentionally NOT
@@ -14,7 +18,18 @@
  *     `onLifecycle` — this panel never mutates lifecycle state itself.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Button, Card, CardBody, CardHeader, CardTitle, Input, Label, Textarea } from '@/shared/ui';
+import { Fingerprint } from 'lucide-react';
+import {
+	Button,
+	Card,
+	CardBody,
+	CardHeader,
+	CardTitle,
+	CopyButton,
+	Input,
+	Label,
+	Textarea,
+} from '@/shared/ui';
 import {
 	useUpdateAgent,
 	ACTIONS_FOR_STATUS,
@@ -115,6 +130,19 @@ export function AgentSettingsPanel({
 					<CardTitle>General</CardTitle>
 				</CardHeader>
 				<CardBody className="space-y-4">
+					{/* The immutable agent id — what API calls and audit rows
+					    reference. Lives here (not in the page chrome), same as the
+					    toolkit console's Toolkit ID. */}
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+							<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+							Agent ID
+						</span>
+						<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
+							{agent.id}
+							<CopyButton value={agent.id} size="icon" variant="ghost" />
+						</span>
+					</div>
 					<div className="space-y-1.5">
 						<Label htmlFor="agent-settings-name">Name</Label>
 						<Input

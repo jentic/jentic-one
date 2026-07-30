@@ -35,15 +35,20 @@ describe('ServiceAccountDetailPage', () => {
 		resetAgentsStore();
 	});
 
-	it('renders identity, status, and attribution', async () => {
+	it('renders identity and status once — id lives on the Settings tab', async () => {
+		const user = userEvent.setup();
 		renderDetail('sva_active_1');
 		expect(
 			await screen.findByRole('heading', { name: 'metrics-exporter' }),
 		).toBeInTheDocument();
-		expect(screen.getByText('sva_active_1')).toBeInTheDocument();
-		// Pin the status to the identity header's badge — a bare text query could
-		// match any other "Active" on the page and mask a wrong-status bug.
+		// Pin the status to the header's badge — a bare text query could match
+		// any other "Active" on the page and mask a wrong-status bug.
 		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
+		// The raw id lives on Settings (toolkit-console grammar), not the chrome.
+		expect(screen.queryByText('sva_active_1')).not.toBeInTheDocument();
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('Account ID')).toBeInTheDocument();
+		expect(screen.getByText('sva_active_1')).toBeInTheDocument();
 	});
 
 	it('renders a Scopes card with the granted scopes on the Access tab', async () => {

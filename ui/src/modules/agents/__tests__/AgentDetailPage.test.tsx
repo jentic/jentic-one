@@ -128,14 +128,23 @@ describe('AgentDetailPage', () => {
 		resetAgentsStore();
 	});
 
-	it('renders identity, status, and attribution for an agent', async () => {
+	it('renders identity and status once — no duplicated title card', async () => {
+		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
+		// The PageHeader IS the identity surface (toolkit-console grammar): the
+		// name renders exactly once, as the page heading.
 		expect(await screen.findByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
-		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
-		// Pin the status to the identity header's badge — a bare text query would
-		// also match e.g. a toolkit "Active" pill and mask a wrong-status bug.
+		expect(screen.getAllByText('support-agent')).toHaveLength(1);
+		// Pin the status to the header's badge — a bare text query would also
+		// match e.g. a toolkit "Active" pill and mask a wrong-status bug.
 		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		expect(screen.getByText('Registered')).toBeInTheDocument();
+		// The raw id lives on the Settings tab (like the toolkit id), not in the
+		// page chrome.
+		expect(screen.queryByText('agnt_active_1')).not.toBeInTheDocument();
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('Agent ID')).toBeInTheDocument();
+		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
 	});
 
 	it('lists bound toolkits for the agent', async () => {
