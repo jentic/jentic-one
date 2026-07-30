@@ -126,16 +126,56 @@ aren't there:
    the agent it is handed to, and by anything else running as the agent user. The
    Unix boundary keeps those secrets away from *other* login users' agents, but it
    does nothing to protect them *from the agent itself*. This is why we recommend
-   fronting the model with a **private LLM proxy and a virtual key**: the key the
-   agent holds is then non-sensitive (revocable, scoped, worthless if exfiltrated),
-   so a leaked agent environment costs you a rotation, not a real provider
-   credential. Treat any secret that reaches the agent env as disclosed to the
-   agent.
+   keeping real credentials out of the agent environment and fronting the model
+   with a **private LLM proxy and a virtual key**: the key the agent holds is then
+   non-sensitive (revocable, scoped, worthless if exfiltrated), so a leaked agent
+   environment costs you a rotation, not a real provider credential. Treat any
+   secret that reaches the agent env as disclosed to the agent, and prefer virtual
+   keys wherever a surface accepts them.
 
-Neither of these undoes the core hardening: running the agent as a **separate Unix
+   The **jentic-one agent token is itself a virtual key** in this sense: for a
+   local deployment it is minted against, and only meaningful to, your own
+   control-plane on the local network — it authenticates the agent to *your*
+   broker, carries no third-party provider credential, and is worthless off that
+   network. So while it does sit in the agent home like any other credential, its
+   presence there is not a provider-secret exposure; the guidance above is about
+   the upstream provider keys you should keep *out* of the agent env by putting a
+   virtual key in front of them.
+
+3. **Network egress is not restricted.** This feature confines the agent's *view of
+   the filesystem*; it does **not** firewall the agent's network access. An agent
+   running under `jentic run` can make arbitrary outbound network connections, the
+   same as any process running as that Unix user. Restricting egress was explicitly
+   **out of scope** for this work — the confinement profile is a filesystem
+   boundary, not an egress jail (see [`sandbox-exec-plan.md`](sandbox-exec-plan.md),
+   "Why not `(deny default)`"). Operators who need to constrain where the agent can
+   reach on the network must do so with a separate mechanism (host firewall, a
+   proxy the agent is forced through, network namespaces/VPN egress rules); jentic
+   does not install or manage one. This is a documented residual, not an oversight:
+   combined with residual (2), assume an agent that acquires a secret can also send
+   it somewhere — which is again why real provider credentials should never reach
+   the agent env in the first place.
+
+4. **The sandbox is not a full container.** The per-session confinement is scoped
+   to the one thing it uniquely can do — per-entry access control *inside* the
+   operator's home — and deliberately does not lock down process execution
+   (`process-exec*`), IPC/`mach-lookup`, or the agent's ability to interact with its
+   own process tree. The agent is **not** being fully containerised: the goal is to
+   stop it acting *as* the human operator (reading their keys, browser session, the
+   jentic-one credential store) and to close the sibling-traversal leak — not to
+   sandbox it from itself or from the OS services any process of that uid may reach.
+   Because the agent runs as its **own** unprivileged Unix user, it cannot signal or
+   kill the operator's processes (different uid); what it *can* do within its own uid
+   (spawn helpers, talk to system services) is intentionally left open so that
+   Node-based agents like `claude` launch and run reliably. See
+   [`sandbox-exec-plan.md`](sandbox-exec-plan.md) for why a stricter `(deny
+   default)` profile was rejected as too brittle.
+
+None of these undoes the core hardening: running the agent as a **separate Unix
 user** still closes the operator-facing attack paths (AP-1–AP-4) above. These notes
 scope what the boundary is *for* — protecting the operator and other users from the
-agent — versus what it is *not*: an intra-agent or secret-hiding sandbox.
+agent — versus what it is *not*: an intra-agent, network-egress, or secret-hiding
+sandbox.
 
 ## Creating the account — folded into `bootstrap` / `wizard`
 
