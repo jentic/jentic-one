@@ -1,4 +1,4 @@
-import { useLocation, Outlet } from 'react-router-dom';
+import { useLocation, Outlet } from 'react-router';
 import { BottomNavbar } from '@/shared/app/BottomNavbar';
 import { TopNavbar } from '@/shared/app/TopNavbar';
 import { AgentRail } from '@/shared/app/rail/AgentRail';

@@ -1,53 +1,62 @@
 /**
- * Agent detail page — the canonical deep view for a single agent at
+ * Agent detail page — the identity console for a single agent at
  * `/agents/:agentId` (router `basename` adds the `/app` prefix).
  *
- * Real-data only, on jentic-one's contract:
- *   - identity + lifecycle + attribution  → GET /agents/{id} (useAgent)
- *   - bound toolkits                       → GET /agents/{id}/toolkits (useAgentToolkits)
- *   - lifecycle actions                    → the same mutation hooks the list uses
+ * Layout mirrors the toolkit console exactly: a shared `PageHeader` band (the
+ * agent's badge as icon, its name as title, its own description as subtitle,
+ * and the constructive lifecycle actions — Approve / Deny / Enable — in the
+ * header action slot), a back row, a denial banner when rejected, the KPI
+ * strip, then five tab panels:
+ *   - Overview  → attribution meta + bound toolkits + audit slice
+ *   - Activity  → this agent's execution volume + recent executions
+ *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
+ *                 with a pre-filtered "Open in Monitor" deep-link
+ *   - Access    → platform scopes (#615) + filed access requests (#619)
+ *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
+ *   - Settings  → the copyable agent id + editable metadata (PATCH
+ *                 /agents/{id}) + danger zone hosting the destructive
+ *                 lifecycle actions (Disable / Archive)
  *
- * Deliberately omitted (no jentic-one backend yet, logged as BACKEND GAPS in the
- * plan): a per-agent live activity feed (`/executions` carries no agent id, so it
- * can't be filtered by agent) and a JWKS card (`AgentResponse` exposes no key
- * metadata). We link out to Monitor for cross-agent execution history instead.
+ * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
+ * shareable and back-button friendly. Activity/KPI sources are admin-gated:
+ * 403s degrade to em-dashes / a quiet note, never an error surface.
  */
-import { useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
-import { ArrowRight, KeyRound, Shield, Activity, Ban, History } from 'lucide-react';
+import { useState } from 'react';
+import { useParams, useSearchParams } from 'react-router';
+import {
+	Activity as ActivityIcon,
+	Key,
+	LayoutDashboard,
+	Settings,
+	ShieldCheck,
+	ShieldX,
+} from 'lucide-react';
 import {
 	AgentBadge,
 	ActorLabel,
 	AppLink,
 	BackButton,
-	Badge,
+	Button,
 	Card,
 	CardBody,
-	CardHeader,
-	CardTitle,
-	CascadeDeleteDialog,
-	CopyButton,
-	EditNameDescriptionDialog,
-	ErrorAlert,
 	LoadingState,
 	PageHeader,
 	PageShell,
-	Button,
+	TabNav,
+	type TabNavOption,
 } from '@/shared/ui';
-import { cn, formatTimestamp, timeAgo } from '@/shared/lib/utils';
+import { cn, formatTimestamp } from '@/shared/lib/utils';
 import {
 	useAgent,
 	useAgentToolkits,
-	useAgentApiKeyInfo,
-	useAgentApiKeyHistory,
+	useActorUsageDetail,
+	useActorExecutions,
 	useApproveAgent,
 	useDenyAgent,
 	useDisableAgent,
 	useEnableAgent,
 	useArchiveAgent,
-	useUpdateAgent,
-	useGenerateAgentApiKey,
-	useRevokeAgentApiKey,
+	AgentsApiError,
 	STATUS_DOT,
 	ACTIONS_FOR_STATUS,
 	ACTION_LABEL,
@@ -55,56 +64,75 @@ import {
 	type AgentAction,
 } from '@/modules/agents/api';
 import { ActorStatusBadge } from '@/modules/agents/components/ActorStatusBadge';
-import { ApiKeyDialog } from '@/modules/agents/components/ApiKeyDialog';
 import { ScopesCard } from '@/modules/agents/components/ScopesCard';
 import { ActorAccessRequestsCard } from '@/modules/agents/components/ActorAccessRequestsCard';
-import { DenyDialog } from '@/modules/agents/components/confirm/DenyDialog';
-import { ConfirmDialog } from '@/modules/agents/components/confirm/ConfirmDialog';
+import {
+	LifecycleDialogs,
+	type PendingConfirm,
+} from '@/modules/agents/components/LifecycleDialogs';
+import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
+import { MetaItem } from '@/modules/agents/components/detail/shared';
+import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
+import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
+import { AgentKeysPanel } from '@/modules/agents/components/detail/AgentKeysPanel';
+import { AgentSettingsPanel } from '@/modules/agents/components/detail/AgentSettingsPanel';
+import { BoundToolkitsCard } from '@/modules/agents/components/detail/BoundToolkitsCard';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
-/** A pending lifecycle action awaiting confirmation in a dialog. */
-type PendingConfirm =
-	| { kind: 'deny' }
-	| { kind: 'disable' }
-	| { kind: 'archive' }
-	| { kind: 'revoke-api-key' }
-	| null;
+const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
+type DetailTab = (typeof DETAIL_TABS)[number];
 
-/** A compact label/value pair used in the identity meta grid. */
-function MetaItem({ label, value }: { label: string; value: ReactNode }) {
-	return (
-		<div className="min-w-0">
-			<dt className="text-muted-foreground/70 text-[10px] tracking-wider uppercase">
-				{label}
-			</dt>
-			<dd className="text-foreground/90 mt-0.5 truncate text-xs">{value}</dd>
-		</div>
-	);
+/** Tab options for the console shell — same icon grammar as the toolkit console. */
+const TAB_OPTIONS: TabNavOption<DetailTab>[] = [
+	{ value: 'overview', label: 'Overview', icon: <LayoutDashboard className="h-4 w-4" /> },
+	{ value: 'activity', label: 'Activity', icon: <ActivityIcon className="h-4 w-4" /> },
+	{ value: 'access', label: 'Access', icon: <ShieldCheck className="h-4 w-4" /> },
+	{ value: 'keys', label: 'Keys', icon: <Key className="h-4 w-4" /> },
+	{ value: 'settings', label: 'Settings', icon: <Settings className="h-4 w-4" /> },
+];
+
+function isDetailTab(value: string | null): value is DetailTab {
+	return DETAIL_TABS.includes(value as DetailTab);
 }
+
+const tabId = (tab: string) => `agent-tab-${tab}`;
+const panelId = (tab: string) => `agent-panel-${tab}`;
 
 export default function AgentDetailPage() {
 	const { agentId } = useParams<{ agentId: string }>();
 	const id = agentId ?? null;
+	const [searchParams, setSearchParams] = useSearchParams();
+	const tabParam = searchParams.get('tab');
+	const activeTab: DetailTab = isDetailTab(tabParam) ? tabParam : 'overview';
 
 	const agentQuery = useAgent(id);
 	const toolkits = useAgentToolkits(id);
-	const apiKeyInfo = useAgentApiKeyInfo(id);
-	const apiKeyHistory = useAgentApiKeyHistory(id);
+	// KPI-strip enrichment (admin-gated; resolves null on 403 — see hooks).
+	const usage = useActorUsageDetail(id);
+	const executions = useActorExecutions(id);
 
 	const approve = useApproveAgent();
 	const deny = useDenyAgent();
 	const disable = useDisableAgent();
 	const enable = useEnableAgent();
 	const archive = useArchiveAgent();
-	const updateAgent = useUpdateAgent(id ?? '');
-	const generateApiKey = useGenerateAgentApiKey();
-	const revokeApiKey = useRevokeAgentApiKey();
 
 	const [confirm, setConfirm] = useState<PendingConfirm>(null);
-	const [apiKey, setApiKey] = useState<string | null>(null);
-	// Edit-agent dialog: just an open flag now — the shared dialog owns the
-	// seeded draft, live validation, diff-vs-seeded patch, and all hardening.
-	const [editOpen, setEditOpen] = useState(false);
+
+	function setTab(tab: string) {
+		// Pushed (not replaced) so the browser back button walks tabs — same
+		// contract as the toolkit console; the back link below is static for
+		// exactly that reason.
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				if (tab === 'overview') next.delete('tab');
+				else next.set('tab', tab);
+				return next;
+			},
+			{ replace: false },
+		);
+	}
 
 	if (agentQuery.isPending) {
 		return (
@@ -114,7 +142,25 @@ export default function AgentDetailPage() {
 		);
 	}
 
-	// 404 / unknown id → honest not-found, not a fake agent.
+	// Only a 404 (or a missing route param) means "no such agent" — anything
+	// else (403, 500, network) is a load failure and must not masquerade as
+	// not-found.
+	const errorStatus = agentQuery.error instanceof AgentsApiError ? agentQuery.error.status : null;
+	if (agentQuery.error && errorStatus !== 404) {
+		return (
+			<PageShell>
+				<PageHeader
+					title="Couldn't load agent"
+					subtitle={
+						errorStatus === 403
+							? 'You do not have permission to view this agent.'
+							: 'Something went wrong while loading this agent. Try again.'
+					}
+				/>
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
+			</PageShell>
+		);
+	}
 	if (agentQuery.error || !agentQuery.data) {
 		return (
 			<PageShell>
@@ -122,14 +168,18 @@ export default function AgentDetailPage() {
 					title="Agent not found"
 					subtitle={id ? `No agent with id ${id}.` : 'Missing agent id.'}
 				/>
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 			</PageShell>
 		);
 	}
 
 	const agent = agentQuery.data;
-	const actions = ACTIONS_FOR_STATUS[agent.status];
-	const desc = agent.description?.trim();
+	// The identity header only offers constructive actions (Approve / Deny /
+	// Enable); destructive ones (Disable / Archive) live in the Settings tab's
+	// danger zone (canvas plan, phase 4).
+	const headerActions = ACTIONS_FOR_STATUS[agent.status].filter(
+		(a) => a !== 'disable' && a !== 'archive',
+	);
 	const actionPending =
 		approve.isPending ||
 		deny.isPending ||
@@ -137,18 +187,19 @@ export default function AgentDetailPage() {
 		enable.isPending ||
 		archive.isPending;
 
-	/** Which specific action is in flight (drives the per-button spinner). */
+	/**
+	 * Which specific header action is in flight (drives the per-button
+	 * spinner). Only constructive verbs render in the header — disable /
+	 * archive run behind the Settings danger zone's confirm dialogs, which
+	 * own their own pending state.
+	 */
 	const pendingAction: AgentAction | null = approve.isPending
 		? 'approve'
 		: deny.isPending
 			? 'deny'
-			: disable.isPending
-				? 'disable'
-				: enable.isPending
-					? 'enable'
-					: archive.isPending
-						? 'archive'
-						: null;
+			: enable.isPending
+				? 'enable'
+				: null;
 
 	function handleAction(action: AgentAction) {
 		switch (action) {
@@ -159,416 +210,206 @@ export default function AgentDetailPage() {
 				enable.mutate(agent.id);
 				break;
 			case 'deny':
-				setConfirm({ kind: 'deny' });
+				setConfirm({ kind: 'deny', id: agent.id, name: agent.name });
 				break;
 			case 'disable':
-				setConfirm({ kind: 'disable' });
+				setConfirm({ kind: 'disable', id: agent.id, name: agent.name });
 				break;
 			case 'archive':
-				setConfirm({ kind: 'archive' });
+				setConfirm({ kind: 'archive', id: agent.id, name: agent.name });
 				break;
 		}
 	}
 
+	const lastActivityAt = executions.data?.items[0]?.startedAt ?? null;
+
 	return (
 		<PageShell>
+			{/* Same header grammar as the toolkit console: badge as the icon,
+			    the agent's own description as subtitle, status pinned beside the
+			    constructive lifecycle actions. No second identity card below —
+			    the header IS the identity surface. */}
 			<PageHeader
 				title={agent.name}
-				subtitle={
-					desc
-						? desc
-						: 'Identity, attribution, bound toolkits, and lifecycle for this agent.'
+				subtitle={agent.description ?? undefined}
+				icon={
+					<div className="relative">
+						<AgentBadge id={agent.id} name={agent.name} size="lg" />
+						<span
+							className={cn(
+								'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
+								STATUS_DOT[agent.status],
+							)}
+							aria-hidden
+						/>
+					</div>
 				}
-				onEdit={() => {
-					updateAgent.reset();
-					setEditOpen(true);
-				}}
-				editLabel="Rename agent"
+				actions={
+					<>
+						<ActorStatusBadge status={agent.status} data-testid="detail-status-badge" />
+						{headerActions.map((action) => (
+							<Button
+								key={action}
+								size="sm"
+								variant={ACTION_VARIANT[action]}
+								disabled={actionPending}
+								loading={pendingAction === action}
+								onClick={() => handleAction(action)}
+								aria-label={`${ACTION_LABEL[action]} ${agent.name}`}
+							>
+								{ACTION_LABEL[action]}
+							</Button>
+						))}
+					</>
+				}
 			/>
 
 			<div className="-mt-2 flex items-center justify-between">
-				<BackButton to={ROUTES.agents} label="All agents" />
+				<BackButton to={ROUTES.agents} label="All agents" useHistory={false} />
 				<AppLink
-					href={ROUTES.monitor}
+					href={ROUTE_PATHS.monitorExecutions({ actorId: agent.id, actorType: 'agent' })}
 					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium transition-colors"
 				>
-					<Activity className="h-3.5 w-3.5" /> Open Monitor
+					<ActivityIcon className="h-3.5 w-3.5" /> Open Monitor
 				</AppLink>
 			</div>
 
-			{/* Identity + lifecycle actions */}
-			<Card>
-				<CardBody className="p-5">
-					<div className="flex flex-wrap items-start gap-4">
-						<div className="relative shrink-0">
-							<AgentBadge id={agent.id} name={agent.name} size="lg" />
-							<span
-								className={cn(
-									'border-background absolute -right-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2',
-									STATUS_DOT[agent.status],
-								)}
-								aria-hidden
-							/>
-						</div>
-						<div className="min-w-0 flex-1">
-							<div className="flex flex-wrap items-center gap-2">
-								<span className="text-foreground text-lg font-semibold tracking-tight">
-									{agent.name}
+			{/* Denial banner — the same full-width alert grammar as the toolkit
+			    console's suspended banner. */}
+			{agent.status === 'rejected' && (
+				<div
+					className="border-danger/40 bg-danger/5 flex items-start gap-3 rounded-xl border p-4"
+					role="alert"
+				>
+					<div className="bg-danger/15 text-danger flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+						<ShieldX className="h-5 w-5" />
+					</div>
+					<div className="min-w-0 flex-1">
+						<p className="text-danger font-heading text-sm font-semibold">
+							Registration denied
+						</p>
+						<p className="text-foreground/90 mt-0.5 text-sm">
+							{agent.denialReason ?? 'No reason recorded.'}
+							{agent.attribution.deniedBy && (
+								<span className="text-muted-foreground block text-xs">
+									by <ActorLabel actorId={agent.attribution.deniedBy} />
 								</span>
-								<ActorStatusBadge status={agent.status} />
-							</div>
-							<div className="mt-1 flex items-center gap-1.5">
-								<code className="text-muted-foreground/80 truncate font-mono text-[11px]">
-									{agent.id}
-								</code>
-								<CopyButton value={agent.id} />
-							</div>
-						</div>
+							)}
+						</p>
+					</div>
+				</div>
+			)}
 
-						{/* Actions — the lifecycle buttons below are gated by status;
-						    rename lives in the PageHeader pencil above. Guard the
-						    container so archived agents (no lifecycle actions, not
-						    active) don't render an empty div. */}
-						{(actions.length > 0 || agent.status === 'active') && (
-							<div className="flex shrink-0 flex-wrap gap-2">
-								{agent.status === 'active' && (
-									<>
-										<Button
-											size="sm"
-											variant="outline"
-											disabled={
-												actionPending ||
-												generateApiKey.isPending ||
-												revokeApiKey.isPending
+			{/* 7-day vitals — StatCard grid like the toolkit console (hidden on 403). */}
+			<KpiStrip
+				usage={usage.data}
+				lastActivityAt={lastActivityAt}
+				toolkitCount={toolkits.data?.length}
+			/>
+
+			<TabNav<DetailTab>
+				options={TAB_OPTIONS}
+				value={activeTab}
+				onChange={setTab}
+				ariaLabel="Agent detail sections"
+				getTabId={tabId}
+				getControls={panelId}
+			/>
+
+			<div
+				role="tabpanel"
+				id={panelId(activeTab)}
+				aria-labelledby={tabId(activeTab)}
+				tabIndex={0}
+				className="space-y-4 focus-visible:outline-none"
+			>
+				{activeTab === 'overview' && (
+					<>
+						<Card>
+							<CardBody>
+								<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+									<MetaItem
+										label="Registered"
+										value={formatTimestamp(agent.createdAt)}
+									/>
+									{agent.attribution.registeredBy ? (
+										<MetaItem
+											label="Registered by"
+											value={
+												<ActorLabel
+													actorId={agent.attribution.registeredBy}
+												/>
 											}
-											loading={generateApiKey.isPending}
-											onClick={async () => {
-												const result = await generateApiKey.mutateAsync(
-													agent.id,
-												);
-												setApiKey(result.key);
-											}}
-											aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
-										>
-											<KeyRound className="h-3.5 w-3.5" />
-											{agent.hasApiKey
-												? 'Regenerate API Key'
-												: 'Generate API Key'}
-										</Button>
-										{agent.hasApiKey && (
-											<Button
-												size="sm"
-												variant="danger"
-												disabled={
-													actionPending ||
-													generateApiKey.isPending ||
-													revokeApiKey.isPending
-												}
-												loading={revokeApiKey.isPending}
-												onClick={() =>
-													setConfirm({ kind: 'revoke-api-key' })
-												}
-												aria-label={`Revoke API key for ${agent.name}`}
-											>
-												<Ban className="h-3.5 w-3.5" />
-												Revoke API Key
-											</Button>
-										)}
-									</>
-								)}
-								{actions.map((action) => (
-									<Button
-										key={action}
-										size="sm"
-										variant={ACTION_VARIANT[action]}
-										disabled={actionPending}
-										loading={pendingAction === action}
-										onClick={() => handleAction(action)}
-										aria-label={`${ACTION_LABEL[action]} ${agent.name}`}
-									>
-										{ACTION_LABEL[action]}
-									</Button>
-								))}
-							</div>
-						)}
-					</div>
+										/>
+									) : null}
+									{agent.approvedAt ? (
+										<MetaItem
+											label="Approved"
+											value={formatTimestamp(agent.approvedAt)}
+										/>
+									) : null}
+									{agent.attribution.approvedBy ? (
+										<MetaItem
+											label="Approved by"
+											value={
+												<ActorLabel
+													actorId={agent.attribution.approvedBy}
+												/>
+											}
+										/>
+									) : null}
+									{agent.ownerId ? (
+										<MetaItem
+											label="Owner"
+											value={<ActorLabel actorId={agent.ownerId} />}
+										/>
+									) : null}
+									{agent.parentAgentId ? (
+										<MetaItem
+											label="Parent agent"
+											value={<ActorLabel actorId={agent.parentAgentId} />}
+										/>
+									) : null}
+								</dl>
+							</CardBody>
+						</Card>
+						<BoundToolkitsCard agentId={agent.id} agentStatus={agent.status} />
+						{/* Actor-scoped audit slice — same "Recent changes" grammar as
+						    the toolkit console (admin only; empty for non-admins). */}
+						<ActorAuditPanel actorKind="agent" actorId={agent.id} />
+					</>
+				)}
 
-					{/* Timestamps / attribution — a quiet bordered grid below identity. */}
-					<dl className="border-border/60 mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-4 sm:grid-cols-3 lg:grid-cols-4">
-						<MetaItem label="Registered" value={formatTimestamp(agent.createdAt)} />
-						{agent.attribution.registeredBy ? (
-							<MetaItem
-								label="Registered by"
-								value={<ActorLabel actorId={agent.attribution.registeredBy} />}
-							/>
-						) : null}
-						{agent.approvedAt ? (
-							<MetaItem label="Approved" value={formatTimestamp(agent.approvedAt)} />
-						) : null}
-						{agent.attribution.approvedBy ? (
-							<MetaItem
-								label="Approved by"
-								value={<ActorLabel actorId={agent.attribution.approvedBy} />}
-							/>
-						) : null}
-						{agent.ownerId ? (
-							<MetaItem
-								label="Owner"
-								value={<ActorLabel actorId={agent.ownerId} />}
-							/>
-						) : null}
-						{agent.parentAgentId ? (
-							<MetaItem
-								label="Parent agent"
-								value={<ActorLabel actorId={agent.parentAgentId} />}
-							/>
-						) : null}
-					</dl>
+				{activeTab === 'activity' && <ActivityPanel actorId={agent.id} actorType="agent" />}
 
-					{agent.status === 'rejected' && (
-						<div className="border-danger/30 bg-danger/5 mt-4 rounded-lg border p-3">
-							<p className="text-danger text-xs font-semibold tracking-wider uppercase">
-								Denial reason
-							</p>
-							<p className="text-foreground/90 mt-1 text-sm">
-								{agent.denialReason ?? '—'}
-								{agent.attribution.deniedBy && (
-									<span className="text-muted-foreground block text-xs">
-										by <ActorLabel actorId={agent.attribution.deniedBy} />
-									</span>
-								)}
-							</p>
-						</div>
-					)}
-				</CardBody>
-			</Card>
+				{activeTab === 'access' && (
+					<>
+						{/* Scopes — platform permissions granted to this agent (#615). */}
+						<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
+						{/* Pending access requests this agent has filed (#619). */}
+						<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
+					</>
+				)}
 
-			{/* API Key — shows key metadata even after revocation. */}
-			{apiKeyInfo.data && (
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between gap-2">
-						<div className="flex items-center gap-2">
-							<KeyRound className="text-primary h-4 w-4" />
-							<CardTitle>API Key</CardTitle>
-						</div>
-						<Badge variant={apiKeyInfo.data.status === 'active' ? 'success' : 'danger'}>
-							{apiKeyInfo.data.status}
-						</Badge>
-					</CardHeader>
-					<CardBody>
-						<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-							<MetaItem label="Key ID" value={apiKeyInfo.data.id} />
-							<MetaItem
-								label="Created"
-								value={formatTimestamp(apiKeyInfo.data.createdAt)}
-							/>
-							{apiKeyInfo.data.rotatedAt && (
-								<MetaItem
-									label="Last rotated"
-									value={formatTimestamp(apiKeyInfo.data.rotatedAt)}
-								/>
-							)}
-							{apiKeyInfo.data.createdBy && (
-								<MetaItem
-									label="Created by"
-									value={<ActorLabel actorId={apiKeyInfo.data.createdBy} />}
-								/>
-							)}
-						</dl>
-					</CardBody>
-				</Card>
-			)}
+				{activeTab === 'keys' && <AgentKeysPanel agent={agent} />}
 
-			{/* API Key History — audit trail of key operations. */}
-			{apiKeyHistory.data && apiKeyHistory.data.length > 0 && (
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between gap-2">
-						<div className="flex items-center gap-2">
-							<History className="text-primary h-4 w-4" />
-							<CardTitle>API Key History</CardTitle>
-						</div>
-					</CardHeader>
-					<CardBody className="space-y-2">
-						{apiKeyHistory.data.map((entry) => (
-							<div
-								key={entry.id}
-								className="border-border/60 flex items-center justify-between rounded-lg border px-3 py-2"
-							>
-								<div className="flex items-center gap-2">
-									<Badge
-										variant={
-											entry.reason === 'api_key_revoked'
-												? 'danger'
-												: 'default'
-										}
-									>
-										{entry.reason === 'api_key_revoked' ? 'Revoked' : 'Rotated'}
-									</Badge>
-									{entry.actorId && (
-										<span className="text-muted-foreground truncate text-xs">
-											by <ActorLabel actorId={entry.actorId} />
-										</span>
-									)}
-								</div>
-								<span
-									className="text-muted-foreground/70 shrink-0 text-[11px]"
-									title={formatTimestamp(entry.occurredAt)}
-								>
-									{timeAgo(entry.occurredAt)}
-								</span>
-							</div>
-						))}
-					</CardBody>
-				</Card>
-			)}
+				{activeTab === 'settings' && (
+					<AgentSettingsPanel
+						agent={agent}
+						lifecyclePending={actionPending}
+						onLifecycle={(action) =>
+							setConfirm({ kind: action, id: agent.id, name: agent.name })
+						}
+					/>
+				)}
+			</div>
 
-			{/* Bound toolkits — real (GET /agents/{id}/toolkits). */}
-			<Card>
-				<CardHeader className="flex flex-row items-center justify-between gap-2">
-					<div className="flex items-center gap-2">
-						<Shield className="text-primary h-4 w-4" />
-						<CardTitle>Bound toolkits</CardTitle>
-					</div>
-				</CardHeader>
-				<CardBody className="space-y-2">
-					{toolkits.isPending ? (
-						<LoadingState size="sm" />
-					) : toolkits.error ? (
-						<ErrorAlert message={toolkits.error as Error} />
-					) : !toolkits.data || toolkits.data.length === 0 ? (
-						<div className="text-muted-foreground border-border/60 rounded-lg border border-dashed p-4 text-center text-sm">
-							No toolkits bound to this agent.
-						</div>
-					) : (
-						toolkits.data.map((t) => (
-							<AppLink
-								key={t.id}
-								href={ROUTE_PATHS.toolkit(t.toolkitId)}
-								className="group hover:border-primary/40 border-border/60 bg-background/40 flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors"
-							>
-								<KeyRound className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-								<code className="text-foreground flex-1 truncate font-mono text-xs">
-									{t.toolkitId}
-								</code>
-								<span
-									className="text-muted-foreground/70 text-[11px]"
-									title={formatTimestamp(t.boundAt)}
-								>
-									{timeAgo(t.boundAt)}
-								</span>
-								<ArrowRight className="text-muted-foreground/40 group-hover:text-primary h-3.5 w-3.5 shrink-0 transition-colors" />
-							</AppLink>
-						))
-					)}
-				</CardBody>
-			</Card>
-
-			{/* Scopes — platform permissions granted to this agent (#615). */}
-			<ScopesCard actorKind="agent" actorId={agent.id} actorName={agent.name} />
-
-			{/* Pending access requests this agent has filed (#619). */}
-			<ActorAccessRequestsCard actorId={agent.id} actorName={agent.name} />
-
-			{/* Activity is cross-agent in jentic-one today (executions carry no agent
-			 *  id), so we link to Monitor rather than show a misleading per-agent feed. */}
-			<p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-				<Activity className="h-3.5 w-3.5" />
-				<AppLink href={ROUTES.monitor} className="hover:text-primary">
-					Open Monitor
-				</AppLink>{' '}
-				for execution history across every agent and toolkit.
-			</p>
-
-			<DenyDialog
-				open={confirm?.kind === 'deny'}
-				subjectName={agent.name}
-				pending={deny.isPending}
-				onConfirm={async (reason) => {
-					try {
-						await deny.mutateAsync({ id: agent.id, reason });
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
+			<LifecycleDialogs
+				confirm={confirm}
 				onClose={() => setConfirm(null)}
-			/>
-
-			<ConfirmDialog
-				open={confirm?.kind === 'disable'}
-				title={`Disable ${agent.name}`}
-				body="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
-				confirmLabel="Disable"
-				pending={disable.isPending}
-				onConfirm={async () => {
-					try {
-						await disable.mutateAsync(agent.id);
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			<CascadeDeleteDialog
-				open={confirm?.kind === 'archive'}
 				entityType="agent"
-				entityName={agent.name}
-				loading={archive.isPending}
-				error={archive.error}
-				onConfirm={async () => {
-					try {
-						await archive.mutateAsync(agent.id);
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			<ConfirmDialog
-				open={confirm?.kind === 'revoke-api-key'}
-				title={`Revoke API key for ${agent.name}`}
-				body="This will immediately invalidate the agent's current API key. The agent will no longer be able to authenticate until a new key is generated."
-				confirmLabel="Revoke"
-				pending={revokeApiKey.isPending}
-				onConfirm={async () => {
-					try {
-						await revokeApiKey.mutateAsync(agent.id);
-						setConfirm(null);
-					} catch {
-						// onError toasts; keep the dialog open so the user can retry.
-					}
-				}}
-				onClose={() => setConfirm(null)}
-			/>
-
-			<ApiKeyDialog open={apiKey != null} apiKey={apiKey} onClose={() => setApiKey(null)} />
-
-			{/* Edit dialog — rename + re-describe the agent (#620). The shared
-			    dialog owns the seeded draft, live validation (name 1..255,
-			    description ≤1024), the diff-vs-seeded patch, and the pending /
-			    empty-patch guards; the page just wires its mutation + title. */}
-			<EditNameDescriptionDialog
-				open={editOpen}
-				onClose={() => setEditOpen(false)}
-				title="Edit agent"
-				initialName={agent.name}
-				initialDescription={agent.description ?? null}
-				isPending={updateAgent.isPending}
-				error={updateAgent.isError ? (updateAgent.error as Error) : null}
-				entityMissing={editOpen && !agentQuery.data}
-				fieldIdPrefix="agent-edit"
-				onSave={(patch) => {
-					updateAgent.mutate(patch, {
-						onSuccess: () => {
-							setEditOpen(false);
-							updateAgent.reset();
-						},
-					});
-				}}
+				disableBody="Disabling immediately revokes this agent's ability to authenticate. You can re-enable it later."
+				mutations={{ deny, disable, archive }}
 			/>
 		</PageShell>
 	);

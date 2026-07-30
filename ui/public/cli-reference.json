@@ -83,7 +83,7 @@
               "shorthand": "y",
               "type": "bool",
               "default": "false",
-              "usage": "non-interactive: use flags + defaults, no prompts"
+              "usage": "non-interactive: no prompts; with no --operator/--all, the skill targets the detected operators"
             }
           ]
         },
@@ -968,14 +968,15 @@
               "name": "request",
               "path": "jentic access request",
               "use": "request",
-              "short": "File a request for a toolkit binding or a scope grant",
-              "long": "request files an access request for the access you are missing and prints an\napprove_url for your human operator. Name the toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves the API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAn existing pending request for the same resource is reused, not duplicated.\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
-              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait",
+              "short": "File a request for toolkit bindings, scope grants, or provisioning plans",
+              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name a toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves an API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\nitem. With more than one --provision, key --auth and --rules-json by the\nsame vendor/name[/version] passed to --provision; the bare form applies\nwhen there is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
+              "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --toolkit github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
               "flags": [
                 {
                   "name": "auth",
-                  "type": "string",
-                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer)"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=\u003ctype\u003e)"
                 },
                 {
                   "name": "base-url",
@@ -995,8 +996,9 @@
                 },
                 {
                   "name": "provision",
-                  "type": "string",
-                  "usage": "file a full provisioning plan to make this API executable (vendor/name[/version])"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)"
                 },
                 {
                   "name": "reason",
@@ -1005,13 +1007,15 @@
                 },
                 {
                   "name": "rules-json",
-                  "type": "string",
-                  "usage": "proposed permission rules for --provision, as a JSON array"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=\u003cjson\u003e)"
                 },
                 {
                   "name": "scope",
-                  "type": "string",
-                  "usage": "request this scope be granted"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request this scope be granted (repeatable)"
                 },
                 {
                   "name": "timeout",
@@ -1021,13 +1025,15 @@
                 },
                 {
                   "name": "toolkit",
-                  "type": "string",
-                  "usage": "request a binding to the toolkit serving this API (vendor/name[/version])"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)"
                 },
                 {
                   "name": "toolkit-id",
-                  "type": "string",
-                  "usage": "request a binding to this toolkit id (tk_…)"
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "request a binding to this toolkit id (tk_…; repeatable)"
                 },
                 {
                   "name": "wait",
@@ -1171,7 +1177,7 @@
               "path": "jentic skill init",
               "use": "init",
               "short": "Generate the Jentic skill for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\n(or pass --operator), and writes the Jentic CLI-usage skill into each\none's native layout.",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic\nCLI-usage skill into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run).\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
               "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
@@ -1212,7 +1218,7 @@
                   "name": "yes",
                   "type": "bool",
                   "default": "false",
-                  "usage": "skip the interactive picker (use --operator/--all)"
+                  "usage": "non-interactive: no pickers; with no --operator/--all, target the detected operators"
                 }
               ]
             },
@@ -1220,7 +1226,7 @@
               "name": "list",
               "path": "jentic skill list",
               "use": "list",
-              "short": "Show supported operators and which are detected in this environment",
+              "short": "Show supported operators: which are detected and where the skill is installed",
               "flags": [
                 {
                   "name": "json",
@@ -1264,7 +1270,7 @@
                 {
                   "name": "scope",
                   "type": "string",
-                  "usage": "placement scope: user or project (default: per-operator)"
+                  "usage": "placement scope to remove from: user or project (default: every scope where the skill is installed)"
                 }
               ]
             }
@@ -1412,6 +1418,12 @@
           "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
+            {
+              "name": "fresh-secrets",
+              "type": "bool",
+              "default": "false",
+              "usage": "rotate every generated secret instead of reusing an existing config's (default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)"
+            },
             {
               "name": "no-start",
               "type": "bool",
@@ -1684,7 +1696,7 @@
           "path": "jenticctl update",
           "use": "update",
           "short": "Update the jentic CLIs (and check the stack) to the latest release",
-          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.",
+          "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.\n\nA Homebrew-installed CLI is never swapped in place: the CLI half runs\n`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n(--ref cannot pin a Homebrew-managed CLI).",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
@@ -1728,14 +1740,14 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. Use --purge to also delete the data volume\n(this destroys the database), or --keep-data to force preservation. With\nno flag and an interactive terminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
               "name": "keep-data",
               "type": "bool",
               "default": "false",
-              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it)"
+              "usage": "preserve the Docker stack's data volume (the default; reinstall reattaches it and reuses jentic-one-old.yaml's encryption key)"
             },
             {
               "name": "purge",

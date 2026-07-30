@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,12 +31,14 @@ from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db import DatabaseIntegrityError
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import ActorStatus, ActorType, ActorVerb
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import Page, decode_cursor_str, encode_cursor
 from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import DEFAULT_AGENT_SCOPES
+
+logger = structlog.get_logger(__name__)
 
 _VALID_TRANSITIONS: dict[ActorVerb, dict[ActorStatus, ActorStatus]] = {
     ActorVerb.APPROVE: {ActorStatus.PENDING: ActorStatus.ACTIVE},
@@ -151,6 +154,36 @@ class AgentService:
         view.has_api_key = has_key
         return view
 
+    async def _settle_registration_alerts(
+        self, session: AsyncSession, agent_id: str, *, acknowledged_by: str
+    ) -> None:
+        """Acknowledge outstanding ``agent.self_registered`` alerts for the agent.
+
+        Self-registration files a ``requires_action`` event so operators are
+        prompted to review. Approving/denying IS that review, so leaving the
+        alert live would keep a stale "awaits approval" row (with a working
+        Review button) on the rail and dashboard forever. Best-effort like the
+        emit itself: alert bookkeeping must never roll back the decision.
+
+        The body runs inside a SAVEPOINT: on PostgreSQL a statement error
+        aborts the whole transaction, so a bare try/except here would swallow
+        the exception but leave the outer transaction poisoned — the decision's
+        commit would then fail anyway. Rolling back just the nested block keeps
+        the "never roll back the decision" promise for DB-level failures too.
+        """
+        try:
+            async with session.begin_nested():
+                await settle_actionable_events(
+                    session,
+                    event_type=EventType.AGENT_SELF_REGISTERED,
+                    acknowledged_by=acknowledged_by,
+                    acknowledgement_note="registration decided",
+                    actor_id=agent_id,
+                    actor_type=ActorType.AGENT.value,
+                )
+        except Exception:
+            logger.warning("settle_registration_alerts_failed", agent_id=agent_id, exc_info=True)
+
     async def approve(self, agent_id: str, *, identity: Identity) -> AgentView:
         async with self._ctx.admin_db.transaction() as session:
             await self._check_transition(session, agent_id, ActorVerb.APPROVE)
@@ -193,11 +226,15 @@ class AgentService:
                 session,
                 type=EventType.AGENT_REGISTRATION_APPROVED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration approved",
+                summary=f"Agent '{agent.name}' registration approved",
+                # `agent_id` lets the UI deep-link the rail row to the agent's
+                # page (the top-level actor here is the deciding USER).
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
@@ -220,11 +257,13 @@ class AgentService:
                 session,
                 type=EventType.AGENT_REGISTRATION_DENIED,
                 severity=EventSeverity.INFO,
-                summary=f"Agent {agent_id} registration denied",
+                summary=f"Agent '{agent.name}' registration denied",
+                data={"agent_id": agent_id, "agent_name": agent.name},
                 created_by=identity.sub,
                 actor_id=identity.sub,
                 actor_type=identity.actor_type.value,
             )
+            await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
         return AgentView.model_validate(agent)
 
     async def disable(self, agent_id: str, *, identity: Identity) -> None:

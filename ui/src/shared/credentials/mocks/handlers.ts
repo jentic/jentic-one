@@ -285,12 +285,38 @@ export const credentialsHandlers = [
 	http.patch('/credentials/:id', async ({ params, request }) => {
 		const idx = store.findIndex((c) => c.credential_id === params.id);
 		if (idx === -1) return new HttpResponse(null, { status: 404 });
-		const body = (await request.json()) as CredentialUpdateRequest;
+		const body = (await request.json()) as CredentialUpdateRequest & {
+			field_name?: string;
+			location?: string;
+			key?: string;
+			token?: string;
+			client_secret?: string;
+			password?: string;
+		};
+		const cur = store[idx];
+		const det = (cur.details ?? {}) as { field_name?: string; location?: string };
+		// field_name/location are immutable after create (#589): a *changed*
+		// value is rejected; a matching echo is tolerated as a no-op.
+		if (body.field_name !== undefined && body.field_name !== det.field_name) {
+			return HttpResponse.json({ type: 'immutable_field' }, { status: 409 });
+		}
+		if (body.location !== undefined && body.location !== det.location) {
+			return HttpResponse.json({ type: 'immutable_field' }, { status: 409 });
+		}
+		// updated_at moves iff something was actually persisted (#739).
+		const changed =
+			body.name !== undefined ||
+			body.active !== undefined ||
+			body.server_variables !== undefined ||
+			body.key !== undefined ||
+			body.token !== undefined ||
+			body.client_secret !== undefined ||
+			body.password !== undefined;
 		const next: Credential = {
-			...store[idx],
-			name: (body as { name?: string }).name ?? store[idx].name,
-			active: (body as { active?: boolean }).active ?? store[idx].active,
-			updated_at: new Date().toISOString(),
+			...cur,
+			name: (body as { name?: string }).name ?? cur.name,
+			active: (body as { active?: boolean }).active ?? cur.active,
+			...(changed ? { updated_at: new Date().toISOString() } : {}),
 		};
 		store[idx] = next;
 		return HttpResponse.json(next);

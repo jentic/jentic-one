@@ -13,7 +13,7 @@
  * state rather than issuing a bad request.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { FileJson, Trash2 } from 'lucide-react';
 import {
 	PageShell,
@@ -75,7 +75,7 @@ export default function ApiDetailPage() {
 	const api = query.data;
 	// Route the title through the shared friendly-name rule so a draft-only API
 	// (no user-set display_name) reads as its humanised sub-API/vendor name
-	// instead of the raw `vendor/name` tuple, matching the workspace tile (#6).
+	// instead of the raw `vendor/name` tuple, matching the workspace tile.
 	// `apiRefDisplayName` can return '' for generic/empty identity fields, so
 	// chain the same guaranteed non-empty fallback `ApiCard.titleFor` uses. The
 	// early return above guarantees `apiKey.vendor` is a non-empty string (a

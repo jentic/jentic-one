@@ -134,7 +134,30 @@ async def test_bucket_seconds_selection_for_various_windows() -> None:
     assert MonitoringService._compute_bucket_seconds(86400) == 3600
     assert MonitoringService._compute_bucket_seconds(259200) == 21600
     assert MonitoringService._compute_bucket_seconds(604800) == 21600
+    # A day-aligned 7d window across a fall-back DST change (7d + 1h) keeps
+    # the 6h tier; only genuinely wider windows drop to daily buckets.
+    assert MonitoringService._compute_bucket_seconds(608400) == 21600
+    assert MonitoringService._compute_bucket_seconds(8 * 86400) == 21600
+    assert MonitoringService._compute_bucket_seconds(8 * 86400 + 1) == 86400
     assert MonitoringService._compute_bucket_seconds(1209600) == 86400
+
+
+def test_trend_points_follow_bucket_tier() -> None:
+    # One trend segment per aggregate bucket: 24 hourly for a day, 28 six-hour
+    # for a week, 30 daily for a month — so day-aligned windows produce
+    # day-aligned segments (the volume chart's 7d axis shows exactly 7 days).
+    assert MonitoringService._compute_trend_points(86400, 3600) == 24
+    assert MonitoringService._compute_trend_points(604800, 21600) == 28
+    assert MonitoringService._compute_trend_points(2592000, 86400) == 30
+    # A DST-stretched 7-day window (7d + 1h) stays on the 6h tier and still
+    # gets 28 segments — each slightly stretched (~6h2m), not an extra one —
+    # so it remains re-bucketable into 7 day bars client-side.
+    assert MonitoringService._compute_trend_points(608400, 21600) == 28
+    # Capped at 60 (1h window / 60s buckets, or pathologically wide windows).
+    assert MonitoringService._compute_trend_points(3600, 60) == 60
+    assert MonitoringService._compute_trend_points(86400 * 365, 86400) == 60
+    # Never below one segment.
+    assert MonitoringService._compute_trend_points(30, 60) == 1
 
 
 @pytest.mark.asyncio
@@ -240,10 +263,12 @@ async def test_query_usage_assembles_response_correctly() -> None:
             "jentic_one.admin.services.monitoring_service.MonitoringRepository.grouped_trend",
             new_callable=AsyncMock,
             return_value=_sample_trends(),
-        ),
+        ) as mock_trend,
     ):
         result = await svc.get_usage_stats(since=1719792000, until=1719878400)
 
+    # 24h window / hourly buckets → 24 trend segments requested.
+    assert mock_trend.call_args[1]["num_points"] == 24
     assert result.total == 100
     assert result.success == 80
     assert result.failed == 20

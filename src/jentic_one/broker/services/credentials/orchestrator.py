@@ -20,6 +20,7 @@ from jentic_one.broker.core.exceptions import (
     AmbiguousMatchError,
     CredentialNeedsReconnectError,
     CredentialRefreshTransientError,
+    CredentialUndecryptableError,
     ErrorOrigin,
     InvalidCredentialNameError,
 )
@@ -38,6 +39,7 @@ from jentic_one.broker.services.credentials.refresh import TokenRefresher
 from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
+from jentic_one.shared.crypto import DecryptionError
 from jentic_one.shared.events import emit_credential_access, emit_event_best_effort
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.models.credentials import CredentialType
@@ -67,6 +69,7 @@ class CredentialService:
         api_version: str,
         identity: Identity,
         credential_name: str | None = None,
+        trace_id: str | None = None,
     ) -> InjectedAuth:
         """Resolve + inject the credential for the API tuple.
 
@@ -74,6 +77,12 @@ class CredentialService:
         credential path). Credential failures are mapped to broker-domain
         exceptions (424/409/401/502) so both call-sites render identical
         problem+json.
+
+        ``trace_id`` is stamped onto the ``CREDENTIAL_ACCESSED`` audit event so
+        an operator inspecting an execution can join the credential-use record
+        back to the specific execution that triggered it (#740). Optional so
+        non-execution call-sites (bind-time probes, service accounts) don't
+        have to fabricate one.
         """
         if not api_vendor:
             return _EMPTY
@@ -84,13 +93,62 @@ class CredentialService:
                 api=api, caller=identity.sub, credential_name=credential_name
             )
 
-            access_token: str | None = None
-            if resolved.wire_type == CredentialType.OAUTH2:
-                access_token = await TokenRefresher(self._ctx).ensure_fresh(
-                    resolved=resolved, caller=identity.sub
-                )
+            try:
+                access_token: str | None = None
+                if resolved.wire_type == CredentialType.OAUTH2:
+                    access_token = await TokenRefresher(self._ctx).ensure_fresh(
+                        resolved=resolved, caller=identity.sub
+                    )
 
-            result = inject_auth(resolved, ctx=self._ctx, access_token=access_token)
+                result = inject_auth(resolved, ctx=self._ctx, access_token=access_token)
+            except DecryptionError as exc:
+                # A blob resolved by id/name but its ciphertext will not
+                # decrypt: the encryption key that produced it is gone (a
+                # reinstall regenerated it under the same key id, a hand
+                # rotation dropped the retired entry, or a DB was restored
+                # under a different key). The agent cannot self-recover —
+                # only an operator can re-add the credential — so map to a
+                # dedicated 424 with a prompt_human directive and flag the
+                # event requires_action so it reaches the Action Inbox
+                # (unlike not_provisioned/refresh_failed, no agent-side
+                # reconnect can fix this). Redaction: carry the credential
+                # id (opaque, not a secret) in extra; never ciphertext or
+                # key material.
+                await self._emit_credential_failure(
+                    type=EventType.CREDENTIAL_UNDECRYPTABLE,
+                    summary=(
+                        f"Credential '{resolved.credential_id}' cannot be decrypted "
+                        f"for '{api.vendor}'"
+                    ),
+                    identity=identity,
+                    requires_action=True,
+                )
+                raise CredentialUndecryptableError(
+                    detail=(
+                        f"Credential '{resolved.credential_id}' for "
+                        f"'{api.vendor}' cannot be decrypted with the "
+                        "configured encryption keys"
+                    ),
+                    type="credential_undecryptable",
+                    extra={
+                        "credential_id": resolved.credential_id,
+                        "api_vendor": api.vendor,
+                    },
+                    directive=AgentDirective(
+                        strategy="prompt_human",
+                        parameters={
+                            "credential_id": resolved.credential_id,
+                            "vendor": api.vendor,
+                        },
+                        human_readable_instruction=(
+                            f"The stored credential for '{api.vendor}' can "
+                            "no longer be decrypted. Ask an operator to "
+                            "remove and re-add it; retrying will not fix "
+                            "this."
+                        ),
+                    ),
+                ) from exc
+
             async with self._ctx.admin_db.transaction() as session:
                 await emit_credential_access(
                     session,
@@ -102,12 +160,15 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
+                    trace_id=trace_id,
                 )
             return InjectedAuth(
                 headers=result.headers,
                 query_params=result.query_params,
                 cookies=result.cookies,
                 server_variables=resolved.server_variables,
+                credential_id=resolved.credential_id,
+                credential_name=resolved.name,
             )
         except CredentialNotProvisionedError as exc:
             await self._emit_credential_failure(
@@ -164,6 +225,7 @@ class CredentialService:
         summary: str,
         identity: Identity,
         tags: set[EventTag] | None = None,
+        requires_action: bool = False,
     ) -> None:
         """Emit a credential-health event on the admin DB (best-effort)."""
         try:
@@ -177,6 +239,7 @@ class CredentialService:
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                     tags=tags,
+                    requires_action=requires_action,
                 )
         except Exception:
             logger.warning("telemetry_emit_failed", event_type=type, exc_info=True)

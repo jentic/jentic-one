@@ -174,15 +174,22 @@ async def test_time_buckets_aggregates_by_window(
     await _seed(admin_db, now - timedelta(seconds=10), "failed", duration_ms=100)
 
     async with admin_db.session() as session:
+        since = now - timedelta(hours=1)
         buckets = await MonitoringRepository.time_buckets(
-            session, now - timedelta(hours=1), now + timedelta(minutes=1), 3600
+            session, since, now + timedelta(minutes=1), 3600
         )
 
-    # Both executions fall in the same hour bucket (exercises the dialect-aware
+    # With the since-anchored bucket grid the two executions may straddle a
+    # boundary, so assert window-wide sums (exercises the dialect-aware
     # epoch-seconds expression that replaced Postgres-only extract('epoch', …)).
     assert sum(b.total for b in buckets) == 2
     assert sum(b.success for b in buckets) == 1
     assert sum(b.failed for b in buckets) == 1
+    # Bucket timestamps land on the since-anchored grid (not UTC-epoch-aligned):
+    # this is what keeps aggregate buckets and trend segments on the same grid
+    # for the day-aligned windows the UI sends.
+    since_epoch = int(since.timestamp())
+    assert all((b.ts - since_epoch) % 3600 == 0 for b in buckets)
 
 
 async def test_grouped_top_and_trend_by_toolkit(

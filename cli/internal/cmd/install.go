@@ -18,10 +18,11 @@ import (
 )
 
 type installOptions struct {
-	out       string
-	skipBuild bool
-	noStart   bool
-	noWizard  bool
+	out          string
+	skipBuild    bool
+	noStart      bool
+	noWizard     bool
+	freshSecrets bool
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -53,6 +54,9 @@ func newInstallCmd(app *App) *cobra.Command {
 		"don't start the app in the background after a local install")
 	cmd.Flags().BoolVar(&opts.noWizard, "no-wizard", false,
 		"don't offer the guided first-run wizard after the stack starts")
+	cmd.Flags().BoolVar(&opts.freshSecrets, "fresh-secrets", false,
+		"rotate every generated secret instead of reusing an existing config's "+
+			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
 
 	return cmd
 }
@@ -93,6 +97,17 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 		return nil
 	}
 
+	// Carry secrets over from an existing config (or its uninstall backup)
+	// before FillSecrets runs, so a reinstall doesn't silently rotate the
+	// encryption key underneath still-present ciphertexts. FillSecrets is
+	// fill-only-empty (see install/secrets.go), so pre-seeded fields survive.
+	// --fresh-secrets skips this step for deliberate rotation. Malformed
+	// prior configs warn and fall through to fresh generation rather than
+	// blocking install.
+	if !opts.freshSecrets {
+		reuseInstallSecrets(a, draft, opts.out)
+	}
+
 	if err := draft.FillSecrets(); err != nil {
 		return err
 	}
@@ -112,13 +127,8 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 		return &exitCodeError{code: 1}
 	}
 	// Stamp the decision onto the draft so the generated config's telemetry gate
-	// reflects the user's choice. An opted-in install gets a stable opaque
-	// instance id (seeds the durable admin-DB identity row on first boot); an
-	// opted-out install writes an explicit `enabled: false` (never a leftover id).
-	draft.TelemetryEnabled = enabled
-	if enabled {
-		draft.TelemetryInstanceID = uuid.NewString()
-	}
+	// reflects the user's choice.
+	stampTelemetryDecision(draft, enabled)
 
 	data, err := draft.Render()
 	if err != nil {
@@ -274,6 +284,12 @@ func (a *App) recordManifest(draft *install.Draft) {
 	}
 	if m.BinaryPath == "" {
 		if exe, err := os.Executable(); err == nil {
+			// Record the real file, not a PATH symlink to it (e.g. Homebrew's
+			// bin link), so later consumers of BinaryPath see the actual
+			// install location.
+			if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+				exe = resolved
+			}
 			m.BinaryPath = exe
 		}
 	}
@@ -285,8 +301,8 @@ func (a *App) recordManifest(draft *install.Draft) {
 // writeCLIConfig points the `jentic` CLI at the freshly installed local stack by
 // persisting the control-plane base URL and the local broker target into
 // ~/.jentic/config.yaml. Without this, `jentic execute` / `jentic run` fall back
-// to the built-in cloud defaults (https://broker.jentic.ai) and every brokered
-// call leaves the machine. Existing values are preserved (so a re-install or a
+// to the built-in defaults (https://127.0.0.1:8100), which may not match this
+// install's broker scheme/port. Existing values are preserved (so a re-install or a
 // hand-edited config is not clobbered); only unset fields are filled in. A
 // failure here is non-fatal: the stack is installed regardless, and the user can
 // set these by hand.
@@ -458,4 +474,45 @@ func installLocal(a *App, draft *install.Draft, configPath string) error {
 	}
 	draft.MigrationsDone = true
 	return nil
+}
+
+// stampTelemetryDecision records the consent decision on the draft. An
+// opted-in install gets a stable opaque instance id (seeds the durable
+// admin-DB identity row on first boot); an id pre-seeded from a prior config
+// (reuseInstallSecrets) is kept so re-consenting preserves the same telemetry
+// identity — its stability contract; an opted-out install writes an explicit
+// `enabled: false` (never a leftover id — render ignores the id when
+// disabled).
+func stampTelemetryDecision(draft *install.Draft, enabled bool) {
+	draft.TelemetryEnabled = enabled
+	if enabled && draft.TelemetryInstanceID == "" {
+		draft.TelemetryInstanceID = uuid.NewString()
+	}
+}
+
+// reuseInstallSecrets pre-seeds draft with the secret fields from an existing
+// jentic-one.yaml (or its uninstall backup) so a reinstall over live data
+// keeps stored ciphertexts readable. Best-effort by design: a missing file
+// is a silent no-op (fresh install); a malformed file warns and falls
+// through so an aborted prior install can't block this one. The out param
+// is the wizard's target config path; we resolve the backup next to it so a
+// non-default --out still reuses when the operator has moved things.
+func reuseInstallSecrets(a *App, draft *install.Draft, out string) {
+	candidates := []string{out, config.BackupNextTo(out)}
+	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
+		reused, err := install.ReuseSecrets(draft, path)
+		if err != nil {
+			fmt.Fprintln(a.Out, theme.Warnf("could not read prior config %s (continuing with fresh secrets): %v", path, err))
+			continue
+		}
+		if reused {
+			fmt.Fprintln(a.Out, theme.Dimf(
+				"Reusing secrets from %s so existing encrypted data stays readable "+
+					"(use --fresh-secrets to rotate instead).", path))
+			return
+		}
+	}
 }

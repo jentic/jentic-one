@@ -89,7 +89,15 @@ function RuleRow({ rule }: { rule: PermissionRule }) {
 					<span className="text-muted-foreground">any request</span>
 				) : null}
 				{rule.path ? (
-					<span className="text-muted-foreground font-mono break-all">{rule.path}</span>
+					<span className="text-muted-foreground font-mono break-all">
+						{/* Non-regex modes change the path's meaning — say so inline. */}
+						{rule.match_mode === 'prefix' || rule.match_mode === 'exact' ? (
+							<span className="text-muted-foreground/70 not-italic">
+								{rule.match_mode}:
+							</span>
+						) : null}
+						{rule.path}
+					</span>
 				) : null}
 			</div>
 			{ops.length > 0 && (

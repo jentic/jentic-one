@@ -11,8 +11,8 @@ from typing import Any
 
 import opentelemetry.instrumentation.fastapi as otel_fastapi
 import structlog
-from fastapi import APIRouter, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from jentic.problem_details import ProblemDetailException, problem_detail_exception_handler
 from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
@@ -34,15 +34,47 @@ from jentic_one.shared.telemetry.instance_id import resolve_instance_id
 from jentic_one.shared.telemetry.loop import TelemetryFlushLoop
 from jentic_one.shared.telemetry.sink import TelemetrySink, set_active_sink
 from jentic_one.shared.tracing import instrument_inbound_app
+from jentic_one.shared.web.agent_discovery import get_agent_discovery_router
+from jentic_one.shared.web.auth import API_KEY_HEADER
 from jentic_one.shared.web.container import AppContainer
+from jentic_one.shared.web.instance_identity import get_instance_router
 from jentic_one.shared.web.openapi_meta import (
     fastapi_metadata_kwargs,
     install_openapi_metadata,
 )
 from jentic_one.shared.web.openapi_responses import COMMON_ERROR_RESPONSES
 from jentic_one.shared.web.reference_router import get_reference_router
+from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 _logger = structlog.get_logger(__name__)
+
+
+async def spa_aware_problem_detail_handler(
+    request: Request, exc: ProblemDetailException
+) -> Response:
+    """Problem-details handler that lands anonymous HTML navigations in the SPA.
+
+    A human following a link to a protected URL after their session expired is
+    a *browser navigation*: ``GET``, ``Accept: text/html``, and — because the
+    web session token lives in the SPA's localStorage, never in a header the
+    browser sends on its own — no credential at all. Answering that with raw
+    ``application/problem+json`` strands the person on a JSON blob (#813), so
+    when an SPA is mounted we redirect into it and let the client-side auth
+    state take over (login screen or dashboard). Everything else — API clients
+    (JSON ``Accept``), requests that *did* present a credential, non-GETs —
+    keeps the RFC 9457 response byte-for-byte.
+    """
+    if (
+        exc.status_code == 401
+        and request.method == "GET"
+        and getattr(request.app.state, "spa_mounted", False)
+        and "text/html" in request.headers.get("accept", "")
+        and "authorization" not in request.headers
+        and API_KEY_HEADER not in request.headers
+    ):
+        return RedirectResponse(f"{SPA_MOUNT_PATH}/", status_code=302)
+    return await problem_detail_exception_handler(request, exc)
+
 
 SURFACE_MODULES = {
     "registry": "jentic_one.registry.web.app",
@@ -327,6 +359,7 @@ def create_surface_app(
     routers: Sequence[tuple[APIRouter, str, list[str]]],
     extra_lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     container: AppContainer | None = None,
+    include_instance_router: bool = True,
 ) -> FastAPI:
     """Create a standalone surface FastAPI app with observability wired.
 
@@ -341,6 +374,12 @@ def create_surface_app(
     ``container`` is the DI seam: when omitted the default is used and behavior is
     unchanged. A caller passes its own container to inject a ``Broker`` (stashed on
     ``app.state``) and mount extra routers after the surface's own.
+
+    ``include_instance_router`` mounts the public backend-identity endpoint
+    (``GET /instance``). It defaults to ``True`` for control-plane surfaces; the
+    broker (a data-plane forward proxy whose only public routes are its
+    liveness/readiness probes) passes ``False`` so it never advertises a
+    control-plane identity surface.
     """
     container = container or AppContainer.default(ctx)
 
@@ -387,8 +426,22 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
+    # Public, schema-hidden agent-discovery documents (onboarding skill +
+    # llms.txt). Mounted on every standalone surface so split deployments
+    # (gateway proxying to per-surface backends) serve them too. Registered
+    # *before* the surface routers and the container extension seam so neither
+    # the broker's /{upstream_url:path} catch-all nor an injected extra router
+    # can shadow these four literal paths.
+    app.include_router(get_agent_discovery_router())
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
+    # Public, schema-visible backend-identity endpoint so a client (MCP server,
+    # CLI, agent) can tell which backend it is bound to — cloud vs. local. Off
+    # for the broker data plane (its only public routes are its probes).
+    if include_instance_router:
+        # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
+        # 400/422 (same posture as /health).
+        app.include_router(get_instance_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
             extra_router,
@@ -399,7 +452,7 @@ def create_surface_app(
     for installer in container.extra_installers:
         installer(app, ctx)
     app.add_middleware(RequestIDMiddleware)
-    app.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
     attach_http_observability(app)
     install_openapi_metadata(app)
     return app
@@ -445,7 +498,7 @@ def create_combined_app(
     if container.broker is not None:
         root.state.broker = container.broker
         root.state.broker_factory = lambda _runner: container.broker
-    root.add_exception_handler(ProblemDetailException, problem_detail_exception_handler)  # type: ignore[arg-type]
+    root.add_exception_handler(ProblemDetailException, spa_aware_problem_detail_handler)  # type: ignore[arg-type]
 
     @root.get(
         "/health",
@@ -460,6 +513,13 @@ def create_combined_app(
         have a stable target. Returns ``{"status": "ok"}`` when the process is up.
         """
         return JSONResponse({"status": "ok", "version": __version__})
+
+    # Public, schema-hidden agent-discovery documents: the onboarding skill
+    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
+    # GET /.well-known/llms.txt) — see #651 / #809. Registered before the
+    # surfaces so no surface route can shadow them (same order as
+    # create_surface_app).
+    root.include_router(get_agent_discovery_router())
 
     for surface in apps:
         module_path = SURFACE_MODULES[surface]
@@ -476,6 +536,12 @@ def create_combined_app(
     # instead of parsing the OpenAPI document). Registered after all surfaces so
     # the reference it builds covers every included route.
     root.include_router(get_reference_router())
+
+    # Public backend-identity endpoint so a client (MCP server, CLI, agent) can
+    # tell which backend it is bound to — cloud vs. a local self-hosted install.
+    # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
+    # 400/422 (same posture as /health).
+    root.include_router(get_instance_router())
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.

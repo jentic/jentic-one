@@ -6,9 +6,14 @@
  * Views must never reach past this layer (ESLint-enforced). Query keys are
  * namespaced under `['toolkits', …]` so callers/tests can target invalidation.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query';
 import { toast } from '@/shared/ui';
-import { sharedQueryKeys } from '@/shared/api';
 import type {
 	ToolkitCreateRequest,
 	ToolkitUpdateRequest,
@@ -16,37 +21,66 @@ import type {
 	ToolkitKeyUpdateRequest,
 	ToolkitCredentialBindRequest,
 	PermissionRuleSchema,
+	PermissionTestRequest,
 } from '@/shared/api';
 import * as client from '@/modules/toolkits/api/client';
 import type { CreatedToolkit } from '@/modules/toolkits/api/types';
+import { sharedQueryKeys } from '@/shared/api';
 
-/** Stable query-key roots so callers/tests can target invalidation precisely. */
+/** Stable query-key roots so callers/tests can target invalidation precisely.
+ * `all` derives from the shared cross-module registry so the Agents module's
+ * agent-side bind/unbind (#607) can invalidate the toolkit-side "Bound Agents"
+ * card through `sharedQueryKeys.toolkitsRoot` without the two prefixes drifting. */
 export const toolkitKeys = {
-	all: ['toolkits'] as const,
-	list: (cursor: string | null) => [...toolkitKeys.all, 'list', cursor] as const,
+	all: sharedQueryKeys.toolkitsRoot,
+	list: () => [...toolkitKeys.all, 'list'] as const,
 	detail: (id: string) => [...toolkitKeys.all, 'detail', id] as const,
 	keys: (id: string) => [...toolkitKeys.all, 'keys', id] as const,
 	bindings: (id: string) => [...toolkitKeys.all, 'bindings', id] as const,
 	permissions: (id: string, credentialId: string) =>
 		[...toolkitKeys.all, 'permissions', id, credentialId] as const,
-	agents: (id: string) => [...toolkitKeys.all, 'agents', id] as const,
+	agents: (id: string) => [...sharedQueryKeys.toolkitAgentsRoot, id] as const,
 	audit: (id: string) => [...toolkitKeys.all, 'audit', id] as const,
+	// Options are part of cache identity — two callers with different windows
+	// or limits must not share (and clobber) one entry.
+	usage: (id: string, sinceDays?: number) =>
+		[...toolkitKeys.all, 'usage', id, sinceDays ?? null] as const,
+	executions: (id: string, limit?: number) =>
+		[...toolkitKeys.all, 'executions', id, limit ?? null] as const,
 	// Toolkit-scoped lists not tied to a single toolkit id.
+	usageByToolkit: () => [...toolkitKeys.all, 'usage-by-toolkit'] as const,
 	bindableCredentials: () => [...toolkitKeys.all, 'bindable-credentials'] as const,
 	linkableAgents: () => [...toolkitKeys.all, 'linkable-agents'] as const,
-	agentBindings: (agentId: string) => [...toolkitKeys.all, 'agent-bindings', agentId] as const,
 };
 
 const STALE_POLL_MS = 30_000;
 
 // --- Toolkit list + detail ------------------------------------------------
 
-export function useToolkits(params: { cursor?: string | null } = {}) {
-	const cursor = params.cursor ?? null;
-	return useQuery({
-		queryKey: toolkitKeys.list(cursor),
-		queryFn: () => client.listToolkits({ cursor }),
+/**
+ * Cursor-keyset toolkit list as an infinite query — pages accumulate behind a
+ * "Load more" affordance instead of replacing each other, so the grid never
+ * discards what the user already scanned. Polling refetches every loaded page.
+ */
+export function useToolkits() {
+	return useInfiniteQuery({
+		queryKey: toolkitKeys.list(),
+		queryFn: ({ pageParam }) => client.listToolkits({ cursor: pageParam }),
+		initialPageParam: null as string | null,
+		getNextPageParam: (last) => (last.has_more ? (last.next_cursor ?? null) : null),
 		placeholderData: keepPreviousData,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+/**
+ * Per-toolkit 7d usage summaries for the list's card sparklines (single
+ * `group_by=toolkit` aggregation, admin-gated → `null` hides the sparklines).
+ */
+export function useUsageByToolkit() {
+	return useQuery({
+		queryKey: toolkitKeys.usageByToolkit(),
+		queryFn: () => client.getUsageByToolkit(),
 		refetchInterval: STALE_POLL_MS,
 	});
 }
@@ -75,26 +109,21 @@ export function useCreateToolkit() {
 export function useUpdateToolkit(toolkitId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
-		mutationFn: (body: ToolkitUpdateRequest) => {
-			// Guard against a mutate fired before the route param resolved: the
-			// hook is instantiated with `toolkitId ?? ''` on the page, so an empty
-			// id here would PATCH `/toolkits/` (wrong toolkit / 404) instead of the
-			// intended one. Fail loudly rather than silently hitting the wrong URL
-			// (#10). Mirrors the same guard on `useUpdateAgent`'s call site.
-			if (!toolkitId) throw new Error('Cannot update a toolkit without an id.');
-			return client.updateToolkit(toolkitId, body);
-		},
-		onSuccess: (updatedToolkit) => {
-			// Seed the detail cache with the server response so the header/name
-			// updates instantly instead of flickering the stale name until the
-			// invalidation refetch lands — mirroring `useUpdateAgent` (#12).
-			queryClient.setQueryData(toolkitKeys.detail(toolkitId), updatedToolkit);
+		mutationFn: (body: ToolkitUpdateRequest) => client.updateToolkit(toolkitId, body),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.all });
-			// A toolkit's name shows on the Dashboard's toolkit surfaces too, so
-			// refresh the shared dashboard root symmetrically with the other
-			// name-changing mutations (`useUpdateAgent`) instead of leaving those
-			// tiles stale until their own poll (#12).
-			queryClient.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			// A rename is the only toolkit-side change that alters a toolkit's
+			// display name, and the Agents module caches that name per bound row
+			// under the shared `toolkitNameRoot` (its own top-level root, not under
+			// `['toolkits']`). Invalidate it here — id-scoped so ONLY this toolkit's
+			// cached name refetches — so agent-side bound-row labels refresh
+			// instantly on rename instead of waiting out `useToolkitName`'s
+			// staleTime. (`useSetToolkitActive` toggles `active`, not `name`, so it
+			// deliberately does NOT touch this root.)
+			queryClient.invalidateQueries({
+				queryKey: [...sharedQueryKeys.toolkitNameRoot, toolkitId],
+			});
 		},
 	});
 }
@@ -178,6 +207,25 @@ export function useRevokeKey(toolkitId: string) {
 		},
 		onError: (err: Error) =>
 			toast({ title: 'Failed to revoke key', description: err.message, variant: 'error' }),
+	});
+}
+
+/**
+ * Non-destructive key metadata update — label rename and/or `allowed_ips`
+ * (both already accepted by `PATCH /toolkits/{id}/keys/{key_id}`). Kept apart
+ * from `useRevokeKey` so its toast/invalidations stay revocation-specific.
+ */
+export function useUpdateKey(toolkitId: string) {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: ({ keyId, body }: { keyId: string; body: ToolkitKeyUpdateRequest }) =>
+			client.updateKey(toolkitId, keyId, body),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: toolkitKeys.keys(toolkitId) });
+			toast({ title: 'API key updated', variant: 'success' });
+		},
+		onError: (err: Error) =>
+			toast({ title: 'Failed to update key', description: err.message, variant: 'error' }),
 	});
 }
 
@@ -327,15 +375,16 @@ export function useLinkAgentToToolkit(toolkitId: string) {
 	});
 }
 
-export function useAgentToolkits(agentId: string | null) {
-	return useQuery({
-		queryKey: toolkitKeys.agentBindings(agentId ?? ''),
-		queryFn: () => client.listAgentToolkits(agentId as string),
-		enabled: agentId != null,
-	});
-}
-
-export function useUnbindToolkitFromAgent(toolkitId: string) {
+/**
+ * Unlink an agent from *this toolkit* (mirror of the agents-module hook that
+ * unbinds a toolkit from an agent). The two hooks used to share a name and only
+ * differ by argument order, which was a real footgun: both took a ``string`` and
+ * their ``.mutate`` calls took a ``string``, so auto-importing the wrong one
+ * would compile cleanly and swap the ids at runtime. Renamed
+ * to make the direction unambiguous — this one binds the *toolkit* argument, and
+ * ``.mutate`` takes the *agent id* to unlink.
+ */
+export function useUnlinkAgentFromToolkit(toolkitId: string) {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: (agentId: string) => client.unbindToolkitFromAgent(agentId, toolkitId),
@@ -344,7 +393,7 @@ export function useUnbindToolkitFromAgent(toolkitId: string) {
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.detail(toolkitId) });
 			// Unlinked agents become linkable again — refresh the picker candidates.
 			queryClient.invalidateQueries({ queryKey: toolkitKeys.linkableAgents() });
-			toast({ title: 'Agent access revoked', variant: 'success' });
+			toast({ title: 'Agent unlinked', variant: 'success' });
 		},
 		onError: (err: Error) =>
 			toast({ title: 'Failed to revoke agent', description: err.message, variant: 'error' }),
@@ -359,6 +408,47 @@ export function useToolkitAudit(toolkitId: string | null, opts: { poll?: boolean
 		queryFn: () => client.listToolkitAudit(toolkitId as string),
 		enabled: toolkitId != null,
 		refetchInterval: opts.poll === false ? false : STALE_POLL_MS,
+	});
+}
+
+// --- Observability (admin monitoring, toolkit-scoped lens) -----------------
+
+/**
+ * Per-toolkit usage aggregation for the KPI strip + Activity chart. `data` is
+ * `null` for non-admins (the repository maps 401/403), so callers hide the
+ * surface rather than render an error.
+ */
+export function useToolkitUsage(toolkitId: string | null, opts: { sinceDays?: number } = {}) {
+	return useQuery({
+		queryKey: toolkitKeys.usage(toolkitId ?? '', opts.sinceDays),
+		queryFn: () => client.getToolkitUsage(toolkitId as string, opts),
+		enabled: toolkitId != null,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+/** Recent executions for the Activity feed (same `null`-for-non-admin gating). */
+export function useToolkitExecutions(toolkitId: string | null, opts: { limit?: number } = {}) {
+	return useQuery({
+		queryKey: toolkitKeys.executions(toolkitId ?? '', opts.limit),
+		queryFn: () => client.listToolkitExecutions(toolkitId as string, opts),
+		enabled: toolkitId != null,
+		refetchInterval: STALE_POLL_MS,
+	});
+}
+
+// --- Permission dry-run (broker verdict without calling upstream) ----------
+
+/**
+ * `POST …/permissions:test` — evaluate a hypothetical request against the
+ * toolkit's vendor-pooled rules. A mutation (not a query): every invocation is
+ * an explicit user action and the verdict must reflect the rules as of *now*,
+ * never a cache.
+ */
+export function useTestPermissions(toolkitId: string, credentialId: string) {
+	return useMutation({
+		mutationFn: (body: PermissionTestRequest) =>
+			client.testPermissions(toolkitId, credentialId, body),
 	});
 }
 

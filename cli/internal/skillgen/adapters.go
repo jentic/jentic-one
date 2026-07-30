@@ -108,6 +108,9 @@ func (a dirSkillAdapter) Aliases() []string  { return a.aliases }
 // skills dir behind). A "how to use Jentic" capability isn't tied to one repo,
 // so default to user scope (~/.claude|.cursor/skills), available everywhere.
 // Pass --scope project to pin it to a specific checkout.
+//
+// Ratified as the deliberate policy in #552 (claude/cursor/hermes → user,
+// codex/generic → project); TestDefaultScopePolicy tripwires any change.
 func (dirSkillAdapter) DefaultScope() Scope { return ScopeUser }
 
 func (a dirSkillAdapter) Target(scope Scope, env DetectEnv) string {
@@ -214,8 +217,15 @@ type agentsAdapter struct {
 	detect  func(env DetectEnv) bool
 }
 
-func (a agentsAdapter) Operator() Operator  { return a.op }
-func (a agentsAdapter) Aliases() []string   { return a.aliases }
+func (a agentsAdapter) Operator() Operator { return a.op }
+func (a agentsAdapter) Aliases() []string  { return a.aliases }
+
+// DefaultScope is project: AGENTS.md is the cross-tool *repo* instruction
+// file, and codex only auto-loads a user-global copy from ~/.codex. Ratified
+// in #552 alongside the dir-skill user default; TestDefaultScopePolicy
+// tripwires any change. Interactive runs confirm placement via the scope
+// prompt; defaulted non-interactive runs echo the resolved target before
+// writing (explicit --operator/--all runs already chose; --dry-run previews).
 func (a agentsAdapter) DefaultScope() Scope { return ScopeProject }
 
 func (a agentsAdapter) Target(scope Scope, env DetectEnv) string {

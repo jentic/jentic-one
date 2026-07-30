@@ -8,9 +8,6 @@
  * credential picker's catalog rows, the toolkit "Bound Credentials" row, the
  * toolkit "Bind API" picker — reads the same "friendly name" from whichever
  * identity field its DTO happens to carry.
- *
- * See `docs/plans/issue-631-friendly-api-names.md` for the decision log and
- * worked examples across surfaces.
  */
 
 /**
@@ -19,45 +16,96 @@
  * than `Posthog Com`. Kept intentionally short — grow the allowlist as we spot
  * new cases in the wild.
  */
-const TLD_SUFFIXES = new Set(['com', 'org', 'net', 'io', 'dev', 'ai', 'app', 'co', 'xyz']);
+const TLD_SUFFIXES = new Set([
+	'com',
+	'org',
+	'net',
+	'io',
+	'dev',
+	'ai',
+	'app',
+	'co',
+	'xyz',
+	// Common ccTLDs so a real dotted domain — including a multi-part public
+	// suffix like `bbc.co.uk` — is recognised as a domain and keeps its dotted
+	// structure instead of collapsing to spaces.
+	'uk',
+	'us',
+	'eu',
+	'de',
+	'fr',
+	'nl',
+	'ca',
+]);
 
 /**
  * Shared core of the two humanisers below. Title-case a slug-ish segment for
  * display (`article_search` → `Article Search`), with the TLD dot-join rule
- * (#631/#11) gated by `domainSlug`.
+ * gated by `domainSlug`.
  *
- * TLD dot-join rule. We rejoin a trailing domain suffix (see `TLD_SUFFIXES`)
- * with a dot instead of a space when it's a real domain slug rather than a
- * product name. Because the real vendor data in this app is *hyphenated*
- * (`posthog-com`, `github-com`), not dotted, a strict "only-if-a-literal-dot"
- * gate would wrongly space-join the real vendor slugs. So the trailing suffix
- * dot-joins when:
- *   - the raw input already contained a literal `.` (a genuinely dotted domain,
- *     e.g. `posthog.com`), OR
- *   - `domainSlug` is on AND there are exactly 2 tokens — the shape of a real
- *     `<vendor>-<tld>` domain slug (`posthog-com` → `Posthog.Com`).
+ * Genuinely-dotted input (a real domain like `posthog.com`, `bbc.co.uk`, or a
+ * multi-part `foo.bar.com`) preserves its dotted STRUCTURE: each dot-separated
+ * label is title-cased on its own (internal hyphen/underscore/space runs
+ * humanise to spaces) and the labels re-join with dots. This keeps a
+ * multi-part public suffix readable (`bbc.co.uk` → `Bbc.Co.Uk`,
+ * `foo.bar.com` → `Foo.Bar.Com`) instead of collapsing the leading dots into
+ * spaces and only re-joining the last one (which produced `Foo Bar.Com`).
  *
- * The "exactly 2 tokens" allowance means 3+-token hyphenated product names like
- * `stable-diffusion-ai` always stay space-joined (`Stable Diffusion Ai`,
- * killing the #11 false positive).
+ * TLD dot-join rule (the hyphenated path). Because the real vendor data in this
+ * app is *hyphenated* (`posthog-com`, `github-com`), not dotted, a strict
+ * "only-if-a-literal-dot" gate would wrongly space-join the real vendor slugs.
+ * So a trailing suffix (see `TLD_SUFFIXES`) dot-joins when `domainSlug` is on
+ * AND there are exactly 2 tokens — the shape of a real `<vendor>-<tld>` domain
+ * slug (`posthog-com` → `Posthog.Com`). The "exactly 2 tokens" allowance means
+ * 3+-token hyphenated product names like `stable-diffusion-ai` always stay
+ * space-joined (`Stable Diffusion Ai`, killing the false positive).
  */
 function humanize(segment: string, domainSlug: boolean): string {
 	// A segment that already carried a real dot is a genuinely dotted domain.
-	const hadDot = segment.includes('.');
-	const parts = segment
-		.split(/[_\-.\s]+/)
-		.filter(Boolean)
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+	// When its trailing label is a recognised TLD (`TLD_SUFFIXES`), preserve the
+	// dotted STRUCTURE so a multi-part public suffix (`bbc.co.uk`,
+	// `foo.bar.com`) stays dot-joined across ALL labels rather than only the
+	// trailing TLD — the old rule produced `Foo Bar.Com` by collapsing the
+	// leading dots into spaces. Each dot label is title-cased independently (its
+	// own hyphen/underscore/space runs humanise to spaces).
+	if (segment.includes('.')) {
+		const labels = segment.split('.').filter(Boolean);
+		const lastLabel = labels[labels.length - 1] ?? '';
+		if (TLD_SUFFIXES.has(lastLabel.toLowerCase())) {
+			return labels.map((label) => titleCaseWords(label)).join('.');
+		}
+		// A dotted input whose trailing label ISN'T a known TLD (`acme.biz`)
+		// isn't treated as a domain — space-join every token as before.
+		return titleCaseTokens(segment).join(' ');
+	}
+	const parts = titleCaseTokens(segment);
 	if (parts.length < 2) return parts.join(' ');
 	const last = parts[parts.length - 1];
-	// Dot-join the trailing TLD for a genuinely-dotted input, or — on the domain
-	// slug path — for a 2-token `<vendor>-<tld>` slug. 3+ tokens are a product
-	// name, so they always space-join.
-	const dotJoin = hadDot || (domainSlug && parts.length === 2);
+	// Dot-join the trailing TLD on the domain-slug path for a 2-token
+	// `<vendor>-<tld>` slug. 3+ tokens are a product name, so they space-join.
+	const dotJoin = domainSlug && parts.length === 2;
 	if (dotJoin && TLD_SUFFIXES.has(last.toLowerCase())) {
 		return parts.slice(0, -1).join(' ') + '.' + last;
 	}
 	return parts.join(' ');
+}
+
+/** Title-case each `[_\-.\s]`-separated token, dropping empties. */
+function titleCaseTokens(segment: string): string[] {
+	return segment
+		.split(/[_\-.\s]+/)
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+}
+
+/** Title-case one domain label's words (hyphen/underscore/space runs) into a
+ * single space-joined string, e.g. `article-search` → `Article Search`. */
+function titleCaseWords(label: string): string {
+	return label
+		.split(/[_\-\s]+/)
+		.filter(Boolean)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(' ');
 }
 
 /**
@@ -128,12 +176,18 @@ function stripVendorPrefix(name: string, vendor: string): string {
 	const vendorLower = vendor.toLowerCase();
 	if (!nameLower.startsWith(vendorLower)) return name;
 	const rest = name.slice(vendor.length);
+	// The name is EXACTLY the vendor (`name === vendor`) — there's no
+	// distinguishing sub-API segment, so return empty and let the caller fall
+	// through to the single vendor humanisation. Otherwise the two paths would
+	// render the same identity two different ways (`humanizeName('github-com')`
+	// → `Github Com` vs `humanizeDomainSlug('github-com')` → `Github.Com`).
+	if (rest === '') return '';
 	// Require a separator after the prefix so `posthog` doesn't strip out of
 	// `posthograph`. An immediately-following alphanumeric means the vendor
 	// slug isn't actually a prefix, so leave the name alone. Real payloads
 	// separate the prefix with a hyphen/dot/underscore/slash, but also
 	// sometimes a space / colon / pipe (`posthog com posthog-api`), so treat
-	// all of those as separators too (#7).
+	// all of those as separators too.
 	if (/^[-_.:/\s|]/.test(rest)) return rest.replace(/^[-_.:/\s|]+/, '');
 	return name;
 }

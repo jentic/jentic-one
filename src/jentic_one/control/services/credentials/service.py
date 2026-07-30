@@ -355,6 +355,31 @@ class CredentialService:
             if payload.type != wire_type:
                 raise ImmutableFieldError("type")
 
+            # The api_key parameter binding (field_name/location) is derived from
+            # the API spec at create time and must not drift afterwards — a wrong
+            # binding silently mis-injects the key (e.g. ?Default=<key>, #589).
+            # The SPA still echoes the stored values on every PATCH, so only an
+            # actual *change* is a violation; matching echoes are a no-op.
+            if payload.type == CredentialType.API_KEY and (
+                payload.field_name is not None or payload.location is not None
+            ):
+                cak = await CustomerAPIKeyRepository.get_by_credential(session, credential_id)
+                if cak is not None:
+                    if payload.field_name is not None and payload.field_name != cak.field_name:
+                        raise ImmutableFieldError("field_name")
+                    if payload.location is not None and str(payload.location) != cak.location:
+                        raise ImmutableFieldError("location")
+
+            # Track whether a mutating field was provided so `updated_at` moves
+            # iff the PATCH could persist a change — an unconditional bump makes
+            # the timestamp a lying signal (#739): a PATCH that only echoes the
+            # stored field_name/location (or provides nothing) must leave it
+            # frozen. Note this keys off "a mutating field was provided", not a
+            # value diff: re-sending the current name/active still counts as
+            # changed. The SPA omits unchanged fields, so this is a no-op in
+            # practice; value-comparing every branch isn't worth the complexity.
+            changed = False
+
             if (
                 payload.name is not None
                 or payload.active is not None
@@ -367,6 +392,7 @@ class CredentialService:
                     active=payload.active,
                     server_variables=payload.server_variables,
                 )
+                changed = True
 
             encryption = self._ctx.encryption
 
@@ -379,6 +405,7 @@ class CredentialService:
                     encrypted_token_value=encrypted,
                     token_preview=preview,
                 )
+                changed = True
 
             elif payload.type == CredentialType.API_KEY and payload.key is not None:
                 encrypted = encryption.encrypt(payload.key)
@@ -389,6 +416,7 @@ class CredentialService:
                     encrypted_key=encrypted,
                     key_preview=preview,
                 )
+                changed = True
 
             elif payload.type == CredentialType.BASIC:
                 if payload.username is not None or payload.password is not None:
@@ -401,6 +429,7 @@ class CredentialService:
                         username=payload.username,
                         encrypted_password=encrypted_pw,
                     )
+                    changed = True
 
             elif payload.type == CredentialType.OAUTH2 and payload.client_secret is not None:
                 validated_token_url: str | None = None
@@ -418,28 +447,33 @@ class CredentialService:
                     token_url=validated_token_url,
                     scope=scope,
                 )
+                changed = True
 
             credential = await CredentialRepository.get_by_id(session, credential_id)
             assert credential is not None
-            credential.updated_at = datetime.now(UTC)
+            if changed:
+                credential.updated_at = datetime.now(UTC)
             await session.flush()
             view = self._to_redacted(credential)
             after_state = {"name": credential.name, "active": credential.active}
 
-        action = AuditAction.UPDATE
-        if payload.active is not None and before_state["active"] != payload.active:
-            action = AuditAction.ENABLE if payload.active else AuditAction.DISABLE
-        await record_audit_best_effort(
-            self._ctx,
-            action=action,
-            target_type=AuditTargetType.CREDENTIAL,
-            target_id=credential_id,
-            actor_type=identity.actor_type,
-            actor_id=identity.sub,
-            before=before_state,
-            after=after_state,
-            origin=identity.origin.value,
-        )
+        # A PATCH that persisted nothing (e.g. only echoed field_name/location)
+        # is a no-op — no timestamp bump and no audit noise.
+        if changed:
+            action = AuditAction.UPDATE
+            if payload.active is not None and before_state["active"] != payload.active:
+                action = AuditAction.ENABLE if payload.active else AuditAction.DISABLE
+            await record_audit_best_effort(
+                self._ctx,
+                action=action,
+                target_type=AuditTargetType.CREDENTIAL,
+                target_id=credential_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                before=before_state,
+                after=after_state,
+                origin=identity.origin.value,
+            )
         return view
 
     async def delete(self, credential_id: str, *, identity: Identity) -> None:

@@ -8,6 +8,10 @@ export {
 	useAgents,
 	useAgent,
 	useAgentToolkits,
+	useLinkableToolkits,
+	useToolkitName,
+	useBindToolkitToAgent,
+	useUnbindToolkitFromAgent,
 	useAgentApiKeyInfo,
 	useAgentApiKeyHistory,
 	useApproveAgent,
@@ -34,11 +38,23 @@ export {
 	useServiceAccountScopes,
 	useReplaceServiceAccountScopes,
 	useActorAccessRequests,
+	useActorsUsage,
+	useActorUsageDetail,
+	useActorExecutions,
+	useActorAudit,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
 } from '@/modules/agents/api/hooks';
 
 export { AgentsApiError } from '@/modules/agents/api/client';
+export type {
+	ActorAuditEntry,
+	ActorUsage,
+	ActorUsageDetail,
+	ActorExecutionEntity,
+	UsageBucketEntity,
+	AgentPatch,
+} from '@/modules/agents/api/client';
 
 export {
 	ACTOR_STATUSES,
@@ -59,6 +75,7 @@ export type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	LinkableToolkit,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,

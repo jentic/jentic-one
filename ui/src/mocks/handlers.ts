@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw';
-import { toolkitsHandlers } from '@/modules/toolkits/mocks/handlers';
+import { toolkitsHandlers, toolkitsE2eHooks } from '@/modules/toolkits/mocks/handlers';
 import { agentsHandlers } from '@/modules/agents/mocks/handlers';
 import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 import { dashboardHandlers } from '@/modules/dashboard/mocks/handlers';
@@ -74,6 +74,16 @@ const actorDirectorySeed = [
 	},
 	{
 		id: 'usr_admin_1',
+		actor_type: 'user',
+		name: 'Admin User',
+		active: true,
+		created_at: '2026-01-01T00:00:00Z',
+	},
+	{
+		// The admin id the agents-module fixtures stamp on approvals / audit
+		// rows (approved_by, audit actor_id) — must resolve or the detail
+		// consoles' "Approved by" and "Recent changes" show a raw id.
+		id: 'usr_000000000000000000000admin',
 		actor_type: 'user',
 		name: 'Admin User',
 		active: true,
@@ -172,5 +182,6 @@ export const handlers = [
 export function installE2eTestHooks(target: Record<string, unknown>): void {
 	target.__mswTestHooks = {
 		...credentialsE2eHooks,
+		...toolkitsE2eHooks,
 	};
 }

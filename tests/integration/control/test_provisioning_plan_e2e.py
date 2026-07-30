@@ -384,3 +384,246 @@ async def test_plain_approve_of_unfulfilled_plan_is_denied_legibly(
     async with ctx.control_db.session() as session:
         rows = (await session.execute(select(ToolkitCredentialBinding))).scalars().all()
         assert rows == [], "a denied plan must not create any credential binding"
+
+
+def _chain_items(api: dict[str, str], scheme: str) -> list[dict[str, Any]]:
+    """One provisioning chain exactly as the CLI --provision builder emits it,
+    including the API reference stamped on the credential:bind (the chain
+    marker: item order is not guaranteed, so the reference is what keeps a
+    composite request's chains attributable)."""
+    return [
+        {"resource_type": "toolkit", "action": "create", "resource_reference": api},
+        {
+            "resource_type": "credential",
+            "action": "provision",
+            "resource_reference": {**api, "security_scheme": scheme},
+        },
+        {
+            "resource_type": "credential",
+            "action": "bind",
+            "resource_reference": api,
+            "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+        },
+        {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
+    ]
+
+
+def _chain_binds(view: Any, api: dict[str, str]) -> tuple[Any, Any]:
+    """The (credential:bind, toolkit:bind) items of the chain for ``api``,
+    matched by the stamped reference — never by position."""
+
+    def _matches(item: Any) -> bool:
+        ref = item.resource_reference or {}
+        return ref.get("vendor") == api["vendor"] and ref.get("name") == api["name"]
+
+    cred_bind = next(
+        i
+        for i in view.items
+        if i.resource_type == "credential" and i.action == "bind" and _matches(i)
+    )
+    tk_bind = next(
+        i for i in view.items if i.resource_type == "toolkit" and i.action == "bind" and _matches(i)
+    )
+    return cred_bind, tk_bind
+
+
+async def test_composite_request_two_chains_plus_plain_items_end_to_end(
+    integration_context: Context, clean: None
+) -> None:
+    """One composite request — two provisioning chains + a plain reference
+    toolkit:bind to a pre-existing toolkit + a scope:grant — fulfils and
+    approves to a fully wired state (issue #844).
+
+    Also guards the mixed-composite fix: the plain reference bind rides in a
+    request that IS a provisioning plan (sibling chains carry fulfilment
+    intents), and must resolve against the existing toolkit instead of being
+    auto-denied with the plan-aware reason.
+    """
+    ctx = integration_context
+    access_svc = AccessRequestService(ctx)
+    toolkit_svc = ToolkitService(ctx)
+    cred_svc = CredentialService(ctx)
+
+    api_a = {"vendor": "httpbin.org", "name": "httpbin"}
+    api_b = {"vendor": "country-is", "name": "country-is"}
+    api_existing = {"vendor": "postman-echo.com", "name": "echo"}
+
+    # 0. A toolkit already serving api_existing (toolkit + credential + binding),
+    #    so the composite's plain toolkit:bind reference can resolve.
+    _existing = await toolkit_svc.create(name="postman-echo.com/echo", identity=_owner_identity())
+    existing_toolkit = _existing.toolkit
+    existing_cred = await cred_svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="echo cred",
+            api=APIReference(vendor="postman-echo.com", name="echo", version=""),
+            token="echo-secret-1",
+        ),
+        identity=_owner_identity(),
+    )
+    async with ctx.control_db.session() as session:
+        await ToolkitBindingRepository.bind(
+            session,
+            toolkit_id=existing_toolkit.id,
+            credential_id=existing_cred.credential_id,
+            created_by=OWNER_SUB,
+        )
+        await session.commit()
+
+    # 1. AGENT files ONE composite request, as the CLI composes it.
+    items = [
+        *_chain_items(api_a, "bearer"),
+        *_chain_items(api_b, "no_auth"),
+        {"resource_type": "toolkit", "action": "bind", "resource_reference": api_existing},
+        {"resource_type": "scope", "action": "grant", "resource_id": "catalog:import"},
+    ]
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Set up the release-notes automation",
+        items=items,
+        identity=_agent_identity(),
+    )
+    assert view.status == "pending"
+    assert len(view.items) == 10
+
+    # 2. WIZARD fulfils BOTH chains, resolving each by its stamped reference.
+    fulfilled: dict[str, tuple[str, str]] = {}
+    for api, cred_type, token in (
+        (api_a, CredentialType.BEARER_TOKEN, "secret-a-1"),
+        (api_b, CredentialType.NO_AUTH, None),
+    ):
+        _create = await toolkit_svc.create(
+            name=f"{api['vendor']}/{api['name']}", identity=_owner_identity()
+        )
+        created_cred = await cred_svc.create(
+            CredentialCreate(
+                type=cred_type,
+                name=f"{api['name']} cred",
+                api=APIReference(vendor=api["vendor"], name=api["name"], version=""),
+                token=token,
+            ),
+            identity=_owner_identity(),
+        )
+        fulfilled[api["vendor"]] = (_create.toolkit.id, created_cred.credential_id)
+
+        cred_bind, tk_bind = _chain_binds(view, api)
+        await access_svc.amend(
+            view.id,
+            identity=_owner_identity(),
+            item_amendments=[
+                {
+                    "item_id": cred_bind.id,
+                    "to_id": _create.toolkit.id,
+                    "resource_id": created_cred.credential_id,
+                    "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+                },
+                {"item_id": tk_bind.id, "resource_id": _create.toolkit.id},
+            ],
+        )
+
+    # 3. OPERATOR approves everything — including the UNAMENDED plain reference
+    #    bind and the scope grant.
+    refreshed = await access_svc.get(view.id, identity=_owner_identity())
+    decided = await access_svc.decide(
+        view.id,
+        identity=_owner_identity(),
+        item_decisions=[
+            {"item_id": i.id, "decision": "approved"}
+            for i in refreshed.items
+            if i.status == "pending"
+        ],
+    )
+    assert decided.status == "approved", [
+        (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
+    ]
+
+    # 4. ASSERT the full end-state: both chains wired, the plain bind bound the
+    #    agent to the EXISTING toolkit, and the scope granted.
+    async with ctx.control_db.session() as session:
+        for vendor, (toolkit_id, credential_id) in fulfilled.items():
+            binding = await ToolkitBindingRepository.get(session, toolkit_id, credential_id)
+            assert binding is not None, f"chain for {vendor} did not wire its credential binding"
+
+    async with ctx.admin_db.session() as session:
+        bound = await session.execute(
+            text("SELECT toolkit_id FROM agent_toolkit_bindings WHERE agent_id = :a"),
+            {"a": AGENT_SUB},
+        )
+        bound_ids = {row[0] for row in bound.fetchall()}
+    expected = {tk for tk, _cred in fulfilled.values()} | {existing_toolkit.id}
+    assert bound_ids == expected, f"agent bindings {bound_ids} != expected {expected}"
+
+
+async def test_composite_partial_fulfilment_is_partially_approved(
+    integration_context: Context, clean: None
+) -> None:
+    """Fulfilling only one of a composite's chains and approving everything
+    yields ``partially_approved``: the fulfilled chain wires, the unfulfilled
+    chain's binds are auto-denied with the plan-aware reason — per chain, not
+    per request."""
+    ctx = integration_context
+    access_svc = AccessRequestService(ctx)
+    toolkit_svc = ToolkitService(ctx)
+    cred_svc = CredentialService(ctx)
+
+    api_a = {"vendor": "httpbin.org", "name": "httpbin"}
+    api_b = {"vendor": "country-is", "name": "country-is"}
+
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Two APIs, one request",
+        items=[*_chain_items(api_a, "bearer"), *_chain_items(api_b, "bearer")],
+        identity=_agent_identity(),
+    )
+
+    # Fulfil ONLY chain A.
+    _create = await toolkit_svc.create(name="httpbin.org/httpbin", identity=_owner_identity())
+    created_cred = await cred_svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="httpbin cred",
+            api=APIReference(vendor="httpbin.org", name="httpbin", version=""),
+            token="secret-a-2",
+        ),
+        identity=_owner_identity(),
+    )
+    cred_bind_a, tk_bind_a = _chain_binds(view, api_a)
+    await access_svc.amend(
+        view.id,
+        identity=_owner_identity(),
+        item_amendments=[
+            {
+                "item_id": cred_bind_a.id,
+                "to_id": _create.toolkit.id,
+                "resource_id": created_cred.credential_id,
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+            {"item_id": tk_bind_a.id, "resource_id": _create.toolkit.id},
+        ],
+    )
+
+    refreshed = await access_svc.get(view.id, identity=_owner_identity())
+    decided = await access_svc.decide(
+        view.id,
+        identity=_owner_identity(),
+        item_decisions=[
+            {"item_id": i.id, "decision": "approved"}
+            for i in refreshed.items
+            if i.status == "pending"
+        ],
+    )
+
+    assert decided.status == "partially_approved", [
+        (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
+    ]
+    cred_bind_a2, tk_bind_a2 = _chain_binds(decided, api_a)
+    cred_bind_b, tk_bind_b = _chain_binds(decided, api_b)
+    assert cred_bind_a2.status == "approved" and tk_bind_a2.status == "approved"
+    assert cred_bind_b.status == "denied" and tk_bind_b.status == "denied"
+    assert "provisioning plan" in (cred_bind_b.decision_reason or "")
+    # Chain A's wiring landed despite chain B's denial.
+    async with ctx.control_db.session() as session:
+        binding = await ToolkitBindingRepository.get(
+            session, _create.toolkit.id, created_cred.credential_id
+        )
+        assert binding is not None, "the fulfilled chain must still wire on partial approval"

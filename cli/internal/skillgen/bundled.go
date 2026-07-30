@@ -9,9 +9,10 @@ import (
 )
 
 // bundledSkill is the canonical "how to use Jentic via the CLI" content shipped
-// in the binary. It is the de-facto source until #277's hosted `GET /skills/*`
-// endpoint exists, and is kept identical to that to-be-hosted markdown so the
-// two never drift.
+// in the binary. The deployed service serves the same markdown at
+// `GET /skills/jentic.md` (#651); the two copies are pinned to each other by
+// the backend drift test (tests/arch/test_skill_drift.py), so they never
+// diverge.
 //
 //go:embed content/jentic.md
 var bundledSkill string

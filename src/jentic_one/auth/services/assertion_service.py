@@ -138,7 +138,9 @@ class AssertionService:
 
     @property
     def _expected_audience(self) -> str:
-        base = self._ctx.config.auth.canonical_base_url
+        # Normalized like deployment_base_url so a trailing slash in the
+        # configured canonical_base_url can't break assertion validation.
+        base = self._ctx.config.auth.canonical_base_url.rstrip("/")
         return f"{base}/oauth/token"
 
     def _validate_timing(self, payload: dict[str, Any]) -> None:

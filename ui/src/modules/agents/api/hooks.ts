@@ -10,7 +10,14 @@
  * disable/enable/archive return 204, so those invalidate the affected slices to
  * force a refetch.
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { toast } from '@/shared/ui';
 import {
 	approveAgent,
@@ -19,6 +26,8 @@ import {
 	archiveServiceAccount,
 	createAgent,
 	createServiceAccount,
+	updateAgent,
+	type AgentPatch,
 	denyAgent,
 	denyServiceAccount,
 	disableAgent,
@@ -33,15 +42,26 @@ import {
 	getAgentScopes,
 	getServiceAccount,
 	getServiceAccountScopes,
+	getToolkitName,
 	listAgentToolkits,
 	listAgents,
+	listLinkableToolkits,
 	listPermissions,
 	listServiceAccounts,
 	replaceAgentScopes,
 	replaceServiceAccountScopes,
 	revokeAgentApiKey,
+	bindToolkitToAgent,
+	unbindToolkitFromAgent,
 	fetchActorAccessRequests,
-	updateAgent,
+	fetchActorsUsage,
+	fetchActorUsageDetail,
+	fetchActorExecutions,
+	listActorAudit,
+	type ActorAuditEntry,
+	type ActorUsage,
+	type ActorUsageDetail,
+	type ActorExecutionEntity,
 	type ListResult,
 } from '@/modules/agents/api/client';
 import type {
@@ -49,6 +69,7 @@ import type {
 	ApiKeyHistoryEntry,
 	ApiKeyInfoEntity,
 	ApiKeyResult,
+	LinkableToolkit,
 	PermissionCatalogEntry,
 	ServiceAccountEntity,
 	ToolkitBindingEntity,
@@ -93,6 +114,37 @@ const serviceAccountKeys = {
 const permissionsKey = [...agentsKeys.all, 'permissions'] as const;
 
 /**
+ * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Kept
+ * under **its own root** (not ``agentsKeys.all``) so a broad
+ * ``sharedQueryKeys.agentsRoot`` invalidation — used by approve/deny/create —
+ * doesn't pointlessly refetch ``GET /toolkits``. Mirrors the
+ * toolkits module keeping its ``linkableAgents`` cache under its own toolkits
+ * root for the same reason.
+ */
+const linkableToolkitsKey = ['agents-linkable-toolkits'] as const;
+
+/**
+ * Human name for a SINGLE bound toolkit, keyed by its id. Powers per-row name
+ * resolution on the detail page's "Bound toolkits" card (#607): each row reads
+ * `GET /toolkits/{id}` for just its own name instead of the whole workspace
+ * paying `useLinkableToolkits`' paginated `GET /toolkits` sweep on every page
+ * load (which would also defeat the picker dialog's `enabled` gate).
+ *
+ * Keyed under the shared `toolkitNameRoot` (`['toolkit-name',id]`) — its OWN
+ * top-level root, NOT under `agentsRoot` and NOT under `toolkitsRoot`. That
+ * isolation is deliberate: (a) agent lifecycle mutations (approve/deny/create)
+ * invalidate `sharedQueryKeys.agentsRoot` and must NOT refetch every visible
+ * bound toolkit's cosmetic name; and (b) ordinary toolkit-side mutations (key
+ * rotation, credential bind/unbind, active toggle, create/delete) invalidate
+ * `toolkitKeys.all` (`['toolkits']`) but leave a toolkit's NAME unchanged, so
+ * they must not ripple here either. The one event that changes a name — a
+ * rename via the Toolkits module's `useUpdateToolkit` — invalidates this shared
+ * root (id-scoped), so a renamed toolkit's cached label refreshes instantly.
+ */
+const toolkitNameKey = (toolkitId: string) =>
+	[...sharedQueryKeys.toolkitNameRoot, toolkitId] as const;
+
+/**
  * Access requests filed BY an actor (#619), keyed by the actor's id + status.
  * `actor_id` is globally unique across agents and service accounts, so one key
  * factory serves both detail pages.
@@ -121,11 +173,24 @@ function notifyError(error: unknown, fallback: string): void {
 // Agents — queries
 // ---------------------------------------------------------------------------
 
-export function useAgents(params: { status?: string }) {
+/**
+ * The cursor-paginated agents list. An infinite query so the page can render
+ * the first 50-row page immediately and "Load more" through `next_cursor`
+ * (the backend caps `limit` at 200; we keep the default 50 per page). Status
+ * narrowing is client-side on the loaded pages (the page always fetches
+ * `all`), so one cache entry serves every status segment.
+ */
+export function useAgents(params: { status?: string } = {}) {
 	const status = params.status ?? 'all';
-	return useQuery<ListResult<AgentEntity>>({
+	return useInfiniteQuery<ListResult<AgentEntity>>({
 		queryKey: agentsKeys.list(status),
-		queryFn: () => listAgents({ status: status === 'all' ? null : status }),
+		queryFn: ({ pageParam }) =>
+			listAgents({
+				status: status === 'all' ? null : status,
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
 	});
 }
@@ -143,6 +208,104 @@ export function useAgentToolkits(id: string | null) {
 		queryKey: agentsKeys.toolkits(id ?? ''),
 		queryFn: () => listAgentToolkits(id as string),
 		enabled: id != null,
+	});
+}
+
+/**
+ * Candidate toolkits for the agent-side "Bind toolkit" picker (#607). Fetched
+ * only while the dialog is open (``enabled``) so it costs nothing on the rest
+ * of the detail page. Keyed under its own root (``linkableToolkitsKey``) rather
+ * than ``agentsKeys.all`` so a broad ``sharedQueryKeys.agentsRoot``
+ * invalidation (used by approve/deny/create) does not pointlessly refetch
+ * ``GET /toolkits``.
+ */
+export function useLinkableToolkits({ enabled = true }: { enabled?: boolean } = {}) {
+	return useQuery<LinkableToolkit[]>({
+		queryKey: linkableToolkitsKey,
+		queryFn: () => listLinkableToolkits(),
+		enabled,
+	});
+}
+
+/**
+ * Resolve one bound toolkit's human name (`GET /toolkits/{id}`), safe to call
+ * once per bound row (#607). Names are slow-changing, so it's cached generously
+ * (5 min) — the card can mount many of these without a thundering herd. Returns
+ * ``null`` for a since-deleted / not-found toolkit so the row falls back to the
+ * id. Disabled until an id is present.
+ */
+export function useToolkitName(toolkitId: string | null) {
+	return useQuery<string | null>({
+		queryKey: toolkitNameKey(toolkitId ?? ''),
+		queryFn: () => getToolkitName(toolkitId as string),
+		enabled: toolkitId != null,
+		staleTime: 5 * 60 * 1000,
+	});
+}
+
+/**
+ * Bind/unbind an agent↔toolkit (#607) ripples across three surfaces: the
+ * agent's own bound-toolkits list, the picker's candidate list (the just-bound
+ * toolkit becomes ineligible), and the toolkit-side "Bound Agents" card (the
+ * binding is bidirectional). Invalidate them together so none goes stale.
+ * Mirrors the sibling `useInvalidateToolkitSurfaces` in the toolkits module.
+ *
+ * The toolkit-side card is refreshed via the narrow shared
+ * `toolkitAgentsRoot` (`['toolkits','agents']`) — the reverse-lookup slices
+ * only — rather than the whole `toolkitsRoot`, which would needlessly refetch
+ * every mounted toolkits query (list, detail, keys, bindings). Null-guards the
+ * agent id so a call before the agent resolves is a no-op on the agent slice.
+ */
+function useInvalidateAgentBindingSurfaces(agentId: string | null) {
+	const qc = useQueryClient();
+	// Memoised on [agentId, qc] so the returned handle keeps a stable identity
+	// across renders — a caller can safely store it in a memoised child's props
+	// or an effect dependency list without re-running on every render.
+	return useCallback(() => {
+		if (agentId) qc.invalidateQueries({ queryKey: agentsKeys.toolkits(agentId) });
+		qc.invalidateQueries({ queryKey: linkableToolkitsKey });
+		qc.invalidateQueries({ queryKey: sharedQueryKeys.toolkitAgentsRoot });
+	}, [agentId, qc]);
+}
+
+/** Bind a toolkit to this agent (#607) — refreshes both the agent's bound
+ * toolkits list and the picker's candidates list on success. Mirrors the
+ * toolkit page's "Link agent". Accepts a nullable agent id and refuses to fire
+ * without one so a stray call before the agent has resolved cannot POST to
+ * ``/agents//toolkits``. */
+export function useBindToolkitToAgent(agentId: string | null) {
+	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
+	return useMutation<void, Error, string>({
+		mutationFn: (toolkitId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot bind a toolkit before the agent loads.'));
+			}
+			return bindToolkitToAgent(agentId, toolkitId);
+		},
+		onSuccess: () => {
+			invalidate();
+			toast({ title: 'Toolkit bound', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to bind the toolkit.'),
+	});
+}
+
+/** Unbind a toolkit from this agent (#607). See {@link useBindToolkitToAgent}
+ * for the null-guard and cache-invalidation rationale. */
+export function useUnbindToolkitFromAgent(agentId: string | null) {
+	const invalidate = useInvalidateAgentBindingSurfaces(agentId);
+	return useMutation<void, Error, string>({
+		mutationFn: (toolkitId: string) => {
+			if (!agentId) {
+				return Promise.reject(new Error('Cannot unbind a toolkit before the agent loads.'));
+			}
+			return unbindToolkitFromAgent(agentId, toolkitId);
+		},
+		onSuccess: () => {
+			invalidate();
+			toast({ title: 'Toolkit unbound', variant: 'success' });
+		},
+		onError: (e) => notifyError(e, 'Failed to unbind the toolkit.'),
 	});
 }
 
@@ -174,7 +337,7 @@ export function useApproveAgent() {
 			qc.setQueryData(agentsKeys.detail(agent.id), agent);
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			// Approving removes the agent from the pending pool the Dashboard's
-			// "Awaiting approval" tile + PendingAgentsCard read, and the persistent
+			// action inbox (`ActionInboxBell`) reads, and the persistent
 			// nav badge (`usePendingAgentsCount`, keyed under the shared agents
 			// root). Refresh both shared roots so those surfaces update instantly
 			// instead of waiting for their fallback poll.
@@ -254,7 +417,8 @@ export function useArchiveAgent() {
 export function useCreateAgent() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null }) => createAgent(input),
+		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
+			createAgent(input),
 		onSuccess: (agent) => {
 			// Invalidate the whole agents root (not just lists()) so the
 			// persistent pending-agents nav badge — keyed under agentsRoot, not
@@ -276,33 +440,29 @@ export function useCreateAgent() {
 }
 
 /**
- * Rename / re-describe an agent (`PATCH /agents/:id`), the write behind the
- * "Edit agent" dialog on the detail page (#620). On success the returned row
- * seeds the detail cache so the header updates instantly, and the lists +
- * dashboard + nav badge refresh so the new name propagates everywhere. Errors
- * are surfaced in the dialog (no toast), so this rethrows rather than swallowing
- * them.
+ * Partial in-place edit (PATCH /agents/{id}): rename, re-describe, or
+ * reassign the owner from the detail page's Settings tab. Invalidates the
+ * detail cache rather than seeding it from the PATCH response — the response
+ * row is built without the `has_api_key` join (always false), so seeding it
+ * would make the Keys tab forget an existing key. The roster refresh lets the
+ * fleet table pick the new name up immediately, and the dashboard root covers
+ * the pending-agents tile, which renders agent names.
  */
-export function useUpdateAgent(agentId: string) {
+export function useUpdateAgent() {
 	const qc = useQueryClient();
-	return useMutation<AgentEntity, Error, { name?: string | null; description?: string | null }>({
-		mutationFn: (patch) => {
-			// The hook is instantiated with `id ?? ''` on the detail page, before
-			// the not-found early-return can run. Guard here so a mutate against an
-			// empty id can't PATCH `/agents/` (wrong agent / 404) — fail loudly
-			// instead of silently hitting the wrong URL (#10).
-			if (!agentId) throw new Error('Cannot update an agent without an id.');
-			return updateAgent(agentId, patch);
-		},
+	return useMutation({
+		mutationFn: ({ id, patch }: { id: string; patch: AgentPatch }) => updateAgent(id, patch),
 		onSuccess: (agent) => {
-			qc.setQueryData(agentsKeys.detail(agent.id), agent);
+			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
-			// The name shows on the roster, the dashboard's agent surfaces, and
-			// the nav badge — all keyed under the shared agents root — so refresh
-			// those too, matching the other agent mutations.
-			qc.invalidateQueries({ queryKey: sharedQueryKeys.agentsRoot });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			toast({
+				title: 'Agent updated',
+				description: `${agent.name} saved.`,
+				variant: 'success',
+			});
 		},
+		onError: (e) => notifyError(e, 'Failed to update the agent.'),
 	});
 }
 
@@ -344,11 +504,19 @@ export function useGenerateServiceAccountApiKey() {
 // Service accounts
 // ---------------------------------------------------------------------------
 
-export function useServiceAccounts(params: { status?: string }) {
+/** Cursor-paginated service accounts — same infinite-query shape as
+ * {@link useAgents} so the page renders both tabs with one component. */
+export function useServiceAccounts(params: { status?: string } = {}) {
 	const status = params.status ?? 'all';
-	return useQuery<ListResult<ServiceAccountEntity>>({
+	return useInfiniteQuery<ListResult<ServiceAccountEntity>>({
 		queryKey: serviceAccountKeys.list(status),
-		queryFn: () => listServiceAccounts({ status: status === 'all' ? null : status }),
+		queryFn: ({ pageParam }) =>
+			listServiceAccounts({
+				status: status === 'all' ? null : status,
+				cursor: (pageParam as string | null) ?? null,
+			}),
+		initialPageParam: null,
+		getNextPageParam: (last) => (last.hasMore ? last.nextCursor : null),
 		placeholderData: keepPreviousData,
 	});
 }
@@ -364,13 +532,15 @@ export function useServiceAccount(id: string | null) {
 export function useCreateServiceAccount() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (input: { name: string; description?: string | null }) =>
+		mutationFn: (input: { name: string; description?: string | null; scopes?: string[] }) =>
 			createServiceAccount(input),
 		onSuccess: (sa) => {
 			qc.invalidateQueries({ queryKey: serviceAccountKeys.lists() });
+			// Unlike agents, service accounts are approved at creation (the
+			// backend calls set_approval inside the create transaction).
 			toast({
 				title: 'Service account created',
-				description: `${sa.name} is pending approval.`,
+				description: `${sa.name} is ready to use.`,
 				variant: 'success',
 			});
 		},
@@ -453,11 +623,12 @@ export function useArchiveServiceAccount() {
  * generously; the Scopes editor maps it into the picker's scope list and uses
  * `grantableByCaller` to disable scopes the operator can't grant.
  */
-export function usePermissionCatalogue() {
+export function usePermissionCatalogue(options: { enabled?: boolean } = {}) {
 	return useQuery<PermissionCatalogEntry[]>({
 		queryKey: permissionsKey,
 		queryFn: () => listPermissions(),
 		staleTime: 5 * 60 * 1000,
+		enabled: options.enabled ?? true,
 	});
 }
 
@@ -502,6 +673,56 @@ export function useReplaceServiceAccountScopes() {
 }
 
 /**
+ * Per-actor execution stats for the fleet table's activity columns
+ * (`GET /monitoring/usage?group_by=agent`, trailing 7 days). Kept under its
+ * OWN root (like `linkableToolkitsKey`) so agent lifecycle invalidations —
+ * which sweep `sharedQueryKeys.agentsRoot` on approve/deny/create — don't
+ * pointlessly re-aggregate the monitoring window. Resolves `null` for
+ * non-admins (403): the table renders without activity columns rather than
+ * erroring, and `retry: false` stops TanStack from hammering a gate that
+ * won't open. Any other failure also degrades to no columns (no toast — the
+ * roster itself is the page's primary data, usage is enrichment).
+ */
+export function useActorsUsage(actorType: 'agent' | 'service_account') {
+	return useQuery<Map<string, ActorUsage> | null>({
+		queryKey: ['agents-usage', actorType],
+		queryFn: () => fetchActorsUsage(actorType),
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * One actor's usage stats + volume buckets (trailing 7 days) for the detail
+ * page's KPI strip and Activity chart. Same `agents-usage` root and 403/`null`
+ * degrade contract as `useActorsUsage` (see its docblock).
+ */
+export function useActorUsageDetail(actorId: string | null) {
+	return useQuery<ActorUsageDetail | null>({
+		queryKey: ['agents-usage', 'detail', actorId],
+		queryFn: () => fetchActorUsageDetail(actorId as string),
+		enabled: actorId != null,
+		staleTime: 60 * 1000,
+		retry: false,
+	});
+}
+
+/**
+ * The most recent executions attributed to one actor — the detail page's
+ * Activity feed. Single page by design: the full, filterable history lives in
+ * Monitor (the feed carries a pre-filtered deep-link). `null` on 403.
+ */
+export function useActorExecutions(actorId: string | null) {
+	return useQuery<{ items: ActorExecutionEntity[]; hasMore: boolean } | null>({
+		queryKey: ['agents-usage', 'executions', actorId],
+		queryFn: () => fetchActorExecutions(actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
+		retry: false,
+	});
+}
+
+/**
  * Access requests filed by a single actor (`GET /access-requests?actor_id=…`),
  * defaulting to the still-pending queue (#619). Works for both agents and
  * service accounts — the backend keys requests by `actor_id`, which is the
@@ -514,5 +735,21 @@ export function useActorAccessRequests(actorId: string | null, status: string | 
 		queryKey: actorAccessRequestsKey(actorId ?? '', status ?? 'all'),
 		queryFn: () => fetchActorAccessRequests(actorId as string, status),
 		enabled: actorId != null,
+	});
+}
+
+/**
+ * Actor-scoped audit trail for the detail console's "Recent changes" panel —
+ * the lifecycle events recorded against this agent / service account as the
+ * TARGET. Mirrors the toolkit console's `useToolkitAudit`. Non-admins resolve
+ * to an empty list (the client maps 401/403), so the panel renders its
+ * graceful "no entries" state instead of erroring.
+ */
+export function useActorAudit(actorKind: 'agent' | 'service-account', actorId: string | null) {
+	return useQuery<ActorAuditEntry[]>({
+		queryKey: ['agents', 'audit', actorKind, actorId],
+		queryFn: () => listActorAudit(actorKind, actorId as string),
+		enabled: actorId != null,
+		staleTime: 30 * 1000,
 	});
 }

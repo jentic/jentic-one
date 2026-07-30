@@ -25,6 +25,7 @@
  */
 import { OpenAPI, apiRequest } from '@/shared/api';
 import { toRailError } from '@/shared/lib/railEvents';
+import type { BadgeVariant } from '@/shared/ui';
 
 /**
  * A single line item on an access request.
@@ -59,6 +60,9 @@ export interface AccessRequestItem {
 /** Permission-rule effect — `require-approval` exists in the schema but is rarely shown. */
 export type PermissionRuleEffect = 'allow' | 'deny' | 'require-approval';
 
+/** How a rule's `path` is interpreted by the broker. Absent = `regex`. */
+export type PermissionRuleMatchMode = 'regex' | 'prefix' | 'exact';
+
 /**
  * A single permission rule on a `credential.bind` item. On approval these are
  * written verbatim as the binding's `ToolkitPermissionRule`s (broker-enforced,
@@ -71,6 +75,11 @@ export interface PermissionRule {
 	methods?: string[] | null;
 	/** Path/regex the rule matches; null = any. */
 	path?: string | null;
+	/**
+	 * How `path` is matched (`regex` full-match, literal `prefix`, literal
+	 * `exact`). null/absent = regex — the backend default.
+	 */
+	match_mode?: PermissionRuleMatchMode | null;
 	/** OpenAPI operationIds the rule matches; null = any. */
 	operations?: string[] | null;
 }
@@ -97,13 +106,32 @@ export interface AccessRequest {
 	reason?: string | null;
 	/** The human/principal that filed the request (NOT the agent — that's `actor_id`). */
 	requested_by: string;
-	/** ISO timestamp the request was filed (present on list/get responses). */
-	filed_at?: string | null;
+	/** The principal that created the row (the agent itself for self-filed requests). */
+	created_by: string;
+	/**
+	 * The filer's owner id. Stamped from the filer's parent (or the filer
+	 * itself), so it may be a non-user id (e.g. a service account) — the
+	 * enrichment below is simply absent in that case. Null only on legacy rows.
+	 */
+	filer_owner_id?: string | null;
+	/** Server-resolved owner display info (absent when the id isn't a user). */
+	filer_owner?: AccessRequestOwner | null;
+	/** Deep link into the webapp's decision surface (stamped at file time). */
+	approve_url: string;
+	/** ISO timestamp the request was filed. */
+	filed_at: string;
 	/** ISO timestamp the request expires. */
-	expires_at?: string | null;
+	expires_at: string;
 	items: AccessRequestItem[];
 	/** Whether the caller can fulfill the request, and the blocking checks if not. */
 	evaluation?: AccessRequestEvaluation | null;
+}
+
+/** Display info for the filer's human owner — labelling only, never authorization. */
+export interface AccessRequestOwner {
+	id: string;
+	email: string;
+	display_name?: string | null;
 }
 
 /** A cursor page of access requests (`GET /access-requests`). */
@@ -290,6 +318,36 @@ export function scopeLabel(item: AccessRequestItem): string {
 }
 
 /**
+ * One-line queue-row summary of a request's items: "toolkit · bind +2 more".
+ * The single copy of the presentation the OSS queue surfaces (dashboard queue
+ * page, per-actor card) previously hand-rolled. Richer consumers that resolve
+ * target names client-side (e.g. the enterprise console) extend rather than
+ * replace this.
+ */
+export function summarizeAccessRequest(request: AccessRequest): string {
+	const n = request.items.length;
+	const head = request.items[0];
+	const label = head ? `${head.resource_type} · ${head.action}` : 'access';
+	return n > 1 ? `${label} +${n - 1} more` : label;
+}
+
+/**
+ * Wire status → Badge variant, covering every aggregate status including the
+ * view-time derived `expired`. Canonical tones: the half-decided and lapsed
+ * states (`partially_approved`, `expired`) read as warnings — they usually
+ * need a human to re-look — while a deliberate `withdrawn` is neutral.
+ * Consumers should fall back to `'default'` for unknown statuses.
+ */
+export const ACCESS_REQUEST_STATUS_VARIANT: Record<string, BadgeVariant> = {
+	pending: 'pending',
+	approved: 'success',
+	denied: 'danger',
+	partially_approved: 'warning',
+	expired: 'warning',
+	withdrawn: 'default',
+};
+
+/**
  * True when an item's permission `rules` will ACTUALLY be enforced on approval.
  * Broker rules are keyed per `(toolkit_id, credential_id)`, so only a
  * `credential.bind` has a key to apply them to — the backend mirrors this and
@@ -319,6 +377,10 @@ export function parseItemRules(item: AccessRequestItem): PermissionRule[] {
 			effect,
 			methods: strings(r.methods),
 			path: typeof r.path === 'string' ? r.path : null,
+			match_mode:
+				r.match_mode === 'prefix' || r.match_mode === 'exact' || r.match_mode === 'regex'
+					? r.match_mode
+					: null,
 			operations: strings(r.operations),
 		});
 	}
@@ -373,8 +435,21 @@ export function ruleSummary(rules: PermissionRule[]): string {
 		}
 		const head = bits.length ? `${verb} ${bits.join(' on ')}` : `${verb} all requests`;
 		// Path is a separate scope, not another thing the methods/ops act "on" —
-		// append it with its own clause so the meaning stays unambiguous.
-		return rule.path ? `${head}, scoped to path ${rule.path}` : head;
+		// append it with its own clause, phrased per match mode so a prefix rule
+		// never reads like a regex (or vice versa).
+		return rule.path ? `${head}, ${pathClause(rule.path, rule.match_mode)}` : head;
 	});
 	return parts.join('; ') + '.';
+}
+
+/** The path-scope clause of a rule summary, phrased for the rule's match mode. */
+function pathClause(path: string, mode: PermissionRuleMatchMode | null | undefined): string {
+	switch (mode) {
+		case 'prefix':
+			return `scoped to paths starting with ${path}`;
+		case 'exact':
+			return `scoped to exactly path ${path}`;
+		default:
+			return `scoped to path ${path}`;
+	}
 }

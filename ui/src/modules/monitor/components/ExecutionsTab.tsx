@@ -1,36 +1,22 @@
 /**
  * Executions tab — the execution trace log.
  *
- * Lists `GET /executions` newest-first in a table, filterable by lifecycle
- * status. Status renders off the UI status union (mapped from the bare wire
- * string), never the raw value, so an unknown server status degrades to a
- * neutral pill rather than a broken colour. Clicking a row opens the trace
- * detail sheet.
+ * Lists `GET /executions` newest-first in the jentic-mini columned execution
+ * table (see ExecutionTable), filterable by lifecycle status. Status renders
+ * off the UI status union (mapped from the bare wire string), never the raw
+ * value, so an unknown server status degrades to a neutral pill rather than a
+ * broken colour. Clicking a row opens the trace detail sheet.
  */
-import { useSearchParams } from 'react-router-dom';
-import { Activity, CheckCircle2, XCircle, Loader2, Ban, CircleDot } from 'lucide-react';
-import {
-	Button,
-	EmptyState,
-	ErrorAlert,
-	RefreshButton,
-	SegmentedToggle,
-	StatusBadge,
-	ActorLabel,
-} from '@/shared/ui';
-import { useExecutions, toExecutionStatus, type ExecutionStatusUi } from '@/modules/monitor/api';
+import { useSearchParams } from 'react-router';
+import { Activity } from 'lucide-react';
+import { Button, EmptyState, ErrorAlert, RefreshButton, SegmentedToggle } from '@/shared/ui';
+import { useExecutions } from '@/modules/monitor/api';
 import { TraceDetailSheet } from '@/modules/monitor/components/TraceDetailSheet';
 import { CursorPager } from '@/modules/monitor/components/CursorPager';
-import {
-	MonitorList,
-	MonitorRow,
-	type MonitorAccent,
-} from '@/modules/monitor/components/MonitorList';
+import { ExecutionTable } from '@/modules/monitor/components/ExecutionTable';
 import { useMonitorFilters } from '@/modules/monitor/lib/useMonitorFilters';
 import { useCursorStack } from '@/modules/monitor/lib/useCursorStack';
 import { hasTrace } from '@/modules/monitor/lib/links';
-import { formatDuration, formatRelative } from '@/modules/monitor/lib/format';
-import { cn } from '@/shared/lib/utils';
 
 type StatusFilter = 'all' | 'completed' | 'failed';
 
@@ -51,19 +37,6 @@ function isStatusFilter(value: string | null): value is StatusFilter {
 const FILTER_WIRE: Record<Exclude<StatusFilter, 'all'>, string[]> = {
 	completed: ['completed'],
 	failed: ['failed'],
-};
-
-// Per-status icon tile + accent, so the row's leading glyph reads the lifecycle
-// at a glance (matching the Overview's colour vocabulary).
-const STATUS_VISUAL: Record<
-	ExecutionStatusUi,
-	{ icon: typeof CheckCircle2; accent: MonitorAccent }
-> = {
-	completed: { icon: CheckCircle2, accent: 'green' },
-	failed: { icon: XCircle, accent: 'pink' },
-	running: { icon: Loader2, accent: 'blue' },
-	cancelled: { icon: Ban, accent: 'orange' },
-	unknown: { icon: CircleDot, accent: 'neutral' },
 };
 
 export function ExecutionsTab() {
@@ -120,12 +93,14 @@ export function ExecutionsTab() {
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
+		toolkitId: filters.toolkitId,
 	});
 	const pager = useCursorStack(filterKey);
 	const query = useExecutions({
 		status,
 		from: filters.from,
 		actorId: filters.actorId,
+		toolkitId: filters.toolkitId,
 		cursor: pager.cursor,
 	});
 	const rows = query.data?.data ?? [];
@@ -175,56 +150,11 @@ export function ExecutionsTab() {
 					}
 				/>
 			) : (
-				<MonitorList title="Executions" ariaLabel="Executions" isLoading={query.isLoading}>
-					{rows.map((row) => {
-						const status = toExecutionStatus(row.status);
-						const visual = STATUS_VISUAL[status];
-						const Icon = visual.icon;
-						return (
-							<MonitorRow
-								key={row.execution_id}
-								accent={visual.accent}
-								icon={
-									<Icon
-										className={cn(
-											'h-4 w-4',
-											status === 'running' && 'animate-spin',
-										)}
-									/>
-								}
-								title={row.operation_id ?? '—'}
-								subtitle={
-									<span className="flex flex-wrap items-center gap-x-1.5">
-										<span className="text-foreground">
-											{row.api?.name ?? row.api?.host ?? row.toolkit_id}
-										</span>
-										<span aria-hidden>·</span>
-										{row.actor_id ? (
-											<ActorLabel
-												actorId={row.actor_id}
-												actorType={row.actor_type}
-											/>
-										) : (
-											<span className="font-mono">{row.actor_type}</span>
-										)}
-									</span>
-								}
-								error={status === 'failed' ? row.error : null}
-								badges={<StatusBadge status={row.http_status} />}
-								meta={
-									<>
-										<span className="text-foreground font-medium">
-											{formatDuration(row.duration_ms)}
-										</span>
-										<span>{formatRelative(row.started_at)}</span>
-									</>
-								}
-								onClick={() => openExecution(row)}
-								label={`View trace for ${row.operation_id ?? row.execution_id}`}
-							/>
-						);
-					})}
-				</MonitorList>
+				<ExecutionTable
+					executions={rows}
+					isLoading={query.isLoading}
+					onRowClick={openExecution}
+				/>
 			)}
 
 			{!query.isError && !showEmpty && (

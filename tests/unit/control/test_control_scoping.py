@@ -9,6 +9,7 @@ from jentic_one.control.core.schema.access_requests import AccessRequest
 from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkits import Toolkit
+from jentic_one.control.scoping import filters as scoping_filters
 from jentic_one.control.scoping.filters import (
     _ACCESS_FILTER_PROVIDERS,
     build_access_filters,
@@ -247,8 +248,16 @@ def test_include_shared_default_off_ignores_providers() -> None:
         _ACCESS_FILTER_PROVIDERS.remove(_provider)
 
 
-def test_no_providers_is_owner_only() -> None:
-    """Stock OSS (no providers) yields the plain owner filter even with include_shared."""
+def test_no_providers_is_owner_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero providers yields the plain owner filter even with include_shared.
+
+    The provider registry is pinned empty for the duration: this test is
+    about the no-provider BASELINE, not the process state — under an
+    overlay-loaded run (e.g. an extension's "OSS suite with the extension
+    registered" harness) providers legitimately exist, and asserting on
+    whatever happens to be     registered would make the test flip there.
+    """
+    monkeypatch.setattr(scoping_filters, "_ACCESS_FILTER_PROVIDERS", [])
     identity = _identity(sub="user_share", permissions=[])
     filters = build_access_filters(identity, Toolkit, include_shared=True)
     assert len(filters) == 1

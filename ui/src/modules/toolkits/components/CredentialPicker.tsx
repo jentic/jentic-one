@@ -22,8 +22,8 @@ import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolk
 interface CredentialPickerProps {
 	/** Credential ids already bound to this toolkit — hidden from the list. */
 	boundIds: Set<string>;
-	/** Fired with the chosen credential id. */
-	onSelect: (credentialId: string) => void;
+	/** Fired with the chosen credential (full row, so hosts can show its label). */
+	onSelect: (credential: BindableCredential) => void;
 	/** Disables rows while a bind mutation is in flight. */
 	pending?: boolean;
 	/** Only fetch when the host dialog is actually open. */
@@ -55,8 +55,15 @@ export function CredentialPicker({
 		return all.filter((c) => {
 			if (boundIds.has(c.credential_id)) return false;
 			if (!q) return true;
+			// Include the friendly display name (what the row's title actually
+			// shows when the user hasn't set a name) in the searchable text, so
+			// typing what's on screen — e.g. `Article Search` for an NYT
+			// credential — returns the row rather than only matching the raw
+			// vendor/name machine identity.
+			const friendly = apiRefDisplayName({ vendor: c.vendor, name: c.apiName });
 			return (
 				c.name.toLowerCase().includes(q) ||
+				friendly.toLowerCase().includes(q) ||
 				(c.vendor?.toLowerCase().includes(q) ?? false) ||
 				(c.apiName?.toLowerCase().includes(q) ?? false) ||
 				(c.provider?.toLowerCase().includes(q) ?? false)
@@ -144,7 +151,7 @@ function CredentialRow({
 	disabled,
 }: {
 	cred: BindableCredential;
-	onSelect: (credentialId: string) => void;
+	onSelect: (credential: BindableCredential) => void;
 	disabled?: boolean;
 }) {
 	// Title = the user's own credential name when they've set one, so a renamed
@@ -161,9 +168,9 @@ function CredentialRow({
 		cred.credential_id;
 	// Muted technical subtitle: the raw vendor/name tuple when an API identity
 	// exists (using `||` so an empty-string vendor falls through to apiName
-	// rather than printing blank — #2), else a guaranteed technical identifier
+	// rather than printing blank), else a guaranteed technical identifier
 	// (`credential_id`) so two identically-named creds with no API identity stay
-	// disambiguable (#9). The title chain never promotes `credential_id`, so the
+	// disambiguable. The title chain never promotes `credential_id`, so the
 	// subtitle is the row's last resort for telling rows apart.
 	const apiTuple =
 		cred.vendor && cred.apiName
@@ -174,11 +181,11 @@ function CredentialRow({
 		<button
 			type="button"
 			disabled={disabled}
-			onClick={() => onSelect(cred.credential_id)}
+			onClick={() => onSelect(cred)}
 			data-testid="credential-picker-row"
 			className="group hover:border-primary/50 bg-background hover:bg-muted/40 border-border flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
 		>
-			<div className="bg-accent-yellow/10 text-accent-yellow flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+			<div className="bg-accent-blue/10 text-accent-blue flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
 				<KeyRound className="h-4 w-4" />
 			</div>
 			<div className="min-w-0 flex-1">

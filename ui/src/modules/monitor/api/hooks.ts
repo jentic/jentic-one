@@ -13,8 +13,8 @@ import {
 	acknowledgeEvent,
 	cancelJob,
 	getExecution,
-	getExecutionStats,
 	getJob,
+	getUsageStats,
 	listActors,
 	listAudit,
 	listEvents,
@@ -22,12 +22,12 @@ import {
 	listJobs,
 	resolveActor,
 	streamEvents,
-	type ExecutionStatsParams,
 	type ListActorsParams,
 	type ListAuditParams,
 	type ListEventsParams,
 	type ListExecutionsParams,
 	type ListJobsParams,
+	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
 import { AuditTargetType } from '@/shared/api';
 import type {
@@ -37,9 +37,9 @@ import type {
 	EventResponse,
 	ExecutionListResponse,
 	ExecutionResponse,
-	ExecutionStatsResponse,
 	JobListResponse,
 	JobResponse,
+	UsageResponse,
 } from '@/shared/api';
 
 /** Stable query-key roots so callers/tests can target invalidation precisely. */
@@ -52,7 +52,7 @@ export const monitorKeys = {
 	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
 	events: (params: ListEventsParams) => [...monitorKeys.all, 'events', params] as const,
 	audit: (params: ListAuditParams) => [...monitorKeys.all, 'audit', params] as const,
-	stats: (params: ExecutionStatsParams) => [...monitorKeys.all, 'stats', params] as const,
+	usage: (params: UsageStatsParams) => [...monitorKeys.all, 'usage', params] as const,
 	actors: () => [...monitorKeys.all, 'actors'] as const,
 };
 
@@ -77,14 +77,15 @@ export function useExecution(executionId: string | null) {
 }
 
 /**
- * Aggregated execution stats for the Overview tab (GET /monitoring/executions,
- * jentic-one#386). `days` is the trailing window (1–30); the endpoint defaults
- * to 7. Powers the usage charts + top-operations panel.
+ * Enriched usage aggregation for the Overview tab (`GET /monitoring/usage`,
+ * jentic-one-internal#561). One call per grouping dimension — the Overview
+ * fires three (api / toolkit / agent) so the bubble chart and breakdown can
+ * toggle between lenses without refetching.
  */
-export function useExecutionStats(params: ExecutionStatsParams = {}) {
-	return useQuery<ExecutionStatsResponse>({
-		queryKey: monitorKeys.stats(params),
-		queryFn: () => getExecutionStats(params),
+export function useUsageStats(params: UsageStatsParams = {}) {
+	return useQuery<UsageResponse>({
+		queryKey: monitorKeys.usage(params),
+		queryFn: () => getUsageStats(params),
 		placeholderData: keepPreviousData,
 	});
 }

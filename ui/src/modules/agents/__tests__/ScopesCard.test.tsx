@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { worker } from '@/mocks/browser';
 import {
 	renderWithProviders,
 	screen,
@@ -6,6 +8,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
@@ -81,6 +84,45 @@ describe('ScopesCard', () => {
 		});
 	});
 
+	it('revokes a granted scope by deselecting it and omits it from the PUT', async () => {
+		const user = userEvent.setup();
+		let putBody: { scopes?: string[] } | undefined;
+		worker.use(
+			http.put('/agents/:id/scopes', async ({ request }) => {
+				putBody = (await request.json()) as { scopes?: string[] };
+				return HttpResponse.json({ scopes: putBody.scopes });
+			}),
+		);
+
+		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
+		const list = await screen.findByRole('list', { name: 'Granted scopes' });
+		expect(within(list).getByText('executions:read')).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: 'Edit scopes for support-agent' }));
+		const dialog = await screen.findByRole('dialog');
+		await user.type(within(dialog).getByLabelText('Search scopes'), 'executions:read');
+		// Already granted → reads back checked; deselect it to revoke. (A string
+		// role name matches the full accessible name, so `owner:executions:read`
+		// can't collide.)
+		const checkbox = await within(dialog).findByRole('checkbox', {
+			name: 'executions:read',
+		});
+		expect(checkbox).toBeChecked();
+		await user.click(checkbox);
+		await user.click(within(dialog).getByRole('button', { name: 'Save scopes' }));
+
+		// The full-list PUT drops the revoked scope but keeps the others.
+		await waitFor(() => expect(putBody).toBeDefined());
+		expect(putBody?.scopes).not.toContain('executions:read');
+		expect(putBody?.scopes).toContain('capabilities:execute');
+
+		// The chip disappears from the card (cache seeded from the PUT response).
+		await waitFor(() => {
+			const updated = screen.getByRole('list', { name: 'Granted scopes' });
+			expect(within(updated).queryByText('executions:read')).not.toBeInTheDocument();
+		});
+	});
+
 	it('keeps Save disabled until the selection differs from the current grants', async () => {
 		const user = userEvent.setup();
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
@@ -126,8 +168,6 @@ describe('ScopesCard', () => {
 		// component handles a 403 defensively (e.g. future enforcement / a perms
 		// change mid-session). Inject one to cover that path.
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {
 				status: 403,
@@ -204,8 +244,6 @@ describe('ScopesCard', () => {
 		// save must include it untouched — dropping it would silently revoke it.
 		const user = userEvent.setup();
 		let putBody: { scopes?: string[] } | undefined;
-		const { worker } = await import('@/mocks/browser');
-		const { http, HttpResponse } = await import('msw');
 		worker.use(
 			http.put('/agents/:id/scopes', async ({ request }) => {
 				putBody = (await request.json()) as { scopes?: string[] };
@@ -267,8 +305,6 @@ describe('ScopesCard', () => {
 		// revoke it — the card must require explicit confirmation first.
 		const user = userEvent.setup();
 		let putBody: { scopes?: string[] } | undefined;
-		const { worker } = await import('@/mocks/browser');
-		const { http, HttpResponse } = await import('msw');
 		worker.use(
 			http.get('/permissions', () =>
 				HttpResponse.json({
@@ -320,8 +356,6 @@ describe('ScopesCard', () => {
 
 	it('keeps the dialog open and shows the error when a scope is malformed (422)', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(
 			createErrorHandler('put', '/agents/:id/scopes', {
 				status: 422,
@@ -344,8 +378,6 @@ describe('ScopesCard', () => {
 
 	it('keeps the dialog open and surfaces a network error on save', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('put', '/agents/:id/scopes', { networkError: true }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
@@ -366,8 +398,6 @@ describe('ScopesCard', () => {
 	});
 
 	it('shows an error (and hides Edit) when the actor scopes fail to load', async () => {
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('get', '/agents/:id/scopes', { status: 500 }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });
@@ -380,8 +410,6 @@ describe('ScopesCard', () => {
 
 	it('disables Save when the permission catalogue fails to load', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('get', '/permissions', { status: 500 }));
 
 		renderCard({ actorKind: 'agent', actorId: 'agnt_active_1', actorName: 'support-agent' });

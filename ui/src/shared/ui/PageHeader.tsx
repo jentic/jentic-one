@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
-import { Pencil } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { cn } from '@/shared/lib/utils';
 
@@ -12,15 +11,6 @@ interface PageHeaderProps {
 	icon?: ReactNode;
 	/** Right-aligned slot for buttons / controls. */
 	actions?: ReactNode;
-	/**
-	 * When set, an outlined "Edit" pill is rendered in the header's top-right
-	 * cluster (alongside any `actions`), so it stays anchored and visible even
-	 * when the title is long. Detail pages use it to open their existing rename
-	 * dialog. Omit it and nothing extra renders (fully backward-compatible).
-	 */
-	onEdit?: () => void;
-	/** Accessible name for the edit button (e.g. "Rename toolkit"). */
-	editLabel?: string;
 	/**
 	 * When true (default) the title slides in with a spring entrance via
 	 * framer-motion. Pass `animated={false}` in tests or wherever the
@@ -46,8 +36,6 @@ export function PageHeader({
 	subtitle,
 	icon,
 	actions,
-	onEdit,
-	editLabel,
 	animated = true,
 	className,
 }: PageHeaderProps) {
@@ -98,19 +86,8 @@ export function PageHeader({
 					)}
 				</div>
 			</div>
-			{(onEdit || actions) && (
-				<div
-					data-testid="page-header-actions"
-					className="flex shrink-0 items-center gap-2 self-center"
-				>
-					{onEdit && (
-						<Button variant="outline" size="sm" onClick={onEdit} aria-label={editLabel}>
-							<Pencil className="h-3.5 w-3.5" />
-							Edit
-						</Button>
-					)}
-					{actions}
-				</div>
+			{actions && (
+				<div className="flex shrink-0 items-center gap-2 self-center">{actions}</div>
 			)}
 		</div>
 	);

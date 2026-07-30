@@ -54,6 +54,8 @@ def _execution_response(view: ExecutionView, request: Request) -> ExecutionRespo
         actor_id=view.actor_id,
         actor_type=view.actor_type,
         origin=view.origin,
+        credential_id=view.credential_id,
+        credential_name=view.credential_name,
         links=links,
     )
 

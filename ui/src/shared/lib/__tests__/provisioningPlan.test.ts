@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
 	FULFILMENT_ITEM_TYPES,
+	chainAuthType,
+	chainIsNoAuth,
+	chainItems,
 	findItem,
 	isPlanGranted,
 	isProvisioningPlan,
 	itemKey,
 	planApiReference,
 	planAuthType,
+	planChains,
 	planDenialReason,
 	planIsNoAuth,
 	planSteps,
@@ -33,6 +37,10 @@ function plan(items: AccessRequestItem[]): AccessRequest {
 		actor_id: 'agnt_1',
 		status: 'pending',
 		requested_by: 'agnt_1',
+		created_by: 'agnt_1',
+		approve_url: 'https://app.example.test/access-requests/areq_1',
+		filed_at: '2026-07-23T09:00:00Z',
+		expires_at: '2026-07-30T09:00:00Z',
 		items,
 	};
 }
@@ -178,6 +186,127 @@ describe('provisioningPlan', () => {
 				item({ resource_type: 'toolkit', action: 'create', status: 'approved' }),
 			]);
 			expect(isPlanGranted(req)).toBe(false);
+		});
+	});
+
+	describe('planChains', () => {
+		const REF_A = { vendor: 'slack.com', name: 'api' };
+		const REF_B = { vendor: 'googleapis.com', name: 'sheets' };
+
+		const chainFor = (
+			ref: { vendor: string; name: string },
+			p: string,
+		): AccessRequestItem[] => [
+			item({
+				id: `${p}1`,
+				resource_type: 'toolkit',
+				action: 'create',
+				resource_reference: ref,
+			}),
+			item({
+				id: `${p}2`,
+				resource_type: 'credential',
+				action: 'provision',
+				resource_reference: { ...ref, security_scheme: p === 'a' ? 'api_key' : 'no_auth' },
+			}),
+			item({
+				id: `${p}3`,
+				resource_type: 'credential',
+				action: 'bind',
+				resource_reference: ref,
+			}),
+			item({
+				id: `${p}4`,
+				resource_type: 'toolkit',
+				action: 'bind',
+				resource_reference: ref,
+			}),
+		];
+
+		it('groups a composite into per-API chains plus extras, by reference not position', () => {
+			const req = plan([
+				// Interleave the two chains + plain items to prove grouping is by ref.
+				...chainFor(REF_A, 'a'),
+				item({
+					id: 'x1',
+					resource_type: 'toolkit',
+					action: 'bind',
+					resource_reference: { vendor: 'github.com', name: 'api' },
+				}),
+				...chainFor(REF_B, 'b'),
+				item({
+					id: 'x2',
+					resource_type: 'scope',
+					action: 'grant',
+					resource_id: 'catalog:import',
+				}),
+			]);
+			const shape = planChains(req);
+			expect(shape.chains.map((c) => c.apiRef.vendor)).toEqual([
+				'slack.com',
+				'googleapis.com',
+			]);
+			const [a, b] = shape.chains;
+			expect(a.credentialBind?.id).toBe('a3');
+			expect(a.toolkitBind?.id).toBe('a4');
+			expect(b.credentialBind?.id).toBe('b3');
+			expect(chainAuthType(a)).toBe('api_key');
+			expect(chainIsNoAuth(a)).toBe(false);
+			expect(chainIsNoAuth(b)).toBe(true);
+			expect(chainItems(a).map((it) => it.id)).toEqual(['a1', 'a2', 'a3', 'a4']);
+			// The plain bind to a non-chain API and the scope grant stay extras.
+			expect(shape.extras.map((it) => it.id)).toEqual(['x1', 'x2']);
+		});
+
+		it('adopts a single reference-less credential:bind into a single chain (legacy shape)', () => {
+			// Requests filed before composite support: the credential:bind has no
+			// reference. With exactly one chain the attribution is unambiguous.
+			const req = plan([
+				item({
+					id: 'l1',
+					resource_type: 'toolkit',
+					action: 'create',
+					resource_reference: REF_A,
+				}),
+				item({
+					id: 'l2',
+					resource_type: 'credential',
+					action: 'provision',
+					resource_reference: { ...REF_A, security_scheme: 'bearer' },
+				}),
+				item({ id: 'l3', resource_type: 'credential', action: 'bind' }),
+				item({
+					id: 'l4',
+					resource_type: 'toolkit',
+					action: 'bind',
+					resource_reference: REF_A,
+				}),
+			]);
+			const shape = planChains(req);
+			expect(shape.chains).toHaveLength(1);
+			expect(shape.chains[0].credentialBind?.id).toBe('l3');
+			expect(shape.extras).toEqual([]);
+		});
+
+		it('never guesses which chain owns a reference-less bind when there are several', () => {
+			const req = plan([
+				...chainFor(REF_A, 'a').filter((it) => it.id !== 'a3'),
+				...chainFor(REF_B, 'b').filter((it) => it.id !== 'b3'),
+				item({ id: 'orphan', resource_type: 'credential', action: 'bind' }),
+			]);
+			const shape = planChains(req);
+			expect(shape.chains).toHaveLength(2);
+			expect(shape.chains.every((c) => c.credentialBind === undefined)).toBe(true);
+			expect(shape.extras.map((it) => it.id)).toEqual(['orphan']);
+		});
+
+		it('yields no chains for a plain (non-plan) request', () => {
+			const req = plan([
+				item({ resource_type: 'toolkit', action: 'bind', resource_reference: REF_A }),
+			]);
+			const shape = planChains(req);
+			expect(shape.chains).toEqual([]);
+			expect(shape.extras).toHaveLength(1);
 		});
 	});
 });

@@ -97,6 +97,12 @@ interface FieldsProps {
 	 * `configured`). Omitted → just the always-available direct options.
 	 */
 	providers?: ProviderDiscoveryEntryResponse[];
+	/**
+	 * Non-blocking warning shown under the api_key "Field name" input during
+	 * create when the typed value diverges from the spec's declared parameter
+	 * name (a wrong binding causes upstream 401s — #589).
+	 */
+	fieldNameWarning?: string;
 }
 
 /** Scope-picker wiring lifted to the parent (owns selection + auto-select). */
@@ -125,8 +131,17 @@ export function CredentialTypeFields({
 	onFlowChange,
 	callbackUrl,
 	providers,
+	fieldNameWarning,
 }: FieldsProps) {
 	const secretHint = mode === 'edit' ? 'Leave blank to keep the current value.' : undefined;
+	// The api_key parameter binding (field name + location) is derived from the
+	// API spec at create time and must not drift afterwards — a wrong binding
+	// silently mis-injects the key (e.g. ?Default=<key>, #589). Lock both fields
+	// in edit mode; the backend also rejects a changed value defensively.
+	const bindingLocked = mode === 'edit';
+	const bindingLockHint = bindingLocked
+		? 'Defined by the API spec — recreate the credential to change it.'
+		: undefined;
 
 	if (type === CredentialType.NO_AUTH) {
 		// A no-auth credential carries no secret — render no fields. Defensive:
@@ -174,19 +189,26 @@ export function CredentialTypeFields({
 						onChange={(e): void => onChange({ key: e.target.value })}
 					/>
 				</Field>
-				<Field label="Field name" required={mode === 'create'} error={errors.fieldName}>
+				<Field
+					label="Field name"
+					required={mode === 'create'}
+					hint={bindingLocked ? bindingLockHint : fieldNameWarning}
+					error={errors.fieldName}
+				>
 					<Input
 						value={state.fieldName}
 						onChange={(e): void => onChange({ fieldName: e.target.value })}
 						placeholder="X-Api-Key"
+						disabled={bindingLocked}
 					/>
 				</Field>
-				<Field label="Location" required={mode === 'create'}>
+				<Field label="Location" required={mode === 'create'} hint={bindingLockHint}>
 					<Select
 						value={state.location}
 						onChange={(e): void =>
 							onChange({ location: e.target.value as 'header' | 'query' })
 						}
+						disabled={bindingLocked}
 					>
 						{KEY_LOCATIONS.map((loc) => (
 							<option key={loc} value={loc}>

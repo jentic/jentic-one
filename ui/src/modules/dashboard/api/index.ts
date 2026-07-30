@@ -12,6 +12,8 @@ export {
 	useActionableEvents,
 	useRecentExecutions,
 	useCatalogSize,
+	useUsageOverview,
+	useHasAgents,
 	dashboardKeys,
 } from '@/modules/dashboard/api/hooks';
 
@@ -22,6 +24,11 @@ export {
 	deriveSuccessRate,
 	approxCountFromPage,
 	formatApproxCount,
+	RANGE_SECONDS,
+	usageToKpis,
+	usageToSuccessRateSeries,
+	usageToLatencySeries,
+	usageToTopRows,
 } from '@/modules/dashboard/api/types';
 
 export type {
@@ -31,13 +38,17 @@ export type {
 	AlertsOverview,
 	RecentExecutionsOverview,
 	CatalogOverview,
+	DashboardRange,
+	UsageKpis,
+	UsageTrendPoint,
+	TopUsageRow,
 } from '@/modules/dashboard/api/types';
 
 // Re-export the generated row types the views render, so view components consume
 // them through the module's api barrel rather than reaching into the
 // @/shared/api facade directly (which the layering ESLint rule forbids).
-export type { AgentResponse, EventResponse, ExecutionResponse } from '@/shared/api';
-export { EventSeverity } from '@/shared/api';
+export type { AgentResponse, EventResponse, ExecutionResponse, UsageResponse } from '@/shared/api';
+export { EventSeverity, GroupBy } from '@/shared/api';
 
 // The access-request row type the Pending-requests card renders, surfaced via
 // the module barrel so the view doesn't deep-import `@/shared/lib`.

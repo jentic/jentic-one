@@ -172,7 +172,13 @@ PATH_SCOPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
 }
 
 #: ``(method, path) -> [actor_type, ...]`` to override the inferred actor types.
-ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {}
+ACTOR_TYPE_OVERRIDES: dict[tuple[str, str], list[str]] = {
+    # Session refresh is enforced in the service layer (AuthService.refresh
+    # rejects non-user actors and opaque tokens), which the route dependency
+    # cannot express — without this override the reference would read "any
+    # authenticated actor" for a users-only operation.
+    ("POST", "/auth/refresh"): [ActorType.USER.value],
+}
 
 #: ``(method, path) -> note`` for operations that **do** authenticate but not via
 #: the standard ``get_current_identity`` bearer dependency (so closure

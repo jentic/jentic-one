@@ -19,11 +19,14 @@ export {
 	isSpecificResource,
 	isScopeGrant,
 	scopeLabel,
+	summarizeAccessRequest,
+	ACCESS_REQUEST_STATUS_VARIANT,
 	rulesAreEnforceable,
 	parseItemRules,
 	ruleSummary,
 	isUnrestrictedAllow,
 	type AccessRequest,
+	type AccessRequestOwner,
 	type AccessRequestItem,
 	type AccessRequestEvaluation,
 	type AccessRequestEvaluationCheck,
@@ -33,6 +36,7 @@ export {
 	type ItemAmendment,
 	type PermissionRule,
 	type PermissionRuleEffect,
+	type PermissionRuleMatchMode,
 } from '@/shared/lib/accessRequests';
 
 // Provisioning-plan classification/shape helpers — used by the fulfilment
@@ -43,11 +47,17 @@ export {
 	planAuthType,
 	planIsNoAuth,
 	planSteps,
+	planChains,
+	chainAuthType,
+	chainIsNoAuth,
+	chainItems,
 	findItem,
 	itemKey,
 	FULFILMENT_ITEM_TYPES,
 	type PlanApiReference,
 	type PlanStep,
+	type PlanChain,
+	type PlanShape,
 } from '@/shared/lib/provisioningPlan';
 
 // Source-agnostic scope primitives — shared by the credentials OAuth2 scope
@@ -82,13 +92,3 @@ export {
 	toolkitCredDisplayName,
 	apiRefDisplayName,
 } from '@/shared/lib/api-display';
-
-// Shared Edit-dialog validators — one copy of the name/description constraints
-// (non-empty name ≤255, optional description ≤1024) used by both the agent and
-// toolkit rename dialogs so their caps + error copy can't drift.
-export {
-	validateName,
-	validateDescription,
-	NAME_MAX_LENGTH,
-	DESCRIPTION_MAX_LENGTH,
-} from '@/shared/lib/validators';

@@ -93,21 +93,101 @@ function seedAgents(opts: { bound: SeedAgent[]; workspace: SeedAgent[] }) {
 			return new HttpResponse(null, { status: 204 });
 		}),
 	);
+	return bound;
 }
 
 describe('ToolkitDetailPage', () => {
-	it('renders the toolkit identity, keys, and bound credentials', async () => {
+	it('renders the identity chrome and tabbed sections (keys, credentials via tabs)', async () => {
+		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 
 		expect(await screen.findByRole('heading', { name: 'GitHub Tools' })).toBeInTheDocument();
-		expect(screen.getByText('tk_demo_github')).toBeInTheDocument();
-		// Keys card lists the seeded key.
-		expect(await screen.findByText('CI runner')).toBeInTheDocument();
-		// Bound credential row.
-		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
-		// Read-only, toolkit-scoped activity panel surfaces audit entries.
-		expect(await screen.findByRole('heading', { name: /activity/i })).toBeInTheDocument();
+
+		// Overview is the landing tab: audit slice renders without a click.
+		expect(await screen.findByRole('heading', { name: /recent changes/i })).toBeInTheDocument();
 		expect(await screen.findByText(/suspended pending review/i)).toBeInTheDocument();
+
+		// Provenance line (created_by rendered at last).
+		expect(screen.getByTestId('toolkit-provenance')).toHaveTextContent('admin@local');
+
+		// Keys tab lists the seeded key.
+		await user.click(screen.getByRole('tab', { name: /^Keys/ }));
+		expect(await screen.findByText('CI runner')).toBeInTheDocument();
+
+		// Access tab lists the bound credential.
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		expect(await screen.findByText('GitHub PAT')).toBeInTheDocument();
+
+		// The immutable toolkit id lives on Settings (not in the page chrome).
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('tk_demo_github')).toBeInTheDocument();
+	});
+
+	it('deep-links a tab through the ?tab= search param', async () => {
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		// The Keys panel content renders without any click…
+		expect(await screen.findByText('CI runner')).toBeInTheDocument();
+		// …and the Keys tab is the selected one.
+		expect(screen.getByRole('tab', { name: /^Keys/ })).toHaveAttribute('aria-selected', 'true');
+	});
+
+	it('shows the 7-day KPI strip from the toolkit-scoped usage aggregation', async () => {
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+
+		const strip = await screen.findByTestId('usage-strip');
+		// Sum of the seeded daily trend (64+88+71+120+104+141+126).
+		expect(within(strip).getByText('714')).toBeInTheDocument();
+		expect(within(strip).getByText('Executions')).toBeInTheDocument();
+		expect(within(strip).getByText('97.6%')).toBeInTheDocument();
+		expect(within(strip).getByText('412ms')).toBeInTheDocument();
+		// Agents / creds / keys roll-up: 1 bound agent, 1 credential, 2 keys.
+		expect(within(strip).getByText('1 / 1 / 2')).toBeInTheDocument();
+	});
+
+	it('renders the Activity tab: volume chart, executions feed, Monitor deep-link', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		// Volume chart (from /monitoring/usage?toolkit_id=…).
+		expect(
+			await screen.findByRole('img', { name: /execution volume for this toolkit/i }),
+		).toBeInTheDocument();
+
+		// Executions feed (from /executions?toolkit_id=…), including the denial.
+		expect(await screen.findByText(/github\.create_issue/)).toBeInTheDocument();
+		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();
+
+		// Deep-link into Monitor carries the toolkit filter.
+		const link = screen.getByRole('link', { name: /open monitor/i });
+		expect(link).toHaveAttribute(
+			'href',
+			expect.stringContaining('tab=executions&toolkit_id=tk_demo_github'),
+		);
+	});
+
+	it('hides the KPI strip and degrades the Activity tab for non-admins (403)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			http.get('/monitoring/usage', () => new HttpResponse(null, { status: 403 })),
+			http.get('/executions', () => new HttpResponse(null, { status: 403 })),
+		);
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Strip resolves to hidden (no error splash).
+		await waitFor(() =>
+			expect(screen.queryByTestId('usage-strip-loading')).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByTestId('usage-strip')).not.toBeInTheDocument();
+
+		// Activity tab explains the gate instead of erroring.
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+		expect(await screen.findByText(/admin-only/i)).toBeInTheDocument();
 	});
 
 	it('reuses the shared PageHeader pattern like /agents/:id', async () => {
@@ -120,7 +200,94 @@ describe('ToolkitDetailPage', () => {
 			expect(screen.getAllByRole('heading', { name: 'GitHub Tools' })).toHaveLength(1),
 		);
 		// "Back to <parent>" affordance sits beneath the header (not baked in).
-		expect(screen.getByRole('button', { name: /all toolkits/i })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /all toolkits/i })).toBeInTheDocument();
+	});
+
+	it('saves identity edits from the Settings tab form', async () => {
+		let patched: { name?: string | null } | null = null;
+		worker.use(
+			http.patch('/toolkits/:toolkitId', async ({ params, request }) => {
+				patched = (await request.json()) as { name?: string | null };
+				return HttpResponse.json({
+					toolkit_id: params.toolkitId,
+					name: patched?.name ?? 'GitHub Tools',
+					description: null,
+					active: true,
+					key_count: 1,
+					credential_count: 1,
+					created_at: '2026-04-01T09:00:00Z',
+				});
+			}),
+		);
+
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+
+		// Save is a no-op until the draft actually diverges from the toolkit.
+		const save = screen.getByRole('button', { name: /save changes/i });
+		expect(save).toBeDisabled();
+
+		await user.clear(nameInput);
+		await user.type(nameInput, 'GitHub Ops');
+		await waitFor(() => expect(save).toBeEnabled());
+
+		await user.click(save);
+		await waitFor(() => expect(patched).toMatchObject({ name: 'GitHub Ops' }));
+	});
+
+	it('clears a toolkit description by sending an empty string, not null, so the clear persists', async () => {
+		// The toolkit backend IGNORES a `null` description (the clear would
+		// silently revert) but HONOURS an empty string — so clearing the field
+		// from the Settings tab Identity form must PATCH `description: ''`. Drive
+		// against a local fixture whose GET reflects the mutated state and whose
+		// PATCH mirrors the real backend (ignore null, honour ''), so this test
+		// FAILS with the old `description || null` and PASSES with `''`.
+		let description: string | null = 'Issues, PRs, and repo automation.';
+		let patchBody: { name?: string | null; description?: string | null } | null = null;
+		const row = () => ({
+			toolkit_id: 'tk_demo_github',
+			name: 'GitHub Tools',
+			description,
+			active: true,
+			key_count: 2,
+			credential_count: 1,
+			permissions: [],
+			created_at: '2026-05-01T10:00:00Z',
+			updated_at: '2026-05-03T10:00:00Z',
+		});
+		worker.use(
+			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
+			http.patch('/toolkits/:toolkitId', async ({ request }) => {
+				patchBody = (await request.json()) as typeof patchBody;
+				// Mirror the real backend: honour an empty string, ignore null.
+				if (patchBody && 'description' in patchBody && patchBody.description != null) {
+					description = patchBody.description;
+				}
+				return HttpResponse.json(row());
+			}),
+		);
+
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const descInput = await screen.findByLabelText('Description');
+		expect(descInput).toHaveValue('Issues, PRs, and repo automation.');
+		await user.clear(descInput);
+		const save = screen.getByRole('button', { name: /save changes/i });
+		await waitFor(() => expect(save).toBeEnabled());
+		await user.click(save);
+
+		// The PATCH carries an empty STRING (backend-honoured), never `null`.
+		await waitFor(() => expect(patchBody).not.toBeNull());
+		expect(patchBody).toMatchObject({ description: '' });
+		// The cleared value sticks on the refetched entity (does not revert).
+		expect(description).toBe('');
 	});
 
 	it('has no critical accessibility violations', async () => {
@@ -129,11 +296,10 @@ describe('ToolkitDetailPage', () => {
 			path: PATH,
 		});
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		// Wait for the seeded keys/credentials rows to mount, then let the
-		// framer-motion entrance fully settle so axe samples final (opaque)
-		// colours rather than mid-fade blended ones.
-		await screen.findByText('CI runner');
-		await screen.findByText('GitHub PAT');
+		// Landing tab: wait for the audit slice + bound-agent rows to mount, then
+		// let the framer-motion entrance fully settle so axe samples final
+		// (opaque) colours rather than mid-fade blended ones.
+		await screen.findByText(/suspended pending review/i);
 		await new Promise((resolve) => setTimeout(resolve, 600));
 		await checkA11y(container);
 	});
@@ -143,11 +309,45 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /create key/i }));
+		await user.click(screen.getByRole('tab', { name: /^Keys/ }));
+		await user.click(await screen.findByRole('button', { name: /create key/i }));
 		await user.click(screen.getByRole('button', { name: /^generate$/i }));
 
 		expect(await screen.findByText('New API Key Created')).toBeInTheDocument();
 		expect(screen.getByText(/jntc_live_freshmockplaintext/)).toBeInTheDocument();
+	});
+
+	it('creates a key with an IP allowlist and shows the restriction chip', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(await screen.findByRole('button', { name: /create key/i }));
+		await user.type(screen.getByLabelText('Key label'), 'Edge worker');
+		await user.type(screen.getByLabelText('Allowed IPs'), '10.0.0.1, 10.0.0.2');
+		await user.click(screen.getByRole('button', { name: /^generate$/i }));
+
+		await screen.findByText('New API Key Created');
+		// The new key row renders the allowed_ips chip.
+		expect(await screen.findByText('10.0.0.1, 10.0.0.2')).toBeInTheDocument();
+	});
+
+	it('renames a key inline from the Keys tab', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=keys`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		await screen.findByText('CI runner');
+
+		// Pencil → inline input pre-filled with the current label.
+		await user.click(screen.getAllByRole('button', { name: 'Rename key' })[0]);
+		const input = screen.getByLabelText('Key label');
+		expect(input).toHaveValue('CI runner');
+		await user.clear(input);
+		await user.type(input, 'Deploy runner{Enter}');
+
+		// PATCH lands, the list refetches, the new label renders.
+		expect(await screen.findByText('Deploy runner')).toBeInTheDocument();
+		expect(screen.queryByText('CI runner')).not.toBeInTheDocument();
 	});
 
 	it('renders full-width (no reading max-width cap)', async () => {
@@ -164,27 +364,198 @@ describe('ToolkitDetailPage', () => {
 		expect(shell).not.toHaveClass('max-w-4xl');
 	});
 
-	it('binds a credential picked from the searchable list', async () => {
+	it('binds a credential with full access through the two-step wizard', async () => {
+		// Unique id: the shared MSW bindings store persists across tests AND
+		// retries — a fixed id would leave the picker empty on a retry.
+		const credId = `cred_stripe_${Math.random().toString(36).slice(2, 7)}`;
 		seedCredentials([
-			{ credential_id: 'cred_stripe', name: 'Stripe key', type: 'api_key', vendor: 'stripe' },
+			{ credential_id: credId, name: 'Stripe key', type: 'api_key', vendor: 'stripe' },
 			{ credential_id: 'cred_gh_1', name: 'GitHub PAT', type: 'api_key', vendor: 'github' },
 		]);
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /bind existing/i }));
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
 
-		// Picker lists the unbound credential…
+		// Step 1: the picker lists the unbound credential…
 		const stripeRow = await screen.findByText('Stripe key');
 		expect(stripeRow).toBeInTheDocument();
 		// …and hides the one already bound to this toolkit (cred_gh_1, "GitHub PAT").
 		const dialog = screen.getByRole('dialog');
 		expect(within(dialog).queryByText('GitHub PAT')).not.toBeInTheDocument();
 
+		// Step 2: picking advances to the access decision (NOT an instant bind),
+		// defaulting to the allow-all grant.
 		await user.click(stripeRow);
-		// Bind succeeds → the dialog closes (onSuccess → setBindOpen(false)).
+		expect(
+			await within(dialog).findByRole('radio', { name: /allow all operations/i }),
+		).toHaveAttribute('aria-checked', 'true');
+		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
 		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+		// The binding lands WITH the allow-all rule — no zero-rules warning — and
+		// renders the grant through the shared operations grammar (effect chip).
+		// (findByText waits out the post-bind list refetch.)
+		const stripeLabel = await screen.findByText(credId);
+		const stripeBound = stripeLabel.closest('[data-testid="binding-row"]');
+		expect(stripeBound).not.toBeNull();
+		expect(within(stripeBound as HTMLElement).getByText('Allow')).toBeInTheDocument();
+		expect(
+			within(stripeBound as HTMLElement).queryByTestId('binding-warning'),
+		).not.toBeInTheDocument();
+	});
+
+	it('binds a credential in the blocked state and surfaces the zero-rules warning', async () => {
+		// Unique id for retry-safety (same reasoning as the wizard test above).
+		const credId = `cred_notion_${Math.random().toString(36).slice(2, 7)}`;
+		seedCredentials([
+			{
+				credential_id: credId,
+				name: 'Notion token',
+				type: 'api_key',
+				vendor: 'notion',
+			},
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
+		await user.click(await screen.findByText('Notion token'));
+
+		const dialog = screen.getByRole('dialog');
+		await user.click(await within(dialog).findByRole('radio', { name: /start blocked/i }));
+		await user.click(within(dialog).getByRole('button', { name: /^bind credential$/i }));
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+		// Zero rules → the backend's warnings[] renders verbatim on the row, plus
+		// the row-level "every operation is blocked" note. (findByText waits out
+		// the post-bind list refetch.)
+		const notionLabel = await screen.findByText(credId);
+		const notionBound = notionLabel.closest('[data-testid="binding-row"]');
+		expect(notionBound).not.toBeNull();
+		expect(within(notionBound as HTMLElement).getByTestId('binding-warning')).toHaveTextContent(
+			/no permission rules/i,
+		);
+		expect(
+			within(notionBound as HTMLElement).getByTestId('binding-no-rules'),
+		).toBeInTheDocument();
+	});
+
+	it('dry-runs a request against the saved rules with the rule tester', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Open the rules editor for the seeded GitHub binding — the tester
+		// lives behind a disclosure next to the rule editor. (Scoped to the
+		// row: a previous test may have bound extra credentials to the shared
+		// mock store.)
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
+		);
+		await user.click(await screen.findByRole('button', { name: /test a request/i }));
+		await screen.findByLabelText('Request path');
+
+		// The seeded allow rule is operation-scoped, so — like the real broker —
+		// it only fires when the request carries a matching operation id.
+		await user.type(screen.getByLabelText('Request path'), '/repos/acme/site');
+		await user.type(screen.getByLabelText('Operation ID (optional)'), 'repos/get');
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		// The verdict anchors to the numbered editor row AND names the rule in
+		// the shared summary voice — no bare unanchored ordinal.
+		const verdict = await screen.findByTestId('rule-verdict');
+		expect(verdict).toHaveTextContent(/allowed — matched rule #1/i);
+		expect(verdict).toHaveTextContent(/allows get/i);
+
+		// The same request WITHOUT the operation id skips the operation-scoped
+		// allow (broker fidelity) → default deny.
+		await user.clear(screen.getByLabelText('Operation ID (optional)'));
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		await waitFor(() =>
+			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
+				/denied — no rule matched/i,
+			),
+		);
+
+		// /admin/… trips the platform-managed system safety deny — named as
+		// such, never as a number pointing at an invisible row.
+		await user.clear(screen.getByLabelText('Request path'));
+		await user.type(screen.getByLabelText('Request path'), '/admin/users');
+		await user.click(screen.getByRole('button', { name: /^test$/i }));
+		await waitFor(() =>
+			expect(screen.getByTestId('rule-verdict')).toHaveTextContent(
+				/denied — matched a platform system safety rule/i,
+			),
+		);
+	});
+
+	it('shows a live pending-changes diff while editing rules', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
+		);
+
+		// Untouched draft → no diff panel, save disabled (nothing to commit).
+		expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
+
+		// Toggle POST onto the seeded allow-GET rule: the diff must show the old
+		// grant leaving (−) and the widened grant arriving (+).
+		await user.click(screen.getAllByRole('button', { name: 'POST', pressed: false })[0]);
+		const diff = await screen.findByTestId('rules-diff');
+		expect(within(diff).getByText(/Allows GET on 5 operations/)).toBeInTheDocument();
+		expect(within(diff).getByText(/Allows GET, POST on 5 operations/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeEnabled();
+
+		// Toggling POST back off restores a clean draft — diff gone (after the
+		// exit animation), save off.
+		await user.click(screen.getByRole('button', { name: 'POST', pressed: true }));
+		await waitFor(() => expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument());
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
+	});
+
+	it('treats a pure rule reorder as a change (first match wins) and says so', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: `${ROUTE}?tab=access`, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		const rows = await screen.findAllByTestId('binding-row');
+		const githubRow = rows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		await user.click(
+			within(githubRow as HTMLElement).getByRole('button', { name: /edit rules/i }),
+		);
+
+		// Rows are numbered — the same numbers the tester's verdict cites.
+		const ruleRows = await screen.findAllByTestId('permission-rule-row');
+		expect(within(ruleRows[0]).getByText('#1')).toBeInTheDocument();
+		expect(within(ruleRows[1]).getByText('#2')).toBeInTheDocument();
+
+		// Swap the two seeded rules: same multiset, different evaluation order —
+		// the diff panel must flag the reorder and the save must arm.
+		await user.click(within(ruleRows[0]).getByRole('button', { name: /move rule down/i }));
+		const diff = await screen.findByTestId('rules-diff');
+		expect(within(diff).getByText(/rules reordered/i)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeEnabled();
+
+		// Swapping back restores a clean draft.
+		const swapped = screen.getAllByTestId('permission-rule-row');
+		await user.click(within(swapped[1]).getByRole('button', { name: /move rule up/i }));
+		await waitFor(() => expect(screen.queryByTestId('rules-diff')).not.toBeInTheDocument());
+		expect(screen.getByRole('button', { name: /save rules/i })).toBeDisabled();
 	});
 
 	it('filters the credential picker by the search term', async () => {
@@ -196,7 +567,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		await user.click(screen.getByRole('button', { name: /bind existing/i }));
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
 		await screen.findByText('AWS key');
 
 		await user.type(screen.getByLabelText('Filter credentials'), 'slack');
@@ -215,8 +587,8 @@ describe('ToolkitDetailPage', () => {
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// Bound Agents section header reflects the seeded count.
-		expect(await screen.findByText(/Bound Agents \(1\)/)).toBeInTheDocument();
+		// Bound agents section header reflects the seeded count.
+		expect(await screen.findByText(/Bound agents \(1\)/)).toBeInTheDocument();
 		// The seeded bound agent shows up as a row. The id shares a <p> with an
 		// optional "· linked …" suffix, so scope the (substring) match to the row
 		// to keep it unambiguous rather than matching across the whole document.
@@ -227,6 +599,44 @@ describe('ToolkitDetailPage', () => {
 		// (parity with the /agents page), not the raw lowercase wire value.
 		expect(within(row).getByText('Active')).toBeInTheDocument();
 		expect(within(row).queryByText('active')).not.toBeInTheDocument();
+	});
+
+	it('shows the bound-credentials summary on Overview with a Manage jump to Access', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Summary of the Access tab's bindings, on the landing tab. (Count is
+		// left loose: earlier cases in this file mutate the shared MSW store.)
+		expect(await screen.findByText(/Bound credentials \(\d+\)/)).toBeInTheDocument();
+		const credRows = await screen.findAllByTestId('overview-credential-row');
+		const githubRow = credRows.find((r) => within(r).queryByText('GitHub PAT'));
+		expect(githubRow).toBeDefined();
+		// Each row carries the grant's gist in the platform's rule voice
+		// (restrictions first), not an opaque "N rules" count.
+		expect(within(githubRow as HTMLElement).getByText(/Blocks DELETE/)).toBeInTheDocument();
+
+		// Manage jumps to the Access tab (full bind/permissions management).
+		await user.click(screen.getByRole('button', { name: 'Manage' }));
+		expect(screen.getByRole('tab', { name: /^Access/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		expect(
+			await screen.findByRole('button', { name: /^bind credential$/i }),
+		).toBeInTheDocument();
+	});
+
+	it('opens the bind wizard straight from the Overview credentials card', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+		await screen.findAllByTestId('overview-credential-row');
+
+		// Symmetry with "Link agent": credentials bind from the landing tab too.
+		await user.click(screen.getByRole('button', { name: /^bind credential$/i }));
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/step 1 of 2/i)).toBeInTheDocument();
 	});
 
 	it('disables the agent filter and shows only the real empty state when no agents are linkable', async () => {
@@ -300,6 +710,38 @@ describe('ToolkitDetailPage', () => {
 		await user.type(screen.getByLabelText('Filter agents'), 'pending');
 		await waitFor(() => expect(screen.queryByText('Billing Bot')).not.toBeInTheDocument());
 		expect(screen.getByText('Pending Bot')).toBeInTheDocument();
+	});
+
+	it('lists a non-active agent as a non-selectable row in the picker', async () => {
+		const bound = seedAgents({
+			bound: [],
+			workspace: [
+				{ agent_id: 'agt_billing_bot', agent_name: 'Billing Bot', status: 'active' },
+				{ agent_id: 'agt_pending_bot', agent_name: 'Pending Bot', status: 'pending' },
+			],
+		});
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: /link agent/i }));
+		await screen.findByText('Pending Bot');
+
+		// The pending agent stays listed (hiding it would read as "missing") but
+		// is aria-disabled with an accessible rationale — the approval queue is
+		// where capabilities start, so it can't be linked yet.
+		const rows = screen.getAllByTestId('agent-picker-row');
+		const pendingRow = rows.find((r) => within(r).queryByText('Pending Bot'));
+		expect(pendingRow).toBeDefined();
+		expect(pendingRow).toHaveAttribute('aria-disabled', 'true');
+		expect(
+			within(pendingRow as HTMLElement).getByText(/approve the agent first/i),
+		).toBeInTheDocument();
+
+		// Clicking it is a no-op: no bind fires and the dialog stays open.
+		await user.click(pendingRow as HTMLElement);
+		expect(screen.getByLabelText('Filter agents')).toBeInTheDocument();
+		expect(bound.some((a) => a.agent_id === 'agt_pending_bot')).toBe(false);
 	});
 
 	it('unlinks a bound agent', async () => {
@@ -398,21 +840,25 @@ describe('ToolkitDetailPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		// Wait for the keys/bindings/agents the blast radius reads from.
-		await screen.findByText('CI runner');
-		await screen.findByText('GitHub PAT');
+		// Overview (landing) shows the bound agent the blast radius reads from.
 		await screen.findByText('Support Bot');
 
-		// Page-level Delete button (PageHeader area, not the kill switch).
-		await user.click(screen.getByRole('button', { name: 'Delete GitHub Tools' }));
+		// The Delete affordance lives in the Settings tab's danger zone; its
+		// blast-radius groups read the same cached keys/bindings/agents queries.
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Delete GitHub Tools' }));
 
 		// Dialog renders the blast-radius headline + each group's count line,
 		// and lists the dependent names underneath. The headline text is built
 		// from multiple inline children of a single <span>, so flatten via
-		// normalizer rather than a literal text-node match.
+		// normalizer rather than a literal text-node match. `findBy` also
+		// absorbs the Settings tab's own keys/bindings fetches resolving just
+		// after the dialog opens.
 		const dialog = await screen.findByRole('dialog', { name: /delete toolkit/i });
 		expect(
-			within(dialog).getByText(/Deleting this toolkit will also remove\s+3\s+dependents/),
+			await within(dialog).findByText(
+				/Deleting this toolkit will also remove\s+3\s+dependents/,
+			),
 		).toBeInTheDocument();
 		expect(within(dialog).getByText('1 agent grant')).toBeInTheDocument();
 		expect(within(dialog).getByText('1 API key')).toBeInTheDocument();
@@ -469,9 +915,9 @@ describe('ToolkitDetailPage', () => {
 		const user = userEvent.setup();
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
-		await screen.findByText('CI runner');
 
-		await user.click(screen.getByRole('button', { name: 'Delete GitHub Tools' }));
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Delete GitHub Tools' }));
 		const dialog = await screen.findByRole('dialog', { name: /delete toolkit/i });
 		await user.type(within(dialog).getByLabelText(/type delete to confirm/i), 'delete');
 		const confirm = within(dialog).getByRole('button', { name: /^delete toolkit$/i });
@@ -481,350 +927,5 @@ describe('ToolkitDetailPage', () => {
 		// Dialog persists on error; the in-dialog error alert shows the server detail.
 		await within(dialog).findByText(/cascade failed mid-flight/i);
 		expect(screen.queryByRole('dialog', { name: /delete toolkit/i })).toBeInTheDocument();
-	});
-
-	it('renames the toolkit through the Edit dialog (#635)', async () => {
-		// Drive rename against a local fixture so the mutation is observable
-		// (GET reflects the new name after PATCH) WITHOUT mutating the shared MSW
-		// store — the store persists across this file and has no per-test reset,
-		// so leaking "GitHub Suite" would break later load anchors.
-		let name = 'GitHub Tools';
-		const row = () => ({
-			toolkit_id: 'tk_demo_github',
-			name,
-			description: 'Issues, PRs, and repo automation for the support agent.',
-			active: true,
-			key_count: 2,
-			credential_count: 1,
-			permissions: [],
-			created_at: '2026-05-01T10:00:00Z',
-			updated_at: '2026-05-03T10:00:00Z',
-		});
-		worker.use(
-			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
-			http.patch('/toolkits/:toolkitId', async ({ request }) => {
-				const body = (await request.json()) as { name?: string };
-				if (body.name) name = body.name;
-				return HttpResponse.json(row());
-			}),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-		const nameInput = within(dialog).getByLabelText('Name');
-		await user.clear(nameInput);
-		await user.type(nameInput, 'GitHub Suite');
-		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
-
-		// Dialog closes on success and the new name propagates to the PageHeader.
-		await waitFor(() =>
-			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
-		);
-		expect(await screen.findByRole('heading', { name: 'GitHub Suite' })).toBeInTheDocument();
-	});
-
-	it('blocks an empty name in the Edit dialog with a validation error (#635)', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-		await user.clear(within(dialog).getByLabelText('Name'));
-
-		expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled();
-		expect(await within(dialog).findByText("Name can't be empty.")).toBeInTheDocument();
-	});
-
-	it('surfaces a server error in the Edit dialog and keeps it open (#635)', async () => {
-		worker.use(
-			http.patch('/toolkits/:toolkitId', () =>
-				HttpResponse.json(
-					{ type: 'conflict', status: 409, detail: 'Name already in use.' },
-					{ status: 409 },
-				),
-			),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-		const nameInput = within(dialog).getByLabelText('Name');
-		await user.clear(nameInput);
-		await user.type(nameInput, 'Taken name');
-		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
-
-		expect(await within(dialog).findByText(/name already in use/i)).toBeInTheDocument();
-		expect(screen.getByRole('dialog', { name: 'Edit toolkit' })).toBeInTheDocument();
-	});
-
-	it('shows the bound-credential subtitle when only api_name is present (empty api_vendor)', async () => {
-		// Regression (#8): an empty-string `api_vendor` must fall through to
-		// `api_name` for the subtitle. The old `??` fallback only treated
-		// null/undefined as missing, so `api_vendor: ''` printed a blank subtitle
-		// even though `api_name` was set. Seed the bound-credentials override with
-		// exactly that shape and assert the non-empty field wins.
-		worker.use(
-			http.get('/toolkits/:toolkitId/credentials', () =>
-				HttpResponse.json({
-					data: [
-						{
-							toolkit_id: 'tk_demo_github',
-							credential_id: 'cred_empty_vendor',
-							label: 'Vendorless PAT',
-							api_name: 'foo',
-							api_vendor: '',
-							credential_type: 'api_key',
-							bound_at: '2026-05-01T10:10:00Z',
-							permissions: [],
-						},
-					],
-					has_more: false,
-				}),
-			),
-		);
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		// The subtitle renders `foo` (not blank, and not `/foo`).
-		expect(await screen.findByText('foo')).toBeInTheDocument();
-		expect(screen.queryByText('/foo')).not.toBeInTheDocument();
-	});
-
-	it('always shows credential_id in the subtitle when no API identity exists (#9)', async () => {
-		// Two credentials share a name and carry no API identity (no `api` block,
-		// so vendor/apiName are null). The subtitle must fall back to the
-		// credential_id so the rows stay disambiguable instead of collapsing to
-		// two identical, subtitle-less rows.
-		worker.use(
-			http.get('/credentials', () =>
-				HttpResponse.json({
-					data: [
-						{
-							credential_id: 'cred_dup_a',
-							name: 'Shared name',
-							type: 'api_key',
-							provider: 'manual',
-							active: true,
-							created_at: '2026-05-01T10:00:00Z',
-							updated_at: null,
-						},
-						{
-							credential_id: 'cred_dup_b',
-							name: 'Shared name',
-							type: 'api_key',
-							provider: 'manual',
-							active: true,
-							created_at: '2026-05-01T10:00:00Z',
-							updated_at: null,
-						},
-					],
-					has_more: false,
-					next_cursor: null,
-				}),
-			),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: /bind existing/i }));
-
-		// Both rows share the same title, so the credential_id subtitle is the
-		// only thing telling them apart — it must be visible on both.
-		expect(await screen.findByText('cred_dup_a')).toBeInTheDocument();
-		expect(await screen.findByText('cred_dup_b')).toBeInTheDocument();
-	});
-
-	it('seeds the Edit dialog even when it is opened before the toolkit finishes loading (#3)', async () => {
-		// Race: the PageHeader pencil is clickable before `useToolkit` resolves.
-		// Delay the GET so the dialog opens against an undefined toolkit, then let
-		// it resolve — the fields must seed from the real data, not stay empty.
-		const { delay } = await import('msw');
-		worker.use(
-			http.get('/toolkits/:toolkitId', async () => {
-				await delay(120);
-				return HttpResponse.json({
-					toolkit_id: 'tk_demo_github',
-					name: 'GitHub Tools',
-					description: 'Repo automation.',
-					active: true,
-					key_count: 2,
-					credential_count: 1,
-					permissions: [],
-					created_at: '2026-05-01T10:00:00Z',
-					updated_at: '2026-05-03T10:00:00Z',
-				});
-			}),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-
-		// Open the dialog immediately (the pencil renders before the query lands).
-		await user.click(await screen.findByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-
-		// Once the toolkit resolves, the fields fill from the real data instead of
-		// being stranded empty (which a naive prev-ref guard would leave them).
-		await waitFor(() =>
-			expect(within(dialog).getByLabelText('Name')).toHaveValue('GitHub Tools'),
-		);
-		expect(within(dialog).getByLabelText('Description')).toHaveValue('Repo automation.');
-	});
-
-	it('disables Cancel while a rename PATCH is in flight (#7)', async () => {
-		let name = 'GitHub Tools';
-		const row = () => ({
-			toolkit_id: 'tk_demo_github',
-			name,
-			description: 'Repo automation.',
-			active: true,
-			key_count: 2,
-			credential_count: 1,
-			permissions: [],
-			created_at: '2026-05-01T10:00:00Z',
-			updated_at: '2026-05-03T10:00:00Z',
-		});
-		const { delay } = await import('msw');
-		worker.use(
-			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
-			http.patch('/toolkits/:toolkitId', async ({ request }) => {
-				const body = (await request.json()) as { name?: string };
-				if (body.name) name = body.name;
-				await delay(150);
-				return HttpResponse.json(row());
-			}),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-		const nameInput = within(dialog).getByLabelText('Name');
-		await user.clear(nameInput);
-		await user.type(nameInput, 'GitHub Suite');
-		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
-
-		// Cancel is disabled mid-flight so a close-and-reopen can't have the stale
-		// onSuccess slam the freshly reopened dialog shut.
-		await waitFor(() =>
-			expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled(),
-		);
-		await waitFor(() =>
-			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
-		);
-	});
-
-	it('does not render a subtitle for a whitespace-only toolkit description (#4)', async () => {
-		worker.use(
-			http.get('/toolkits/:toolkitId', () =>
-				HttpResponse.json({
-					toolkit_id: 'tk_demo_github',
-					name: 'GitHub Tools',
-					description: '   \t  ',
-					active: true,
-					key_count: 2,
-					credential_count: 1,
-					permissions: [],
-					created_at: '2026-05-01T10:00:00Z',
-					updated_at: '2026-05-03T10:00:00Z',
-				}),
-			),
-		);
-		const { container } = renderWithProviders(<ToolkitDetailPage />, {
-			route: ROUTE,
-			path: PATH,
-		});
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		// The PageHeader subtitle band trims the description, so a whitespace-only
-		// value collapses to `undefined` — no subtitle `<p>` is rendered at all,
-		// and the raw padding never surfaces verbatim.
-		expect(container.textContent).not.toContain('   \t  ');
-		// The rename pencil still renders (proving the header itself mounted), so
-		// the assertion above isn't vacuously true on a missing header.
-		expect(screen.getByRole('button', { name: 'Rename toolkit' })).toBeInTheDocument();
-	});
-
-	it('keeps the Save button disabled until the draft actually changes (#8)', async () => {
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-
-		// Freshly seeded, unedited draft → empty patch → Save disabled so an
-		// unchanged Save never round-trips a PATCH.
-		expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled();
-
-		// A real edit re-enables it…
-		const nameInput = within(dialog).getByLabelText('Name');
-		await user.type(nameInput, ' Suite');
-		await waitFor(() =>
-			expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeEnabled(),
-		);
-
-		// …and reverting the edit disables it again (diff-vs-seeded is empty).
-		await user.clear(nameInput);
-		await user.type(nameInput, 'GitHub Tools');
-		await waitFor(() =>
-			expect(within(dialog).getByRole('button', { name: /save changes/i })).toBeDisabled(),
-		);
-	});
-
-	it('does not close on Escape while a rename PATCH is in flight (#1)', async () => {
-		let name = 'GitHub Tools';
-		const row = () => ({
-			toolkit_id: 'tk_demo_github',
-			name,
-			description: 'Repo automation.',
-			active: true,
-			key_count: 2,
-			credential_count: 1,
-			permissions: [],
-			created_at: '2026-05-01T10:00:00Z',
-			updated_at: '2026-05-03T10:00:00Z',
-		});
-		const { delay } = await import('msw');
-		worker.use(
-			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
-			http.patch('/toolkits/:toolkitId', async ({ request }) => {
-				const body = (await request.json()) as { name?: string };
-				if (body.name) name = body.name;
-				await delay(150);
-				return HttpResponse.json(row());
-			}),
-		);
-		const user = userEvent.setup();
-		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
-		await screen.findByRole('heading', { name: 'GitHub Tools' });
-
-		await user.click(screen.getByRole('button', { name: 'Rename toolkit' }));
-		const dialog = await screen.findByRole('dialog', { name: 'Edit toolkit' });
-		const nameInput = within(dialog).getByLabelText('Name');
-		await user.clear(nameInput);
-		await user.type(nameInput, 'GitHub Suite');
-		await user.click(within(dialog).getByRole('button', { name: /save changes/i }));
-
-		// Escape while the Save is in flight must NOT close the dialog (the
-		// pending guard early-returns), so a stale in-flight success can't slam a
-		// freshly reopened dialog shut.
-		await waitFor(() =>
-			expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled(),
-		);
-		await user.keyboard('{Escape}');
-		expect(screen.getByRole('dialog', { name: 'Edit toolkit' })).toBeInTheDocument();
-
-		// It closes normally once the PATCH settles.
-		await waitFor(() =>
-			expect(screen.queryByRole('dialog', { name: 'Edit toolkit' })).not.toBeInTheDocument(),
-		);
 	});
 });

@@ -91,10 +91,13 @@ client credentials — every authenticated operation expects
 token) except `GET /health`, `POST /auth/login`,
 `POST /users:create-admin`, and `POST /users:redeem-invite`.
 Human tokens are issued by `POST /auth/login` with a fixed 1-hour
-TTL; agents and service accounts obtain tokens from
-`POST /oauth/token` (see `BearerAuth`). The `permissions` claim on a
-token is a snapshot at issue time; permission changes take effect at
-the next re-issue (≤ 1 hour with the default TTL).
+TTL and can be re-minted before expiry via `POST /auth/refresh`
+(sliding session, bounded by an absolute window —
+`admin.auth.session_ttl_seconds`, 12 hours by default); agents and
+service accounts obtain tokens from `POST /oauth/token` (see
+`BearerAuth`). The `permissions` claim on a token is a snapshot at
+issue time; permission changes take effect at the next re-issue —
+the next refresh or re-login (≤ 1 hour with the default TTL).
 
 The platform ships **no default credentials**. On a fresh
 install the users table is empty, so `GET /health` returns
@@ -524,9 +527,16 @@ OPENAPI_TAGS: list[dict[str, str]] = [
             "provider-specific router. The on-the-wire token contract — `Authorization: Bearer "
             "<jwt>` — is unchanged either way.\n\n"
             "**Disabling and revocation.** `:disable` flips `active=false` and rejects "
-            "subsequent `POST /auth/login`. **Existing JWTs keep working until they expire** "
-            "(≤ 1 hour with the platform's default TTL). This is a deliberate trade-off; "
-            "sub-minute revocation would require a server-side session table."
+            "subsequent `POST /auth/login` **and** `POST /auth/refresh`. **Existing JWTs keep "
+            "working until they expire** (≤ 1 hour with the platform's default TTL). This is a "
+            "deliberate trade-off; sub-minute revocation would require a server-side session "
+            "table.\n\n"
+            "**Session lifetime.** Login JWTs carry a 1-hour TTL. The UI keeps an active "
+            "session alive by calling `POST /auth/refresh` before expiry (sliding session); "
+            "refresh re-reads permissions and the `must_change_password` gate from the "
+            "database and is refused with 401 `session_expired` once the original "
+            "authentication is older than the absolute window "
+            "(`admin.auth.session_ttl_seconds`, 12 hours by default), forcing a fresh login."
         ),
     },
     {
@@ -740,6 +750,8 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
     {
         # Health probes (root + per-surface) are dependency-free liveness checks.
         "getHealth",
+        # Backend-identity probe: unauthenticated, self-describing, no secrets.
+        "getInstance",
         "health",
         "controlHealth",
         "adminHealth",
@@ -793,6 +805,7 @@ NON_BEARER_AUTH_OPERATION_IDS: frozenset[str] = frozenset(
 _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/health$"), "System"),
     (re.compile(r"^/[^/]+/health$"), "System"),
+    (re.compile(r"^/instance$"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),
@@ -818,7 +831,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/permissions"), "Permissions"),
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),
-    (re.compile(r"^/auth/login"), "Users"),
+    (re.compile(r"^/auth/(login|refresh)"), "Users"),
     (re.compile(r"^/audit"), "Audit"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),

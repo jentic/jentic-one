@@ -50,6 +50,10 @@ class Identity(BaseModel):
     parent_permissions: list[str] = []
 
     must_change_password: bool = False
+    # Convenience default for trusted constructors (tests, resolvers that
+    # already know the type). The *untrusted* boundary must never rely on
+    # it: verify_token fails closed on a token without an explicit
+    # actor_type claim (#862) — never default when parsing credentials.
     actor_type: ActorType = ActorType.USER
     parent_actor_id: str | None = None
 

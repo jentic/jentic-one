@@ -21,7 +21,7 @@ export default defineConfig({
 	optimizeDeps: {
 		include: [
 			'@tanstack/react-query',
-			'react-router-dom',
+			'react-router',
 			'@testing-library/react',
 			'@testing-library/user-event',
 			'axe-core',
@@ -49,12 +49,13 @@ export default defineConfig({
 		// `*.lint.test.ts` are Node-only (they drive ESLint's programmatic API);
 		// they run under vitest.lint.config.ts, not the browser provider.
 		exclude: [...configDefaults.exclude, 'src/**/*.lint.test.ts'],
-		// Browser-mode tests share a single Chromium page; on a loaded CI runner
-		// async React re-renders and MSW responses can land mid-assertion and
-		// trip a transient duplicate/not-yet-narrowed match. Retry on CI only —
-		// real regressions fail every attempt, so this won't mask them. Mirrors
-		// the Playwright config's `retries: process.env.CI ? 2 : 0`.
-		retry: process.env.CI ? 2 : 0,
+		// Browser-mode tests run all files in parallel inside one Chromium, so
+		// under load async UI settling (lazy mounts, secondary queries, entrance
+		// animations) occasionally outlasts testing-library timeouts — a
+		// different marginal test loses the race each full run, locally too.
+		// Retry once locally and twice on CI — real regressions fail every
+		// attempt, so this won't mask them. Mirrors the Playwright config.
+		retry: process.env.CI ? 2 : 1,
 		coverage: {
 			provider: 'istanbul',
 			reporter: ['text', 'html', 'lcov'],

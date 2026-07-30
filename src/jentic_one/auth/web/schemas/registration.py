@@ -13,7 +13,10 @@ _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
 class RegisterRequest(BaseModel):
     """POST /register request body."""
 
-    client_name: str
+    # Bounded to the agents.name column (String(255)): /register is
+    # unauthenticated per RFC 7591, and the name flows verbatim into event
+    # summaries surfaced on operator attention surfaces.
+    client_name: str = Field(min_length=1, max_length=255)
     jwks: dict[str, Any]
     grant_types: list[str] | None = None
     token_endpoint_auth_method: str | None = None

@@ -23,6 +23,7 @@ def test_list_without_admin(unauthed_client: TestClient, web_context: Context) -
     claims = {
         "sub": "nonadmin-user",
         "email": "nonadmin@test.local",
+        "actor_type": "user",
         "permissions": ["users:read"],
         "must_change_password": False,
     }

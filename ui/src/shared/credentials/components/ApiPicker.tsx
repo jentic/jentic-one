@@ -123,7 +123,23 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 		const rows = apisQuery.data?.data ?? [];
 		if (!q) return rows;
 		return rows.filter((r) => {
-			const hay = [r.display_name, r.description, r.api?.vendor, r.api?.name, r.api?.host]
+			// Include the friendly display name (what the row actually shows) in
+			// the searchable text, so typing what's on screen — e.g. `Posthog.Com`
+			// for a `posthog-com` vendor with no explicit `display_name` — returns
+			// the row instead of only matching the raw machine identity.
+			const friendly = apiRefDisplayName({
+				displayName: r.display_name,
+				vendor: r.api?.vendor,
+				name: r.api?.name,
+			});
+			const hay = [
+				r.display_name,
+				friendly,
+				r.description,
+				r.api?.vendor,
+				r.api?.name,
+				r.api?.host,
+			]
 				.filter(Boolean)
 				.join(' ')
 				.toLowerCase();

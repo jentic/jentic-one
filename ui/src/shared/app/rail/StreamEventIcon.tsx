@@ -8,6 +8,7 @@
  */
 import {
 	AlertTriangle,
+	Bot,
 	CheckCircle2,
 	Clock,
 	Database,
@@ -34,6 +35,9 @@ const TYPE_ICON_MAP: Record<string, { Icon: LucideIcon; tone: string }> = {
 	'access_request.approved': { Icon: CheckCircle2, tone: 'text-success' },
 	'access_request.denied': { Icon: XCircle, tone: 'text-warning' },
 	'access_request.withdrawn': { Icon: XCircle, tone: 'text-muted-foreground' },
+	'agent.self_registered': { Icon: Bot, tone: 'text-warning' },
+	'agent.registration_approved': { Icon: CheckCircle2, tone: 'text-success' },
+	'agent.registration_denied': { Icon: XCircle, tone: 'text-warning' },
 };
 
 const KIND_ICON_MAP: Record<StreamKind, { Icon: LucideIcon; tone: string }> = {
@@ -41,6 +45,7 @@ const KIND_ICON_MAP: Record<StreamKind, { Icon: LucideIcon; tone: string }> = {
 	execution: { Icon: PlayCircle, tone: 'text-muted-foreground' },
 	credential: { Icon: KeyRound, tone: 'text-muted-foreground' },
 	access_request: { Icon: ShieldQuestion, tone: 'text-muted-foreground' },
+	agent: { Icon: Bot, tone: 'text-muted-foreground' },
 	other: { Icon: AlertTriangle, tone: 'text-muted-foreground' },
 };
 

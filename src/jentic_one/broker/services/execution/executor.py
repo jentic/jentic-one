@@ -94,6 +94,8 @@ def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:
         api_version=meta.get("api_version"),
         prefer=None,
         pinned_revisions=meta.get("pinned_revisions"),
+        credential_id=meta.get("credential_id"),
+        credential_name=meta.get("credential_name"),
     )
 
 
