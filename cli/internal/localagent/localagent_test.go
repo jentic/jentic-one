@@ -484,17 +484,68 @@ func TestInstallSudoersIsSafeAndIdempotent(t *testing.T) {
 
 // TestRemoveSudoersDropsInstalledRule guards that the teardown grep-filter removes
 // exactly the line InstallSudoersCmd writes — i.e. reset undoes the install. The
-// removal filters on the agent user, which appears in the rule's runas spec.
+// removal anchors on the runas spec `(<agentUser>)`, which appears verbatim in the
+// installed rule.
 func TestRemoveSudoersDropsInstalledRule(t *testing.T) {
 	rule := SudoersRule("alice", "alice-local-agent")
 	remove := strings.Join(RemoveSudoersCmd("alice-local-agent").Args, " ")
-	// The removal script greps out lines matching the agent user; that token must
+	// The removal script greps out lines matching the runas spec; that token must
 	// be present in the installed rule so the filter catches it.
-	if !strings.Contains(rule, "alice-local-agent") {
-		t.Fatalf("installed rule must contain the agent user so removal matches it: %q", rule)
+	if !strings.Contains(rule, "(alice-local-agent)") {
+		t.Fatalf("installed rule must contain the runas spec so removal matches it: %q", rule)
 	}
-	if !strings.Contains(remove, "alice-local-agent") {
-		t.Errorf("removal must filter on the agent user: %s", remove)
+	if !strings.Contains(remove, "(alice-local-agent)") {
+		t.Errorf("removal must anchor on the runas spec: %s", remove)
+	}
+}
+
+// TestRemoveSudoersAnchorsOnRunasSpec proves the teardown filter can't collaterally
+// delete a co-resident agent's rule from the SHARED drop-in when its account name
+// contains this one as a prefix. The grep pattern must be `(alice-local-agent)` (the
+// parenthesised runas spec), which does not appear in the rule for
+// `alice-local-agent-2` (`(alice-local-agent-2)`), so that line survives.
+func TestRemoveSudoersAnchorsOnRunasSpec(t *testing.T) {
+	remove := strings.Join(RemoveSudoersCmd("alice-local-agent").Args, " ")
+	if !strings.Contains(remove, "(alice-local-agent)") {
+		t.Fatalf("removal must filter on the parenthesised runas spec: %s", remove)
+	}
+	// A bare-name filter (no parens) would also strike the -2 sibling's rule. Assert
+	// we do NOT filter on the bare name.
+	if strings.Contains(remove, " alice-local-agent ") || strings.Contains(remove, "'alice-local-agent'") {
+		t.Errorf("removal must not filter on the bare name (would hit prefix siblings): %s", remove)
+	}
+	// The sibling's rule line is not matched by our pattern.
+	sibling := SudoersRule("alice", "alice-local-agent-2")
+	if strings.Contains(sibling, "(alice-local-agent)") {
+		t.Errorf("sibling rule unexpectedly contains our anchored spec: %q", sibling)
+	}
+}
+
+// TestACLUserNeedleTerminated proves the ACL-presence needle is terminated so a
+// prefix account can't false-match: probing `alice-local-agent` must not be
+// satisfied by an ACE for `alice-local-agent-2`.
+func TestACLUserNeedleTerminated(t *testing.T) {
+	needle := aclUserNeedle("alice-local-agent")
+	// The needle ends in the per-tool delimiter (space on darwin, colon elsewhere),
+	// so the sibling's rendered ACE token does not contain it.
+	var siblingACE string
+	if runtime.GOOS == "darwin" {
+		siblingACE = "0: user:alice-local-agent-2 allow read"
+	} else {
+		siblingACE = "user:alice-local-agent-2:rwx"
+	}
+	if strings.Contains(siblingACE, needle) {
+		t.Errorf("needle %q false-matches sibling ACE %q", needle, siblingACE)
+	}
+	// And it DOES match the exact account's ACE.
+	var ownACE string
+	if runtime.GOOS == "darwin" {
+		ownACE = "0: user:alice-local-agent allow read"
+	} else {
+		ownACE = "user:alice-local-agent:rwx"
+	}
+	if !strings.Contains(ownACE, needle) {
+		t.Errorf("needle %q must match own ACE %q", needle, ownACE)
 	}
 }
 

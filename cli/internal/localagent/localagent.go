@@ -448,9 +448,21 @@ func AgentACLPresent(ctx context.Context, agentUser, dir string) bool {
 	if err != nil {
 		return false
 	}
-	// macOS prints "N: user:<name> allow …"; Linux getfacl prints "user:<name>:…"
-	// (and "default:user:<name>:…"). Both contain the "user:<name>" needle.
-	return strings.Contains(string(out), "user:"+agentUser)
+	return strings.Contains(string(out), aclUserNeedle(agentUser))
+}
+
+// aclUserNeedle is the substring that appears in an ACL listing IFF it carries an
+// entry for exactly agentUser. It includes the delimiter that terminates the name
+// in each tool's output so a prefix can't false-match: macOS `ls -lde` prints
+// "N: user:<name> allow …" (space after the name), Linux `getfacl` prints
+// "user:<name>:<perms>" and "default:user:<name>:<perms>" (colon after the name).
+// Without the terminator, probing "alice-local-agent" would match an ACE for
+// "alice-local-agent-2" and report access that doesn't exist for this user.
+func aclUserNeedle(agentUser string) string {
+	if runtime.GOOS == "darwin" {
+		return "user:" + agentUser + " "
+	}
+	return "user:" + agentUser + ":"
 }
 
 // ReownHomeCmd changes ownership of the agent's home tree to the operator, so
@@ -576,10 +588,18 @@ func InstallSudoersCmd(operator, agentUser string) *exec.Cmd {
 // empty. It edits through a temp file validated with `visudo -c` before install,
 // so a malformed result can never brick sudo, and is a no-op when the file is
 // absent (the passwordless drop-in is optional). Runs as root.
+//
+// The line filter is ANCHORED on the runas spec `(<agentUser>)` — the exact token
+// SudoersRule emits — rather than the bare name, because the drop-in is SHARED
+// across every agent account and a bare-substring match would also delete a
+// co-resident agent's rule whose name shares this one as a prefix (removing
+// `alice-local-agent` must not wipe `alice-local-agent-2`). The parentheses of the
+// runas spec bound the name on both sides, so only the exact account's line is
+// dropped. `-F` keeps the pattern a fixed string.
 func RemoveSudoersCmd(agentUser string) *exec.Cmd {
-	q := shellQuote(agentUser)
+	q := shellQuote("(" + agentUser + ")")
 	script := `f=` + shellQuote(sudoersPath) + `; [ -f "$f" ] || exit 0; ` +
-		`tmp="$(mktemp)"; grep -v ` + q + ` "$f" > "$tmp" || true; ` +
+		`tmp="$(mktemp)"; grep -vF ` + q + ` "$f" > "$tmp" || true; ` +
 		`if [ -s "$tmp" ]; then ` +
 		`  if visudo -cf "$tmp" >/dev/null 2>&1; then install -m 0440 "$tmp" "$f"; fi; ` +
 		`else rm -f "$f"; fi; ` +
