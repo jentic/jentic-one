@@ -35,12 +35,12 @@ type FileConfig struct {
 	// records whether the user has been asked; Enabled records their answer.
 	// Both are written together so the CLI never re-prompts after a decision.
 	Telemetry TelemetryConfig `yaml:"telemetry"`
-	// LocalAgents records the dedicated OS accounts `jentic run` launches
-	// coding agents under, keyed by the <agent> identifier the operator types
-	// (e.g. "claude"). It is the operator-side inventory of which local agents
-	// exist, where their homes live, and which directories they've been granted
-	// — paths and names only, never secrets.
-	LocalAgents map[string]LocalAgent `yaml:"local_agents,omitempty"`
+	// Agent is the SINGLE dedicated Unix account every local coding agent runs
+	// under (one per human). It is the operator-side record of whether that
+	// account exists, where its home/identity live, and which directories it has
+	// been granted — paths and names only, never secrets. Nil until the operator
+	// has been through the agent-user decision at least once.
+	Agent *AgentAccount `yaml:"agent_account,omitempty"`
 
 	// Path records where the config was loaded from (empty if no file existed).
 	Path string `yaml:"-"`
@@ -48,38 +48,42 @@ type FileConfig struct {
 	Loaded bool `yaml:"-"`
 }
 
-// LocalAgent is one configured local coding agent: the OS account `jentic run`
-// becomes, that account's home, the binary to exec, and the durable directory
-// grants made for it. Nothing here is secret (the agent's keys/tokens live in
-// its own home as that user), so it sits safely in the operator's config.
-type LocalAgent struct {
-	// User is the OS account name `jentic run` sudo's to.
+// AgentAccount is the one dedicated Unix account all of this operator's local
+// coding agents share — the true credential boundary between the agents and the
+// operator's secrets. A human provisions it once; every `jentic run`, whatever
+// the agent binary or profile, goes through it. Nothing here is secret (the
+// agents' keys/tokens live in the account's own home), so it sits safely in the
+// operator's config, which is also the only place the grant list may live so the
+// agents can't edit their own access.
+type AgentAccount struct {
+	// User is the OS account name `jentic run` sudo's to (<operator>-local-agent).
 	User string `yaml:"user"`
-	// AccountCreated records whether jentic provisioned a dedicated Unix account
-	// for this agent (the true credential boundary), as opposed to the operator
-	// declining and running the agent same-user. It gates later behaviour — e.g.
-	// `jentic run` only enforces the isolated posture when an account exists, and
-	// setup/teardown paths key off it — so it is recorded even when false.
+	// AccountCreated records whether jentic provisioned the dedicated Unix account
+	// (the true boundary), as opposed to the operator declining and running the
+	// agent same-user. The whole isolated posture keys off it: false means the CLI
+	// behaves exactly as it does for a user with no agent account.
 	AccountCreated bool `yaml:"account_created,omitempty"`
-	// HomeDir is that account's home directory (the always-accessible
-	// working space; the session opens here unless a directory is granted).
+	// Enabled records whether the agent account is currently in use. It is set
+	// true when the account is created and flipped false when a reset deletes the
+	// account. There is no command to toggle it today — it is reserved as the
+	// single place a future soft-pause would read from; behaviour currently keys
+	// off AccountCreated.
+	Enabled bool `yaml:"enabled,omitempty"`
+	// HomeDir is the account's home directory (the always-accessible working
+	// space; a session opens here unless a directory is granted).
 	HomeDir string `yaml:"home_dir,omitempty"`
-	// ConfigDir is a REFERENCE to where this agent's own jentic identity lives —
-	// the agent user's ~/.jentic (typically <HomeDir>/.jentic). For a self-user
-	// agent the identity (Ed25519 key, agent ID, tokens) is written and owned
-	// there, not in the operator's config; the operator's config keeps only this
-	// pointer plus HomeDir. This is how the "which config gets written" problem is
-	// solved — by reference to a single source of truth, not by dual-writing. It
-	// is empty for a same-user (declined-isolation) agent, whose identity lives in
-	// the operator's own config as usual.
+	// ConfigDir is a REFERENCE to the account's own ~/.jentic (typically
+	// <HomeDir>/.jentic), the single source of truth for the agents' registered
+	// identities and profiles. New agent registrations land there (owned by the
+	// agent); the operator's config keeps only this pointer. Empty until an
+	// account is created.
 	ConfigDir string `yaml:"config_dir,omitempty"`
-	// Binary is the agent executable to probe and exec (e.g. "claude").
-	Binary string `yaml:"binary,omitempty"`
-	// GrantedDirs is the inventory of directories the agent has been granted
-	// read/write access to (durable ACLs on disk). This is the record of what
-	// jentic granted; the on-disk ACL is the source of truth for access.
+	// GrantedDirs is the consolidated inventory of directories the account has
+	// been granted read/write access to (durable ACLs on disk). The ACLs are
+	// physically one set — same uid — so this is one list regardless of which
+	// agent binary made the grant. The on-disk ACL is the source of truth.
 	GrantedDirs []string `yaml:"granted_dirs,omitempty"`
-	// CreatedAt is when this entry was first recorded (RFC3339).
+	// CreatedAt is when the account was first recorded (RFC3339).
 	CreatedAt string `yaml:"created_at,omitempty"`
 }
 
@@ -226,50 +230,61 @@ func SetDefaultProfile(paths Paths, name string) error {
 	return cfg.Save(paths)
 }
 
-// LocalAgent returns the configured local agent for the given identifier and
-// whether it was present.
-func (c *FileConfig) LocalAgent(id string) (LocalAgent, bool) {
-	a, ok := c.LocalAgents[id]
-	return a, ok
-}
-
-// SetLocalAgent records (or replaces) the local-agent entry for id and returns
-// the mutated config for chaining a Save. The map is created lazily.
-func (c *FileConfig) SetLocalAgent(id string, agent LocalAgent) {
-	if c.LocalAgents == nil {
-		c.LocalAgents = map[string]LocalAgent{}
+// AgentAccount returns the configured agent account and whether one is recorded.
+// A nil Agent (no account ever set up) returns a zero value and false.
+func (c *FileConfig) AgentAccount() (AgentAccount, bool) {
+	if c.Agent == nil {
+		return AgentAccount{}, false
 	}
-	c.LocalAgents[id] = agent
+	return *c.Agent, true
 }
 
-// AddGrantedDir records dir against the local agent id (idempotently) and
-// returns true if it was newly added. Callers Save afterwards.
-func (c *FileConfig) AddGrantedDir(id, dir string) bool {
-	agent, ok := c.LocalAgents[id]
-	if !ok {
+// HasAgentUser reports whether a dedicated Unix agent account has been
+// provisioned and is enabled. This is the single gate the rest of the CLI keys
+// off: false means behave exactly as for an operator with no agent account.
+func (c *FileConfig) HasAgentUser() bool {
+	return c.Agent != nil && c.Agent.AccountCreated && c.Agent.Enabled
+}
+
+// SetAgentAccount records (or replaces) the agent account entry. Callers Save
+// afterwards.
+func (c *FileConfig) SetAgentAccount(acct AgentAccount) {
+	a := acct
+	c.Agent = &a
+}
+
+// ClearAgentAccount removes the agent-account record entirely — used when a full
+// reset tears down the Unix account, its home, and every grant, so nothing in
+// config points at state that no longer exists. Callers Save afterwards.
+func (c *FileConfig) ClearAgentAccount() {
+	c.Agent = nil
+}
+
+// AddGrantedDir records dir against the agent account (idempotently) and returns
+// true if it was newly added. Returns false when no account exists. Callers Save
+// afterwards.
+func (c *FileConfig) AddGrantedDir(dir string) bool {
+	if c.Agent == nil {
 		return false
 	}
-	for _, d := range agent.GrantedDirs {
+	for _, d := range c.Agent.GrantedDirs {
 		if d == dir {
 			return false
 		}
 	}
-	agent.GrantedDirs = append(agent.GrantedDirs, dir)
-	c.LocalAgents[id] = agent
+	c.Agent.GrantedDirs = append(c.Agent.GrantedDirs, dir)
 	return true
 }
 
-// RemoveGrantedDir drops dir from the local agent id's grant inventory and
+// RemoveGrantedDir drops dir from the agent account's grant inventory and
 // returns true if it was present. Callers Save afterwards.
-func (c *FileConfig) RemoveGrantedDir(id, dir string) bool {
-	agent, ok := c.LocalAgents[id]
-	if !ok {
+func (c *FileConfig) RemoveGrantedDir(dir string) bool {
+	if c.Agent == nil {
 		return false
 	}
-	for i, d := range agent.GrantedDirs {
+	for i, d := range c.Agent.GrantedDirs {
 		if d == dir {
-			agent.GrantedDirs = append(agent.GrantedDirs[:i], agent.GrantedDirs[i+1:]...)
-			c.LocalAgents[id] = agent
+			c.Agent.GrantedDirs = append(c.Agent.GrantedDirs[:i], c.Agent.GrantedDirs[i+1:]...)
 			return true
 		}
 	}

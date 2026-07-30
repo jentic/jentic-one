@@ -74,47 +74,47 @@ func TestOperatorNames(t *testing.T) {
 	}
 }
 
-// TestRecordAgentAccount checks the persisted boolean and that a re-record keeps
+// TestRecordAgentAccount checks the persisted booleans and that a re-record keeps
 // the original CreatedAt stamp while updating the create flag.
 func TestRecordAgentAccount(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 
 	// Declined: recorded as not created, no home, no config-dir reference.
-	app.recordAgentAccount("claude", "alice-local-agent", "claude", "", "", false)
+	app.recordAgentAccount("alice-local-agent", "", "", false)
 	cfg, err := config.Load(app.Paths)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	entry, ok := cfg.LocalAgent("claude")
-	if !ok || entry.AccountCreated || entry.User != "alice-local-agent" {
-		t.Fatalf("declined entry = %+v (ok=%v)", entry, ok)
+	acct, ok := cfg.AgentAccount()
+	if !ok || acct.AccountCreated || acct.Enabled || acct.User != "alice-local-agent" {
+		t.Fatalf("declined account = %+v (ok=%v)", acct, ok)
 	}
-	if entry.ConfigDir != "" {
-		t.Errorf("declined entry should have no config-dir reference, got %q", entry.ConfigDir)
+	if acct.ConfigDir != "" {
+		t.Errorf("declined account should have no config-dir reference, got %q", acct.ConfigDir)
 	}
-	if entry.CreatedAt == "" {
+	if acct.CreatedAt == "" {
 		t.Fatal("expected CreatedAt to be stamped")
 	}
-	firstStamp := entry.CreatedAt
+	firstStamp := acct.CreatedAt
 
-	// Later opting in: create flag flips, home + config-dir reference are set,
-	// stamp is preserved.
-	app.recordAgentAccount("claude", "alice-local-agent", "claude", "/Users/Shared/alice-local-agent", "/Users/Shared/alice-local-agent/.jentic", true)
+	// Later opting in: create + enabled flags flip, home + config-dir reference are
+	// set, stamp is preserved.
+	app.recordAgentAccount("alice-local-agent", "/Users/Shared/alice-local-agent", "/Users/Shared/alice-local-agent/.jentic", true)
 	cfg, err = config.Load(app.Paths)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	entry, _ = cfg.LocalAgent("claude")
-	if !entry.AccountCreated {
-		t.Error("expected AccountCreated to flip to true")
+	acct, _ = cfg.AgentAccount()
+	if !acct.AccountCreated || !acct.Enabled {
+		t.Error("expected AccountCreated and Enabled to flip to true")
 	}
-	if entry.HomeDir != "/Users/Shared/alice-local-agent" {
-		t.Errorf("home = %q", entry.HomeDir)
+	if acct.HomeDir != "/Users/Shared/alice-local-agent" {
+		t.Errorf("home = %q", acct.HomeDir)
 	}
-	if entry.ConfigDir != "/Users/Shared/alice-local-agent/.jentic" {
-		t.Errorf("config_dir = %q, want the agent's ~/.jentic", entry.ConfigDir)
+	if acct.ConfigDir != "/Users/Shared/alice-local-agent/.jentic" {
+		t.Errorf("config_dir = %q, want the agent's ~/.jentic", acct.ConfigDir)
 	}
-	if entry.CreatedAt != firstStamp {
-		t.Errorf("CreatedAt changed on re-record: %q → %q", firstStamp, entry.CreatedAt)
+	if acct.CreatedAt != firstStamp {
+		t.Errorf("CreatedAt changed on re-record: %q → %q", firstStamp, acct.CreatedAt)
 	}
 }

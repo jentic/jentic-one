@@ -203,22 +203,26 @@ func TestSetDefaultProfile(t *testing.T) {
 	}
 }
 
-func TestLocalAgentRoundTrip(t *testing.T) {
+func TestAgentAccountRoundTrip(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	cfg, err := Load(paths)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	cfg.SetLocalAgent("claude", LocalAgent{
+	if cfg.HasAgentUser() {
+		t.Fatal("fresh config should have no agent user")
+	}
+	cfg.SetAgentAccount(AgentAccount{
 		User:           "alice-local-agent",
 		AccountCreated: true,
+		Enabled:        true,
 		HomeDir:        "/Users/Shared/alice-local-agent",
-		Binary:         "claude",
+		ConfigDir:      "/Users/Shared/alice-local-agent/.jentic",
 	})
-	if !cfg.AddGrantedDir("claude", "/Users/Shared/alice-local-agent/work") {
+	if !cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
 		t.Fatal("expected AddGrantedDir to report a new grant")
 	}
-	if cfg.AddGrantedDir("claude", "/Users/Shared/alice-local-agent/work") {
+	if cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
 		t.Fatal("expected duplicate AddGrantedDir to be idempotent")
 	}
 	if err := cfg.Save(paths); err != nil {
@@ -229,28 +233,31 @@ func TestLocalAgentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	agent, ok := got.LocalAgent("claude")
+	if !got.HasAgentUser() {
+		t.Fatal("expected an enabled agent account after reload")
+	}
+	acct, ok := got.AgentAccount()
 	if !ok {
-		t.Fatal("local agent not persisted")
+		t.Fatal("agent account not persisted")
 	}
-	if agent.User != "alice-local-agent" || agent.Binary != "claude" {
-		t.Errorf("unexpected agent: %+v", agent)
+	if acct.User != "alice-local-agent" || acct.ConfigDir == "" {
+		t.Errorf("unexpected account: %+v", acct)
 	}
-	if !agent.AccountCreated {
-		t.Error("expected AccountCreated to round-trip as true")
+	if !acct.AccountCreated || !acct.Enabled {
+		t.Error("expected AccountCreated and Enabled to round-trip as true")
 	}
-	if len(agent.GrantedDirs) != 1 {
-		t.Fatalf("granted dirs = %v", agent.GrantedDirs)
+	if len(acct.GrantedDirs) != 1 {
+		t.Fatalf("granted dirs = %v", acct.GrantedDirs)
 	}
 
-	if !got.RemoveGrantedDir("claude", "/Users/Shared/alice-local-agent/work") {
+	if !got.RemoveGrantedDir("/Users/Shared/alice-local-agent/work") {
 		t.Fatal("expected RemoveGrantedDir to report removal")
 	}
-	if got.RemoveGrantedDir("claude", "/nope") {
+	if got.RemoveGrantedDir("/nope") {
 		t.Fatal("did not expect removal of an absent dir")
 	}
-	agent, _ = got.LocalAgent("claude")
-	if len(agent.GrantedDirs) != 0 {
-		t.Errorf("granted dirs after remove = %v", agent.GrantedDirs)
+	acct, _ = got.AgentAccount()
+	if len(acct.GrantedDirs) != 0 {
+		t.Errorf("granted dirs after remove = %v", acct.GrantedDirs)
 	}
 }

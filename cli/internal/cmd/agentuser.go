@@ -79,7 +79,7 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// Non-interactive (--yes / no TTY): never trigger sudo unattended. Skip, but
 	// leave a discoverable pointer and record that no account was created.
 	if !interactive {
-		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
+		a.recordAgentAccount(defaultName, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Skipping agent-user isolation (non-interactive). Create it later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -104,7 +104,7 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 	if !create {
-		a.recordAgentAccount(agentID, defaultName, desc.Binary, "", "", false)
+		a.recordAgentAccount(defaultName, "", "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Keeping same-user. You can isolate later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -141,7 +141,7 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// identity is written and owned (see agentSetup / ConfigDir), so the operator's
 	// config need only reference it.
 	configDir := localagent.AgentConfigDir(fields.homeDir)
-	a.recordAgentAccount(agentID, fields.name, desc.Binary, fields.homeDir, configDir, true)
+	a.recordAgentAccount(fields.name, fields.homeDir, configDir, true)
 
 	// Offer to bring the operator's trusted workspaces (from the agent's own config)
 	// over to the new agent in one step, rather than making them re-grant each
@@ -263,29 +263,31 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 	return a.ensureProviderConfig(ctx, provPrefs, fields.name)
 }
 
-// recordAgentAccount persists the local-agent entry, including the AccountCreated
-// boolean the rest of the CLI keys off. A fresh entry is stamped with CreatedAt;
-// an existing one keeps its original stamp.
-func (a *App) recordAgentAccount(agentID, userName, binary, homeDir, configDir string, created bool) {
+// recordAgentAccount persists the single shared agent-account entry, including
+// the AccountCreated/Enabled booleans the rest of the CLI keys off. A fresh entry
+// is stamped with CreatedAt; an existing one keeps its original stamp and its
+// recorded grants. Enabled tracks AccountCreated: creating the account enables it,
+// and recording a declined (created=false) account leaves it disabled.
+func (a *App) recordAgentAccount(userName, homeDir, configDir string, created bool) {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not record the agent account: %v", err))
 		return
 	}
-	entry, existed := cfg.LocalAgent(agentID)
-	entry.User = userName
-	entry.Binary = binary
-	entry.AccountCreated = created
+	acct, existed := cfg.AgentAccount()
+	acct.User = userName
+	acct.AccountCreated = created
+	acct.Enabled = created
 	if homeDir != "" {
-		entry.HomeDir = homeDir
+		acct.HomeDir = homeDir
 	}
 	if configDir != "" {
-		entry.ConfigDir = configDir
+		acct.ConfigDir = configDir
 	}
-	if !existed || entry.CreatedAt == "" {
-		entry.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	if !existed || acct.CreatedAt == "" {
+		acct.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	cfg.SetLocalAgent(agentID, entry)
+	cfg.SetAgentAccount(acct)
 	if err := cfg.Save(a.Paths); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not save the agent account: %v", err))
 	}
