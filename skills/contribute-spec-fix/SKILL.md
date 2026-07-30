@@ -12,6 +12,9 @@ flywheel — fixes made by AI agents are contributed back, not siloed on one mac
 
 Target: `$ARGUMENTS` (a `vendor/api` id like `posthog.com/posthog-api`, or a path to a spec).
 
+If the vendor is **not in the catalog at all**, this is the wrong skill — use `import-new-api`
+instead; this skill only fixes specs that already exist.
+
 ## The flywheel — read this first
 
 ```
