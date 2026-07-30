@@ -558,6 +558,9 @@ async def test_update_key_with_echoed_binding_succeeds(
     assert updated.details.field_name == "appid"
     assert updated.updated_at is not None
     assert updated.updated_at > created.created_at
+
+
+async def test_delete_cascade(svc: CredentialService, clean_credentials: None) -> None:
     """Delete removes the credential and its sibling row via cascade."""
     created = await svc.create(
         CredentialCreate(

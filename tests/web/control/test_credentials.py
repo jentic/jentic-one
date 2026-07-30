@@ -11,10 +11,21 @@ Exercises the real HTTP path (router → service → DB) to pin two invariants:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.integration
+
+
+def _parse_ts(value: str) -> datetime:
+    """Parse an API ``updated_at`` timestamp for order-safe comparison.
+
+    Comparing the raw ISO strings works today but breaks silently if the
+    serialization format or timezone suffix ever changes; parse instead.
+    """
+    return datetime.fromisoformat(value)
 
 
 def _create_api_key(client: TestClient) -> str:
@@ -64,7 +75,7 @@ def test_patch_noop_does_not_move_updated_at(cred_writer_client: TestClient) -> 
         json={"type": "api_key", "field_name": "appid", "location": "query"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["updated_at"] == before["updated_at"]
+    assert _parse_ts(resp.json()["updated_at"]) == _parse_ts(before["updated_at"])
 
 
 def test_patch_key_rotation_moves_updated_at(cred_writer_client: TestClient) -> None:
@@ -77,4 +88,4 @@ def test_patch_key_rotation_moves_updated_at(cred_writer_client: TestClient) -> 
         json={"type": "api_key", "key": "sk-web-test-key-rotated"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["updated_at"] > before["updated_at"]
+    assert _parse_ts(resp.json()["updated_at"]) > _parse_ts(before["updated_at"])

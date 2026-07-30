@@ -370,9 +370,14 @@ class CredentialService:
                     if payload.location is not None and str(payload.location) != cak.location:
                         raise ImmutableFieldError("location")
 
-            # Track whether anything was actually persisted so `updated_at` moves
-            # iff a change landed — an unconditional bump makes the timestamp a
-            # lying signal (#739): a no-op PATCH must leave it frozen.
+            # Track whether a mutating field was provided so `updated_at` moves
+            # iff the PATCH could persist a change — an unconditional bump makes
+            # the timestamp a lying signal (#739): a PATCH that only echoes the
+            # stored field_name/location (or provides nothing) must leave it
+            # frozen. Note this keys off "a mutating field was provided", not a
+            # value diff: re-sending the current name/active still counts as
+            # changed. The SPA omits unchanged fields, so this is a no-op in
+            # practice; value-comparing every branch isn't worth the complexity.
             changed = False
 
             if (
