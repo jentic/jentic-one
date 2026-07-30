@@ -10,46 +10,14 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
-func TestResetTargets(t *testing.T) {
-	cfg := &config.FileConfig{LocalAgents: map[string]config.LocalAgent{
-		"claude": {User: "alice-local-agent"},
-		"cursor": {User: "alice-cursor-agent"},
-	}}
-
-	// Named, configured agent resolves to just that one.
-	got, err := resetTargets(cfg, []string{"claude"})
-	if err != nil || len(got) != 1 || got[0] != "claude" {
-		t.Fatalf("resetTargets([claude]) = %v, %v", got, err)
-	}
-
-	// Named but unconfigured agent errors (nothing to reset).
-	if _, err := resetTargets(cfg, []string{"nope"}); err == nil {
-		t.Fatal("expected an error for an unconfigured agent")
-	}
-
-	// No argument targets every configured agent, in stable sorted order.
-	all, err := resetTargets(cfg, nil)
-	if err != nil {
-		t.Fatalf("resetTargets(nil): %v", err)
-	}
-	if len(all) != 2 || all[0] != "claude" || all[1] != "cursor" {
-		t.Fatalf("resetTargets(nil) = %v, want [claude cursor]", all)
-	}
-
-	// Empty config errors rather than silently doing nothing.
-	if _, err := resetTargets(&config.FileConfig{}, nil); err == nil {
-		t.Fatal("expected an error when no local agents are configured")
-	}
-}
-
-// TestSurveyResetPlan checks the plan is built from the config entry and includes
+// TestSurveyResetPlan checks the plan is built from the account record and includes
 // leaf grants plus the deduped ancestor traverse chain for grants under the
 // operator's home. The on-disk ACL probes return false for these non-existent
 // paths, so `present` is false — which is exactly what lets us assert the plan's
 // shape without root or real ACLs.
 func TestSurveyResetPlan(t *testing.T) {
 	home := "/Users/alice"
-	entry := config.LocalAgent{
+	acct := config.AgentAccount{
 		User:    "alice-local-agent",
 		HomeDir: "/Users/Shared/alice-local-agent",
 		GrantedDirs: []string{
@@ -57,7 +25,7 @@ func TestSurveyResetPlan(t *testing.T) {
 			"/Users/Shared/work",        // outside home → leaf only
 		},
 	}
-	plan := surveyReset(context.Background(), "alice", home, "claude", entry)
+	plan := surveyReset(context.Background(), "alice", home, acct)
 
 	if plan.user != "alice-local-agent" || plan.homeDir != "/Users/Shared/alice-local-agent" {
 		t.Fatalf("plan identity = %+v", plan)
@@ -94,14 +62,14 @@ func TestSurveyResetPlan(t *testing.T) {
 // … allow execute`) would error "Entry not found" and abort the whole teardown.
 func TestSurveyResetNestedLeafNotTraversed(t *testing.T) {
 	home := "/Users/alice"
-	entry := config.LocalAgent{
+	acct := config.AgentAccount{
 		User: "alice-local-agent",
 		GrantedDirs: []string{
 			"/Users/alice/workspace",             // leaf grant AND ancestor of the next
 			"/Users/alice/workspace/github/repo", // deeper leaf grant
 		},
 	}
-	plan := surveyReset(context.Background(), "alice", home, "claude", entry)
+	plan := surveyReset(context.Background(), "alice", home, acct)
 
 	for _, acl := range plan.acls {
 		if acl.traverse && acl.dir == "/Users/alice/workspace" {
@@ -133,20 +101,19 @@ func TestSurveyResetNestedLeafNotTraversed(t *testing.T) {
 }
 
 // TestSurveyResetDefaultsUser falls back to the derived <operator>-local-agent
-// name when the config entry has no user recorded.
+// name when the account record has no user.
 func TestSurveyResetDefaultsUser(t *testing.T) {
-	plan := surveyReset(context.Background(), "bob", "/Users/bob", "claude", config.LocalAgent{})
+	plan := surveyReset(context.Background(), "bob", "/Users/bob", config.AgentAccount{})
 	if plan.user != "bob-local-agent" {
 		t.Fatalf("plan.user = %q, want bob-local-agent", plan.user)
 	}
 }
 
 // TestBuildResetStepsOrderAndHome asserts the load-bearing ordering (leaf ACLs →
-// traverse ACLs → home → sudoers → account) and that the home step honours the
-// delete flag. Only present ACLs become steps.
+// traverse ACLs → identity → home → sudoers → account) and that the home step
+// honours the delete flag. Only present ACLs become steps.
 func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	plan := resetPlan{
-		agentID:   "claude",
 		user:      "alice-local-agent",
 		homeDir:   "/Users/Shared/alice-local-agent",
 		configDir: "/Users/Shared/alice-local-agent/.jentic",
@@ -226,7 +193,6 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 // account no longer exists (idempotent re-run after a partial teardown).
 func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 	plan := resetPlan{
-		agentID:       "claude",
 		user:          "alice-local-agent",
 		operator:      "alice",
 		accountExists: false,
@@ -238,22 +204,21 @@ func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 	}
 }
 
-// TestResetRunsAsOperator confirms reset no longer refuses to run without EUID 0:
-// it runs as the operator (only its individual steps are sudo-fronted). With a
-// configured agent it surfaces the "(requires sudo)" notice and proceeds to the
-// plan; the non-interactive-without-force guard then stops it — proving it got
-// past any (removed) root gate. There must be NO "must run as root" error.
+// TestResetRunsAsOperator confirms a full reset no longer refuses to run without
+// EUID 0: it runs as the operator (only its individual steps are sudo-fronted).
+// With a configured account it surfaces the "(requires sudo)" notice and proceeds
+// to the plan; the non-interactive-without-force guard then stops it — proving it
+// got past any (removed) root gate. There must be NO "must run as root" error.
 func TestResetRunsAsOperator(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
-	cfg := &config.FileConfig{LocalAgents: map[string]config.LocalAgent{
-		"claude": {User: "alice-local-agent"},
-	}}
+	cfg := &config.FileConfig{}
+	cfg.SetAgentAccount(config.AgentAccount{User: "alice-local-agent", AccountCreated: true, Enabled: true})
 	if err := cfg.Save(app.Paths); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
-	err := app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
+	err := app.resetE(context.Background(), &resetOptions{}, nil)
 	if err != nil && strings.Contains(err.Error(), "must run as root") {
 		t.Fatalf("reset must not require root, got %v", err)
 	}
@@ -266,9 +231,9 @@ func TestResetRunsAsOperator(t *testing.T) {
 	}
 }
 
-// TestResetFullWipesProfiles confirms a bare `jentic reset --force` (no agent) is
+// TestResetFullWipesProfiles confirms a bare `jentic reset --force` (no account) is
 // a clean slate: it removes every profile and clears default_profile, even when no
-// local agents are configured.
+// agent account is configured.
 func TestResetFullWipesProfiles(t *testing.T) {
 	out := &bytes.Buffer{}
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}
@@ -278,7 +243,7 @@ func TestResetFullWipesProfiles(t *testing.T) {
 		t.Fatalf("set default: %v", err)
 	}
 
-	// No agents configured + no agent arg: a valid config-only clean slate.
+	// No account configured + no profile arg: a valid config-only clean slate.
 	err := app.resetE(context.Background(), &resetOptions{force: true}, nil)
 	if err != nil {
 		t.Fatalf("resetE: %v", err)
@@ -300,28 +265,66 @@ func TestResetFullWipesProfiles(t *testing.T) {
 	}
 }
 
-// TestResetNamedAgentKeepsProfiles confirms a named `jentic reset <agent>` never
-// touches the operator's own profiles — only that agent's config links.
-func TestResetNamedAgentKeepsProfiles(t *testing.T) {
+// TestResetSingleProfileKeepsOthers confirms `jentic reset <profile> --force`
+// removes only the named operator-owned profile and never touches the others or
+// the agent account.
+func TestResetSingleProfileKeepsOthers(t *testing.T) {
 	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
 	seedProfile(t, app, "default", "agnt_default")
-	cfg := &config.FileConfig{LocalAgents: map[string]config.LocalAgent{
-		"claude": {User: "alice-local-agent"},
-	}}
-	if err := cfg.Save(app.Paths); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
+	seedProfile(t, app, "work", "agnt_work")
 
-	// Named agent, non-interactive without --force stops at the per-agent gate; the
-	// point is that the config wipe is never even reached for a named reset.
-	_ = app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
+	if err := app.resetE(context.Background(), &resetOptions{force: true}, []string{"work"}); err != nil {
+		t.Fatalf("resetE: %v", err)
+	}
 
 	names, err := profile.List(app.Paths)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 	if len(names) != 1 || names[0] != "default" {
-		t.Errorf("a named reset must not touch the operator's profiles, got %v", names)
+		t.Errorf("a single-profile reset must keep the other profiles, got %v", names)
+	}
+}
+
+// TestResetSingleProfileClearsDefault confirms removing the profile that was the
+// operator's default also clears the default_profile pointer.
+func TestResetSingleProfileClearsDefault(t *testing.T) {
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	seedProfile(t, app, "solo", "agnt_solo")
+	if err := config.SetDefaultProfile(app.Paths, "solo"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+
+	if err := app.resetE(context.Background(), &resetOptions{force: true}, []string{"solo"}); err != nil {
+		t.Fatalf("resetE: %v", err)
+	}
+
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.DefaultProfile != "" {
+		t.Errorf("default_profile should be cleared after removing it, got %q", cfg.DefaultProfile)
+	}
+}
+
+// TestResetUnknownProfileNameErrors confirms a name that matches no profile errors,
+// and that a name matching a known agent binary id points the operator at the bare
+// full reset instead.
+func TestResetUnknownProfileNameErrors(t *testing.T) {
+	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	seedProfile(t, app, "default", "agnt_default")
+
+	// A plain unknown name.
+	err := app.resetE(context.Background(), &resetOptions{}, []string{"ghost"})
+	if err == nil || !strings.Contains(err.Error(), "no profile") {
+		t.Fatalf("expected a no-profile error, got %v", err)
+	}
+
+	// A name that is a known agent binary id → steer to the bare full reset.
+	err = app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
+	if err == nil || !strings.Contains(err.Error(), "with no argument") {
+		t.Fatalf("expected a steer-to-full-reset error, got %v", err)
 	}
 }
 
@@ -343,7 +346,7 @@ func TestResetConfigRequiresForceNonInteractive(t *testing.T) {
 	}
 }
 
-// TestResetNothingToDo is a friendly no-op when there are no agents and no config
+// TestResetNothingToDo is a friendly no-op when there is no account and no config
 // to remove.
 func TestResetNothingToDo(t *testing.T) {
 	out := &bytes.Buffer{}
