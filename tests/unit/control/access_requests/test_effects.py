@@ -960,6 +960,93 @@ async def test_validate_toolkit_bind_in_plan_denies_when_unfulfilled() -> None:
     assert "arqi_intent_1" in str(exc_info.value)
 
 
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_governed_bind_never_half_wires_to_preexisting_toolkit(
+    effects_repo: MagicMock,
+) -> None:
+    # Even when a PRE-EXISTING toolkit serves the same API, a governed bind
+    # must NOT resolve to it: approving it plain would wire the agent to the
+    # old toolkit while the rest of its chain (the new toolkit + credential)
+    # is denied — a half-wired grant. The plan-aware denial must win, without
+    # resolution ever being attempted.
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_preexisting"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    with pytest.raises(ProvisioningPlanNotFulfilledError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            plan_governance=PlanGovernance(
+                governing_intent_ids=frozenset({"arqi_intent_1"}),
+                governing_api=("acme", "widgets"),
+            ),
+        )
+    effects_repo.resolve_toolkits_for_api.assert_not_awaited()
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_ungoverned_bind_in_composite_passes_when_reference_resolves(
+    effects_repo: MagicMock,
+) -> None:
+    # A composite request can mix plan chains with PLAIN reference binds to
+    # toolkits that already exist. A bind whose API no chain provisions gets
+    # UNGOVERNED_PLAN from decide() and is satisfiable exactly as filed — the
+    # plan context must not auto-deny it (the mixed-composite fix).
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_existing"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    await applicator.validate(
+        item,
+        identity=_make_identity(),
+        control_session=session,
+        plan_governance=UNGOVERNED_PLAN,
+    )
+
+
+@patch(f"{_MODULE}.EffectsRepository")
+async def test_validate_ungoverned_bind_in_composite_keeps_ambiguity_pending(
+    effects_repo: MagicMock,
+) -> None:
+    # An AMBIGUOUS plain reference inside a composite keeps the documented
+    # non-plan semantics: it raises (so the item stays pending for amendment)
+    # instead of being converted into a misleading plan denial.
+    effects_repo.resolve_toolkits_for_api = AsyncMock(return_value=["tk_1", "tk_2"])
+    ctx = _make_ctx()
+    session = _make_session()
+    applicator = EffectApplicator(ctx)
+    item = _make_item(
+        resource_type="toolkit",
+        action="bind",
+        resource_id=None,
+        to_id=None,
+        resource_reference={"vendor": "acme", "name": "widgets"},
+    )
+    with pytest.raises(ToolkitReferenceAmbiguousError):
+        await applicator.validate(
+            item,
+            identity=_make_identity(),
+            control_session=session,
+            plan_governance=UNGOVERNED_PLAN,
+        )
+
+
 # --- plan governance (issue #778) --------------------------------------------
 #
 # ``plan_governance_for_items`` is the pure function that replaced the
@@ -1068,6 +1155,29 @@ def test_plan_governance_leaves_independent_toolkit_bind_ungoverned() -> None:
     # The Y bind isn't in the mapping — it stays on the plain contract. The
     # credential-bind absence is expected (there is no credential-bind here).
     assert "arqi_independent_bind" not in governance
+
+
+def test_plan_governance_governs_unattributable_toolkit_bind_conservatively() -> None:
+    # A toolkit:bind with a vendor-less (or missing) reference can never
+    # resolve by reference — the plain contract would surface a bare
+    # ValueError (500, stranding the request pending). Inside a plan it is
+    # governed by every live intent so the operator gets a legible plan-aware
+    # denial instead.
+    items = [
+        _intent(vendor="acme", name="widgets", item_id="arqi_i1"),
+        _make_item(
+            resource_type="toolkit",
+            action="bind",
+            resource_id=None,
+            to_id=None,
+            resource_reference={"name": "widgets"},  # no vendor
+            item_id="arqi_vendorless_bind",
+        ),
+    ]
+    governance = plan_governance_for_items(items)
+    assert governance["arqi_vendorless_bind"].is_governed
+    assert governance["arqi_vendorless_bind"].governing_intent_ids == frozenset({"arqi_i1"})
+    assert governance["arqi_vendorless_bind"].governing_api is None
 
 
 def test_plan_governance_governs_all_credential_binds_when_any_intent_lives() -> None:

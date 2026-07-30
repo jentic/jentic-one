@@ -9,6 +9,7 @@ import pytest
 
 from jentic_one.broker.core.token_validation import CachedTokenValidator
 from jentic_one.broker.services.auth.token_validation import CompositeTokenValidator
+from jentic_one.shared.auth.errors import TokenValidationError
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.scopes import BROKER_EXECUTE_SCOPE
@@ -155,8 +156,8 @@ async def test_jwt_routes_to_jwt_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unknown_api_key_raises_value_error(api_key_resolver: AsyncMock) -> None:
-    """An API key not found in the DB raises ValueError (mapped to 401)."""
+async def test_unknown_api_key_raises_typed_error(api_key_resolver: AsyncMock) -> None:
+    """An API key not found in the DB raises TokenValidationError (mapped to 401)."""
     api_key_resolver.resolve_access_token = AsyncMock(return_value=None)
     opaque_resolver = AsyncMock()
     opaque_resolver.resolve_access_token = AsyncMock()
@@ -170,5 +171,5 @@ async def test_unknown_api_key_raises_value_error(api_key_resolver: AsyncMock) -
         opaque=opaque_cached, api_key=api_key_cached, toolkit_key=toolkit_cached, jwt=None
     )
 
-    with pytest.raises(ValueError, match="unknown_token"):
+    with pytest.raises(TokenValidationError, match="unknown_token"):
         await triple.validate("jak_bad_key")

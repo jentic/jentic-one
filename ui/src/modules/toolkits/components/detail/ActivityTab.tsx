@@ -4,7 +4,7 @@ import { useToolkitExecutions, useToolkitUsage } from '@/modules/toolkits/api';
 import type { ToolkitExecution } from '@/modules/toolkits/api/types';
 import { DetailSection, EmptyRow } from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * Activity tab — what this toolkit has actually been doing: the 7-day
@@ -133,7 +133,7 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 				icon={<ListOrdered className="h-4 w-4" />}
 				trailing={
 					<AppLink
-						href={`${ROUTES.monitor}?tab=executions&toolkit_id=${toolkitId}`}
+						href={ROUTE_PATHS.monitorExecutions({ toolkitId })}
 						className="text-primary inline-flex items-center gap-1 text-xs font-medium"
 					>
 						{/* In-app route — the Activity glyph, matching the agents page;

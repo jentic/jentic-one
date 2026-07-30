@@ -71,6 +71,9 @@ class CredentialUpdate(BaseModel):
 
     # api_key rotation/update
     key: str | None = None
+    # field_name/location are immutable after create; accepted here only so the
+    # service can reject a *changed* value (the SPA still echoes the stored
+    # ones on every PATCH). See CredentialService.update (#589).
     location: str | None = None
     field_name: str | None = None
 

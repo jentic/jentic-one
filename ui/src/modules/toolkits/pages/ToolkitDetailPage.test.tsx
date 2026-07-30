@@ -93,6 +93,7 @@ function seedAgents(opts: { bound: SeedAgent[]; workspace: SeedAgent[] }) {
 			return new HttpResponse(null, { status: 204 });
 		}),
 	);
+	return bound;
 }
 
 describe('ToolkitDetailPage', () => {
@@ -658,6 +659,38 @@ describe('ToolkitDetailPage', () => {
 		await user.type(screen.getByLabelText('Filter agents'), 'pending');
 		await waitFor(() => expect(screen.queryByText('Billing Bot')).not.toBeInTheDocument());
 		expect(screen.getByText('Pending Bot')).toBeInTheDocument();
+	});
+
+	it('lists a non-active agent as a non-selectable row in the picker', async () => {
+		const bound = seedAgents({
+			bound: [],
+			workspace: [
+				{ agent_id: 'agt_billing_bot', agent_name: 'Billing Bot', status: 'active' },
+				{ agent_id: 'agt_pending_bot', agent_name: 'Pending Bot', status: 'pending' },
+			],
+		});
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('button', { name: /link agent/i }));
+		await screen.findByText('Pending Bot');
+
+		// The pending agent stays listed (hiding it would read as "missing") but
+		// is aria-disabled with an accessible rationale — the approval queue is
+		// where capabilities start, so it can't be linked yet.
+		const rows = screen.getAllByTestId('agent-picker-row');
+		const pendingRow = rows.find((r) => within(r).queryByText('Pending Bot'));
+		expect(pendingRow).toBeDefined();
+		expect(pendingRow).toHaveAttribute('aria-disabled', 'true');
+		expect(
+			within(pendingRow as HTMLElement).getByText(/approve the agent first/i),
+		).toBeInTheDocument();
+
+		// Clicking it is a no-op: no bind fires and the dialog stays open.
+		await user.click(pendingRow as HTMLElement);
+		expect(screen.getByLabelText('Filter agents')).toBeInTheDocument();
+		expect(bound.some((a) => a.agent_id === 'agt_pending_bot')).toBe(false);
 	});
 
 	it('unlinks a bound agent', async () => {

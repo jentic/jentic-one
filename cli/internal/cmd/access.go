@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,8 +15,7 @@ import (
 )
 
 var (
-	errAccessTargetRequired = errors.New("specify what to request: --toolkit <vendor/name>, --toolkit-id <tk_…>, or --scope <scope>")
-	errAccessTargetConflict = errors.New("specify exactly one of --toolkit, --toolkit-id, or --scope")
+	errAccessTargetRequired = errors.New("specify what to request: --toolkit <vendor/name>, --toolkit-id <tk_…>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
 	errAccessWaitTimeout    = errors.New("timed out waiting for a decision")
 )
 
@@ -71,19 +71,27 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 	opts := &accessRequestOptions{}
 	cmd := &cobra.Command{
 		Use:   "request",
-		Short: "File a request for a toolkit binding or a scope grant",
-		Long: "request files an access request for the access you are missing and prints an\n" +
-			"approve_url for your human operator. Name the toolkit by the API you found in\n" +
+		Short: "File a request for toolkit bindings, scope grants, or provisioning plans",
+		Long: "request files one access request for the access you are missing and prints an\n" +
+			"approve_url for your human operator. Name a toolkit by the API you found in\n" +
 			"search (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n" +
 			"(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\n" +
-			"When nothing serves the API yet (a fresh import with no toolkit/credential),\n" +
+			"When nothing serves an API yet (a fresh import with no toolkit/credential),\n" +
 			"use --provision vendor/name to file the whole path to first execution as one\n" +
 			"plan: create a toolkit, provision a credential, bind it (with your proposed\n" +
 			"--rules-json), and bind yourself. A human fulfils the create/provision steps\n" +
 			"in the dashboard (they enter the secret — it never rides in your request) and\n" +
 			"approves. Use --auth to declare the credential type you detected from the spec\n" +
 			"(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\n" +
-			"An existing pending request for the same resource is reused, not duplicated.\n\n" +
+			"All target flags repeat and combine, so a job needing several APIs files ONE\n" +
+			"composite request the human decides in one sitting: each --provision appends\n" +
+			"a provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\n" +
+			"item. With more than one --provision, key --auth and --rules-json by the\n" +
+			"same vendor/name[/version] passed to --provision; the bare form applies\n" +
+			"when there is exactly one.\n\n" +
+			"An existing pending request for the same resource is reused when this request\n" +
+			"names a single target; a composite aborts instead (drop the already-pending\n" +
+			"target or withdraw the older request, then re-file).\n\n" +
 			"Exit codes:\n" +
 			"  0 — request filed (or, with --wait, fully approved)\n" +
 			"  2 — request was denied, expired, or withdrawn (only with --wait)\n" +
@@ -93,18 +101,22 @@ func newAccessRequestCmd(app *App) *cobra.Command {
 			"  jentic access request --toolkit-id tk_123 --wait\n" +
 			"  jentic access request --scope owner:toolkits:read --json\n" +
 			"  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n" +
-			"    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait",
+			"    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n" +
+			"  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n" +
+			"    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n" +
+			"    --toolkit github.com/api --scope apis:write \\\n" +
+			"    --reason \"release-notes automation\" --wait",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.accessRequestE(cmd, ident, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.toolkit, "toolkit", "", "request a binding to the toolkit serving this API (vendor/name[/version])")
-	cmd.Flags().StringVar(&opts.toolkitID, "toolkit-id", "", "request a binding to this toolkit id (tk_…)")
-	cmd.Flags().StringVar(&opts.scope, "scope", "", "request this scope be granted")
-	cmd.Flags().StringVar(&opts.provision, "provision", "", "file a full provisioning plan to make this API executable (vendor/name[/version])")
-	cmd.Flags().StringVar(&opts.auth, "auth", "", "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer)")
-	cmd.Flags().StringVar(&opts.rulesJSON, "rules-json", "", "proposed permission rules for --provision, as a JSON array")
+	cmd.Flags().StringArrayVar(&opts.toolkits, "toolkit", nil, "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)")
+	cmd.Flags().StringArrayVar(&opts.toolkitIDs, "toolkit-id", nil, "request a binding to this toolkit id (tk_…; repeatable)")
+	cmd.Flags().StringArrayVar(&opts.scopes, "scope", nil, "request this scope be granted (repeatable)")
+	cmd.Flags().StringArrayVar(&opts.provisions, "provision", nil, "file a full provisioning plan to make this API executable (vendor/name[/version]; repeatable)")
+	cmd.Flags().StringArrayVar(&opts.auths, "auth", nil, "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=<type>)")
+	cmd.Flags().StringArrayVar(&opts.rulesJSONs, "rules-json", nil, "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=<json>)")
 	cmd.Flags().StringVar(&opts.reason, "reason", "", "human-readable justification shown to the approver")
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "block until the request is decided")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 10*time.Minute, "max time to wait with --wait")
@@ -187,46 +199,235 @@ func newAccessRefreshCmd(app *App) *cobra.Command {
 }
 
 type accessRequestOptions struct {
-	toolkit   string
-	toolkitID string
-	scope     string
-	provision string
-	auth      string
-	rulesJSON string
-	reason    string
-	wait      bool
-	timeout   time.Duration
-	json      bool
+	toolkits   []string
+	toolkitIDs []string
+	scopes     []string
+	provisions []string
+	auths      []string
+	rulesJSONs []string
+	reason     string
+	wait       bool
+	timeout    time.Duration
+	json       bool
 }
 
-// item builds the single request item from the chosen target, enforcing that
-// exactly one of --toolkit/--toolkit-id/--scope is set.
-func (o *accessRequestOptions) item() (accessclient.Item, error) {
-	chosen := 0
-	for _, s := range []string{o.toolkit, o.toolkitID, o.scope} {
-		if strings.TrimSpace(s) != "" {
-			chosen++
-		}
+// targetCount is the number of distinct targets the request names — each
+// --provision plan counts as one target, as does each --toolkit/--toolkit-id/
+// --scope item. It decides composite behavior (e.g. the 409 handling).
+func (o *accessRequestOptions) targetCount() int {
+	return len(cleanValues(o.provisions)) + len(cleanValues(o.toolkits)) +
+		len(cleanValues(o.toolkitIDs)) + len(cleanValues(o.scopes))
+}
+
+// compose builds the full item list for the request from every target flag, in
+// fulfilment order: provisioning plans first (one 4-item chain per --provision,
+// in flag order), then toolkit binds by reference, by id, and scope grants.
+// Targets are validated as a set — duplicates and a --toolkit/--provision pair
+// naming the same API are rejected, since they would file conflicting or
+// redundant intents the approving human then has to untangle.
+func (o *accessRequestOptions) compose() ([]accessclient.Item, error) {
+	provisions := cleanValues(o.provisions)
+	toolkits := cleanValues(o.toolkits)
+	toolkitIDs := cleanValues(o.toolkitIDs)
+	scopes := cleanValues(o.scopes)
+
+	if len(provisions)+len(toolkits)+len(toolkitIDs)+len(scopes) == 0 {
+		return nil, errAccessTargetRequired
 	}
-	switch {
-	case chosen == 0:
-		return accessclient.Item{}, errAccessTargetRequired
-	case chosen > 1:
-		return accessclient.Item{}, errAccessTargetConflict
+	if len(provisions) == 0 && (len(cleanValues(o.auths)) > 0 || len(cleanValues(o.rulesJSONs)) > 0) {
+		return nil, errors.New("--auth and --rules-json only apply with --provision")
 	}
 
-	switch {
-	case o.scope != "":
-		return accessclient.Item{ResourceType: "scope", Action: "grant", ResourceID: o.scope}, nil
-	case o.toolkitID != "":
-		return accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceID: o.toolkitID}, nil
-	default:
-		ref, err := parseToolkitRef(o.toolkit)
-		if err != nil {
-			return accessclient.Item{}, err
-		}
-		return accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceReference: ref}, nil
+	// Canonicalize the reference-shaped targets so duplicates are caught
+	// regardless of spelling (whitespace) and so keyed --auth/--rules-json
+	// values can be matched to their chain.
+	provKeys, err := canonicalRefKeys("--provision", provisions)
+	if err != nil {
+		return nil, err
 	}
+	toolkitKeys, err := canonicalRefKeys("--toolkit", toolkits)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range toolkitKeys {
+		for _, p := range provKeys {
+			if k == p {
+				return nil, fmt.Errorf("%s is named by both --toolkit and --provision; "+
+					"a provisioning plan already ends with the toolkit binding, so drop the --toolkit", k)
+			}
+		}
+	}
+	if dup := firstDuplicate(toolkitIDs); dup != "" {
+		return nil, fmt.Errorf("--toolkit-id %s given more than once", dup)
+	}
+	if dup := firstDuplicate(scopes); dup != "" {
+		return nil, fmt.Errorf("--scope %s given more than once", dup)
+	}
+
+	auths, err := resolveKeyedValues("--auth", o.auths, provKeys)
+	if err != nil {
+		return nil, err
+	}
+	rulesJSONs, err := resolveKeyedValues("--rules-json", o.rulesJSONs, provKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []accessclient.Item
+	for i, p := range provisions {
+		chain, planErr := buildProvisionPlan(p, auths[provKeys[i]], rulesJSONs[provKeys[i]])
+		if planErr != nil {
+			return nil, planErr
+		}
+		items = append(items, chain...)
+	}
+	for _, t := range toolkits {
+		ref, refErr := parseToolkitRef(t)
+		if refErr != nil {
+			return nil, refErr
+		}
+		items = append(items, accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceReference: ref})
+	}
+	for _, id := range toolkitIDs {
+		items = append(items, accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceID: id})
+	}
+	for _, s := range scopes {
+		items = append(items, accessclient.Item{ResourceType: "scope", Action: "grant", ResourceID: s})
+	}
+	return items, nil
+}
+
+// cleanValues trims each value and drops empties, preserving order.
+func cleanValues(values []string) []string {
+	var out []string
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// firstDuplicate returns the first value that appears more than once, or "".
+func firstDuplicate(values []string) string {
+	seen := make(map[string]bool, len(values))
+	for _, v := range values {
+		if seen[v] {
+			return v
+		}
+		seen[v] = true
+	}
+	return ""
+}
+
+// canonicalRefKeys parses each vendor/name[/version] value and returns its
+// canonical key form, rejecting duplicates within the flag.
+func canonicalRefKeys(flag string, values []string) ([]string, error) {
+	keys := make([]string, 0, len(values))
+	for _, v := range values {
+		ref, err := parseToolkitRef(v)
+		if err != nil {
+			return nil, err
+		}
+		key := refKey(ref)
+		for _, k := range keys {
+			if k == key {
+				return nil, fmt.Errorf("%s %s given more than once", flag, key)
+			}
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+// refKey renders a parsed reference back to its canonical vendor/name[/version]
+// string, used to match keyed --auth/--rules-json values to their chain and to
+// reject duplicates. Vendor/name are slugified exactly like the server does
+// (jentic_one.shared.models.api_identity.slugify_api_field), so raw-domain and
+// slug spellings of the same API ("httpbin.org" vs "httpbin-org") collide here
+// instead of filing as two distinct chains that the server would then merge.
+func refKey(ref map[string]any) string {
+	vendor, _ := ref["vendor"].(string)
+	name, _ := ref["name"].(string)
+	key := slugifyAPIField(vendor) + "/" + slugifyAPIField(name)
+	if version, ok := ref["version"].(string); ok && version != "" {
+		key += "/" + version
+	}
+	return key
+}
+
+var apiSlugRe = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// slugifyAPIField mirrors the server's canonical slug form for API vendor/name
+// fields: lowercase, strip, runs of non-[a-z0-9-] become a single hyphen,
+// leading/trailing hyphens trimmed.
+func slugifyAPIField(value string) string {
+	slug := apiSlugRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(value)), "-")
+	return strings.Trim(slug, "-")
+}
+
+// resolveKeyedValues maps repeatable per-API option values (--auth,
+// --rules-json) onto their --provision chains. Each value is either keyed
+// ("vendor/name[/version]=<value>") or bare; the bare form is only unambiguous
+// with exactly one --provision. Returns a map from canonical provision key to
+// the value for that chain (missing keys mean "use the default").
+func resolveKeyedValues(flag string, values, provKeys []string) (map[string]string, error) {
+	out := make(map[string]string, len(values))
+	for _, raw := range cleanValues(values) {
+		key, value, keyed, err := splitKeyedValue(flag, raw, provKeys)
+		if err != nil {
+			return nil, err
+		}
+		if !keyed {
+			if len(provKeys) != 1 {
+				return nil, fmt.Errorf("%s %q must be keyed by API when --provision repeats (e.g. %s %s=<value>)",
+					flag, raw, flag, firstOr(provKeys, "vendor/name"))
+			}
+			key, value = provKeys[0], raw
+		}
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("%s given more than once for %s", flag, key)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+// splitKeyedValue splits "key=value" when the key part is shaped like an API
+// reference (vendor/name…). A shaped key that matches no --provision target is
+// an error (a typo, or a chain that was never requested); anything not shaped
+// like a keyed form — including JSON payloads that happen to contain '=' — is
+// treated as a bare value.
+func splitKeyedValue(flag, raw string, provKeys []string) (key, value string, keyed bool, err error) {
+	// A value that starts like a JSON document is always a bare payload — a
+	// rules array can legitimately contain '=' (e.g. inside a path regex) and
+	// must not be probed for a key.
+	if trimmed := strings.TrimSpace(raw); strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+		return "", "", false, nil
+	}
+	eq := strings.Index(raw, "=")
+	if eq <= 0 {
+		return "", "", false, nil
+	}
+	candidate := strings.TrimSpace(raw[:eq])
+	ref, refErr := parseToolkitRef(candidate)
+	if refErr != nil {
+		return "", "", false, nil //nolint:nilerr // an unparsable key prefix means "bare value", not a failure.
+	}
+	canonical := refKey(ref)
+	for _, k := range provKeys {
+		if canonical == k {
+			return k, raw[eq+1:], true, nil
+		}
+	}
+	return "", "", false, fmt.Errorf("%s is keyed to %s, which is not among the --provision targets", flag, canonical)
+}
+
+func firstOr(values []string, fallback string) string {
+	if len(values) > 0 {
+		return values[0]
+	}
+	return fallback
 }
 
 // validAuthTypes are the credential auth types --auth accepts. "none" marks a
@@ -236,19 +437,19 @@ var validAuthTypes = map[string]bool{
 	"bearer": true, "api_key": true, "basic": true, "oauth2": true, "none": true,
 }
 
-// plan builds a full provisioning plan for --provision: the ordered set of
-// items describing the whole path to first execution. The agent files intent
-// (create toolkit, provision a credential, bind it with proposed rules, bind the
-// agent); a human fulfils the create/provision steps via the dashboard, which
-// writes the resulting ids back onto the bind items before approving. Returns
-// the items in fulfilment order.
-func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
-	ref, err := parseToolkitRef(o.provision)
+// buildProvisionPlan builds one full provisioning plan for a --provision
+// target: the ordered set of items describing the whole path to first
+// execution. The agent files intent (create toolkit, provision a credential,
+// bind it with proposed rules, bind the agent); a human fulfils the
+// create/provision steps via the dashboard, which writes the resulting ids back
+// onto the bind items before approving. Returns the items in fulfilment order.
+func buildProvisionPlan(provision, auth, rulesJSON string) ([]accessclient.Item, error) {
+	ref, err := parseToolkitRef(provision)
 	if err != nil {
 		return nil, err
 	}
 
-	auth := strings.TrimSpace(o.auth)
+	auth = strings.TrimSpace(auth)
 	if auth == "" {
 		auth = "bearer"
 	}
@@ -263,7 +464,7 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 		authScheme = "no_auth"
 	}
 
-	rules, err := parseProposedRules(o.rulesJSON)
+	rules, err := parseProposedRules(rulesJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -295,8 +496,14 @@ func (o *accessRequestOptions) plan() ([]accessclient.Item, error) {
 	// Step 3: bind the (to-be-created) credential to the (to-be-created)
 	// toolkit, carrying the agent's proposed first-pass rules. The operator
 	// amends the concrete credential/toolkit ids onto this item before approval.
+	// The API reference is stamped on so the item names its chain: item order
+	// is not guaranteed server-side, and in a composite request with several
+	// plans the bare item would be indistinguishable from its siblings (it also
+	// keeps pending-dedup from colliding two different plans' bind items). The
+	// server ignores the reference for credential:bind — only the amended ids
+	// wire the effect.
 	items = append(items, accessclient.Item{
-		ResourceType: "credential", Action: "bind", Rules: rules,
+		ResourceType: "credential", Action: "bind", ResourceReference: ref, Rules: rules,
 	})
 	// Step 4: bind the agent to the toolkit, named by the same API reference.
 	items = append(items, accessclient.Item{
@@ -360,26 +567,9 @@ func (a *App) accessWhoamiE(cmd *cobra.Command, ident *identityOptions, jsonFlag
 }
 
 func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *accessRequestOptions) error {
-	var items []accessclient.Item
-	if strings.TrimSpace(opts.provision) != "" {
-		// --provision is mutually exclusive with the single-item target flags.
-		if opts.toolkit != "" || opts.toolkitID != "" || opts.scope != "" {
-			return errors.New("--provision cannot be combined with --toolkit, --toolkit-id, or --scope")
-		}
-		planItems, err := opts.plan()
-		if err != nil {
-			return err
-		}
-		items = planItems
-	} else {
-		if opts.auth != "" || opts.rulesJSON != "" {
-			return errors.New("--auth and --rules-json only apply with --provision")
-		}
-		item, err := opts.item()
-		if err != nil {
-			return err
-		}
-		items = []accessclient.Item{item}
+	items, err := opts.compose()
+	if err != nil {
+		return err
 	}
 
 	baseURL, token, err := a.agentSession(cmd.Context(), ident)
@@ -396,6 +586,18 @@ func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 		var dup *accessclient.DuplicatePendingError
 		if !errors.As(err, &dup) {
 			return err
+		}
+		// Filing is all-or-nothing, so a 409 on a composite means one of its
+		// targets is already pending and NOTHING was filed. Attaching would
+		// silently swap the composite for the older, smaller request — the
+		// agent would wait on a grant that covers only part of what it asked
+		// for. Surface the collision instead so the agent drops the pending
+		// target or withdraws the older request and re-files.
+		if opts.targetCount() > 1 {
+			return fmt.Errorf("nothing was filed: one of the requested targets already has a pending request (%s); "+
+				"inspect it with `jentic access status %s`, then either drop that target from this request "+
+				"or withdraw the pending one (`jentic access withdraw %s`) and re-file",
+				dup.ExistingRequestID, dup.ExistingRequestID, dup.ExistingRequestID)
 		}
 		fmt.Fprintln(a.Out, theme.Warnf("A pending request already exists (%s); attaching to it.", dup.ExistingRequestID))
 		req, err = client.Get(cmd.Context(), token, dup.ExistingRequestID)

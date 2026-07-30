@@ -517,7 +517,13 @@ async def test_update_rotates_bearer_token(svc: CredentialService, clean_credent
     )
     assert isinstance(updated.details, BearerTokenRedacted)
     assert updated.details.token_preview == "…xyz"
+    # A persisted change must advance updated_at past created_at (#739) — both on
+    # the update return value and on a fresh read.
     assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
+    reread = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert reread.updated_at is not None
+    assert reread.updated_at > reread.created_at
 
 
 async def test_update_name(svc: CredentialService, clean_credentials: None) -> None:
@@ -550,6 +556,144 @@ async def test_update_rejects_type_change(svc: CredentialService, clean_credenti
             CredentialUpdate(type=CredentialType.API_KEY),
             identity=_ADMIN_IDENTITY,
         )
+
+
+async def test_update_rotates_api_key_advances_updated_at(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating an api_key secret bumps updated_at (#739)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Rotate Key",
+            api=_api(),
+            key="old-key-value",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(type=CredentialType.API_KEY, key="new-key-value"),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
+
+
+async def test_update_noop_does_not_bump_updated_at(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A PATCH that persists nothing must leave updated_at frozen (#739).
+
+    The SPA echoes the stored field_name/location on every api_key PATCH; a
+    request that carries only those (matching) echoes and no new secret changes
+    nothing, so updated_at must not move — otherwise it is a lying signal.
+    """
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="No-op",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    before = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(type=CredentialType.API_KEY, field_name="appid", location="query"),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert updated.updated_at == before.updated_at
+
+    reread = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert reread.updated_at == before.updated_at
+
+
+async def test_update_rejects_field_name_change(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Changing the api_key field_name is rejected as immutable (#589)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Locked Binding",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(ImmutableFieldError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.API_KEY, field_name="Default"),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_rejects_location_change(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Changing the api_key location is rejected as immutable (#589)."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Locked Location",
+            api=_api(),
+            key="key-value-123",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(ImmutableFieldError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.API_KEY, location="header"),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_key_with_echoed_binding_succeeds(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating the key while echoing the stored binding is allowed (#589).
+
+    The SPA always resends the seeded field_name/location; a matching echo
+    alongside a new key must rotate the secret and bump updated_at, not 409.
+    """
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.API_KEY,
+            name="Echo Binding",
+            api=_api(),
+            key="old-key-value",
+            location="query",
+            field_name="appid",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(
+            type=CredentialType.API_KEY,
+            key="new-key-value",
+            field_name="appid",
+            location="query",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(updated.details, ApiKeyRedacted)
+    assert updated.details.field_name == "appid"
+    assert updated.updated_at is not None
+    assert updated.updated_at > created.created_at
 
 
 async def test_delete_cascade(svc: CredentialService, clean_credentials: None) -> None:

@@ -9,6 +9,7 @@ import {
 	within,
 	userEvent,
 	checkA11y,
+	createErrorHandler,
 } from '@/__tests__/test-utils';
 import { setToken } from '@/shared/api';
 import { Toaster } from '@/shared/ui';
@@ -127,12 +128,23 @@ describe('AgentDetailPage', () => {
 		resetAgentsStore();
 	});
 
-	it('renders identity, status, and attribution for an agent', async () => {
+	it('renders identity and status once — no duplicated title card', async () => {
+		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
+		// The PageHeader IS the identity surface (toolkit-console grammar): the
+		// name renders exactly once, as the page heading.
 		expect(await screen.findByRole('heading', { name: 'support-agent' })).toBeInTheDocument();
-		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
-		expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('support-agent')).toHaveLength(1);
+		// Pin the status to the header's badge — a bare text query would also
+		// match e.g. a toolkit "Active" pill and mask a wrong-status bug.
+		expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		expect(screen.getByText('Registered')).toBeInTheDocument();
+		// The raw id lives on the Settings tab (like the toolkit id), not in the
+		// page chrome.
+		expect(screen.queryByText('agnt_active_1')).not.toBeInTheDocument();
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('Agent ID')).toBeInTheDocument();
+		expect(screen.getByText('agnt_active_1')).toBeInTheDocument();
 	});
 
 	it('lists bound toolkits for the agent', async () => {
@@ -147,9 +159,27 @@ describe('AgentDetailPage', () => {
 		await waitFor(() => expect(within(row).getAllByText('github')).toHaveLength(1));
 	});
 
-	it('shows the pending access requests this agent has filed (#619)', async () => {
+	it('shows the actor-scoped "Recent changes" audit slice on Overview', async () => {
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
+		// Same audit grammar as the toolkit console: lifecycle events recorded
+		// against this agent as the target, newest first.
+		expect(await screen.findByText('Recent changes')).toBeInTheDocument();
+		expect(await screen.findByText('rotate')).toBeInTheDocument();
+		expect(screen.getByText('approve')).toBeInTheDocument();
+		expect(screen.getByText('register')).toBeInTheDocument();
+		// The acting user resolves through the actor directory (ActorLabel) —
+		// a raw usr_… id in the feed means the directory wiring regressed.
+		expect(await screen.findAllByText(/Admin User/)).not.toHaveLength(0);
+		expect(screen.queryByText('usr_000000000000000000000admin')).not.toBeInTheDocument();
+	});
+
+	it('shows the pending access requests this agent has filed (#619)', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		// The permission story lives on the Access tab.
+		await user.click(screen.getByRole('tab', { name: 'Access' }));
 		expect(await screen.findByRole('heading', { name: 'Access requests' })).toBeInTheDocument();
 		expect(await screen.findByText(/toolkit · use \+2 more/)).toBeInTheDocument();
 	});
@@ -157,7 +187,18 @@ describe('AgentDetailPage', () => {
 	it('shows an honest empty state when no toolkits are bound', async () => {
 		renderDetail('agnt_pending_1');
 		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
-		expect(await screen.findByText(/No toolkits bound to this agent\./)).toBeInTheDocument();
+		// A pending agent additionally explains the approval gate (no bind CTA).
+		expect(
+			await screen.findByText(/No toolkits bound\. Approve this agent first/),
+		).toBeInTheDocument();
+	});
+
+	it('gates toolkit binding to active agents (no Bind button while pending)', async () => {
+		renderDetail('agnt_pending_1');
+		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
+		// The approval queue is where a human vouches for an agent — a pending
+		// one must not accumulate capabilities beforehand.
+		expect(screen.queryByRole('button', { name: 'Bind toolkit' })).not.toBeInTheDocument();
 	});
 
 	it('renders a not-found surface for an unknown id', async () => {
@@ -165,17 +206,137 @@ describe('AgentDetailPage', () => {
 		expect(await screen.findByText('Agent not found')).toBeInTheDocument();
 	});
 
-	it('gates lifecycle actions by status (pending → approve / deny / archive)', async () => {
+	// --- Phase 3: identity console (KPI strip + tabs) ----------------------
+
+	it('renders the KPI strip from the per-actor usage aggregate', async () => {
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		// The agents-module usage fixture sums to 1,204 executions / 99.0%.
+		const strip = await screen.findByRole('group', { name: 'Key metrics' });
+		await waitFor(() => expect(within(strip).getByText('1,204')).toBeInTheDocument());
+		expect(within(strip).getByText('99%')).toBeInTheDocument();
+		expect(within(strip).getByText('Bound toolkits')).toBeInTheDocument();
+	});
+
+	it('hides the KPI strip when monitoring is admin-gated (403)', async () => {
+		worker.use(
+			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
+			createErrorHandler('get', '/executions', { status: 403 }),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		// The usage query resolves to the 403 sentinel and the strip unmounts
+		// entirely (same contract as the toolkit console's UsageStrip) — a
+		// permission gate is not an error, so no alert either.
+		await waitFor(() =>
+			expect(screen.queryByTestId('kpi-strip-loading')).not.toBeInTheDocument(),
+		);
+		expect(screen.queryByRole('group', { name: 'Key metrics' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('shows the per-agent executions feed on the Activity tab with a Monitor deep-link', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		// The feed lists this agent's executions only (agents-module fixture).
+		expect(await screen.findByText('github.create_issue')).toBeInTheDocument();
+		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
+		expect(screen.getByText('Execution volume (7d)')).toBeInTheDocument();
+
+		// The deep-link carries the actor filter into Monitor's URL contract.
+		const link = screen.getByRole('link', { name: /Open in Monitor/ });
+		expect(link.getAttribute('href')).toContain('tab=executions');
+		expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
+		expect(link.getAttribute('href')).toContain('actor_type=agent');
+	});
+
+	it('shows a quiet permission note on the Activity tab for non-admins (403)', async () => {
+		const user = userEvent.setup();
+		worker.use(
+			createErrorHandler('get', '/monitoring/usage', { status: 403 }),
+			createErrorHandler('get', '/executions', { status: 403 }),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Activity' }));
+
+		expect(await screen.findByText('Activity requires elevated access')).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	it('hosts the API key lifecycle on the Keys tab', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+
+		// No key issued yet → honest empty copy + the generate action.
+		expect(
+			await screen.findByText('No API key has been issued for this agent yet.'),
+		).toBeInTheDocument();
+		await user.click(
+			screen.getByRole('button', { name: 'Generate API key for support-agent' }),
+		);
+
+		// Plaintext shows exactly once via the ApiKeyDialog.
+		expect(
+			await screen.findByRole('dialog', { name: 'API key generated' }),
+		).toBeInTheDocument();
+	});
+
+	it('confirms before regenerating an existing API key', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+		await user.click(screen.getByRole('tab', { name: 'Keys' }));
+
+		// First issue destroys nothing → generates directly (no confirm step).
+		await user.click(
+			await screen.findByRole('button', { name: 'Generate API key for support-agent' }),
+		);
+		const reveal = await screen.findByRole('dialog', { name: 'API key generated' });
+		await user.click(within(reveal).getByRole('button', { name: 'Done' }));
+
+		// Now a key exists → the action reads Regenerate and confirms first,
+		// because rotating invalidates the current key immediately.
+		await user.click(
+			await screen.findByRole('button', {
+				name: 'Regenerate API key for support-agent',
+			}),
+		);
+		const confirm = await screen.findByRole('dialog', {
+			name: 'Regenerate API key for support-agent',
+		});
+		expect(
+			within(confirm).getByText(/current API key stops working immediately/),
+		).toBeInTheDocument();
+		await user.click(within(confirm).getByRole('button', { name: 'Regenerate' }));
+
+		expect(
+			await screen.findByRole('dialog', { name: 'API key generated' }),
+		).toBeInTheDocument();
+	});
+
+	it('gates lifecycle actions by status (pending → approve / deny in header)', async () => {
 		renderDetail('agnt_pending_1');
 		await screen.findByRole('heading', { name: 'inbox-triage-bot' });
 		expect(
 			screen.getByRole('button', { name: 'Approve inbox-triage-bot' }),
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Deny inbox-triage-bot' })).toBeInTheDocument();
-		// Pending actors can be archived (cleanup) but not disabled (not active).
+		// Destructive actions (Archive / Disable) moved to the Settings tab's
+		// danger zone (phase 4) — the header only offers constructive ones.
 		expect(
-			screen.getByRole('button', { name: 'Archive inbox-triage-bot' }),
-		).toBeInTheDocument();
+			screen.queryByRole('button', { name: 'Archive inbox-triage-bot' }),
+		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole('button', { name: 'Disable inbox-triage-bot' }),
 		).not.toBeInTheDocument();
@@ -183,8 +344,6 @@ describe('AgentDetailPage', () => {
 
 	it('keeps the deny dialog open and toasts when the deny fails', async () => {
 		const user = userEvent.setup();
-		const { worker } = await import('@/mocks/browser');
-		const { createErrorHandler } = await import('@/__tests__/test-utils');
 		worker.use(createErrorHandler('post', '/agents/:id\\:deny', { status: 500 }));
 
 		renderDetail('agnt_pending_1');
@@ -208,7 +367,7 @@ describe('AgentDetailPage', () => {
 
 		expect(await screen.findByText('Agent approved')).toBeInTheDocument();
 		await waitFor(() => {
-			expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Active');
 		});
 	});
 
@@ -221,6 +380,143 @@ describe('AgentDetailPage', () => {
 		const dialog = await screen.findByRole('dialog');
 		await user.click(within(dialog).getByRole('button', { name: 'Deny' }));
 		expect(await within(dialog).findByText('A reason is required.')).toBeInTheDocument();
+	});
+
+	// --- Phase 4: Settings tab (PATCH /agents/:id + danger zone) -----------
+
+	it('renames an agent from the Settings tab, sending only the dirty field', async () => {
+		const user = userEvent.setup();
+		// Spy on the PATCH body to pin real PATCH semantics (only changed keys),
+		// then fall through to the module's stateful mock — the hook invalidates
+		// the detail cache, so the refetch must serve the renamed row.
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
+			}),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+
+		// Save is disabled until something changes.
+		const save = screen.getByRole('button', { name: 'Save changes' });
+		expect(save).toBeDisabled();
+
+		await user.clear(nameInput);
+		await user.type(nameInput, 'support-agent-v2');
+		expect(save).toBeEnabled();
+		await user.click(save);
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		// Only the renamed field crossed the wire — no description/owner echo.
+		expect(patchBody).toEqual({ name: 'support-agent-v2' });
+		// The detail cache invalidates and refetches → header updates.
+		expect(
+			await screen.findByRole('heading', { name: 'support-agent-v2' }),
+		).toBeInTheDocument();
+	});
+
+	it('clears the description by sending an explicit null', async () => {
+		const user = userEvent.setup();
+		let patchBody: Record<string, unknown> | null = null;
+		worker.use(
+			http.patch('/agents/:id', async ({ request }) => {
+				patchBody = (await request.clone().json()) as Record<string, unknown>;
+				return undefined;
+			}),
+		);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const descInput = await screen.findByLabelText('Description');
+		await user.clear(descInput);
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
+		expect(patchBody).toEqual({ description: null });
+	});
+
+	it('does not expose an owner editor — ownership is not routine metadata', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await screen.findByLabelText('Name');
+		// Reassigning the accountable human is an administrative act; the
+		// Settings form deliberately only edits name + description.
+		expect(screen.queryByLabelText('Owner')).not.toBeInTheDocument();
+	});
+
+	it('disables an active agent through the danger-zone confirm flow', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		await user.click(await screen.findByRole('button', { name: 'Disable support-agent' }));
+
+		// The danger zone never mutates directly — it routes through the
+		// page-level confirm dialog first.
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/Disable support-agent/)).toBeInTheDocument();
+		await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
+
+		expect(await screen.findByText('Agent disabled')).toBeInTheDocument();
+		// Detail cache invalidates → the header badge flips and the header now
+		// offers the constructive Enable action.
+		await waitFor(() => {
+			expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Disabled');
+		});
+		expect(
+			await screen.findByRole('button', { name: 'Enable support-agent' }),
+		).toBeInTheDocument();
+	});
+
+	it('keeps the draft and toasts when the PATCH fails', async () => {
+		const user = userEvent.setup();
+		worker.use(createErrorHandler('patch', '/agents/:id', { status: 500 }));
+
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const nameInput = await screen.findByLabelText('Name');
+		await user.clear(nameInput);
+		await user.type(nameInput, 'renamed-agent');
+		await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+		expect(await screen.findByText('Failed to update the agent.')).toBeInTheDocument();
+		// Draft survives so the user can retry without retyping.
+		expect(nameInput).toHaveValue('renamed-agent');
+	});
+
+	it('hosts Disable and Archive in the Settings danger zone for an active agent', async () => {
+		const user = userEvent.setup();
+		renderDetail('agnt_active_1');
+		await screen.findByRole('heading', { name: 'support-agent' });
+
+		// Header carries no destructive lifecycle buttons any more.
+		expect(
+			screen.queryByRole('button', { name: 'Disable support-agent' }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: 'Archive support-agent' }),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		expect(await screen.findByText('Danger zone')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Disable support-agent' })).toBeInTheDocument();
+
+		// Archive routes through the cascade-delete confirmation dialog.
+		await user.click(screen.getByRole('button', { name: 'Archive support-agent' }));
+		const dialog = await screen.findByRole('dialog');
+		expect(within(dialog).getByText(/support-agent/)).toBeInTheDocument();
 	});
 
 	it('has no critical a11y violations', async () => {

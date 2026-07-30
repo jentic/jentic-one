@@ -248,8 +248,10 @@ export function EditCredentialSheet({
 
 /**
  * Structural equality for two form snapshots — drives the edit sheet's
- * dirty-tracking. Compares every scalar field plus a shallow compare of the
- * `serverVars` record (untouched in edit, but compared defensively).
+ * dirty-tracking. Compares every *editable* scalar field plus a shallow compare
+ * of the `serverVars` record. `fieldName`/`location` are omitted: they are
+ * immutable after create (#589), rendered read-only in edit mode, so they can
+ * never legitimately dirty the form.
  */
 function formStatesEqual(a: CredentialFormState, b: CredentialFormState): boolean {
 	const keys: (keyof CredentialFormState)[] = [
@@ -260,8 +262,6 @@ function formStatesEqual(a: CredentialFormState, b: CredentialFormState): boolea
 		'apiVersion',
 		'token',
 		'key',
-		'fieldName',
-		'location',
 		'username',
 		'password',
 		'clientId',

@@ -8,14 +8,13 @@ import (
 )
 
 func TestPlanBuildsFullProvisioningChain(t *testing.T) {
-	opts := &accessRequestOptions{
-		provision: "posthog.com/posthog-api",
-		auth:      "bearer",
-		rulesJSON: `[{"effect":"allow","methods":["GET"],"path":".*"}]`,
-	}
-	items, err := opts.plan()
+	items, err := buildProvisionPlan(
+		"posthog.com/posthog-api",
+		"bearer",
+		`[{"effect":"allow","methods":["GET"],"path":".*"}]`,
+	)
 	if err != nil {
-		t.Fatalf("plan() error: %v", err)
+		t.Fatalf("buildProvisionPlan() error: %v", err)
 	}
 	if len(items) != 4 {
 		t.Fatalf("expected 4 items, got %d", len(items))
@@ -33,9 +32,14 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 		}
 	}
 
-	// The credential:bind item carries the proposed rules.
+	// The credential:bind item carries the proposed rules AND the API
+	// reference: item order is not guaranteed server-side, so the reference is
+	// what ties the bind to its chain in a composite request.
 	if len(items[2].Rules) != 1 || items[2].Rules[0].Effect != "allow" {
 		t.Errorf("credential:bind should carry the proposed allow rule, got %+v", items[2].Rules)
+	}
+	if items[2].ResourceReference["vendor"] != "posthog.com" || items[2].ResourceReference["name"] != "posthog-api" {
+		t.Errorf("credential:bind should carry the api reference, got %v", items[2].ResourceReference)
 	}
 
 	// The provision item carries the detected auth type and the API reference.
@@ -48,10 +52,9 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 }
 
 func TestPlanNoAuthProvisionsNoAuthCredential(t *testing.T) {
-	opts := &accessRequestOptions{provision: "open-meteo.com/forecast", auth: "none"}
-	items, err := opts.plan()
+	items, err := buildProvisionPlan("open-meteo.com/forecast", "none", "")
 	if err != nil {
-		t.Fatalf("plan() error: %v", err)
+		t.Fatalf("buildProvisionPlan() error: %v", err)
 	}
 	// A no-auth plan is the SAME four-item shape as an auth plan — a credential
 	// row is still required for the credential:bind effect to attach the toolkit
@@ -73,15 +76,13 @@ func TestPlanNoAuthProvisionsNoAuthCredential(t *testing.T) {
 }
 
 func TestPlanRejectsInvalidAuth(t *testing.T) {
-	opts := &accessRequestOptions{provision: "x.com/api", auth: "kerberos"}
-	if _, err := opts.plan(); err == nil {
+	if _, err := buildProvisionPlan("x.com/api", "kerberos", ""); err == nil {
 		t.Fatal("expected error for invalid --auth value")
 	}
 }
 
 func TestPlanRejectsBadRulesJSON(t *testing.T) {
-	opts := &accessRequestOptions{provision: "x.com/api", rulesJSON: "not json"}
-	if _, err := opts.plan(); err == nil {
+	if _, err := buildProvisionPlan("x.com/api", "", "not json"); err == nil {
 		t.Fatal("expected error for malformed --rules-json")
 	}
 }
@@ -126,8 +127,7 @@ func TestParseProposedRulesEmpty(t *testing.T) {
 }
 
 func TestPlanItemsSerializeWithoutEmptyIDs(t *testing.T) {
-	opts := &accessRequestOptions{provision: "x.com/api", auth: "bearer"}
-	items, _ := opts.plan()
+	items, _ := buildProvisionPlan("x.com/api", "bearer", "")
 	// credential:bind has no resource_id/to_id yet (filled at approval); ensure
 	// they are omitted from the wire form rather than sent as empty strings.
 	b, _ := json.Marshal(items[2])

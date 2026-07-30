@@ -156,13 +156,14 @@ export function buildUpdateBody(
 		case CredentialType.BEARER_TOKEN:
 			return { type, ...namePatch, ...svPatch, token: secret(state.token) };
 		case CredentialType.API_KEY:
+			// field_name/location are immutable after create (#589): the edit UI
+			// locks them, so the update body omits them entirely. Only the secret
+			// (key) rotates.
 			return {
 				type,
 				...namePatch,
 				...svPatch,
 				key: secret(state.key),
-				field_name: state.fieldName.trim() || undefined,
-				location: toKeyLocationEnum(state.location),
 			};
 		case CredentialType.BASIC:
 			return {

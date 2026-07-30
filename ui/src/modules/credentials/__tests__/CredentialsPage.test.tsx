@@ -416,6 +416,26 @@ describe('CredentialsPage', () => {
 		expect(save).toBeEnabled();
 	});
 
+	it('locks the api_key field name and location in the edit sheet (#589)', async () => {
+		resetCredentialsStore([
+			makeMockCredential({
+				credential_id: 'ck1',
+				name: 'Key cred',
+				type: CredentialType.API_KEY,
+				details: { field_name: 'appid', location: 'query', hint: '••••' },
+			}),
+		]);
+		renderWithProviders(<CredentialsPage />);
+		const user = userEvent.setup();
+
+		await screen.findByText('Key cred');
+		await user.click(screen.getByRole('button', { name: 'Edit credential Key cred' }));
+		await screen.findByRole('heading', { name: 'Edit credential' });
+
+		const fieldName = await screen.findByDisplayValue('appid');
+		expect(fieldName).toBeDisabled();
+	});
+
 	it('has no critical a11y violations on the populated list', async () => {
 		// Render through the real app shell (authenticated) so the page sits in
 		// its painted layout context. The grid reveals cards with a framer
