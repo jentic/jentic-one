@@ -42,6 +42,12 @@ type FileConfig struct {
 	// been granted — paths and names only, never secrets. Nil until the operator
 	// has been through the agent-user decision at least once.
 	Agent *AgentAccount `yaml:"agent_account,omitempty"`
+	// SameUserNoticeSeen records that the operator has already been shown the
+	// one-time notice that `jentic run` is launching the agent same-user (no
+	// dedicated account, no confinement — the agent has the operator's own
+	// filesystem access). It is set the first time that unconfined path is taken so
+	// the security notice is shown once, not nagged on every launch.
+	SameUserNoticeSeen bool `yaml:"same_user_notice_seen,omitempty"`
 
 	// Path records where the config was loaded from (empty if no file existed).
 	Path string `yaml:"-"`

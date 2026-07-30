@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -162,6 +167,72 @@ func TestRunRegisteredOnAPITree(t *testing.T) {
 	ctl := newCtlRootCmd(testApp(t))
 	if hasCommand(ctl, "run") {
 		t.Error("jenticctl root unexpectedly registers 'run'")
+	}
+}
+
+// TestWarnSameUserOnce proves the unconfined-launch notice is shown exactly once:
+// the first call emits it and persists SameUserNoticeSeen; a second call (fresh
+// config loaded from disk) stays silent.
+func TestWarnSameUserOnce(t *testing.T) {
+	app := testApp(t)
+	out := app.Out.(*bytes.Buffer)
+
+	cfg1, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	app.warnSameUserOnce(cfg1)
+	if !strings.Contains(out.String(), "no confinement") {
+		t.Fatalf("first launch should warn, got: %q", out.String())
+	}
+	if !cfg1.SameUserNoticeSeen {
+		t.Error("in-memory cfg should record the notice as seen")
+	}
+
+	// A subsequent launch reloads config from disk and must stay silent.
+	out.Reset()
+	cfg2, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !cfg2.SameUserNoticeSeen {
+		t.Fatal("SameUserNoticeSeen must persist across reload")
+	}
+	app.warnSameUserOnce(cfg2)
+	if out.String() != "" {
+		t.Errorf("second launch must not warn again, got: %q", out.String())
+	}
+}
+
+// TestWireGracefulCancelSendsSIGTERM proves cancellation terminates the child with
+// a catchable SIGTERM (which sudo can relay down the launch chain) rather than the
+// exec default SIGKILL to the direct child, and sets a WaitDelay SIGKILL backstop.
+func TestWireGracefulCancelSendsSIGTERM(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// A long-lived child so the process is alive when we exercise Cancel.
+	c := exec.CommandContext(ctx, "sleep", "60")
+	wireGracefulCancel(c)
+	if c.WaitDelay != cancelGracePeriod {
+		t.Errorf("WaitDelay = %v, want %v", c.WaitDelay, cancelGracePeriod)
+	}
+	if c.Cancel == nil {
+		t.Fatal("Cancel must be set so ctx-cancel sends SIGTERM, not SIGKILL")
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := c.Cancel(); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	err := c.Wait()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("expected ExitError from a signalled child, got %v", err)
+	}
+	ws, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Errorf("child should have been terminated by SIGTERM, got %v", exit)
 	}
 }
 

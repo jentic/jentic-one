@@ -10,6 +10,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -19,6 +21,33 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
+
+// cancelGracePeriod is how long a launched agent session is given to exit on the
+// SIGTERM sent when the run context is cancelled, before the exec package escalates
+// to SIGKILL. It is generous because the SIGTERM has to relay down the launch chain
+// (sudo → shell → confinement wrapper → agent) and the agent may flush transcript
+// state on the way out.
+const cancelGracePeriod = 5 * time.Second
+
+// wireGracefulCancel makes ctx-cancellation of a launched session TERMINATE the
+// child rather than SIGKILL it. exec.CommandContext's default cancel sends SIGKILL
+// to the DIRECT child — for a confined launch that child is `sudo`, which cannot
+// relay an uncatchable SIGKILL, so the agent process tree underneath it would be
+// orphaned (reparented to init and left running) on a `jentic run` cancel. Sending
+// SIGTERM instead lets sudo (and the shells below it) forward the signal so the
+// whole tree unwinds; WaitDelay is the backstop that still forces a SIGKILL if the
+// tree hasn't exited within the grace period. Interactive Ctrl-C is unaffected: it
+// is delivered by the tty to the entire foreground process group by the kernel, so
+// this only governs the programmatic-cancel path (a SIGINT/SIGTERM to the jentic
+// process, which cancels ctx).
+func wireGracefulCancel(cmd *exec.Cmd) {
+	cmd.Cancel = func() error {
+		// Best-effort: if the process has already gone, Signal returns an error we
+		// deliberately ignore — WaitDelay/Wait handle the terminal state.
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
+	cmd.WaitDelay = cancelGracePeriod
+}
 
 type runOptions struct {
 	home         bool
@@ -294,6 +323,8 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary)
 	}
 
+	a.warnSameUserOnce(cfg)
+
 	dir := ""
 	if !opts.home && len(posArgs) > 1 {
 		abs, aerr := filepath.Abs(posArgs[1])
@@ -309,6 +340,7 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 	// The operator's own active profile (flag < JENTIC_PROFILE < config default)
 	// carries into the session so the agent's `jentic` calls act on it.
 	c.Env = append(os.Environ(), config.ProfileEnv+"="+cfg.ResolvedProfileName(opts.profile))
+	wireGracefulCancel(c)
 	if err := c.Run(); err != nil {
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
@@ -317,6 +349,36 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 		return fmt.Errorf("launch %s: %w", desc.Binary, err)
 	}
 	return nil
+}
+
+// warnSameUserOnce shows the one-time security notice that this launch runs the
+// agent SAME-USER: no dedicated Unix account and no process confinement, so the
+// agent has the operator's own filesystem access (its keys, browser session, and
+// the jentic-one credential store are all reachable). The isolated path errors
+// closed when it can't confine; this unconfined path is only reached when the
+// operator never enabled isolation, so it must not fail silently-permissive — the
+// operator should know the boundary isn't there and how to get it. The notice is
+// shown once (persisted via SameUserNoticeSeen) so it informs without nagging every
+// launch. Persisting is best-effort: a save failure just means it may show again.
+func (a *App) warnSameUserOnce(cfg *config.FileConfig) {
+	if cfg.SameUserNoticeSeen {
+		return
+	}
+	fmt.Fprintln(a.Out, theme.Warnf(
+		"Running the agent as YOU — no dedicated account, no confinement."))
+	fmt.Fprintln(a.Out, theme.Dim.Render(
+		"  It can read everything you can: your keys, browser session, and the jentic-one"))
+	fmt.Fprintln(a.Out, theme.Dim.Render(
+		"  credential store. Run `jentic bootstrap` to isolate it behind its own Unix user."))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  (Shown once.)"))
+
+	if _, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
+		c.SameUserNoticeSeen = true
+		return nil
+	}); err != nil {
+		return // best-effort: the notice may show again next launch
+	}
+	cfg.SameUserNoticeSeen = true
 }
 
 // resolveAgentUser applies the precedence: --agent-user flag, then the recorded
@@ -783,6 +845,9 @@ func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
 	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, sessionProfile, grantedDirs, agentArgs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// On a programmatic cancel (SIGINT/SIGTERM to jentic), terminate the confined
+	// session gracefully instead of SIGKILLing sudo and orphaning the agent tree.
+	wireGracefulCancel(cmd)
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
