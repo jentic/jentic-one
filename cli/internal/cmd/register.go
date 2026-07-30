@@ -156,8 +156,12 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	a.handOffToAgent(target)
 
 	fmt.Fprintln(a.Out, theme.Successf("Tokens saved to %s", sess.Profile.Dir()))
+	// Preview only the short-lived access token as a "it worked" confirmation. The
+	// refresh token is the long-lived credential — never echo it (not even a
+	// truncated preview), since it lands in terminal scrollback, tmux buffers, and
+	// CI logs. It is safe on disk in the profile (0600); that is the only place it
+	// needs to be.
 	fmt.Fprintln(a.Out, theme.Field("access", shorten(tokens.AccessToken)))
-	fmt.Fprintln(a.Out, theme.Field("refresh", shorten(tokens.RefreshToken)))
 	if !tokens.AccessExpiresAt.IsZero() {
 		fmt.Fprintln(a.Out, theme.Field("expires", tokens.AccessExpiresAt.Format(time.RFC3339)))
 	}

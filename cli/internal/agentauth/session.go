@@ -87,8 +87,22 @@ func (s *Session) ResetRegistration() {
 	s.Meta.RegistrationAccessToken = ""
 }
 
+// ErrIdentityMismatch is returned when a freshly minted token resolves (via /me)
+// to an agent other than the one this profile is registered as. It means the token
+// pair was NOT persisted — acting on it would let the CLI operate as the wrong
+// identity, so we refuse rather than silently save a mis-attributed credential.
+var ErrIdentityMismatch = errors.New("minted token resolves to a different agent identity; not saving it")
+
 // MintFresh signs an assertion and exchanges it for a new token pair, saving it
 // to the profile. Returns *authclient.PendingError while the agent is not active.
+//
+// Before persisting, the freshly minted access token is checked against /me: if
+// the server reports an identity that CONTRADICTS this profile's registered agent
+// id, the token is discarded and ErrIdentityMismatch is returned — a confused
+// server or a key/profile mix-up must not leave the CLI holding a token minted for
+// someone else. The check is deliberately best-effort in the ambiguous cases (the
+// /me call fails, or the response carries no identity field we recognise): minting
+// must not hard-depend on a second endpoint, so we only fail on a definite mismatch.
 func (s *Session) MintFresh(ctx context.Context) (*profile.Tokens, error) {
 	if s.Meta.AgentID == "" {
 		return nil, ErrNotRegistered
@@ -101,7 +115,35 @@ func (s *Session) MintFresh(ctx context.Context) (*profile.Tokens, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !s.identityMatches(ctx, pair.AccessToken) {
+		return nil, ErrIdentityMismatch
+	}
 	return s.persist(pair)
+}
+
+// identityMatches reports whether the access token resolves (via /me) to this
+// profile's registered agent id, or whether the answer is indeterminate. It
+// returns false ONLY on a definite contradiction — a recognised identity field is
+// present, non-empty, and none of them equals AgentID. A failed /me call or a
+// response with no recognised identity field returns true (can't assert → don't
+// block minting; see MintFresh).
+func (s *Session) identityMatches(ctx context.Context, accessToken string) bool {
+	me, err := s.Client.Me(ctx, accessToken)
+	if err != nil {
+		return true // can't reach /me — best-effort, don't block the mint
+	}
+	var sawIdentity bool
+	for _, k := range []string{"sub", "client_id", "id", "agent_id"} {
+		if v, ok := me[k].(string); ok && v != "" {
+			sawIdentity = true
+			if v == s.Meta.AgentID {
+				return true
+			}
+		}
+	}
+	// A recognised identity field was present but none matched → real mismatch.
+	// No recognised field at all → indeterminate, allow.
+	return !sawIdentity
 }
 
 // ValidToken returns a non-expired access token, refreshing or re-minting as
