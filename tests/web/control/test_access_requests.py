@@ -283,6 +283,162 @@ def test_get_not_found_returns_404(filer_client: TestClient) -> None:
     assert resp.json()["type"] == "access_request_not_found"
 
 
+# --- already_satisfied enrichment (issue #826) ---
+
+
+async def test_credential_bind_already_satisfied_flips_on_manual_binding(
+    filer_client: TestClient, web_context: Context
+) -> None:
+    """A pending credential:bind flips False → True once the binding exists.
+
+    The manual-fulfilment loop: an operator binds the credential by hand
+    (outside the wizard), and the request's GET now reports the item as
+    already in effect so the reviewer can approve instead of re-doing it.
+    List pages skip the enrichment (null) by design.
+    """
+    data = _file_request(filer_client)  # credential:bind cred_001 → tk_target
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["items"][0]["already_satisfied"] is False
+
+    listed = filer_client.get("/access-requests").json()["data"][0]
+    assert listed["items"][0]["already_satisfied"] is None
+
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) "
+                "VALUES ('tcb_webtest_sat', 'tk_target', 'cred_001') ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.commit()
+    # seed_binding's teardown removes tk_target's bindings, so no local cleanup.
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["items"][0]["already_satisfied"] is True
+
+
+def test_toolkit_bind_already_satisfied_and_null_once_decided(
+    filer_client: TestClient, owner_client: TestClient
+) -> None:
+    """A toolkit:bind whose agent↔toolkit binding already exists reports True;
+    once decided the hint is no longer computed (null)."""
+    # seed_binding already binds FILER_SUB to tk_target in the admin DB.
+    filed = filer_client.post(
+        "/access-requests",
+        json={
+            "items": [{"resource_type": "toolkit", "action": "bind", "resource_id": "tk_target"}]
+        },
+    )
+    assert filed.status_code == 202, filed.text
+    request_id = filed.json()["id"]
+    item_id = filed.json()["items"][0]["id"]
+
+    got = filer_client.get(f"/access-requests/{request_id}").json()
+    assert got["items"][0]["already_satisfied"] is True
+
+    decided = owner_client.post(
+        f"/access-requests/{request_id}:decide",
+        json={"items": [{"item_id": item_id, "decision": "approved"}]},
+    )
+    assert decided.status_code == 200, decided.text
+    got = filer_client.get(f"/access-requests/{request_id}").json()
+    assert got["items"][0]["status"] == "approved"
+    assert got["items"][0]["already_satisfied"] is None
+
+
+async def test_toolkit_bind_by_reference_already_satisfied(
+    filer_client: TestClient, owner_client: TestClient, web_context: Context
+) -> None:
+    """A reference-only toolkit:bind resolves under the viewer's scope and
+    reports True when the agent is already bound to a resolved toolkit."""
+    # Bind a canonical-vendor credential to tk_target so the reference resolves
+    # (seed_binding's cred_001 carries a raw, unslugged vendor on purpose).
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
+                "VALUES ('cred_refsat', 'token_value', 'cred-refsat', 'webtest-refsat', :owner) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) "
+                "VALUES ('tcb_refsat', 'tk_target', 'cred_refsat') ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.commit()
+    try:
+        filed = filer_client.post(
+            "/access-requests",
+            json={
+                "items": [
+                    {
+                        "resource_type": "toolkit",
+                        "action": "bind",
+                        "resource_reference": {"vendor": "webtest-refsat"},
+                    }
+                ]
+            },
+        )
+        assert filed.status_code == 202, filed.text
+        request_id = filed.json()["id"]
+
+        # The owner sees tk_target (they own it): the reference resolves to it
+        # and the agent is already bound → True.
+        got = owner_client.get(f"/access-requests/{request_id}").json()
+        assert got["items"][0]["already_satisfied"] is True
+
+        # The filer agent (no owner:toolkits:read delegation) can't see any
+        # toolkit serving the API — determinately unsatisfied under ITS scope.
+        got = filer_client.get(f"/access-requests/{request_id}").json()
+        assert got["items"][0]["already_satisfied"] is False
+    finally:
+        async with web_context.control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM toolkit_credential_bindings WHERE id = 'tcb_refsat'")
+            )
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_refsat'"))
+            await session.commit()
+
+
+async def test_scope_grant_already_satisfied_flips_on_manual_grant(
+    filer_client: TestClient, web_context: Context
+) -> None:
+    """A pending scope:grant flips False → True once the actor holds the scope."""
+    filed = filer_client.post(
+        "/access-requests",
+        json={
+            "items": [{"resource_type": "scope", "action": "grant", "resource_id": "apis:write"}]
+        },
+    )
+    assert filed.status_code == 202, filed.text
+    request_id = filed.json()["id"]
+
+    got = filer_client.get(f"/access-requests/{request_id}").json()
+    assert got["items"][0]["already_satisfied"] is False
+
+    try:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO actor_scope_grants (id, actor_id, actor_type, scope, granted_by) "
+                    "VALUES ('asg_webtest_sat', :actor, 'agent', 'apis:write', :granted_by) "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {"actor": FILER_SUB, "granted_by": OWNER_SUB},
+            )
+            await session.commit()
+        got = filer_client.get(f"/access-requests/{request_id}").json()
+        assert got["items"][0]["already_satisfied"] is True
+    finally:
+        async with web_context.admin_db.session() as session:
+            await session.execute(
+                text("DELETE FROM actor_scope_grants WHERE id = 'asg_webtest_sat'")
+            )
+            await session.commit()
+
+
 # --- Decide ---
 
 

@@ -8,9 +8,10 @@ import {
 	Settings,
 	ShieldCheck,
 	ShieldOff,
+	Unplug,
 } from 'lucide-react';
 import { Button, EmptyState, TabNav } from '@/shared/ui';
-import { useToolkit } from '@/modules/toolkits/api';
+import { useToolkit, useToolkitAgents } from '@/modules/toolkits/api';
 import { OverviewTab } from '@/modules/toolkits/components/detail/OverviewTab';
 import { ActivityTab } from '@/modules/toolkits/components/detail/ActivityTab';
 import { AccessTab } from '@/modules/toolkits/components/detail/AccessTab';
@@ -63,6 +64,9 @@ export interface ToolkitDetailBodyProps {
 
 export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBodyProps) {
 	const { data: toolkit, isLoading } = useToolkit(toolkitId);
+	// Shares the Overview tab's query cache (same key), so this costs nothing
+	// extra when Overview is the active tab.
+	const { data: boundAgents } = useToolkitAgents(toolkitId);
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const tabParam = searchParams.get('tab');
@@ -109,6 +113,16 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 		);
 
 	const suspended = !toolkit.active;
+	// A toolkit with credentials but NO bound agent serves nothing: this is the
+	// classic manual-setup dead end (issue #826) — the operator created the
+	// toolkit and bound a credential but never linked the agent, so every call
+	// still fails. Surface it inline rather than letting them discover it via
+	// an agent's 403. Suppressed while suspended (the danger banner owns that
+	// state) and until the agents query resolves (no flash on load).
+	const unservedCredentials =
+		!suspended && toolkit.credential_count > 0 && boundAgents !== undefined
+			? boundAgents.length === 0
+			: false;
 
 	const tabOptions = [
 		{
@@ -157,6 +171,42 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 									callers. Restore access with the kill switch above.
 								</p>
 							</div>
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+
+			<AnimatePresence initial={false}>
+				{unservedCredentials && (
+					<motion.div key="no-agents-banner" {...panelMotion} className="overflow-hidden">
+						<div
+							className="border-warning/40 bg-warning/5 flex items-start gap-3 rounded-xl border p-4"
+							role="status"
+							data-testid="toolkit-no-agents-banner"
+						>
+							<div className="bg-warning/15 text-warning flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+								<Unplug className="h-5 w-5" />
+							</div>
+							<div className="min-w-0 flex-1">
+								<p className="text-warning font-heading text-sm font-semibold">
+									No agent is linked to this toolkit
+								</p>
+								<p className="text-muted-foreground mt-0.5 text-sm">
+									Its bound credential
+									{toolkit.credential_count === 1 ? ' is' : 's are'} not reachable
+									by any agent yet — link an agent from the Overview tab to put{' '}
+									{toolkit.credential_count === 1 ? 'it' : 'them'} to use.
+								</p>
+							</div>
+							{activeTab !== 'overview' && (
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={() => setTab('overview')}
+								>
+									Go to Overview
+								</Button>
+							)}
 						</div>
 					</motion.div>
 				)}

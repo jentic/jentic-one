@@ -845,3 +845,56 @@ describe('ToolkitDetailPage', () => {
 		expect(screen.queryByRole('dialog', { name: /delete toolkit/i })).toBeInTheDocument();
 	});
 });
+
+describe('ToolkitDetailPage — no-linked-agents banner', () => {
+	it('warns when credentials are bound but no agent is linked', async () => {
+		// tk_demo_github carries credential_count: 1; strip its bound agents.
+		seedAgents({ bound: [], workspace: [] });
+		const { container } = renderWithProviders(<ToolkitDetailPage />, {
+			route: ROUTE,
+			path: PATH,
+		});
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		const banner = await screen.findByTestId('toolkit-no-agents-banner');
+		expect(banner).toHaveTextContent(/no agent is linked to this toolkit/i);
+		await checkA11y(container);
+	});
+
+	it('shows no banner when an agent is bound', async () => {
+		// Default handlers bind Support Bot to tk_demo_github.
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// Wait for the bound-agents query to resolve (Overview lists the agent)
+		// so the assertion isn't a false pass on the not-yet-loaded state.
+		await screen.findByText('Support Bot');
+		expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument();
+	});
+
+	it('shows no banner when the toolkit has no credentials to serve', async () => {
+		worker.use(
+			http.get('/toolkits/:toolkitId', () =>
+				HttpResponse.json({
+					toolkit_id: 'tk_demo_github',
+					name: 'GitHub Tools',
+					description: null,
+					active: true,
+					created_by: 'admin@local',
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: null,
+					credential_count: 0,
+					key_count: 0,
+				}),
+			),
+		);
+		seedAgents({ bound: [], workspace: [] });
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// An unbound, credential-less toolkit is just new — nothing to warn about.
+		await waitFor(() =>
+			expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument(),
+		);
+	});
+});
