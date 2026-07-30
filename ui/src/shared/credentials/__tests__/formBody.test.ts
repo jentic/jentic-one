@@ -152,6 +152,18 @@ describe('buildUpdateBody', () => {
 			password: 'p',
 		});
 	});
+
+	it('omits field_name/location for api_key (immutable after create, #589)', () => {
+		const body = buildUpdateBody(
+			CredentialType.API_KEY,
+			{ ...EMPTY_FORM, name: 'Same', key: 'new-key', fieldName: 'appid', location: 'query' },
+			'Same',
+		);
+		// Only the rotated secret is sent; the binding is never echoed back.
+		expect(body).toEqual({ type: 'api_key', key: 'new-key' });
+		expect(body).not.toHaveProperty('field_name');
+		expect(body).not.toHaveProperty('location');
+	});
 });
 
 describe('validateCreate', () => {

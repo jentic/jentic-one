@@ -358,3 +358,34 @@ def wrong_scope_client(web_context: Context) -> Iterator[TestClient]:
     app = _build_app(web_context, WRONG_SCOPE_IDENTITY)
     with TestClient(app) as tc:
         yield tc
+
+
+# --- Credential-focused client (credential CRUD, no access-request seeding) ---
+
+CRED_WRITER_IDENTITY = Identity(
+    sub="usr_webtest_cred_writer",
+    email="credwriter@test.local",
+    permissions=_effective("org:admin", "credentials:write"),
+)
+
+
+@pytest.fixture()
+async def clean_cred_writer_credentials(web_context: Context) -> AsyncGenerator[None, None]:
+    """Remove credentials created by the credential-writer identity."""
+    yield
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("DELETE FROM credentials WHERE created_by = :who"),
+            {"who": "usr_webtest_cred_writer"},
+        )
+        await session.commit()
+
+
+@pytest.fixture()
+def cred_writer_client(
+    web_context: Context, clean_cred_writer_credentials: None
+) -> Iterator[TestClient]:
+    """TestClient that can create/update credentials (org:admin + credentials:write)."""
+    app = _build_app(web_context, CRED_WRITER_IDENTITY)
+    with TestClient(app) as tc:
+        yield tc
