@@ -561,6 +561,17 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, a
 	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
 		return err
 	}
+	// Positively confirm the leaf ACE actually landed rather than trusting the exit
+	// code + stderr classification alone: runGrant treats a benign mid-scan race as
+	// success, and a subtly malformed ACE spec could exit zero without granting. Read
+	// the ACL back and require the agent's entry to be present before recording —
+	// otherwise we'd persist a grant that doesn't exist on disk, and a later launch
+	// would silently fail to reach the directory. This closes the gap between "the
+	// grant command returned" and "the agent can actually read/write here".
+	if !localagent.AgentACLPresent(ctx, agentUser, abs) {
+		return fmt.Errorf("grant directory access: the access-control entry for %s did not "+
+			"appear on %s after granting — not recording it", agentUser, abs)
+	}
 	// Record the grant under the config lock, reloading first, so a concurrent
 	// `jentic run` granting a different directory can't drop this one (each would
 	// otherwise load, append its own dir, and the last Save would win). Mutate

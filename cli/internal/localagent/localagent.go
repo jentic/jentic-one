@@ -339,15 +339,29 @@ func AncestorsNeedingTraverse(ctx context.Context, agentUser, home, leaf string)
 	return need
 }
 
+// sudoC builds a `sudo env LC_ALL=C <cmd>` invocation, forcing the elevated
+// program's diagnostics into stable, byte-for-byte English regardless of the
+// operator's locale. The grant path parses chmod/setfacl stderr to tell a benign
+// mid-scan "No such file or directory" race apart from a real failure
+// (classifyGrantStderr); under, say, a French or Japanese locale those messages
+// are translated and the parse would misread a harmless race as a hard error and
+// abort an already-applied grant. Setting the locale via `env` (the elevated
+// program) rather than a `sudo LC_ALL=C` command-line assignment makes it
+// independent of the sudoers env policy — `env` sets the variable itself before
+// exec'ing the real command.
+func sudoC(args ...string) *exec.Cmd {
+	//nolint:gosec // callers pass config-derived account names and resolved paths.
+	return exec.Command("sudo", append([]string{"env", "LC_ALL=C"}, args...)...)
+}
+
 // TraverseGrantCmd returns the command that grants the agent execute-only
 // (traverse/search — not list or read) on a single directory (Layer 1). It is
 // non-recursive and non-inherited: it opens pass-through on exactly this dir.
 func TraverseGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "chmod", "+a", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
-			"user:"+agentUser+" allow execute", dir)
+		return sudoC("chmod", "+a", "user:"+agentUser+" allow execute", dir)
 	}
-	return exec.Command("sudo", "setfacl", "-m", "u:"+agentUser+":--x", dir) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+	return sudoC("setfacl", "-m", "u:"+agentUser+":--x", dir)
 }
 
 // macLeafACE is the macOS ACL permission set granted on the rwx-leaf. It must be
@@ -379,12 +393,12 @@ const macLeafACE = "list,add_file,add_subdirectory,search,delete,delete_child," 
 // obvious alternative.)
 func LeafGrantCmd(agentUser, dir string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
-		return exec.Command("sudo", "find", dir, "!", "-type", "l", //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+		return sudoC("find", dir, "!", "-type", "l",
 			"-exec", "chmod", "+a#", "0", "user:"+agentUser+" allow "+macLeafACE, "{}", "+")
 	}
 	script := "setfacl -R -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir) +
 		" && setfacl -R -d -m u:" + shellQuote(agentUser) + ":rwX " + shellQuote(dir)
-	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser is a config account name; dir is a resolved path.
+	return sudoC("sh", "-c", script)
 }
 
 // LeafRevokeCmd removes the agent's rwx-leaf allow from dir (and its subtree),

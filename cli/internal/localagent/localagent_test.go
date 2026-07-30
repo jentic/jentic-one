@@ -204,6 +204,25 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// TestGrantCmdsForceCLocale guards that the two grant commands whose stderr is
+// parsed to distinguish a benign mid-scan race from a real failure
+// (classifyGrantStderr) run under LC_ALL=C, so their diagnostics stay English on a
+// non-English operator locale. The locale is set via `sudo env LC_ALL=C …` so it
+// doesn't depend on the sudoers env policy.
+func TestGrantCmdsForceCLocale(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"traverse", TraverseGrantCmd("a-local-agent", "/Users/alice").Args},
+		{"leaf-grant", LeafGrantCmd("a-local-agent", "/Users/Shared/x/work").Args},
+	} {
+		if len(c.args) < 3 || c.args[0] != "sudo" || c.args[1] != "env" || c.args[2] != "LC_ALL=C" {
+			t.Errorf("%s: expected `sudo env LC_ALL=C …` prefix, got %v", c.name, c.args)
+		}
+	}
+}
+
 func TestGrantAndRevokeCmdShape(t *testing.T) {
 	// The exact args are platform-specific; assert each layer's command is
 	// sudo-fronted and names the agent user + its target path so it can't
