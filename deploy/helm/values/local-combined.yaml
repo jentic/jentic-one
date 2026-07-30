@@ -51,7 +51,10 @@ app:
             # Explicit override: the OAuth popup runs in the operator's browser,
             # which reaches the callback on the NodePort (30080), not the
             # in-cluster public_base_url (localhost:8000). This is the one URL
-            # that legitimately differs from public_base_url here.
+            # that legitimately differs from public_base_url here — and the
+            # startup public_url_origin_mismatch check excludes provider
+            # redirect_uri overrides for exactly this reason, so no warning
+            # fires.
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 broker:

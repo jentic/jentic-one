@@ -27,6 +27,10 @@ def test_normalize_base_url_ok(raw: str, expected: str) -> None:
         "host-without-scheme",
         "https://",
         "http://user:pass@host",  # userinfo must never end up in a link  # pragma: allowlist secret
+        "https://ex.com?x=1",  # query string would corrupt derived links
+        "https://ex.com#frag",  # fragment likewise
+        "http://h:99999",  # port out of range — reject at load, not at runtime
+        "http://h:8a",  # non-numeric port
     ],
 )
 def test_normalize_base_url_rejects(raw: str) -> None:
@@ -57,4 +61,17 @@ def test_origins_equivalent_true(a: str, b: str) -> None:
     ],
 )
 def test_origins_equivalent_false(a: str, b: str) -> None:
+    assert origins_equivalent(a, b) is False
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("http://h:99999", "http://h:8000"),  # out-of-range port
+        ("http://h:8a", "http://h:8000"),  # non-numeric port
+    ],
+)
+def test_origins_equivalent_never_raises_on_bad_port(a: str, b: str) -> None:
+    # Defense-in-depth: even a value that skipped config validation must not
+    # crash the comparison — a bad port yields a non-comparable origin.
     assert origins_equivalent(a, b) is False

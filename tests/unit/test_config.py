@@ -614,3 +614,31 @@ def test_check_public_url_consistency(tmp_path: Path):
         },
     )
     assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_excludes_provider_redirect_uri(tmp_path: Path):
+    # A provider redirect_uri override that legitimately differs from the public
+    # origin (split-origin gateway/NodePort) must NOT be flagged — otherwise the
+    # reference Helm deployment fires a false positive on every boot.
+    config = _load(
+        tmp_path,
+        {
+            "server": {"public_base_url": "http://localhost:8000"},
+            "credentials": {
+                "providers": {
+                    "direct_oauth2": {
+                        "kind": "direct_oauth2",
+                        "redirect_uri": "http://127.0.0.1:30080/credentials/oauth/callback",
+                    }
+                }
+            },
+        },
+    )
+    assert check_public_url_consistency(config) == []
+
+
+def test_check_public_url_consistency_never_crashes_on_bad_port(tmp_path: Path):
+    # An out-of-range port must be rejected at config load (ValueError), not
+    # crash the consistency check at startup — the "warn, don't crash" contract.
+    with pytest.raises(ConfigError):
+        _load(tmp_path, {"auth": {"canonical_base_url": "http://h:99999"}})

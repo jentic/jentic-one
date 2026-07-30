@@ -929,13 +929,20 @@ class PublicUrlMismatch:
 def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
     """Find explicitly-set public URLs whose origin disagrees with the server's.
 
-    For each field that holds an absolute public URL and is actually set, its
+    For each *server-published* absolute-URL field that is actually set, its
     origin is compared (loopback/bind-host aware) against
     ``server.public_base_url`` when set, else the serving bind
     (``http://{host}:{port}``). Unset fields are skipped — they self-derive and
     cannot be wrong. Pure and side-effect-free so ``_serve`` only has to log the
     result. Never raises: a bad-shaped configured value simply won't compare
     equal and is reported, matching the "warn, don't crash" contract.
+
+    Provider ``redirect_uri`` overrides are intentionally **excluded**: an OAuth
+    callback is reached by the operator's *browser*, which behind a gateway /
+    NodePort legitimately hits a different origin than the in-cluster
+    ``public_base_url`` (this is precisely why the field exists). Flagging it
+    would fire a false positive on any split-origin deployment — including our
+    own reference Helm values — and train operators to ignore the warning.
     """
     expected = config.server.public_base_url or f"http://{config.server.host}:{config.server.port}"
     candidates: list[tuple[str, str | None]] = [
@@ -947,11 +954,6 @@ def check_public_url_consistency(config: AppConfig) -> list[PublicUrlMismatch]:
         ("broker.jobs_api_base_url", config.broker.jobs_api_base_url),
         ("broker.account_linking_base_url", config.broker.account_linking_base_url),
     ]
-    for provider_id, pc in config.credentials.providers.items():
-        if isinstance(pc, DirectOAuth2ProviderConfig) and pc.redirect_uri:
-            candidates.append(
-                (f"credentials.providers.{provider_id}.redirect_uri", pc.redirect_uri)
-            )
 
     mismatches: list[PublicUrlMismatch] = []
     for field_path, value in candidates:

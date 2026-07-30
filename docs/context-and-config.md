@@ -159,14 +159,45 @@ Resolution, per URL:
 3. for request-scoped URLs (OAuth callback, issuer), the **incoming request's
    origin**.
 
+> **Note — the JWT-Bearer assertion audience is not request-scoped.** It is
+> built request-lessly from step 1→2 only. With **both** `auth.canonical_base_url`
+> and `server.public_base_url` unset it collapses to `/oauth/token` (while the
+> discovery document, being request-scoped, advertises the request origin). So
+> "any-port zero config" covers the OAuth connect callback and discovery, **not**
+> the agent JWT-Bearer assertion flow — set `public_base_url` for that. (This is
+> pre-existing behaviour, unchanged by the public-origin work.)
+
 Because of (3), local development on any port works with **zero** configuration
 — the OAuth callback tracks whatever host/port you actually browsed to, fixing
 the "connect breaks on any port but 8000" trap. Set `public_base_url` (or an
 override) only when the app can't infer its public origin from the request,
 i.e. behind a reverse proxy / ingress. At startup, any *explicitly configured*
-public URL whose origin disagrees with the serving origin (and isn't explained
-by `public_base_url`) logs a `public_url_origin_mismatch` warning — the server
-still starts.
+server-published public URL whose origin disagrees with the serving origin (and
+isn't explained by `public_base_url`) logs a `public_url_origin_mismatch`
+warning — the server still starts. (Per-provider `redirect_uri` overrides are
+excluded from that check: an OAuth callback is reached by the operator's
+browser, which behind a gateway legitimately hits a different origin than the
+in-cluster `public_base_url` — that is exactly why the override exists.)
+
+> **Behind a TLS-terminating reverse proxy**, set `public_base_url` explicitly.
+> The request-origin fallback (3) reconstructs the scheme/host from the incoming
+> request, which for a plain-HTTP hop from the proxy yields `http://…` and the
+> proxy's internal host unless forwarded headers are trusted — so a derived
+> `redirect_uri` / issuer would be wrong. `public_base_url` (or the specific
+> override) short-circuits that and is the supported way to pin the public
+> `https://` origin.
+
+> **Security — the request-origin fallback trusts the `Host` header.** The app
+> runs no `TrustedHostMiddleware`, so when a URL is derived from the request an
+> authenticated caller who controls their own `Host` header can make the
+> *authorize* URL carry a `redirect_uri` pointing at an arbitrary origin. This
+> is low-risk because it is the caller's own connect flow, and the real gate is
+> the IdP's **exact-match** on its registered redirect URIs: the callback only
+> works if it matches a URL the operator pre-registered with the IdP. That makes
+> IdP-side exact-match redirect-URI registration a **load-bearing security
+> boundary** of this design — register the exact callback URL shown by
+> `GET /credentials/providers` (`callback_url`), and pin `public_base_url` in
+> any deployment where you don't want the callback origin to follow the request.
 
 ### The `GET /instance` identity probe
 
