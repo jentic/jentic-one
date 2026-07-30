@@ -19,10 +19,10 @@ const (
 	ModeDocker = "docker"
 )
 
-// Manifest records what `jentic install` / the installer put on disk so
-// `jentic update` knows what to track (which repo/ref) and how to refresh it
+// Manifest records what `jenticctl install` / the installer put on disk so
+// `jenticctl update` knows what to track (which repo/ref) and how to refresh it
 // (local venv vs Docker compose). It is written to ~/.jentic/install.json by
-// both tools/install.sh (CLI fields) and `jentic install` (stack fields).
+// both tools/install.sh (CLI fields) and `jenticctl install` (stack fields).
 type Manifest struct {
 	// Repo is the owner/name source repository (e.g. "jentic/jentic-one").
 	Repo string `json:"repo,omitempty"`
@@ -93,7 +93,7 @@ func (m *Manifest) Save(paths Paths) error {
 
 // MergeStack updates the stack-related fields (mode, db, broker port) plus the
 // CLI metadata known at runtime (ref, commit, version) on top of whatever the
-// installer recorded, then saves. This is what `jentic install` calls so a
+// installer recorded, then saves. This is what `jenticctl install` calls so a
 // re-install keeps any CLI fields written by tools/install.sh while refreshing
 // the rest.
 func (m *Manifest) MergeStack(paths Paths, mode, db, brokerPort, ref, commit, cliVersion string) error {

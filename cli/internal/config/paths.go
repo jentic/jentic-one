@@ -50,11 +50,11 @@ const (
 	profilesDirName = "profiles"
 
 	// InstallConfigName is the generated app config file written by
-	// `jentic install`.
+	// `jenticctl install`.
 	InstallConfigName = "jentic-one.yaml"
 
 	// ManifestName records what was installed (repo, ref, commit, deploy mode)
-	// so `jentic update` knows what to track and how to refresh it.
+	// so `jenticctl update` knows what to track and how to refresh it.
 	ManifestName = "install.json"
 
 	caCertName = "ca.pem"
@@ -70,7 +70,7 @@ const (
 	caTrustedName = "ca.trusted"
 
 	// appPidName holds the PID of the app started in the background by
-	// `jentic install`.
+	// `jenticctl install`.
 	appPidName = "app.pid"
 
 	// brokerPidName holds the PID of the broker service started in the
