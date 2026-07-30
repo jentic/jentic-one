@@ -398,6 +398,79 @@ func TestMacLeafGrantIncludesDeleteBits(t *testing.T) {
 	}
 }
 
+// TestLinuxLeafGrantAndRevokeUseSetfaclPairs guards the Linux ACL idiom: the leaf
+// grant lays down BOTH an access ACL (-m) and a matching default ACL (-d -m) so
+// files the agent creates later inherit the grant, and the revoke drops BOTH with
+// the mirror (-x / -d -x) so no half-removed default ACL is left behind. rwX (capital
+// X) is required so the execute bit is granted on directories but not on plain files.
+func TestLinuxLeafGrantAndRevokeUseSetfaclPairs(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Linux-specific setfacl idiom")
+	}
+	dir := "/home/alice/projects/api"
+	grant := strings.Join(LeafGrantCmd("a-local-agent", dir).Args, " ")
+	for _, want := range []string{
+		"setfacl -R -m u:'a-local-agent':rwX",
+		"setfacl -R -d -m u:'a-local-agent':rwX",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("Linux leaf grant missing %q: %s", want, grant)
+		}
+	}
+	revoke := strings.Join(LeafRevokeCmd("a-local-agent", dir).Args, " ")
+	for _, want := range []string{
+		"setfacl -R -x u:'a-local-agent'",
+		"setfacl -R -d -x u:'a-local-agent'",
+	} {
+		if !strings.Contains(revoke, want) {
+			t.Errorf("Linux leaf revoke missing %q: %s", want, revoke)
+		}
+	}
+}
+
+// TestLinuxTraverseGrantIsExecuteOnly guards Layer-1 on Linux: the traverse grant
+// opens execute-only (--x, pass-through, NOT read/list) on a single directory and
+// is non-recursive/non-default, so it can't leak the ancestor's other children.
+func TestLinuxTraverseGrantIsExecuteOnly(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Linux-specific setfacl idiom")
+	}
+	grant := strings.Join(TraverseGrantCmd("a-local-agent", "/home/alice").Args, " ")
+	if !strings.Contains(grant, "setfacl -m u:a-local-agent:--x") {
+		t.Errorf("Linux traverse grant must be execute-only (--x): %s", grant)
+	}
+	// Non-recursive / non-default: a traverse grant must not carry -R or -d, or it
+	// would open more than pass-through on the single ancestor.
+	if strings.Contains(grant, " -R") || strings.Contains(grant, " -d") {
+		t.Errorf("Linux traverse grant must be non-recursive and non-default: %s", grant)
+	}
+	revoke := strings.Join(TraverseRevokeCmd("a-local-agent", "/home/alice").Args, " ")
+	if !strings.Contains(revoke, "setfacl -x u:a-local-agent") {
+		t.Errorf("Linux traverse revoke must drop the named-user entry: %s", revoke)
+	}
+}
+
+// TestLinuxCreateAccountUsesUseraddWithHome guards the Linux account recipe:
+// `useradd -m -d <home> -s /bin/bash` creates the account and its home in one step
+// (matching agentLaunchShell), then the operator grant lays down access+default
+// ACLs. The home must be the /opt default, not a human-home path.
+func TestLinuxCreateAccountUsesUseraddWithHome(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("Linux-specific account recipe")
+	}
+	home := DefaultHomeDir("alice-local-agent")
+	if !strings.HasPrefix(home, "/opt/") {
+		t.Fatalf("Linux default agent home must live under /opt, got %q", home)
+	}
+	steps := CreateAccountCmds("alice", "alice-local-agent", home)
+	create := strings.Join(steps[0].Cmd.Args, " ")
+	for _, want := range []string{"useradd", "-m", "-d " + home, "-s /bin/bash"} {
+		if !strings.Contains(create, want) {
+			t.Errorf("Linux useradd step missing %q: %s", want, create)
+		}
+	}
+}
+
 // TestSharedBinPathsExcludesOperatorHome guards the core isolation invariant of
 // the CLI-tool sharing feature: only world-traversable dirs OUTSIDE the
 // operator's 700 home may be shared. A candidate under the operator home is

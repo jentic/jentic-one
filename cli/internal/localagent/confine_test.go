@@ -166,12 +166,31 @@ func TestSbplPathEscaping(t *testing.T) {
 	}
 }
 
+// existingHomeRoot returns a human-home root that actually exists on the running
+// platform (/Users on macOS, /home on Linux) plus the two paths under it the test
+// uses. bwrapArgs only emits `--tmpfs <root>` for a root that Stat-exists, so a
+// test that hardcodes /Users passes on macOS but silently fails on the Linux CI
+// runner where /Users is absent — this keeps the fixture meaningful on both.
+func existingHomeRoot(t *testing.T) (root, agentHome, grant string) {
+	t.Helper()
+	for _, r := range humanHomeRoots {
+		if info, err := os.Stat(r); err == nil && info.IsDir() {
+			// Agent home lives under /Users/Shared on macOS; on Linux the agent home
+			// is /opt (outside every human root), so for the "home re-bound over the
+			// mask" assertions use an in-root path either way.
+			return r, r + "/Shared/alice-local-agent", r + "/alice/projects/api"
+		}
+	}
+	t.Skip("no human-home root exists on this platform")
+	return "", "", ""
+}
+
 func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
+	root, agentHome, grant := existingHomeRoot(t)
 	// Each returned token is individually shell-quoted; unquote for structural
 	// assertions on the command shape.
-	quoted := bwrapArgs("/usr/bin/claude", "/Users/alice/projects/api",
-		"/Users/Shared/alice-local-agent",
-		[]string{"/Users/alice/projects/api", "/opt/outside"}, nil)
+	quoted := bwrapArgs("/usr/bin/claude", grant, agentHome,
+		[]string{grant, "/opt/outside"}, nil)
 	args := make([]string, len(quoted))
 	for i, q := range quoted {
 		args[i] = strings.Trim(q, "'")
@@ -180,14 +199,14 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 
 	for _, want := range []string{
 		"bwrap --die-with-parent",
-		// hide every human-home root behind a tmpfs...
-		"--tmpfs /Users",
+		// hide the human-home root behind a tmpfs...
+		"--tmpfs " + root,
 		// ...then re-bind the agent home and the in-home grant over it
-		"--bind /Users/Shared/alice-local-agent /Users/Shared/alice-local-agent",
-		"--bind /Users/alice/projects/api /Users/alice/projects/api",
+		"--bind " + agentHome + " " + agentHome,
+		"--bind " + grant + " " + grant,
 		// exec routes re-mounted read-only (/usr/bin exists everywhere)
 		"--ro-bind /usr/bin /usr/bin",
-		"--chdir /Users/alice/projects/api",
+		"--chdir " + grant,
 		// the binary is introduced by bwrap's `--` end-of-options marker
 		"-- /usr/bin/claude",
 	} {
@@ -204,10 +223,10 @@ func TestBwrapArgsHidesHomesRebindsGrantsAndReadOnlyExec(t *testing.T) {
 	}
 	// tmpfs must come before the re-bind so the bind lands on top; the read-only
 	// exec bind must come after the grant re-bind.
-	if strings.Index(joined, "--tmpfs /Users") > strings.Index(joined, "--bind /Users/alice/projects/api") {
+	if strings.Index(joined, "--tmpfs "+root) > strings.Index(joined, "--bind "+grant) {
 		t.Errorf("tmpfs must precede the grant re-bind:\n%s", joined)
 	}
-	if strings.Index(joined, "--bind /Users/alice/projects/api") > strings.Index(joined, "--ro-bind /usr/bin") {
+	if strings.Index(joined, "--bind "+grant) > strings.Index(joined, "--ro-bind /usr/bin") {
 		t.Errorf("read-only exec bind must come after grant re-binds:\n%s", joined)
 	}
 }
@@ -247,6 +266,42 @@ func TestBwrapArgsSeparatesForwardedFlags(t *testing.T) {
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "-- /usr/bin/claude --model opus") {
 		t.Errorf("forwarded flags must follow `-- <binary>`, got:\n%s", joined)
+	}
+}
+
+// On the real Linux layout the agent home is /opt/<user> — OUTSIDE every denied
+// human-home root — so it must stay visible through the root bind (never tmpfs-
+// masked, never re-bound), while a grant that lives under /home is masked then
+// re-bound. This is the Linux analog of the /Users/Shared case above and the
+// end-to-end guarantee behind an /opt home reaching through confinement.
+func TestBwrapArgsLinuxOptHomeStaysVisible(t *testing.T) {
+	quoted := bwrapArgs("/usr/bin/claude", "/home/alice/projects/api",
+		"/opt/alice-local-agent",
+		[]string{"/home/alice/projects/api"}, nil)
+	args := make([]string, len(quoted))
+	for i, q := range quoted {
+		args[i] = strings.Trim(q, "'")
+	}
+	joined := strings.Join(args, " ")
+
+	// The /opt home is outside /Users and /home, so it needs no bind — it is
+	// reachable through the root --dev-bind that opens the whole host.
+	if strings.Contains(joined, "--bind /opt/alice-local-agent") {
+		t.Errorf("an /opt agent home must NOT be re-bound (it is visible via the root bind):\n%s", joined)
+	}
+	// A /home grant IS inside a denied root, so it must be re-bound over the mask.
+	if !strings.Contains(joined, "--bind /home/alice/projects/api /home/alice/projects/api") {
+		t.Errorf("a /home grant must be re-bound over the tmpfs mask:\n%s", joined)
+	}
+	// The chdir into the grant must still be emitted (the launch cd's there).
+	if !strings.Contains(joined, "--chdir /home/alice/projects/api") {
+		t.Errorf("expected --chdir into the working directory:\n%s", joined)
+	}
+	// SessionAccess (the shared source both platforms consume) reports the /opt
+	// home as read/write, so the display can't claim the agent lacks its own home.
+	rw := reopenDirs("/opt/alice-local-agent", []string{"/home/alice/projects/api"})
+	if len(rw) == 0 || rw[0] != "/opt/alice-local-agent" {
+		t.Errorf("the /opt home must be the first read/write dir SessionAccess reports, got %v", rw)
 	}
 }
 
