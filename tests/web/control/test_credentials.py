@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.integration
 
 
-def _create_api_key(client: TestClient) -> dict[str, object]:
+def _create_api_key(client: TestClient) -> str:
     resp = client.post(
         "/credentials",
         json={
@@ -31,14 +31,13 @@ def _create_api_key(client: TestClient) -> dict[str, object]:
         },
     )
     assert resp.status_code == 201, resp.text
-    data: dict[str, object] = resp.json()
-    return data
+    credential_id: str = resp.json()["credential"]["credential_id"]
+    return credential_id
 
 
 def test_patch_changing_field_name_is_rejected(cred_writer_client: TestClient) -> None:
     """A PATCH that changes the api_key field name returns 409 immutable_field."""
-    created = _create_api_key(cred_writer_client)
-    cred_id = created["credential_id"]
+    cred_id = _create_api_key(cred_writer_client)
 
     resp = cred_writer_client.patch(
         f"/credentials/{cred_id}",
@@ -57,8 +56,7 @@ def test_patch_changing_field_name_is_rejected(cred_writer_client: TestClient) -
 
 def test_patch_noop_does_not_move_updated_at(cred_writer_client: TestClient) -> None:
     """A PATCH that echoes the stored binding and nothing else keeps updated_at frozen."""
-    created = _create_api_key(cred_writer_client)
-    cred_id = created["credential_id"]
+    cred_id = _create_api_key(cred_writer_client)
     before = cred_writer_client.get(f"/credentials/{cred_id}").json()
 
     resp = cred_writer_client.patch(
@@ -71,8 +69,7 @@ def test_patch_noop_does_not_move_updated_at(cred_writer_client: TestClient) -> 
 
 def test_patch_key_rotation_moves_updated_at(cred_writer_client: TestClient) -> None:
     """Rotating the secret persists a change, so updated_at advances (#739)."""
-    created = _create_api_key(cred_writer_client)
-    cred_id = created["credential_id"]
+    cred_id = _create_api_key(cred_writer_client)
     before = cred_writer_client.get(f"/credentials/{cred_id}").json()
 
     resp = cred_writer_client.patch(
