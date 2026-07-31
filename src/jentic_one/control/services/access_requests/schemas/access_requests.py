@@ -42,6 +42,15 @@ class AccessRequestItemView(BaseModel):
     decided_by: str | None
     decided_at: dt.datetime | None
     decision_reason: str | None
+    # Tri-state satisfaction hint, stamped by ``AccessRequestService.get()`` only
+    # (single-request reads; list pages skip it): True when the item's outcome is
+    # already in effect (binding/grant exists), False when it determinately is
+    # not, None when not computed (decided items, indeterminate or ambiguous
+    # targets, list endpoints, fulfilment-only intents).
+    already_satisfied: bool | None = None
+    # For a satisfied toolkit:bind, the toolkit id that satisfies it — lets
+    # consumers point the operator at the exact object. None otherwise.
+    already_satisfied_by: str | None = None
 
 
 class EvaluationCheck(BaseModel):

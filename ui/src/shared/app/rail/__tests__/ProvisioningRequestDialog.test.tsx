@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { http, HttpResponse } from 'msw';
-import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
+import { renderWithProviders, screen, waitFor, within, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
 import { clearToken, setToken } from '@/shared/api';
 import {
@@ -571,5 +571,455 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		expect(draft).toBeDefined();
 		expect(draft.chains[0].toolkitId).toBe('tk_chain_1');
 		expect(draft.chains[0].key).toContain('open-meteo-com');
+	});
+});
+
+/** A single-chain plan whose credential must be operator-provided (api_key). */
+function authPlanRequest(): AccessRequest {
+	const base = planRequest();
+	return {
+		...base,
+		id: 'arq_plan_auth',
+		approve_url: 'https://app.example.test/access-requests/arq_plan_auth',
+		items: base.items.map((it) =>
+			it.action === 'provision'
+				? {
+						...it,
+						resource_reference: {
+							...it.resource_reference,
+							security_scheme: 'api_key',
+						},
+					}
+				: it,
+		),
+	};
+}
+
+describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		resetProvisioningWizardDrafts();
+	});
+	afterEach(() => clearToken());
+
+	/** Stub the pickers' list endpoints + the amend/decide submit path. */
+	function stubAdoption(
+		request: AccessRequest,
+		opts?: {
+			onAmend?: (body: unknown) => void;
+			onDecide?: (body: unknown) => void;
+			onCredentialQuery?: (vendor: string | null) => void;
+		},
+	) {
+		stubDirectoryAndRequest(request);
+		worker.use(
+			http.get('/toolkits', () =>
+				HttpResponse.json({
+					data: [
+						{
+							toolkit_id: 'tk_existing',
+							name: 'Ops toolkit',
+							description: null,
+							active: true,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 1,
+							key_count: 0,
+						},
+						{
+							// Suspended — must never be offered for adoption.
+							toolkit_id: 'tk_suspended',
+							name: 'Suspended toolkit',
+							description: null,
+							active: false,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 0,
+							key_count: 0,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.get('/credentials', ({ request: httpReq }) => {
+				opts?.onCredentialQuery?.(new URL(httpReq.url).searchParams.get('vendor'));
+				return HttpResponse.json({
+					data: [
+						{
+							credential_id: 'cred_exist',
+							name: 'Weather key',
+							type: 'api_key',
+							provider: 'manual',
+							active: true,
+							api: { vendor: 'open-meteo-com', name: 'forecast', version: null },
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+						},
+						{
+							// Disabled for injection — must never be offered.
+							credential_id: 'cred_disabled',
+							name: 'Old disabled key',
+							type: 'api_key',
+							provider: 'manual',
+							active: false,
+							api: { vendor: 'open-meteo-com', name: 'forecast', version: null },
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+			http.post('/credentials', () =>
+				HttpResponse.json({ credential: { credential_id: 'cred_noauth_1' } }),
+			),
+			http.post('/access-requests/*', async ({ request: httpReq }) => {
+				const url = new URL(httpReq.url);
+				const body = await httpReq.json();
+				if (url.pathname.endsWith(':amend')) {
+					opts?.onAmend?.(body);
+					return HttpResponse.json(request);
+				}
+				if (url.pathname.endsWith(':decide')) {
+					opts?.onDecide?.(body);
+					const decisions = (body as { items: { item_id: string; decision: string }[] })
+						.items;
+					const byId = new Map(decisions.map((d) => [d.item_id, d.decision]));
+					return HttpResponse.json({
+						...request,
+						status: 'approved',
+						items: request.items.map((it) => ({
+							...it,
+							status: byId.get(it.id) ?? it.status,
+						})),
+					});
+				}
+				return new HttpResponse(null, { status: 404 });
+			}),
+		);
+	}
+
+	it('adopting an existing toolkit skips the create call and amends its id', async () => {
+		let amendBody: unknown;
+		let createCalls = 0;
+		const request = planRequest();
+		stubAdoption(request, { onAmend: (b) => (amendBody = b) });
+		worker.use(
+			http.post('/toolkits', () => {
+				createCalls += 1;
+				return HttpResponse.json(
+					{ toolkit: { toolkit_id: 'tk_new', name: 'nope' }, api_key: 'k' },
+					{ status: 201 },
+				);
+			}),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Pick the existing toolkit instead of creating one — selection is
+		// staged, the button commits (no-auth plan: straight to rules).
+		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		// No satisfaction hint on this request — the nudge must not render.
+		expect(screen.queryByText(/already wired/i)).not.toBeInTheDocument();
+		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+
+		// Review names the adopted toolkit and marks it as pre-existing.
+		expect(await screen.findByText('Ops toolkit')).toBeInTheDocument();
+		expect(screen.getByText('(existing)')).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		// The binds were amended to the ADOPTED id; nothing was created.
+		const amendments = (
+			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
+		).items;
+		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
+		expect(byItem.get('i3')?.to_id).toBe('tk_existing');
+		expect(byItem.get('i4')?.resource_id).toBe('tk_existing');
+		expect(createCalls).toBe(0);
+	});
+
+	it('never offers to discard adopted objects on cancel', async () => {
+		const request = planRequest();
+		stubAdoption(request);
+		let closed = false;
+		let deleteCalls = 0;
+		worker.use(
+			http.delete('/toolkits/:id', () => {
+				deleteCalls += 1;
+				return new HttpResponse(null, { status: 204 });
+			}),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog
+				open
+				request={request}
+				onClose={() => {
+					closed = true;
+				}}
+			/>,
+		);
+		const user = userEvent.setup();
+
+		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await screen.findByRole('button', { name: /^Review/ });
+
+		// Cancel: the wizard created NOTHING this session (the toolkit was
+		// adopted), so there are no orphans — close directly, never offering
+		// to delete infrastructure the operator set up outside the wizard.
+		await user.click(screen.getByRole('button', { name: 'Close' }));
+		await waitFor(() => expect(closed).toBe(true));
+		// The confirm <dialog> stays mounted while closed, so assert on
+		// visibility rather than presence.
+		expect(screen.getByText('Keep this setup for later?')).not.toBeVisible();
+		expect(deleteCalls).toBe(0);
+	});
+
+	it('adopting an existing credential skips the connect flow and amends its id', async () => {
+		let amendBody: unknown;
+		const request = authPlanRequest();
+		stubAdoption(request, { onAmend: (b) => (amendBody = b) });
+		worker.use(
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+
+		// The credential step offers the vendor-scoped existing credentials;
+		// staging one and committing advances straight to rules — no create
+		// form, no connect flow.
+		const picker = await screen.findByLabelText(/use an existing credential/i);
+		await user.selectOptions(picker, 'cred_exist');
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+
+		expect(await screen.findByText('Weather key')).toBeInTheDocument();
+		expect(screen.getByText('(existing)')).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
+		expect(await screen.findByText('Access granted')).toBeInTheDocument();
+
+		const amendments = (amendBody as { items: { item_id: string; resource_id?: string }[] })
+			.items;
+		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
+		expect(byItem.get('i3')?.resource_id).toBe('cred_exist');
+	});
+
+	it('slugifies the raw filed vendor and hides inactive artifacts in the pickers', async () => {
+		// Agents file references with raw domains ('Open-Meteo.com'); stored
+		// rows carry the slug ('open-meteo-com') and the credential list's
+		// vendor filter is an exact match — an unslugged query would silently
+		// collapse the picker (issue #656's mismatch).
+		let queriedVendor: string | null | undefined;
+		const base = authPlanRequest();
+		const rawRef = { vendor: 'Open-Meteo.com', name: 'forecast' };
+		const request = {
+			...base,
+			items: base.items.map((it) => ({
+				...it,
+				resource_reference: { ...it.resource_reference, ...rawRef },
+			})),
+		};
+		stubAdoption(request, { onCredentialQuery: (v) => (queriedVendor = v) });
+		worker.use(
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Toolkit picker: the suspended toolkit is never offered.
+		const toolkitPicker = await screen.findByLabelText(/use an existing toolkit/i);
+		expect(within(toolkitPicker).getByRole('option', { name: 'Ops toolkit' })).toBeVisible();
+		expect(
+			within(toolkitPicker).queryByRole('option', { name: 'Suspended toolkit' }),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+
+		// Credential picker: queried with the slug, disabled rows filtered out.
+		const credPicker = await screen.findByLabelText(/use an existing credential/i);
+		expect(queriedVendor).toBe('open-meteo-com');
+		expect(within(credPicker).getByRole('option', { name: /Weather key/ })).toBeVisible();
+		expect(
+			within(credPicker).queryByRole('option', { name: /Old disabled key/ }),
+		).not.toBeInTheDocument();
+	});
+
+	it('names the wired toolkit, floats it in the picker, and reviews honestly on adopt', async () => {
+		// The backend hint carries WHICH toolkit satisfies the bind
+		// (already_satisfied_by) — the nudge names it and the picker floats it
+		// so the operator isn't left hunting through name-only options.
+		const base = planRequest();
+		const request = {
+			...base,
+			items: base.items.map((it) =>
+				it.id === 'i4'
+					? { ...it, already_satisfied: true, already_satisfied_by: 'tk_existing' }
+					: it,
+			),
+		};
+		stubAdoption(request);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		const nudge = await screen.findByText(/already wired to/i);
+		expect(nudge).toHaveTextContent('Ops toolkit');
+
+		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		const options = within(picker).getAllByRole('option');
+		expect(options[1]).toHaveTextContent(/Ops toolkit — already linked to this agent/);
+
+		// Adopt it and reach review: the note is the adopted variant, honest
+		// about the rules being updated (an approve REPLACES binding rules —
+		// never "nothing changes").
+		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+		expect(
+			await screen.findByText(/reuses that setup and updates its permission rules/i),
+		).toBeInTheDocument();
+	});
+
+	it('offers a retry instead of silently collapsing when the toolkit list fails', async () => {
+		// The nudge may be telling the operator to adopt — a failed fetch must
+		// say so and offer a way out, not silently hide the picker.
+		const request = planRequest();
+		stubDirectoryAndRequest(request);
+		let failures = 0;
+		worker.use(
+			http.get('/toolkits', () => {
+				failures += 1;
+				if (failures === 1) return new HttpResponse(null, { status: 500 });
+				return HttpResponse.json({
+					data: [
+						{
+							toolkit_id: 'tk_existing',
+							name: 'Ops toolkit',
+							description: null,
+							active: true,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 1,
+							key_count: 0,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		expect(
+			await screen.findByText(/couldn.t load your existing toolkits/i),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Retry' }));
+		expect(await screen.findByLabelText(/use an existing toolkit/i)).toBeInTheDocument();
+	});
+});
+
+describe('ProvisioningRequestDialog — already-in-place hints (#826)', () => {
+	beforeEach(() => {
+		setToken('test-token');
+		resetProvisioningWizardDrafts();
+	});
+	afterEach(() => clearToken());
+
+	/** A composite whose chain-1 toolkit:bind and scope extra are already satisfied. */
+	function satisfiedComposite(): AccessRequest {
+		const request = compositeRequest();
+		return {
+			...request,
+			items: request.items.map((it) => {
+				if (it.id === 'a4' || it.id === 's1') return { ...it, already_satisfied: true };
+				return it;
+			}),
+		};
+	}
+
+	it('nudges towards adopting when the agent is already wired to the API', async () => {
+		stubDirectoryAndRequest(satisfiedComposite());
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={satisfiedComposite()} onClose={() => {}} />,
+		);
+
+		// The fresh GET carries `already_satisfied` on chain 1's toolkit:bind:
+		// the toolkit step points at the existing wiring before the operator
+		// mints a duplicate toolkit.
+		expect(await screen.findByText(/already wired to a toolkit serving/i)).toBeInTheDocument();
+	});
+
+	it('marks satisfied chains and extras on the review step', async () => {
+		const request = satisfiedComposite();
+		stubDirectoryAndRequest(request);
+		let created = 0;
+		worker.use(
+			http.post('/toolkits', () => {
+				created += 1;
+				return HttpResponse.json({
+					toolkit: {
+						toolkit_id: `tk_chain_${created}`,
+						name: `Chain toolkit ${created}`,
+					},
+					api_key: 'k',
+				});
+			}),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		// Walk both no-auth chains to reach review.
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /Next API/ }));
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+
+		// Chain 1 carries the existing-binding note — the operator created a
+		// NEW toolkit despite the detected wiring, so the note is honest about
+		// binding it alongside the existing setup. The satisfied scope grant
+		// is labelled as already in place.
+		expect(
+			await screen.findByText(/already has a toolkit wired for this API/i),
+		).toBeInTheDocument();
+		expect(screen.getByText(/alongside that existing setup/i)).toBeInTheDocument();
+		expect(screen.getByText(/already in place — approving records it/i)).toBeInTheDocument();
 	});
 });
