@@ -69,6 +69,11 @@ export function AccessRequestItemCard({
 	// Rules present on an item type that can't enforce them (e.g. a legacy
 	// toolkit.bind): show a notice instead of an allowlist that won't apply.
 	const hasUnenforceableRules = rules.length > 0 && !enforceable;
+	// The enriched GET stamps `already_satisfied` on pending items whose
+	// outcome is already in effect (see the backend annotator): surfaced as a
+	// chip so a reviewer of manually-fulfilled work approves instead of
+	// re-provisioning. Absent/null (not computed) renders nothing.
+	const alreadySatisfied = item.already_satisfied === true;
 	const initials = label
 		.replace(/[^a-zA-Z0-9]/g, '')
 		.slice(0, 2)
@@ -169,6 +174,19 @@ export function AccessRequestItemCard({
 								</span>
 							)}
 						</>
+					)}
+					{alreadySatisfied && (
+						<span
+							className="bg-accent-green/10 text-accent-green inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium"
+							title={
+								item.already_satisfied_by
+									? `Already satisfied by toolkit ${item.already_satisfied_by} — approving records the decision without redoing the setup.`
+									: 'What this item asks for already exists — approving records the decision without redoing the setup.'
+							}
+						>
+							<CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+							Already in place
+						</span>
 					)}
 				</div>
 

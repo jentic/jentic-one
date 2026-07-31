@@ -99,6 +99,42 @@ describe('AccessRequestItemCard — credential.bind operations', () => {
 	});
 });
 
+describe('AccessRequestItemCard — already-satisfied hint', () => {
+	it('shows the "Already in place" chip when the enriched GET marks the item satisfied', () => {
+		renderCard({
+			resource_type: 'scope',
+			action: 'grant',
+			resource_id: 'capabilities:execute',
+			already_satisfied: true,
+		});
+		expect(screen.getByText('Already in place')).toBeInTheDocument();
+	});
+
+	it('names the satisfying toolkit in the chip tooltip when the hint carries it', () => {
+		renderCard({
+			resource_type: 'toolkit',
+			action: 'bind',
+			resource_id: 'tk_target',
+			already_satisfied: true,
+			already_satisfied_by: 'tk_target',
+		});
+		expect(screen.getByText('Already in place')).toHaveAttribute(
+			'title',
+			expect.stringContaining('tk_target'),
+		);
+	});
+
+	it('renders nothing for false or not-computed hints', () => {
+		// False (determinately unsatisfied) and null/absent (not computed) both
+		// stay silent: the chip only ever asserts, never speculates.
+		const { unmount } = renderCard({ already_satisfied: false });
+		expect(screen.queryByText('Already in place')).not.toBeInTheDocument();
+		unmount();
+		renderCard({});
+		expect(screen.queryByText('Already in place')).not.toBeInTheDocument();
+	});
+});
+
 describe('AccessRequestItemCard — non-enforceable rules', () => {
 	it('hides the allowlist and shows a notice for a toolkit.bind carrying rules', () => {
 		// Broker rules key per credential, so a toolkit.bind (agent↔toolkit) can't

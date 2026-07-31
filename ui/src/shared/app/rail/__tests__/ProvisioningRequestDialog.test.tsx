@@ -910,6 +910,121 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		).toBeInTheDocument();
 	});
 
+	it('ranks toolkits already serving the chain API first and badges them', async () => {
+		// The canonical #826 manual state (toolkit + credential exist, agent
+		// unbound) satisfies nothing, so the wired-toolkit float never fires —
+		// ranking by the served API (the list's `apis` aggregation) rescues
+		// that exact case: the right toolkit surfaces even from a name-only
+		// list (#890).
+		const request = planRequest();
+		stubDirectoryAndRequest(request);
+		worker.use(
+			http.get('/toolkits', () =>
+				HttpResponse.json({
+					data: [
+						{
+							// Server order puts the non-serving toolkit first: the
+							// ranking, not luck, must float the serving one.
+							toolkit_id: 'tk_unrelated',
+							name: 'Unrelated toolkit',
+							description: null,
+							active: true,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 1,
+							key_count: 0,
+							apis: [{ vendor: 'github-com', name: 'rest', version: '' }],
+						},
+						{
+							toolkit_id: 'tk_serves',
+							name: 'Weather toolkit',
+							description: null,
+							active: true,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 1,
+							key_count: 0,
+							apis: [{ vendor: 'open-meteo-com', name: 'forecast', version: '' }],
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+
+		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		const options = within(picker).getAllByRole('option');
+		// [0] is the placeholder; the serving toolkit floats above the rest.
+		expect(options[1]).toHaveTextContent(/Weather toolkit — already serves/);
+		expect(options[2]).toHaveTextContent('Unrelated toolkit');
+		expect(options[2]).not.toHaveTextContent(/already serves/);
+	});
+
+	it('flags a never-connected OAuth credential and warns before adoption', async () => {
+		// The adopt picker previously trusted the operator's choice: a
+		// never-signed-in OAuth credential only failed at execute time. The
+		// redacted listing now carries the derived connect state, so the
+		// picker warns BEFORE the pick is committed (#890).
+		const request = authPlanRequest();
+		stubAdoption(request);
+		worker.use(
+			http.get('/credentials', () =>
+				HttpResponse.json({
+					data: [
+						{
+							credential_id: 'cred_oauth_pending',
+							name: 'GitHub OAuth',
+							type: 'oauth2',
+							provider: 'static',
+							active: true,
+							api: { vendor: 'open-meteo-com', name: 'forecast', version: null },
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							details: {
+								client_id: 'cid',
+								token_url: 'https://auth.example/token',
+								grant_type: 'authorization_code',
+								connected: false,
+							},
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				}),
+			),
+			http.post('/toolkits', () =>
+				HttpResponse.json({
+					toolkit: { toolkit_id: 'tk_auth', name: 'Weather Agent toolkit' },
+					api_key: 'k',
+				}),
+			),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		await screen.findByLabelText('Toolkit name');
+		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
+
+		const picker = await screen.findByLabelText(/use an existing credential/i);
+		const options = within(picker).getAllByRole('option');
+		expect(options[1]).toHaveTextContent(/not signed in yet/);
+
+		// No warning until the risky option is actually staged.
+		expect(screen.queryByText(/was never signed in/i)).not.toBeInTheDocument();
+		await user.selectOptions(picker, 'cred_oauth_pending');
+		expect(await screen.findByText(/was never signed in/i)).toBeInTheDocument();
+		// The pick is still allowed — warned, not blocked.
+		expect(screen.getByRole('button', { name: 'Use this credential' })).toBeEnabled();
+	});
+
 	it('offers a retry instead of silently collapsing when the toolkit list fails', async () => {
 		// The nudge may be telling the operator to adopt — a failed fetch must
 		// say so and offer a way out, not silently hide the picker.

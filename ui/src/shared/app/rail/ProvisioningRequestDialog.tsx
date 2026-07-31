@@ -601,6 +601,14 @@ export function ProvisioningRequestDialog({
 		};
 	}, [open, step, chainVendor, existingCredentials]);
 	const chainCredentialOptions = chainVendor ? (existingCredentials[chainVendor] ?? null) : null;
+	// A never-connected OAuth credential (authorization_code whose interactive
+	// sign-in was never completed — the backend's derived `connected` flag on
+	// the redacted details) would fail at execute time if adopted. Flag it in
+	// the picker so the operator is warned before adopting, not after (#890).
+	// `connected` is absent for other types/grants, so only an explicit false
+	// marks a credential as unconnected.
+	const isUnconnectedOAuth = (cred: CredentialRedactedResponse) =>
+		cred.type === CredentialType.OAUTH2 && cred.details?.connected === false;
 
 	// Picker selections are staged locally and committed by an explicit
 	// button: committing on <select> change is a keyboard trap (arrowing
@@ -649,10 +657,11 @@ export function ProvisioningRequestDialog({
 
 	/**
 	 * Adopt an existing credential — reused as-is, no connect flow. The picker
-	 * only offers active credentials; whether an OAuth credential actually
-	 * completed its sign-in is not observable from the redacted listing, so
-	 * adoption trusts the operator's choice (a broken pick fails at execute
-	 * time, same as it would for the manual setup being adopted).
+	 * only offers active credentials; a never-connected OAuth credential is
+	 * flagged in the picker (see `isUnconnectedOAuth`) with a warning before
+	 * commit, but adoption still trusts the operator's choice — warned, not
+	 * blocked (a broken pick fails at execute time, same as it would for the
+	 * manual setup being adopted).
 	 */
 	const handleAdoptCredential = useCallback(
 		(credentialId: string) => {
@@ -1028,12 +1037,32 @@ export function ProvisioningRequestDialog({
 	const wiredToolkitId = chain?.toolkitBind
 		? satisfiedByItemId.get(chain.toolkitBind.id)
 		: undefined;
+	// Whether a toolkit already serves this chain's API (from the list
+	// response's `apis` aggregation): in the canonical manual-setup state
+	// (toolkit + credential exist, agent unbound) nothing is satisfied, so the
+	// wired-toolkit float never fires — ranking by served API rescues that
+	// exact case (issue #890). Vendor must match; names only when both are
+	// known — a version-less/name-less chain reference matches any row for the
+	// vendor, mirroring decide-time reference resolution's laxity.
+	const chainNameSlug = chain?.apiRef.name ? slugifyApiField(chain.apiRef.name) : '';
+	const servesChainApi = (tk: ToolkitResponse) =>
+		chainVendor !== undefined &&
+		(tk.apis ?? []).some(
+			(api) =>
+				api.vendor === chainVendor &&
+				(!chainNameSlug || !api.name || api.name === chainNameSlug),
+		);
 	const toolkitPickerOptions =
-		existingToolkits === 'error' || existingToolkits === null || !wiredToolkitId
+		existingToolkits === 'error' || existingToolkits === null
 			? existingToolkits
 			: [
 					...existingToolkits.filter((tk) => tk.toolkit_id === wiredToolkitId),
-					...existingToolkits.filter((tk) => tk.toolkit_id !== wiredToolkitId),
+					...existingToolkits.filter(
+						(tk) => tk.toolkit_id !== wiredToolkitId && servesChainApi(tk),
+					),
+					...existingToolkits.filter(
+						(tk) => tk.toolkit_id !== wiredToolkitId && !servesChainApi(tk),
+					),
 				];
 	const wiredToolkitName =
 		wiredToolkitId && existingToolkits !== 'error'
@@ -1440,7 +1469,9 @@ export function ProvisioningRequestDialog({
 																{tk.name}
 																{tk.toolkit_id === wiredToolkitId
 																	? ' — already linked to this agent'
-																	: ''}
+																	: servesChainApi(tk)
+																		? ` — already serves ${chainLabel}`
+																		: ''}
 															</option>
 														))}
 													</Select>
@@ -1585,9 +1616,28 @@ export function ProvisioningRequestDialog({
 																{credentialTypeLabel(cred.type) ??
 																	cred.type}
 																)
+																{isUnconnectedOAuth(cred)
+																	? ' — not signed in yet'
+																	: ''}
 															</option>
 														))}
 													</Select>
+													{(() => {
+														const pending = chainCredentialOptions.find(
+															(cred) =>
+																cred.credential_id ===
+																pendingCredentialChoice,
+														);
+														return pending &&
+															isUnconnectedOAuth(pending) ? (
+															<p className="text-accent-orange text-sm">
+																This OAuth credential was never
+																signed in, so calls using it will
+																fail until someone completes its
+																sign-in from the Credentials page.
+															</p>
+														) : null;
+													})()}
 													{pendingCredentialChoice && (
 														<Button
 															variant="secondary"

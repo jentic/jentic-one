@@ -239,7 +239,17 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 					<OverviewTab toolkitId={toolkitId} onManageAccess={() => setTab('access')} />
 				)}
 				{activeTab === 'activity' && <ActivityTab toolkitId={toolkitId} />}
-				{activeTab === 'access' && <AccessTab toolkitId={toolkitId} />}
+				{activeTab === 'access' && (
+					<AccessTab
+						toolkitId={toolkitId}
+						agentless={
+							boundAgents !== undefined &&
+							boundAgents.length === 0 &&
+							toolkit.key_count === 0
+						}
+						onLinkAgent={() => setTab('overview')}
+					/>
+				)}
 				{activeTab === 'keys' && <KeysTab toolkitId={toolkitId} suspended={suspended} />}
 				{activeTab === 'settings' && (
 					<SettingsTab toolkit={toolkit} onDeleted={onRequestClose} />

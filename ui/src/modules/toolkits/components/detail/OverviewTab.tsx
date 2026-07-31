@@ -274,12 +274,15 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 			</Dialog>
 
 			{/* Two-step bind wizard — the same component the Access tab opens, so
-			    binding reads identically wherever it starts. */}
+			    binding reads identically wherever it starts. The post-bind
+			    "link an agent?" prompt opens the link dialog hosted right here. */}
 			<BindCredentialDialog
 				toolkitId={toolkitId}
 				open={bindOpen}
 				onClose={() => setBindOpen(false)}
 				boundIds={boundIds}
+				agentless={!agentsError && agents.length === 0 && (toolkit?.key_count ?? 0) === 0}
+				onLinkAgent={() => setLinkAgentOpen(true)}
 			/>
 		</div>
 	);

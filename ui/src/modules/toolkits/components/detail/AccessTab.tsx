@@ -28,7 +28,17 @@ import {
  * access-request review cards use, so "what can this credential do" reads
  * identically at review time and on the live binding.
  */
-export function AccessTab({ toolkitId }: { toolkitId: string }) {
+export function AccessTab({
+	toolkitId,
+	agentless = false,
+	onLinkAgent,
+}: {
+	toolkitId: string;
+	/** No linked agent and no API key — enables the post-bind link prompt. */
+	agentless?: boolean;
+	/** Jump to the surface hosting the link-agent affordance (Overview). */
+	onLinkAgent?: () => void;
+}) {
 	const { data: bindings = [], isError: bindingsError } = useToolkitBindings(toolkitId);
 	const unbindCredential = useUnbindCredential(toolkitId);
 
@@ -202,6 +212,8 @@ export function AccessTab({ toolkitId }: { toolkitId: string }) {
 				open={bindOpen}
 				onClose={() => setBindOpen(false)}
 				boundIds={boundIds}
+				agentless={agentless}
+				onLinkAgent={onLinkAgent}
 			/>
 		</>
 	);
