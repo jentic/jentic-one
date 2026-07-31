@@ -180,7 +180,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		// leaves opts.interactive false (it owns the profile prompts) while the
 		// user is very much at a terminal.
 		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
-		s, err := a.setupAgentUser(ctx, operatorNames(adapters), agentInteractive)
+		s, err := a.setupAgentUser(ctx, operatorNames(targetAdapters(targets)), agentInteractive)
 		if err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Agent-user setup cancelled."))

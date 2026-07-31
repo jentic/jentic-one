@@ -406,6 +406,18 @@ func (a *App) recordAgentAccount(userName, homeDir, configDir string, created bo
 	}
 }
 
+// targetAdapters projects the resolved skill targets to their adapters. The
+// skill-selection flow moved from a flat []skillgen.Adapter to []skillTarget
+// (adapter + placement scope); the agent-user step only cares about the operator
+// behind each target, so it unwraps the adapters here and reuses operatorNames.
+func targetAdapters(targets []skillTarget) []skillgen.Adapter {
+	adapters := make([]skillgen.Adapter, 0, len(targets))
+	for _, t := range targets {
+		adapters = append(adapters, t.adapter)
+	}
+	return adapters
+}
+
 // operatorNames projects the selected skill adapters to their operator names,
 // the vocabulary localagent.Lookup understands (e.g. "claude").
 func operatorNames(adapters []skillgen.Adapter) []string {
