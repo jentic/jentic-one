@@ -170,6 +170,44 @@ else
   pass "detect_platform: unsupported arch exits non-zero"
 fi
 
+# --- highest_release_tag: latest canonical release tag from ls-remote output ---
+# Mirrors the Go highestReleaseTag (cli/internal/update/version.go): keep only
+# clean vX.Y.Z tags; ignore cli/v* noise, pre-releases, and peeled "^{}" lines.
+# The fixture is deliberately unordered and mixes all the shapes we must ignore.
+lsr_fixture="$(printf '%s\n' \
+  'b99f974	refs/tags/cli/v0.14.3' \
+  'b99f974	refs/tags/cli/v0.14.3^{}' \
+  '1b37598	refs/tags/v0.1.0' \
+  'f4b8f89	refs/tags/v0.10.0' \
+  'aaaaaaa	refs/tags/v0.24.0' \
+  'bbbbbbb	refs/tags/v0.24.0^{}' \
+  'ccccccc	refs/tags/v1.0.0-rc1' \
+  'ddddddd	refs/tags/v0.9.0')"
+
+out="$(printf '%s\n' "$lsr_fixture" | highest_release_tag)"
+assert_eq "highest_release_tag: picks the highest vX.Y.Z" "v0.24.0" "$out"
+
+# Numeric (not lexical) ordering: v0.9.0 must beat v0.10.0 only when it's really
+# larger — here v0.10.0 > v0.9.0, and neither is the max, so the earlier check
+# already covers ordering. Add a focused pair to guard against lexical sort.
+out="$(printf '%s\n' 'x	refs/tags/v0.2.0' 'y	refs/tags/v0.10.0' | highest_release_tag)"
+assert_eq "highest_release_tag: numeric ordering (v0.10.0 > v0.2.0)" "v0.10.0" "$out"
+
+# Only noise/non-release tags -> non-zero exit and no output.
+set +e
+out="$(printf '%s\n' 'a	refs/tags/cli/v0.14.3' 'b	refs/tags/v1.0.0-rc1' 'c	refs/heads/main' | highest_release_tag)"
+rc=$?
+set -e
+assert_eq "highest_release_tag: no release tags -> non-zero exit" "1" "$rc"
+assert_eq "highest_release_tag: no release tags -> empty output" "" "$out"
+
+# Empty input -> non-zero exit, empty output.
+set +e
+out="$(printf '' | highest_release_tag)"
+rc=$?
+set -e
+assert_eq "highest_release_tag: empty input -> non-zero exit" "1" "$rc"
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has

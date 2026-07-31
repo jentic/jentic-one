@@ -17,7 +17,9 @@
 #
 # Configuration (environment variables, all optional):
 #   JENTIC_REPO         owner/name of the source repo   (default: jentic/jentic-one)
-#   JENTIC_REF          branch, tag, or commit to build  (default: main)
+#   JENTIC_REF          branch, tag, or commit to build  (default: latest release
+#                       tag, e.g. v0.24.0; falls back to main if none is found.
+#                       Set explicitly to build main or a dev branch.)
 #   JENTIC_INSTALL_DIR  where to install the binaries     (default: ~/.jentic/bin)
 #   JENTIC_GO_VERSION   Go to download if none suitable   (default: 1.26.2)
 #   GITHUB_TOKEN        token for cloning a private fork  (default: unset/anonymous)
@@ -112,7 +114,10 @@ set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
 JENTIC_REPO="${JENTIC_REPO:-jentic/jentic-one}"
-JENTIC_REF="${JENTIC_REF:-main}"
+# Empty by default: fetch_source() resolves the latest release tag when unset.
+# An explicit value (a branch like `main`, a tag, or a commit) is honored
+# verbatim — that's the override for building main or a dev/local branch.
+JENTIC_REF="${JENTIC_REF:-}"
 JENTIC_INSTALL_DIR="${JENTIC_INSTALL_DIR:-$HOME/.jentic/bin}"
 JENTIC_GO_VERSION="${JENTIC_GO_VERSION:-1.26.2}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
@@ -366,6 +371,55 @@ ensure_go() {
 }
 
 # --- source fetch -----------------------------------------------------------
+# highest_release_tag reads `git ls-remote --tags` output on stdin and prints
+# the highest canonical release tag (vMAJOR.MINOR.PATCH, with its `v`). It
+# mirrors the Go `highestReleaseTag` (cli/internal/update/version.go): it keeps
+# only clean three-part `v` tags and deliberately ignores `cli/v*` noise tags,
+# pre-releases (`v1.0.0-rc1`), and the peeled `^{}` lines ls-remote also prints.
+# Returns non-zero (and prints nothing) when no release tag is present. Sorting
+# is done field-by-field with a plain `sort` so it works on stock macOS bash 3.2
+# / BSD tools (no `sort -V`).
+highest_release_tag() {
+  # Lines look like "<sha>\trefs/tags/<name>". Extract the tag name, keep only
+  # canonical vX.Y.Z (anchored, so `cli/v*` and `-rc` suffixes are dropped),
+  # strip the leading `v`, numeric-sort by each component, take the largest,
+  # then re-add the `v`.
+  local top
+  top="$(
+    sed -n 's|^.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' \
+      | sed 's/^v//' \
+      | sort -t. -k1,1n -k2,2n -k3,3n \
+      | tail -n 1
+  )"
+  [ -n "$top" ] || return 1
+  printf 'v%s\n' "$top"
+}
+
+# resolve_default_ref sets JENTIC_REF to the latest release tag when the caller
+# left it unset. On any failure (no release tags — e.g. a fork — or a network
+# error) it warns loudly and falls back to main so a build still happens. An
+# explicit JENTIC_REF is honored verbatim and this is a no-op. git auth args are
+# passed through so private repos resolve. Must run after the git auth setup in
+# fetch_source.
+resolve_default_ref() {
+  local clone_url="$1"; shift
+  local -a git_base_auth=("$@")   # git_base + git_auth, already assembled
+
+  [ -n "$JENTIC_REF" ] && return 0
+
+  local ls_out tag
+  if ls_out="$(git "${git_base_auth[@]}" ls-remote --tags "$clone_url" 'v*' 2>/dev/null)" \
+      && tag="$(printf '%s\n' "$ls_out" | highest_release_tag)"; then
+    JENTIC_REF="$tag"
+    ok "Latest release: ${C_BOLD}${JENTIC_REF}${C_RESET}"
+    return 0
+  fi
+
+  JENTIC_REF="main"
+  warn "Could not resolve a release tag in ${JENTIC_REPO} — building from ${C_BOLD}main${C_RESET}."
+  warn "  Pin a specific build with ${C_BOLD}JENTIC_REF=<tag|branch|commit>${C_RESET}."
+}
+
 fetch_source() {
   step "Fetching source"
   WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install.XXXXXX")"
@@ -390,6 +444,9 @@ fetch_source() {
     basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
     git_auth=(-c "http.extraheader=Authorization: Basic ${basic}")
   fi
+
+  # Default the build ref to the latest release tag (unless the user pinned one).
+  resolve_default_ref "$clone_url" "${git_base[@]}" ${git_auth[@]+"${git_auth[@]}"}
 
   if ! spin "Cloning ${JENTIC_REPO}@${JENTIC_REF}" \
         git "${git_base[@]}" ${git_auth[@]+"${git_auth[@]}"} clone \
