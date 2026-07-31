@@ -423,6 +423,9 @@ def parse_preview_operations(
             op_keys = {(p.name, p.location) for p in op_params}
             merged = op_params + [p for p in path_params if (p.name, p.location) not in op_keys]
             op_security_raw = op.get("security")
+            # Op security overrides doc security entirely; absence inherits it.
+            # The same op-else-doc resolution is applied at ingest in
+            # OpenAPIOperationParser (issue #772) — keep the two aligned.
             security = (
                 flatten_security(op_security_raw) if op_security_raw is not None else doc_security
             )
