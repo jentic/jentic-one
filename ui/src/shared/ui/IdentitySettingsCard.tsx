@@ -70,19 +70,34 @@ export function IdentitySettingsCard({
 	// any cache refetch) and a background refetch can't flip a clean form dirty.
 	const [saved, setSaved] = useState({ name, description: description ?? '' });
 
-	// Seed-from-props syncs only when the entity itself changed — never on
-	// re-renders of the same entity, or a background refetch would clobber
-	// the user's draft (and a warm cache could carry entity A's draft onto
-	// entity B and PATCH the wrong row).
-	const seededIdRef = useRef(idValue);
+	// Seed-from-props syncs when the entity itself changed, and otherwise
+	// absorbs server-side changes only while the form is CLEAN — a background
+	// refetch must never clobber an in-progress draft (and a warm cache could
+	// carry entity A's draft onto entity B and PATCH the wrong row), but
+	// late-arriving data for the same entity must still land. The ref gate
+	// makes the effect react to PROP changes only: right after a save,
+	// `saved` is ahead of the (stale) props, and syncing then would revert
+	// the form to pre-save values.
+	const lastPropsRef = useRef({ idValue, name, description: description ?? '' });
 	useEffect(() => {
-		if (seededIdRef.current === idValue) return;
-		seededIdRef.current = idValue;
-		setDraftName(name);
-		setDraftDescription(description ?? '');
-		setSaved({ name, description: description ?? '' });
-		setNameError(null);
-	}, [idValue, name, description]);
+		const next = { name, description: description ?? '' };
+		const prev = lastPropsRef.current;
+		lastPropsRef.current = { idValue, ...next };
+		if (prev.idValue !== idValue) {
+			setDraftName(next.name);
+			setDraftDescription(next.description);
+			setSaved(next);
+			setNameError(null);
+			return;
+		}
+		if (prev.name === next.name && prev.description === next.description) return;
+		const clean = draftName === saved.name && draftDescription === saved.description;
+		setSaved(next);
+		if (clean) {
+			setDraftName(next.name);
+			setDraftDescription(next.description);
+		}
+	}, [idValue, name, description, saved, draftName, draftDescription]);
 
 	const trimmedName = draftName.trim();
 	const trimmedDescription = draftDescription.trim();

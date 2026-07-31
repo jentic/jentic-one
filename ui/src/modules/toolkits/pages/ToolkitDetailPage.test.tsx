@@ -163,9 +163,10 @@ describe('ToolkitDetailPage', () => {
 		expect(await screen.findByText(/github\.create_issue/)).toBeInTheDocument();
 		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();
 
-		// Deep-links into Monitor (back row + feed card) carry the toolkit filter.
+		// Deep-links into Monitor carry the toolkit filter — exactly two: the
+		// back-row link and the feed-card link.
 		const links = screen.getAllByRole('link', { name: /open monitor/i });
-		expect(links.length).toBeGreaterThan(0);
+		expect(links).toHaveLength(2);
 		for (const link of links) {
 			expect(link).toHaveAttribute(
 				'href',

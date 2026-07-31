@@ -4,18 +4,17 @@
  *
  * Layout mirrors the toolkit console exactly: a shared `PageHeader` band (the
  * agent's badge as icon, its name as title, its own description as subtitle,
- * and the constructive lifecycle actions — Approve / Deny / Enable — in the
- * header action slot), a back row, a denial banner when rejected, the KPI
- * strip, then five tab panels:
+ * with the kill switch for the reversible active/disabled flip plus the
+ * constructive Approve / Deny actions in the header action slot), a back row,
+ * a denial banner when rejected, the KPI strip, then five tab panels:
  *   - Overview  → attribution meta + bound toolkits + audit slice
  *   - Activity  → this agent's execution volume + recent executions
  *                 (GET /monitoring/usage?agent_id=…, GET /executions?actor_id=…)
- *                 with a pre-filtered "Open in Monitor" deep-link
+ *                 with a pre-filtered "Open Monitor" deep-link
  *   - Access    → platform scopes (#615) + filed access requests (#619)
  *   - Keys      → API-key metadata, generate/regenerate/revoke, rotation history
  *   - Settings  → the copyable agent id + editable metadata (PATCH
- *                 /agents/{id}) + danger zone hosting the destructive
- *                 lifecycle actions (Disable / Archive)
+ *                 /agents/{id}) + danger zone hosting the terminal Archive
  *
  * The active tab lives in `?tab=` (like Monitor's lenses) so every view is
  * shareable and back-button friendly. Activity/KPI sources are admin-gated:
@@ -177,11 +176,12 @@ export default function AgentDetailPage() {
 	const agent = agentQuery.data;
 	// The identity header offers the kill switch for the reversible
 	// active/disabled flip (same control as the toolkit console) plus the
-	// constructive actions (Approve / Deny); destructive-irreversible ones
-	// (Archive) live in the Settings tab's danger zone.
+	// constructive actions (Approve / Deny); the terminal Archive lives in
+	// the Settings tab's danger zone. `enable`/`disable` never render as
+	// header buttons — the kill switch owns that verb pair.
 	const killSwitchStatus = agent.status === 'active' || agent.status === 'disabled';
 	const headerActions = ACTIONS_FOR_STATUS[agent.status].filter(
-		(a) => a !== 'disable' && a !== 'archive' && (!killSwitchStatus || a !== 'enable'),
+		(a) => a !== 'disable' && a !== 'archive' && a !== 'enable',
 	);
 	const actionPending =
 		approve.isPending ||
@@ -192,34 +192,23 @@ export default function AgentDetailPage() {
 
 	/**
 	 * Which specific header action is in flight (drives the per-button
-	 * spinner). Only constructive verbs render in the header — disable /
-	 * archive run behind the Settings danger zone's confirm dialogs, which
-	 * own their own pending state.
+	 * spinner). Only Approve / Deny render as header buttons — the
+	 * enable/disable pair runs through the kill switch (its own spinner) and
+	 * Archive behind the Settings danger zone's confirm dialog.
 	 */
 	const pendingAction: AgentAction | null = approve.isPending
 		? 'approve'
 		: deny.isPending
 			? 'deny'
-			: enable.isPending
-				? 'enable'
-				: null;
+			: null;
 
 	function handleAction(action: AgentAction) {
 		switch (action) {
 			case 'approve':
 				approve.mutate(agent.id);
 				break;
-			case 'enable':
-				enable.mutate(agent.id);
-				break;
 			case 'deny':
 				setConfirm({ kind: 'deny', id: agent.id, name: agent.name });
-				break;
-			case 'disable':
-				setConfirm({ kind: 'disable', id: agent.id, name: agent.name });
-				break;
-			case 'archive':
-				setConfirm({ kind: 'archive', id: agent.id, name: agent.name });
 				break;
 		}
 	}

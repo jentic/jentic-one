@@ -59,19 +59,36 @@ export function KillSwitch({
 	const [confirming, setConfirming] = useState(false);
 	const confirmId = useId();
 	const confirmRef = useRef<HTMLButtonElement>(null);
+	const pillRef = useRef<HTMLButtonElement>(null);
 
 	useEffect(() => {
 		if (confirming) confirmRef.current?.focus();
 	}, [confirming]);
 
-	const apply = () => {
+	/** Close the confirm group and hand focus back to the pill. */
+	const dismiss = () => {
 		setConfirming(false);
+		pillRef.current?.focus();
+	};
+
+	const apply = () => {
+		dismiss();
 		onToggle(!active);
 	};
 
 	return (
-		<div className={cn('inline-flex items-center gap-2', className)} data-testid={dataTestId}>
+		<div
+			className={cn('inline-flex items-center gap-2', className)}
+			data-testid={dataTestId}
+			onKeyDown={(e) => {
+				if (confirming && e.key === 'Escape') {
+					e.stopPropagation();
+					dismiss();
+				}
+			}}
+		>
 			<Button
+				ref={pillRef}
 				variant="ghost"
 				loading={pending}
 				onClick={() => setConfirming((c) => !c)}
@@ -139,7 +156,7 @@ export function KillSwitch({
 					</Button>
 					<Button
 						variant="ghost"
-						onClick={() => setConfirming(false)}
+						onClick={dismiss}
 						className="text-muted-foreground hover:text-foreground px-1 py-0 text-xs"
 					>
 						Cancel

@@ -18,8 +18,9 @@
  *   - Settings  → the copyable account id + danger zone; there is no PATCH
  *                 /service-accounts (backend gap, documented inline)
  *
- * The PageHeader only offers constructive actions (Approve / Deny / Enable);
- * destructive ones (Disable / Archive) live in Settings' danger zone.
+ * The PageHeader carries the kill switch for the reversible active/disabled
+ * flip (same control as the toolkit console) plus the constructive Approve /
+ * Deny actions; the terminal Archive lives in Settings' danger zone.
  */
 import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
@@ -181,37 +182,24 @@ function SaSettingsPanel({
 	lifecyclePending,
 }: {
 	account: ServiceAccountEntity;
-	onLifecycle: (action: 'disable' | 'archive') => void;
+	onLifecycle: (action: 'archive') => void;
 	lifecyclePending: boolean;
 }) {
 	const actions = ACTIONS_FOR_STATUS[account.status];
-	const dangerActions: DangerZoneAction[] = [
-		...(actions.includes('disable')
-			? [
-					{
-						key: 'disable',
-						title: 'Disable service account',
-						description:
-							'Immediately revokes this account’s access. Reversible — you can re-enable it later.',
-						buttonLabel: 'Disable',
-						ariaLabel: `Disable ${account.name}`,
-						emphasis: 'outline' as const,
-					},
-				]
-			: []),
-		...(actions.includes('archive')
-			? [
-					{
-						key: 'archive',
-						title: 'Archive service account',
-						description:
-							'Removes this account from the fleet and cascades to its grants. This cannot be undone.',
-						buttonLabel: 'Archive',
-						ariaLabel: `Archive ${account.name}`,
-					},
-				]
-			: []),
-	];
+	// Terminal Archive only — the reversible Disable/Enable flip lives in the
+	// page header's kill switch, exactly like the toolkit console.
+	const dangerActions: DangerZoneAction[] = actions.includes('archive')
+		? [
+				{
+					key: 'archive',
+					title: 'Archive service account',
+					description:
+						'Removes this account from the fleet and cascades to its grants. This cannot be undone.',
+					buttonLabel: 'Archive',
+					ariaLabel: `Archive ${account.name}`,
+				},
+			]
+		: [];
 
 	return (
 		<div className="space-y-4">
@@ -226,7 +214,7 @@ function SaSettingsPanel({
 			<DangerZone
 				actions={dangerActions}
 				pending={lifecyclePending}
-				onAction={(key) => onLifecycle(key as 'disable' | 'archive')}
+				onAction={() => onLifecycle('archive')}
 			/>
 		</div>
 	);
@@ -313,10 +301,11 @@ export default function ServiceAccountDetailPage() {
 	const account = accountQuery.data;
 	// The header offers the kill switch for the reversible active/disabled
 	// flip (same control as the toolkit console) plus constructive actions
-	// (Approve / Deny); Archive lives in Settings.
+	// (Approve / Deny); Archive lives in Settings. `enable`/`disable` never
+	// render as header buttons — the kill switch owns that verb pair.
 	const killSwitchStatus = account.status === 'active' || account.status === 'disabled';
 	const headerActions = ACTIONS_FOR_STATUS[account.status].filter(
-		(a) => a !== 'disable' && a !== 'archive' && (!killSwitchStatus || a !== 'enable'),
+		(a) => a !== 'disable' && a !== 'archive' && a !== 'enable',
 	);
 	const actionPending =
 		approve.isPending ||
@@ -330,26 +319,15 @@ export default function ServiceAccountDetailPage() {
 		? 'approve'
 		: deny.isPending
 			? 'deny'
-			: enable.isPending
-				? 'enable'
-				: null;
+			: null;
 
 	function handleAction(action: AgentAction) {
 		switch (action) {
 			case 'approve':
 				approve.mutate(account.id);
 				break;
-			case 'enable':
-				enable.mutate(account.id);
-				break;
 			case 'deny':
 				setConfirm({ kind: 'deny', id: account.id, name: account.name });
-				break;
-			case 'disable':
-				setConfirm({ kind: 'disable', id: account.id, name: account.name });
-				break;
-			case 'archive':
-				setConfirm({ kind: 'archive', id: account.id, name: account.name });
 				break;
 		}
 	}

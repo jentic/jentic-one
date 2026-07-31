@@ -61,6 +61,21 @@ describe('KillSwitch', () => {
 		await user.click(screen.getByRole('button', { name: 'Cancel' }));
 		expect(onToggle).not.toHaveBeenCalled();
 		expect(screen.queryByText('Block keys + agents?')).not.toBeInTheDocument();
+		// Focus returns to the pill so keyboard users aren't dropped to <body>.
+		expect(screen.getByRole('button', { name: 'Suspend toolkit (kill switch)' })).toHaveFocus();
+	});
+
+	it('dismisses the armed confirm with Escape', async () => {
+		const user = userEvent.setup();
+		const onToggle = vi.fn();
+		renderWithProviders(<KillSwitch active onToggle={onToggle} {...BASE_PROPS} />);
+
+		await user.click(screen.getByRole('button', { name: 'Suspend toolkit (kill switch)' }));
+		expect(screen.getByText('Block keys + agents?')).toBeInTheDocument();
+		await user.keyboard('{Escape}');
+		expect(onToggle).not.toHaveBeenCalled();
+		expect(screen.queryByText('Block keys + agents?')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Suspend toolkit (kill switch)' })).toHaveFocus();
 	});
 
 	it('disables the pill while the mutation is pending', () => {

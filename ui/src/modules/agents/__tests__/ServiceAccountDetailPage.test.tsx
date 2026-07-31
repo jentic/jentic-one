@@ -130,8 +130,9 @@ describe('ServiceAccountDetailPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Activity' }));
 		expect(await screen.findByText(/Recent executions/)).toBeInTheDocument();
 
+		// Exactly two deep-links: the back-row link and the feed-card link.
 		const links = await screen.findAllByRole('link', { name: /Open Monitor/ });
-		expect(links.length).toBeGreaterThan(0);
+		expect(links).toHaveLength(2);
 		for (const link of links) {
 			expect(link.getAttribute('href')).toContain('actor_id=sva_active_1');
 			expect(link.getAttribute('href')).toContain('actor_type=service_account');
@@ -165,7 +166,7 @@ describe('ServiceAccountDetailPage', () => {
 		expect(within(dialog).getByText('API key generated')).toBeInTheDocument();
 	});
 
-	it('hosts Disable and Archive in the Settings danger zone with the PATCH gap documented', async () => {
+	it('hosts only the terminal Archive in the danger zone with the PATCH gap documented', async () => {
 		const user = userEvent.setup();
 		renderDetail('sva_active_1');
 		await screen.findByRole('heading', { name: 'metrics-exporter' });
@@ -174,9 +175,10 @@ describe('ServiceAccountDetailPage', () => {
 		// No metadata form: jentic-one has no PATCH /service-accounts.
 		expect(await screen.findByText(/no PATCH \/service-accounts/)).toBeInTheDocument();
 		expect(screen.getByText('Danger zone')).toBeInTheDocument();
+		// The reversible Disable lives in the header kill switch, not here.
 		expect(
-			screen.getByRole('button', { name: 'Disable metrics-exporter' }),
-		).toBeInTheDocument();
+			screen.queryByRole('button', { name: 'Disable metrics-exporter' }),
+		).not.toBeInTheDocument();
 
 		// Archive routes through the cascade-delete confirmation dialog.
 		await user.click(screen.getByRole('button', { name: 'Archive metrics-exporter' }));

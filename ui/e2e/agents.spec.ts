@@ -92,7 +92,11 @@ test('the Activity tab feeds per-agent executions and deep-links to Monitor', as
 	await expect(page.getByText('github.create_issue')).toBeVisible();
 
 	// The Monitor deep-link carries the actor filter (Monitor's URL contract).
-	const href = await page.getByRole('link', { name: /Open in Monitor/ }).getAttribute('href');
+	// Two links match (back row + feed card) — both share the same href.
+	const href = await page
+		.getByRole('link', { name: /Open Monitor/ })
+		.first()
+		.getAttribute('href');
 	expect(href).toContain('tab=executions');
 	expect(href).toContain('actor_id=agnt_active_1');
 	expect(href).toContain('actor_type=agent');

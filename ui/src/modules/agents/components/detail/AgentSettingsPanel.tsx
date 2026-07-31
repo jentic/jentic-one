@@ -7,11 +7,11 @@
  *     are sent (real PATCH semantics). Ownership is intentionally NOT
  *     editable here — reassigning an agent's accountable human is an
  *     administrative act, not routine metadata upkeep.
- *   - {@link DangerZone} → the destructive lifecycle actions (Disable /
- *     Archive), moved out of the identity header so it only ever offers
- *     constructive actions. Both buttons defer to the page-level
- *     {@link LifecycleDialogs} via `onLifecycle` — this panel never mutates
- *     lifecycle state itself.
+ *   - {@link DangerZone} → the terminal Archive action. Suspension is NOT
+ *     here: the reversible Disable/Enable flip lives in the page header's
+ *     kill switch, exactly like the toolkit console. The button defers to
+ *     the page-level {@link LifecycleDialogs} via `onLifecycle` — this panel
+ *     never mutates lifecycle state itself.
  */
 import { DangerZone, IdentitySettingsCard, type DangerZoneAction } from '@/shared/ui';
 import {
@@ -24,7 +24,7 @@ import {
 interface AgentSettingsPanelProps {
 	agent: AgentEntity;
 	/** Ask the page to run a destructive lifecycle action (opens its dialog). */
-	onLifecycle: (action: 'disable' | 'archive') => void;
+	onLifecycle: (action: 'archive') => void;
 	/** True while any page-level lifecycle mutation is in flight. */
 	lifecyclePending: boolean;
 }
@@ -37,33 +37,18 @@ export function AgentSettingsPanel({
 	const update = useUpdateAgent();
 
 	const actions = ACTIONS_FOR_STATUS[agent.status];
-	const dangerActions: DangerZoneAction[] = [
-		...(actions.includes('disable')
-			? [
-					{
-						key: 'disable',
-						title: 'Disable agent',
-						description:
-							'Immediately revokes this agent’s ability to authenticate. Reversible — you can re-enable it later.',
-						buttonLabel: 'Disable',
-						ariaLabel: `Disable ${agent.name}`,
-						emphasis: 'outline' as const,
-					},
-				]
-			: []),
-		...(actions.includes('archive')
-			? [
-					{
-						key: 'archive',
-						title: 'Archive agent',
-						description:
-							'Removes this agent from the fleet and cascades to its bindings. This cannot be undone.',
-						buttonLabel: 'Archive',
-						ariaLabel: `Archive ${agent.name}`,
-					},
-				]
-			: []),
-	];
+	const dangerActions: DangerZoneAction[] = actions.includes('archive')
+		? [
+				{
+					key: 'archive',
+					title: 'Archive agent',
+					description:
+						'Removes this agent from the fleet and cascades to its bindings. This cannot be undone.',
+					buttonLabel: 'Archive',
+					ariaLabel: `Archive ${agent.name}`,
+				},
+			]
+		: [];
 
 	return (
 		<div className="space-y-4">
@@ -91,7 +76,7 @@ export function AgentSettingsPanel({
 			<DangerZone
 				actions={dangerActions}
 				pending={lifecyclePending}
-				onAction={(key) => onLifecycle(key as 'disable' | 'archive')}
+				onAction={() => onLifecycle('archive')}
 			/>
 		</div>
 	);

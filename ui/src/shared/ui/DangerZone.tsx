@@ -57,10 +57,13 @@ export function DangerZone({ actions, pending = false, onAction }: DangerZonePro
 					</div>
 					<Button
 						size="sm"
-						variant={action.emphasis === 'outline' ? 'outline' : 'danger'}
+						// `outline` emphasis needs a fully danger-tinted treatment —
+						// the stock outline variant is primary-tinted and would leak
+						// teal through on hover.
+						variant={action.emphasis === 'outline' ? 'ghost' : 'danger'}
 						className={
 							action.emphasis === 'outline'
-								? 'border-danger/40 text-danger hover:bg-danger/10 shrink-0'
+								? 'border-danger/40 text-danger hover:bg-danger/10 hover:text-danger shrink-0 border'
 								: 'shrink-0'
 						}
 						disabled={pending}

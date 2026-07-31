@@ -81,7 +81,7 @@ export function ExecutionVolumeCharts({
 				value: b.success,
 				colorClassName: 'bg-accent-green/80',
 			},
-			{ key: 'failed', label: 'failed', value: b.failed, colorClassName: 'bg-danger/70' },
+			{ key: 'failed', label: 'failed', value: b.failed, colorClassName: 'bg-danger/80' },
 		],
 	}));
 

@@ -78,6 +78,47 @@ describe('IdentitySettingsCard', () => {
 		expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
 	});
 
+	it('absorbs late-arriving props while clean but never clobbers a dirty draft', async () => {
+		const user = userEvent.setup();
+		const { rerender } = renderWithProviders(
+			<IdentitySettingsCard
+				idLabel="Agent ID"
+				idValue="agent_1"
+				name=""
+				description={null}
+				onSave={vi.fn()}
+			/>,
+		);
+
+		// Late fetch resolves for the SAME entity: a clean form re-seeds.
+		rerender(
+			<IdentitySettingsCard
+				idLabel="Agent ID"
+				idValue="agent_1"
+				name="support-agent"
+				description="Answers tickets"
+				onSave={vi.fn()}
+			/>,
+		);
+		expect(screen.getByLabelText('Name')).toHaveValue('support-agent');
+		expect(screen.getByLabelText('Description')).toHaveValue('Answers tickets');
+		expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+
+		// Once the user edits, a background refetch must not clobber the draft.
+		await user.clear(screen.getByLabelText('Name'));
+		await user.type(screen.getByLabelText('Name'), 'renamed-agent');
+		rerender(
+			<IdentitySettingsCard
+				idLabel="Agent ID"
+				idValue="agent_1"
+				name="support-agent-v2"
+				description="Answers tickets"
+				onSave={vi.fn()}
+			/>,
+		);
+		expect(screen.getByLabelText('Name')).toHaveValue('renamed-agent');
+	});
+
 	it('renders read-only (id + note, no form) when there is no update endpoint', () => {
 		renderWithProviders(
 			<IdentitySettingsCard

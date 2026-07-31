@@ -13,6 +13,14 @@ import { AppLink } from '@/shared/ui/AppLink';
 import { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 
+/** Absolute-time tooltip for either wire shape (ISO string or epoch number). */
+function absoluteTime(value: string | number): string {
+	if (typeof value === 'string') return formatTimestamp(value);
+	// Same 10-digit heuristic as the shared `timeAgo`: seconds vs milliseconds.
+	const ms = value < 1e12 ? value * 1000 : value;
+	return formatTimestamp(new Date(ms).toISOString());
+}
+
 export interface RecentExecutionItem {
 	id: string;
 	/** Execution lifecycle status (completed/failed/running/cancelled). */
@@ -98,9 +106,7 @@ function ExecutionRow({ item }: { item: RecentExecutionItem }) {
 			</span>
 			<span
 				className="text-muted-foreground w-20 shrink-0 text-right text-xs"
-				title={
-					typeof item.startedAt === 'string' ? formatTimestamp(item.startedAt) : undefined
-				}
+				title={absoluteTime(item.startedAt)}
 			>
 				{timeAgo(item.startedAt)}
 			</span>

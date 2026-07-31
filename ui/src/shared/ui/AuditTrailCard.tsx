@@ -92,43 +92,48 @@ export function AuditTrailCard({
 			{!isError && !isLoading && entries.length === 0 && (
 				<EmptyRow icon={<ScrollText />}>{emptyMessage}</EmptyRow>
 			)}
-			<AnimatePresence initial={false}>
-				{entries.map((entry) => {
-					const occurred = Date.parse(entry.occurredAt);
-					return (
-						<motion.div
-							key={entry.id}
-							{...rowMotion}
-							className="bg-muted/30 border-border/60 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2"
-						>
-							<Badge variant={actionVariant(entry.action)}>{entry.action}</Badge>
-							<span className="text-foreground min-w-0 flex-1 truncate text-sm">
-								{entry.actorId ? (
-									<ActorLabel
-										actorId={entry.actorId}
-										actorType={entry.actorType ?? undefined}
-									/>
-								) : (
-									(entry.actorType ?? 'system')
-								)}
-								{entry.reason ? (
-									<span className="text-muted-foreground"> — {entry.reason}</span>
-								) : null}
-							</span>
-							<span
-								className="text-muted-foreground shrink-0 text-xs"
-								title={
-									Number.isFinite(occurred)
-										? formatTimestamp(entry.occurredAt)
-										: entry.occurredAt
-								}
+			{!isError && !isLoading && (
+				<AnimatePresence initial={false}>
+					{entries.map((entry) => {
+						const occurred = Date.parse(entry.occurredAt);
+						return (
+							<motion.div
+								key={entry.id}
+								{...rowMotion}
+								className="bg-muted/30 border-border/60 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2"
 							>
-								{Number.isFinite(occurred) ? timeAgo(entry.occurredAt) : ''}
-							</span>
-						</motion.div>
-					);
-				})}
-			</AnimatePresence>
+								<Badge variant={actionVariant(entry.action)}>{entry.action}</Badge>
+								<span className="text-foreground min-w-0 flex-1 truncate text-sm">
+									{entry.actorId ? (
+										<ActorLabel
+											actorId={entry.actorId}
+											actorType={entry.actorType ?? undefined}
+										/>
+									) : (
+										(entry.actorType ?? 'system')
+									)}
+									{entry.reason ? (
+										<span className="text-muted-foreground">
+											{' '}
+											— {entry.reason}
+										</span>
+									) : null}
+								</span>
+								<span
+									className="text-muted-foreground shrink-0 text-xs"
+									title={
+										Number.isFinite(occurred)
+											? formatTimestamp(entry.occurredAt)
+											: entry.occurredAt
+									}
+								>
+									{Number.isFinite(occurred) ? timeAgo(entry.occurredAt) : ''}
+								</span>
+							</motion.div>
+						);
+					})}
+				</AnimatePresence>
+			)}
 		</DetailSection>
 	);
 }

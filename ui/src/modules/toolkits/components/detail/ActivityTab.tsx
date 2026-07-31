@@ -11,7 +11,7 @@ import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * Activity tab — what this toolkit has actually been doing: the shared
- * console chart pair (stacked execution volume + total-call trend,
+ * console chart pair (stacked execution volume + success-rate trend,
  * `ExecutionVolumeCharts`, fed by `GET /monitoring/usage?toolkit_id=…`) and
  * the shared recent-executions feed (`RecentExecutionsCard`, fed by
  * `GET /executions?toolkit_id=…`), with a deep-link into Monitor's full

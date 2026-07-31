@@ -1,6 +1,6 @@
 /**
  * ActivityPanel — the detail page's Activity tab: the shared console chart
- * pair (stacked execution volume + total-call trend, `ExecutionVolumeCharts`)
+ * pair (stacked execution volume + success-rate trend, `ExecutionVolumeCharts`)
  * plus the shared recent-executions feed (`RecentExecutionsCard`), both
  * scoped by `actor_id`. Monitor owns the full history (cursor paging, trace
  * sheets, filters), so the panel deep-links there rather than

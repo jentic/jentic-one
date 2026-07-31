@@ -46,13 +46,24 @@ describe('AuditTrailCard', () => {
 	it('shows the error state instead of rows', () => {
 		renderWithProviders(
 			<AuditTrailCard
-				entries={[]}
+				entries={entries}
 				isError
 				errorMessage="Failed to load the audit log."
 				emptyMessage="Nothing recorded yet."
 			/>,
 		);
 		expect(screen.getByText('Failed to load the audit log.')).toBeInTheDocument();
+		expect(screen.queryByText('Nothing recorded yet.')).not.toBeInTheDocument();
+		// Stale cache entries must not render behind the error alert.
+		expect(screen.queryByText('agent.approve')).not.toBeInTheDocument();
+	});
+
+	it('suppresses rows and the empty state while loading', () => {
+		renderWithProviders(
+			<AuditTrailCard entries={entries} isLoading emptyMessage="Nothing recorded yet." />,
+		);
+		expect(screen.getByText('Recent changes')).toBeInTheDocument();
+		expect(screen.queryByText('agent.approve')).not.toBeInTheDocument();
 		expect(screen.queryByText('Nothing recorded yet.')).not.toBeInTheDocument();
 	});
 
