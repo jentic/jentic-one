@@ -63,6 +63,9 @@ jobs:
               - 'alembic.ini'
               - 'docker/**'
               - 'src/jentic_one/migrations/**'
+              # Fixture upstream for the Flow-3 catalog-update real-backend e2e
+              # (launched by ui-e2e-realbackend); a fixture-only edit must re-run.
+              - 'scripts/flow3_upstream_fixture.py'
             cli:
               - 'cli/**'
               # The cli job drift-checks the generated CLI reference the docs
@@ -493,6 +496,23 @@ jobs:
       - name: Start database fixtures (clean DB -> first-run gate present)
         run: make start-fixtures
 
+      - name: Start the Flow-3 fixture upstream
+        # A controllable upstream on loopback for the catalog update-notify e2e
+        # (flow3-catalog-update.spec.ts): serves a catalog manifest + a mutable
+        # OpenAPI spec, with POST /control/bump to simulate an upstream change.
+        # Backgrounded in its own session so teardown can reap it. The spec self-
+        # skips if this isn't up, so a failure to launch degrades to a skip.
+        run: |
+          setsid python scripts/flow3_upstream_fixture.py > /tmp/flow3-upstream.log 2>&1 &
+          echo "FLOW3_UPSTREAM_PGID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8099/healthz >/dev/null 2>&1; then
+              echo "flow3 upstream ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "flow3 upstream did not become ready"; cat /tmp/flow3-upstream.log; exit 1
+
       - name: Start the combined app
         # Force reload off: config/local.yaml sets server.reload: true, which
         # spawns a file-watching reloader parent + worker child. Backgrounding
@@ -501,6 +521,15 @@ jobs:
         # CI and harms determinism, so we override it and capture a single PID.
         env:
           JENTIC__SERVER__RELOAD: "false"
+          # Flow-3 catalog update-notify e2e wiring (flow3-catalog-update.spec.ts):
+          # point the catalog manifest at the loopback fixture, admit that loopback
+          # upstream through the SSRF egress guard, and shorten the sweep interval
+          # so a re-probe happens on demand (the spec still drives it via
+          # POST /catalog:refresh). Harmless to the other specs.
+          JENTIC__CATALOG__MANIFEST_URL: "http://127.0.0.1:8099/apis.json"
+          JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS: "5"
+          JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS: "5"
+          JENTIC__INGEST__EGRESS__ALLOWED_PRIVATE_SUBNETS: "127.0.0.0/8"
         run: |
           # Own a process group so teardown can reap uvicorn even though it runs
           # under `make -> uv -> python` (kill of the make PID alone wouldn't
@@ -533,6 +562,10 @@ jobs:
         if: failure()
         run: cat /tmp/jentic-app.log || true
 
+      - name: Dump Flow-3 upstream log on failure
+        if: failure()
+        run: cat /tmp/flow3-upstream.log || true
+
       - name: Stop the app
         if: always()
         run: |
@@ -541,6 +574,13 @@ jobs:
           # make/uv/python together. Negative PID targets the process group.
           if [ -n "${APP_PGID:-}" ]; then
             kill -TERM "-${APP_PGID}" 2>/dev/null || true
+          fi
+
+      - name: Stop the Flow-3 fixture upstream
+        if: always()
+        run: |
+          if [ -n "${FLOW3_UPSTREAM_PGID:-}" ]; then
+            kill -TERM "-${FLOW3_UPSTREAM_PGID}" 2>/dev/null || true
           fi
 
       - name: Stop fixtures
