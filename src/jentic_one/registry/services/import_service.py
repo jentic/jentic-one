@@ -18,6 +18,7 @@ from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -89,6 +90,11 @@ class ImportHandler:
                                 "version": result.api_version,
                             },
                             "revision_id": str(result.revision_id),
+                            "superseded_revision_id": (
+                                str(result.superseded_revision_id)
+                                if result.superseded_revision_id is not None
+                                else None
+                            ),
                             "state": result.state,
                         }
                     )
@@ -138,7 +144,10 @@ class ImportHandler:
             if overlay_id:
                 if len(revisions) == 1 and not failures:
                     await self._link_overlay_revision(
-                        job_id, str(overlay_id), revisions[0]["revision_id"]
+                        job_id,
+                        str(overlay_id),
+                        revisions[0]["revision_id"],
+                        revisions[0].get("superseded_revision_id"),
                     )
                 elif not revisions and len(sources) == 1:
                     # Recovery: a prior attempt of this exact confirm already produced
@@ -180,7 +189,13 @@ class ImportHandler:
         finally:
             unbind_contextvars("job_id")
 
-    async def _link_overlay_revision(self, job_id: str, overlay_id: str, revision_id: str) -> None:
+    async def _link_overlay_revision(
+        self,
+        job_id: str,
+        overlay_id: str,
+        revision_id: str,
+        superseded_revision_id: str | None = None,
+    ) -> None:
         """Record the materialized revision on the overlay (best-effort).
 
         Runs in its own registry_db transaction — the Ingestor already committed the
@@ -188,11 +203,23 @@ class ImportHandler:
         (durable) re-ingest, so it is logged rather than raised: the served spec is
         already correct; only the overlay->revision back-reference is missing and can
         be repaired by re-confirming.
+
+        ``superseded_revision_id`` (the revision this materialization archived) is
+        recorded alongside so a later un-confirm/rollback (A5b) has a deterministic
+        prior-revision target. ``None`` when the materialize superseded nothing (a
+        first-ever current revision).
         """
         try:
             async with self._ctx.registry_db.transaction() as session:
                 updated = await OverlayRepository.set_confirmed_revision(
-                    session, overlay_id, uuid.UUID(revision_id)
+                    session,
+                    overlay_id,
+                    uuid.UUID(revision_id),
+                    superseded_revision_id=(
+                        uuid.UUID(superseded_revision_id)
+                        if superseded_revision_id is not None
+                        else None
+                    ),
                 )
             if updated == 0:
                 logger.warning(
@@ -282,14 +309,26 @@ class ImportHandler:
                 if api.current_revision.origin != ORIGIN_OVERLAY:
                     return False
                 assert api.current_revision_id is not None
+                # Reconstruct the revision this materialize superseded. The original
+                # confirm archived it before crashing pre-link, so it isn't in memory
+                # here — recover it as the newest archived non-overlay revision. Passed
+                # best-effort: set_confirmed_revision won't clobber an already-captured
+                # value, and None (first-ever materialize) leaves it NULL as intended.
+                superseded_id = await ApiRevisionRepository.latest_archived_non_overlay(
+                    session, api.id, ORIGIN_OVERLAY
+                )
                 updated = await OverlayRepository.set_confirmed_revision(
-                    session, overlay_id, api.current_revision_id
+                    session,
+                    overlay_id,
+                    api.current_revision_id,
+                    superseded_revision_id=superseded_id,
                 )
             logger.info(
                 "overlay_materialize_recovered_existing_revision",
                 job_id=job_id,
                 overlay_id=overlay_id,
                 revision_id=str(api.current_revision_id),
+                superseded_revision_id=str(superseded_id) if superseded_id else None,
                 linked=updated > 0,
             )
             return updated > 0

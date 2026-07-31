@@ -433,6 +433,9 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
     new_revision_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
     assert result.body["revisions"][0]["state"] == "imported"
     assert new_revision_id != base_revision_id
+    # The materialize superseded the served base revision — the result carries it and
+    # it is back-linked onto the overlay for a later deterministic rollback (A5b).
+    assert result.body["revisions"][0]["superseded_revision_id"] == str(base_revision_id)
 
     async with registry_db.session() as session:
         api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
@@ -458,6 +461,7 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
             await session.execute(select(Overlay).where(Overlay.id == overlay_id))
         ).scalar_one()
         assert overlay_row.confirmed_revision_id == new_revision_id
+        assert overlay_row.superseded_revision_id == base_revision_id
 
 
 async def test_overlay_materialization_archives_active_revision_of_other_origin(
@@ -673,11 +677,16 @@ async def test_overlay_materialization_recovers_link_on_duplicate_reingest(
         job_id=str(uuid.uuid4()), session=None, payload=job_payload, created_by="usr_test"
     )
     materialized_rev = uuid.UUID(first.body["revisions"][0]["revision_id"])
+    superseded_rev = uuid.UUID(first.body["revisions"][0]["superseded_revision_id"])
 
-    # Simulate the lost back-link (revision exists, confirmed_revision_id is NULL).
+    # Simulate the torn state: a confirm that committed the re-ingest (revision exists,
+    # base archived) but crashed before back-linking — confirmed_revision_id AND
+    # superseded_revision_id are both NULL.
     async with registry_db.session() as session:
         await session.execute(
-            update(Overlay).where(Overlay.id == overlay_id).values(confirmed_revision_id=None)
+            update(Overlay)
+            .where(Overlay.id == overlay_id)
+            .values(confirmed_revision_id=None, superseded_revision_id=None)
         )
         await session.commit()
 
@@ -693,6 +702,9 @@ async def test_overlay_materialization_recovers_link_on_duplicate_reingest(
             await session.execute(select(Overlay).where(Overlay.id == overlay_id))
         ).scalar_one()
         assert overlay_row.confirmed_revision_id == materialized_rev
+        # M1: recovery reconstructs the superseded revision (newest archived non-overlay
+        # revision) so the torn state doesn't permanently strand A5b's rollback target.
+        assert overlay_row.superseded_revision_id == superseded_rev
 
 
 async def test_url_source_via_mock(

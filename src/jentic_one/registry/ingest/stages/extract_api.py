@@ -36,6 +36,10 @@ class CreateRevisionStage(BasePipelineStage):
 
     name: ClassVar[str] = "CreateRevisionStage"
     _requires: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
+    # Only ``revision_id`` is a *mandatory* output. This stage also conditionally
+    # produces ``superseded_revision_id`` (overlay materialize that replaced a current
+    # revision) — deliberately NOT declared here, since ``_produces`` keys are asserted
+    # present for every run; the ingestor reads that one via the non-raising ctx.get().
     _produces: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
@@ -63,6 +67,14 @@ class CreateRevisionStage(BasePipelineStage):
                 # origin-scoped archive would leave those active and the new imported
                 # revision would then violate ix_api_revisions_one_active (one active
                 # revision per api). Archive every active revision (published+imported).
+                #
+                # Capture the revision being superseded (the API's current revision
+                # *before* the archive) so the overlay can record it for a later
+                # deterministic rollback (A5b). None if the API had no current revision
+                # (a first-ever materialize) — the overlay then has no rollback target.
+                api = await ApiRepository.get_by_id(ctx.session, api_id)
+                if api is not None and api.current_revision_id is not None:
+                    ctx.produce("superseded_revision_id", api.current_revision_id, uuid.UUID)
                 await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
             else:
                 await ApiRevisionRepository.archive_active_imported(

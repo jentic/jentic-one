@@ -272,6 +272,73 @@ async def test_set_confirmed_revision(registry_db: DatabaseSession, sample_api: 
     assert fetched.updated_at is not None
 
 
+async def test_set_confirmed_revision_records_superseded(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """set_confirmed_revision persists the superseded revision when supplied."""
+    revision_id = uuid.uuid4()
+    superseded_id = uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_confirmed_revision(
+            session, overlay_id, revision_id, superseded_revision_id=superseded_id
+        )
+        await session.commit()
+
+    assert rows == 1
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
+
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == revision_id
+    assert fetched.superseded_revision_id == superseded_id
+
+
+async def test_set_confirmed_revision_none_superseded_does_not_clobber(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A later relink without a superseded id must not NULL an already-captured one.
+
+    The recovery/relink path (duplicate re-ingest) doesn't know the superseded
+    revision, so it passes None — that must leave a previously-recorded
+    superseded_revision_id intact rather than overwriting it with NULL.
+    """
+    first_rev, superseded_id, relink_rev = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        await OverlayRepository.set_confirmed_revision(
+            session, overlay_id, first_rev, superseded_revision_id=superseded_id
+        )
+        await session.commit()
+
+    # A relink that doesn't carry the superseded id (None) must preserve it.
+    async with registry_db.session() as session:
+        await OverlayRepository.set_confirmed_revision(session, overlay_id, relink_rev)
+        await session.commit()
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
+
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == relink_rev
+    assert fetched.superseded_revision_id == superseded_id  # preserved, not clobbered
+
+
 async def test_set_confirmed_revision_missing_overlay_returns_zero(
     registry_db: DatabaseSession, sample_api: Api
 ) -> None:

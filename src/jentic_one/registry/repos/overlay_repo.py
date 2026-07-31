@@ -153,19 +153,29 @@ class OverlayRepository:
         session: AsyncSession,
         overlay_id: str,
         confirmed_revision_id: uuid.UUID,
+        *,
+        superseded_revision_id: uuid.UUID | None = None,
     ) -> int:
         """Record the revision produced by materializing this overlay.
 
         Written by the ingest job after a confirm's re-ingest succeeds, so the
         overlay points at the concrete revision now serving the overlaid spec.
+
+        ``superseded_revision_id`` records the revision this materialization archived
+        (the API's current revision immediately before), giving a later
+        un-confirm/rollback (A5b) a deterministic prior-revision target. It is only
+        written when non-``None`` — a recovery/relink that doesn't know the superseded
+        revision must not overwrite a previously-captured value with ``NULL``.
         """
+        values: dict[str, Any] = {
+            "confirmed_revision_id": confirmed_revision_id,
+            "updated_at": func.now(),
+        }
+        if superseded_revision_id is not None:
+            values["superseded_revision_id"] = superseded_revision_id
         result = cast(
             "CursorResult[Any]",
-            await session.execute(
-                update(Overlay)
-                .where(Overlay.id == overlay_id)
-                .values(confirmed_revision_id=confirmed_revision_id, updated_at=func.now())
-            ),
+            await session.execute(update(Overlay).where(Overlay.id == overlay_id).values(**values)),
         )
         await session.flush()
         return result.rowcount

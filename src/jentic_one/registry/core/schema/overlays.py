@@ -45,6 +45,14 @@ class Overlay(AuditableMixin, RegistryBase):
     #: the link is advisory — a pruned revision simply leaves this dangling, and the
     #: overlay is re-materialized on the next confirm/re-import.
     confirmed_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    #: The revision this overlay *superseded* — i.e. the API's current revision at the
+    #: moment materialization archived it and promoted the overlay's revision. Captured
+    #: at confirm/materialize time so a later un-confirm/rollback (A5b) can promote the
+    #: prior revision back to current deterministically, even once overlays stack.
+    #: Nullable (pre-existing overlays and non-superseding materializations read NULL —
+    #: treat NULL as "unknown prior → no deterministic rollback target"). No FK, for the
+    #: same advisory reason as ``confirmed_revision_id``.
+    superseded_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'pending'")
     )
