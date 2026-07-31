@@ -40,7 +40,8 @@ const TOP_LIMIT = 12;
 
 // Window-edge resolution. 5 minutes balances freshness against cache churn:
 // each roll forward is a new query key (a full refetch of all three
-// groupings), while the backend's own usage cache TTL is 120s anyway.
+// groupings), while the backend's own usage cache TTL (30s) absorbs repeats
+// within a step.
 const WINDOW_STEP_MS = 300_000;
 
 /**
@@ -92,21 +93,29 @@ export function OverviewTab() {
 			{ replace: true },
 		);
 
-	// Unix-second window bounds. The 24h window rolls with "now" (floored to
-	// 5-minute steps so the query key stays stable across re-renders yet still
-	// slides forward on long-lived tabs). The multi-day windows are aligned to
-	// local calendar days — midnight (days-1) days ago through the end of
-	// today — matching jentic-mini's day-bucketed volume chart: a rolling
-	// now-7d bound straddles 8 calendar dates, so the day axis showed "more
-	// than 7 days". Day alignment also makes the window an exact multiple of
-	// the backend's bucket tier, so the per-entity trend segments land on day
-	// boundaries. `until` is sent explicitly: the backend picks
+	// Unix-second window bounds. The 24h window rolls with "now" resolved to
+	// 5-minute steps (stable query key across re-renders, still slides forward
+	// on long-lived tabs) — with `until` at the NEXT step boundary: the
+	// backend's aggregate uses a strict `started_at < until`, so an
+	// already-elapsed bound would hide the current partial step's executions
+	// from the charts while the executions tab lists them (#913). The
+	// multi-day windows are aligned to local calendar days — midnight
+	// (days-1) days ago through the end of today — matching jentic-mini's
+	// day-bucketed volume chart: a rolling now-7d bound straddles 8 calendar
+	// dates, so the day axis showed "more than 7 days". Day alignment also
+	// makes the window an exact multiple of the backend's bucket tier, so the
+	// per-entity trend segments land on day boundaries (their `until` is
+	// end-of-today, i.e. in the future, so they never had the exclusion
+	// problem). `until` is sent explicitly: the backend picks
 	// `bucket_seconds` from the window width (until - since), and letting the
 	// server default `until` to *its* now would shift the window
 	// nondeterministically.
 	const nowSec = useCoarseNowSec(WINDOW_STEP_MS);
 	const { since, until } = useMemo(() => {
-		if (days === 1) return { since: nowSec - 86_400, until: nowSec };
+		if (days === 1) {
+			const edge = nowSec + WINDOW_STEP_MS / 1000;
+			return { since: edge - 86_400, until: edge };
+		}
 		const startOfToday = new Date(nowSec * 1000);
 		startOfToday.setHours(0, 0, 0, 0);
 		const sinceDate = new Date(startOfToday);
