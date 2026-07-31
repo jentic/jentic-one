@@ -7,6 +7,7 @@ dedupe, the no-change no-op, and the per-API best-effort isolation.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,6 +28,8 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     ctx.config.catalog.update_check_interval_seconds = interval
     ctx.config.catalog.manifest_max_age_seconds = 300
     ctx.config.catalog.manifest_url = "https://example.com/apis.json"
+    ctx.config.catalog.update_sweep_deadline_seconds = 300
+    ctx.config.catalog.update_sweep_max_concurrency = 4
     ctx.config.ingest = MagicMock()
     session = AsyncMock()
     for db in (ctx.registry_db, ctx.admin_db):
@@ -160,7 +163,7 @@ async def test_probe_change_emits_event_once() -> None:
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
-        assert emit_kwargs["requires_action"] is True
+        assert emit_kwargs["requires_action"] is False
         assert emit_kwargs["data"]["upstream_digest"] == "upstream-new"
         upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
         assert upsert_kwargs["notified_digest"] == "upstream-new"
@@ -283,7 +286,7 @@ async def test_sweep_swallows_emit_failure_per_api() -> None:
 
 @pytest.mark.asyncio
 async def test_safe_refresh_runs_sweep_after_successful_refresh() -> None:
-    """_safe_refresh triggers the update-notify sweep once the refresh succeeds."""
+    """_safe_refresh spawns the update-notify sweep once the refresh succeeds."""
     svc = CatalogService(_make_ctx(interval=86400))
     with (
         patch(
@@ -293,10 +296,10 @@ async def test_safe_refresh_runs_sweep_after_successful_refresh() -> None:
         ),
         patch(f"{_SWEEP}.CatalogRepository.fetched_at", new_callable=AsyncMock, return_value=None),
         patch.object(svc, "refresh", new_callable=AsyncMock),
-        patch.object(svc, "_run_update_notify_sweep", new_callable=AsyncMock) as sweep,
+        patch.object(svc, "_spawn_update_notify_sweep") as spawn,
     ):
         await svc._safe_refresh()
-        sweep.assert_awaited_once()
+        spawn.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -313,7 +316,84 @@ async def test_safe_refresh_skips_sweep_when_refresh_fails() -> None:
         patch.object(
             svc, "refresh", new_callable=AsyncMock, side_effect=CatalogUnavailableError("x")
         ),
-        patch.object(svc, "_run_update_notify_sweep", new_callable=AsyncMock) as sweep,
+        patch.object(svc, "_spawn_update_notify_sweep") as spawn,
     ):
         await svc._safe_refresh()
-        sweep.assert_not_called()
+        spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_spawn_sweep_detaches_and_runs_task() -> None:
+    """The spawn seam runs the sweep as a background task (not awaited inline)."""
+    svc = CatalogService(_make_ctx(interval=86400))
+    ran = asyncio.Event()
+
+    async def _fake_sweep() -> None:
+        ran.set()
+
+    with patch.object(svc, "_run_update_notify_sweep", side_effect=_fake_sweep):
+        svc._spawn_update_notify_sweep()
+        # Not yet awaited — the coroutine only runs once we yield to the loop.
+        await asyncio.wait_for(ran.wait(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_sweep_deadline_hit_is_swallowed() -> None:
+    """A sweep exceeding the wall-clock budget logs and returns, never raises."""
+    ctx = _make_ctx(interval=86400)
+    ctx.config.catalog.update_sweep_deadline_seconds = 0  # trip the deadline immediately
+    svc = CatalogService(ctx)
+
+    async def _slow(_spec_arg: object, *, now: object, interval: int) -> None:
+        await asyncio.sleep(0.2)
+
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[_spec()],
+        ),
+        patch.object(svc, "_probe_one", side_effect=_slow),
+    ):
+        # Must not raise despite the probe outrunning the deadline.
+        await svc._run_update_notify_sweep()
+
+
+@pytest.mark.asyncio
+async def test_sweep_bounds_concurrency() -> None:
+    """No more than update_sweep_max_concurrency probes run at once."""
+    ctx = _make_ctx(interval=86400)
+    ctx.config.catalog.update_sweep_max_concurrency = 2
+    svc = CatalogService(ctx)
+    specs = [
+        RegisteredSpec(
+            api_id=uuid.uuid4(),
+            source_url=f"https://raw.githubusercontent.com/x/y/main/{i}.json",
+            spec_digest="d",
+            vendor="acme",
+            name="widgets",
+            version="1.0.0",
+        )
+        for i in range(6)
+    ]
+    in_flight = 0
+    peak = 0
+
+    async def _probe(_spec_arg: object, *, now: object, interval: int) -> None:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.02)
+        in_flight -= 1
+
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=specs,
+        ),
+        patch.object(svc, "_probe_one", side_effect=_probe),
+    ):
+        await svc._run_update_notify_sweep()
+
+    assert peak <= 2

@@ -10,6 +10,7 @@ digest-based dedupe against persisted state — the parts unit mocks can't catch
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
@@ -97,7 +98,7 @@ async def test_sweep_emits_event_and_records_check(
     events = await _events(integration_context)
     assert len(events) == 1
     evt = events[0]
-    assert evt.requires_action is True
+    assert evt.requires_action is False
     assert evt.data["api_id"] == str(registered_api.id)
     assert evt.data["upstream_digest"] == "sha256:upstream-new"
     assert evt.data["current_digest"] == "sha256:registered"
@@ -147,3 +148,45 @@ async def test_sweep_no_event_when_upstream_matches_registered(
         check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
     assert check is not None
     assert check.last_notified_digest is None  # recorded the check, but never notified
+
+
+async def test_sweep_no_event_with_real_bare_hex_digest(
+    integration_context: Context, registry_db: DatabaseSession, clean_state: None
+) -> None:
+    """Guards the digest *format* contract: ingest stores a bare sha256 hex
+    (``hashlib.sha256(body).hexdigest()``, no ``sha256:`` prefix), and the probe
+    computes the same bare hex over the same body — so an unchanged upstream must
+    compare equal and emit nothing. The other tests hand-feed opaque ``sha256:*``
+    markers on both sides, which would pass even if the two sides framed digests
+    differently; this one exercises the real convention end-to-end.
+    """
+    body = b'{"openapi": "3.0.0", "info": {"title": "widgets", "version": "1"}}'
+    real_digest = hashlib.sha256(body).hexdigest()
+    assert ":" not in real_digest  # bare hex, matching the ingest convention
+
+    api = Api(vendor="notify-test.com", name="widgets", version="v1")
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        session.add(
+            ApiRevision(
+                api_id=api.id,
+                state="published",
+                spec_digest=real_digest,
+                source_type="url",
+                source_url=_SPEC_URL,
+            )
+        )
+        await session.commit()
+
+    integration_context.config.catalog.update_check_interval_seconds = 86400
+    same = ConditionalFetch(not_modified=False, etag='"v1"', content=body, digest=real_digest)
+    svc = CatalogService(integration_context)
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=same):
+        await svc._run_update_notify_sweep()
+
+    assert await _events(integration_context) == []
+    async with integration_context.registry_db.session() as session:
+        check = await CatalogUpdateCheckRepository.get(session, api.id)
+    assert check is not None
+    assert check.last_notified_digest is None

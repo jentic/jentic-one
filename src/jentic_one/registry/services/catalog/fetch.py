@@ -58,7 +58,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
     caps) but returns a plain decoded JSON object instead of an IngestSpecification.
     """
     try:
-        validated_url = validate_upstream_url(url)
+        validated_url = validate_upstream_url(url, config.egress)
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
@@ -76,7 +76,9 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
                 if not location:
                     break
                 try:
-                    validated_url = validate_upstream_url(urljoin(validated_url, location))
+                    validated_url = validate_upstream_url(
+                        urljoin(validated_url, location), config.egress
+                    )
                 except ValueError as exc:
                     raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
                 resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
@@ -125,7 +127,7 @@ async def fetch_bytes_conditional(
     stable digest) means the upstream spec is byte-identical to what we last saw.
     """
     try:
-        validated_url = validate_upstream_url(url)
+        validated_url = validate_upstream_url(url, config.egress)
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
@@ -147,7 +149,9 @@ async def fetch_bytes_conditional(
                 if not location:
                     break
                 try:
-                    validated_url = validate_upstream_url(urljoin(validated_url, location))
+                    validated_url = validate_upstream_url(
+                        urljoin(validated_url, location), config.egress
+                    )
                 except ValueError as exc:
                     raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
                 resp = await client.get(validated_url, headers=headers)

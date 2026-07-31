@@ -764,6 +764,13 @@ class CatalogConfig(BaseModel):
     # API is re-probed at most once per this interval. Zero disables the sweep
     # entirely (kill switch for air-gapped installs — no event spam, no egress).
     update_check_interval_seconds: int = 86400
+    # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
+    # the triggering read (fire-and-forget), but it still probes N registered specs
+    # over the network, so bound the batch: stop after this many wall-clock seconds
+    # and run at most this many probes concurrently. Concurrency is kept below the
+    # registry DB pool so the sweep never starves live request traffic.
+    update_sweep_deadline_seconds: int = 300
+    update_sweep_max_concurrency: int = 4
 
 
 class ServerConfig(BaseModel):

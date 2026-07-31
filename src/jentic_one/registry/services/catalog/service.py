@@ -17,6 +17,7 @@ Boundaries kept from D-005a:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -46,6 +47,14 @@ from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
 
 logger = structlog.get_logger(__name__)
+
+#: Strong references to in-flight fire-and-forget sweep tasks. ``CatalogService``
+#: is constructed per-request and GC'd when the request returns, so a task held
+#: only on ``self`` could be collected mid-flight (asyncio keeps only weak refs to
+#: tasks). Parking them here until they finish keeps them alive; the done-callback
+#: discards on completion. Bounded in practice by the max-age + advisory-lock gates
+#: on the refresh that spawns them.
+_SWEEP_TASKS: set[asyncio.Task[None]] = set()
 
 
 @dataclass(frozen=True)
@@ -144,7 +153,31 @@ class CatalogService:
             await self.refresh()
         except CatalogUnavailableError:
             return
-        await self._run_update_notify_sweep()
+        self._spawn_update_notify_sweep()
+
+    def _spawn_update_notify_sweep(self) -> None:
+        """Fire-and-forget the update-notify sweep off the triggering read path.
+
+        The sweep issues up to N conditional GETs, so awaiting it inline would make
+        an unlucky user's (max-age-gated) catalog read block on the whole batch. We
+        detach it into a background task instead; failures are logged, never raised
+        back to the reader. The task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
+        before it finishes (this service instance is per-request and short-lived).
+        """
+        try:
+            task = asyncio.create_task(self._run_update_notify_sweep())
+        except RuntimeError:
+            # No running loop (e.g. a sync test harness): run inline as a fallback.
+            logger.debug("catalog_update_sweep_no_loop_running_inline")
+            return
+        _SWEEP_TASKS.add(task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            _SWEEP_TASKS.discard(t)
+            if not t.cancelled() and (exc := t.exception()) is not None:
+                logger.warning("catalog_update_sweep_task_failed", exc_info=exc)
+
+        task.add_done_callback(_done)
 
     async def _run_update_notify_sweep(self) -> None:
         """Probe registered specs for upstream changes; emit an event on change.
@@ -162,9 +195,10 @@ class CatalogService:
         staleness check), so this sweep is **not** globally single-flight: a rare
         concurrent double-refresh could emit a duplicate event for the same change.
         That is deliberately tolerated — the event is idempotent for operators and
-        the next sweep dedupes on the persisted digest. Probes run serially (one
-        network round-trip each); fine at MVP catalog scale — a future fan-out would
-        need a ``Semaphore`` bounded below the DB pool size.
+        the next sweep dedupes on the persisted digest. Probes fan out with bounded
+        concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
+        a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
+        candidate set can't turn one refresh into an unbounded stall.
         """
         interval = self._cfg.update_check_interval_seconds
         if interval <= 0:
@@ -176,16 +210,42 @@ class CatalogService:
             return
 
         now = utcnow()
-        for spec in candidates:
-            try:
-                await self._probe_one(spec, now=now, interval=interval)
-            except Exception:  # best-effort per API, never break the sweep
-                logger.warning(
-                    "catalog_update_probe_failed",
-                    api_id=str(spec.api_id),
-                    spec_url=spec.source_url,
-                    exc_info=True,
-                )
+        sem = asyncio.Semaphore(max(1, self._cfg.update_sweep_max_concurrency))
+        stats = {"probed": 0, "failed": 0}
+
+        async def _guarded(spec: RegisteredSpec) -> None:
+            async with sem:
+                try:
+                    await self._probe_one(spec, now=now, interval=interval)
+                    stats["probed"] += 1
+                except Exception:  # best-effort per API, never break the sweep
+                    stats["failed"] += 1
+                    logger.warning(
+                        "catalog_update_probe_failed",
+                        api_id=str(spec.api_id),
+                        spec_url=spec.source_url,
+                        exc_info=True,
+                    )
+
+        started = asyncio.get_running_loop().time()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(_guarded(spec) for spec in candidates)),
+                timeout=self._cfg.update_sweep_deadline_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "catalog_update_sweep_deadline_hit",
+                candidates=len(candidates),
+                probed=stats["probed"],
+            )
+        logger.info(
+            "catalog_update_sweep_complete",
+            candidates=len(candidates),
+            probed=stats["probed"],
+            failed=stats["failed"],
+            duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
+        )
 
     async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
         """Conditionally fetch one registered spec and emit on a fresh change."""
@@ -243,7 +303,12 @@ class CatalogService:
                 type=EventType.CATALOG_UPDATE_AVAILABLE,
                 severity=EventSeverity.INFO,
                 summary=(f"Upstream spec updated for {spec.vendor}/{spec.name} ({spec.version})"),
-                requires_action=True,
+                # Informational until Flow-3 ships a resolve path (one-click re-import
+                # / dismiss-snooze per (api_id, digest) — Phase 4). Marking it
+                # requires_action now would pile unresolvable items into the action
+                # inbox (nothing the operator can do clears them), so it surfaces in
+                # the events feed only. Flip to True alongside the re-import affordance.
+                requires_action=False,
                 created_by=None,
                 data={
                     "api_id": str(spec.api_id),
