@@ -1,10 +1,10 @@
-"""AWS Signature Version 4 request signing (stdlib-only).
+"""AWS Signature Version 4 request signing.
 
 SigV4 is a stable, publicly specified request-signing algorithm. Implementing it
 here on ``hashlib``/``hmac`` avoids pulling ``botocore`` in for one signer, and
-keeps signing inside the process (no sidecar). Only the ``cryptography`` package
-is arch-restricted to ``shared/crypto/encryption.py``; SigV4 needs neither it nor
-any third-party dependency.
+keeps signing inside the process (no sidecar). The only non-stdlib dependency is
+``httpx`` — already the broker's transport — used purely to derive the **wire**
+form of the URL (see :func:`_wire_target`); we do not add a new dependency.
 
 The signer produces the headers to merge onto an outbound request:
 ``authorization``, ``x-amz-date``, ``x-amz-content-sha256`` — plus
@@ -13,8 +13,18 @@ sign a **minimal** header set (``host``, ``x-amz-date``, ``x-amz-content-sha256`
 and ``x-amz-security-token`` when present) so a header added *after* signing (e.g.
 the runner's ``accept-encoding: identity``) never invalidates the signature.
 
+**Input contract (critical).** ``sign_request`` is handed the exact URL string the
+transport will send (``RunnerRequest.url``), whose path is already
+percent-encoded on the wire — the broker reconstructs it byte-exact from the ASGI
+scope and never decodes it (see ``broker/core/proxy_headers.reconstruct_upstream_url``).
+So we canonicalise from the **wire** target, not a decoded path: AWS's verifier
+canonicalises exactly what it receives on the wire, and httpx *is* the wire, so
+``httpx.URL(url).raw_path`` is the authoritative source of truth (it also performs
+the same dot-segment removal httpx applies before dispatch). Decoding then
+re-encoding would be lossy for S3 keys containing ``%2F``, so we never do that.
+
 References: AWS "Signing AWS API requests" (SigV4), the canonical-request /
-string-to-sign / signing-key derivation.
+string-to-sign / signing-key derivation, and the official ``aws-sig-v4-test-suite``.
 """
 
 from __future__ import annotations
@@ -23,8 +33,9 @@ import hashlib
 import hmac
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from posixpath import normpath
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote
+
+import httpx
 
 _ALGORITHM = "AWS4-HMAC-SHA256"
 _AWS4_REQUEST = "aws4_request"
@@ -33,8 +44,8 @@ _EMPTY_PAYLOAD_HASH = hashlib.sha256(b"").hexdigest()
 _DEFAULT_PORTS = {"http": "80", "https": "443"}
 # S3 is the one service that single-encodes the canonical path and does not
 # normalise it (object keys are opaque and may legitimately contain ``.``/``..``
-# and ``//``). Every other service double-encodes and normalises. See the AWS
-# SigV4 spec, "Create a canonical request", CanonicalURI.
+# and ``//``). Every other service double-encodes. See the AWS SigV4 spec,
+# "Create a canonical request", CanonicalURI.
 _S3_SERVICES = frozenset({"s3", "s3-object-lambda"})
 
 
@@ -73,48 +84,35 @@ def _uri_encode(value: str, *, is_path: bool) -> str:
     return quote(value, safe=safe + "-_.~")
 
 
-def _normalize_path(path: str) -> str:
-    """RFC 3986 ``remove_dot_segments`` (``.``/``..``/``//``), preserving trailing ``/``.
+def _wire_target(url: str) -> tuple[str, str]:
+    """Return the ``(path, query)`` exactly as httpx will put them on the wire.
 
-    AWS's verifier normalises the canonical path for every service except S3, so
-    the signer must too. ``posixpath.normpath`` does the segment resolution but
-    drops a trailing slash that RFC 3986 keeps: a path ending in ``/``, ``/.`` or
-    ``/..`` normalises to a directory (trailing slash), e.g. ``/foo/bar/..`` ->
-    ``/foo/``. We restore that slash to match AWS (and Java's ``URI.normalize``).
+    ``httpx.URL(url).raw_path`` is the byte-exact request target httpx dispatches:
+    the path stays percent-encoded (the broker never decoded it) and dot segments
+    are already removed. Canonicalising from this — rather than a decoded path —
+    is what keeps the signed path identical to the wire path for S3 object keys
+    with spaces / unicode / ``%2F``. See the module docstring's input contract.
     """
-    if not path:
-        return "/"
-    normalized = normpath(path)
-    keeps_trailing_slash = path.endswith(("/", "/.", "/.."))
-    if keeps_trailing_slash and not normalized.endswith("/"):
-        normalized += "/"
-    # POSIX ``normpath`` deliberately preserves a leading ``//`` (implementation-
-    # defined per POSIX); AWS collapses it, so squeeze any leading run to one.
-    if normalized.startswith("//"):
-        normalized = "/" + normalized.lstrip("/")
-    # normpath can return "." for an empty/relative path.
-    if not normalized.startswith("/"):
-        normalized = "/" + normalized
-    return normalized
+    raw = httpx.URL(url).raw_path.decode("ascii")
+    path, _, query = raw.partition("?")
+    return (path or "/"), query
 
 
-def _canonical_uri(path: str, *, is_s3: bool) -> str:
-    """CanonicalURI for the SigV4 canonical request.
+def _canonical_uri(wire_path: str, *, is_s3: bool) -> str:
+    """CanonicalURI for the SigV4 canonical request, from the **wire** path.
 
-    ``path`` is the **decoded** absolute path component (what ``urlsplit`` yields
-    and what AWS SDKs canonicalise from — they build both the wire request and the
-    signature from the same decoded path). For non-S3 services the path is
-    RFC 3986-normalised then URI-encoded **twice**; for S3 it is encoded **once**
-    and never normalised (object keys are opaque and ``.``/``..``/``//`` are
-    significant). Verified byte-for-byte against the official
-    ``aws-sig-v4-test-suite`` ``get-space``/``get-utf8``/``normalize-path`` vectors.
+    ``wire_path`` is the already-percent-encoded, dot-segment-removed path httpx
+    sends (see :func:`_wire_target`). AWS canonicalises exactly what it receives:
+    for S3 the wire path is used **verbatim** (object keys are opaque — no re-encode,
+    no normalisation); every other service URI-encodes it **once more** (the AWS
+    "encode twice" rule, the first encode being the one already on the wire).
+    Verified byte-for-byte against the official ``aws-sig-v4-test-suite`` vectors.
     """
-    if not path:
+    if not wire_path:
         return "/"
     if is_s3:
-        return _uri_encode(path, is_path=True)
-    normalized = _normalize_path(path)
-    return _uri_encode(_uri_encode(normalized, is_path=True), is_path=True)
+        return wire_path
+    return _uri_encode(wire_path, is_path=True)
 
 
 def _canonical_query(query: str) -> str:
@@ -163,10 +161,12 @@ def sign_request(
     amz_date = ts.strftime("%Y%m%dT%H%M%SZ")
     date_stamp = ts.strftime("%Y%m%d")
 
-    split = urlsplit(url)
-    host = split.hostname or ""
-    if split.port is not None and str(split.port) != _DEFAULT_PORTS.get(split.scheme, ""):
-        host = f"{host}:{split.port}"
+    parsed = httpx.URL(url)
+    host = parsed.host
+    port = parsed.port
+    if port is not None and str(port) != _DEFAULT_PORTS.get(parsed.scheme, ""):
+        host = f"{host}:{port}"
+    wire_path, wire_query = _wire_target(url)
 
     payload_hash = hashlib.sha256(body).hexdigest() if body else _EMPTY_PAYLOAD_HASH
 
@@ -186,8 +186,8 @@ def sign_request(
     canonical_request = "\n".join(
         [
             method.upper(),
-            _canonical_uri(split.path, is_s3=is_s3),
-            _canonical_query(split.query),
+            _canonical_uri(wire_path, is_s3=is_s3),
+            _canonical_query(wire_query),
             canonical_headers,
             signed_header_names,
             payload_hash,

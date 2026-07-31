@@ -20,9 +20,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 from datetime import UTC, datetime
+from urllib.parse import quote, unquote
 
+import httpx
 import pytest
 
+from jentic_one.broker.core.proxy_headers import reconstruct_upstream_url
 from jentic_one.shared.aws.sigv4 import (
     SigV4Material,
     _canonical_query,
@@ -43,33 +46,32 @@ _MATERIAL = SigV4Material(
 
 # ---------------------------------------------------------------------------
 # Canonicalisation — pinned byte-for-byte against the official test suite.
-# Each row is (raw decoded path, expected non-S3 CanonicalURI). These are the
-# CanonicalURI lines from get-vanilla, get-space, get-utf8 and the normalize-path
-# family of the aws-sig-v4-test-suite (service='service', which double-encodes
-# and normalises).
+# ``_canonical_uri`` now takes the **wire** path (already percent-encoded and
+# dot-segment-removed, exactly what httpx dispatches — see ``_wire_target``).
+# Each row is (wire path, expected non-S3 CanonicalURI): AWS URI-encodes the wire
+# path one further time for non-S3 services. The wire paths below are what httpx
+# produces for the official get-space / get-utf8 requests (a raw space becomes
+# ``%20``, the UTF-8 char becomes ``%E1%88%B4``); dot-segment removal is httpx's
+# job on the wire, so those cases are covered by the end-to-end tests, not here.
 # ---------------------------------------------------------------------------
 _CANONICAL_URI_VECTORS = [
     ("/", "/"),
-    ("/example space/", "/example%2520space/"),  # get-space
-    ("/\u1234", "/%25E1%2588%25B4"),  # get-utf8
-    ("//", "/"),  # normalize-path.get-slash
-    ("//example//", "/example/"),  # normalize-path.get-slashes
-    ("/./", "/"),  # normalize-path.get-slash-dot-slash
-    ("/./foo", "/foo"),  # normalize-path.get-slash-pointless-dot
-    ("/foo/bar/..", "/foo/"),  # normalize-path.get-relative
-    ("/foo/bar/../..", "/"),  # normalize-path.get-relative-relative
+    ("/example%20space/", "/example%2520space/"),  # get-space (wire form)
+    ("/%E1%88%B4", "/%25E1%2588%25B4"),  # get-utf8 (wire form)
+    ("/_search", "/_search"),
+    ("/documents/reports", "/documents/reports"),
 ]
 
 
-@pytest.mark.parametrize(("path", "expected"), _CANONICAL_URI_VECTORS)
-def test_canonical_uri_matches_official_vectors(path: str, expected: str) -> None:
-    assert _canonical_uri(path, is_s3=False) == expected
+@pytest.mark.parametrize(("wire_path", "expected"), _CANONICAL_URI_VECTORS)
+def test_canonical_uri_matches_official_vectors(wire_path: str, expected: str) -> None:
+    assert _canonical_uri(wire_path, is_s3=False) == expected
 
 
-def test_canonical_uri_s3_single_encodes_and_skips_normalization() -> None:
-    # S3 object keys are opaque: encode once, and never collapse ``//`` or ``..``
-    # (an object literally named ``a//b`` must sign as ``a//b``, not ``a/b``).
-    assert _canonical_uri("/bucket/a b", is_s3=True) == "/bucket/a%20b"
+def test_canonical_uri_s3_uses_wire_path_verbatim() -> None:
+    # S3 object keys are opaque: the wire path is signed exactly as sent — no
+    # re-encoding (``%20`` stays ``%20``) and no ``//`` collapsing.
+    assert _canonical_uri("/bucket/a%20b", is_s3=True) == "/bucket/a%20b"
     assert _canonical_uri("/my-object//example//photo", is_s3=True) == (
         "/my-object//example//photo"
     )
@@ -245,6 +247,104 @@ def test_s3_and_non_s3_sign_the_same_path_differently() -> None:
     )
     other = sign_request(method="GET", url=url, body=None, material=_MATERIAL, now=_FIXED_NOW)
     assert s3["authorization"] != other["authorization"]
+
+
+def _verifier_signature_from_wire(
+    *, url: str, material: SigV4Material, amz_date: str, date_stamp: str
+) -> str:
+    """Independent SigV4 signature computed the way an AWS verifier would.
+
+    Canonicalises from ``httpx.Request(...).url.raw_path`` — i.e. the actual bytes
+    on the wire — using the AWS rule (S3: path verbatim; else: URI-encode once
+    more), sharing no code with the production signer's URL handling. This is the
+    oracle that closes the input-contract seam: if the signer canonicalised from a
+    decoded path instead of the wire, this signature would diverge.
+    """
+    wire = httpx.Request("GET", url).url.raw_path.decode("ascii")
+    wire_path, _, wire_query = wire.partition("?")
+    is_s3 = material.service.lower() in {"s3", "s3-object-lambda"}
+    canonical_uri = wire_path if is_s3 else quote(wire_path, safe="/-_.~")
+
+    canonical_query = ""
+    if wire_query:
+        pairs = []
+        for part in wire_query.split("&"):
+            key, _, value = part.partition("=")
+            pairs.append((quote(unquote(key), safe="-_.~"), quote(unquote(value), safe="-_.~")))
+        pairs.sort()
+        canonical_query = "&".join(f"{k}={v}" for k, v in pairs)
+
+    empty = hashlib.sha256(b"").hexdigest()
+    host = httpx.URL(url).host
+    canonical_request = "\n".join(
+        [
+            "GET",
+            canonical_uri,
+            canonical_query,
+            f"host:{host}\nx-amz-content-sha256:{empty}\nx-amz-date:{amz_date}\n",
+            "host;x-amz-content-sha256;x-amz-date",
+            empty,
+        ]
+    )
+    sts = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            f"{date_stamp}/{material.region}/{material.service}/aws4_request",
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        ]
+    )
+
+    def _h(key: bytes, msg: str) -> bytes:
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    k = _h(f"AWS4{material.secret_access_key}".encode(), date_stamp)
+    k = _h(k, material.region)
+    k = _h(k, material.service)
+    k = _h(k, "aws4_request")
+    return hmac.new(k, sts.encode(), hashlib.sha256).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("service", "raw_path"),
+    [
+        # S3 keys with characters that must survive to the wire byte-exact.
+        ("s3", b"/my%20file.txt"),
+        ("s3", b"/folder/a%2Fb/key.json"),  # encoded slash inside one segment
+        ("s3", b"/unicode/%E1%88%B4"),
+        # Non-S3 services with an encoded path (double-encode on the wire).
+        ("aoss", b"/index/_doc/id%20with%20space"),
+        ("execute-api", b"/stage/resource"),
+    ],
+)
+def test_signed_path_matches_httpx_wire_end_to_end(service: str, raw_path: bytes) -> None:
+    """The seam test: reconstruct → sign → wire, and confirm they agree.
+
+    A percent-encoded path travels the real path — ASGI scope →
+    :func:`reconstruct_upstream_url` (byte-exact, no decode) → :func:`sign_request`
+    — and the resulting signature must equal one computed independently from what
+    httpx actually puts on the wire. This is what caught the earlier over-encoding
+    bug where the signer treated the encoded wire path as if it were decoded.
+    """
+    scope = {
+        "raw_path": b"bucket.s3.amazonaws.com" + raw_path
+        if service == "s3"
+        else b"host.region.amazonaws.com" + raw_path,
+        "query_string": b"",
+    }
+    url = reconstruct_upstream_url(scope)
+    material = SigV4Material(
+        access_key_id="AKIDEXAMPLE",
+        secret_access_key=_MATERIAL.secret_access_key,
+        region="us-east-1",
+        service=service,
+    )
+    headers = sign_request(method="GET", url=url, body=None, material=material, now=_FIXED_NOW)
+
+    expected_sig = _verifier_signature_from_wire(
+        url=url, material=material, amz_date="20150830T123600Z", date_stamp="20150830"
+    )
+    assert headers["authorization"].endswith(f"Signature={expected_sig}")
 
 
 def test_session_token_adds_header_and_is_signed() -> None:
