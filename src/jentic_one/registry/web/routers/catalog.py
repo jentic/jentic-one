@@ -66,7 +66,7 @@ async def list_catalog(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: CatalogService = Depends(get_catalog_service),
-    q: str | None = None,
+    q: str | None = Query(default=None, max_length=500),
     registered_only: bool = False,
     unregistered_only: bool = False,
     cursor: str | None = None,
