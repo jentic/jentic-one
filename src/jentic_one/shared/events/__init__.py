@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 import structlog
@@ -16,6 +17,7 @@ from jentic_one.shared.telemetry.sink import get_active_sink
 logger = structlog.get_logger(__name__)
 
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+_ZERO_TRACE_ID = "0" * 32
 
 
 def valid_trace_id_or_none(trace_id: str | None) -> str | None:
@@ -25,10 +27,27 @@ def valid_trace_id_or_none(trace_id: str | None) -> str | None:
     that receive a caller-supplied value (raw headers, job payload defaults)
     must sanitise through this helper so a garbage trace id degrades to an
     uncorrelated event instead of failing the surrounding operation (#903).
+    The all-zeros id is rejected too: W3C defines it as invalid, and an event
+    "correlated" on it would join unrelated requests together.
     """
-    if trace_id is not None and _TRACE_ID_PATTERN.match(trace_id):
+    if trace_id is not None and _TRACE_ID_PATTERN.match(trace_id) and trace_id != _ZERO_TRACE_ID:
         return trace_id
     return None
+
+
+def mint_trace_id() -> str:
+    """Mint a fresh random 32-hex trace id."""
+    return secrets.token_hex(16)
+
+
+def valid_trace_id_or_minted(trace_id: str | None) -> str:
+    """Return ``trace_id`` when it is a valid 32-hex trace id, else mint one.
+
+    For call sites that must always carry a *usable* trace id forward (job
+    payload rebuilds, persisted execution rows) rather than degrade to ``None``
+    — never the literal ``"unknown"``, which crashed event emission (#903).
+    """
+    return valid_trace_id_or_none(trace_id) or mint_trace_id()
 
 
 def _validate_tags(type: str, tags: set[EventTag] | None) -> list[EventTag]:

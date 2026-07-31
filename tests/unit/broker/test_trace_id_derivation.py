@@ -66,9 +66,21 @@ def test_parse_traceparent_accepts_uppercase_trace_id() -> None:
 
 
 def test_hex32_x_request_id_is_honoured() -> None:
-    """The documented #903 workaround (32-hex x-request-id) keeps working."""
+    """The #903 workaround header works as a no-span fallback.
+
+    On an instrumented surface the active span's id supersedes it (branch 1 of
+    ``_derive_trace_id``) — a caller who needs to pick the trace id must send
+    ``traceparent``. This exercises the uninstrumented (no active span) path.
+    """
     derived = _derive_trace_id(Headers({"x-request-id": "AB" * 16}))
     assert derived == "ab" * 16
+
+
+def test_all_zeros_x_request_id_falls_back_to_minting() -> None:
+    """The all-zeros id is invalid per W3C — rejected on every branch."""
+    derived = _derive_trace_id(Headers({"x-request-id": "0" * 32}))
+    assert _HEX32.match(derived)
+    assert derived != "0" * 32
 
 
 def test_non_hex_x_request_id_falls_back_to_minting() -> None:

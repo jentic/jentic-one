@@ -13,7 +13,6 @@ pipeline stages / runner decorators (added in later PRs).
 from __future__ import annotations
 
 import base64
-import secrets
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -97,7 +96,11 @@ from jentic_one.shared.broker.protocols import (
 )
 from jentic_one.shared.config import UpstreamClientConfig
 from jentic_one.shared.context import Context
-from jentic_one.shared.events import emit_event_best_effort, valid_trace_id_or_none
+from jentic_one.shared.events import (
+    emit_event_best_effort,
+    mint_trace_id,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.metrics import get_meter
@@ -248,17 +251,14 @@ def _parse_traceparent(value: str | None) -> str | None:
 
     ``version-traceid-spanid-flags`` → the 32-hex ``traceid`` field, or ``None``
     when the header is absent/malformed or carries the all-zeros (invalid per
-    W3C) trace id.
+    W3C) trace id — ``valid_trace_id_or_none`` rejects both.
     """
     if not value:
         return None
     parts = value.split("-")
     if len(parts) < 4:
         return None
-    trace_id = valid_trace_id_or_none(parts[1].lower())
-    if trace_id is None or trace_id == "0" * 32:
-        return None
-    return trace_id
+    return valid_trace_id_or_none(parts[1].lower())
 
 
 def _derive_trace_id(headers: Headers) -> str:
@@ -268,10 +268,15 @@ def _derive_trace_id(headers: Headers) -> str:
 
     1. The active OTel span — the inbound instrumentation already parsed the
        W3C ``traceparent`` (or started a fresh trace), so this is the id the
-       rest of the platform correlates on.
+       rest of the platform correlates on. Every production surface is
+       instrumented (``attach_http_observability``), so this branch always
+       wins there; the rest are fallbacks for uninstrumented contexts
+       (tests, embedded use).
     2. The ``traceparent`` header's trace-id field, parsed per W3C (never the
        raw header value, which is not a trace id).
-    3. A 32-hex ``x-request-id`` (kept for callers using the #903 workaround).
+    3. A 32-hex ``x-request-id`` (the #903 workaround header). Superseded by
+       the span id on instrumented surfaces — a caller who needs to pick the
+       trace id must send ``traceparent``.
     4. A freshly minted random id — never the literal ``"unknown"``, which
        failed event emission and 500'd the whole execute request.
     """
@@ -284,7 +289,7 @@ def _derive_trace_id(headers: Headers) -> str:
     from_request_id = valid_trace_id_or_none((headers.get("x-request-id") or "").lower())
     if from_request_id is not None:
         return from_request_id
-    return secrets.token_hex(16)
+    return mint_trace_id()
 
 
 def _context_from_discovery(

@@ -27,7 +27,7 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event, valid_trace_id_or_none
+from jentic_one.shared.events import emit_event, valid_trace_id_or_minted, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.protocols import (
@@ -86,7 +86,10 @@ class ExecutionHandler:
 
         upstream_url = payload.get("upstream_url", "")
         method = payload.get("method", "GET")
-        trace_id = payload.get("trace_id", "unknown")
+        # Minted-if-invalid so the credential audit event, the lifecycle
+        # events, and the persisted execution row all share one valid id —
+        # never the literal "unknown" (#903).
+        trace_id = valid_trace_id_or_minted(str(payload.get("trace_id") or ""))
         execution_id = payload.get("execution_id", f"exec_{job_id}")
         api_vendor = payload.get("api_vendor")
         api_name = payload.get("api_name")
