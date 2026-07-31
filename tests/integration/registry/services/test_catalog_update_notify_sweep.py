@@ -11,6 +11,7 @@ digest-based dedupe against persisted state — the parts unit mocks can't catch
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
@@ -25,9 +26,11 @@ from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateC
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
 from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models.events import EventType
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
+from jentic_one.shared.models.events import EventSeverity, EventType
 
 pytestmark = pytest.mark.integration
 
@@ -371,3 +374,90 @@ async def test_outdated_api_ids_does_not_collide_across_apis_sharing_a_spec_url(
 
     assert stale.id in outdated_ids  # served digest != notified → outdated
     assert fresh.id not in outdated_ids  # served digest == notified → not outdated
+
+
+async def test_settle_acknowledges_update_event_by_api_id(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """settle_actionable_events acks the catalog.update_available event for the re-imported API.
+
+    Covers the Flow-3 re-import settle path end-to-end against the DB: an actionable event is
+    emitted for the API, then settled (as ImportHandler._settle_update_available does) keyed on
+    the event payload's api_id. The event must flip to acknowledged; an unrelated API's event
+    must be left untouched.
+    """
+    other_id = uuid.uuid4()
+    async with integration_context.admin_db.transaction() as session:
+        for api_id in (registered_api.id, other_id):
+            await emit_event_best_effort(
+                session,
+                type=EventType.CATALOG_UPDATE_AVAILABLE,
+                severity=EventSeverity.INFO,
+                summary=f"Upstream spec updated for {api_id}",
+                requires_action=True,
+                created_by=None,
+                data={"api_id": str(api_id), "spec_url": _SPEC_URL},
+            )
+
+    async with integration_context.admin_db.transaction() as session:
+        settled = await settle_actionable_events(
+            session,
+            event_type=EventType.CATALOG_UPDATE_AVAILABLE,
+            acknowledged_by="usr_reimport",
+            acknowledgement_note="Resolved by re-import of the upstream spec",
+            data_match={"api_id": str(registered_api.id)},
+        )
+    assert settled == 1
+
+    async with integration_context.admin_db.session() as session:
+        result = await session.execute(
+            select(Event).where(Event.type == EventType.CATALOG_UPDATE_AVAILABLE)
+        )
+        events = {e.data["api_id"]: e for e in result.scalars().all()}
+    assert events[str(registered_api.id)].acknowledged is True
+    assert events[str(registered_api.id)].acknowledged_by == "usr_reimport"
+    assert events[str(other_id)].acknowledged is False  # unrelated API untouched
+
+
+async def test_import_handler_settle_reuses_session_no_self_deadlock(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """ImportHandler._settle_update_available acks within the handler's own admin txn.
+
+    Regression for the SQLite self-deadlock the manual E2E surfaced: the worker runs the
+    import handler *inside* an admin ``BEGIN IMMEDIATE`` (JobWorker._execute_handler), so the
+    settle must reuse that session — opening a second admin transaction deadlocks on SQLite's
+    single writer (a nested BEGIN IMMEDIATE against a lock our own call stack holds; no retry
+    can win). Here we emit the actionable event, then invoke the real settle helper with an
+    open admin transaction standing in for the handler's session, and assert it acks the event
+    (and would not have on the old, separate-transaction code path under SQLite).
+    """
+    async with integration_context.admin_db.transaction() as session:
+        await emit_event_best_effort(
+            session,
+            type=EventType.CATALOG_UPDATE_AVAILABLE,
+            severity=EventSeverity.INFO,
+            summary=f"Upstream spec updated for {registered_api.id}",
+            requires_action=True,
+            created_by=None,
+            data={"api_id": str(registered_api.id), "spec_url": _SPEC_URL},
+        )
+
+    handler = ImportHandler(integration_context)
+    api_triple = {
+        "vendor": registered_api.vendor,
+        "name": registered_api.name,
+        "version": registered_api.version,
+    }
+    # Reproduce the worker's frame: the handler body runs inside an open admin write txn.
+    async with integration_context.admin_db.transaction() as session:
+        await handler._settle_update_available("job_test", "usr_reimport", api_triple, session)
+
+    async with integration_context.admin_db.session() as session:
+        event = (
+            await session.execute(
+                select(Event).where(Event.type == EventType.CATALOG_UPDATE_AVAILABLE)
+            )
+        ).scalar_one()
+    assert event.acknowledged is True
+    assert event.acknowledged_by == "usr_reimport"

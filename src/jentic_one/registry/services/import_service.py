@@ -126,7 +126,7 @@ class ImportHandler:
             # the event payload's ``api_id``; a manual import that was never catalog-
             # tracked simply has no matching event. Never fails the import.
             for rev in revisions:
-                await self._settle_update_available(job_id, created_by, rev["api"])
+                await self._settle_update_available(job_id, created_by, rev["api"], session)
 
             # Overlay materialization: link the confirmed overlay to the revision the
             # re-ingest just produced, so the served spec and the overlay agree on which
@@ -209,7 +209,7 @@ class ImportHandler:
             )
 
     async def _settle_update_available(
-        self, job_id: str, actor_id: str, api: dict[str, Any]
+        self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
     ) -> None:
         """Clear any outstanding ``catalog.update_available`` for the (re-)imported API.
 
@@ -218,16 +218,27 @@ class ImportHandler:
         then acknowledge matching actionable events (matched on the event payload's
         ``api_id``). Never fails the import — the served spec is already correct; a missed
         settle only leaves a stale inbox item that the next re-import clears.
+
+        ``session`` is the handler's own jobs/admin write session (events live in the admin
+        DB). We deliberately reuse it rather than opening a second admin transaction: the
+        worker already runs the handler inside an admin ``BEGIN IMMEDIATE`` (see
+        ``JobWorker._execute_handler``), and on SQLite's single writer a nested admin
+        transaction would deadlock against that outer one — no retry can win because the
+        blocker is our own call stack. Reusing the session also makes the ack atomic with
+        the import. The settle runs in a SAVEPOINT so a failure rolls back only itself,
+        leaving the surrounding import (and its completion event) intact.
         """
         vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
         if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
             return
         try:
-            async with self._ctx.registry_db.session() as session:
-                resolved = await ApiRepository.get_by_identifier(session, vendor, name, version)
+            async with self._ctx.registry_db.session() as read_session:
+                resolved = await ApiRepository.get_by_identifier(
+                    read_session, vendor, name, version
+                )
             if resolved is None:
                 return
-            async with self._ctx.admin_db.transaction() as session:
+            async with session.begin_nested():
                 settled = await settle_actionable_events(
                     session,
                     event_type=EventType.CATALOG_UPDATE_AVAILABLE,
