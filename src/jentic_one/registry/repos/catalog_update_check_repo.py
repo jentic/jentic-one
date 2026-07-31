@@ -10,11 +10,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
+from jentic_one.shared.models import ApiRevisionState
 
 
 class CatalogUpdateCheckRepository:
@@ -30,25 +32,52 @@ class CatalogUpdateCheckRepository:
 
     @staticmethod
     async def outdated_spec_urls(session: AsyncSession) -> set[str]:
-        """Spec URLs whose upstream has a notified update the local revision hasn't adopted.
+        """Spec URLs whose upstream has a notified update the served revision hasn't adopted.
 
         An API is *outdated* when its check row carries a ``last_notified_digest`` (a real
-        ``catalog.update_available`` fired for it) that differs from the current
-        (non-archived) local revision's ``spec_digest``. Re-importing the upstream makes
-        the local digest equal the notified digest, so the API silently drops out of this
-        set — the read-time "resolve on re-import" without touching the event row.
+        ``catalog.update_available`` fired for it) that differs from the digest of the API's
+        **served** revision — the same single revision the notify sweep compares against
+        (:meth:`ApiRevisionRepository.registered_specs_for_notify`): the API's
+        ``current_revision_id`` when set, else the newest non-archived revision (``created_at``
+        then ``id`` as the deterministic tiebreak). Re-importing the upstream makes that
+        served digest equal the notified digest, so the API silently drops out of this set —
+        the read-time "resolve on re-import" without touching the event row.
 
-        Returned as a set of ``spec_url`` so the catalog list (keyed on manifest
+        Matching that *single* revision (not "any non-archived revision") is essential: an API
+        can legitimately keep a stale, never-promoted ``draft`` alongside its live
+        ``published``/``imported`` revision, and comparing against every non-archived row would
+        leave the API stuck as outdated forever even after the served revision adopts the
+        upstream. Returned as a set of ``spec_url`` so the catalog list (keyed on manifest
         ``spec_url``, not local ``api_id``) can flag ``update_available`` with a single
-        membership test. Joins on ``local_api_id`` → ``api_revisions.api_id``; an API with
-        no active revision (only archived) is excluded (nothing served to be outdated).
+        membership test; an API with no non-archived revision is excluded (nothing served to
+        be outdated).
         """
+        # Rank each API's non-archived revisions exactly as the notify sweep does — current
+        # revision first, then newest — and keep only rank 1 (the served revision).
+        served_rank = func.row_number().over(
+            partition_by=ApiRevision.api_id,
+            order_by=(
+                case((ApiRevision.id == Api.current_revision_id, 0), else_=1),
+                ApiRevision.created_at.desc(),
+                ApiRevision.id,
+            ),
+        )
+        served = (
+            select(
+                ApiRevision.api_id.label("api_id"),
+                ApiRevision.spec_digest.label("spec_digest"),
+                served_rank.label("rnk"),
+            )
+            .join(Api, Api.id == ApiRevision.api_id)
+            .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
+            .subquery()
+        )
         result = await session.execute(
             select(CatalogUpdateCheck.spec_url)
-            .join(ApiRevision, ApiRevision.api_id == CatalogUpdateCheck.local_api_id)
+            .join(served, served.c.api_id == CatalogUpdateCheck.local_api_id)
+            .where(served.c.rnk == 1)
             .where(CatalogUpdateCheck.last_notified_digest.is_not(None))
-            .where(CatalogUpdateCheck.last_notified_digest != ApiRevision.spec_digest)
-            .where(ApiRevision.state != "archived")
+            .where(CatalogUpdateCheck.last_notified_digest != served.c.spec_digest)
         )
         return {url for (url,) in result.all() if url}
 

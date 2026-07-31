@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -262,3 +263,51 @@ async def test_outdated_spec_urls_reflects_notify_then_clears_on_adopt(
     async with integration_context.registry_db.session() as session:
         outdated_after = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
     assert _SPEC_URL not in outdated_after
+
+
+async def test_outdated_ignores_stale_draft_when_served_revision_adopted(
+    integration_context: Context, registered_api: Api, registry_db: DatabaseSession
+) -> None:
+    """A stale non-archived draft must not keep an API outdated after the served revision adopts.
+
+    Regression: ``outdated_spec_urls`` must compare the notified digest against the *single*
+    served revision (current-or-newest), not "any non-archived revision". An API can keep a
+    never-promoted draft alongside its live revision; once the live revision adopts the
+    upstream the API must drop out of the outdated set even though the draft still differs.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 86400
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+
+    async with integration_context.registry_db.transaction() as session:
+        # The served (published) revision adopts the upstream…
+        served = (
+            await session.execute(
+                select(ApiRevision)
+                .where(ApiRevision.api_id == registered_api.id)
+                .where(ApiRevision.state == "published")
+            )
+        ).scalar_one()
+        served.spec_digest = "sha256:upstream-new"
+        # …but a stale, never-promoted draft with a different digest lingers. Make it
+        # strictly older so the served revision wins the current-or-newest selection
+        # (no current_revision_id pin needed → no dangling FK for teardown).
+        session.add(
+            ApiRevision(
+                api_id=registered_api.id,
+                state="draft",
+                spec_digest="sha256:some-other-draft",
+                source_type="url",
+                source_url=_SPEC_URL,
+                origin="catalog",
+                created_at=datetime(2000, 1, 1, tzinfo=UTC),
+            )
+        )
+
+    async with integration_context.registry_db.session() as session:
+        outdated = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+    assert _SPEC_URL not in outdated
