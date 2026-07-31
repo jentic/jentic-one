@@ -130,9 +130,12 @@ describe('ServiceAccountDetailPage', () => {
 		await user.click(screen.getByRole('tab', { name: 'Activity' }));
 		expect(await screen.findByText(/Recent executions/)).toBeInTheDocument();
 
-		const link = await screen.findByRole('link', { name: /Open in Monitor/ });
-		expect(link.getAttribute('href')).toContain('actor_id=sva_active_1');
-		expect(link.getAttribute('href')).toContain('actor_type=service_account');
+		const links = await screen.findAllByRole('link', { name: /Open Monitor/ });
+		expect(links.length).toBeGreaterThan(0);
+		for (const link of links) {
+			expect(link.getAttribute('href')).toContain('actor_id=sva_active_1');
+			expect(link.getAttribute('href')).toContain('actor_type=service_account');
+		}
 	});
 
 	it('generates an API key from the Keys tab and shows it once', async () => {

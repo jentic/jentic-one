@@ -15,6 +15,12 @@ export type {
 	UsageChartBucket,
 } from '@/shared/ui/ExecutionVolumeCharts';
 
+export { RecentExecutionsCard } from '@/shared/ui/RecentExecutionsCard';
+export type {
+	RecentExecutionItem,
+	RecentExecutionsCardProps,
+} from '@/shared/ui/RecentExecutionsCard';
+
 export { DangerZone } from '@/shared/ui/DangerZone';
 export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 

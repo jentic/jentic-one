@@ -249,11 +249,15 @@ describe('AgentDetailPage', () => {
 		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
 		expect(screen.getByText('Execution volume · 7d')).toBeInTheDocument();
 
-		// The deep-link carries the actor filter into Monitor's URL contract.
-		const link = screen.getByRole('link', { name: /Open in Monitor/ });
-		expect(link.getAttribute('href')).toContain('tab=executions');
-		expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
-		expect(link.getAttribute('href')).toContain('actor_type=agent');
+		// The deep-links (page header + feed card) carry the actor filter into
+		// Monitor's URL contract.
+		const links = screen.getAllByRole('link', { name: /Open Monitor/ });
+		expect(links.length).toBeGreaterThan(0);
+		for (const link of links) {
+			expect(link.getAttribute('href')).toContain('tab=executions');
+			expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
+			expect(link.getAttribute('href')).toContain('actor_type=agent');
+		}
 	});
 
 	it('shows a quiet permission note on the Activity tab for non-admins (403)', async () => {
