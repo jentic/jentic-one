@@ -212,6 +212,118 @@ async def test_provisioning_plan_end_to_end(integration_context: Context, clean:
     )
 
 
+async def test_provisioning_plan_fulfilled_into_existing_toolkit(
+    integration_context: Context, clean: None
+) -> None:
+    """A plan can be fulfilled into a PRE-EXISTING toolkit — the #897 reuse path.
+
+    The reporter's scenario: the operator already has a toolkit (serving other
+    APIs) and wants the new credential added to IT, not a parallel toolkit. The
+    wizard's "use existing" choice amends the bind items at the existing toolkit
+    id and — audit honesty — stamps the inert ``toolkit:create`` /
+    ``credential:provision`` placeholders with the ids that fulfilled them, so
+    the approved record reads "fulfilled by tk_…" instead of implying a create
+    that never happened. This drives that exact amend+decide shape through the
+    real service layer: it must reach FULL approval (the agent's ``--wait``
+    exits 0) with no second toolkit anywhere.
+    """
+    ctx = integration_context
+    access_svc = AccessRequestService(ctx)
+    toolkit_svc = ToolkitService(ctx)
+    cred_svc = CredentialService(ctx)
+
+    # The operator's pre-existing toolkit ("My Travel Agent") — created BEFORE
+    # the plan is filed, outside any wizard session.
+    _existing = await toolkit_svc.create(name="My Travel Agent", identity=_owner_identity())
+    existing_toolkit = _existing.toolkit
+
+    api = {"vendor": "httpbin.org", "name": "httpbin", "version": "1.0.0"}
+    plan_items: list[dict[str, Any]] = [
+        {"resource_type": "toolkit", "action": "create", "resource_reference": api},
+        {
+            "resource_type": "credential",
+            "action": "provision",
+            "resource_reference": {**api, "security_scheme": "bearer"},
+        },
+        {
+            "resource_type": "credential",
+            "action": "bind",
+            "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+        },
+        {"resource_type": "toolkit", "action": "bind", "resource_reference": api},
+    ]
+    view = await access_svc.file(
+        actor_id=AGENT_SUB,
+        reason="Extend my existing toolkit",
+        items=plan_items,
+        identity=_agent_identity(),
+    )
+    by_key = {(i.resource_type, i.action): i for i in view.items}
+
+    # Wizard fulfilment: only the credential is created; the toolkit is reused.
+    created_cred = await cred_svc.create(
+        CredentialCreate(
+            type=CredentialType.BEARER_TOKEN,
+            name="httpbin cred (reuse)",
+            api=APIReference(vendor="httpbin.org", name="httpbin", version="1.0.0"),
+            token="secret-token-value-456",
+        ),
+        identity=_owner_identity(),
+    )
+    await access_svc.amend(
+        view.id,
+        identity=_owner_identity(),
+        item_amendments=[
+            {
+                "item_id": by_key[("credential", "bind")].id,
+                "to_id": existing_toolkit.id,
+                "resource_id": created_cred.credential_id,
+                "rules": [{"effect": "allow", "methods": ["GET"], "path": ".*"}],
+            },
+            {"item_id": by_key[("toolkit", "bind")].id, "resource_id": existing_toolkit.id},
+            # Placeholder stamping: resource_id on fulfilment-only items must be
+            # amendable (the scope-grant allow-list guard only fires for
+            # scope:grant) so the record names the reused objects.
+            {"item_id": by_key[("toolkit", "create")].id, "resource_id": existing_toolkit.id},
+            {
+                "item_id": by_key[("credential", "provision")].id,
+                "resource_id": created_cred.credential_id,
+            },
+        ],
+    )
+
+    refreshed = await access_svc.get(view.id, identity=_owner_identity())
+    decisions = [
+        {"item_id": i.id, "decision": "approved"} for i in refreshed.items if i.status == "pending"
+    ]
+    decided = await access_svc.decide(view.id, identity=_owner_identity(), item_decisions=decisions)
+
+    # FULL approval — a partial approval reads as failure to the waiting agent.
+    assert decided.status == "approved", [
+        (i.resource_type, i.action, i.status, i.decision_reason) for i in decided.items
+    ]
+    decided_create = next(
+        i for i in decided.items if i.resource_type == "toolkit" and i.action == "create"
+    )
+    assert decided_create.resource_id == existing_toolkit.id
+
+    # The wiring landed on the EXISTING toolkit, and no parallel toolkit exists.
+    async with ctx.control_db.session() as session:
+        binding = await ToolkitBindingRepository.get(
+            session, existing_toolkit.id, created_cred.credential_id
+        )
+        assert binding is not None, "credential:bind did not attach to the existing toolkit"
+        toolkit_ids = (await session.execute(select(Toolkit.id))).scalars().all()
+        assert toolkit_ids == [existing_toolkit.id], f"unexpected extra toolkits: {toolkit_ids}"
+
+    async with ctx.admin_db.session() as session:
+        bound = await session.execute(
+            text("SELECT 1 FROM agent_toolkit_bindings WHERE agent_id = :a AND toolkit_id = :t"),
+            {"a": AGENT_SUB, "t": existing_toolkit.id},
+        )
+        assert bound.scalar_one_or_none() is not None, "agent was not bound to the existing toolkit"
+
+
 async def test_noauth_plan_is_executable_via_broker_resolvers(
     integration_context: Context, clean: None
 ) -> None:

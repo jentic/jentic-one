@@ -147,7 +147,10 @@ jentic access request --provision stripe.com/api \
     describes the whole path (create toolkit, provision + bind a credential with
     your proposed rules, bind you), which a human fulfils and approves in the
     dashboard. The directive's `suggested_command` already points at `--provision`
-    in this case.
+    in this case. The plan does **not** force a new toolkit: during fulfilment
+    the operator can add the credential to a toolkit they already have (the
+    wizard offers both) — worth relaying when your operator mentions an
+    existing toolkit they want to extend.
   - `toolkit_serves_api: true` — a toolkit already serves this API and you just
     aren't bound to it; the directive suggests `jentic access request --toolkit
     <vendor/name> --wait`. File that and wait for approval.
@@ -451,7 +454,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
     bare `--toolkit` bind would be **denied** ("No toolkit serves API …"); the
     directive suggests `--provision` instead — file that plan (propose `--auth`
     and `--rules-json` from the spec, pass `--reason`) and your operator fulfils
-    it in the dashboard.
+    it in the dashboard, into a new toolkit **or one they already have** — an
+    existing toolkit never has to be recreated.
   - **424 `credential_not_provisioned`** → the directive gives a
     `provisioning_url` for your operator to connect an account (an access
     request won't help).
