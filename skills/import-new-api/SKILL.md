@@ -184,12 +184,6 @@ done; echo "raw link: $code"
 
 ### 5. Open the import issue on jentic-public-apis
 
-> ⚠️ **Injection hazard — keep the body free of shell metacharacters.** The import workflow
-> interpolates the raw issue body directly into a shell script (`BODY="${{ github.event.issue.body }}"`),
-> inside **double quotes**. So backticks, `$(...)`, `${...}`, **double quotes (`"`)** and
-> **backslashes (`\`)** in the body are all live injection/breakage vectors. Write the body
-> plainly — no code spans, no JSON snippets — and run the guard below before submitting.
-
 The workflow triggers on any opened/reopened issue whose body contains `import_oas_url:` — the
 `[AUTO]` title and `enhancement` label are template conventions (keep them for humans; the parser
 ignores them). It extracts `import_oas_url` and `vendor_name` with a line-anchored grep after
@@ -198,8 +192,11 @@ value on the same line after the colon.
 
 - `import_oas_url` — the **raw** link verified in step 4 (`raw.githubusercontent.com/...`), never
   a `github.com/.../blob/...` page URL.
-- `vendor_name` — passed to the importer **unvalidated**, so get it right: the bare domain from
-  step 2 for a single-API vendor (`firecrawl.dev` → `vendor=firecrawl.dev; api_name=main`), or
+- `vendor_name` — validated against a safe charset (letters, digits, `.`, `-`, `_`, and a single
+  optional `/` for `<domain>/<api_name>`, each segment starting with a letter or digit); anything
+  else is rejected with a comment on the issue. It is **not** checked for *correctness*, though, so
+  get it right: the bare domain from step 2 for a single-API vendor
+  (`firecrawl.dev` → `vendor=firecrawl.dev; api_name=main`), or
   `<domain>/<api_name>` when the vendor ships several distinct APIs
   (`firecrawl.dev/scrape` → `vendor=firecrawl.dev; api_name=scrape`). A slug or misspelt domain
   is accepted silently and mis-catalogues the API.
@@ -216,14 +213,9 @@ vendor_name: <VENDOR_NAME>
 
 ## Additional Information
 
-<one or two plain sentences: what the API does, path count, auth scheme, source. No backticks, no code, no quotes.>
+<one or two plain sentences: what the API does, path count, auth scheme, source.>
 EOF
 )
-
-# Guard: the import workflow shell-evals the body inside double quotes
-if printf '%s' "$BODY" | grep -qE '[`$"\\]'; then
-  echo "Unsafe issue body (contains one of \` \$ \" \\)"; exit 1
-fi
 
 gh issue create --repo jentic/jentic-public-apis \
   --title "[AUTO] Import OpenAPI to Jentic Public APIs: <VENDOR_NAME>" \
@@ -267,4 +259,4 @@ Give the user:
   exist; every import adds a new `{vendor}/{slug}/{version}/` subtree. Don't create a fresh repo
   per API.
 - **You act under the user's GitHub identity.** Show them the issue body and file list before
-  submission; keep the body free of `` ` `` `$` `"` `\`.
+  submission.
