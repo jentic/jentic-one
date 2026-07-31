@@ -33,6 +33,10 @@ class InlineSource(BaseModel):
     #: bytes inline and must carry the base ``source_url`` forward, or catalog
     #: "registered" detection and the Flow-3 update-notify sweep lose the API.
     source_url: str | None = None
+    #: Catalog identity slug, carried forward on re-ingests of a
+    #: catalog-originated spec (e.g. overlay materialization). ``None`` for
+    #: genuine pastes.
+    catalog_api_id: str | None = None
 
 
 class UrlSource(BaseModel):
@@ -45,6 +49,10 @@ class UrlSource(BaseModel):
     version: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
+    #: Catalog identity slug (`domain[/sub-api]`) for catalog-originated
+    #: imports. Persisted verbatim on the Api row (the `api_name` copy of the
+    #: same slug gets slugified and loses the separable structure).
+    catalog_api_id: str | None = None
 
 
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
@@ -184,4 +192,5 @@ async def load_specification(
         source_filename=source_filename,
         submitted_by=source.submitted_by,
         origin=source.origin,
+        catalog_api_id=source.catalog_api_id,
     )

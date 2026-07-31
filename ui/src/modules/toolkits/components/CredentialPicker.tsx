@@ -15,6 +15,7 @@ import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, KeyRound, Link as LinkIcon, SearchX } from 'lucide-react';
 import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
+import { apiIdentityTuple, apiRefDisplayName } from '@/shared/lib';
 import { useBindableCredentials } from '@/modules/toolkits/api';
 import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolkits/api/types';
 
@@ -54,9 +55,22 @@ export function CredentialPicker({
 		return all.filter((c) => {
 			if (boundIds.has(c.credential_id)) return false;
 			if (!q) return true;
+			// Include the friendly display name (what the row's title actually
+			// shows when the user hasn't set a name) in the searchable text, so
+			// typing what's on screen — e.g. `Article Search` for an NYT
+			// credential — returns the row rather than only matching the raw
+			// vendor/name machine identity.
+			const friendly = apiRefDisplayName({
+				catalogApiId: c.catalogApiId,
+				vendor: c.vendor,
+				name: c.apiName,
+			});
 			return (
 				c.name.toLowerCase().includes(q) ||
+				friendly.toLowerCase().includes(q) ||
+				(c.catalogApiId?.toLowerCase().includes(q) ?? false) ||
 				(c.vendor?.toLowerCase().includes(q) ?? false) ||
+				(c.apiName?.toLowerCase().includes(q) ?? false) ||
 				(c.provider?.toLowerCase().includes(q) ?? false)
 			);
 		});
@@ -145,7 +159,35 @@ function CredentialRow({
 	onSelect: (credential: BindableCredential) => void;
 	disabled?: boolean;
 }) {
-	const subtitle = cred.vendor ?? cred.provider ?? cred.credential_id;
+	// Title = the user's own credential name when they've set one, so a renamed
+	// credential leads with that name (matching the credentials page). Fall back
+	// to the friendly API name — the persisted catalog slug when recorded, else
+	// the vendor/name tuple minus a repeated vendor prefix — then provider /
+	// credential_id so we never render blank. We never show the derived API
+	// name as a *separate* line: the row is just the name (user's or derived)
+	// plus the mono machine-identity subtitle.
+	const title =
+		cred.name ||
+		apiRefDisplayName({
+			catalogApiId: cred.catalogApiId,
+			vendor: cred.vendor,
+			name: cred.apiName,
+		}) ||
+		cred.provider ||
+		cred.credential_id;
+	// Muted technical subtitle: the machine identity when one exists (the
+	// catalog slug verbatim, else the vendor/name tuple via the shared helper,
+	// which also peels a tuple-shaped `apiName` so the vendor doesn't render
+	// twice), else a guaranteed technical identifier (`credential_id`) so two
+	// identically-named creds with no API identity stay disambiguable. The
+	// title chain never promotes `credential_id`, so the subtitle is the row's
+	// last resort for telling rows apart.
+	const apiTuple = apiIdentityTuple({
+		catalogApiId: cred.catalogApiId,
+		vendor: cred.vendor,
+		name: cred.apiName,
+	});
+	const subtitle = apiTuple || cred.credential_id;
 	return (
 		<button
 			type="button"
@@ -158,12 +200,12 @@ function CredentialRow({
 				<KeyRound className="h-4 w-4" />
 			</div>
 			<div className="min-w-0 flex-1">
-				<span className="text-foreground block truncate text-sm font-medium">
-					{cred.name}
-				</span>
-				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{subtitle}
-				</p>
+				<span className="text-foreground block truncate text-sm font-medium">{title}</span>
+				{subtitle && (
+					<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
+						{subtitle}
+					</p>
+				)}
 			</div>
 			<Badge variant="default" className="shrink-0 text-[10px]">
 				{CREDENTIAL_TYPE_LABELS[cred.type] ?? cred.type}

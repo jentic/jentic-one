@@ -308,6 +308,13 @@ class CredentialRedactedResponse(BaseModel):
     api: APIReferenceResponse = Field(
         description="The (vendor, name, version) API this credential targets."
     )
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog identity slug of the target API (`domain[/sub-api]`), when "
+            "recorded at create time. Display-only; null for older credentials."
+        ),
+    )
     provider: str = Field(description="Credential provider; 'static' for stored secrets.")
     provider_account_ref: str | None = Field(
         default=None, description="Opaque reference to the provider account, when applicable."

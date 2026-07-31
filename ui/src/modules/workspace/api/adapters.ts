@@ -55,6 +55,7 @@ export function toWorkspaceApi(value: unknown): WorkspaceApi {
 	const r = asRecord(value);
 	return {
 		api: toApiRef(r.api),
+		catalogApiId: strOrNull(r.catalog_api_id),
 		displayName: strOrNull(r.display_name),
 		description: strOrNull(r.description),
 		iconUrl: strOrNull(r.icon_url),

@@ -28,6 +28,18 @@
       "APIReferenceRequest": {
         "description": "Relaxed variant for request bodies where partial identification is allowed.",
         "properties": {
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Api Id"
+          },
           "name": {
             "default": "",
             "title": "Name",
@@ -1464,6 +1476,17 @@
           "api": {
             "$ref": "#/components/schemas/ApiReferenceResponse"
           },
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog Api Id"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -1536,6 +1559,7 @@
         },
         "required": [
           "api",
+          "catalog_api_id",
           "display_name",
           "description",
           "icon_url",
@@ -2701,6 +2725,18 @@
           "api": {
             "$ref": "#/components/schemas/APIReference",
             "description": "The (vendor, name, version) API this credential targets."
+          },
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Catalog identity slug of the target API (`domain[/sub-api]`), when recorded at create time. Display-only; null for older credentials.",
+            "title": "Catalog Api Id"
           },
           "created_at": {
             "description": "Creation timestamp (UTC).",
@@ -7067,6 +7103,18 @@
             "format": "date-time",
             "title": "Bound At",
             "type": "string"
+          },
+          "catalog_api_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Catalog identity slug of the bound credential's target API (`domain[/sub-api]`), when recorded. Display-only.",
+            "title": "Catalog Api Id"
           },
           "credential_id": {
             "title": "Credential Id",

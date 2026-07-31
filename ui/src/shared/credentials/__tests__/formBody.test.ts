@@ -23,7 +23,24 @@ describe('buildCreateBody', () => {
 			token: 'sk-123',
 		});
 		expect(body).toMatchObject({ type: 'bearer_token', name: 'My token', token: 'sk-123' });
-		expect(body.api).toEqual({ vendor: 'acme', name: undefined, version: undefined });
+		expect(body.api).toEqual({
+			vendor: 'acme',
+			name: undefined,
+			version: undefined,
+			catalog_api_id: undefined,
+		});
+	});
+
+	it('carries the picked catalog slug on the api reference (#910)', () => {
+		const body = buildCreateBody(CredentialType.BEARER_TOKEN, {
+			...EMPTY_FORM,
+			name: 'NYT',
+			apiVendor: 'nytimes.com',
+			apiName: 'article_search',
+			catalogApiId: 'nytimes.com/article_search',
+			token: 'sk-123',
+		});
+		expect(body.api).toMatchObject({ catalog_api_id: 'nytimes.com/article_search' });
 	});
 
 	it('builds an api_key body with the location enum', () => {

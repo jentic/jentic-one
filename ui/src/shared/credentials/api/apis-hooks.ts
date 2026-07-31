@@ -37,7 +37,9 @@ export interface SelectedApi {
 	vendor: string;
 	name: string;
 	version: string;
-	/** Catalog-only: the catalog `api_id` (for `:import` and the entry detail). */
+	/** The catalog `api_id` slug (for `:import`, the entry detail, and the
+	 * credential's stored `catalog_api_id`). Set for catalog rows and for
+	 * workspace rows whose API recorded one at import. */
 	apiId?: string;
 	/** Catalog-only: public URL for the spec (raw GitHub). */
 	specUrl?: string;

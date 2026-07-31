@@ -19,10 +19,14 @@ import type {
 	UsageBucket,
 	BindingWarningSchema,
 	PermissionTestResponse,
+	ToolkitUpdateRequest,
 } from '@/shared/api';
 
 /** A toolkit as rendered by the list/detail UI. */
 export type Toolkit = ToolkitResponse;
+
+/** Write shape for an in-place toolkit edit (PATCH /toolkits/{id}). */
+export type ToolkitUpdate = ToolkitUpdateRequest;
 
 /** Cursor-paginated toolkit list envelope. */
 export type ToolkitList = ToolkitListResponse;
@@ -89,6 +93,11 @@ export interface BindableCredential {
 	name: string;
 	type: string;
 	vendor: string | null;
+	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
+	apiName: string | null;
+	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
+	 * preferred friendly-title source. */
+	catalogApiId: string | null;
 	provider: string | null;
 }
 

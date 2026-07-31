@@ -89,6 +89,7 @@ class ApiRepository:
         display_name: str | None = None,
         description: str | None = None,
         created_by: str,
+        catalog_api_id: str | None = None,
     ) -> Api:
         result = await session.execute(
             select(Api).where(Api.vendor == vendor, Api.name == name, Api.version == version)
@@ -99,6 +100,10 @@ class ApiRepository:
                 api.display_name = display_name
             if description is not None:
                 api.description = description
+            # A catalog re-import refreshes (or backfills) the catalog identity;
+            # a manual re-import (None) never clears one already recorded.
+            if catalog_api_id is not None:
+                api.catalog_api_id = catalog_api_id
         else:
             api = Api(
                 vendor=vendor,
@@ -107,6 +112,7 @@ class ApiRepository:
                 display_name=display_name,
                 description=description,
                 created_by=created_by,
+                catalog_api_id=catalog_api_id,
             )
             session.add(api)
         await session.flush()

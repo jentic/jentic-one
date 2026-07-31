@@ -456,6 +456,12 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			// A rename changes what every `ActorLabel` renders — monitor rows,
+			// toolkit audit, access requests, and the "Registered by / Approved
+			// by" grid on this very page all resolve names through the actor
+			// directory (5-min staleTime, no focus refetch). Invalidate it so the
+			// new name shows up immediately instead of after the staleTime.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 			toast({
 				title: 'Agent updated',
 				description: `${agent.name} saved.`,

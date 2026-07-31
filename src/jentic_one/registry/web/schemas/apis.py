@@ -94,6 +94,10 @@ class ApiResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     api: ApiReferenceResponse
+    # Catalog identity slug this API was imported from (`domain[/sub-api]`,
+    # e.g. `nytimes.com/article_search`) — the separable form the UI derives
+    # friendly titles from. Null for manual/inline imports.
+    catalog_api_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
