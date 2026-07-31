@@ -433,6 +433,9 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
     new_revision_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
     assert result.body["revisions"][0]["state"] == "imported"
     assert new_revision_id != base_revision_id
+    # The materialize superseded the served base revision — the result carries it and
+    # it is back-linked onto the overlay for a later deterministic rollback (A5b).
+    assert result.body["revisions"][0]["superseded_revision_id"] == str(base_revision_id)
 
     async with registry_db.session() as session:
         api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
@@ -458,6 +461,7 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
             await session.execute(select(Overlay).where(Overlay.id == overlay_id))
         ).scalar_one()
         assert overlay_row.confirmed_revision_id == new_revision_id
+        assert overlay_row.superseded_revision_id == base_revision_id
 
 
 async def test_overlay_materialization_archives_active_revision_of_other_origin(

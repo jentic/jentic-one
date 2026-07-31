@@ -89,6 +89,11 @@ class ImportHandler:
                                 "version": result.api_version,
                             },
                             "revision_id": str(result.revision_id),
+                            "superseded_revision_id": (
+                                str(result.superseded_revision_id)
+                                if result.superseded_revision_id is not None
+                                else None
+                            ),
                             "state": result.state,
                         }
                     )
@@ -138,7 +143,10 @@ class ImportHandler:
             if overlay_id:
                 if len(revisions) == 1 and not failures:
                     await self._link_overlay_revision(
-                        job_id, str(overlay_id), revisions[0]["revision_id"]
+                        job_id,
+                        str(overlay_id),
+                        revisions[0]["revision_id"],
+                        revisions[0].get("superseded_revision_id"),
                     )
                 elif not revisions and len(sources) == 1:
                     # Recovery: a prior attempt of this exact confirm already produced
@@ -180,7 +188,13 @@ class ImportHandler:
         finally:
             unbind_contextvars("job_id")
 
-    async def _link_overlay_revision(self, job_id: str, overlay_id: str, revision_id: str) -> None:
+    async def _link_overlay_revision(
+        self,
+        job_id: str,
+        overlay_id: str,
+        revision_id: str,
+        superseded_revision_id: str | None = None,
+    ) -> None:
         """Record the materialized revision on the overlay (best-effort).
 
         Runs in its own registry_db transaction — the Ingestor already committed the
@@ -188,11 +202,23 @@ class ImportHandler:
         (durable) re-ingest, so it is logged rather than raised: the served spec is
         already correct; only the overlay->revision back-reference is missing and can
         be repaired by re-confirming.
+
+        ``superseded_revision_id`` (the revision this materialization archived) is
+        recorded alongside so a later un-confirm/rollback (A5b) has a deterministic
+        prior-revision target. ``None`` when the materialize superseded nothing (a
+        first-ever current revision).
         """
         try:
             async with self._ctx.registry_db.transaction() as session:
                 updated = await OverlayRepository.set_confirmed_revision(
-                    session, overlay_id, uuid.UUID(revision_id)
+                    session,
+                    overlay_id,
+                    uuid.UUID(revision_id),
+                    superseded_revision_id=(
+                        uuid.UUID(superseded_revision_id)
+                        if superseded_revision_id is not None
+                        else None
+                    ),
                 )
             if updated == 0:
                 logger.warning(

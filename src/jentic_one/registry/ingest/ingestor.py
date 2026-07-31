@@ -62,6 +62,11 @@ class Ingestor:
 
                     operation_ids: set[str] = pipeline_ctx.require("operation_ids", set)
                     revision_id: uuid.UUID = pipeline_ctx.require("revision_id", uuid.UUID)
+                    # Optional: only produced by CreateRevisionStage for an overlay
+                    # materialization that superseded an existing current revision.
+                    superseded_revision_id: uuid.UUID | None = pipeline_ctx.get(
+                        "superseded_revision_id"
+                    )
 
                 result_state = (
                     ApiRevisionState.IMPORTED if spec.origin is not None else ApiRevisionState.DRAFT
@@ -71,6 +76,7 @@ class Ingestor:
                     api_name=spec.api_identifier.name,
                     api_version=spec.api_identifier.version,
                     revision_id=revision_id,
+                    superseded_revision_id=superseded_revision_id,
                     state=result_state,
                     operation_count=len(operation_ids),
                 )
