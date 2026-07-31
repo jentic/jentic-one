@@ -58,6 +58,9 @@ export default function DiscoverPage() {
 	// changes. Comparing the previous values (rather than a "have I mounted"
 	// boolean) is StrictMode-safe: the effect's double-invocation on mount reads
 	// the ref back as the current value and no-ops, so first load isn't yanked.
+	// The snap fires at debounce-commit, before results land — deliberately, so
+	// the viewport is already in place when they swap in; if the fetch errors
+	// instead, the error alert renders at the top the user was just snapped to.
 	const prevQueryRef = useRef(debouncedQuery);
 	const prevFilterRef = useRef(filter);
 	useEffect(() => {
@@ -66,7 +69,7 @@ export default function DiscoverPage() {
 		}
 		prevQueryRef.current = debouncedQuery;
 		prevFilterRef.current = filter;
-		window.scrollTo({ top: 0 });
+		window.scrollTo({ top: 0, left: 0 });
 	}, [debouncedQuery, filter]);
 
 	function handleOpen(entity: DiscoveryEntity) {
