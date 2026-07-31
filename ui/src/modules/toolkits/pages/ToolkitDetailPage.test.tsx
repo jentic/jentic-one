@@ -153,10 +153,11 @@ describe('ToolkitDetailPage', () => {
 
 		await user.click(screen.getByRole('tab', { name: 'Activity' }));
 
-		// Volume chart (from /monitoring/usage?toolkit_id=…).
+		// Chart pair (from /monitoring/usage?toolkit_id=…): stacked volume + call trend.
 		expect(
-			await screen.findByRole('img', { name: /execution volume for this toolkit/i }),
+			await screen.findByRole('img', { name: /execution volume over the last 7d/i }),
 		).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /total calls per bucket/i })).toBeInTheDocument();
 
 		// Executions feed (from /executions?toolkit_id=…), including the denial.
 		expect(await screen.findByText(/github\.create_issue/)).toBeInTheDocument();

@@ -1,7 +1,8 @@
 /**
- * ActivityPanel — the detail page's Activity tab: this actor's execution
- * volume (7-day stacked bars) plus a most-recent-executions feed, both scoped
- * by `actor_id`. Monitor owns the full history (cursor paging, trace sheets,
+ * ActivityPanel — the detail page's Activity tab: the shared console chart
+ * pair (stacked execution volume + total-call trend, `ExecutionVolumeCharts`)
+ * plus a most-recent-executions feed, both scoped by `actor_id`. Monitor
+ * owns the full history (cursor paging, trace sheets,
  * filters), so the panel ends in a pre-filtered "Open in Monitor" deep-link
  * rather than re-implementing any of that here.
  *
@@ -9,17 +10,16 @@
  * behind `executions:read`): a 403 resolves to `null` (not an error) and the
  * panel renders one quiet permission note instead of charts.
  */
-import { Activity, ArrowRight, ListOrdered, TrendingUp } from 'lucide-react';
+import { Activity, ArrowRight, ListOrdered } from 'lucide-react';
 import {
 	AppLink,
 	DataTable,
 	DetailSection,
 	EmptyState,
+	ExecutionVolumeCharts,
 	LoadingState,
-	StackedBarChart,
 	StatusBadge,
 	type Column,
-	type StackedBarDatum,
 } from '@/shared/ui';
 import { ROUTE_PATHS } from '@/shared/app';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
@@ -34,18 +34,6 @@ function formatDuration(ms: number | null): string {
 	if (ms == null) return '—';
 	if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
 	return `${Math.round(ms)}ms`;
-}
-
-/**
- * Label a bucket timestamp for the x-axis: clock time for sub-day buckets,
- * month + day otherwise (mirrors the dashboard's bucket-label convention).
- */
-function bucketLabel(ts: number, bucketSeconds: number): string {
-	const date = new Date(ts * 1000);
-	if (bucketSeconds < 86_400) {
-		return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-	}
-	return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /** The operation cell: "toolkit.operation" with the error inlined for failures. */
@@ -107,24 +95,6 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 	}
 
 	const buckets = usage.data?.buckets ?? [];
-	const bars: StackedBarDatum[] = buckets.map((b) => ({
-		key: String(b.ts),
-		label: bucketLabel(b.ts, usage.data?.bucketSeconds ?? 86_400),
-		segments: [
-			{
-				key: 'success',
-				label: 'succeeded',
-				value: b.success,
-				colorClassName: 'bg-accent-green/80',
-			},
-			{
-				key: 'failed',
-				label: 'failed',
-				value: b.failed,
-				colorClassName: 'bg-danger/70',
-			},
-		],
-	}));
 
 	const items = executions.data?.items ?? [];
 	const columns: Column<ActorExecutionEntity>[] = [
@@ -173,22 +143,11 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 	return (
 		<div className="space-y-4">
 			{usage.data != null && (
-				<DetailSection
-					title="Execution volume · 7d"
-					icon={<TrendingUp className="h-4 w-4" />}
-				>
-					{buckets.length === 0 ? (
-						<p className="text-muted-foreground py-6 text-center text-sm">
-							No executions in the last 7 days.
-						</p>
-					) : (
-						<StackedBarChart
-							bars={bars}
-							height={120}
-							ariaLabel={`Execution volume over the last 7 days: ${usage.data.total} total, ${usage.data.failed} failed.`}
-						/>
-					)}
-				</DetailSection>
+				<ExecutionVolumeCharts
+					buckets={buckets}
+					bucketSeconds={usage.data.bucketSeconds}
+					emptyMessage="No executions in the last 7 days. Volume appears here once this actor starts making calls."
+				/>
 			)}
 
 			{executions.data != null && (

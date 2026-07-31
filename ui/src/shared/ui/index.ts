@@ -9,6 +9,12 @@ export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailS
 export { AuditTrailCard } from '@/shared/ui/AuditTrailCard';
 export type { AuditTrailCardProps, AuditTrailEntry } from '@/shared/ui/AuditTrailCard';
 
+export { ExecutionVolumeCharts } from '@/shared/ui/ExecutionVolumeCharts';
+export type {
+	ExecutionVolumeChartsProps,
+	UsageChartBucket,
+} from '@/shared/ui/ExecutionVolumeCharts';
+
 export { DangerZone } from '@/shared/ui/DangerZone';
 export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
 

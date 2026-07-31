@@ -1,26 +1,20 @@
-import { Activity, ListOrdered, Lock, TrendingUp } from 'lucide-react';
-import { ActorLabel, AppLink, DetailSection, EmptyRow, TrendLineChart } from '@/shared/ui';
+import { Activity, ListOrdered, Lock } from 'lucide-react';
+import { ActorLabel, AppLink, DetailSection, EmptyRow, ExecutionVolumeCharts } from '@/shared/ui';
 import { useToolkitExecutions, useToolkitUsage } from '@/modules/toolkits/api';
 import type { ToolkitExecution } from '@/modules/toolkits/api/types';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
- * Activity tab — what this toolkit has actually been doing: the 7-day
- * execution-volume chart (`GET /monitoring/usage?toolkit_id=…`) and a recent
- * executions feed (`GET /executions?toolkit_id=…`), with a deep-link into
- * Monitor's full filterable log carrying the toolkit filter.
+ * Activity tab — what this toolkit has actually been doing: the shared
+ * console chart pair (stacked execution volume + total-call trend,
+ * `ExecutionVolumeCharts`, fed by `GET /monitoring/usage?toolkit_id=…`) and a
+ * recent executions feed (`GET /executions?toolkit_id=…`), with a deep-link
+ * into Monitor's full filterable log carrying the toolkit filter.
  *
  * Both endpoints are admin-gated; the repository maps 401/403 to `null` and
  * this tab degrades to a single explanatory panel for non-admins.
  */
-
-function formatBucketTs(ts: number): string {
-	return new Date(ts * 1000).toLocaleDateString(undefined, {
-		month: 'short',
-		day: 'numeric',
-	});
-}
 
 function formatDuration(ms: number | null): string {
 	if (ms == null) return '—';
@@ -101,31 +95,16 @@ export function ActivityTab({ toolkitId }: { toolkitId: string }) {
 	}
 
 	const buckets = usage?.buckets ?? [];
-	const chartData = buckets.map((b) => ({ ts: b.ts, value: b.total }));
 	const rows = executions ?? [];
 
 	return (
 		<div className="space-y-6">
-			<DetailSection title="Execution volume · 7d" icon={<TrendingUp className="h-4 w-4" />}>
-				{loading ? (
-					<div className="bg-muted h-28 animate-pulse rounded-lg" aria-hidden="true" />
-				) : chartData.length >= 2 ? (
-					<TrendLineChart
-						data={chartData}
-						formatValue={(v) => v.toLocaleString()}
-						formatTs={formatBucketTs}
-						height={112}
-						ariaLabel={`Execution volume for this toolkit over the last 7 days: ${
-							usage?.stats.total ?? 0
-						} total executions.`}
-					/>
-				) : (
-					<EmptyRow icon={<Activity />}>
-						No executions in the last 7 days. Volume appears here once agents start
-						calling this toolkit.
-					</EmptyRow>
-				)}
-			</DetailSection>
+			<ExecutionVolumeCharts
+				buckets={buckets}
+				bucketSeconds={usage?.bucket_seconds ?? 86_400}
+				isLoading={loading}
+				emptyMessage="No executions in the last 7 days. Volume appears here once agents start calling this toolkit."
+			/>
 
 			<DetailSection
 				title="Recent executions"
