@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.24.0](https://github.com/jentic/jentic-one/compare/v0.23.0...v0.24.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **broker/auth:** self-contained JWTs presented at the broker edge must now embed an actor_type claim of "agent" or "service_account" (alongside sub and exp). External trusted (JWKS) issuers must update their minting before upgrading; a token without actor_type — previously treated as an agent — is now refused with a 401.
+
+### Features
+
+* **access-requests:** composite multi-item access requests end to end ([#869](https://github.com/jentic/jentic-one/issues/869)) ([33c7e23](https://github.com/jentic/jentic-one/commit/33c7e23f1910ff3e3c23a8afbfea07e549e0b55d))
+* **access-requests:** surface already-satisfied items and adopt existing artifacts in fulfilment wizard ([#885](https://github.com/jentic/jentic-one/issues/885)) ([5d6ecfe](https://github.com/jentic/jentic-one/commit/5d6ecfe5f5bfc656a7649fe635f88f4391f7f3d3))
+* **ui:** rebuild the agents pages as an identity console ([#878](https://github.com/jentic/jentic-one/issues/878)) ([73c632b](https://github.com/jentic/jentic-one/commit/73c632b049b6eb0032527106f84b25b0a82780d0))
+
+
+### Bug Fixes
+
+* **broker/auth:** typed token errors, fail-closed actor_type, refusal logging ([#880](https://github.com/jentic/jentic-one/issues/880)) ([44268e6](https://github.com/jentic/jentic-one/commit/44268e6adcb6f878c4896f0ae6d13c6e7ef7c592))
+* **credentials:** honest updated_at, immutable api_key binding, vendor-wide reuse ([#881](https://github.com/jentic/jentic-one/issues/881)) ([76d156b](https://github.com/jentic/jentic-one/commit/76d156b7f778836d1c993af7f8fec46b7e3861d1))
+* **ingest:** resolve effective operation security op-level-else-document-level ([#886](https://github.com/jentic/jentic-one/issues/886)) ([3961336](https://github.com/jentic/jentic-one/commit/3961336dac699a7775d10463133970e7b411dfc0))
+
+
+### Documentation
+
+* **skills:** add contribute-spec-fix skill (overlay fix -&gt; PR -&gt; optional local apply) ([774a56e](https://github.com/jentic/jentic-one/commit/774a56e66f7173be6b5d70624109a5603fb5a83e))
+* **skills:** add import-new-api skill (new-API import flow) ([572f950](https://github.com/jentic/jentic-one/commit/572f950d23bd0d84e23de67b43a128db25301e16))
+
 ## [0.23.0](https://github.com/jentic/jentic-one/compare/v0.22.0...v0.23.0) (2026-07-29)
 
 
