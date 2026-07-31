@@ -76,7 +76,11 @@ export function DiscoveryCard({
 						className="mt-auto flex w-full flex-wrap items-center gap-1.5 pt-2.5"
 						data-testid="discovery-card-footer"
 					>
-						<CardStatusPill registered={registered} pending={importPending} />
+						<CardStatusPill
+							registered={registered}
+							pending={importPending}
+							updateAvailable={entity.updateAvailable}
+						/>
 					</div>
 				</div>
 

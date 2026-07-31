@@ -3,7 +3,8 @@
  *
  * Built entirely from shared primitives (SearchInput, SegmentedToggle,
  * RefreshButton). The filter maps onto the catalog query:
- * All (no flag) / Imported (`registered_only`) / Available (`unregistered_only`).
+ * All (no flag) / Imported (`registered_only`) / Available (`unregistered_only`) /
+ * Updates (`outdated_only`, registered entries with an upstream update).
  *
  * Sticky-on-scroll (jentic-mini parity): the bar pins below the fixed `h-12`
  * TopNavbar (`sticky top-12`) and bleeds to the page gutter edges
@@ -30,6 +31,7 @@ const FILTER_OPTIONS: { value: CatalogFilter; label: string }[] = [
 	{ value: 'all', label: 'All' },
 	{ value: 'registered', label: 'Imported' },
 	{ value: 'unregistered', label: 'Available' },
+	{ value: 'outdated', label: 'Updates' },
 ];
 
 export function DiscoverToolbar({
