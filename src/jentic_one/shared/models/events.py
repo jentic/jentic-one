@@ -31,8 +31,10 @@ class EventType:
     JOB_FAILED_PERMANENTLY = "job.failed_permanently"
     UNAUTHORIZED_ACCESS_ATTEMPT = "security.unauthorized_access_attempt"
     # A registered catalog/imported API's upstream spec changed (detected by the
-    # update-notify sweep). Emitted with requires_action=True and deduped on the
-    # observed spec digest so it fires once per real change, not every sweep.
+    # update-notify sweep). Emitted with requires_action=False (informational
+    # until Flow-3 ships a resolve path — one-click re-import / dismiss — in a
+    # later phase) and deduped on the observed spec digest so it fires once per
+    # real change, not every sweep.
     CATALOG_UPDATE_AVAILABLE = "catalog.update_available"
 
     # --- Product-telemetry event types (issue #446) ----------------------
