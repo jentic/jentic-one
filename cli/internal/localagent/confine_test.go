@@ -352,7 +352,15 @@ func TestConfineExecUsesAbsoluteWrapperAndConfinedLoginShell(t *testing.T) {
 		t.Errorf("confineExec must invoke the absolute wrapper %q, got:\n%s", wrapper, got)
 	}
 	// The login shell runs INSIDE the wrapper (so agent rc is sourced confined).
-	if !strings.Contains(got, shellQuote(agentLaunchShell)+" -lc ") {
+	// The two wrappers render the argv differently — darwin builds the string with
+	// a bare `-lc` (sandbox-exec … 'bash' -lc '…'), while the Linux bwrap builder
+	// shell-quotes EVERY token ('bash' '-lc' '…') — so assert whichever form this
+	// platform actually emits.
+	loginShell := shellQuote(agentLaunchShell) + " -lc "
+	if runtime.GOOS == "linux" {
+		loginShell = shellQuote(agentLaunchShell) + " " + shellQuote("-lc") + " "
+	}
+	if !strings.Contains(got, loginShell) {
 		t.Errorf("confineExec must run a login shell (%s -lc) inside the wrapper, got:\n%s", agentLaunchShell, got)
 	}
 }
