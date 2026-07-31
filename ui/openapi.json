@@ -7393,6 +7393,14 @@
             "title": "Active",
             "type": "boolean"
           },
+          "apis": {
+            "description": "Distinct (vendor, name, version) APIs served by this toolkit's credential bindings, sorted by vendor/name/version. Empty when no credentials are bound.",
+            "items": {
+              "$ref": "#/components/schemas/APIReference"
+            },
+            "title": "Apis",
+            "type": "array"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",

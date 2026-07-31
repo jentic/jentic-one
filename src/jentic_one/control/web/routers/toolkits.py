@@ -40,10 +40,34 @@ from jentic_one.control.web.schemas.toolkits import (
     ToolkitUpdateRequest,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.schemas import APIReference
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
+
+
+def _served_apis(toolkit: Toolkit) -> list[APIReference]:
+    """Distinct APIs across the toolkit's credential bindings, stably sorted.
+
+    ``bindings`` and each binding's ``credential`` are selectin-eager on the
+    ORM, so this is pure in-memory aggregation — no extra queries on the list
+    path. Dedupes on the identity tuple: two credentials for the same API
+    yield one entry.
+    """
+    tuples = {
+        (
+            binding.credential.api_vendor,
+            binding.credential.api_name or "",
+            binding.credential.api_version or "",
+        )
+        for binding in toolkit.bindings
+        if binding.credential is not None
+    }
+    return [
+        APIReference(vendor=vendor, name=name, version=version)
+        for vendor, name, version in sorted(tuples)
+    ]
 
 
 def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
@@ -54,6 +78,7 @@ def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
         active=toolkit.active,
         key_count=len(toolkit.keys),
         credential_count=len(toolkit.bindings),
+        apis=_served_apis(toolkit),
         created_by=toolkit.created_by,
         created_at=toolkit.created_at,
         updated_at=toolkit.updated_at,

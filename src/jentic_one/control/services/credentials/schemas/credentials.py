@@ -142,6 +142,12 @@ class OAuth2Redacted(BaseModel):
     token_url: str
     grant_type: str
     scopes: list[str] | None = None
+    # Whether the interactive sign-in completed (a live token row exists).
+    # Only meaningful for authorization_code credentials — client_credentials
+    # mint tokens automatically at execute time, so it stays None there. Lets
+    # list consumers (e.g. the fulfilment wizard's adopt picker) warn about a
+    # never-connected credential before adopting it.
+    connected: bool | None = None
 
 
 class NoAuthRedacted(BaseModel):

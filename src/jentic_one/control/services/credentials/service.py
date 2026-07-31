@@ -534,11 +534,18 @@ class CredentialService:
 
         elif wire_type == CredentialType.OAUTH2:
             occ = credential.oauth_client_credential
+            is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
+            connected: bool | None = None
+            if is_auth_code:
+                # oauth_token is selectin-eager on the ORM, so this is free.
+                token = credential.oauth_token
+                connected = token is not None and token.revoked_at is None
             details = OAuth2Redacted(
                 client_id=occ.client_id if occ else "",
                 token_url=occ.token_url if occ else "",
-                grant_type="client_credentials",
+                grant_type="authorization_code" if is_auth_code else "client_credentials",
                 scopes=occ.scope.split() if occ and occ.scope else None,
+                connected=connected,
             )
         elif wire_type == CredentialType.NO_AUTH:
             details = NoAuthRedacted()
