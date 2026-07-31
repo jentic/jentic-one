@@ -295,9 +295,10 @@ API. The PR stays open — do not close it; this is not a fork.
 > re-ingests the base spec with the overlay applied and promotes the result to the API's current
 > revision, so the served spec (`GET …/openapi.json`) reflects the fix immediately after confirm.
 > Two things follow from this:
-> - **Confirm is an operator action** and requires the `org:admin` permission (not `apis:write`).
->   Contributors *submit* overlays; an operator reviews and *confirms*. Use an `org:admin` token
->   for the confirm call below, or ask an operator to confirm.
+> - **Confirm is an operator action** and requires the `overlays:confirm` permission (not
+>   `apis:write`). Contributors *submit* overlays; an operator reviews and *confirms*. Use a
+>   token with `overlays:confirm` (an `org:admin` token also works — it implies the scope) for
+>   the confirm call below, or ask an operator to confirm.
 > - **Verify locally first.** Because confirm rewrites what the platform serves, treat the local
 >   apply as the real verification of the fix: confirm, then re-download the spec and diff it
 >   against your PR-branch `openapi.json` (they should match). If the overlay can't be applied
@@ -310,8 +311,9 @@ plane (default `http://127.0.0.1:8000`).
 
 ```
 BASE=http://127.0.0.1:8000
-# Submit uses an apis:write token; confirm uses an org:admin token (may be the same
-# token if your profile has both). Adjust to however your active token is exposed.
+# Submit uses an apis:write token; confirm uses an overlays:confirm token (may be the
+# same token if your profile has both; an org:admin token also satisfies confirm).
+# Adjust to however your active token is exposed.
 TOKEN=$(jentic profile list --json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
 V=<vendor>; N=<api>; VER=<version>
 
@@ -321,8 +323,8 @@ curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays" \
   -d "$(python3 -c "import json;print(json.dumps({'document':json.load(open('$OVL')),'contributed_by':'contribute-spec-fix skill'}))")"
 # → note the returned overlay "id" and the "_links.confirm" URL
 
-# Confirm it (pending → confirmed) — requires org:admin. This materializes the overlay:
-# it re-ingests the base spec with the overlay applied and serves the result.
+# Confirm it (pending → confirmed) — requires overlays:confirm. This materializes the
+# overlay: it re-ingests the base spec with the overlay applied and serves the result.
 curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```

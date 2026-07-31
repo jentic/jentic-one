@@ -109,7 +109,7 @@ _Total endpoints: **153**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (45)
+## Operator-facing (typically a human operator / admin) (44)
 
 
 ### `access-requests`
@@ -144,12 +144,6 @@ _Total endpoints: **153**._
 | POST | `/agents/{agent_id}:enable` | `agents:write` | operator | Enable Agent |
 | POST | `/agents/{agent_id}:generate-api-key` | `agents:write` | operator | Generate Agent Api Key |
 | POST | `/agents/{agent_id}:revoke-api-key` | `agents:write` | operator | Revoke Agent Api Key |
-
-### `apis`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `org:admin` | operator | Confirm Overlay |
 
 ### `audit`
 
@@ -212,7 +206,7 @@ _Total endpoints: **153**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (59)
+## Any authenticated actor (60)
 
 
 ### `access-requests`
@@ -250,6 +244,7 @@ _Total endpoints: **153**._
 | POST | `/apis/{vendor}/{name}/{version}/overlays` | `apis:write` | any | Submit Overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Deprecate Overlay |
 | PATCH | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}` | `apis:write` | any | Update Overlay |
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `overlays:confirm` | any | Confirm Overlay |
 | DELETE | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}` | `apis:write` | any | Delete Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:archive` | `apis:write` | any | Archive Revision |
 | POST | `/apis/{vendor}/{name}/{version}/revisions/{revision_id}:promote` | `apis:write` | any | Promote Revision |

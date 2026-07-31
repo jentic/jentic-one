@@ -233,15 +233,20 @@ async def confirm_overlay(
     version: str,
     overlay_id: str,
     body: OverlayConfirmRequest,
-    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
+    identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
     """Confirm an overlay, materializing it onto the served spec.
 
-    Requires ``org:admin``: confirming rewrites the API's served spec (it re-ingests
-    the base spec with the overlay applied and promotes the result to the current
-    revision), so it is an operator action, not a contributor one (contributors
-    ``submit`` overlays with ``apis:write``; an operator reviews and confirms).
+    Requires ``overlays:confirm``: confirming rewrites the API's served spec (it
+    re-ingests the base spec with the overlay applied and promotes the result to the
+    current revision), so it is an operator action, not a contributor one (contributors
+    ``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a
+    purpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an
+    owner can grant it to a trusted operator without handing over full admin power.
+    ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
+    deliberately excluded from an agent's self-service grantable set so a low-privilege
+    agent cannot escalate into it.
     """
     svc = OverlayService(ctx)
     view = await svc.confirm(

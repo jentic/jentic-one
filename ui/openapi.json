@@ -14923,7 +14923,7 @@
     },
     "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm": {
       "post": {
-        "description": "Confirm an overlay, materializing it onto the served spec.\n\nRequires ``org:admin``: confirming rewrites the API's served spec (it re-ingests\nthe base spec with the overlay applied and promotes the result to the current\nrevision), so it is an operator action, not a contributor one (contributors\n``submit`` overlays with ``apis:write``; an operator reviews and confirms).",
+        "description": "Confirm an overlay, materializing it onto the served spec.\n\nRequires ``overlays:confirm``: confirming rewrites the API's served spec (it\nre-ingests the base spec with the overlay applied and promotes the result to the\ncurrent revision), so it is an operator action, not a contributor one (contributors\n``submit`` overlays with ``apis:write``; an operator reviews and confirms). This is a\npurpose-scoped downgrade from the former ``org:admin`` gate — narrow enough that an\nowner can grant it to a trusted operator without handing over full admin power.\n``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is\ndeliberately excluded from an agent's self-service grantable set so a low-privilege\nagent cannot escalate into it.",
         "operationId": "confirmOverlay",
         "parameters": [
           {
