@@ -325,8 +325,10 @@ curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays" \
 
 # Confirm it (pending → confirmed) — requires overlays:confirm. This materializes the
 # overlay: it re-ingests the base spec with the overlay applied and serves the result.
+# Uses $TOKEN too; if your active profile lacks overlays:confirm, swap in an operator
+# token that has it (an org:admin token also works).
 curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{}'
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```
 
 Verify the fix actually landed on the served spec (this is the local verification of the fix):

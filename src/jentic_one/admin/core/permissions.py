@@ -152,7 +152,10 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     ),
     OVERLAYS_CONFIRM: Permission(
         name=OVERLAYS_CONFIRM,
-        description="Confirm a pending overlay to materialize it onto the served API revision",
+        description=(
+            "Confirm a pending overlay, rewriting the API's served spec "
+            "(operator action; not granted to agents by default)"
+        ),
         implies=frozenset({APIS_READ}),
     ),
     EXECUTIONS_READ: Permission(

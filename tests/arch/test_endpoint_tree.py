@@ -27,6 +27,7 @@ from tools.endpoint_tree import (
 )
 
 from jentic_one.shared.models.actors import ActorType
+from jentic_one.shared.scopes import GRANTABLE_SCOPES
 from jentic_one.shared.web.deps import get_current_identity
 from jentic_one.shared.web.endpoint_reference import (
     GROUP_AGENT,
@@ -42,7 +43,13 @@ from jentic_one.shared.web.endpoint_reference import (
     build_reference_payload,
     collect_endpoints,
 )
-from jentic_one.shared.web.endpoint_scopes import _closure_values
+from jentic_one.shared.web.endpoint_scopes import (
+    _AGENT_DEFAULT_SCOPES,
+    _OPERATOR_SCOPES,
+    TYPICAL_OPERATOR,
+    _closure_values,
+    _typical_caller,
+)
 
 
 def _ep(
@@ -358,3 +365,35 @@ def test_live_reference_matches_committed() -> None:
         "docs/reference/endpoints.json. The broker surface declaration or the "
         "committed file is stale; run `make endpoints` and reconcile."
     )
+
+
+@pytest.mark.arch
+def test_overlays_confirm_classified_operator() -> None:
+    """overlays:confirm gates an operator route — the advisory hint must say so.
+
+    Regression: overlays:confirm was added to the permission catalogue but not to
+    _OPERATOR_SCOPES, so the reference flipped the confirm endpoint's typical caller
+    from "operator" to "any" — contradicting the PR's operator-scope intent. Pin it.
+    """
+    assert _typical_caller(["overlays:confirm"], []) == TYPICAL_OPERATOR
+
+
+@pytest.mark.arch
+def test_operator_only_scopes_are_classified_operator() -> None:
+    """Any scope withheld from self-service AND agent defaults must classify as operator.
+
+    The _typical_caller operator list is hand-maintained, which is exactly how
+    overlays:confirm silently drifted to "any". This ties the classifier to the
+    authorization model: a scope that is neither self-service-grantable nor an agent
+    default (and isn't the org:admin superuser or an owner-scoped read) is, by
+    definition, operator-held — so it must be in _OPERATOR_SCOPES or the reference
+    will mislabel its endpoints.
+    """
+    operator_only = {
+        s for s in _OPERATOR_SCOPES if s not in GRANTABLE_SCOPES and s not in _AGENT_DEFAULT_SCOPES
+    }
+    # Sanity: the set is non-trivial (guards against a vacuous pass).
+    assert "overlays:confirm" in operator_only
+    # Every such scope classifies as operator on its own.
+    for scope in operator_only:
+        assert _typical_caller([scope], []) == TYPICAL_OPERATOR, scope

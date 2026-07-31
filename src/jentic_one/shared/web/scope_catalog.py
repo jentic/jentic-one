@@ -61,7 +61,7 @@ _FAMILY_BLURBS: dict[str, str] = {
     "toolkits": "Toolkit configuration and lifecycle.",
     "apis": "Imported API definitions and metadata.",
     "catalog": "Importing public catalog APIs into the local registry.",
-    "overlays": "Confirming spec overlays onto the served API revision.",
+    "overlays": "Confirming spec overlays — rewrites the API's served revision.",
     "credentials": "Stored credential metadata and lifecycle.",
     "agents": "Agent identities and their configuration.",
     "service-accounts": "Non-human service-account identities.",

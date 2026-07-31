@@ -1033,7 +1033,7 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "overlays:confirm": [
           "apis:read"
@@ -1048,7 +1048,7 @@
       ],
       "summary": "Confirm Overlay",
       "surface": "apis",
-      "typical_caller": "any"
+      "typical_caller": "operator"
     },
     {
       "actor_types": [
@@ -3830,13 +3830,13 @@
         ]
       },
       {
-        "blurb": "Confirming spec overlays onto the served API revision.",
+        "blurb": "Confirming spec overlays — rewrites the API's served revision.",
         "label": "Overlays",
         "name": "overlays",
         "scopes": [
           {
             "action": "confirm",
-            "description": "Confirm a pending overlay to materialize it onto the served API revision",
+            "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
             "family": "overlays",
             "implies": [
               "apis:read"
@@ -4408,7 +4408,7 @@
       },
       {
         "action": "confirm",
-        "description": "Confirm a pending overlay to materialize it onto the served API revision",
+        "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
         "family": "overlays",
         "implies": [
           "apis:read"
