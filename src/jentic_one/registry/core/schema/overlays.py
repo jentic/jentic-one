@@ -39,6 +39,12 @@ class Overlay(AuditableMixin, RegistryBase):
         nullable=False,
     )
     target_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
+    #: The revision produced by materializing this overlay (set by the ingest job on
+    #: a successful confirm). Distinct from ``target_revision_id`` (the base revision
+    #: the overlay was authored against). No FK: the revision lives in the same DB but
+    #: the link is advisory — a pruned revision simply leaves this dangling, and the
+    #: overlay is re-materialized on the next confirm/re-import.
+    confirmed_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'pending'")
     )

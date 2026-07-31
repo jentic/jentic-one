@@ -113,7 +113,15 @@ class OverlayRepository:
         confirmed_at: datetime | None = None,
         confirmed_by_execution_id: str | None = None,
         deprecated_at: datetime | None = None,
+        expected_status: OverlayStatus | None = None,
     ) -> int:
+        """Set an overlay's status, returning the number of rows updated.
+
+        When ``expected_status`` is given the UPDATE is guarded by ``status =
+        expected_status`` (a compare-and-swap), so a caller can detect that it lost a
+        race (``rowcount == 0``) instead of blindly overwriting a concurrent
+        transition (e.g. two confirms, or confirm vs deprecate).
+        """
         values: dict[str, Any] = {"status": status, "updated_at": func.now()}
         if confirmed_at is not None:
             values["confirmed_at"] = confirmed_at
@@ -121,9 +129,34 @@ class OverlayRepository:
             values["confirmed_by_execution_id"] = confirmed_by_execution_id
         if deprecated_at is not None:
             values["deprecated_at"] = deprecated_at
+        stmt = update(Overlay).where(Overlay.id == overlay_id)
+        if expected_status is not None:
+            stmt = stmt.where(Overlay.status == expected_status)
         result = cast(
             "CursorResult[Any]",
-            await session.execute(update(Overlay).where(Overlay.id == overlay_id).values(**values)),
+            await session.execute(stmt.values(**values)),
+        )
+        await session.flush()
+        return result.rowcount
+
+    @staticmethod
+    async def set_confirmed_revision(
+        session: AsyncSession,
+        overlay_id: str,
+        confirmed_revision_id: uuid.UUID,
+    ) -> int:
+        """Record the revision produced by materializing this overlay.
+
+        Written by the ingest job after a confirm's re-ingest succeeds, so the
+        overlay points at the concrete revision now serving the overlaid spec.
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(Overlay)
+                .where(Overlay.id == overlay_id)
+                .values(confirmed_revision_id=confirmed_revision_id, updated_at=func.now())
+            ),
         )
         await session.flush()
         return result.rowcount

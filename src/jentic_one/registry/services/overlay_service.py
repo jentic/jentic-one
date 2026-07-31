@@ -2,26 +2,127 @@
 
 from __future__ import annotations
 
+import json
+import re
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
 
+import structlog
 from pydantic import BaseModel
 
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
+from jentic_one.registry.repos.spec_file_repo import SpecFileRepository
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
+    InvalidOverlayDocumentError,
+    NoCurrentRevisionError,
+    OverlayApplyConflictError,
     OverlayNotFoundError,
     OverlayStateConflictError,
+    SpecFileMissingError,
 )
+from jentic_one.registry.services.overlay_apply import OverlayApplyError, apply_overlay
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
-from jentic_one.shared.models import OverlayStatus
+from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.models import ORIGIN_OVERLAY, JobKind, OverlayStatus
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
+from jentic_one.shared.url_validation import validate_upstream_url
+
+logger = structlog.get_logger(__name__)
+
+#: Upper bound on the number of actions an overlay document may carry. An overlay is
+#: a small, targeted fix (a handful of remove/update pairs); a document with thousands
+#: of actions is abuse, not a legitimate fix, and would be unbounded work at apply time.
+_MAX_OVERLAY_ACTIONS = 512
+
+#: Upper bound on the serialized size of an overlay document accepted at submit/update.
+#: The document is contributor-controlled JSONB that an operator later materializes
+#: inline (bypassing the URL-fetch cap), so bound it at ingress. Smaller than
+#: max_spec_bytes because an overlay is a diff, not a whole spec.
+_MAX_OVERLAY_DOCUMENT_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+def _validate_overlay_document(document: Any) -> None:
+    """Reject a structurally-invalid or oversized overlay document at submit/update.
+
+    Cheap ingress guard (see the two bounds above). Full JSONPath/action semantics are
+    still validated at confirm time by the applier; this only stops obvious abuse and
+    unbounded payloads from being persisted by a contributor (``apis:write``).
+    """
+    if not isinstance(document, dict):
+        raise InvalidOverlayDocumentError("document must be a JSON object")
+    actions = document.get("actions")
+    if not isinstance(actions, list):
+        raise InvalidOverlayDocumentError("document must have an 'actions' array")
+    if len(actions) > _MAX_OVERLAY_ACTIONS:
+        raise InvalidOverlayDocumentError(
+            f"too many actions ({len(actions)} > {_MAX_OVERLAY_ACTIONS})"
+        )
+    try:
+        size = len(json.dumps(document).encode())
+    except (TypeError, ValueError) as exc:
+        raise InvalidOverlayDocumentError(f"document is not JSON-serializable: {exc}") from exc
+    if size > _MAX_OVERLAY_DOCUMENT_BYTES:
+        raise InvalidOverlayDocumentError(f"document exceeds {_MAX_OVERLAY_DOCUMENT_BYTES} bytes")
+
+
+def _iter_server_urls(spec: dict[str, Any]) -> Iterator[str]:
+    """Yield every ``servers[].url`` string in a spec.
+
+    OpenAPI allows a ``servers`` array at the document root, under each Path Item,
+    and under each Operation. All three are real upstream targets, so all three must
+    be SSRF-validated when an overlay rewrites the spec — not just the top-level one.
+    """
+
+    def _from_servers(node: Any) -> Iterator[str]:
+        if isinstance(node, list):
+            for server in node:
+                if isinstance(server, dict) and isinstance(server.get("url"), str):
+                    yield server["url"]
+
+    yield from _from_servers(spec.get("servers"))
+
+    paths = spec.get("paths")
+    if isinstance(paths, dict):
+        for path_item in paths.values():
+            if not isinstance(path_item, dict):
+                continue
+            yield from _from_servers(path_item.get("servers"))
+            for operation in path_item.values():
+                if isinstance(operation, dict):
+                    yield from _from_servers(operation.get("servers"))
+
+
+def _concrete_server_urls(url: str) -> list[str]:
+    """Expand a (possibly templated) server URL into concrete URL(s) to validate.
+
+    A non-templated URL yields itself. For an RFC 6570-style templated URL (e.g.
+    ``https://{region}.example.com``) we cannot know the runtime value, so we return
+    the literal parts around the variables joined so an attacker can't hide a blocked
+    host purely inside a variable: we strip the ``{var}`` placeholders and validate the
+    remaining literal skeleton. If the skeleton has no host left (whole host is a
+    variable), we skip — those are validated at execution time against egress policy.
+    """
+    if "{" not in url:
+        return [url]
+    # Replace each {var} with a neutral placeholder label so the literal host parts
+    # still parse; if a blocked host is spelled out literally around the variable
+    # (e.g. "http://169.254.169.254/{path}") it is still caught.
+    skeleton = re.sub(r"\{[^}]*\}", "x", url)
+    parsed = urlparse(skeleton if "://" in skeleton else f"https://{skeleton}")
+    # If the host is entirely made of substituted placeholders (e.g. "{host}"), there
+    # is nothing literal to validate here; defer to execution-time validation.
+    if not parsed.hostname or parsed.hostname == "x":
+        return []
+    return [skeleton]
 
 
 @dataclass(frozen=True)
@@ -36,6 +137,10 @@ class OverlayView:
     status: str
     document: dict[str, Any]
     target_revision_id: uuid.UUID | None
+    #: The revision produced by materializing this overlay, set by the ingest job on a
+    #: successful confirm. NULL until materialization completes (and for pending
+    #: overlays). Distinct from ``target_revision_id`` (the base the overlay targets).
+    confirmed_revision_id: uuid.UUID | None
     contributed_by: str | None
     confirmed_by_execution_id: str | None
     created_at: datetime
@@ -52,6 +157,7 @@ class OverlayPageItem(BaseModel):
     status: str
     document: dict[str, Any]
     target_revision_id: uuid.UUID | None
+    confirmed_revision_id: uuid.UUID | None
     contributed_by: str | None
     confirmed_by_execution_id: str | None
     created_at: datetime
@@ -81,6 +187,155 @@ class OverlayService:
             raise ApiNotFoundError(vendor, name, version)
         return api
 
+    async def _load_base_spec(
+        self,
+        vendor: str,
+        name: str,
+        version: str,
+        overlay_id: str,
+        target_revision_id: uuid.UUID | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Load the base revision's spec content + source_url an overlay applies to.
+
+        The base is the API's current (live) revision. Returns the parsed spec dict
+        and its ``source_url`` (so the materialized revision keeps the same catalog
+        provenance for Flow-3 update detection).
+
+        NOTE: materialization always applies to the *current* revision, not to the
+        overlay's ``target_revision_id`` (the base it was authored against). Structural
+        drift is caught by the applier (unresolved targets → 409); a semantic drift
+        (target still resolves) would apply silently, so we emit a warning when the
+        overlay's target no longer matches the current revision. Per-target-revision
+        materialization is a deferred follow-up (see the flywheel tracker).
+        """
+        async with self._ctx.registry_db.session() as session:
+            api = await ApiRepository.get_by_identifier_with_current_revision(
+                session, vendor, name, version
+            )
+            if api is None:
+                raise ApiNotFoundError(vendor, name, version)
+            if api.current_revision_id is None:
+                raise NoCurrentRevisionError(vendor, name, version)
+            if target_revision_id is not None and target_revision_id != api.current_revision_id:
+                logger.warning(
+                    "overlay_confirm_base_drift",
+                    overlay_id=overlay_id,
+                    target_revision_id=str(target_revision_id),
+                    current_revision_id=str(api.current_revision_id),
+                    detail=(
+                        "overlay authored against a revision that is no longer current; "
+                        "applying to current — verify the fix still applies as intended"
+                    ),
+                )
+            spec_file = await SpecFileRepository.get_for_revision(session, api.current_revision_id)
+            if spec_file is None:
+                raise SpecFileMissingError(str(api.current_revision_id))
+            source_url = api.current_revision.source_url if api.current_revision else None
+            return dict(spec_file.content), source_url
+
+    def _apply_and_validate(
+        self, overlay_id: str, base_content: dict[str, Any], document: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply the overlay to the base spec and validate the result, or raise."""
+        try:
+            overlaid = apply_overlay(base_content, document)
+        except OverlayApplyError as exc:
+            raise OverlayApplyConflictError(overlay_id, str(exc)) from exc
+
+        if not isinstance(overlaid.get("openapi"), str):
+            raise OverlayApplyConflictError(
+                overlay_id, "overlaid spec is missing a string 'openapi' version"
+            )
+
+        # Bound the materialized spec: the overlay document is contributor-controlled
+        # (apis:write) JSONB and an org:admin confirm re-ingests it inline, which
+        # bypasses the URL-fetch size cap. Reject a spec that would exceed the ingest
+        # max_spec_bytes so a malicious/oversized overlay can't DoS the worker/DB.
+        max_bytes = self._ctx.config.ingest.max_spec_bytes
+        if max_bytes and len(json.dumps(overlaid).encode()) > max_bytes:
+            raise OverlayApplyConflictError(
+                overlay_id, f"overlaid spec exceeds max_spec_bytes ({max_bytes})"
+            )
+
+        # SSRF guard: the overlay is the one place an operator can rewrite server URLs,
+        # so re-validate every server URL (document-, path-, and operation-level)
+        # against egress policy before we let it be served.
+        egress = self._ctx.config.ingest.egress
+        for url in _iter_server_urls(overlaid):
+            for concrete in _concrete_server_urls(url):
+                try:
+                    validate_upstream_url(concrete, egress)
+                except ValueError as exc:
+                    raise OverlayApplyConflictError(
+                        overlay_id, f"unsafe servers[].url rejected: {exc}"
+                    ) from exc
+        return overlaid
+
+    async def _enqueue_materialize_job(
+        self,
+        vendor: str,
+        name: str,
+        version: str,
+        *,
+        overlay_id: str,
+        overlaid_spec: dict[str, Any],
+        base_source_url: str | None,
+        identity: Identity,
+    ) -> None:
+        """Enqueue the re-ingest that rewrites the served spec for a confirmed overlay."""
+        source: dict[str, Any] = {
+            "type": "inline",
+            "content": json.dumps(overlaid_spec),
+            "filename": "openapi.json",
+            "vendor": vendor,
+            "api_name": name,
+            "version": version,
+            "submitted_by": identity.sub,
+            "origin": ORIGIN_OVERLAY,
+            "source_url": base_source_url,
+        }
+        async with self._ctx.admin_db.transaction() as session:
+            await enqueue_job(
+                session,
+                JobKind.IMPORT,
+                created_by=identity.sub,
+                actor_type=identity.actor_type,
+                payload={"sources": [source], "overlay_id": overlay_id},
+            )
+
+    async def _get_overlay_or_raise(
+        self,
+        api_id: uuid.UUID,
+        overlay_id: str,
+        vendor: str,
+        name: str,
+        version: str,
+    ) -> Any:
+        async with self._ctx.registry_db.session() as session:
+            overlay = await OverlayRepository.get_for_api(session, api_id, overlay_id)
+        if overlay is None:
+            raise OverlayNotFoundError(overlay_id, vendor, name, version)
+        return overlay
+
+    def _view(self, vendor: str, name: str, version: str, overlay: Any) -> OverlayView:
+        return OverlayView(
+            id=overlay.id,
+            api_id=overlay.api_id,
+            vendor=vendor,
+            name=name,
+            version=version,
+            status=overlay.status,
+            document=overlay.document,
+            target_revision_id=overlay.target_revision_id,
+            confirmed_revision_id=overlay.confirmed_revision_id,
+            contributed_by=overlay.contributed_by,
+            confirmed_by_execution_id=overlay.confirmed_by_execution_id,
+            created_at=overlay.created_at,
+            updated_at=overlay.updated_at,
+            confirmed_at=overlay.confirmed_at,
+            deprecated_at=overlay.deprecated_at,
+        )
+
     async def submit(
         self,
         vendor: str,
@@ -92,6 +347,7 @@ class OverlayService:
         *,
         identity: Identity,
     ) -> OverlayView:
+        _validate_overlay_document(document)
         api = await self._resolve_api(vendor, name, version)
 
         async with self._ctx.registry_db.transaction() as session:
@@ -123,6 +379,7 @@ class OverlayService:
             status=overlay.status,
             document=overlay.document,
             target_revision_id=overlay.target_revision_id,
+            confirmed_revision_id=overlay.confirmed_revision_id,
             contributed_by=overlay.contributed_by,
             confirmed_by_execution_id=overlay.confirmed_by_execution_id,
             created_at=overlay.created_at,
@@ -152,6 +409,7 @@ class OverlayService:
             status=overlay.status,
             document=overlay.document,
             target_revision_id=overlay.target_revision_id,
+            confirmed_revision_id=overlay.confirmed_revision_id,
             contributed_by=overlay.contributed_by,
             confirmed_by_execution_id=overlay.confirmed_by_execution_id,
             created_at=overlay.created_at,
@@ -197,6 +455,7 @@ class OverlayService:
                 status=row.status,
                 document=row.document,
                 target_revision_id=row.target_revision_id,
+                confirmed_revision_id=row.confirmed_revision_id,
                 contributed_by=row.contributed_by,
                 confirmed_by_execution_id=row.confirmed_by_execution_id,
                 created_at=row.created_at,
@@ -227,6 +486,8 @@ class OverlayService:
     ) -> OverlayView:
         if not overlay_id.startswith("ovr_"):
             raise OverlayNotFoundError(overlay_id, vendor, name, version)
+        if document is not None:
+            _validate_overlay_document(document)
 
         api = await self._resolve_api(vendor, name, version)
 
@@ -269,6 +530,7 @@ class OverlayService:
             status=refreshed.status,
             document=refreshed.document,
             target_revision_id=refreshed.target_revision_id,
+            confirmed_revision_id=refreshed.confirmed_revision_id,
             contributed_by=refreshed.contributed_by,
             confirmed_by_execution_id=refreshed.confirmed_by_execution_id,
             created_at=refreshed.created_at,
@@ -292,45 +554,79 @@ class OverlayService:
 
         api = await self._resolve_api(vendor, name, version)
 
+        # First transaction: read the overlay and decide what to do.
+        # - PENDING → materialize (the normal path below).
+        # - CONFIRMED with a materialized revision → idempotent no-op return.
+        # - CONFIRMED but confirmed_revision_id is NULL → a prior confirm claimed the
+        #   overlay but its materialize job never landed (enqueue failed / crash
+        #   between the flip and the enqueue). Re-drive materialization idempotently.
+        # - anything else (DEPRECATED) → conflict.
         async with self._ctx.registry_db.transaction() as session:
             overlay = await OverlayRepository.get_for_api(session, api.id, overlay_id)
             if overlay is None:
                 raise OverlayNotFoundError(overlay_id, vendor, name, version)
 
-            if overlay.status == OverlayStatus.CONFIRMED:
-                return OverlayView(
-                    id=overlay.id,
-                    api_id=overlay.api_id,
-                    vendor=vendor,
-                    name=name,
-                    version=version,
-                    status=overlay.status,
-                    document=overlay.document,
-                    target_revision_id=overlay.target_revision_id,
-                    contributed_by=overlay.contributed_by,
-                    confirmed_by_execution_id=overlay.confirmed_by_execution_id,
-                    created_at=overlay.created_at,
-                    updated_at=overlay.updated_at,
-                    confirmed_at=overlay.confirmed_at,
-                    deprecated_at=overlay.deprecated_at,
-                )
+            if (
+                overlay.status == OverlayStatus.CONFIRMED
+                and overlay.confirmed_revision_id is not None
+            ):
+                return self._view(vendor, name, version, overlay)
 
-            if overlay.status != OverlayStatus.PENDING:
+            recovering = overlay.status == OverlayStatus.CONFIRMED
+            if not recovering and overlay.status != OverlayStatus.PENDING:
                 raise OverlayStateConflictError(
                     overlay_id, overlay.status, [OverlayStatus.PENDING], "confirm"
                 )
+            document = overlay.document
+            target_revision_id = overlay.target_revision_id
 
-            now = datetime.now(UTC)
-            await OverlayRepository.set_status(
-                session,
-                overlay_id,
-                OverlayStatus.CONFIRMED,
-                confirmed_at=now,
-                confirmed_by_execution_id=execution_id,
-            )
+        # Load the base spec + its provenance (source_url) and materialize BEFORE
+        # flipping state, so a drifted/unsafe overlay is rejected while it is still
+        # pending — no torn confirm, no orphaned ingest job.
+        base_content, base_source_url = await self._load_base_spec(
+            vendor, name, version, overlay_id, target_revision_id
+        )
+        overlaid = self._apply_and_validate(overlay_id, base_content, document)
 
-            refreshed = await OverlayRepository.get_for_api(session, api.id, overlay_id)
-            assert refreshed is not None
+        # Atomically claim the overlay: flip PENDING→CONFIRMED with a compare-and-swap
+        # so that at most one concurrent confirm proceeds to enqueue a materialize job.
+        # In the recovery path the overlay is already CONFIRMED (with a null revision),
+        # so we skip the claim and just re-enqueue.
+        if not recovering:
+            async with self._ctx.registry_db.transaction() as session:
+                now = datetime.now(UTC)
+                claimed = await OverlayRepository.set_status(
+                    session,
+                    overlay_id,
+                    OverlayStatus.CONFIRMED,
+                    confirmed_at=now,
+                    confirmed_by_execution_id=execution_id,
+                    expected_status=OverlayStatus.PENDING,
+                )
+            if claimed == 0:
+                # Lost the race to a concurrent confirm/transition — return the current
+                # state idempotently rather than enqueueing a duplicate materialize job.
+                refreshed = await self._get_overlay_or_raise(
+                    api.id, overlay_id, vendor, name, version
+                )
+                return self._view(vendor, name, version, refreshed)
+
+        # Enqueue the re-ingest that actually rewrites the served spec. This lives in
+        # admin_db (the job queue), separate from the registry-side status flip above.
+        # If this fails after the flip, the overlay is CONFIRMED with a null
+        # confirmed_revision_id; a later re-confirm takes the recovery path and
+        # re-enqueues. The worker sets confirmed_revision_id on success.
+        await self._enqueue_materialize_job(
+            vendor,
+            name,
+            version,
+            overlay_id=overlay_id,
+            overlaid_spec=overlaid,
+            base_source_url=base_source_url,
+            identity=identity,
+        )
+
+        refreshed = await self._get_overlay_or_raise(api.id, overlay_id, vendor, name, version)
 
         await record_audit_best_effort(
             self._ctx,
@@ -343,22 +639,7 @@ class OverlayService:
             reason=f"confirmed by execution {execution_id}" if execution_id else None,
             origin=identity.origin.value,
         )
-        return OverlayView(
-            id=refreshed.id,
-            api_id=refreshed.api_id,
-            vendor=vendor,
-            name=name,
-            version=version,
-            status=refreshed.status,
-            document=refreshed.document,
-            target_revision_id=refreshed.target_revision_id,
-            contributed_by=refreshed.contributed_by,
-            confirmed_by_execution_id=refreshed.confirmed_by_execution_id,
-            created_at=refreshed.created_at,
-            updated_at=refreshed.updated_at,
-            confirmed_at=refreshed.confirmed_at,
-            deprecated_at=refreshed.deprecated_at,
-        )
+        return self._view(vendor, name, version, refreshed)
 
     async def deprecate(
         self, vendor: str, name: str, version: str, overlay_id: str, *, identity: Identity
