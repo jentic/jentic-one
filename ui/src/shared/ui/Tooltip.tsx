@@ -4,6 +4,7 @@ import {
 	useCallback,
 	useEffect,
 	useId,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type ReactElement,
@@ -67,6 +68,7 @@ export function Tooltip({
 	const [show, setShow] = useState(false);
 	const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 	const tooltipId = useId();
+	const bubbleRef = useRef<HTMLSpanElement>(null);
 
 	const clearTimer = useCallback(() => {
 		if (timerRef.current) {
@@ -119,6 +121,8 @@ export function Tooltip({
 	// scroll containers (not just window) are caught. Capture-phase scroll fires
 	// for every nested scroller, so coalesce bursts into one measurement per
 	// animation frame rather than a synchronous rect+setState per event.
+	// Escape dismisses while open (WCAG 1.4.13 "dismissible") — document-level
+	// so it works for hover-opened bubbles too, where focus is elsewhere.
 	useEffect(() => {
 		if (!show) return undefined;
 		let rafId: number | null = null;
@@ -129,24 +133,56 @@ export function Tooltip({
 				measure();
 			});
 		};
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') close();
+		};
 		window.addEventListener('scroll', onReflow, true);
 		window.addEventListener('resize', onReflow);
+		document.addEventListener('keydown', onKeyDown);
 		return () => {
 			if (rafId !== null) window.cancelAnimationFrame(rafId);
 			window.removeEventListener('scroll', onReflow, true);
 			window.removeEventListener('resize', onReflow);
+			document.removeEventListener('keydown', onKeyDown);
 		};
-	}, [show, measure]);
+	}, [show, measure, close]);
+
+	// Clamp the bubble inside the viewport. The bubble is centered on the
+	// trigger with a CSS translate; near a viewport edge (the rail hugs the
+	// right one) that would clip it off-screen, so after each position pass
+	// measure the rendered bubble and nudge it back in with a margin. Direct
+	// style mutation (not state) — this must not feed back into the effect.
+	useLayoutEffect(() => {
+		if (!show || !pos) return;
+		const el = bubbleRef.current;
+		if (!el) return;
+		el.style.marginLeft = '0px';
+		const rect = el.getBoundingClientRect();
+		const margin = 8;
+		let dx = 0;
+		if (rect.left < margin) dx = margin - rect.left;
+		else if (rect.right > window.innerWidth - margin)
+			dx = window.innerWidth - margin - rect.right;
+		if (dx !== 0) el.style.marginLeft = `${dx}px`;
+	}, [show, pos]);
 
 	// When the child is itself focusable, `aria-describedby` is NOT inherited
 	// from the wrapper — focus lands on the inner control, so the association
-	// has to live ON that control. Clone it onto the child and leave the wrapper
+	// has to live ON that control. Clone it onto the child (APPENDING to any
+	// description the child already carries) and leave the wrapper
 	// non-focusable and un-described. Otherwise the wrapper is the focus target
 	// and carries the association itself.
 	const describedChildren =
 		interactiveChild && isValidElement(children)
 			? cloneElement(children as ReactElement<{ 'aria-describedby'?: string }>, {
-					'aria-describedby': tooltipId,
+					'aria-describedby': [
+						(children as ReactElement<{ 'aria-describedby'?: string }>).props[
+							'aria-describedby'
+						],
+						tooltipId,
+					]
+						.filter(Boolean)
+						.join(' '),
 				})
 			: children;
 
@@ -170,9 +206,13 @@ export function Tooltip({
 				createPortal(
 					<span
 						id={tooltipId}
+						ref={bubbleRef}
 						role="tooltip"
 						className={cn(
-							'border-border/40 bg-card/70 text-card-foreground pointer-events-none fixed z-[9999] max-w-[320px] -translate-x-1/2 rounded-lg border px-3 py-2 text-xs whitespace-nowrap shadow-xl backdrop-blur-md',
+							// `whitespace-normal` (not nowrap): long content must wrap
+							// inside the max-width, not overflow the bubble. Consumers
+							// with short one-liners are unaffected.
+							'border-border/40 bg-card/70 text-card-foreground pointer-events-none fixed z-[9999] max-w-[320px] -translate-x-1/2 rounded-lg border px-3 py-2 text-xs whitespace-normal shadow-xl backdrop-blur-md',
 							placement === 'top' && '-translate-y-full',
 							bubbleClassName,
 						)}

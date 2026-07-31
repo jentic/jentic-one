@@ -43,8 +43,8 @@ export default defineConfig({
 					// Pin timezone + locale so `toLocaleDateString`/`toLocaleTimeString`
 					// output (rail day/time labels, #705) is deterministic across
 					// developer machines and CI — otherwise a region-dependent month
-					// abbreviation makes assertions like `/Jul/` only-green-on-CI (#7).
-					// UTC is DST-free; the DST-specific "Yesterday" test (#4)
+					// abbreviation makes assertions like `/Jul/` only-green-on-CI.
+					// UTC is DST-free; the DST-specific "Yesterday" test
 					// temporarily overrides the in-page timezone to America/New_York
 					// via CDP (`Emulation.setTimezoneOverride`) for that one test and
 					// restores UTC in a `finally`, so it exercises a real spring-forward
@@ -60,11 +60,12 @@ export default defineConfig({
 		},
 		globals: true,
 		// Pin locale/timezone env for any Node-side date logic too; the browser
-		// context above pins the in-page `Date`/`Intl` behaviour (#7).
+		// context above pins the in-page `Date`/`Intl` behaviour. (POSIX locale
+		// ids use underscores — `en_US`, unlike the BCP 47 `en-US` above.)
 		env: {
 			TZ: 'UTC',
-			LANG: 'en-US.UTF-8',
-			LC_ALL: 'en-US.UTF-8',
+			LANG: 'en_US.UTF-8',
+			LC_ALL: 'en_US.UTF-8',
 		},
 		setupFiles: ['./src/__tests__/setup.ts'],
 		include: ['src/**/*.test.{ts,tsx}'],

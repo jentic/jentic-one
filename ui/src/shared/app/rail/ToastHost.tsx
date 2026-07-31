@@ -39,10 +39,12 @@ function readRailCollapsed(): boolean {
 
 const TOAST_TTL_MS = 6000;
 const MAX_TOASTS = 3;
+const MAX_DISMISSED_IDS = 500;
+const ASSERTIVE_COALESCE_MS = 5000;
 
 const KIND_LABEL = STREAM_KIND_LABEL;
 
-type Toast = StreamEvent & { addedAt: number };
+type Toast = StreamEvent & { addedAt: number; assertive: boolean };
 
 export function ToastHost() {
 	const { latest, acknowledge } = useAgentStream();
@@ -55,8 +57,16 @@ export function ToastHost() {
 	// the operator closed would silently re-appear when scope flips, because the
 	// dedup guard below only inspects still-alive toasts. TTL-expiry does NOT go
 	// in here (#671: an unattended failure that merely timed out must be able to
-	// re-toast when it becomes eligible again).
+	// re-toast when it becomes eligible again). Bounded FIFO (mirrors the
+	// stream provider's delivered-ids guard) so a very long session can't grow
+	// the set without limit.
 	const dismissedIdsRef = useRef<Set<string>>(new Set());
+	const dismissedOrderRef = useRef<string[]>([]);
+	// Time of the last assertive (role="alert") announcement. Under a failure
+	// burst the visible stack caps at MAX_TOASTS but each insert would still
+	// fire its own interrupting screen-reader announcement — demote follow-ups
+	// inside the window to polite so AT users hear one interruption, not N.
+	const lastAssertiveAtRef = useRef(0);
 
 	// React to scope + rail-collapse changes (same-tab CustomEvent + cross-tab StorageEvent)
 	useEffect(() => {
@@ -90,7 +100,15 @@ export function ToastHost() {
 			return;
 		setToasts((prev) => {
 			if (prev.some((t) => t.id === latest.id)) return prev;
-			return [{ ...latest, addedAt: Date.now() }, ...prev].slice(0, MAX_TOASTS);
+			const now = Date.now();
+			// First failure in a burst interrupts (assertive); follow-ups within
+			// the coalesce window are announced politely instead.
+			let assertive = false;
+			if (isFailureSeverity(latest.severity)) {
+				assertive = now - lastAssertiveAtRef.current > ASSERTIVE_COALESCE_MS;
+				if (assertive) lastAssertiveAtRef.current = now;
+			}
+			return [{ ...latest, addedAt: now, assertive }, ...prev].slice(0, MAX_TOASTS);
 		});
 	}, [latest, scope]);
 
@@ -107,7 +125,14 @@ export function ToastHost() {
 	}, [toasts.length]);
 
 	function dismiss(id: string) {
-		dismissedIdsRef.current.add(id);
+		if (!dismissedIdsRef.current.has(id)) {
+			dismissedIdsRef.current.add(id);
+			dismissedOrderRef.current.push(id);
+			while (dismissedOrderRef.current.length > MAX_DISMISSED_IDS) {
+				const oldest = dismissedOrderRef.current.shift();
+				if (oldest) dismissedIdsRef.current.delete(oldest);
+			}
+		}
 		setToasts((prev) => prev.filter((t) => t.id !== id));
 	}
 
@@ -195,11 +220,13 @@ function ToastCard({
 		? [{ kind: 'view_request', label: 'Review', opensRequest: true }]
 		: rawActions;
 	const critical = toast.severity === 'critical' || toast.severity === 'error';
+	// Burst coalescing: only the first failure inside the window interrupts.
+	const assertive = critical && toast.assertive;
 
 	return (
 		<div
-			role={critical ? 'alert' : 'status'}
-			aria-live={critical ? 'assertive' : 'polite'}
+			role={assertive ? 'alert' : 'status'}
+			aria-live={assertive ? 'assertive' : 'polite'}
 			tabIndex={onOpen ? 0 : undefined}
 			onClick={(e) => {
 				if (!onOpen) return;

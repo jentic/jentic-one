@@ -223,13 +223,13 @@ export function RailHeader({
 					{failureCount > 0 && (
 						<Tooltip
 							interactiveChild
-							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`}
+							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
 							className="shrink-0"
 						>
 							<button
 								type="button"
 								onClick={onFocusFailures}
-								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}. Show failures.`}
+								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Show failures.`}
 								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold tabular-nums transition-colors"
 							>
 								<TriangleAlert className="h-3 w-3" />

@@ -55,7 +55,7 @@ describe('RailFeed — day separators (#705)', () => {
 		expect(container.querySelectorAll('[role="presentation"]')).toHaveLength(0);
 	});
 
-	it('does not emit a blank separator for a malformed (NaN) timestamp (#3)', () => {
+	it('does not emit a blank separator for a malformed (NaN) timestamp', () => {
 		// A NaN timestamp yields an empty day key. It must NOT become its own
 		// label-less separator row; the event still renders normally.
 		const today = new Date(2026, 6, 17, 10, 0, 0).getTime();
@@ -69,13 +69,14 @@ describe('RailFeed — day separators (#705)', () => {
 
 		// The malformed event still renders as an event row…
 		expect(screen.getByText('malformed event')).toBeInTheDocument();
-		// …and every rendered separator carries a non-empty label (no blank ones).
+		// …and every rendered separator carries non-empty visible label text
+		// (no blank ones).
 		for (const sep of container.querySelectorAll('[role="presentation"]')) {
-			expect(sep.getAttribute('aria-label')).toBeTruthy();
+			expect(sep.textContent).toBeTruthy();
 		}
 	});
 
-	it('marks day separators role="presentation" so the role="log" feed does not announce them (#7)', () => {
+	it('marks day separators role="presentation" so the role="log" feed does not announce them', () => {
 		const today = new Date(2026, 6, 17, 10, 0, 0).getTime();
 		const older = new Date(2026, 6, 13, 10, 0, 0).getTime();
 		const events = [
@@ -93,7 +94,10 @@ describe('RailFeed — day separators (#705)', () => {
 		expect(screen.queryByRole('separator')).toBeNull();
 		for (const sep of separators) {
 			expect(sep).toHaveAttribute('role', 'presentation');
-			expect(sep.getAttribute('aria-label')).toBeTruthy();
+			// No aria-label: it's prohibited ARIA on a presentational node
+			// (axe: aria-prohibited-attr). The visible text carries the day.
+			expect(sep).not.toHaveAttribute('aria-label');
+			expect(sep.textContent).toBeTruthy();
 		}
 	});
 

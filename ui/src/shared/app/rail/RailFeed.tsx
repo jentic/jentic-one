@@ -175,8 +175,11 @@ export function RailFeed({ events, filters, onAction, onOpenRequest, onNavigate 
 						<div
 							key={`day-${row.dayKey}`}
 							className="text-muted-foreground flex items-center gap-2 pt-1.5 pb-0.5 text-[10px] font-semibold tracking-wider uppercase"
+							// Presentational: keeps the separator out of the role="log"
+							// announcement stream. The visible text is still readable in
+							// context; an aria-label here would be prohibited ARIA
+							// (axe: aria-prohibited-attr) and ignored anyway.
 							role="presentation"
-							aria-label={formatStreamDayLabel(row.tsMs)}
 						>
 							<span className="shrink-0">{formatStreamDayLabel(row.tsMs)}</span>
 							<span className="bg-border h-px flex-1" />

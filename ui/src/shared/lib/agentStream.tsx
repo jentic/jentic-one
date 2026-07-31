@@ -176,8 +176,10 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
  * Extract the trailing id from a HAL link like `/executions/{id}` or
  * `/jobs/{id}` (query/hash stripped). The backend surfaces the linked
  * execution/job only as such a link, not as a `data` field — see `adaptEvent`.
+ * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
+ * links with the same rules instead of re-deriving them.
  */
-function idFromLink(link: string | null | undefined): string | undefined {
+export function idFromLink(link: string | null | undefined): string | undefined {
 	if (!link) return undefined;
 	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
 	return id.length > 0 ? id : undefined;
@@ -554,11 +556,21 @@ export function AgentStreamProvider({
 			try {
 				const updated = await acknowledgeEvent(eventId);
 				patchEvent(eventId, () => adaptEvent(updated));
+				// The ack happened outside React Query, and the SSE stream is a
+				// created_at-watermark poll that will never re-deliver an old event
+				// just because its acknowledged flag flipped — so eagerly refresh
+				// the other surfaces that count/list unacknowledged events (the
+				// Monitor Events tab and the dashboard action inbox), mirroring
+				// what `decide` does for approval surfaces.
+				void queryClient.invalidateQueries({
+					queryKey: sharedQueryKeys.monitorEventsRoot,
+				});
+				void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 			} catch {
 				patchEvent(eventId, markUnresolved);
 			}
 		},
-		[patchEvent, markResolved, markUnresolved],
+		[patchEvent, markResolved, markUnresolved, queryClient],
 	);
 
 	const decide = useCallback(
@@ -654,6 +666,17 @@ export function useAgentStream(): AgentStreamValue {
 	return ctx;
 }
 
+/**
+ * Provider-optional variant for module-side hooks that should SYNC with the
+ * stream when it's mounted (the app shell) but must not require it (tests,
+ * embedded surfaces). Monitor's acknowledge mutation uses this to flip the
+ * rail's in-memory copy of an event so the failure pill drops immediately —
+ * the SSE watermark poll never re-delivers an old event on an ack flip.
+ */
+export function useAgentStreamOptional(): AgentStreamValue | null {
+	return useContext(AgentStreamContext);
+}
+
 /* ------------------------------------------------------------------ */
 /* Toast scope + display helpers                                       */
 /* ------------------------------------------------------------------ */
@@ -698,9 +721,12 @@ export function isFailureSeverity(severity: StreamSeverity): boolean {
 }
 
 /**
- * Count of unacknowledged failure events (error/critical) in the feed — the
- * number shown on the rail's persistent failure badge (#671). Drops to zero as
- * the operator acknowledges each failing event.
+ * Count of unacknowledged failure events (error/critical) in the LOADED feed
+ * window (backlog seed + live inserts, capped) — the number shown on the
+ * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
+ * is a "recent activity" signal, not a global unacked-failures query (that's
+ * the Monitor Events tab); labels around it say "recent" for that reason.
+ * Drops as the operator acknowledges each failing event.
  */
 export function unacknowledgedFailureCount(events: StreamEvent[]): number {
 	let n = 0;
@@ -715,7 +741,7 @@ export function unacknowledgedFailureCount(events: StreamEvent[]): number {
  * can't overflow the narrow rail pill, and clamps pathological inputs (NaN,
  * negatives, fractions) to a sane non-negative integer so the pill never shows
  * "NaN" or "-1". The underlying number stays accurate for aria labels — this
- * only shapes the visible glyphs (#11).
+ * only shapes the visible glyphs.
  */
 export function formatFailurePillCount(count: number): string {
 	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;

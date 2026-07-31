@@ -203,14 +203,14 @@ export function AgentRail() {
 		// Unfreeze so a failure that arrived while paused/hovering actually enters
 		// the feed the operator is being pointed at — otherwise the pill can count
 		// N+1 while the frozen feed still shows N, and the new failure never
-		// surfaces (#4). Clear both freeze mechanisms and the frozen snapshot.
+		// surfaces. Clear both freeze mechanisms and the frozen snapshot.
 		setManualPaused(false);
 		setHoverFrozen(false);
 		setFrozenIds(null);
 		// ADD the failure severities to the operator's current view rather than
 		// replacing it — union with the previous set so a `warning`/`info` chip
 		// they had selected survives, and deliberately leave `search` and `kinds`
-		// untouched so we don't wipe a filter they set on purpose (#5).
+		// untouched so we don't wipe a filter they set on purpose.
 		setSeverities((prev) => new Set<StreamEvent['severity']>([...prev, 'error', 'critical']));
 	}
 
@@ -305,12 +305,12 @@ export function AgentRail() {
 					{failureCount > 0 && (
 						<Tooltip
 							interactiveChild
-							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}`}
+							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
 						>
 							<button
 								type="button"
 								onClick={() => focusFailures()}
-								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'}. Expand and show failures.`}
+								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
 								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 flex flex-col items-center gap-0.5 rounded-full border px-1 py-1 text-[9px] font-bold tabular-nums transition-colors"
 							>
 								<TriangleAlert className="h-3 w-3" />

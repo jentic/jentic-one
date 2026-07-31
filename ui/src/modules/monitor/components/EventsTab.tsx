@@ -20,7 +20,7 @@ import {
 	ActorLabel,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/utils';
-import { eventSeverityIcon } from '@/shared/lib';
+import { eventSeverityIcon, idFromLink } from '@/shared/lib';
 import {
 	useEvents,
 	useEventStream,
@@ -105,12 +105,9 @@ function drillInFor(row: EventResponse): { traceId: string | null; executionId: 
 		const v = data[key];
 		return typeof v === 'string' && v.length > 0 ? v : null;
 	};
-	// `_links.execution` is `/executions/{execution_id}` — take the last path
-	// segment as the id (strip any query/hash defensively).
-	const execLink = row._links?.execution ?? null;
-	const executionIdFromLink = execLink
-		? decodeURIComponent(execLink.split(/[?#]/)[0].split('/').pop() ?? '') || null
-		: null;
+	// `_links.execution` is `/executions/{execution_id}` — parsed by the shared
+	// HAL-link helper so the rail and this tab can't disagree on the rules.
+	const executionIdFromLink = idFromLink(row._links?.execution) ?? null;
 	return {
 		traceId: row.trace_id ?? dataStr('trace_id'),
 		executionId: executionIdFromLink ?? dataStr('execution_id'),

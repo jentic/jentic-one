@@ -29,7 +29,8 @@ import {
 	type ListJobsParams,
 	type UsageStatsParams,
 } from '@/modules/monitor/api/client';
-import { AuditTargetType } from '@/shared/api';
+import { AuditTargetType, sharedQueryKeys } from '@/shared/api';
+import { useAgentStreamOptional } from '@/shared/lib';
 import type {
 	ActorListResponse,
 	AuditListResponse,
@@ -50,7 +51,10 @@ export const monitorKeys = {
 	execution: (id: string) => [...monitorKeys.all, 'execution', id] as const,
 	jobs: (params: ListJobsParams) => [...monitorKeys.all, 'jobs', params] as const,
 	job: (id: string) => [...monitorKeys.all, 'job', id] as const,
-	events: (params: ListEventsParams) => [...monitorKeys.all, 'events', params] as const,
+	// Derives from the shared cross-module root: the agent-stream provider's
+	// `acknowledge` (rail/toast) invalidates that root, so the two prefixes
+	// must be the same list or they'd silently drift apart.
+	events: (params: ListEventsParams) => [...sharedQueryKeys.monitorEventsRoot, params] as const,
 	audit: (params: ListAuditParams) => [...monitorKeys.all, 'audit', params] as const,
 	usage: (params: UsageStatsParams) => [...monitorKeys.all, 'usage', params] as const,
 	actors: () => [...monitorKeys.all, 'actors'] as const,
@@ -154,6 +158,11 @@ export function useEvents(params: ListEventsParams = {}) {
 /** Acknowledge an event (`PATCH /events/{id}`); invalidates the events feeds. */
 export function useAcknowledgeEvent() {
 	const queryClient = useQueryClient();
+	// Provider-optional: when the app shell's stream is mounted, flip its
+	// in-memory copy too — the SSE watermark poll never re-delivers an old
+	// event on an ack flip, so without this the rail's failure pill keeps
+	// counting an event the operator just acknowledged from the Events tab.
+	const stream = useAgentStreamOptional();
 	return useMutation({
 		mutationFn: (eventId: string) => acknowledgeEvent(eventId),
 		onSuccess: (event) => {
@@ -163,6 +172,7 @@ export function useAcknowledgeEvent() {
 				variant: 'success',
 			});
 			queryClient.invalidateQueries({ queryKey: [...monitorKeys.all, 'events'] });
+			stream?.resolveEvent(event.event_id);
 		},
 		onError: (error: unknown) => {
 			toast({

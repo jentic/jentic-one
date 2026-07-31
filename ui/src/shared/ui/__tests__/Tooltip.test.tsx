@@ -48,7 +48,7 @@ describe('Tooltip', () => {
 		expect(tip).toHaveTextContent('focus value');
 	});
 
-	it('keeps a stable aria-describedby target even while closed (#9)', () => {
+	it('keeps a stable aria-describedby target even while closed', () => {
 		const { container } = renderWithProviders(
 			<Tooltip content="described text">
 				<span>trigger</span>
@@ -67,7 +67,7 @@ describe('Tooltip', () => {
 		expect(descNode).toHaveTextContent('described text');
 	});
 
-	it('puts aria-describedby on the focusable child (not the wrapper) when interactive (#2)', () => {
+	it('puts aria-describedby on the focusable child (not the wrapper) when interactive', () => {
 		const { container } = renderWithProviders(
 			<Tooltip interactiveChild content="tip">
 				<button type="button">real control</button>
@@ -102,5 +102,44 @@ describe('Tooltip', () => {
 		);
 		const wrapper = container.querySelector('span[aria-describedby]');
 		expect(wrapper?.getAttribute('tabindex')).toBe('0');
+	});
+
+	it('dismisses on Escape without moving focus or pointer (WCAG 1.4.13)', async () => {
+		const user = userEvent.setup();
+		renderWithProviders(
+			<Tooltip content="escapable">
+				<span>trigger</span>
+			</Tooltip>,
+		);
+		// Keyboard-opened: focus stays on the trigger, Escape closes.
+		await user.tab();
+		await screen.findByRole('tooltip');
+		await user.keyboard('{Escape}');
+		expect(screen.queryByRole('tooltip')).toBeNull();
+
+		// Hover-opened (focus elsewhere): document-level Escape still closes.
+		await user.hover(screen.getByText('trigger'));
+		await screen.findByRole('tooltip');
+		await user.keyboard('{Escape}');
+		expect(screen.queryByRole('tooltip')).toBeNull();
+	});
+
+	it('appends to (not clobbers) an existing aria-describedby on an interactive child', () => {
+		renderWithProviders(
+			<>
+				<span id="prior-desc">prior description</span>
+				<Tooltip interactiveChild content="tip">
+					<button type="button" aria-describedby="prior-desc">
+						real control
+					</button>
+				</Tooltip>
+			</>,
+		);
+		const button = screen.getByRole('button', { name: 'real control' });
+		const ids = (button.getAttribute('aria-describedby') ?? '').split(/\s+/);
+		expect(ids).toContain('prior-desc');
+		expect(ids).toHaveLength(2);
+		const tipNode = document.getElementById(ids.find((id) => id !== 'prior-desc') ?? '');
+		expect(tipNode).toHaveTextContent('tip');
 	});
 });

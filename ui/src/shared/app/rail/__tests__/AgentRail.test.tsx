@@ -215,7 +215,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 		);
 	});
 
-	it('formatFailurePillCount caps at 99+ and clamps pathological inputs (#8)', () => {
+	it('formatFailurePillCount caps at 99+ and clamps pathological inputs', () => {
 		expect(formatFailurePillCount(0)).toBe('0');
 		expect(formatFailurePillCount(1)).toBe('1');
 		expect(formatFailurePillCount(99)).toBe('99');
@@ -274,7 +274,7 @@ describe('agentStream — wire adaptation + pure helpers', () => {
 			);
 		});
 
-		it('formatStreamDayLabel computes Yesterday by calendar rewind across a real DST boundary (#4)', async () => {
+		it('formatStreamDayLabel computes Yesterday by calendar rewind across a real DST boundary', async () => {
 			// The suite is globally pinned to UTC (DST-free) for determinism, so a
 			// fixed-24h rewind and a calendar-day rewind coincide and a UTC-only
 			// test can't tell the fix from the bug. Override JUST this test's
@@ -662,7 +662,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		// The seeded backlog has exactly one unacknowledged failure (the critical
 		// execution.failed) → the pill reads "1 unacknowledged failure".
 		const pill = await screen.findByRole('button', {
-			name: /1 unacknowledged failure\. Show failures\./i,
+			name: /1 unacknowledged failure in recent activity. Show failures./i,
 		});
 		expect(pill).toBeInTheDocument();
 
@@ -685,7 +685,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 
 		await user.click(
 			await screen.findByRole('button', {
-				name: /unacknowledged failure\. Show failures\./i,
+				name: /unacknowledged failure in recent activity. Show failures./i,
 			}),
 		);
 
@@ -697,7 +697,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		expect(screen.getByText(/Execution failed: slack\.postMessage/i)).toBeInTheDocument();
 	});
 
-	it('focusFailures preserves the operator’s search + kind filters (#5)', async () => {
+	it('focusFailures preserves the operator’s search + kind filters', async () => {
 		const user = userEvent.setup();
 		renderRail(<AgentRail />);
 		await screen.findByText('Agent rail');
@@ -717,7 +717,9 @@ describe('AgentRail — shell-mounted live surface', () => {
 		// Clicking the failure pill must ADD failure severities, NOT wipe the
 		// operator's search or kind filters.
 		await user.click(
-			screen.getByRole('button', { name: /unacknowledged failure\. Show failures\./i }),
+			screen.getByRole('button', {
+				name: /unacknowledged failure in recent activity. Show failures./i,
+			}),
 		);
 
 		expect(searchBox).toHaveValue('slack');
@@ -742,7 +744,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		);
 	});
 
-	it('re-inserting a dismissed failure toast does not happen on scope change (#2)', async () => {
+	it('re-inserting a dismissed failure toast does not happen on scope change', async () => {
 		const user = userEvent.setup();
 		// Override the stream with a SINGLE critical event so `latest` is
 		// deterministically the failure (failures toast regardless of scope, #671)
@@ -819,7 +821,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		);
 
 		// Flip the toast scope (this re-runs ToastHost's insert effect with the
-		// SAME `latest`). The dismissed failure toast must NOT re-appear (#2).
+		// SAME `latest`). The dismissed failure toast must NOT re-appear.
 		const scopeSelect = screen.getByLabelText('Toasts');
 		await user.selectOptions(scopeSelect, 'all');
 		await waitFor(() =>
@@ -832,7 +834,7 @@ describe('AgentRail — shell-mounted live surface', () => {
 		expect(screen.queryByRole('button', { name: 'Dismiss toast' })).not.toBeInTheDocument();
 	});
 
-	it('re-toasts a failure that only TTL-expired (not operator-dismissed) after a scope change (#3)', async () => {
+	it('re-toasts a failure that only TTL-expired (not operator-dismissed) after a scope change', async () => {
 		const user = userEvent.setup();
 		// A single critical failure so `latest` is deterministically the failure
 		// and no later event overwrites it. Failures toast regardless of scope.
