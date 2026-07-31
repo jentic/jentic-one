@@ -149,7 +149,7 @@ _Total endpoints: **153**._
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `org:admin` | operator | Confirm Overlay |
+| POST | `/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm` | `overlays:confirm` | operator | Confirm Overlay |
 
 ### `audit`
 
