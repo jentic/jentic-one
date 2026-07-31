@@ -41,6 +41,7 @@ class ApiPageItem(BaseModel):
     vendor: str
     name: str
     version: str
+    catalog_api_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
@@ -68,6 +69,7 @@ class ApiView:
     vendor: str
     name: str
     version: str
+    catalog_api_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
@@ -143,6 +145,7 @@ class ApiService:
                         vendor=row.vendor,
                         name=row.name,
                         version=row.version,
+                        catalog_api_id=row.catalog_api_id,
                         display_name=row.display_name,
                         description=row.description,
                         icon_url=row.icon_url,
@@ -302,6 +305,7 @@ class ApiService:
             vendor=api.vendor,
             name=api.name,
             version=api.version,
+            catalog_api_id=api.catalog_api_id,
             display_name=api.display_name,
             description=api.description,
             icon_url=api.icon_url,

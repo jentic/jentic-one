@@ -55,6 +55,24 @@ async def test_inline_yaml_produces_valid_specification() -> None:
 
 
 @pytest.mark.asyncio
+async def test_catalog_api_id_carried_verbatim() -> None:
+    """The catalog slug survives loading untouched (#910) — unlike the same
+    value passed as api_name, which identity resolution slugifies. The
+    separable `domain/sub-api` shape is what display surfaces need."""
+    result = await load_specification(
+        _make_inline(_SPEC_JSON, filename="spec.json", catalog_api_id="acme.com/pet_store")
+    )
+    assert result.catalog_api_id == "acme.com/pet_store"
+
+
+@pytest.mark.asyncio
+async def test_catalog_api_id_defaults_to_none() -> None:
+    """A genuine paste has no catalog identity."""
+    result = await load_specification(_make_inline(_SPEC_JSON, filename="spec.json"))
+    assert result.catalog_api_id is None
+
+
+@pytest.mark.asyncio
 async def test_invalid_content_raises_ingest_stage_error() -> None:
     with pytest.raises(IngestStageError, match="must be a mapping"):
         await load_specification(_make_inline("<<<not valid>>>"))

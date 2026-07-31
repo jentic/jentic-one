@@ -88,6 +88,7 @@ def _to_binding_response(
         credential_id=binding.credential_id,
         api_vendor=cred.api_vendor if cred else None,
         api_name=cred.api_name if cred else None,
+        catalog_api_id=cred.catalog_api_id if cred else None,
         credential_type=cred.type if cred else None,
         label=cred.name if cred else None,
         bound_at=binding.bound_at,

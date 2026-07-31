@@ -223,3 +223,48 @@ def test_client_credentials_has_no_connect_state(cred_writer_client: TestClient)
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["details"]["grant_type"] == "client_credentials"
     assert "connected" not in got["details"]
+
+
+def test_catalog_api_id_round_trips_verbatim(cred_writer_client: TestClient) -> None:
+    """A create that carries the catalog identity slug stores it verbatim and
+    exposes it on the create echo, read, and list responses (#910).
+
+    Verbatim matters: the slug's `domain/sub-api` shape is exactly what the
+    vendor/name tuple loses to slugification, and the UI derives friendly
+    titles from the separable form.
+    """
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "api_key",
+            "name": "web-cred-910",
+            "api": {
+                "vendor": "nytimes.com",
+                "name": "article_search",
+                "version": "",
+                "catalog_api_id": "nytimes.com/article_search",
+            },
+            "provider": "static",
+            "key": "sk-web-test-key-910",
+            "location": "query",
+            "field_name": "api-key",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()["credential"]
+    assert created["catalog_api_id"] == "nytimes.com/article_search"
+
+    got = cred_writer_client.get(f"/credentials/{created['credential_id']}").json()
+    assert got["catalog_api_id"] == "nytimes.com/article_search"
+
+    listed = cred_writer_client.get("/credentials").json()["data"]
+    row = next(r for r in listed if r["credential_id"] == created["credential_id"])
+    assert row["catalog_api_id"] == "nytimes.com/article_search"
+
+
+def test_catalog_api_id_defaults_to_null(cred_writer_client: TestClient) -> None:
+    """Creates that don't know the slug (older clients, manual imports) store
+    and expose null — the UI falls back to the vendor/name tuple."""
+    cred_id = _create_api_key(cred_writer_client)
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["catalog_api_id"] is None

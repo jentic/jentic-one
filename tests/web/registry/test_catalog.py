@@ -532,6 +532,7 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
         "origin": "catalog",
         "vendor": "coincap.io",
         "api_name": "coincap.io",
+        "catalog_api_id": "coincap.io",
     }
 
 
@@ -549,6 +550,9 @@ def test_to_import_source_threads_api_name_with_slash(web_context: Context) -> N
     assert result["api_name"] == "slack.com/api"
     assert result["vendor"] == "slack.com"
     assert result["origin"] == "catalog"
+    # The separable slug is also carried verbatim — `api_name` above gets
+    # slugified during identity resolution, this copy is persisted as-is.
+    assert result["catalog_api_id"] == "slack.com/api"
 
 
 def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
@@ -566,6 +570,7 @@ def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
         "url": "https://example.test/x/openapi.json",
         "origin": "catalog",
         "api_name": "x",
+        "catalog_api_id": "x",
     }
 
 

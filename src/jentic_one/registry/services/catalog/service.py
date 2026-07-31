@@ -495,6 +495,11 @@ class CatalogService:
             source["vendor"] = entry.vendor
         if entry.api_id:
             source["api_name"] = entry.api_id
+            # Also carried verbatim: `api_name` above only seeds the slugified
+            # vendor/name identity (the separable `domain/sub` structure is
+            # destroyed by slugification), while this copy is persisted as-is
+            # on the Api row for friendly-title derivation.
+            source["catalog_api_id"] = entry.api_id
         return source
 
     async def import_entry(self, api_id: str, identity: Identity) -> str:

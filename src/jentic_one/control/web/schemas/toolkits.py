@@ -228,6 +228,13 @@ class ToolkitCredentialBindingResponse(BaseModel):
     credential_id: str
     api_vendor: str | None = None
     api_name: str | None = None
+    catalog_api_id: str | None = Field(
+        default=None,
+        description=(
+            "Catalog identity slug of the bound credential's target API "
+            "(`domain[/sub-api]`), when recorded. Display-only."
+        ),
+    )
     credential_type: str | None = None
     label: str | None = None
     bound_at: datetime

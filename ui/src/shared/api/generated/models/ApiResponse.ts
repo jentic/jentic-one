@@ -14,6 +14,7 @@ import type { ApiReferenceResponse } from './ApiReferenceResponse';
 export type ApiResponse = {
     _links: ApiLinksResponse;
     api: ApiReferenceResponse;
+    catalog_api_id: (string | null);
     created_at: string;
     current_revision_id: (string | null);
     description: (string | null);

@@ -43,6 +43,11 @@ class Credential(AuditableMixin, ControlBase):
     # Match apis.version (String(100)); the registry does not length-cap versions
     # and SNAPSHOT builds carry a commit suffix that overflows 50 chars (#690).
     api_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Catalog identity slug of the target API (`domain[/sub-api]`), copied at
+    # create time when the client knows it. Display-only — resolution identity
+    # stays the (api_vendor, api_name, api_version) tuple. NULL for credentials
+    # created before this column or against manually-imported APIs.
+    catalog_api_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provider: Mapped[str] = mapped_column(
         String(50), nullable=False, default="static", server_default=text("'static'")
     )

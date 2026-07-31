@@ -26,6 +26,7 @@ class ResolveApiStage(BasePipelineStage):
             name=ctx.specification.api_identifier.name,
             version=ctx.specification.api_identifier.version,
             created_by=ctx.created_by,
+            catalog_api_id=ctx.specification.catalog_api_id,
         )
         ctx.produce("api_id", api.id, uuid.UUID)
 
