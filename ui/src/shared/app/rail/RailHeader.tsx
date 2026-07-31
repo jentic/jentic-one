@@ -22,10 +22,13 @@ import {
 	MoreVertical,
 	Pause,
 	Play,
+	TriangleAlert,
 	Volume2,
 } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { SearchInput } from '@/shared/ui/SearchInput';
+import { Tooltip } from '@/shared/ui';
+import { formatFailurePillCount } from '@/shared/lib/agentStream';
 import type { StreamEvent, StreamStatus } from '@/shared/lib/agentStream';
 import { cn } from '@/shared/lib/utils';
 
@@ -75,6 +78,10 @@ export type RailHeaderProps = {
 	heldBack: number;
 	stale: boolean; // SSE errored or reconnecting after a drop
 	audioOnCritical: boolean;
+	/** Unacknowledged error/critical events — drives the persistent failure pill (#671). */
+	failureCount: number;
+	/** Click the failure pill → focus the feed on error+critical events. */
+	onFocusFailures: () => void;
 	onTogglePause: () => void;
 	onCollapse: () => void;
 	onLoadOlder: () => void;
@@ -98,6 +105,8 @@ export function RailHeader({
 	heldBack,
 	stale,
 	audioOnCritical,
+	failureCount,
+	onFocusFailures,
 	onTogglePause,
 	onCollapse,
 	onLoadOlder,
@@ -211,6 +220,23 @@ export function RailHeader({
 					<span className="text-foreground shrink-0 text-sm font-semibold">
 						Agent rail
 					</span>
+					{failureCount > 0 && (
+						<Tooltip
+							interactiveChild
+							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
+							className="shrink-0"
+						>
+							<button
+								type="button"
+								onClick={onFocusFailures}
+								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Show failures.`}
+								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold tabular-nums transition-colors"
+							>
+								<TriangleAlert className="h-3 w-3" />
+								{formatFailurePillCount(failureCount)}
+							</button>
+						</Tooltip>
+					)}
 					{status === 'connecting' && (
 						<span
 							className="text-muted-foreground shrink-0 font-mono text-[9px] tracking-widest uppercase"
