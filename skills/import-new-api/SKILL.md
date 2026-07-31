@@ -193,7 +193,8 @@ value on the same line after the colon.
 - `import_oas_url` — the **raw** link verified in step 4 (`raw.githubusercontent.com/...`), never
   a `github.com/.../blob/...` page URL.
 - `vendor_name` — validated against a safe charset (letters, digits, `.`, `-`, `_`, and a single
-  optional `/` for `<domain>/<api_name>`); anything else is rejected with a comment on the issue.
+  optional `/` for `<domain>/<api_name>`, each segment starting with a letter or digit); anything
+  else is rejected with a comment on the issue.
   It still isn't checked for *correctness*, so get it right: the bare domain from step 2 for a
   single-API vendor (`firecrawl.dev` → `vendor=firecrawl.dev; api_name=main`), or
   `<domain>/<api_name>` when the vendor ships several distinct APIs
