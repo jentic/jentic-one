@@ -144,6 +144,23 @@ def configure_tracing(
     return provider
 
 
+def current_trace_id() -> str | None:
+    """Return the active span's trace id as 32 lowercase hex chars, or ``None``.
+
+    Within a request handler this is the sanctioned way to obtain the request's
+    trace id: the inbound instrumentation (``instrument_inbound_app``) has
+    already extracted the W3C ``traceparent`` — or started a fresh trace when
+    the header was absent — so the active span context carries exactly the id
+    a caller would want to correlate on. Returns ``None`` when there is no
+    valid span context (e.g. tracing was never configured), so callers must
+    bring their own fallback.
+    """
+    span_context = trace.get_current_span().get_span_context()
+    if not span_context.is_valid:
+        return None
+    return format(span_context.trace_id, "032x")
+
+
 # ---------------------------------------------------------------------------
 # Outbound (upstream) propagation
 # ---------------------------------------------------------------------------

@@ -39,11 +39,34 @@ export default defineConfig({
 					// resolve to their final state immediately. Without this, axe
 					// colour-contrast checks can fire mid-animation and report
 					// false positives on translucent elements.
-					context: { reducedMotion: 'reduce' },
+					//
+					// Pin timezone + locale so `toLocaleDateString`/`toLocaleTimeString`
+					// output (rail day/time labels, #705) is deterministic across
+					// developer machines and CI — otherwise a region-dependent month
+					// abbreviation makes assertions like `/Jul/` only-green-on-CI.
+					// UTC is DST-free; the DST-specific "Yesterday" test
+					// temporarily overrides the in-page timezone to America/New_York
+					// via CDP (`Emulation.setTimezoneOverride`) for that one test and
+					// restores UTC in a `finally`, so it exercises a real spring-forward
+					// boundary without weakening this global pin for the rest of the
+					// suite.
+					context: {
+						reducedMotion: 'reduce',
+						timezoneId: 'UTC',
+						locale: 'en-US',
+					},
 				},
 			],
 		},
 		globals: true,
+		// Pin locale/timezone env for any Node-side date logic too; the browser
+		// context above pins the in-page `Date`/`Intl` behaviour. (POSIX locale
+		// ids use underscores — `en_US`, unlike the BCP 47 `en-US` above.)
+		env: {
+			TZ: 'UTC',
+			LANG: 'en_US.UTF-8',
+			LC_ALL: 'en_US.UTF-8',
+		},
 		setupFiles: ['./src/__tests__/setup.ts'],
 		include: ['src/**/*.test.{ts,tsx}'],
 		// `*.lint.test.ts` are Node-only (they drive ESLint's programmatic API);

@@ -372,7 +372,13 @@ class CredentialRedactedResponse(BaseModel):
     updated_at: datetime | None = Field(default=None, description="Last update timestamp (UTC).")
     details: dict[str, Any] | None = Field(
         default=None,
-        description="Redacted, type-specific projection (hints/last-N chars; never the secret).",
+        description=(
+            "Redacted, type-specific projection (hints/last-N chars; never the "
+            "secret). For oauth2: client_id, token_url, grant_type "
+            "(authorization_code | client_credentials), scopes, and — for "
+            "authorization_code only — `connected`, whether the interactive "
+            "sign-in completed and is still usable (null for other grants)."
+        ),
     )
     server_variables: dict[str, str] | None = Field(
         default=None,

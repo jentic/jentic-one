@@ -14,6 +14,8 @@ def _make_ctx(*, max_age: int = 300) -> MagicMock:
     ctx = MagicMock()
     ctx.config.catalog.manifest_max_age_seconds = max_age
     ctx.config.catalog.manifest_url = "https://example.com/apis.json"
+    # Disable the update-notify sweep for these lock-focused tests.
+    ctx.config.catalog.update_check_interval_seconds = 0
     ctx.config.ingest = MagicMock()
     mock_session = AsyncMock()
     ctx.registry_db.transaction.return_value.__aenter__ = AsyncMock(return_value=mock_session)

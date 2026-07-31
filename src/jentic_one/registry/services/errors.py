@@ -122,6 +122,33 @@ class OverlayStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class OverlayApplyConflictError(RegistryServiceError):
+    """Raised when a confirmed overlay cannot be materialized onto its base spec.
+
+    Covers an overlay whose JSONPath targets no longer resolve against the base
+    spec (drift), an unsupported target expression, or an overlaid spec that fails
+    the post-apply safety checks (missing ``openapi`` key, unsafe ``servers[].url``).
+    """
+
+    def __init__(self, overlay_id: str, detail: str) -> None:
+        super().__init__(f"Cannot materialize overlay '{overlay_id}': {detail}")
+        self.overlay_id = overlay_id
+        self.detail = detail
+
+
+class InvalidOverlayDocumentError(RegistryServiceError):
+    """Raised when an overlay document is structurally invalid or too large at submit.
+
+    Rejects abusive input at the ingress (contributor with ``apis:write``) rather than
+    only at confirm time: the document must be an object with a bounded ``actions``
+    list and must not exceed the configured serialized-size cap.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"Invalid overlay document: {detail}")
+        self.detail = detail
+
+
 class SearchUnavailableError(RegistryServiceError):
     """Raised when search is not supported for the current backend/mode."""
 

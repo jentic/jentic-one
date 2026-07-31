@@ -40,13 +40,16 @@ from jentic_one.control.web.schemas.toolkits import (
     ToolkitUpdateRequest,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 
 router = APIRouter()
 
 
-def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
+def _to_toolkit_response(
+    toolkit: Toolkit, served: dict[str, list[ServedApiRef]] | None = None
+) -> ToolkitResponse:
     return ToolkitResponse(
         toolkit_id=toolkit.id,
         name=toolkit.name,
@@ -54,6 +57,7 @@ def _to_toolkit_response(toolkit: Toolkit) -> ToolkitResponse:
         active=toolkit.active,
         key_count=len(toolkit.keys),
         credential_count=len(toolkit.bindings),
+        apis=(served or {}).get(toolkit.id, []),
         created_by=toolkit.created_by,
         created_at=toolkit.created_at,
         updated_at=toolkit.updated_at,
@@ -162,8 +166,9 @@ async def create_toolkit(
         active=body.active,
         credential_ids=body.credential_ids,
     )
+    served = await svc.served_apis([result.toolkit.id], identity=identity)
     return ToolkitCreateResponse(
-        toolkit=_to_toolkit_response(result.toolkit),
+        toolkit=_to_toolkit_response(result.toolkit, served),
         api_key=result.plaintext_key,
         warnings=[_to_binding_warning(w) for w in result.warnings],
     )
@@ -180,8 +185,9 @@ async def list_toolkits(
 ) -> ToolkitListResponse:
     """List toolkits with cursor-based pagination."""
     data, has_more, next_cursor = await svc.list_all(cursor=cursor, limit=limit, identity=identity)
+    served = await svc.served_apis([t.id for t in data], identity=identity)
     return ToolkitListResponse(
-        data=[_to_toolkit_response(t) for t in data],
+        data=[_to_toolkit_response(t, served) for t in data],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -197,7 +203,8 @@ async def get_toolkit(
 ) -> ToolkitResponse:
     """Get a single toolkit by its `tk_…` ID."""
     toolkit = await svc.get(toolkit_id, identity=identity)
-    return _to_toolkit_response(toolkit)
+    served = await svc.served_apis([toolkit.id], identity=identity)
+    return _to_toolkit_response(toolkit, served)
 
 
 @router.patch("/toolkits/{toolkit_id}", summary="Update toolkit", responses=not_found())
@@ -215,7 +222,8 @@ async def update_toolkit(
         description=body.description,
         active=body.active,
     )
-    return _to_toolkit_response(toolkit)
+    served = await svc.served_apis([toolkit.id], identity=identity)
+    return _to_toolkit_response(toolkit, served)
 
 
 @router.delete(

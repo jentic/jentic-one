@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -72,6 +73,11 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 	const tabParam = searchParams.get('tab');
 	const activeTab: ToolkitTab = isToolkitTab(tabParam) ? tabParam : 'overview';
 
+	// Set when a "Link an agent" CTA fires from a tab that doesn't host the
+	// picker (Access's post-bind prompt): switch to Overview AND open the
+	// picker there — the button must land in the picker, not on a tab.
+	const [linkAgentRequested, setLinkAgentRequested] = useState(false);
+
 	const setTab = (tab: string) => {
 		setSearchParams(
 			(prev) => {
@@ -127,6 +133,13 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 		toolkit.key_count === 0 &&
 		boundAgents !== undefined &&
 		boundAgents.length === 0;
+
+	// The single source of truth for "a fresh bind would serve nothing" (the
+	// post-bind link-an-agent prompt's gate). Loading-safe: `undefined` (query
+	// still in flight) means NOT agentless — the prompt only ever fires on
+	// resolved evidence, never on a default empty array.
+	const agentless =
+		boundAgents !== undefined && boundAgents.length === 0 && toolkit.key_count === 0;
 
 	const tabOptions = [
 		{
@@ -236,10 +249,25 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				className="focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && (
-					<OverviewTab toolkitId={toolkitId} onManageAccess={() => setTab('access')} />
+					<OverviewTab
+						toolkitId={toolkitId}
+						onManageAccess={() => setTab('access')}
+						agentless={agentless}
+						openLinkAgent={linkAgentRequested}
+						onLinkAgentOpened={() => setLinkAgentRequested(false)}
+					/>
 				)}
 				{activeTab === 'activity' && <ActivityTab toolkitId={toolkitId} />}
-				{activeTab === 'access' && <AccessTab toolkitId={toolkitId} />}
+				{activeTab === 'access' && (
+					<AccessTab
+						toolkitId={toolkitId}
+						agentless={agentless}
+						onLinkAgent={() => {
+							setLinkAgentRequested(true);
+							setTab('overview');
+						}}
+					/>
+				)}
 				{activeTab === 'keys' && <KeysTab toolkitId={toolkitId} suspended={suspended} />}
 				{activeTab === 'settings' && (
 					<SettingsTab toolkit={toolkit} onDeleted={onRequestClose} />

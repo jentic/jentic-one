@@ -26,6 +26,7 @@ from jentic_one.broker.adapters.runners.registry import RunnerRegistry
 from jentic_one.broker.core.schemas import ExecuteRequestContext
 from jentic_one.broker.services.execution.service import default_broker, run_execution
 from jentic_one.shared.broker.broker import Broker
+from jentic_one.shared.events import valid_trace_id_or_minted
 from jentic_one.shared.jobs.protocols import (
     UpstreamExecRequest,
     UpstreamExecResult,
@@ -87,7 +88,9 @@ def _ctx_from_metadata(request: UpstreamExecRequest) -> ExecuteRequestContext:
     return ExecuteRequestContext(
         upstream_url=request.url,
         method=request.method,
-        trace_id=str(meta.get("trace_id", "unknown")),
+        # The worker always sends a valid id; minted-if-invalid keeps the
+        # "trace_id is always 32-hex" invariant for any other caller (#903).
+        trace_id=valid_trace_id_or_minted(str(meta.get("trace_id") or "")),
         toolkit_id=meta.get("toolkit_id"),
         operation_id=meta.get("operation_id"),
         api_vendor=meta.get("api_vendor"),

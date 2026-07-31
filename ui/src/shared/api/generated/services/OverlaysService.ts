@@ -204,7 +204,12 @@ export class OverlaysService {
     }
     /**
      * Confirm Overlay
-     * Confirm an overlay, transitioning from pending to confirmed.
+     * Confirm an overlay, materializing it onto the served spec.
+     *
+     * Requires ``org:admin``: confirming rewrites the API's served spec (it re-ingests
+     * the base spec with the overlay applied and promotes the result to the current
+     * revision), so it is an operator action, not a contributor one (contributors
+     * ``submit`` overlays with ``apis:write``; an operator reviews and confirms).
      * @returns any Successful Response
      * @throws ApiError
      */

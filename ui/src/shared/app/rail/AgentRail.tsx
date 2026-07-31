@@ -22,9 +22,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { sharedQueryKeys } from '@/shared/api/queryKeys';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, TriangleAlert } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
-import { toast } from '@/shared/ui';
+import { toast, Tooltip } from '@/shared/ui';
 import { AccessRequestDecisionDialog } from '@/shared/app/rail/AccessRequestDecisionDialog';
 import { RailEventRow } from '@/shared/app/rail/RailEventRow';
 import { RailFeed } from '@/shared/app/rail/RailFeed';
@@ -37,7 +37,9 @@ import {
 	RAIL_COLLAPSE_CHANGE_EVENT,
 	RAIL_COLLAPSED_STORAGE_KEY,
 	buildTraceBundle,
+	formatFailurePillCount,
 	readToastScope,
+	unacknowledgedFailureCount,
 	useAgentStream,
 	writeToastScope,
 } from '@/shared/lib/agentStream';
@@ -193,6 +195,25 @@ export function AgentRail() {
 		setKinds(new Set());
 	}
 
+	// The rail's persistent failure badge counts unacknowledged error/critical
+	// events; clicking it focuses the feed on exactly those (#671).
+	const failureCount = useMemo(() => unacknowledgedFailureCount(events), [events]);
+	function focusFailures() {
+		setCollapsed(false);
+		// Unfreeze so a failure that arrived while paused/hovering actually enters
+		// the feed the operator is being pointed at — otherwise the pill can count
+		// N+1 while the frozen feed still shows N, and the new failure never
+		// surfaces. Clear both freeze mechanisms and the frozen snapshot.
+		setManualPaused(false);
+		setHoverFrozen(false);
+		setFrozenIds(null);
+		// ADD the failure severities to the operator's current view rather than
+		// replacing it — union with the previous set so a `warning`/`info` chip
+		// they had selected survives, and deliberately leave `search` and `kinds`
+		// untouched so we don't wipe a filter they set on purpose.
+		setSeverities((prev) => new Set<StreamEvent['severity']>([...prev, 'error', 'critical']));
+	}
+
 	function handleLoadOlder() {
 		void loadOlderEvents();
 	}
@@ -281,6 +302,22 @@ export function AgentRail() {
 										: 'bg-muted-foreground',
 						)}
 					/>
+					{failureCount > 0 && (
+						<Tooltip
+							interactiveChild
+							content={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity`}
+						>
+							<button
+								type="button"
+								onClick={() => focusFailures()}
+								aria-label={`${failureCount} unacknowledged failure${failureCount === 1 ? '' : 's'} in recent activity. Expand and show failures.`}
+								className="border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 flex flex-col items-center gap-0.5 rounded-full border px-1 py-1 text-[9px] font-bold tabular-nums transition-colors"
+							>
+								<TriangleAlert className="h-3 w-3" />
+								{formatFailurePillCount(failureCount)}
+							</button>
+						</Tooltip>
+					)}
 					<span className="text-muted-foreground font-mono text-[10px] tracking-widest uppercase [writing-mode:vertical-rl]">
 						Events · {events.length}
 					</span>
@@ -304,6 +341,8 @@ export function AgentRail() {
 				heldBack={feedFrozen ? Math.max(0, events.length - renderEvents.length) : 0}
 				stale={stale}
 				audioOnCritical={audioOnCritical}
+				failureCount={failureCount}
+				onFocusFailures={focusFailures}
 				onTogglePause={() => setManualPaused((p) => !p)}
 				onCollapse={() => setCollapsed(true)}
 				onLoadOlder={handleLoadOlder}
