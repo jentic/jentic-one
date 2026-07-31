@@ -6,6 +6,7 @@ It fetches/parses OpenAPI/Arazzo sources and creates draft ApiRevisions.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import structlog
@@ -15,11 +16,13 @@ from structlog.contextvars import bind_contextvars, unbind_contextvars
 from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestJobError
 from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
+from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.jobs.handlers import JobResultPayload
-from jentic_one.shared.models import ActorType
+from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType
 
 logger = structlog.get_logger(__name__)
 
@@ -63,9 +66,11 @@ class ImportHandler:
         try:
             payload = payload or {}
             sources = payload.get("sources", [])
+            overlay_id = payload.get("overlay_id")
             resolved_actor_type = ActorType(actor_type) if actor_type else ActorType.USER
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
+            recovered_overlay_link = False
 
             logger.info("import_handler_start", source_count=len(sources), job_id=job_id)
 
@@ -113,12 +118,47 @@ class ImportHandler:
                 failed=len(failures),
             )
 
+            # Overlay materialization: link the confirmed overlay to the revision the
+            # re-ingest just produced, so the served spec and the overlay agree on which
+            # revision embodies the applied change. ``overlay_id`` is set only by
+            # OverlayService (a materialize job), which always carries exactly one
+            # overlay-origin source — so its presence, not the revision count, is the
+            # signal. Guard the single-source invariant and skip if it was violated or
+            # the source failed, rather than linking the wrong revision.
+            if overlay_id:
+                if len(revisions) == 1 and not failures:
+                    await self._link_overlay_revision(
+                        job_id, str(overlay_id), revisions[0]["revision_id"]
+                    )
+                elif not revisions and len(sources) == 1:
+                    # Recovery: a prior attempt of this exact confirm already produced
+                    # the overlaid revision, so the re-ingest failed only because the
+                    # identical content already exists (DuplicateRevisionError). The
+                    # existing active revision *is* the materialization we want linked —
+                    # resolve it by digest and back-link, so H2 recovery completes even
+                    # when the revision (not just the link) already landed.
+                    recovered_overlay_link = await self._recover_overlay_link(
+                        job_id, str(overlay_id), sources[0]
+                    )
+                else:
+                    logger.warning(
+                        "overlay_materialize_unexpected_result",
+                        job_id=job_id,
+                        overlay_id=overlay_id,
+                        succeeded=len(revisions),
+                        failed=len(failures),
+                    )
+
             # If every source failed, surface it as a failed job rather than
             # masking it behind a "completed" status with an empty result.
             # Each source runs in its own transaction (see Ingestor.ingest), so
             # when nothing succeeded there is no committed work to preserve by
             # returning a "completed" result.
-            if failures and not revisions:
+            #
+            # Exception: an overlay recovery job whose only failure was "identical
+            # content already exists" *did* achieve its goal (the revision exists and
+            # we linked it above) — treat it as success, not a failed job.
+            if failures and not revisions and not recovered_overlay_link:
                 raise IngestJobError(
                     f"all {len(sources)} import source(s) failed: " + "; ".join(failures)
                 )
@@ -129,3 +169,74 @@ class ImportHandler:
             )
         finally:
             unbind_contextvars("job_id")
+
+    async def _link_overlay_revision(self, job_id: str, overlay_id: str, revision_id: str) -> None:
+        """Record the materialized revision on the overlay (best-effort).
+
+        Runs in its own registry_db transaction — the Ingestor already committed the
+        revision, so this is a follow-up write. A failure here does not undo the
+        (durable) re-ingest, so it is logged rather than raised: the served spec is
+        already correct; only the overlay->revision back-reference is missing and can
+        be repaired by re-confirming.
+        """
+        try:
+            async with self._ctx.registry_db.transaction() as session:
+                updated = await OverlayRepository.set_confirmed_revision(
+                    session, overlay_id, uuid.UUID(revision_id)
+                )
+            if updated == 0:
+                logger.warning(
+                    "overlay_confirmed_revision_not_linked",
+                    job_id=job_id,
+                    overlay_id=overlay_id,
+                    reason="overlay_not_found",
+                )
+        except Exception:
+            logger.exception(
+                "overlay_confirmed_revision_link_failed",
+                job_id=job_id,
+                overlay_id=overlay_id,
+            )
+
+    async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
+        """Link an overlay to its already-materialized revision after a duplicate re-ingest.
+
+        Returns ``True`` if the re-ingest failed *only* because the overlaid content
+        already exists and the current revision is the overlay revision we linked
+        (so the job is a successful no-op recovery), else ``False`` (a genuine failure
+        that should still surface). Best-effort like ``_link_overlay_revision``.
+        """
+        src = source if isinstance(source, dict) else {}
+        vendor = src.get("vendor")
+        name = src.get("api_name")
+        version = src.get("version")
+        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
+            return False
+        try:
+            async with self._ctx.registry_db.transaction() as session:
+                api = await ApiRepository.get_by_identifier_with_current_revision(
+                    session, vendor, name, version
+                )
+                if api is None or api.current_revision is None:
+                    return False
+                # Only claim recovery when the live revision is the overlaid one; a
+                # non-overlay current revision means the duplicate was something else.
+                if api.current_revision.origin != ORIGIN_OVERLAY:
+                    return False
+                assert api.current_revision_id is not None
+                updated = await OverlayRepository.set_confirmed_revision(
+                    session, overlay_id, api.current_revision_id
+                )
+            logger.info(
+                "overlay_materialize_recovered_existing_revision",
+                job_id=job_id,
+                overlay_id=overlay_id,
+                revision_id=str(api.current_revision_id),
+                linked=updated > 0,
+            )
+            return updated > 0
+        except Exception:
+            logger.exception(
+                "overlay_materialize_recovery_failed", job_id=job_id, overlay_id=overlay_id
+            )
+            return False

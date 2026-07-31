@@ -55,6 +55,7 @@ class OverlayResponse(BaseModel):
     status: str
     document: dict[str, Any]
     target_revision_id: str | None
+    confirmed_revision_id: str | None = None
     contributed_by: str | None
     confirmed_by_execution_id: str | None
     created_at: datetime

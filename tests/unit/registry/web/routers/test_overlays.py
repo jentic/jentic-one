@@ -55,7 +55,9 @@ def client() -> TestClient:
     return TestClient(app, headers={"Authorization": "Bearer test-token"})
 
 
-def _make_view(*, status: str = "pending") -> OverlayView:
+def _make_view(
+    *, status: str = "pending", confirmed_revision_id: uuid.UUID | None = None
+) -> OverlayView:
     return OverlayView(
         id=_OVERLAY_ID,
         api_id=uuid.uuid4(),
@@ -65,6 +67,7 @@ def _make_view(*, status: str = "pending") -> OverlayView:
         status=status,
         document={"overlay": "1.0"},
         target_revision_id=None,
+        confirmed_revision_id=confirmed_revision_id,
         contributed_by="agent",
         confirmed_by_execution_id=None,
         created_at=datetime(2024, 6, 1, tzinfo=UTC),
@@ -109,6 +112,21 @@ def test_submit_overlay_api_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+def test_get_overlay_surfaces_confirmed_revision_id(client: TestClient) -> None:
+    """A materialized overlay exposes its confirmed_revision_id over the API."""
+    rev_id = uuid.uuid4()
+    view = _make_view(status="confirmed", confirmed_revision_id=rev_id)
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["confirmed_revision_id"] == str(rev_id)
+
+
 def test_list_overlays_200(client: TestClient) -> None:
     page = OverlayPage(
         data=[
@@ -118,6 +136,7 @@ def test_list_overlays_200(client: TestClient) -> None:
                 status="pending",
                 document={"x": 1},
                 target_revision_id=None,
+                confirmed_revision_id=None,
                 contributed_by=None,
                 confirmed_by_execution_id=None,
                 created_at=datetime(2024, 6, 1, tzinfo=UTC),

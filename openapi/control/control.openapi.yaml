@@ -8498,7 +8498,13 @@ paths:
       - Overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm:
     post:
-      description: Confirm an overlay, transitioning from pending to confirmed.
+      description: |-
+        Confirm an overlay, materializing it onto the served spec.
+
+        Requires ``org:admin``: confirming rewrites the API's served spec (it re-ingests
+        the base spec with the overlay applied and promotes the result to the current
+        revision), so it is an operator action, not a contributor one (contributors
+        ``submit`` overlays with ``apis:write``; an operator reviews and confirms).
       operationId: confirmOverlay
       parameters:
       - in: path

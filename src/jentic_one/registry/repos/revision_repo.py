@@ -135,6 +135,30 @@ class ApiRevisionRepository:
         await session.flush()
 
     @staticmethod
+    async def archive_all_active(
+        session: AsyncSession,
+        api_id: uuid.UUID,
+    ) -> None:
+        """Archive every *active* revision (PUBLISHED or IMPORTED) for an API.
+
+        The one-active partial unique index (``ix_api_revisions_one_active``) covers
+        ``state IN ('published','imported')``, so a new active revision must supersede
+        whichever of those is currently live. Used by overlay materialization, whose
+        base may be a manually-promoted PUBLISHED revision (not just an IMPORTED one).
+        """
+        now = datetime.now(UTC)
+        await session.execute(
+            update(ApiRevision)
+            .where(
+                ApiRevision.api_id == api_id,
+                ApiRevision.state.in_([ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED]),
+            )
+            .values(state=ApiRevisionState.ARCHIVED, archived_at=now)
+            .execution_options(synchronize_session="fetch")
+        )
+        await session.flush()
+
+    @staticmethod
     async def get_by_digest(
         session: AsyncSession, api_id: uuid.UUID, spec_digest: str
     ) -> ApiRevision | None:
