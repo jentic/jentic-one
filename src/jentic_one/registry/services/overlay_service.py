@@ -496,7 +496,15 @@ class OverlayService:
             if overlay is None:
                 raise OverlayNotFoundError(overlay_id, vendor, name, version)
 
-            if overlay.status != OverlayStatus.PENDING:
+            # PENDING is the normal editable state. Also allow editing a stuck
+            # CONFIRMED-but-unmaterialized overlay (confirmed_revision_id IS NULL): its
+            # materialize job failed deterministically and re-confirm would only
+            # re-enqueue the same failure, so editing the document is the operator's
+            # escape hatch — it resets the overlay to PENDING for a fresh confirm.
+            stuck_unmaterialized = (
+                overlay.status == OverlayStatus.CONFIRMED and overlay.confirmed_revision_id is None
+            )
+            if overlay.status != OverlayStatus.PENDING and not stuck_unmaterialized:
                 raise OverlayStateConflictError(
                     overlay_id, overlay.status, [OverlayStatus.PENDING], "update"
                 )
@@ -506,6 +514,7 @@ class OverlayService:
                 overlay_id,
                 document=document,
                 target_revision_id=target_revision_id,
+                reset_to_pending=stuck_unmaterialized,
             )
 
             refreshed = await OverlayRepository.get_for_api(session, api.id, overlay_id)
@@ -592,8 +601,29 @@ class OverlayService:
         # so that at most one concurrent confirm proceeds to enqueue a materialize job.
         # In the recovery path the overlay is already CONFIRMED (with a null revision),
         # so we skip the claim and just re-enqueue.
+        #
+        # We also re-read the document inside the claim transaction and bail if it
+        # changed since tx1: apply+validate above runs outside any transaction and can
+        # take a while on a multi-MB spec, and an ``update`` landing in that window is
+        # legal (the overlay is still PENDING). Without this guard the CAS would still
+        # succeed and we'd enqueue a job carrying the *old* document while the row stores
+        # the *new* one — confirmed_revision_id would then point at a revision that does
+        # not embody the stored document (the same doc/served divergence this PR defers
+        # for update-after-confirm, but inside a single confirm). Treat a changed
+        # document as a lost race and return the current (still PENDING) view so the
+        # caller re-confirms against the new document.
         if not recovering:
             async with self._ctx.registry_db.transaction() as session:
+                current = await OverlayRepository.get_for_api(session, api.id, overlay_id)
+                if (
+                    current is None
+                    or current.status != OverlayStatus.PENDING
+                    or current.document != document
+                ):
+                    refreshed = current or await self._get_overlay_or_raise(
+                        api.id, overlay_id, vendor, name, version
+                    )
+                    return self._view(vendor, name, version, refreshed)
                 now = datetime.now(UTC)
                 claimed = await OverlayRepository.set_status(
                     session,

@@ -91,12 +91,21 @@ class OverlayRepository:
         *,
         document: dict[str, Any] | None = None,
         target_revision_id: uuid.UUID | None | _Unset = _UNSET,
+        reset_to_pending: bool = False,
     ) -> int:
         values: dict[str, Any] = {"updated_at": func.now()}
         if document is not None:
             values["document"] = document
         if not isinstance(target_revision_id, _Unset):
             values["target_revision_id"] = target_revision_id
+        if reset_to_pending:
+            # Recovery lever for a CONFIRMED-but-unmaterialized overlay whose materialize
+            # job fails deterministically: editing the document sends it back to PENDING
+            # (clearing the stale confirm metadata) so the operator can re-confirm the fix
+            # instead of re-enqueueing the same failing job forever.
+            values["status"] = OverlayStatus.PENDING
+            values["confirmed_at"] = None
+            values["confirmed_by_execution_id"] = None
         result = cast(
             "CursorResult[Any]",
             await session.execute(update(Overlay).where(Overlay.id == overlay_id).values(**values)),

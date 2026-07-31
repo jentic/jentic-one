@@ -297,7 +297,8 @@ async def test_update_pending_succeeds() -> None:
 async def test_update_confirmed_raises_conflict() -> None:
     ctx = _make_ctx()
     api = _make_api()
-    overlay = _make_overlay(status="confirmed")
+    # A fully materialized confirmed overlay (confirmed_revision_id set) stays immutable.
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=uuid.uuid4())
 
     with (
         patch(
@@ -323,6 +324,53 @@ async def test_update_confirmed_raises_conflict() -> None:
             )
         assert exc_info.value.action == "update"
         assert exc_info.value.current_state == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_update_stuck_confirmed_resets_to_pending() -> None:
+    """A CONFIRMED-but-unmaterialized overlay is editable and resets to PENDING.
+
+    If the materialize job fails deterministically the overlay is left CONFIRMED with a
+    null confirmed_revision_id and re-confirm only re-enqueues the same failure. Editing
+    the document is the operator's escape hatch: it must be allowed and must reset the
+    overlay to PENDING (clearing stale confirm metadata) for a fresh confirm.
+    """
+    ctx = _make_ctx()
+    api = _make_api()
+    stuck = _make_overlay(status="confirmed", confirmed_revision_id=None)
+    reset = _make_overlay(status="pending")
+    reset.document = {"updated": True}
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[stuck, reset],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=1,
+        ) as mock_update,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.update(
+            "acme",
+            "pets",
+            "v1",
+            "ovr_abc123def456ghi789",
+            document={"actions": [{"target": "$.info", "update": {"title": "x"}}]},
+            identity=_IDENTITY,
+        )
+
+    # Edit went through and requested the reset-to-PENDING back to an editable state.
+    assert mock_update.call_args.kwargs["reset_to_pending"] is True
+    assert view.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -358,7 +406,7 @@ async def test_confirm_pending_succeeds() -> None:
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
-            side_effect=[overlay, confirmed_overlay],
+            side_effect=[overlay, overlay, confirmed_overlay],
         ),
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.set_status",
@@ -723,7 +771,7 @@ async def test_confirm_lost_race_returns_without_enqueue() -> None:
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
-            side_effect=[overlay, winner_view],
+            side_effect=[overlay, overlay, winner_view],
         ),
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.set_status",
@@ -743,7 +791,66 @@ async def test_confirm_lost_race_returns_without_enqueue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirm_rejects_unsafe_operation_level_server_url() -> None:
+async def test_confirm_document_changed_during_apply_returns_without_enqueue() -> None:
+    """A concurrent update landing during apply+validate is not silently materialized.
+
+    confirm reads the document in tx1, applies+validates outside any transaction (a real
+    window on a large spec), then re-reads inside the claim transaction. If an update
+    changed the document in the meantime the CAS must be skipped so we never enqueue a
+    materialize job carrying the *old* document while the row stores the *new* one — the
+    doc/served divergence this PR otherwise defers, but happening inside a single confirm.
+    """
+    ctx = _make_ctx()
+    api = _make_api_with_revision()
+    overlay = _make_overlay(status="pending")
+    overlay.document = _GOOD_DOC
+    # Re-read inside the claim transaction shows a different document (a concurrent
+    # update landed while apply+validate ran) — still PENDING, so the plain status CAS
+    # would have succeeded; the document guard is what saves us.
+    changed = _make_overlay(status="pending")
+    changed.document = {"actions": [{"target": "$", "update": {"info": {"title": "X"}}}]}
+    spec_file = MagicMock()
+    spec_file.content = _BASE_SPEC
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository."
+            "get_by_identifier_with_current_revision",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.SpecFileRepository.get_for_revision",
+            new_callable=AsyncMock,
+            return_value=spec_file,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, changed],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.set_status",
+            new_callable=AsyncMock,
+        ) as mock_set_status,
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.confirm("acme", "pets", "v1", "ovr_abc123def456ghi789", identity=_IDENTITY)
+
+    # Neither claimed nor enqueued: returns the current (still PENDING, freshly-updated)
+    # overlay so the caller re-confirms against the new document.
+    mock_set_status.assert_not_called()
+    mock_enqueue.assert_not_called()
+    assert view.status == "pending"
     """SSRF validation covers operation-level servers[], not just the document root."""
     ctx = _make_ctx()
     api = _make_api_with_revision()
