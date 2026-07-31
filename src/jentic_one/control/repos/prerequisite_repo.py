@@ -95,10 +95,12 @@ class PrerequisiteRepository:
     ) -> bool:
         """Return True if the agent is bound to at least one of the given toolkits.
 
-        Batched variant of :meth:`agent_toolkit_binding_exists` for satisfaction
-        checks where a ``toolkit:bind`` reference resolves to several candidate
-        toolkits — being bound to any of them means the bind's outcome is
-        already in effect. Empty ``toolkit_ids`` short-circuits to False.
+        Batched variant of :meth:`agent_toolkit_binding_exists` for
+        satisfaction checks (issue #826). The current annotator only probes a
+        single resolved toolkit per item (ambiguous references are left
+        un-annotated), but the batched shape stays so future callers can check
+        several candidates in one query. Empty ``toolkit_ids`` short-circuits
+        to False.
         """
         if not toolkit_ids:
             return False

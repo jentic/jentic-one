@@ -118,11 +118,15 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 	// toolkit and bound a credential but never linked the agent, so every call
 	// still fails. Surface it inline rather than letting them discover it via
 	// an agent's 403. Suppressed while suspended (the danger banner owns that
-	// state) and until the agents query resolves (no flash on load).
-	const unservedCredentials =
-		!suspended && toolkit.credential_count > 0 && boundAgents !== undefined
-			? boundAgents.length === 0
-			: false;
+	// state), until the agents query resolves (no flash on load), and when the
+	// toolkit has API keys — key callers reach the credentials fine, so
+	// "serves nothing" would be false.
+	const hasUnservedCredentials =
+		!suspended &&
+		toolkit.credential_count > 0 &&
+		toolkit.key_count === 0 &&
+		boundAgents !== undefined &&
+		boundAgents.length === 0;
 
 	const tabOptions = [
 		{
@@ -177,7 +181,7 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 			</AnimatePresence>
 
 			<AnimatePresence initial={false}>
-				{unservedCredentials && (
+				{hasUnservedCredentials && (
 					<motion.div key="no-agents-banner" {...panelMotion} className="overflow-hidden">
 						<div
 							className="border-warning/40 bg-warning/5 flex items-start gap-3 rounded-xl border p-4"
@@ -194,8 +198,9 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 								<p className="text-muted-foreground mt-0.5 text-sm">
 									Its bound credential
 									{toolkit.credential_count === 1 ? ' is' : 's are'} not reachable
-									by any agent yet — link an agent from the Overview tab to put{' '}
-									{toolkit.credential_count === 1 ? 'it' : 'them'} to use.
+									by any agent yet — link an agent{' '}
+									{activeTab === 'overview' ? 'below' : 'from the Overview tab'}{' '}
+									to put {toolkit.credential_count === 1 ? 'it' : 'them'} to use.
 								</p>
 							</div>
 							{activeTab !== 'overview' && (

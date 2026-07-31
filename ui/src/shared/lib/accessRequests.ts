@@ -60,9 +60,16 @@ export interface AccessRequestItem {
 	 * item's outcome is already in effect (the binding/grant exists — e.g. an
 	 * operator set it up manually outside the wizard), `false` when it
 	 * determinately is not, absent/null when not computed (list pages,
-	 * decided items, fulfilment-only intents, indeterminate targets).
+	 * decided items, fulfilment-only intents, indeterminate or ambiguous
+	 * targets).
 	 */
 	already_satisfied?: boolean | null;
+	/**
+	 * For a satisfied toolkit:bind, the id of the toolkit the agent is already
+	 * bound to — lets the wizard name the exact object instead of a bare
+	 * boolean. Absent/null otherwise.
+	 */
+	already_satisfied_by?: string | null;
 }
 
 /** Permission-rule effect — `require-approval` exists in the schema but is rarely shown. */

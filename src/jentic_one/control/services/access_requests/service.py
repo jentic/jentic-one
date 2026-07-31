@@ -12,6 +12,7 @@ import structlog
 from jentic_one.control.core.errors import DuplicatePendingItemError
 from jentic_one.control.core.schema.access_request_items import RULE_BEARING_COMBINATIONS
 from jentic_one.control.core.schema.access_requests import AccessRequest
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.repos.access_request_repo import AccessRequestRepository
 from jentic_one.control.repos.credential_repo import CredentialRepository
 from jentic_one.control.repos.effects_repo import EffectsRepository
@@ -112,8 +113,10 @@ class _AdminSatisfactionProbes:
     already-resolved lookup key.
     """
 
-    # (item_id, agent_id, candidate toolkit ids) — satisfied if bound to any.
-    toolkit_binds: list[tuple[str, str, list[str]]] = field(default_factory=list)
+    # (item_id, agent_id, toolkit_id) — satisfied if the agent is bound to it.
+    # Always a single resolved toolkit: explicit ids probe directly, and
+    # ambiguous references are left un-annotated (see the annotator).
+    toolkit_binds: list[tuple[str, str, str]] = field(default_factory=list)
     # (item_id, actor_id, scope) — satisfied if the grant row exists.
     scope_grants: list[tuple[str, str, str]] = field(default_factory=list)
 
@@ -549,6 +552,9 @@ class AccessRequestService:
         request: AccessRequest,
         *,
         identity: Identity,
+        # ``Any`` because the arch rule forbids sqlalchemy imports in control
+        # services (tests/arch/test_no_direct_db.py); the repos it's passed to
+        # type it as AsyncSession.
         session: Any,
     ) -> _AdminSatisfactionProbes:
         """Stamp control-DB ``already_satisfied`` hints; collect admin-DB probes.
@@ -561,11 +567,20 @@ class AccessRequestService:
 
         Only PENDING effect items are annotated. Everything else stays ``None``
         (not computed): decided items, fulfilment-only intents (their outcome is
-        the downstream binds'), and items whose target is indeterminate (a
-        target-less credential:bind, a vendor-less toolkit reference). A
-        reference that resolves to no toolkit visible to the caller is
-        determinately False — resolution runs under the caller's owner scope,
-        the same scope decide-time resolution would use.
+        the downstream binds'), items whose target is indeterminate (a
+        target-less credential:bind, a vendor-less toolkit reference), an
+        ambiguous toolkit reference (decide-time resolution would refuse it, so
+        a hint would advertise an approval that cannot succeed), and a
+        credential:bind whose credential the caller cannot see (mirrors
+        decide-time validation — and keeps the probe from acting as a
+        binding-existence oracle for amended-in foreign ids). A reference that
+        resolves to no toolkit visible to the caller is determinately False —
+        resolution runs under the caller's owner scope, the same scope
+        decide-time resolution would use.
+
+        When a ``toolkit:bind`` is satisfied, ``already_satisfied_by`` names the
+        toolkit that satisfies it so consumers can point the operator at the
+        exact object instead of a bare boolean.
 
         Control-DB checks (credential bindings, reference resolution) run on the
         caller's ``session``; admin-DB checks are returned as probes for
@@ -580,6 +595,18 @@ class AccessRequestService:
             key = (item.resource_type, item.action)
             if key == ("credential", "bind"):
                 if item.to_id and item.resource_id:
+                    # Same visibility gate as decide-time validation
+                    # (_validate_credential_bind_target): a credential the
+                    # caller can't see means approval would 422, and probing
+                    # past it would leak binding existence for arbitrary
+                    # amended-in ids.
+                    credential = await CredentialRepository.get_by_id(
+                        session,
+                        item.resource_id,
+                        filters=build_access_filters(identity, Credential),
+                    )
+                    if credential is None:
+                        continue
                     binding = await ToolkitBindingRepository.get(
                         session, item.to_id, item.resource_id
                     )
@@ -587,7 +614,7 @@ class AccessRequestService:
             elif key == ("toolkit", "bind"):
                 explicit_id = item.resource_id or item.to_id
                 if explicit_id:
-                    probes.toolkit_binds.append((item.id, item.actor_id, [explicit_id]))
+                    probes.toolkit_binds.append((item.id, item.actor_id, explicit_id))
                     continue
                 reference = item.resource_reference or {}
                 vendor = reference.get("vendor")
@@ -603,8 +630,12 @@ class AccessRequestService:
                 )
                 if not candidates:
                     item_view.already_satisfied = False
-                else:
-                    probes.toolkit_binds.append((item.id, item.actor_id, candidates))
+                elif len(candidates) == 1:
+                    probes.toolkit_binds.append((item.id, item.actor_id, candidates[0]))
+                # Several candidates: decide-time resolution would raise
+                # ToolkitReferenceAmbiguousError, so the item is not approvable
+                # as filed — leave the hint not-computed rather than advertise
+                # a satisfaction the operator can't act on.
             elif key == ("scope", "grant") and item.resource_id:
                 probes.scope_grants.append((item.id, item.actor_id, item.resource_id))
         return probes
@@ -622,16 +653,17 @@ class AccessRequestService:
             return
         item_views_by_id = {iv.id: iv for iv in view.items}
         async with self._ctx.admin_db.session() as session:
-            for item_id, agent_id, toolkit_ids in probes.toolkit_binds:
-                item_views_by_id[
-                    item_id
-                ].already_satisfied = await PrerequisiteRepository.agent_bound_to_any_toolkit(
-                    session, agent_id=agent_id, toolkit_ids=toolkit_ids
+            for item_id, agent_id, toolkit_id in probes.toolkit_binds:
+                item_view = item_views_by_id[item_id]
+                bound = await PrerequisiteRepository.agent_bound_to_any_toolkit(
+                    session, agent_id=agent_id, toolkit_ids=[toolkit_id]
                 )
+                item_view.already_satisfied = bound
+                if bound:
+                    item_view.already_satisfied_by = toolkit_id
             for item_id, actor_id, scope in probes.scope_grants:
-                item_views_by_id[
-                    item_id
-                ].already_satisfied = await PrerequisiteRepository.actor_scope_grant_exists(
+                item_view = item_views_by_id[item_id]
+                item_view.already_satisfied = await PrerequisiteRepository.actor_scope_grant_exists(
                     session, actor_id=actor_id, scope=scope
                 )
 

@@ -287,20 +287,27 @@ def test_get_not_found_returns_404(filer_client: TestClient) -> None:
 
 
 async def test_credential_bind_already_satisfied_flips_on_manual_binding(
-    filer_client: TestClient, web_context: Context
+    filer_client: TestClient, owner_client: TestClient, web_context: Context
 ) -> None:
     """A pending credential:bind flips False → True once the binding exists.
 
     The manual-fulfilment loop: an operator binds the credential by hand
     (outside the wizard), and the request's GET now reports the item as
     already in effect so the reviewer can approve instead of re-doing it.
-    List pages skip the enrichment (null) by design.
+    List pages skip the enrichment (null) by design, and a viewer who cannot
+    see the credential gets no hint at all (null) — the probe mirrors
+    decide-time credential visibility so it can't be used as a
+    binding-existence oracle for amended-in foreign ids.
     """
     data = _file_request(filer_client)  # credential:bind cred_001 → tk_target
-    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    got = owner_client.get(f"/access-requests/{data['id']}").json()
     assert got["items"][0]["already_satisfied"] is False
 
-    listed = filer_client.get("/access-requests").json()["data"][0]
+    # The filer agent doesn't own cred_001 → hint not computed for it.
+    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    assert got["items"][0]["already_satisfied"] is None
+
+    listed = owner_client.get("/access-requests").json()["data"][0]
     assert listed["items"][0]["already_satisfied"] is None
 
     async with web_context.control_db.session() as session:
@@ -312,7 +319,7 @@ async def test_credential_bind_already_satisfied_flips_on_manual_binding(
         )
         await session.commit()
     # seed_binding's teardown removes tk_target's bindings, so no local cleanup.
-    got = filer_client.get(f"/access-requests/{data['id']}").json()
+    got = owner_client.get(f"/access-requests/{data['id']}").json()
     assert got["items"][0]["already_satisfied"] is True
 
 
@@ -334,6 +341,8 @@ def test_toolkit_bind_already_satisfied_and_null_once_decided(
 
     got = filer_client.get(f"/access-requests/{request_id}").json()
     assert got["items"][0]["already_satisfied"] is True
+    # The satisfying toolkit is named so consumers can point at the object.
+    assert got["items"][0]["already_satisfied_by"] == "tk_target"
 
     decided = owner_client.post(
         f"/access-requests/{request_id}:decide",
@@ -343,6 +352,7 @@ def test_toolkit_bind_already_satisfied_and_null_once_decided(
     got = filer_client.get(f"/access-requests/{request_id}").json()
     assert got["items"][0]["status"] == "approved"
     assert got["items"][0]["already_satisfied"] is None
+    assert got["items"][0]["already_satisfied_by"] is None
 
 
 async def test_toolkit_bind_by_reference_already_satisfied(
@@ -385,20 +395,130 @@ async def test_toolkit_bind_by_reference_already_satisfied(
         request_id = filed.json()["id"]
 
         # The owner sees tk_target (they own it): the reference resolves to it
-        # and the agent is already bound → True.
+        # and the agent is already bound → True, naming the toolkit.
         got = owner_client.get(f"/access-requests/{request_id}").json()
         assert got["items"][0]["already_satisfied"] is True
+        assert got["items"][0]["already_satisfied_by"] == "tk_target"
 
         # The filer agent (no owner:toolkits:read delegation) can't see any
         # toolkit serving the API — determinately unsatisfied under ITS scope.
         got = filer_client.get(f"/access-requests/{request_id}").json()
         assert got["items"][0]["already_satisfied"] is False
+        assert got["items"][0]["already_satisfied_by"] is None
     finally:
         async with web_context.control_db.session() as session:
             await session.execute(
                 text("DELETE FROM toolkit_credential_bindings WHERE id = 'tcb_refsat'")
             )
             await session.execute(text("DELETE FROM credentials WHERE id = 'cred_refsat'"))
+            await session.commit()
+
+
+async def test_toolkit_bind_raw_vendor_reference_is_slugified(
+    filer_client: TestClient, owner_client: TestClient, web_context: Context
+) -> None:
+    """A reference filed with a raw vendor still resolves: the annotator
+    slugifies it before matching the canonical (slugified-on-write) rows."""
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
+                "VALUES ('cred_rawsat', 'token_value', 'cred-rawsat', 'webtest-rawsat', :owner) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) "
+                "VALUES ('tcb_rawsat', 'tk_target', 'cred_rawsat') ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.commit()
+    try:
+        filed = filer_client.post(
+            "/access-requests",
+            json={
+                "items": [
+                    {
+                        "resource_type": "toolkit",
+                        "action": "bind",
+                        # Raw, unslugged — as agents actually file them.
+                        "resource_reference": {"vendor": "Webtest.Rawsat"},
+                    }
+                ]
+            },
+        )
+        assert filed.status_code == 202, filed.text
+        got = owner_client.get(f"/access-requests/{filed.json()['id']}").json()
+        assert got["items"][0]["already_satisfied"] is True
+        assert got["items"][0]["already_satisfied_by"] == "tk_target"
+    finally:
+        async with web_context.control_db.session() as session:
+            await session.execute(
+                text("DELETE FROM toolkit_credential_bindings WHERE id = 'tcb_rawsat'")
+            )
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_rawsat'"))
+            await session.commit()
+
+
+async def test_toolkit_bind_ambiguous_reference_not_annotated(
+    filer_client: TestClient, owner_client: TestClient, web_context: Context
+) -> None:
+    """A reference resolving to several toolkits stays null: decide-time
+    resolution would refuse it (ToolkitReferenceAmbiguousError), so a hint
+    would advertise an approval that cannot succeed as filed."""
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "INSERT INTO credentials (id, type, name, api_vendor, created_by) "
+                "VALUES ('cred_ambsat', 'token_value', 'cred-ambsat', 'webtest-ambsat', :owner) "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkits (id, name, created_by) "
+                "VALUES ('tk_ambsat_2', 'ambsat-second', :owner) ON CONFLICT DO NOTHING"
+            ),
+            {"owner": OWNER_SUB},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO toolkit_credential_bindings (id, toolkit_id, credential_id) VALUES "
+                "('tcb_ambsat_1', 'tk_target', 'cred_ambsat'), "
+                "('tcb_ambsat_2', 'tk_ambsat_2', 'cred_ambsat') ON CONFLICT DO NOTHING"
+            )
+        )
+        await session.commit()
+    try:
+        filed = filer_client.post(
+            "/access-requests",
+            json={
+                "items": [
+                    {
+                        "resource_type": "toolkit",
+                        "action": "bind",
+                        "resource_reference": {"vendor": "webtest-ambsat"},
+                    }
+                ]
+            },
+        )
+        assert filed.status_code == 202, filed.text
+        got = owner_client.get(f"/access-requests/{filed.json()['id']}").json()
+        assert got["items"][0]["already_satisfied"] is None
+        assert got["items"][0]["already_satisfied_by"] is None
+    finally:
+        async with web_context.control_db.session() as session:
+            await session.execute(
+                text(
+                    "DELETE FROM toolkit_credential_bindings "
+                    "WHERE id IN ('tcb_ambsat_1', 'tcb_ambsat_2')"
+                )
+            )
+            await session.execute(text("DELETE FROM toolkits WHERE id = 'tk_ambsat_2'"))
+            await session.execute(text("DELETE FROM credentials WHERE id = 'cred_ambsat'"))
             await session.commit()
 
 

@@ -723,9 +723,12 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		const user = userEvent.setup();
 
 		// Pick the existing toolkit instead of creating one — selection is
-		// commit, so the wizard advances (no-auth plan: straight to rules).
+		// staged, the button commits (no-auth plan: straight to rules).
 		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		// No satisfaction hint on this request — the nudge must not render.
+		expect(screen.queryByText(/already wired/i)).not.toBeInTheDocument();
 		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
 		// Review names the adopted toolkit and marks it as pre-existing.
@@ -769,6 +772,7 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 
 		const picker = await screen.findByLabelText(/use an existing toolkit/i);
 		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
 		await screen.findByRole('button', { name: /^Review/ });
 
 		// Cancel: the wizard created NOTHING this session (the toolkit was
@@ -803,10 +807,11 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		await user.click(screen.getByRole('button', { name: /Create toolkit/i }));
 
 		// The credential step offers the vendor-scoped existing credentials;
-		// adopting one advances straight to rules — no create form, no
-		// connect flow (an existing credential is already usable).
+		// staging one and committing advances straight to rules — no create
+		// form, no connect flow.
 		const picker = await screen.findByLabelText(/use an existing credential/i);
 		await user.selectOptions(picker, 'cred_exist');
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
 		await user.click(await screen.findByRole('button', { name: /^Review/ }));
 
 		expect(await screen.findByText('Weather key')).toBeInTheDocument();
@@ -866,6 +871,84 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		expect(
 			within(credPicker).queryByRole('option', { name: /Old disabled key/ }),
 		).not.toBeInTheDocument();
+	});
+
+	it('names the wired toolkit, floats it in the picker, and reviews honestly on adopt', async () => {
+		// The backend hint carries WHICH toolkit satisfies the bind
+		// (already_satisfied_by) — the nudge names it and the picker floats it
+		// so the operator isn't left hunting through name-only options.
+		const base = planRequest();
+		const request = {
+			...base,
+			items: base.items.map((it) =>
+				it.id === 'i4'
+					? { ...it, already_satisfied: true, already_satisfied_by: 'tk_existing' }
+					: it,
+			),
+		};
+		stubAdoption(request);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		const nudge = await screen.findByText(/already wired to/i);
+		expect(nudge).toHaveTextContent('Ops toolkit');
+
+		const picker = await screen.findByLabelText(/use an existing toolkit/i);
+		const options = within(picker).getAllByRole('option');
+		expect(options[1]).toHaveTextContent(/Ops toolkit — already linked to this agent/);
+
+		// Adopt it and reach review: the note is the adopted variant, honest
+		// about the rules being updated (an approve REPLACES binding rules —
+		// never "nothing changes").
+		await user.selectOptions(picker, 'tk_existing');
+		await user.click(screen.getByRole('button', { name: 'Use this toolkit' }));
+		await user.click(await screen.findByRole('button', { name: /^Review/ }));
+		expect(
+			await screen.findByText(/reuses that setup and updates its permission rules/i),
+		).toBeInTheDocument();
+	});
+
+	it('offers a retry instead of silently collapsing when the toolkit list fails', async () => {
+		// The nudge may be telling the operator to adopt — a failed fetch must
+		// say so and offer a way out, not silently hide the picker.
+		const request = planRequest();
+		stubDirectoryAndRequest(request);
+		let failures = 0;
+		worker.use(
+			http.get('/toolkits', () => {
+				failures += 1;
+				if (failures === 1) return new HttpResponse(null, { status: 500 });
+				return HttpResponse.json({
+					data: [
+						{
+							toolkit_id: 'tk_existing',
+							name: 'Ops toolkit',
+							description: null,
+							active: true,
+							created_by: 'usr_admin',
+							created_at: '2026-01-01T00:00:00Z',
+							updated_at: null,
+							credential_count: 1,
+							key_count: 0,
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+		);
+		renderWithProviders(
+			<ProvisioningRequestDialog open request={request} onClose={() => {}} />,
+		);
+		const user = userEvent.setup();
+
+		expect(
+			await screen.findByText(/couldn.t load your existing toolkits/i),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole('button', { name: 'Retry' }));
+		expect(await screen.findByLabelText(/use an existing toolkit/i)).toBeInTheDocument();
 	});
 });
 

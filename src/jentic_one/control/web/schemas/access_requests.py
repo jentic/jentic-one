@@ -147,11 +147,23 @@ class AccessRequestItemResponse(BaseModel):
             "manually-fulfilled work instead of re-doing it in the wizard. "
             "Populated on single-request GETs for pending credential:bind, "
             "toolkit:bind, and scope:grant items; null when not computed "
-            "(list endpoints, decided items, fulfilment-only intents, or an "
-            "item whose target cannot be determined). Toolkit REFERENCES are "
-            "resolved under the caller's visibility, mirroring decide-time "
-            "resolution, so False can also mean 'satisfied by a toolkit this "
-            "caller cannot see'; explicit-id targets are probed directly."
+            "(list endpoints, decided items, fulfilment-only intents, an item "
+            "whose target cannot be determined, an ambiguous toolkit "
+            "reference — which approval would refuse as filed — or a "
+            "credential:bind whose credential is not visible to the caller). "
+            "Toolkit REFERENCES are resolved under the caller's visibility, "
+            "mirroring decide-time resolution, so False can also mean "
+            "'satisfied by a toolkit this caller cannot see'; explicit-id "
+            "targets are probed directly."
+        ),
+    )
+    already_satisfied_by: str | None = Field(
+        default=None,
+        description=(
+            "For a satisfied toolkit:bind, the id of the toolkit the agent is "
+            "already bound to — names the exact object so consumers can point "
+            "the operator at it. Null for other item types and whenever "
+            "already_satisfied is not true."
         ),
     )
 

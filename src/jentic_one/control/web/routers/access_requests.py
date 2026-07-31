@@ -47,6 +47,7 @@ def _to_item_response(item: AccessRequestItemView) -> AccessRequestItemResponse:
         decided_at=item.decided_at,
         decision_reason=item.decision_reason,
         already_satisfied=item.already_satisfied,
+        already_satisfied_by=item.already_satisfied_by,
     )
 
 

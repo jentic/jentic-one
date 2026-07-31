@@ -847,8 +847,28 @@ describe('ToolkitDetailPage', () => {
 });
 
 describe('ToolkitDetailPage — no-linked-agents banner', () => {
+	/** The default tk_demo_github handler carries key_count: 1 — override to a
+	 *  keys-less toolkit so the credential-dead-end condition can fire. */
+	function stubKeylessToolkit(credentialCount = 1) {
+		worker.use(
+			http.get('/toolkits/:toolkitId', () =>
+				HttpResponse.json({
+					toolkit_id: 'tk_demo_github',
+					name: 'GitHub Tools',
+					description: null,
+					active: true,
+					created_by: 'admin@local',
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: null,
+					credential_count: credentialCount,
+					key_count: 0,
+				}),
+			),
+		);
+	}
+
 	it('warns when credentials are bound but no agent is linked', async () => {
-		// tk_demo_github carries credential_count: 1; strip its bound agents.
+		stubKeylessToolkit();
 		seedAgents({ bound: [], workspace: [] });
 		const { container } = renderWithProviders(<ToolkitDetailPage />, {
 			route: ROUTE,
@@ -862,6 +882,7 @@ describe('ToolkitDetailPage — no-linked-agents banner', () => {
 	});
 
 	it('shows no banner when an agent is bound', async () => {
+		stubKeylessToolkit();
 		// Default handlers bind Support Bot to tk_demo_github.
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
@@ -872,29 +893,30 @@ describe('ToolkitDetailPage — no-linked-agents banner', () => {
 		expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument();
 	});
 
-	it('shows no banner when the toolkit has no credentials to serve', async () => {
-		worker.use(
-			http.get('/toolkits/:toolkitId', () =>
-				HttpResponse.json({
-					toolkit_id: 'tk_demo_github',
-					name: 'GitHub Tools',
-					description: null,
-					active: true,
-					created_by: 'admin@local',
-					created_at: '2026-05-01T10:00:00Z',
-					updated_at: null,
-					credential_count: 0,
-					key_count: 0,
-				}),
-			),
-		);
+	it('shows no banner when the toolkit has API keys to serve the credentials', async () => {
+		// Default handler: credential_count 1, key_count 1 — key callers reach
+		// the credentials fine, so there is no dead end to warn about.
 		seedAgents({ bound: [], workspace: [] });
 		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
 		await screen.findByRole('heading', { name: 'GitHub Tools' });
 
-		// An unbound, credential-less toolkit is just new — nothing to warn about.
-		await waitFor(() =>
-			expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument(),
-		);
+		// Settle the agents query first so the absence can't be a false pass
+		// on the not-yet-loaded suppression.
+		await screen.findByText(/no agents linked/i);
+		expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument();
+	});
+
+	it('shows no banner when the toolkit has no credentials to serve', async () => {
+		stubKeylessToolkit(0);
+		seedAgents({ bound: [], workspace: [] });
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		// An unbound, credential-less toolkit is just new — nothing to warn
+		// about. Settle the agents query first: the banner is suppressed until
+		// it resolves, so asserting immediately would pass even if the logic
+		// regressed.
+		await screen.findByText(/no agents linked/i);
+		expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument();
 	});
 });
