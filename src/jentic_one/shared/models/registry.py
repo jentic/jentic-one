@@ -35,3 +35,10 @@ class OverlayStatus(StrEnum):
 #: revision supersedes whatever is currently served. Keep the service that enqueues
 #: the materialize job and the stage that consumes it in sync via this constant.
 ORIGIN_OVERLAY = "overlay"
+
+#: Revision ``origin`` marker for a spec imported from a public-catalog entry. Set by
+#: ``CatalogService`` when it builds the import source, and load-bearing for Flow-3: the
+#: update-notify scanner treats a ``"catalog"``-origin revision (and an overlay-origin one
+#: whose ``source_url`` still points at a catalog spec) as an upstream-tracked candidate.
+#: Kept as a shared constant so the importer and the scanner classifier agree.
+ORIGIN_CATALOG = "catalog"

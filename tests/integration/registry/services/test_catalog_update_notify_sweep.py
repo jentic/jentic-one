@@ -69,6 +69,7 @@ async def registered_api(registry_db: DatabaseSession, clean_state: None) -> Api
                 spec_digest="sha256:registered",
                 source_type="url",
                 source_url=_SPEC_URL,
+                origin="catalog",
             )
         )
         await session.commit()
@@ -98,7 +99,7 @@ async def test_sweep_emits_event_and_records_check(
     events = await _events(integration_context)
     assert len(events) == 1
     evt = events[0]
-    assert evt.requires_action is False
+    assert evt.requires_action is True
     assert evt.data["api_id"] == str(registered_api.id)
     assert evt.data["upstream_digest"] == "sha256:upstream-new"
     assert evt.data["current_digest"] == "sha256:registered"
@@ -175,6 +176,7 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
                 spec_digest=real_digest,
                 source_type="url",
                 source_url=_SPEC_URL,
+                origin="catalog",
             )
         )
         await session.commit()
@@ -190,3 +192,73 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
         check = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check is not None
     assert check.last_notified_digest is None
+
+
+# ── Phase 4: origin-scoped candidates + outdated derivation ──────────────────
+
+
+async def test_sweep_skips_manual_revision_not_in_manifest(
+    integration_context: Context, registry_db: DatabaseSession, clean_state: None
+) -> None:
+    """A manual (origin=NULL) revision whose source_url isn't a manifest entry is skipped."""
+    api = Api(vendor="notify-test.com", name="manual", version="v1")
+    async with registry_db.session() as session:
+        session.add(api)
+        await session.flush()
+        session.add(
+            ApiRevision(
+                api_id=api.id,
+                state="published",
+                spec_digest="sha256:registered",
+                source_type="url",
+                source_url=_SPEC_URL,
+                origin=None,  # manual import
+            )
+        )
+        await session.commit()
+
+    integration_context.config.catalog.update_check_interval_seconds = 86400
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+    with patch(
+        f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed
+    ) as fetch:
+        # No catalog snapshot exists → manifest_spec_urls is empty → the manual spec is
+        # out of scope and never fetched.
+        await svc._run_update_notify_sweep()
+
+    fetch.assert_not_called()
+    assert await _events(integration_context) == []
+
+
+async def test_outdated_spec_urls_reflects_notify_then_clears_on_adopt(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """outdated_spec_urls surfaces a notified update, then drops once the digest is adopted."""
+    integration_context.config.catalog.update_check_interval_seconds = 86400
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+
+    async with integration_context.registry_db.session() as session:
+        outdated = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+    assert _SPEC_URL in outdated  # notified digest != current revision digest
+
+    # Simulate adopting the upstream: the current revision's digest now equals the
+    # notified digest (as a re-import would produce).
+    async with integration_context.registry_db.transaction() as session:
+        rev = (
+            await session.execute(
+                select(ApiRevision).where(ApiRevision.api_id == registered_api.id)
+            )
+        ).scalar_one()
+        rev.spec_digest = "sha256:upstream-new"
+
+    async with integration_context.registry_db.session() as session:
+        outdated_after = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+    assert _SPEC_URL not in outdated_after

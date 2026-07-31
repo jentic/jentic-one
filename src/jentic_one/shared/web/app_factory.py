@@ -21,6 +21,7 @@ from jentic_one import __version__
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.jobs.catalog_update_scanner import CatalogUpdateScanner
 from jentic_one.shared.jobs.credential_expiry_scanner import CredentialExpiryScanner
 from jentic_one.shared.jobs.execution_handler import ExecutionHandler
 from jentic_one.shared.jobs.handlers import JobHandlerRegistry
@@ -248,6 +249,38 @@ async def _stop_expiry_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_catalog_update_scanner(
+    ctx: Context,
+) -> tuple[CatalogUpdateScanner, asyncio.Task[None]] | None:
+    """Start the Flow-3 catalog update-notify scanner when registry + admin DBs exist.
+
+    The sweep reads sweep candidates + check rows from the **registry** DB and emits
+    ``catalog.update_available`` events into the **admin** DB, so both must be present.
+    A standalone-registry deployment (no admin DB) gets no scanner — there is nowhere
+    to record the notifications.
+    """
+    if not (ctx.has_db("registry") and ctx.has_db("admin")):
+        return None
+    scanner = CatalogUpdateScanner(ctx)
+    task = asyncio.create_task(scanner.run())
+    _logger.info("catalog_update_scanner_task_started")
+    return scanner, task
+
+
+async def _stop_catalog_update_scanner(
+    handle: tuple[CatalogUpdateScanner, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the catalog update-notify scanner (best-effort)."""
+    if handle is None:
+        return
+    scanner, task = handle
+    scanner.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
     """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
 
@@ -399,6 +432,7 @@ def create_surface_app(
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
             )
             scanner_task = _start_expiry_scanner(ctx)
+            catalog_scanner_task = _start_catalog_update_scanner(ctx)
             try:
                 yield
             finally:
@@ -410,6 +444,7 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
                 await _stop_telemetry(telemetry_handle)
@@ -480,9 +515,11 @@ def create_combined_app(
         telemetry_handle = await _start_telemetry(ctx)
         worker_task = _start_worker(ctx)
         scanner_task = _start_expiry_scanner(ctx)
+        catalog_scanner_task = _start_catalog_update_scanner(ctx)
         try:
             yield
         finally:
+            await _stop_catalog_update_scanner(catalog_scanner_task)
             await _stop_expiry_scanner(scanner_task)
             await _stop_worker(worker_task)
             await _stop_telemetry(telemetry_handle)

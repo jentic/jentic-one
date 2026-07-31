@@ -27,6 +27,7 @@ from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.executions import ExecutionStatus
 from jentic_one.shared.models.jobs import JobKind, JobStatus
 from jentic_one.shared.models.registry import (
+    ORIGIN_CATALOG,
     ORIGIN_OVERLAY,
     ApiRevisionSourceType,
     ApiRevisionState,
@@ -36,6 +37,7 @@ from jentic_one.shared.models.users import AuthProvider, InviteState
 
 __all__ = [
     "API_FIELD_MAX_LENGTH",
+    "ORIGIN_CATALOG",
     "ORIGIN_OVERLAY",
     "AccessRequestItemStatus",
     "AccessRequestStatus",

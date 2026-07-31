@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.catalog_update_checks import CatalogUpdateCheck
 
 
@@ -26,6 +27,30 @@ class CatalogUpdateCheckRepository:
             select(CatalogUpdateCheck).where(CatalogUpdateCheck.local_api_id == local_api_id)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def outdated_spec_urls(session: AsyncSession) -> set[str]:
+        """Spec URLs whose upstream has a notified update the local revision hasn't adopted.
+
+        An API is *outdated* when its check row carries a ``last_notified_digest`` (a real
+        ``catalog.update_available`` fired for it) that differs from the current
+        (non-archived) local revision's ``spec_digest``. Re-importing the upstream makes
+        the local digest equal the notified digest, so the API silently drops out of this
+        set — the read-time "resolve on re-import" without touching the event row.
+
+        Returned as a set of ``spec_url`` so the catalog list (keyed on manifest
+        ``spec_url``, not local ``api_id``) can flag ``update_available`` with a single
+        membership test. Joins on ``local_api_id`` → ``api_revisions.api_id``; an API with
+        no active revision (only archived) is excluded (nothing served to be outdated).
+        """
+        result = await session.execute(
+            select(CatalogUpdateCheck.spec_url)
+            .join(ApiRevision, ApiRevision.api_id == CatalogUpdateCheck.local_api_id)
+            .where(CatalogUpdateCheck.last_notified_digest.is_not(None))
+            .where(CatalogUpdateCheck.last_notified_digest != ApiRevision.spec_digest)
+            .where(ApiRevision.state != "archived")
+        )
+        return {url for (url,) in result.all() if url}
 
     @staticmethod
     async def upsert(

@@ -52,6 +52,7 @@ def _entry_response(request: Request, view: CatalogEntryView) -> CatalogEntryRes
         path=view.path,
         spec_url=view.spec_url,
         registered=view.registered,
+        update_available=view.update_available,
         links=CatalogEntryLinksResponse(
             self_link=self_link,
             operations=f"{self_link}/operations",
@@ -69,6 +70,7 @@ async def list_catalog(
     q: str | None = Query(default=None, max_length=500),
     registered_only: bool = False,
     unregistered_only: bool = False,
+    outdated_only: bool = False,
     cursor: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> JSONResponse:
@@ -76,8 +78,8 @@ async def list_catalog(
 
     The catalog holds thousands of entries, so this is cursor-paginated like
     ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-    ``catalog_total``/``registered_count`` count the whole manifest, not the
-    page, so the Discover status row stays stable while scrolling.
+    ``catalog_total``/``registered_count``/``outdated_count`` count the whole
+    manifest, not the page, so the Discover status row stays stable while scrolling.
     """
     if registered_only and unregistered_only:
         raise ProblemDetailException(
@@ -92,6 +94,7 @@ async def list_catalog(
             q=q,
             registered_only=registered_only,
             unregistered_only=unregistered_only,
+            outdated_only=outdated_only,
             cursor=cursor,
             limit=limit,
         )
@@ -102,6 +105,7 @@ async def list_catalog(
         data=[_entry_response(request, v) for v in page.data],
         catalog_total=page.catalog_total,
         registered_count=page.registered_count,
+        outdated_count=page.outdated_count,
         manifest_age_seconds=page.manifest_age_seconds,
         has_more=page.has_more,
         next_cursor=page.next_cursor,

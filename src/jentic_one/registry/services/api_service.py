@@ -12,6 +12,7 @@ import structlog
 from pydantic import BaseModel
 
 from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.registry.repos.control_credential_boundary_repo import (
     ControlCredentialBoundaryRepository,
 )
@@ -52,6 +53,9 @@ class ApiPageItem(BaseModel):
     host: str | None
     created_at: datetime
     updated_at: datetime
+    origin: str | None = None
+    source_url: str | None = None
+    update_available: bool = False
 
 
 class ApiPage(BaseModel):
@@ -80,6 +84,12 @@ class ApiView:
     security_schemes: list[str]
     created_at: datetime
     updated_at: datetime
+    #: Provenance of the current revision (``"catalog"``/``"overlay"``/``None`` manual)
+    #: and its upstream spec URL — the #648 provenance backend half. ``update_available``
+    #: is true when this API is catalog-tracked and has an un-adopted upstream update.
+    origin: str | None = None
+    source_url: str | None = None
+    update_available: bool = False
 
 
 class ApiService:
@@ -129,16 +139,21 @@ class ApiService:
             ]
             security_types: dict[uuid.UUID, list[str]] = {}
             server_hosts: dict[uuid.UUID, str | None] = {}
+            provenance: dict[uuid.UUID, tuple[str | None, str | None]] = {}
+            outdated_api_ids: set[uuid.UUID] = set()
             if revision_ids:
                 security_types = await ApiRepository.load_security_scheme_types(
                     session, revision_ids
                 )
                 server_hosts = await ApiRepository.load_server_hosts(session, revision_ids)
+                provenance = await ApiRepository.load_revision_provenance(session, revision_ids)
+                outdated_api_ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
 
             for row in rows:
                 rev = row.current_revision_id
                 host = server_hosts.get(rev) if rev else None
                 schemes = security_types.get(rev, []) if rev else []
+                origin, source_url = provenance.get(rev, (None, None)) if rev else (None, None)
                 items.append(
                     ApiPageItem(
                         id=row.id,
@@ -156,6 +171,9 @@ class ApiService:
                         host=host,
                         created_at=row.created_at,
                         updated_at=row.updated_at or row.created_at,
+                        origin=origin,
+                        source_url=source_url,
+                        update_available=row.id in outdated_api_ids,
                     )
                 )
 
@@ -292,14 +310,26 @@ class ApiService:
 
         host: str | None = None
         security_schemes: list[str] = []
+        origin: str | None = None
+        source_url: str | None = None
 
         if api.current_revision is not None:
             revision = api.current_revision
+            origin = revision.origin
+            source_url = revision.source_url
             if revision.servers:
                 parsed = urlparse(revision.servers[0].url)
                 host = parsed.hostname
             if revision.security_schemes:
                 security_schemes = sorted({s.type for s in revision.security_schemes})
+
+        update_available = False
+        if source_url is not None:
+            # Key on api_id, not source_url: two local APIs can share one upstream URL, so
+            # URL membership would over-flag. (source_url gate keeps unregistered/manual-only
+            # APIs — which never have a check row — a cheap short-circuit.)
+            outdated = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+            update_available = api.id in outdated
 
         return ApiView(
             vendor=api.vendor,
@@ -316,4 +346,7 @@ class ApiService:
             security_schemes=security_schemes,
             created_at=api.created_at,
             updated_at=api.updated_at or api.created_at,
+            origin=origin,
+            source_url=source_url,
+            update_available=update_available,
         )

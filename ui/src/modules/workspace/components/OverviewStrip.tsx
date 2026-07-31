@@ -8,8 +8,10 @@
  * live in other modules, so the stats here are the API-owned facts: operations,
  * revisions, security schemes, and live-revision state.
  */
-import { Activity, GitBranch, ShieldCheck, Zap } from 'lucide-react';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import { Activity, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
+import { Badge, Button, Tooltip } from '@/shared/ui';
+import { useReimportFromCatalog } from '@/modules/workspace/api';
+import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
 
 function relativeTime(iso: string): string | null {
 	const ts = Date.parse(iso);
@@ -51,12 +53,68 @@ function MetaItem({
 export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	const hasLive = api.currentRevisionId !== null;
 	const importedAgo = relativeTime(api.createdAt);
+	const key: ApiKey = api.api;
+	const { reimport, isReimporting } = useReimportFromCatalog(key);
+
+	// Re-import is only safe for catalog-origin APIs. Overlay-origin APIs still
+	// surface the "Update available" signal, but a silent re-import would clobber
+	// confirmed overlays (blocked on an internal issue), so the button is
+	// disabled with a tooltip steering the user to resolve overlays first. When
+	// `origin` is absent (older backend), we gate conservatively on catalog only.
+	const isCatalogOrigin = api.origin === 'catalog';
+	// The catalog entry is addressed by its `api_id` (the manifest domain, e.g.
+	// `stripe.com`), which for a catalog-origin API equals the API's vendor. The
+	// `/apis` payload doesn't expose the catalog `api_id` directly, so we thread
+	// the vendor — correct for the common (non-umbrella) case.
+	const catalogApiId = api.api.vendor;
 
 	return (
 		<section
 			className="border-border/60 bg-muted/20 rounded-xl border"
 			data-testid="workspace-overview-strip"
 		>
+			{api.updateAvailable ? (
+				<div
+					className="border-border/30 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+					data-testid="workspace-update-available"
+				>
+					<div className="flex items-center gap-2">
+						<Badge variant="warning" dot>
+							Update available
+						</Badge>
+						<span className="text-muted-foreground text-xs">
+							The upstream spec has changed since this API was imported.
+						</span>
+					</div>
+					{isCatalogOrigin ? (
+						<Button
+							variant="outline"
+							size="sm"
+							loading={isReimporting}
+							onClick={() => reimport(catalogApiId)}
+							data-testid="workspace-reimport"
+						>
+							<RefreshCw size={14} aria-hidden="true" />
+							Re-import
+						</Button>
+					) : (
+						<Tooltip
+							content="Resolve overlays first — re-importing would overwrite this API's confirmed overlays."
+							interactiveChild
+						>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled
+								data-testid="workspace-reimport"
+							>
+								<RefreshCw size={14} aria-hidden="true" />
+								Re-import
+							</Button>
+						</Tooltip>
+					)}
+				</div>
+			) : null}
 			{api.api.host ? (
 				<div className="border-border/30 border-b px-4 py-3">
 					<p className="text-muted-foreground mb-1.5 text-[11px] font-medium tracking-wide uppercase">

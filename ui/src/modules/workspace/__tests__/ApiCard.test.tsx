@@ -46,4 +46,14 @@ describe('ApiCard', () => {
 		expect(label).not.toBe('Open ');
 		expect(label.replace(/^Open /, '').trim()).not.toBe('');
 	});
+
+	it('shows the "Update available" badge when updateAvailable is true', () => {
+		renderWithProviders(<ApiCard api={makeApi({ updateAvailable: true })} />);
+		expect(screen.getByTestId('update-available-badge')).toHaveTextContent('Update available');
+	});
+
+	it('hides the badge when updateAvailable is false/absent', () => {
+		renderWithProviders(<ApiCard api={makeApi()} />);
+		expect(screen.queryByTestId('update-available-badge')).not.toBeInTheDocument();
+	});
 });

@@ -204,7 +204,7 @@
           "path": "jentic catalog",
           "use": "catalog",
           "short": "Browse, search, and import APIs from the public catalog",
-          "long": "catalog explores the Jentic public API catalog and imports specs into\nthis deployment's local registry. Run bare on a terminal to open an\ninteractive browser (search, preview operations, import in place); the\nsubcommands (list/search/show/import/refresh) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
+          "long": "catalog explores the Jentic public API catalog and imports specs into\nthis deployment's local registry. Run bare on a terminal to open an\ninteractive browser (search, preview operations, import in place); the\nsubcommands (list/search/show/import/outdated/refresh) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
           "group_title": "APIs",
           "flags": [
             {
@@ -389,6 +389,37 @@
                   "type": "duration",
                   "default": "2m0s",
                   "usage": "how long to wait for the import job"
+                }
+              ]
+            },
+            {
+              "name": "outdated",
+              "path": "jentic catalog outdated",
+              "use": "outdated",
+              "short": "List registered entries with an upstream update available",
+              "long": "outdated lists locally-registered catalog entries whose upstream spec has\nchanged since import (an update is available). Re-importing promotes the\nnew spec to live, so this is a suggestion surface for operators — review\nbefore re-importing. Script-friendly with --json.",
+              "flags": [
+                {
+                  "name": "base-url",
+                  "type": "string",
+                  "usage": "Jentic control-plane base URL"
+                },
+                {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "emit JSON instead of formatted output"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "50",
+                  "usage": "page size (1-200)"
+                },
+                {
+                  "name": "profile",
+                  "type": "string",
+                  "usage": "profile name (default: config default_profile)"
                 }
               ]
             },

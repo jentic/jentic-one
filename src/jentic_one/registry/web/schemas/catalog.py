@@ -74,6 +74,13 @@ class CatalogEntryResponse(BaseModel):
             "non-archived revision in `GET /apis`."
         )
     )
+    update_available: bool = Field(
+        default=False,
+        description=(
+            "Whether this (registered) entry has an upstream spec update the local "
+            "revision hasn't adopted yet. Always false for unregistered entries."
+        ),
+    )
     links: CatalogEntryLinksResponse = Field(serialization_alias="_links")
 
 
@@ -101,6 +108,12 @@ class CatalogListResponse(BaseModel):
     )
     registered_count: int = Field(
         description="Count of whole-manifest entries already imported locally."
+    )
+    outdated_count: int = Field(
+        default=0,
+        description=(
+            "Count of whole-manifest registered entries with an upstream update available."
+        ),
     )
     manifest_age_seconds: int | None = Field(
         default=None,

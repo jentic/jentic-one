@@ -28,6 +28,7 @@ import {
 	listOperations,
 	listRevisions,
 	promoteRevision,
+	reimportCatalogEntry,
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
@@ -363,4 +364,50 @@ export function useImportSpec(): UseImportSpec {
 	);
 
 	return { importSpec, isImporting };
+}
+
+/**
+ * Re-import a catalog-backed API to adopt an upstream spec update (Flow-3).
+ *
+ * The API detail surface shows a "Re-import" affordance when the API reports
+ * `update_available`. Clicking it re-runs the catalog import for the API's
+ * catalog `api_id` (`POST /catalog/{id}:import`) — the same async job Discover
+ * enqueues. We toast the queued job (mirroring Discover's "Import started"
+ * surface) and, once queued, invalidate the API's detail cache so the freshly
+ * cleared `update_available` (and any new revision count) re-reads on the next
+ * fetch. The 202 doesn't mean the new revision has landed yet, so this is a
+ * "queued" acknowledgement, not a completion.
+ */
+export function useReimportFromCatalog(key: ApiKey) {
+	const queryClient = useQueryClient();
+
+	const mutation = useMutation({
+		mutationFn: (apiId: string) => reimportCatalogEntry(apiId),
+		onSuccess: (job) => {
+			toast({
+				variant: 'success',
+				title: 'Re-import started',
+				description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
+			});
+			// The re-import lands a new revision and clears `update_available`
+			// server-side; drop the API's detail + revision caches so both re-read.
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Re-import failed',
+				description:
+					error instanceof Error
+						? error.message
+						: 'Could not re-import from the catalog.',
+			});
+		},
+	});
+
+	return {
+		reimport: (apiId: string) => mutation.mutate(apiId),
+		isReimporting: mutation.isPending,
+	};
 }

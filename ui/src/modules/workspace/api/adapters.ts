@@ -65,6 +65,14 @@ export function toWorkspaceApi(value: unknown): WorkspaceApi {
 		securitySchemes: strArray(r.security_schemes),
 		source: typeof r.source === 'string' ? r.source : undefined,
 		registered: typeof r.registered === 'boolean' ? r.registered : undefined,
+		origin: typeof r.origin === 'string' ? r.origin : r.origin === null ? null : undefined,
+		sourceUrl:
+			typeof r.source_url === 'string'
+				? r.source_url
+				: r.source_url === null
+					? null
+					: undefined,
+		updateAvailable: typeof r.update_available === 'boolean' ? r.update_available : undefined,
 		createdAt: str(r.created_at),
 		updatedAt: str(r.updated_at),
 	};
