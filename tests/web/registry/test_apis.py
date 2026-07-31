@@ -189,7 +189,13 @@ def test_import_inline_source(authed_client: TestClient) -> None:
 async def test_list_apis_all_items_are_local(
     authed_client: TestClient, web_context: Context, _cleanup_apis: None
 ) -> None:
-    """/apis is local-only — items carry no catalog-flavored fields."""
+    """/apis is local-only — items carry no catalog-*blend* fields.
+
+    ``catalog_api_id`` is NOT the old blend coming back: the blended contract
+    used it to mark catalog-sourced *list rows*; the field on today's contract
+    is persisted import provenance on the local Api row itself (#910) — null
+    for APIs that never came from the catalog, like these seeded ones.
+    """
     await _seed_api(web_context, vendor="local-a.com")
     await _seed_api(web_context, vendor="local-b.com")
     resp = authed_client.get("/apis")
@@ -200,7 +206,8 @@ async def test_list_apis_all_items_are_local(
         # the old blended contract's fields are gone, not just constant
         assert "source" not in item
         assert "registered" not in item
-        assert "catalog_api_id" not in item
+        # import provenance is present but null for non-catalog imports
+        assert item["catalog_api_id"] is None
         # and an import link never appears on a local api row
         assert "import" not in item["_links"]
 
