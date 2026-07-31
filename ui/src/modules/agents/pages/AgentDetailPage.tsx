@@ -25,6 +25,7 @@ import { useState } from 'react';
 import { useParams, useSearchParams } from 'react-router';
 import {
 	Activity as ActivityIcon,
+	Fingerprint,
 	Key,
 	LayoutDashboard,
 	Settings,
@@ -37,8 +38,7 @@ import {
 	AppLink,
 	BackButton,
 	Button,
-	Card,
-	CardBody,
+	DetailSection,
 	LoadingState,
 	PageHeader,
 	PageShell,
@@ -325,54 +325,51 @@ export default function AgentDetailPage() {
 			>
 				{activeTab === 'overview' && (
 					<>
-						<Card>
-							<CardBody>
-								<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+						<DetailSection
+							title="Attribution"
+							icon={<Fingerprint className="h-4 w-4" />}
+						>
+							<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+								<MetaItem
+									label="Registered"
+									value={formatTimestamp(agent.createdAt)}
+								/>
+								{agent.attribution.registeredBy ? (
 									<MetaItem
-										label="Registered"
-										value={formatTimestamp(agent.createdAt)}
+										label="Registered by"
+										value={
+											<ActorLabel actorId={agent.attribution.registeredBy} />
+										}
 									/>
-									{agent.attribution.registeredBy ? (
-										<MetaItem
-											label="Registered by"
-											value={
-												<ActorLabel
-													actorId={agent.attribution.registeredBy}
-												/>
-											}
-										/>
-									) : null}
-									{agent.approvedAt ? (
-										<MetaItem
-											label="Approved"
-											value={formatTimestamp(agent.approvedAt)}
-										/>
-									) : null}
-									{agent.attribution.approvedBy ? (
-										<MetaItem
-											label="Approved by"
-											value={
-												<ActorLabel
-													actorId={agent.attribution.approvedBy}
-												/>
-											}
-										/>
-									) : null}
-									{agent.ownerId ? (
-										<MetaItem
-											label="Owner"
-											value={<ActorLabel actorId={agent.ownerId} />}
-										/>
-									) : null}
-									{agent.parentAgentId ? (
-										<MetaItem
-											label="Parent agent"
-											value={<ActorLabel actorId={agent.parentAgentId} />}
-										/>
-									) : null}
-								</dl>
-							</CardBody>
-						</Card>
+								) : null}
+								{agent.approvedAt ? (
+									<MetaItem
+										label="Approved"
+										value={formatTimestamp(agent.approvedAt)}
+									/>
+								) : null}
+								{agent.attribution.approvedBy ? (
+									<MetaItem
+										label="Approved by"
+										value={
+											<ActorLabel actorId={agent.attribution.approvedBy} />
+										}
+									/>
+								) : null}
+								{agent.ownerId ? (
+									<MetaItem
+										label="Owner"
+										value={<ActorLabel actorId={agent.ownerId} />}
+									/>
+								) : null}
+								{agent.parentAgentId ? (
+									<MetaItem
+										label="Parent agent"
+										value={<ActorLabel actorId={agent.parentAgentId} />}
+									/>
+								) : null}
+							</dl>
+						</DetailSection>
 						<BoundToolkitsCard agentId={agent.id} agentStatus={agent.status} />
 						{/* Actor-scoped audit slice — same "Recent changes" grammar as
 						    the toolkit console (admin only; empty for non-admins). */}

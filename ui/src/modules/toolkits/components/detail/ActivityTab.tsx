@@ -1,8 +1,7 @@
 import { Activity, ListOrdered, Lock, TrendingUp } from 'lucide-react';
-import { ActorLabel, AppLink, TrendLineChart } from '@/shared/ui';
+import { ActorLabel, AppLink, DetailSection, EmptyRow, TrendLineChart } from '@/shared/ui';
 import { useToolkitExecutions, useToolkitUsage } from '@/modules/toolkits/api';
 import type { ToolkitExecution } from '@/modules/toolkits/api/types';
-import { DetailSection, EmptyRow } from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ROUTE_PATHS } from '@/shared/app/routes';
 

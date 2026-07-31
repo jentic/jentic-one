@@ -39,15 +39,14 @@ import {
 	AppLink,
 	BackButton,
 	Button,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
-	CopyButton,
+	DangerZone,
+	DetailSection,
+	IdentitySettingsCard,
 	LoadingState,
 	PageHeader,
 	PageShell,
 	TabNav,
+	type DangerZoneAction,
 	type TabNavOption,
 } from '@/shared/ui';
 import { cn, formatTimestamp } from '@/shared/lib/utils';
@@ -81,11 +80,7 @@ import {
 import { KpiStrip } from '@/modules/agents/components/detail/KpiStrip';
 import { ActivityPanel } from '@/modules/agents/components/detail/ActivityPanel';
 import { ActorAuditPanel } from '@/modules/agents/components/detail/ActorAuditPanel';
-import {
-	DangerZone,
-	MetaItem,
-	type DangerZoneItem,
-} from '@/modules/agents/components/detail/shared';
+import { MetaItem } from '@/modules/agents/components/detail/shared';
 import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 const DETAIL_TABS = ['overview', 'activity', 'access', 'keys', 'settings'] as const;
@@ -124,38 +119,34 @@ function SaKeysPanel({
 	const generateApiKey = useGenerateServiceAccountApiKey();
 	const [confirmGenerate, setConfirmGenerate] = useState(false);
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2">
-					<KeyRound className="text-muted-foreground h-4 w-4" aria-hidden />
-					API key
-				</CardTitle>
-			</CardHeader>
-			<CardBody className="space-y-3">
-				<p className="text-muted-foreground text-sm">
-					Generate a bearer key this service account authenticates with. The plaintext is
-					shown once — store it securely. jentic-one doesn’t expose key metadata or
-					rotation history for service accounts yet.
+		<DetailSection
+			title="API key"
+			icon={<KeyRound className="h-4 w-4" />}
+			bodyClassName="space-y-3"
+		>
+			<p className="text-muted-foreground text-sm">
+				Generate a bearer key this service account authenticates with. The plaintext is
+				shown once — store it securely. jentic-one doesn’t expose key metadata or rotation
+				history for service accounts yet.
+			</p>
+			<div className="flex justify-end">
+				<Button
+					size="sm"
+					variant="outline"
+					disabled={account.status !== 'active' || generateApiKey.isPending}
+					loading={generateApiKey.isPending}
+					onClick={() => setConfirmGenerate(true)}
+					aria-label={`Generate API key for ${account.name}`}
+				>
+					<KeyRound className="h-3.5 w-3.5" />
+					Generate API Key
+				</Button>
+			</div>
+			{account.status !== 'active' && (
+				<p className="text-muted-foreground text-xs">
+					Keys can only be generated for active service accounts.
 				</p>
-				<div className="flex justify-end">
-					<Button
-						size="sm"
-						variant="outline"
-						disabled={account.status !== 'active' || generateApiKey.isPending}
-						loading={generateApiKey.isPending}
-						onClick={() => setConfirmGenerate(true)}
-						aria-label={`Generate API key for ${account.name}`}
-					>
-						<KeyRound className="h-3.5 w-3.5" />
-						Generate API Key
-					</Button>
-				</div>
-				{account.status !== 'active' && (
-					<p className="text-muted-foreground text-xs">
-						Keys can only be generated for active service accounts.
-					</p>
-				)}
-			</CardBody>
+			)}
 			<ConfirmDialog
 				open={confirmGenerate}
 				title={`Generate API key for ${account.name}`}
@@ -173,15 +164,15 @@ function SaKeysPanel({
 				}}
 				onClose={() => setConfirmGenerate(false)}
 			/>
-		</Card>
+		</DetailSection>
 	);
 }
 
 /**
- * The Settings tab body. Hosts the immutable, copyable account id (same
- * placement as the toolkit console's Toolkit ID) and the danger zone. There
- * is no PATCH /service-accounts in jentic-one (backend gap), so — unlike the
- * agent page — there's no metadata form here.
+ * The Settings tab body — the shared console cards in read-only mode: the
+ * immutable, copyable account id (same {@link IdentitySettingsCard} the agent
+ * and toolkit consoles render — there is no PATCH /service-accounts in
+ * jentic-one, a backend gap, so no metadata form) plus the shared danger zone.
  */
 function SaSettingsPanel({
 	account,
@@ -193,25 +184,28 @@ function SaSettingsPanel({
 	lifecyclePending: boolean;
 }) {
 	const actions = ACTIONS_FOR_STATUS[account.status];
-	const dangerItems: DangerZoneItem[] = [
+	const dangerActions: DangerZoneAction[] = [
 		...(actions.includes('disable')
 			? [
 					{
-						action: 'disable' as const,
+						key: 'disable',
 						title: 'Disable service account',
 						description:
 							'Immediately revokes this account’s access. Reversible — you can re-enable it later.',
+						buttonLabel: 'Disable',
 						ariaLabel: `Disable ${account.name}`,
+						emphasis: 'outline' as const,
 					},
 				]
 			: []),
 		...(actions.includes('archive')
 			? [
 					{
-						action: 'archive' as const,
+						key: 'archive',
 						title: 'Archive service account',
 						description:
 							'Removes this account from the fleet and cascades to its grants. This cannot be undone.',
+						buttonLabel: 'Archive',
 						ariaLabel: `Archive ${account.name}`,
 					},
 				]
@@ -220,33 +214,19 @@ function SaSettingsPanel({
 
 	return (
 		<div className="space-y-4">
-			<Card>
-				<CardHeader>
-					<CardTitle>General</CardTitle>
-				</CardHeader>
-				<CardBody className="space-y-4">
-					{/* The immutable account id — what API calls and audit rows
-					    reference. Lives here (not in the page chrome), same as the
-					    toolkit console's Toolkit ID. */}
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<span className="text-muted-foreground flex items-center gap-1.5 text-xs">
-							<Fingerprint className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-							Account ID
-						</span>
-						<span className="bg-muted text-muted-foreground inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-xs">
-							{account.id}
-							<CopyButton value={account.id} size="icon" variant="ghost" />
-						</span>
-					</div>
-					<p className="text-muted-foreground text-sm">
-						Renaming or re-describing a service account isn’t supported yet — jentic-one
-						has no PATCH /service-accounts endpoint. Create a replacement account if the
-						metadata must change.
-					</p>
-				</CardBody>
-			</Card>
+			<IdentitySettingsCard
+				idLabel="Account ID"
+				idValue={account.id}
+				name={account.name}
+				description={account.description ?? null}
+				readOnlyNote="Renaming or re-describing a service account isn’t supported yet — jentic-one has no PATCH /service-accounts endpoint. Create a replacement account if the metadata must change."
+			/>
 
-			<DangerZone items={dangerItems} pending={lifecyclePending} onAction={onLifecycle} />
+			<DangerZone
+				actions={dangerActions}
+				pending={lifecyclePending}
+				onAction={(key) => onLifecycle(key as 'disable' | 'archive')}
+			/>
 		</div>
 	);
 }
@@ -480,48 +460,47 @@ export default function ServiceAccountDetailPage() {
 			>
 				{activeTab === 'overview' && (
 					<>
-						<Card>
-							<CardBody>
-								<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+						<DetailSection
+							title="Attribution"
+							icon={<Fingerprint className="h-4 w-4" />}
+						>
+							<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+								<MetaItem
+									label="Created"
+									value={formatTimestamp(account.createdAt)}
+								/>
+								{account.attribution.registeredBy ? (
 									<MetaItem
-										label="Created"
-										value={formatTimestamp(account.createdAt)}
+										label="Created by"
+										value={
+											<ActorLabel
+												actorId={account.attribution.registeredBy}
+											/>
+										}
 									/>
-									{account.attribution.registeredBy ? (
-										<MetaItem
-											label="Created by"
-											value={
-												<ActorLabel
-													actorId={account.attribution.registeredBy}
-												/>
-											}
-										/>
-									) : null}
-									{account.approvedAt ? (
-										<MetaItem
-											label="Approved"
-											value={formatTimestamp(account.approvedAt)}
-										/>
-									) : null}
-									{account.attribution.approvedBy ? (
-										<MetaItem
-											label="Approved by"
-											value={
-												<ActorLabel
-													actorId={account.attribution.approvedBy}
-												/>
-											}
-										/>
-									) : null}
-									{account.ownerId ? (
-										<MetaItem
-											label="Owner"
-											value={<ActorLabel actorId={account.ownerId} />}
-										/>
-									) : null}
-								</dl>
-							</CardBody>
-						</Card>
+								) : null}
+								{account.approvedAt ? (
+									<MetaItem
+										label="Approved"
+										value={formatTimestamp(account.approvedAt)}
+									/>
+								) : null}
+								{account.attribution.approvedBy ? (
+									<MetaItem
+										label="Approved by"
+										value={
+											<ActorLabel actorId={account.attribution.approvedBy} />
+										}
+									/>
+								) : null}
+								{account.ownerId ? (
+									<MetaItem
+										label="Owner"
+										value={<ActorLabel actorId={account.ownerId} />}
+									/>
+								) : null}
+							</dl>
+						</DetailSection>
 						{/* Actor-scoped audit slice — same "Recent changes" grammar as
 						    the agent + toolkit consoles (admin only). */}
 						<ActorAuditPanel actorKind="service-account" actorId={account.id} />

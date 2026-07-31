@@ -1,16 +1,11 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Ban, Check, Globe, Key, Pencil, Plus, X } from 'lucide-react';
-import { Badge, Button, ErrorAlert, Input } from '@/shared/ui';
+import { Badge, Button, DetailSection, EmptyRow, ErrorAlert, Input } from '@/shared/ui';
 import { useCreateKey, useRevokeKey, useToolkitKeys, useUpdateKey } from '@/modules/toolkits/api';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
 import { OneTimeKeyDisplay } from '@/modules/toolkits/components/OneTimeKeyDisplay';
-import {
-	DetailSection,
-	EmptyRow,
-	panelMotion,
-	rowMotion,
-} from '@/modules/toolkits/components/detail/shared';
+import { panelMotion, rowMotion } from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import type { ToolkitKey } from '@/modules/toolkits/api/types';
 

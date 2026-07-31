@@ -10,16 +10,7 @@
  */
 import { useState } from 'react';
 import { Ban, History, KeyRound } from 'lucide-react';
-import {
-	ActorLabel,
-	Badge,
-	Button,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
-	LoadingState,
-} from '@/shared/ui';
+import { ActorLabel, Badge, Button, DetailSection, LoadingState } from '@/shared/ui';
 import { formatTimestamp, timeAgo } from '@/shared/lib/utils';
 import {
 	useAgentApiKeyInfo,
@@ -63,122 +54,112 @@ export function AgentKeysPanel({ agent }: { agent: AgentEntity }) {
 
 	return (
 		<div className="space-y-4">
-			<Card>
-				<CardHeader className="flex flex-row items-center justify-between gap-2">
-					<div className="flex items-center gap-2">
-						<KeyRound className="text-primary h-4 w-4" />
-						<CardTitle>API Key</CardTitle>
-					</div>
-					{info && (
+			<DetailSection
+				title="API key"
+				icon={<KeyRound className="h-4 w-4" />}
+				titleExtra={
+					info && (
 						<Badge variant={info.status === 'active' ? 'success' : 'danger'}>
 							{info.status}
 						</Badge>
-					)}
-				</CardHeader>
-				<CardBody className="space-y-4">
-					{info ? (
-						<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-							<MetaItem label="Key ID" value={info.id} />
-							<MetaItem label="Created" value={formatTimestamp(info.createdAt)} />
-							{info.rotatedAt && (
-								<MetaItem
-									label="Last rotated"
-									value={formatTimestamp(info.rotatedAt)}
-								/>
-							)}
-							{info.createdBy && (
-								<MetaItem
-									label="Created by"
-									value={<ActorLabel actorId={info.createdBy} />}
-								/>
-							)}
-						</dl>
-					) : (
-						<p className="text-muted-foreground text-sm">
-							No API key has been issued for this agent yet.
-						</p>
-					)}
+					)
+				}
+				bodyClassName="space-y-4"
+			>
+				{info ? (
+					<dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+						<MetaItem label="Key ID" value={info.id} />
+						<MetaItem label="Created" value={formatTimestamp(info.createdAt)} />
+						{info.rotatedAt && (
+							<MetaItem
+								label="Last rotated"
+								value={formatTimestamp(info.rotatedAt)}
+							/>
+						)}
+						{info.createdBy && (
+							<MetaItem
+								label="Created by"
+								value={<ActorLabel actorId={info.createdBy} />}
+							/>
+						)}
+					</dl>
+				) : (
+					<p className="text-muted-foreground text-sm">
+						No API key has been issued for this agent yet.
+					</p>
+				)}
 
-					{agent.status === 'active' ? (
-						<div className="flex flex-wrap justify-end gap-2">
-							{agent.hasApiKey && (
-								<Button
-									size="sm"
-									variant="danger"
-									disabled={mutating}
-									loading={revokeApiKey.isPending}
-									onClick={() => setConfirmRevoke(true)}
-									aria-label={`Revoke API key for ${agent.name}`}
-								>
-									<Ban className="h-3.5 w-3.5" />
-									Revoke API Key
-								</Button>
-							)}
+				{agent.status === 'active' ? (
+					<div className="flex flex-wrap justify-end gap-2">
+						{agent.hasApiKey && (
 							<Button
 								size="sm"
-								variant="outline"
+								variant="danger"
 								disabled={mutating}
-								loading={!confirmRegenerate && generateApiKey.isPending}
-								onClick={() => {
-									// Regenerating rotates the credential — the current key
-									// stops working the moment the new one is issued, so it
-									// confirms first. A first issue destroys nothing and
-									// generates directly.
-									if (agent.hasApiKey) setConfirmRegenerate(true);
-									else void generate();
-								}}
-								aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
+								loading={revokeApiKey.isPending}
+								onClick={() => setConfirmRevoke(true)}
+								aria-label={`Revoke API key for ${agent.name}`}
 							>
-								<KeyRound className="h-3.5 w-3.5" />
-								{agent.hasApiKey ? 'Regenerate API Key' : 'Generate API Key'}
+								<Ban className="h-3.5 w-3.5" />
+								Revoke API Key
 							</Button>
-						</div>
-					) : (
-						<p className="text-muted-foreground text-xs">
-							Keys can only be issued while the agent is active.
-						</p>
-					)}
-				</CardBody>
-			</Card>
+						)}
+						<Button
+							size="sm"
+							variant="outline"
+							disabled={mutating}
+							loading={!confirmRegenerate && generateApiKey.isPending}
+							onClick={() => {
+								// Regenerating rotates the credential — the current key
+								// stops working the moment the new one is issued, so it
+								// confirms first. A first issue destroys nothing and
+								// generates directly.
+								if (agent.hasApiKey) setConfirmRegenerate(true);
+								else void generate();
+							}}
+							aria-label={`${agent.hasApiKey ? 'Regenerate' : 'Generate'} API key for ${agent.name}`}
+						>
+							<KeyRound className="h-3.5 w-3.5" />
+							{agent.hasApiKey ? 'Regenerate API Key' : 'Generate API Key'}
+						</Button>
+					</div>
+				) : (
+					<p className="text-muted-foreground text-xs">
+						Keys can only be issued while the agent is active.
+					</p>
+				)}
+			</DetailSection>
 
 			{history.length > 0 && (
-				<Card>
-					<CardHeader className="flex flex-row items-center gap-2">
-						<History className="text-primary h-4 w-4" />
-						<CardTitle>API Key History</CardTitle>
-					</CardHeader>
-					<CardBody className="space-y-2">
-						{history.map((entry) => (
-							<div
-								key={entry.id}
-								className="border-border/60 flex items-center justify-between rounded-lg border px-3 py-2"
-							>
-								<div className="flex items-center gap-2">
-									<Badge
-										variant={
-											entry.reason === 'api_key_revoked'
-												? 'danger'
-												: 'default'
-										}
-									>
-										{entry.reason === 'api_key_revoked' ? 'Revoked' : 'Rotated'}
-									</Badge>
-									{entry.actorId && (
-										<span className="text-muted-foreground truncate text-xs">
-											by <ActorLabel actorId={entry.actorId} />
-										</span>
-									)}
-								</div>
-								<span
-									className="text-muted-foreground/70 shrink-0 text-[11px]"
-									title={formatTimestamp(entry.occurredAt)}
+				<DetailSection title="API key history" icon={<History className="h-4 w-4" />}>
+					{history.map((entry) => (
+						<div
+							key={entry.id}
+							className="border-border/60 flex items-center justify-between rounded-lg border px-3 py-2"
+						>
+							<div className="flex items-center gap-2">
+								<Badge
+									variant={
+										entry.reason === 'api_key_revoked' ? 'danger' : 'default'
+									}
 								>
-									{timeAgo(entry.occurredAt)}
-								</span>
+									{entry.reason === 'api_key_revoked' ? 'Revoked' : 'Rotated'}
+								</Badge>
+								{entry.actorId && (
+									<span className="text-muted-foreground truncate text-xs">
+										by <ActorLabel actorId={entry.actorId} />
+									</span>
+								)}
 							</div>
-						))}
-					</CardBody>
-				</Card>
+							<span
+								className="text-muted-foreground/70 shrink-0 text-[11px]"
+								title={formatTimestamp(entry.occurredAt)}
+							>
+								{timeAgo(entry.occurredAt)}
+							</span>
+						</div>
+					))}
+				</DetailSection>
 			)}
 
 			<ConfirmDialog

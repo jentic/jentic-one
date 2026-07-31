@@ -9,14 +9,11 @@
  * behind `executions:read`): a 403 resolves to `null` (not an error) and the
  * panel renders one quiet permission note instead of charts.
  */
-import { Activity, ArrowRight } from 'lucide-react';
+import { Activity, ArrowRight, ListOrdered, TrendingUp } from 'lucide-react';
 import {
 	AppLink,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
 	DataTable,
+	DetailSection,
 	EmptyState,
 	LoadingState,
 	StackedBarChart,
@@ -176,76 +173,75 @@ export function ActivityPanel({ actorId, actorType }: ActivityPanelProps) {
 	return (
 		<div className="space-y-4">
 			{usage.data != null && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Execution volume (7d)</CardTitle>
-					</CardHeader>
-					<CardBody>
-						{buckets.length === 0 ? (
-							<p className="text-muted-foreground py-6 text-center text-sm">
-								No executions in the last 7 days.
-							</p>
-						) : (
-							<StackedBarChart
-								bars={bars}
-								height={120}
-								ariaLabel={`Execution volume over the last 7 days: ${usage.data.total} total, ${usage.data.failed} failed.`}
-							/>
-						)}
-					</CardBody>
-				</Card>
+				<DetailSection
+					title="Execution volume · 7d"
+					icon={<TrendingUp className="h-4 w-4" />}
+				>
+					{buckets.length === 0 ? (
+						<p className="text-muted-foreground py-6 text-center text-sm">
+							No executions in the last 7 days.
+						</p>
+					) : (
+						<StackedBarChart
+							bars={bars}
+							height={120}
+							ariaLabel={`Execution volume over the last 7 days: ${usage.data.total} total, ${usage.data.failed} failed.`}
+						/>
+					)}
+				</DetailSection>
 			)}
 
 			{executions.data != null && (
-				<Card>
-					<CardHeader className="flex flex-row items-center justify-between gap-2">
-						<CardTitle>Recent executions</CardTitle>
+				<DetailSection
+					title="Recent executions"
+					icon={<ListOrdered className="h-4 w-4" />}
+					trailing={
 						<AppLink
 							href={monitorLink}
 							className="text-muted-foreground hover:text-primary inline-flex items-center gap-1 text-xs font-medium transition-colors"
 						>
 							Open in Monitor <ArrowRight className="h-3.5 w-3.5" />
 						</AppLink>
-					</CardHeader>
-					<CardBody className="px-0 py-0">
-						<DataTable<ActorExecutionEntity>
-							columns={columns}
-							data={items}
-							getRowKey={(row) => row.id}
-							emptyMessage="No executions recorded for this actor yet."
-							ariaLabel="Recent executions"
-							renderCard={(row) => (
-								<div className="space-y-1.5">
-									<div className="flex items-center justify-between gap-2">
-										{row.httpStatus != null ? (
-											<StatusBadge status={row.httpStatus} />
-										) : (
-											<span className="text-muted-foreground text-xs">
-												{row.status}
-											</span>
-										)}
-										<span
-											className="text-muted-foreground text-[11px]"
-											title={formatTimestamp(row.startedAt)}
-										>
-											{timeAgo(row.startedAt)}
+					}
+					bodyClassName="px-0 py-0 space-y-0"
+				>
+					<DataTable<ActorExecutionEntity>
+						columns={columns}
+						data={items}
+						getRowKey={(row) => row.id}
+						emptyMessage="No executions recorded for this actor yet."
+						ariaLabel="Recent executions"
+						renderCard={(row) => (
+							<div className="space-y-1.5">
+								<div className="flex items-center justify-between gap-2">
+									{row.httpStatus != null ? (
+										<StatusBadge status={row.httpStatus} />
+									) : (
+										<span className="text-muted-foreground text-xs">
+											{row.status}
 										</span>
-									</div>
-									<OperationCell row={row} />
+									)}
+									<span
+										className="text-muted-foreground text-[11px]"
+										title={formatTimestamp(row.startedAt)}
+									>
+										{timeAgo(row.startedAt)}
+									</span>
 								</div>
-							)}
-						/>
-						{executions.data.hasMore && (
-							<p className="text-muted-foreground border-border/60 border-t px-4 py-2.5 text-xs">
-								Showing the {items.length} most recent —{' '}
-								<AppLink href={monitorLink} className="text-primary font-medium">
-									see the full history in Monitor
-								</AppLink>
-								.
-							</p>
+								<OperationCell row={row} />
+							</div>
 						)}
-					</CardBody>
-				</Card>
+					/>
+					{executions.data.hasMore && (
+						<p className="text-muted-foreground border-border/60 border-t px-4 py-2.5 text-xs">
+							Showing the {items.length} most recent —{' '}
+							<AppLink href={monitorLink} className="text-primary font-medium">
+								see the full history in Monitor
+							</AppLink>
+							.
+						</p>
+					)}
+				</DetailSection>
 			)}
 		</div>
 	);

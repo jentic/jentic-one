@@ -3,6 +3,18 @@ export type { ButtonProps } from '@/shared/ui/Button';
 
 export { Card, CardHeader, CardBody, CardFooter, CardTitle } from '@/shared/ui/Card';
 
+export { DetailSection, EmptyRow } from '@/shared/ui/DetailSection';
+export type { DetailSectionProps, SectionActionProps } from '@/shared/ui/DetailSection';
+
+export { AuditTrailCard } from '@/shared/ui/AuditTrailCard';
+export type { AuditTrailCardProps, AuditTrailEntry } from '@/shared/ui/AuditTrailCard';
+
+export { DangerZone } from '@/shared/ui/DangerZone';
+export type { DangerZoneProps, DangerZoneAction } from '@/shared/ui/DangerZone';
+
+export { IdentitySettingsCard } from '@/shared/ui/IdentitySettingsCard';
+export type { IdentitySettingsCardProps } from '@/shared/ui/IdentitySettingsCard';
+
 export { Badge, MethodBadge, StatusBadge } from '@/shared/ui/Badge';
 export type { Variant as BadgeVariant } from '@/shared/ui/Badge';
 
