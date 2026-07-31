@@ -758,6 +758,12 @@ class CatalogConfig(BaseModel):
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
     manifest_max_age_seconds: int = 86400
+    # Update-notify (Flow 3): after a manifest refresh, conditionally re-fetch the
+    # spec URLs of registered APIs (If-None-Match) and emit a
+    # ``catalog.update_available`` event when the upstream spec changed. A given
+    # API is re-probed at most once per this interval. Zero disables the sweep
+    # entirely (kill switch for air-gapped installs — no event spam, no egress).
+    update_check_interval_seconds: int = 86400
 
 
 class ServerConfig(BaseModel):

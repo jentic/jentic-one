@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -12,7 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
+from jentic_one.registry.core.schema.apis import Api
 from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
+
+
+@dataclass(frozen=True)
+class RegisteredSpec:
+    """A sweep candidate: a registered API's spec URL + its current identity/digest."""
+
+    api_id: uuid.UUID
+    source_url: str
+    spec_digest: str | None
+    vendor: str
+    name: str
+    version: str
 
 
 class ApiRevisionRepository:
@@ -253,3 +267,46 @@ class ApiRevisionRepository:
         )
         await session.flush()
         return result.rowcount
+
+    @staticmethod
+    async def registered_specs_for_notify(
+        session: AsyncSession,
+    ) -> list[RegisteredSpec]:
+        """Non-archived revisions that carry a ``source_url`` — the sweep candidates.
+
+        Joins each candidate revision to its API's identity + current spec digest so
+        the update-notify sweep can build an event payload and dedupe without a
+        second query. One row per ``(api_id, source_url)``; an API with multiple
+        non-archived revisions from the same URL is de-duplicated by the caller via
+        the unique ``local_api_id`` check row.
+        """
+        result = await session.execute(
+            select(
+                ApiRevision.api_id,
+                ApiRevision.source_url,
+                ApiRevision.spec_digest,
+                Api.vendor,
+                Api.name,
+                Api.version,
+            )
+            .join(Api, Api.id == ApiRevision.api_id)
+            .where(ApiRevision.source_url.is_not(None))
+            .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
+        )
+        seen: set[uuid.UUID] = set()
+        specs: list[RegisteredSpec] = []
+        for api_id, source_url, spec_digest, vendor, name, version in result.all():
+            if api_id in seen:
+                continue
+            seen.add(api_id)
+            specs.append(
+                RegisteredSpec(
+                    api_id=api_id,
+                    source_url=source_url,
+                    spec_digest=spec_digest,
+                    vendor=vendor,
+                    name=name,
+                    version=version,
+                )
+            )
+        return specs

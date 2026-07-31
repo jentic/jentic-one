@@ -21,9 +21,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
+
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
-from jentic_one.registry.services.catalog.fetch import CatalogFetchError, fetch_json
+from jentic_one.registry.services.catalog.fetch import (
+    CatalogFetchError,
+    fetch_bytes_conditional,
+    fetch_json,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
@@ -31,9 +39,13 @@ from jentic_one.registry.services.errors import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -132,6 +144,117 @@ class CatalogService:
             await self.refresh()
         except CatalogUnavailableError:
             return
+        await self._run_update_notify_sweep()
+
+    async def _run_update_notify_sweep(self) -> None:
+        """Probe registered specs for upstream changes; emit an event on change.
+
+        Piggybacks on the (rare, max-age-gated) manifest refresh. For each
+        registered API with a spec URL, sends a conditional ``GET``
+        (``If-None-Match`` with the last-seen ETag) at most once per
+        ``update_check_interval_seconds``; a ``304`` or an unchanged digest is a
+        no-op, a changed digest emits ``catalog.update_available`` once (deduped on
+        ``last_notified_digest``). Upstream/DB failures are swallowed per API so a
+        flaky host never breaks the refresh or the rest of the batch. A ``0``
+        interval disables the sweep entirely (air-gapped kill switch).
+
+        Note the refresh's advisory lock is transaction-scoped (it guards only the
+        staleness check), so this sweep is **not** globally single-flight: a rare
+        concurrent double-refresh could emit a duplicate event for the same change.
+        That is deliberately tolerated — the event is idempotent for operators and
+        the next sweep dedupes on the persisted digest. Probes run serially (one
+        network round-trip each); fine at MVP catalog scale — a future fan-out would
+        need a ``Semaphore`` bounded below the DB pool size.
+        """
+        interval = self._cfg.update_check_interval_seconds
+        if interval <= 0:
+            return
+
+        async with self._ctx.registry_db.session() as session:
+            candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
+        if not candidates:
+            return
+
+        now = utcnow()
+        for spec in candidates:
+            try:
+                await self._probe_one(spec, now=now, interval=interval)
+            except Exception:  # best-effort per API, never break the sweep
+                logger.warning(
+                    "catalog_update_probe_failed",
+                    api_id=str(spec.api_id),
+                    spec_url=spec.source_url,
+                    exc_info=True,
+                )
+
+    async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
+        """Conditionally fetch one registered spec and emit on a fresh change."""
+        async with self._ctx.registry_db.session() as session:
+            check = await CatalogUpdateCheckRepository.get(session, spec.api_id)
+
+        if check is not None and check.last_checked_at is not None:
+            age = (now - check.last_checked_at).total_seconds()
+            if age < interval:
+                return
+
+        prior_etag = check.last_seen_etag if check is not None else None
+        result = await fetch_bytes_conditional(
+            spec.source_url, config=self._ingest_cfg, etag=prior_etag
+        )
+
+        if result.not_modified or result.digest is None:
+            async with self._ctx.registry_db.transaction() as session:
+                await CatalogUpdateCheckRepository.upsert(
+                    session,
+                    local_api_id=spec.api_id,
+                    spec_url=spec.source_url,
+                    etag=result.etag,
+                    digest=None,
+                    checked_at=now,
+                )
+            return
+
+        upstream_digest = result.digest
+        last_notified = check.last_notified_digest if check is not None else None
+        # A change worth notifying: the upstream bytes differ from what backs the
+        # registered revision, and we have not already notified for this exact
+        # upstream digest. Comparing against spec_digest (not just last_seen)
+        # means a spec that reverts to the registered content stops notifying.
+        changed = upstream_digest != spec.spec_digest and upstream_digest != last_notified
+
+        notified_digest = upstream_digest if changed else None
+        async with self._ctx.registry_db.transaction() as session:
+            await CatalogUpdateCheckRepository.upsert(
+                session,
+                local_api_id=spec.api_id,
+                spec_url=spec.source_url,
+                etag=result.etag,
+                digest=upstream_digest,
+                checked_at=now,
+                notified_digest=notified_digest,
+            )
+
+        if not changed:
+            return
+
+        async with self._ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.CATALOG_UPDATE_AVAILABLE,
+                severity=EventSeverity.INFO,
+                summary=(f"Upstream spec updated for {spec.vendor}/{spec.name} ({spec.version})"),
+                requires_action=True,
+                created_by=None,
+                data={
+                    "api_id": str(spec.api_id),
+                    "vendor": spec.vendor,
+                    "name": spec.name,
+                    "version": spec.version,
+                    "current_digest": spec.spec_digest,
+                    "upstream_digest": upstream_digest,
+                    "spec_url": spec.source_url,
+                },
+            )
 
     async def _refresh_if_stale(self) -> None:
         """Lazy refresh-on-read seam for the single-entry reads (``get``)."""
