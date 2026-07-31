@@ -238,10 +238,12 @@ class CatalogService:
         interval disables the sweep entirely (air-gapped kill switch).
 
         Note the refresh's advisory lock is transaction-scoped (it guards only the
-        staleness check), so this sweep is **not** globally single-flight: a rare
-        concurrent double-refresh could emit a duplicate event for the same change.
-        That is deliberately tolerated — the event is idempotent for operators and
-        the next sweep dedupes on the persisted digest. Probes fan out with bounded
+        staleness check). Sweeps are serialized **within a process** by
+        ``Context.update_sweep_lock`` (scanner + read-path trigger can't overlap), but this
+        is **not** globally single-flight across replicas: a rare concurrent double-refresh on
+        two replicas could still emit a duplicate event for the same change. That is
+        deliberately tolerated — the event is idempotent for operators and the next sweep on
+        either replica dedupes on the persisted digest. Probes fan out with bounded
         concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
         a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
         candidate set can't turn one refresh into an unbounded stall.
@@ -250,6 +252,19 @@ class CatalogService:
         if interval <= 0:
             return
 
+        # Serialize sweeps in-process: the scanner and the read-path trigger can both fire.
+        # A held lock means a sweep is already in flight — skip rather than queue, since a
+        # second back-to-back sweep would re-probe the same candidates and risk a duplicate
+        # (now actionable) emit for a first-time change (see Context.update_sweep_lock).
+        lock = self._ctx.update_sweep_lock
+        if lock.locked():
+            logger.debug("catalog_update_sweep_skipped_in_flight")
+            return
+        async with lock:
+            await self._do_update_notify_sweep(interval)
+
+    async def _do_update_notify_sweep(self, interval: int) -> None:
+        """Sweep body — always called under ``Context.update_sweep_lock``."""
         async with self._ctx.registry_db.session() as session:
             candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
             # The manifest coverage set is only needed to admit overlay/manual specs
@@ -360,9 +375,13 @@ class CatalogService:
                 # Actionable: an operator can resolve it by re-importing the upstream spec
                 # (one-click in the UI / `jentic catalog outdated` + import in the CLI),
                 # which the ImportHandler settles via ``settle_actionable_events`` keyed on
-                # this ``api_id``. A re-import that adopts the upstream also drops the API
-                # out of ``outdated_spec_urls`` (its current digest now equals the notified
-                # one), so the badge/count clear even if the settle is missed.
+                # this ``api_id``. A catalog re-import that adopts the upstream also drops the
+                # API out of the outdated set (the served revision's digest now equals the
+                # notified one), so the badge/count clear even if the settle is missed. Caveat:
+                # when the served revision is a *manually PUBLISHED* one (not a catalog import),
+                # a catalog re-import is blocked by ``ix_api_revisions_one_active`` — the
+                # operator must archive/replace the published revision to resolve; until then
+                # the outdated flag correctly stays lit and the settle only clears the inbox.
                 requires_action=True,
                 created_by=None,
                 data={

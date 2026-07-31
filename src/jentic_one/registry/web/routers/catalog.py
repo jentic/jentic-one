@@ -88,6 +88,15 @@ async def list_catalog(
             type="mutually_exclusive_filters",
             instance="/catalog",
         )
+    if outdated_only and unregistered_only:
+        # Outdated ⊆ registered, so this pair can only ever return an empty page. Reject it
+        # as a contradiction rather than silently yielding nothing.
+        raise ProblemDetailException(
+            status_code=422,
+            detail="outdated_only and unregistered_only are mutually exclusive",
+            type="mutually_exclusive_filters",
+            instance="/catalog",
+        )
 
     try:
         page = await svc.list_all(

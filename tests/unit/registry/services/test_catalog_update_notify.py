@@ -32,6 +32,7 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     ctx.config.catalog.update_sweep_deadline_seconds = 300
     ctx.config.catalog.update_sweep_max_concurrency = 4
     ctx.config.ingest = MagicMock()
+    ctx.update_sweep_lock = asyncio.Lock()
     session = AsyncMock()
     for db in (ctx.registry_db, ctx.admin_db):
         db.transaction.return_value.__aenter__ = AsyncMock(return_value=session)
@@ -253,6 +254,24 @@ async def test_sweep_no_candidates_is_noop() -> None:
     ):
         await svc._run_update_notify_sweep()
         fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_when_lock_already_held() -> None:
+    """A sweep in flight (lock held) makes a concurrent trigger skip, not double-run.
+
+    Guards the in-process double-emit fix: the scanner and the read-path trigger share
+    ``Context.update_sweep_lock``; the second one to start must bail before touching the DB.
+    """
+    ctx = _make_ctx()
+    svc = CatalogService(ctx)
+    await ctx.update_sweep_lock.acquire()  # simulate an in-flight sweep
+    try:
+        with patch(f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify") as specs:
+            await svc._run_update_notify_sweep()
+            specs.assert_not_called()
+    finally:
+        ctx.update_sweep_lock.release()
 
 
 @pytest.mark.asyncio

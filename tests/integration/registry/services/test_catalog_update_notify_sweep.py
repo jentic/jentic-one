@@ -311,3 +311,63 @@ async def test_outdated_ignores_stale_draft_when_served_revision_adopted(
     async with integration_context.registry_db.session() as session:
         outdated = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
     assert _SPEC_URL not in outdated
+
+
+async def test_outdated_api_ids_does_not_collide_across_apis_sharing_a_spec_url(
+    integration_context: Context, registry_db: DatabaseSession, clean_state: None
+) -> None:
+    """Two APIs sharing one upstream spec_url must be flagged independently.
+
+    Regression for the ``spec_url``-keyed collision: ``outdated_api_ids`` (used by the
+    per-API surfaces) must flag only the genuinely-outdated API, even when a sibling API
+    imported from the *same* ``source_url`` is already up to date. ``outdated_spec_urls``
+    (the manifest-keyed catalog form) legitimately can't disambiguate a shared URL, which is
+    exactly why the /apis surfaces key on api_id instead.
+    """
+    shared_url = _SPEC_URL
+    stale = Api(vendor="notify-test.com", name="stale", version="v1")
+    fresh = Api(vendor="notify-test.com", name="fresh", version="v1")
+    async with registry_db.transaction() as session:
+        session.add_all([stale, fresh])
+        await session.flush()
+        # Both served revisions were imported from the same upstream URL.
+        session.add_all(
+            [
+                ApiRevision(
+                    api_id=stale.id,
+                    state="published",
+                    spec_digest="sha256:old",
+                    source_type="url",
+                    source_url=shared_url,
+                    origin="catalog",
+                ),
+                ApiRevision(
+                    api_id=fresh.id,
+                    state="published",
+                    spec_digest="sha256:new",
+                    source_type="url",
+                    source_url=shared_url,
+                    origin="catalog",
+                ),
+            ]
+        )
+        await session.flush()
+        # Upstream advanced to sha256:new and both APIs were notified. `stale` hasn't
+        # adopted it (served digest still sha256:old); `fresh` already has (sha256:new).
+        now = datetime.now(UTC)
+        for api in (stale, fresh):
+            await CatalogUpdateCheckRepository.upsert(
+                session,
+                local_api_id=api.id,
+                spec_url=shared_url,
+                etag='"v2"',
+                digest="sha256:new",
+                checked_at=now,
+                notified_digest="sha256:new",
+            )
+
+    async with integration_context.registry_db.session() as session:
+        outdated_ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+
+    assert stale.id in outdated_ids  # served digest != notified → outdated
+    assert fresh.id not in outdated_ids  # served digest == notified → not outdated

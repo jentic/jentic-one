@@ -347,6 +347,14 @@ def test_mutually_exclusive_filters_rejected(admin_client: TestClient) -> None:
     assert "mutually_exclusive" in resp.json()["type"]
 
 
+def test_outdated_only_with_unregistered_only_rejected(admin_client: TestClient) -> None:
+    # Outdated ⊆ registered, so combining with unregistered_only is a contradiction (422),
+    # not a silent empty page.
+    resp = admin_client.get("/catalog", params={"outdated_only": True, "unregistered_only": True})
+    assert resp.status_code == 422
+    assert "mutually_exclusive" in resp.json()["type"]
+
+
 def test_list_unregistered_only(admin_client: TestClient) -> None:
     admin_client.post("/catalog:refresh")
     body = admin_client.get("/catalog", params={"unregistered_only": True}).json()
