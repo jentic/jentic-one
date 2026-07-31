@@ -40,7 +40,11 @@ from jentic_one.broker.services.credentials.resolver import CredentialResolver
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.crypto import DecryptionError
-from jentic_one.shared.events import emit_credential_access, emit_event_best_effort
+from jentic_one.shared.events import (
+    emit_credential_access,
+    emit_event_best_effort,
+    valid_trace_id_or_none,
+)
 from jentic_one.shared.jobs.protocols import InjectedAuth
 from jentic_one.shared.models.credentials import CredentialType
 from jentic_one.shared.models.events import ErrorSource, EventSeverity, EventTag, EventType
@@ -82,7 +86,8 @@ class CredentialService:
         an operator inspecting an execution can join the credential-use record
         back to the specific execution that triggered it (#740). Optional so
         non-execution call-sites (bind-time probes, service accounts) don't
-        have to fabricate one.
+        have to fabricate one. A malformed value degrades to an uncorrelated
+        event rather than failing the injection (#903).
         """
         if not api_vendor:
             return _EMPTY
@@ -160,7 +165,9 @@ class CredentialService:
                     api_vendor=api.vendor,
                     api_name=api.name,
                     api_version=api.version,
-                    trace_id=trace_id,
+                    # Sanitised: emit_event raises on a malformed trace_id, and
+                    # a 500 here would fail the whole execute request (#903).
+                    trace_id=valid_trace_id_or_none(trace_id),
                 )
             return InjectedAuth(
                 headers=result.headers,

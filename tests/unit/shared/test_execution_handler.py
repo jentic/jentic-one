@@ -12,6 +12,7 @@ session that has no real backing is fine for these pure-logic unit tests.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -76,7 +77,7 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "execution_id": "exec_123",
         "upstream_url": "https://api.example.com/v1/things",
         "method": "GET",
-        "trace_id": "unknown",
+        "trace_id": "ab" * 16,
         "api_vendor": "example",
         "api_name": "api",
         "api_version": "1.0.0",
@@ -233,16 +234,53 @@ async def test_handler_carries_credential_attribution_and_trace_id() -> None:
     await handler.execute(
         "job8",
         _FakeSession(),
-        payload=_payload(trace_id="trace-xyz"),
+        payload=_payload(trace_id="ab" * 16),
         created_by="agt_abc123",
         actor_type="agent",
     )
 
-    assert injector.last_trace_id == "trace-xyz"
+    assert injector.last_trace_id == "ab" * 16
     req = executor.last_request
     assert req is not None
     assert req.metadata["credential_id"] == "cred_abc"
     assert req.metadata["credential_name"] == "stripe-live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_trace_id", [None, "unknown", "trace-xyz"])
+async def test_handler_mints_a_valid_trace_id_for_garbage_payloads(
+    bad_trace_id: str | None,
+) -> None:
+    """A missing/malformed payload trace_id is replaced by one minted valid id
+    shared by inject() and the executor metadata — so the credential audit
+    event, the lifecycle events, and the persisted execution row still
+    correlate with each other, and the literal "unknown" never reaches the
+    execution record (#903)."""
+    executor = _RecordingExecutor(
+        UpstreamExecResult(status_code=200, body=b"", content_type=None, duration_ms=1)
+    )
+    injector = _FakeInjector(InjectedAuth(headers={}, query_params={}, cookies={}))
+    handler = ExecutionHandler(executor=executor, credential_injector=injector)
+
+    payload = _payload()
+    payload.pop("trace_id")
+    if bad_trace_id is not None:
+        payload["trace_id"] = bad_trace_id
+
+    await handler.execute(
+        "job9",
+        _FakeSession(),
+        payload=payload,
+        created_by="agt_abc123",
+        actor_type="agent",
+    )
+
+    minted = injector.last_trace_id
+    assert minted is not None
+    assert re.fullmatch(r"[0-9a-f]{32}", minted)
+    req = executor.last_request
+    assert req is not None
+    assert req.metadata["trace_id"] == minted
 
 
 @pytest.mark.asyncio
