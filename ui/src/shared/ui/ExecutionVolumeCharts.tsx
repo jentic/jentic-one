@@ -1,7 +1,7 @@
 /**
  * ExecutionVolumeCharts — the console-standard activity chart pair, mirroring
  * the dashboard's arrangement: a stacked succeeded/failed volume chart on the
- * left (2/3) and a total-call-volume trend line on the right (1/3). Toolkit,
+ * left (2/3) and a success-rate trend line on the right (1/3). Toolkit,
  * agent and service-account detail consoles all render the same pair so
  * "activity" reads identically everywhere.
  *
@@ -85,7 +85,9 @@ export function ExecutionVolumeCharts({
 		],
 	}));
 
-	const trendData = buckets.map((b) => ({ ts: b.ts, value: b.total }));
+	const trendData = buckets
+		.filter((b) => b.total > 0)
+		.map((b) => ({ ts: b.ts, value: (b.success / b.total) * 100 }));
 
 	if (!isLoading && buckets.length === 0) {
 		return (
@@ -118,7 +120,7 @@ export function ExecutionVolumeCharts({
 			</DetailSection>
 
 			<DetailSection
-				title={`Call trend · ${windowLabel}`}
+				title={`Success rate · ${windowLabel}`}
 				icon={<TrendingUp className="h-4 w-4" />}
 			>
 				{isLoading ? (
@@ -127,10 +129,11 @@ export function ExecutionVolumeCharts({
 					<TrendLineChart
 						data={trendData}
 						height={128}
-						formatValue={(v) => Math.round(v).toLocaleString()}
+						yDomain={[0, 100]}
+						formatValue={(v) => `${Math.round(v)}%`}
 						formatTs={(ts) => bucketLabel(ts, bucketSeconds)}
-						colorClassName="text-accent-blue"
-						ariaLabel={`Total calls per bucket over the last ${windowLabel}.`}
+						colorClassName="text-accent-green"
+						ariaLabel={`Success rate per bucket over the last ${windowLabel}.`}
 					/>
 				) : (
 					<p className="text-muted-foreground py-6 text-center text-sm">

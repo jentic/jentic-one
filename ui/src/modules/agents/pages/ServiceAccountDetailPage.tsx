@@ -42,6 +42,7 @@ import {
 	DangerZone,
 	DetailSection,
 	IdentitySettingsCard,
+	KillSwitch,
 	LoadingState,
 	PageHeader,
 	PageShell,
@@ -310,9 +311,12 @@ export default function ServiceAccountDetailPage() {
 	}
 
 	const account = accountQuery.data;
-	// Constructive actions only — Disable/Archive live in Settings (phase 4/5).
+	// The header offers the kill switch for the reversible active/disabled
+	// flip (same control as the toolkit console) plus constructive actions
+	// (Approve / Deny); Archive lives in Settings.
+	const killSwitchStatus = account.status === 'active' || account.status === 'disabled';
 	const headerActions = ACTIONS_FOR_STATUS[account.status].filter(
-		(a) => a !== 'disable' && a !== 'archive',
+		(a) => a !== 'disable' && a !== 'archive' && (!killSwitchStatus || a !== 'enable'),
 	);
 	const actionPending =
 		approve.isPending ||
@@ -379,10 +383,29 @@ export default function ServiceAccountDetailPage() {
 				}
 				actions={
 					<>
-						<ActorStatusBadge
-							status={account.status}
-							data-testid="detail-status-badge"
-						/>
+						{killSwitchStatus ? (
+							// Same reversible suspend/restore control as the toolkit
+							// header — disable/enable is the account's kill switch.
+							<KillSwitch
+								active={account.status === 'active'}
+								pending={disable.isPending || enable.isPending}
+								onToggle={(next) =>
+									next ? enable.mutate(account.id) : disable.mutate(account.id)
+								}
+								inactiveLabel="Disabled"
+								suspendAriaLabel={`Disable ${account.name} (kill switch)`}
+								restoreAriaLabel={`Enable ${account.name}`}
+								suspendPrompt="Block this service account?"
+								restorePrompt="Restore access?"
+								suspendConfirmLabel="Disable"
+								data-testid="detail-status-badge"
+							/>
+						) : (
+							<ActorStatusBadge
+								status={account.status}
+								data-testid="detail-status-badge"
+							/>
+						)}
 						{headerActions.map((action) => (
 							<Button
 								key={action}

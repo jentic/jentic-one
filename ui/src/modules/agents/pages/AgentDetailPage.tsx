@@ -39,6 +39,7 @@ import {
 	BackButton,
 	Button,
 	DetailSection,
+	KillSwitch,
 	LoadingState,
 	PageHeader,
 	PageShell,
@@ -174,11 +175,13 @@ export default function AgentDetailPage() {
 	}
 
 	const agent = agentQuery.data;
-	// The identity header only offers constructive actions (Approve / Deny /
-	// Enable); destructive ones (Disable / Archive) live in the Settings tab's
-	// danger zone (canvas plan, phase 4).
+	// The identity header offers the kill switch for the reversible
+	// active/disabled flip (same control as the toolkit console) plus the
+	// constructive actions (Approve / Deny); destructive-irreversible ones
+	// (Archive) live in the Settings tab's danger zone.
+	const killSwitchStatus = agent.status === 'active' || agent.status === 'disabled';
 	const headerActions = ACTIONS_FOR_STATUS[agent.status].filter(
-		(a) => a !== 'disable' && a !== 'archive',
+		(a) => a !== 'disable' && a !== 'archive' && (!killSwitchStatus || a !== 'enable'),
 	);
 	const actionPending =
 		approve.isPending ||
@@ -246,7 +249,29 @@ export default function AgentDetailPage() {
 				}
 				actions={
 					<>
-						<ActorStatusBadge status={agent.status} data-testid="detail-status-badge" />
+						{killSwitchStatus ? (
+							// Same reversible suspend/restore control as the toolkit
+							// header — disable/enable is the agent's kill switch.
+							<KillSwitch
+								active={agent.status === 'active'}
+								pending={disable.isPending || enable.isPending}
+								onToggle={(next) =>
+									next ? enable.mutate(agent.id) : disable.mutate(agent.id)
+								}
+								inactiveLabel="Disabled"
+								suspendAriaLabel={`Disable ${agent.name} (kill switch)`}
+								restoreAriaLabel={`Enable ${agent.name}`}
+								suspendPrompt="Block this agent?"
+								restorePrompt="Restore access?"
+								suspendConfirmLabel="Disable"
+								data-testid="detail-status-badge"
+							/>
+						) : (
+							<ActorStatusBadge
+								status={agent.status}
+								data-testid="detail-status-badge"
+							/>
+						)}
 						{headerActions.map((action) => (
 							<Button
 								key={action}

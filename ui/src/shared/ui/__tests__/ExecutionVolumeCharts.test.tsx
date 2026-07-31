@@ -15,7 +15,7 @@ describe('ExecutionVolumeCharts', () => {
 		renderWithProviders(<ExecutionVolumeCharts buckets={BUCKETS} bucketSeconds={DAY} />);
 
 		expect(screen.getByText('Execution volume · 7d')).toBeInTheDocument();
-		expect(screen.getByText('Call trend · 7d')).toBeInTheDocument();
+		expect(screen.getByText('Success rate · 7d')).toBeInTheDocument();
 
 		// Volume chart summarises totals from the buckets (223 total, 13 failed).
 		expect(
@@ -24,7 +24,7 @@ describe('ExecutionVolumeCharts', () => {
 			}),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole('img', { name: /total calls per bucket over the last 7d/i }),
+			screen.getByRole('img', { name: /success rate per bucket over the last 7d/i }),
 		).toBeInTheDocument();
 
 		// Legend for the stacked segments.
@@ -37,7 +37,7 @@ describe('ExecutionVolumeCharts', () => {
 			<ExecutionVolumeCharts buckets={BUCKETS} bucketSeconds={DAY} windowLabel="24h" />,
 		);
 		expect(screen.getByText('Execution volume · 24h')).toBeInTheDocument();
-		expect(screen.getByText('Call trend · 24h')).toBeInTheDocument();
+		expect(screen.getByText('Success rate · 24h')).toBeInTheDocument();
 	});
 
 	it('collapses to a single empty panel when there are no buckets', () => {
@@ -49,7 +49,7 @@ describe('ExecutionVolumeCharts', () => {
 			/>,
 		);
 		expect(screen.getByText('No executions yet.')).toBeInTheDocument();
-		expect(screen.queryByText('Call trend · 7d')).not.toBeInTheDocument();
+		expect(screen.queryByText('Success rate · 7d')).not.toBeInTheDocument();
 		expect(screen.queryByRole('img')).not.toBeInTheDocument();
 	});
 
