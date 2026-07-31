@@ -775,6 +775,13 @@ class CatalogConfig(BaseModel):
     # registry DB pool so the sweep never starves live request traffic.
     update_sweep_deadline_seconds: int = 300
     update_sweep_max_concurrency: int = 4
+    # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
+    # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
+    # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
+    # replicas that start in lock-step drift apart instead of all re-probing the
+    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
+    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
+    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class ServerConfig(BaseModel):

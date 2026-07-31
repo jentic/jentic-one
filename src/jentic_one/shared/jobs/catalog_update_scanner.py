@@ -21,6 +21,7 @@ Gated on both the ``registry`` DB (candidates + check rows) and the ``admin`` DB
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import TYPE_CHECKING
 
 import structlog
@@ -53,6 +54,9 @@ class CatalogUpdateScanner:
         self._tick_seconds = tick_seconds
         self._running = False
         self._last_swept_at: float | None = None
+        #: The (jittered) interval the *current* wait is gated on. Recomputed each time
+        #: a sweep fires so replicas de-phase across cycles (see ``_due_interval``).
+        self._due_interval: float | None = None
 
     async def run(self) -> None:
         """Main loop — run a sweep whenever one is due, until cancelled.
@@ -78,17 +82,51 @@ class CatalogUpdateScanner:
             self._running = False
             logger.info("catalog_update_scanner_stopped")
 
+    def _max_due_interval(self, interval: int) -> float:
+        """Upper bound of the jittered gate for the *current* interval.
+
+        ``interval * (1 + max(ratio, 0))`` — the ceiling ``_compute_due_interval`` can
+        return. Used to clamp a stale ``_due_interval`` (computed from an older, larger
+        interval) so a mid-run interval drop is honoured within one current-interval
+        ceiling rather than waiting out the old gate.
+        """
+        ratio = max(self._cfg.update_sweep_jitter_ratio, 0.0)
+        return interval * (1.0 + ratio)
+
+    def _compute_due_interval(self, interval: int) -> float:
+        """The jittered wait before the next sweep is due (thundering-herd spread).
+
+        Full jitter over a bounded fraction of the base interval: the next sweep is due
+        after ``interval * (1 + uniform(0, jitter_ratio))``. Applied per cycle (not once
+        at startup) so replicas that begin in lock-step keep drifting apart rather than
+        re-syncing. ``jitter_ratio <= 0`` yields exactly ``interval`` (deterministic).
+        """
+        ratio = self._cfg.update_sweep_jitter_ratio
+        if ratio <= 0:
+            return float(interval)
+        return interval * (1.0 + random.uniform(0.0, ratio))
+
     async def _tick(self) -> None:
         interval = self._cfg.update_check_interval_seconds
         if interval <= 0:
             # Kill switch (air-gapped installs): never sweep.
             return
         loop_now = asyncio.get_running_loop().time()
-        if self._last_swept_at is not None and (loop_now - self._last_swept_at) < interval:
+        # Gate on the jittered interval computed when the last sweep fired; on the very
+        # first tick there's no prior sweep, so run immediately (then pick a jittered
+        # gate for the next cycle). Clamp to the *current* interval's jitter ceiling so
+        # a mid-run drop in ``update_check_interval_seconds`` (if config is ever hot-
+        # reloaded) can't keep the scanner waiting on a stale, larger gate — the wait
+        # never exceeds what the current interval would itself allow.
+        due = self._due_interval if self._due_interval is not None else float(interval)
+        due = min(due, self._max_due_interval(interval))
+        if self._last_swept_at is not None and (loop_now - self._last_swept_at) < due:
             return
         # Stamp before running so a long sweep doesn't immediately re-trigger; the
-        # per-API DB gate is the authoritative dedupe across restarts.
+        # per-API DB gate is the authoritative dedupe across restarts. Recompute the
+        # jittered gate for the next cycle so the phase keeps drifting.
         self._last_swept_at = loop_now
+        self._due_interval = self._compute_due_interval(interval)
         await self.sweep()
 
     async def sweep(self) -> None:
