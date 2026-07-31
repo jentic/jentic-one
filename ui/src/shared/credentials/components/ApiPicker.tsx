@@ -350,7 +350,11 @@ function CatalogRow({
 					{selected.label}
 				</span>
 				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{selected.vendor}
+					{/* The full machine identity (`nytimes.com/books`), not just the
+					    vendor: two entries whose sub-segments humanise identically must
+					    stay distinguishable, and the user can verify exactly which
+					    api_id a pick will import. */}
+					{selected.apiId}
 				</p>
 			</div>
 			{entry.registered && (

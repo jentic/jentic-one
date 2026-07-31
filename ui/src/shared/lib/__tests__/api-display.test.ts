@@ -240,6 +240,20 @@ describe('apiRefDisplayName', () => {
 		).toBe('Article Search');
 	});
 
+	it('peels a tuple-shaped name the same way the binding-row helper does', () => {
+		// `name` can carry the same `vendor/name`-shaped tuple as a binding
+		// row's `api_name` (both read the credential's api_name column) — the
+		// two helpers must agree on that shape or the picker's fallback title
+		// and AccessTab's title diverge for the same credential.
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'posthog-com',
+				name: 'posthog-com/posthog-com-posthog-api',
+			}),
+		).toBe('Posthog Api');
+	});
+
 	it('strips a space/colon/pipe-separated vendor prefix so the vendor is not double-rendered', () => {
 		// The separator after the vendor prefix isn't always a hyphen/dot — a
 		// space (and colon / pipe) must also be treated as a separator, else the

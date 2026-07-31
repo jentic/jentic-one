@@ -60,7 +60,7 @@ describe('ApiPicker', () => {
 		const selected = onSelect.mock.calls[0][0] as SelectedApi;
 		expect(selected.source).toBe('catalog');
 		// Server-supplied vendor wins over the `api_id` slug so the stored
-		// vendor is the canonical `github`, not `github.com` (#6).
+		// vendor is the canonical `github`, not `github.com`.
 		expect(selected.vendor).toBe('github');
 		expect(selected.apiId).toBe('github.com');
 		expect(selected.specUrl).toContain('mock-spec.test');
@@ -94,7 +94,7 @@ describe('ApiPicker', () => {
 		expect(seeded.name).toBe(selected.label);
 	});
 
-	it('stores the server-supplied vendor and dedups against a workspace row (#6)', async () => {
+	it('stores the server-supplied vendor and dedups against a workspace row', async () => {
 		// A catalog entry `{api_id:'github.com', vendor:'github'}` must resolve
 		// vendor='github' (not 'github.com') so it dedups against a workspace
 		// `github/main` row rather than showing as a duplicate-looking catalog

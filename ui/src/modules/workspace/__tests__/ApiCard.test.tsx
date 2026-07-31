@@ -25,7 +25,7 @@ describe('ApiCard', () => {
 		expect(screen.getByRole('heading', { name: 'Github.Com' })).toBeInTheDocument();
 	});
 
-	it('never renders a blank heading or aria-label when the display name is absent and vendor is empty (#14)', () => {
+	it('never renders a blank heading or aria-label when the display name is absent and vendor is empty', () => {
 		// `apiRefDisplayName` returns '' here (no display name, empty vendor,
 		// generic `main`). The titleFor fallback must keep the heading + the
 		// link aria-label non-empty so the card is always identifiable.

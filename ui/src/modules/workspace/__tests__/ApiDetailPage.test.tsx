@@ -160,7 +160,7 @@ describe('ApiDetailPage', () => {
 		expect(screen.getByText('/v1/resource/0')).toBeInTheDocument();
 	});
 
-	it('titles a draft-only sub-API through the shared friendly-name rule, matching the tile (#6)', async () => {
+	it('titles a draft-only sub-API through the shared friendly-name rule, matching the tile', async () => {
 		// The Adyen sub-API has no user-set display_name, so the header must
 		// route the raw `vendor`/`name` through `apiRefDisplayName` — the same
 		// rule the workspace tile uses — instead of rendering the raw

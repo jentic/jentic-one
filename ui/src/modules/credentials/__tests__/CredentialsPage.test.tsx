@@ -222,7 +222,7 @@ describe('CredentialsPage', () => {
 		// Catalog rows lead with the friendly title (via the shared
 		// `apiRefDisplayName`) rather than the raw `acme.com` slug. The
 		// server-supplied `vendor: 'acme'` wins over the dotted `api_id` slug
-		// (#6), so the title humanises to `Acme` (not `Acme.Com`).
+		// so the title humanises to `Acme` (not `Acme.Com`).
 		await user.click(await screen.findByText('Acme'));
 
 		// The summary chip now signals the upcoming :import via an inline

@@ -286,7 +286,11 @@ export function apiRefDisplayName(input: {
 	const dn = input.displayName?.trim();
 	if (dn) return dn;
 	const vendor = input.vendor ?? '';
-	const name = input.name ?? '';
+	const rawName = input.name ?? '';
+	// `name` on real data can itself be a `vendor/name`-shaped tuple (the same
+	// column feeds toolkitCredDisplayName's binding rows, which peel it) — take
+	// the tail so the prefix strip below sees just the sub-API segment.
+	const name = rawName.includes('/') ? (rawName.split('/').pop() ?? rawName) : rawName;
 	const stripped = vendor && name ? stripVendorPrefix(name, vendor) : name;
 	if (stripped && !GENERIC_NAMES.has(stripped.toLowerCase())) {
 		return humanizeName(stripped);

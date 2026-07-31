@@ -79,11 +79,15 @@ export function AccessTab({
 								cred.label || toolkitCredDisplayName(cred) || cred.credential_id;
 							// Muted technical subtitle: the raw vendor/name tuple, via the
 							// shared helper so a tuple-shaped `api_name` doesn't render the
-							// vendor twice.
-							const apiTuple = apiIdentityTuple({
-								vendor: cred.api_vendor,
-								name: cred.api_name,
-							});
+							// vendor twice. `credential_id` is the last-resort fallback for
+							// telling identically labelled rows apart (matching Overview
+							// and the picker) — unless the heading already IS the id, in
+							// which case repeating it is pure noise.
+							const subtitle =
+								apiIdentityTuple({
+									vendor: cred.api_vendor,
+									name: cred.api_name,
+								}) || (heading === cred.credential_id ? '' : cred.credential_id);
 							return (
 								<motion.div
 									key={cred.credential_id}
@@ -97,9 +101,9 @@ export function AccessTab({
 											<span className="text-foreground text-sm font-medium">
 												{heading}
 											</span>
-											{apiTuple && (
+											{subtitle && (
 												<p className="text-muted-foreground truncate font-mono text-xs">
-													{apiTuple}
+													{subtitle}
 												</p>
 											)}
 										</div>
