@@ -323,13 +323,16 @@ class ApiService:
             if revision.security_schemes:
                 security_schemes = sorted({s.type for s in revision.security_schemes})
 
-        update_available = False
-        if source_url is not None:
-            # Key on api_id, not source_url: two local APIs can share one upstream URL, so
-            # URL membership would over-flag. (source_url gate keeps unregistered/manual-only
-            # APIs — which never have a check row — a cheap short-circuit.)
-            outdated = await CatalogUpdateCheckRepository.outdated_api_ids(session)
-            update_available = api.id in outdated
+        # Keyed on api_id (not source_url): outdated_api_ids only ever contains APIs
+        # that have a check row *and* whose served revision differs from the notified
+        # upstream digest, so membership is exact. We deliberately do NOT gate on the
+        # current revision's source_url: when a manually PUBLISHED revision (source_url
+        # None) supersedes a catalog import, the API stays legitimately outdated (the
+        # documented published-over-catalog caveat), and the list surface flags it — so
+        # the detail view must agree or the badge and the ribbon contradict each other
+        # for exactly that case. The extra query on a single-API read is negligible.
+        outdated = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        update_available = api.id in outdated
 
         return ApiView(
             vendor=api.vendor,

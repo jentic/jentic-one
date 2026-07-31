@@ -253,9 +253,13 @@ class CatalogService:
             return
 
         # Serialize sweeps in-process: the scanner and the read-path trigger can both fire.
-        # A held lock means a sweep is already in flight — skip rather than queue, since a
-        # second back-to-back sweep would re-probe the same candidates and risk a duplicate
-        # (now actionable) emit for a first-time change (see Context.update_sweep_lock).
+        # The lock.locked() pre-check is a best-effort fast-skip, not a guarantee — it is
+        # TOCTOU, so two triggers racing past it both reach ``async with lock`` and the
+        # second *queues* (waits) rather than skipping. That is harmless: by the time the
+        # queued sweep runs, the first has bumped each candidate's ``last_checked_at``, so
+        # the queued pass no-ops on the per-API interval gate in ``_probe_one``. The
+        # pre-check just avoids the common non-racing back-to-back trigger paying for a
+        # full re-probe (see Context.update_sweep_lock).
         lock = self._ctx.update_sweep_lock
         if lock.locked():
             logger.debug("catalog_update_sweep_skipped_in_flight")
@@ -349,7 +353,8 @@ class CatalogService:
         # registered revision, and we have not already notified for this exact
         # upstream digest. Comparing against spec_digest (not just last_seen)
         # means a spec that reverts to the registered content stops notifying.
-        changed = upstream_digest != spec.spec_digest and upstream_digest != last_notified
+        in_sync = upstream_digest == spec.spec_digest
+        changed = not in_sync and upstream_digest != last_notified
 
         notified_digest = upstream_digest if changed else None
         async with self._ctx.registry_db.transaction() as session:
@@ -361,6 +366,12 @@ class CatalogService:
                 digest=upstream_digest,
                 checked_at=now,
                 notified_digest=notified_digest,
+                # Upstream matches the served revision again (e.g. a bad publish was
+                # reverted): pin last_notified_digest to it so the outdated read surface
+                # clears. Otherwise a revert leaves the badge stuck lit with no operator
+                # action able to resolve it. Dedupe is preserved — a later genuinely
+                # different upstream digest still re-fires exactly once.
+                sync_notified=in_sync,
             )
 
         if not changed:

@@ -525,7 +525,14 @@ jobs:
           # point the catalog manifest at the loopback fixture, admit that loopback
           # upstream through the SSRF egress guard, and shorten the sweep interval
           # so a re-probe happens on demand (the spec still drives it via
-          # POST /catalog:refresh). Harmless to the other specs.
+          # POST /catalog:refresh).
+          #
+          # SCOPE: this redirects the catalog manifest for the ENTIRE realbackend
+          # suite, not just flow3 — every spec in this job sees the one-entry fixture
+          # manifest, not the real public catalog. Harmless today (no other spec
+          # asserts real-catalog Discover content), but if you add a spec that does,
+          # it will silently run against this fixture. Move this env onto a dedicated
+          # job (or gate the fixture per-spec) before relying on real catalog content.
           JENTIC__CATALOG__MANIFEST_URL: "http://127.0.0.1:8099/apis.json"
           JENTIC__CATALOG__MANIFEST_MAX_AGE_SECONDS: "5"
           JENTIC__CATALOG__UPDATE_CHECK_INTERVAL_SECONDS: "5"

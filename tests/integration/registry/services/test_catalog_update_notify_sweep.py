@@ -152,7 +152,11 @@ async def test_sweep_no_event_when_upstream_matches_registered(
     async with integration_context.registry_db.session() as session:
         check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
     assert check is not None
-    assert check.last_notified_digest is None  # recorded the check, but never notified
+    # No event fired, and last_notified_digest is pinned to the served digest (sync): the
+    # upstream matches what we serve, so nothing is outstanding and the outdated read
+    # surface (last_notified_digest != served) must be empty. (Pre-M1 this stayed None; the
+    # sync-back write keeps the outdated set honest without ever emitting.)
+    assert check.last_notified_digest == "sha256:registered"
 
 
 async def test_sweep_no_event_with_real_bare_hex_digest(
@@ -195,7 +199,9 @@ async def test_sweep_no_event_with_real_bare_hex_digest(
     async with integration_context.registry_db.session() as session:
         check = await CatalogUpdateCheckRepository.get(session, api.id)
     assert check is not None
-    assert check.last_notified_digest is None
+    # Upstream matches served → no event, and last_notified_digest is synced to the served
+    # digest so the outdated read surface stays empty (see M1 sync-back fix).
+    assert check.last_notified_digest == real_digest
 
 
 # ── Phase 4: origin-scoped candidates + outdated derivation ──────────────────
@@ -266,6 +272,65 @@ async def test_outdated_spec_urls_reflects_notify_then_clears_on_adopt(
     async with integration_context.registry_db.session() as session:
         outdated_after = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
     assert _SPEC_URL not in outdated_after
+
+
+async def test_outdated_clears_when_upstream_reverts_to_served(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """An upstream revert to the served content must drop the API out of the outdated set.
+
+    Regression for the stuck-badge revert path (ren-jentic M1): ``_probe_one`` never
+    lowers ``last_notified_digest`` on a no-change probe (correct, for event dedupe), but
+    the read surface (``outdated_api_ids`` / ``outdated_spec_urls``) keys off that same
+    field. So without a fix, this sequence stuck the badge permanently:
+
+    1. served digest is ``sha256:registered``; upstream publishes ``sha256:upstream-new``
+       → sweep notifies, ``last_notified_digest = sha256:upstream-new``, API is outdated.
+    2. upstream is *reverted* (bad publish rolled back) → it now serves the original
+       ``sha256:registered`` again, byte-identical to what we already serve.
+    3. next sweep sees no change vs served, so it emits nothing — but the API must ALSO
+       stop being outdated, since the upstream no longer differs from what we serve. A
+       re-import can't fix it (it would adopt content identical to the served revision, so
+       the served digest never moves off ``sha256:registered``).
+
+    The fix: when the upstream matches the served digest, the probe pins
+    ``last_notified_digest`` to it (``sync_notified``) so the ``!= served digest`` read
+    predicate clears. Event dedupe is unaffected — a later, genuinely different upstream
+    digest still re-fires exactly once.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    svc = CatalogService(integration_context)
+
+    # 1. Upstream advances → notify, API becomes outdated.
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+
+    async with integration_context.registry_db.session() as session:
+        assert registered_api.id in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert _SPEC_URL in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+
+    # 2. Upstream reverts to the served content. Reopen the interval gate first.
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        assert check is not None
+        check.last_checked_at = None
+    reverted = ConditionalFetch(
+        not_modified=False, etag='"v1"', content=b"{}", digest="sha256:registered"
+    )
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=reverted):
+        await svc._run_update_notify_sweep()
+
+    # 3. No new event (nothing changed vs served) AND the API is no longer outdated.
+    assert len(await _events(integration_context)) == 1  # the step-1 event, not re-fired
+    async with integration_context.registry_db.session() as session:
+        check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        assert check_after is not None
+        assert check_after.last_notified_digest == "sha256:registered"  # pinned to served
+        assert registered_api.id not in await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert _SPEC_URL not in await CatalogUpdateCheckRepository.outdated_spec_urls(session)
 
 
 async def test_outdated_ignores_stale_draft_when_served_revision_adopted(

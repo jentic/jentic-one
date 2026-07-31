@@ -32,6 +32,7 @@ from jentic_one.shared.models.registry import (
     ApiRevisionSourceType,
     ApiRevisionState,
     OverlayStatus,
+    RevisionOrigin,
 )
 from jentic_one.shared.models.users import AuthProvider, InviteState
 
@@ -61,6 +62,7 @@ __all__ = [
     "JobStatus",
     "Origin",
     "OverlayStatus",
+    "RevisionOrigin",
     "StoredCredentialType",
     "actor_type_from_id",
     "canonical_credential_scope",

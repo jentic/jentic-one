@@ -120,12 +120,26 @@ class CatalogUpdateCheckRepository:
         digest: str | None,
         checked_at: datetime,
         notified_digest: str | None = None,
+        sync_notified: bool = False,
     ) -> CatalogUpdateCheck:
         """Insert or update the observation for ``local_api_id`` and return the row.
 
         ``notified_digest`` is only written when non-``None`` — a probe that
         observes no change (or a ``304``) must not clear the digest that last
         produced an event, or the dedupe would re-fire on the next real change.
+
+        ``sync_notified`` is the one exception to that "never lower the digest"
+        rule: when the caller observes that the *upstream is back in sync with the
+        served revision* (``upstream_digest == spec_digest``), it sets
+        ``last_notified_digest = digest`` so the read surface
+        (:meth:`_outdated_base`, ``!= served digest``) drops the API out of the
+        outdated set. Without this, an upstream revert leaves ``last_notified_digest``
+        pinned at the reverted digest and every surface stays stuck as "update
+        available" with no operator action able to clear it (re-importing adopts a
+        spec byte-identical to the served one, so the served digest never moves).
+        Event dedupe is unaffected — a later, genuinely different upstream digest
+        still differs from both the served and the synced ``last_notified_digest``,
+        so the next real change re-fires exactly once.
 
         Read-then-insert (no ``ON CONFLICT``) is acceptable because the
         update-notify sweep is triggered only from the (rare, max-age-gated) lazy
@@ -144,7 +158,7 @@ class CatalogUpdateCheckRepository:
                 spec_url=spec_url,
                 last_seen_etag=etag,
                 last_seen_digest=digest,
-                last_notified_digest=notified_digest,
+                last_notified_digest=digest if sync_notified else notified_digest,
                 last_checked_at=checked_at,
             )
             session.add(row)
@@ -154,7 +168,11 @@ class CatalogUpdateCheckRepository:
                 row.last_seen_etag = etag
             if digest is not None:
                 row.last_seen_digest = digest
-            if notified_digest is not None:
+            if sync_notified:
+                # Upstream is back in sync with the served revision: pin the notified
+                # digest to it so the outdated read surface clears (see docstring).
+                row.last_notified_digest = digest
+            elif notified_digest is not None:
                 row.last_notified_digest = notified_digest
             row.last_checked_at = checked_at
         await session.flush()
