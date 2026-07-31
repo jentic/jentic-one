@@ -302,6 +302,12 @@ need no request — an approved agent already holds `apis:read` and
 `catalog:import` by default, so just import and search again. Don't file an
 access request for a made-up "catalog read" scope.
 
+`jentic catalog outdated` lists registered APIs whose upstream spec changed since
+import (also surfaced by `jenticctl status`). Re-importing promotes the new spec
+to **live**, changing behavior, so this is an **operator** decision: **suggest**
+the re-import (`jentic catalog import <vendor/name>`) to the operator and let them
+run it — never silently re-import on your own.
+
 **Before concluding "the data is gone", confirm which backend you're on.** If
 APIs, credentials, or toolkits you *know* existed appear missing — or IDs look
 unfamiliar — you may be talking to a **different** backend than you expect. A

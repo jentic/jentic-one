@@ -58,6 +58,36 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 	}
 }
 
+func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{
+			"data":[
+				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"update_available":true,"_links":{}}],
+			"catalog_total":2,"registered_count":1,"outdated_count":1,"manifest_age_seconds":120,
+			"has_more":false,"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	ident := &identityOptions{baseURL: srv.URL}
+	if err := app.catalogList(context.Background(), ident, &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
+		t.Fatalf("catalogList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "outdated_only=true") {
+		t.Errorf("server saw query %q, want outdated_only=true", gotQuery)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"stripe.com", "UPDATE AVAILABLE", "1 update(s) available"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("outdated output missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
 func TestCatalogSearchPassesQuery(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

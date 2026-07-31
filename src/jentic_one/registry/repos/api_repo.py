@@ -214,6 +214,24 @@ class ApiRepository:
                 mapping[row.revision_id] = parsed.hostname
         return mapping
 
+    @staticmethod
+    async def load_revision_provenance(
+        session: AsyncSession, revision_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[str | None, str | None]]:
+        """Batch-load ``(origin, source_url)`` for the given revisions (Flow-3 provenance).
+
+        Keyed by revision id so the API list can surface each current revision's origin +
+        catalog linkage without an N+1. Missing revisions simply aren't in the map.
+        """
+        if not revision_ids:
+            return {}
+        result = await session.execute(
+            select(ApiRevision.id, ApiRevision.origin, ApiRevision.source_url).where(
+                ApiRevision.id.in_(revision_ids)
+            )
+        )
+        return {row.id: (row.origin, row.source_url) for row in result}
+
     _UPDATABLE_FIELDS = frozenset({"display_name", "description", "icon_url"})
 
     @staticmethod

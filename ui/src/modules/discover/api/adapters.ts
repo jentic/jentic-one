@@ -34,6 +34,7 @@ export function catalogEntryToEntity(entry: CatalogEntryResponse): DiscoveryEnti
 		// the title (i.e. an umbrella sub-API), to avoid `stripe.com / stripe.com`.
 		subtitle: vendor && vendor !== summary ? vendor : undefined,
 		registered: entry.registered,
+		updateAvailable: entry.update_available ?? false,
 		vendor: vendor ?? entry.api_id,
 		githubUrl: entry._links.github ?? undefined,
 		raw: entry,

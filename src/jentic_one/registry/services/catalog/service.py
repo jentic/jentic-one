@@ -44,6 +44,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
+from jentic_one.shared.models.registry import ORIGIN_CATALOG, ORIGIN_OVERLAY
 from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
 
 logger = structlog.get_logger(__name__)
@@ -57,6 +58,24 @@ logger = structlog.get_logger(__name__)
 _SWEEP_TASKS: set[asyncio.Task[None]] = set()
 
 
+def _is_upstream_tracked(spec: RegisteredSpec, manifest_urls: set[str]) -> bool:
+    """Whether the update-notify sweep should probe this candidate (OQ-3 scope).
+
+    - ``catalog``-origin revisions are always tracked (imported straight from the manifest).
+    - ``overlay``-origin revisions are tracked when their ``source_url`` still points at a
+      catalog spec — overlay materialization propagates the base revision's ``source_url``
+      (#904), so a confirmed overlay over a catalog API stays upstream-tracked.
+    - manual imports (``origin is None``) are tracked only if their ``source_url`` now
+      matches a catalog manifest entry (a "you could switch to the catalog source" nudge).
+    - any other manual import is skipped: we have no upstream-of-record to compare against.
+    """
+    if spec.origin == ORIGIN_CATALOG:
+        return True
+    if spec.origin in (ORIGIN_OVERLAY, None):
+        return spec.source_url in manifest_urls
+    return False
+
+
 @dataclass(frozen=True)
 class CatalogEntryView:
     """A browsable catalog entry with derived `registered` status."""
@@ -67,6 +86,10 @@ class CatalogEntryView:
     spec_url: str | None
     github_url: str | None
     registered: bool
+    #: True when this entry is registered locally AND its upstream spec has a notified
+    #: update the local revision hasn't adopted yet (Flow-3). Always False for
+    #: unregistered entries (nothing to update).
+    update_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -79,6 +102,9 @@ class CatalogListView:
     manifest_age_seconds: int | None
     has_more: bool
     next_cursor: str | None
+    #: Count of registered entries with an upstream update available (full manifest,
+    #: pre-filter/pre-page) so the UI status row is stable across pages.
+    outdated_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -190,6 +216,15 @@ class CatalogService:
 
         task.add_done_callback(_done)
 
+    async def run_update_sweep(self) -> None:
+        """Run one update-notify sweep to completion (awaitable).
+
+        Public entry point for the standalone ``CatalogUpdateScanner``, which owns the
+        periodic cadence and awaits each sweep — unlike ``trigger_update_notify_sweep``,
+        the fire-and-forget read-path piggyback. Honors the same kill switch.
+        """
+        await self._run_update_notify_sweep()
+
     async def _run_update_notify_sweep(self) -> None:
         """Probe registered specs for upstream changes; emit an event on change.
 
@@ -203,10 +238,12 @@ class CatalogService:
         interval disables the sweep entirely (air-gapped kill switch).
 
         Note the refresh's advisory lock is transaction-scoped (it guards only the
-        staleness check), so this sweep is **not** globally single-flight: a rare
-        concurrent double-refresh could emit a duplicate event for the same change.
-        That is deliberately tolerated — the event is idempotent for operators and
-        the next sweep dedupes on the persisted digest. Probes fan out with bounded
+        staleness check). Sweeps are serialized **within a process** by
+        ``Context.update_sweep_lock`` (scanner + read-path trigger can't overlap), but this
+        is **not** globally single-flight across replicas: a rare concurrent double-refresh on
+        two replicas could still emit a duplicate event for the same change. That is
+        deliberately tolerated — the event is idempotent for operators and the next sweep on
+        either replica dedupes on the persisted digest. Probes fan out with bounded
         concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
         a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
         candidate set can't turn one refresh into an unbounded stall.
@@ -215,8 +252,33 @@ class CatalogService:
         if interval <= 0:
             return
 
+        # Serialize sweeps in-process: the scanner and the read-path trigger can both fire.
+        # The lock.locked() pre-check is a best-effort fast-skip, not a guarantee — it is
+        # TOCTOU, so two triggers racing past it both reach ``async with lock`` and the
+        # second *queues* (waits) rather than skipping. That is harmless: by the time the
+        # queued sweep runs, the first has bumped each candidate's ``last_checked_at``, so
+        # the queued pass no-ops on the per-API interval gate in ``_probe_one``. The
+        # pre-check just avoids the common non-racing back-to-back trigger paying for a
+        # full re-probe (see Context.update_sweep_lock).
+        lock = self._ctx.update_sweep_lock
+        if lock.locked():
+            logger.debug("catalog_update_sweep_skipped_in_flight")
+            return
+        async with lock:
+            await self._do_update_notify_sweep(interval)
+
+    async def _do_update_notify_sweep(self, interval: int) -> None:
+        """Sweep body — always called under ``Context.update_sweep_lock``."""
         async with self._ctx.registry_db.session() as session:
             candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
+            # The manifest coverage set is only needed to admit overlay/manual specs
+            # whose source_url still points at a catalog spec; skip the query when the
+            # candidate set has no such rows (pure-catalog installs, the common case).
+            needs_manifest = any(spec.origin != ORIGIN_CATALOG for spec in candidates)
+            manifest_urls = (
+                await CatalogRepository.manifest_spec_urls(session) if needs_manifest else set()
+            )
+        candidates = [spec for spec in candidates if _is_upstream_tracked(spec, manifest_urls)]
         if not candidates:
             return
 
@@ -291,7 +353,8 @@ class CatalogService:
         # registered revision, and we have not already notified for this exact
         # upstream digest. Comparing against spec_digest (not just last_seen)
         # means a spec that reverts to the registered content stops notifying.
-        changed = upstream_digest != spec.spec_digest and upstream_digest != last_notified
+        in_sync = upstream_digest == spec.spec_digest
+        changed = not in_sync and upstream_digest != last_notified
 
         notified_digest = upstream_digest if changed else None
         async with self._ctx.registry_db.transaction() as session:
@@ -303,6 +366,12 @@ class CatalogService:
                 digest=upstream_digest,
                 checked_at=now,
                 notified_digest=notified_digest,
+                # Upstream matches the served revision again (e.g. a bad publish was
+                # reverted): pin last_notified_digest to it so the outdated read surface
+                # clears. Otherwise a revert leaves the badge stuck lit with no operator
+                # action able to resolve it. Dedupe is preserved — a later genuinely
+                # different upstream digest still re-fires exactly once.
+                sync_notified=in_sync,
             )
 
         if not changed:
@@ -314,12 +383,17 @@ class CatalogService:
                 type=EventType.CATALOG_UPDATE_AVAILABLE,
                 severity=EventSeverity.INFO,
                 summary=(f"Upstream spec updated for {spec.vendor}/{spec.name} ({spec.version})"),
-                # Informational until Flow-3 ships a resolve path (one-click re-import
-                # / dismiss-snooze per (api_id, digest) — Phase 4). Marking it
-                # requires_action now would pile unresolvable items into the action
-                # inbox (nothing the operator can do clears them), so it surfaces in
-                # the events feed only. Flip to True alongside the re-import affordance.
-                requires_action=False,
+                # Actionable: an operator can resolve it by re-importing the upstream spec
+                # (one-click in the UI / `jentic catalog outdated` + import in the CLI),
+                # which the ImportHandler settles via ``settle_actionable_events`` keyed on
+                # this ``api_id``. A catalog re-import that adopts the upstream also drops the
+                # API out of the outdated set (the served revision's digest now equals the
+                # notified one), so the badge/count clear even if the settle is missed. Caveat:
+                # when the served revision is a *manually PUBLISHED* one (not a catalog import),
+                # a catalog re-import is blocked by ``ix_api_revisions_one_active`` — the
+                # operator must archive/replace the published revision to resolve; until then
+                # the outdated flag correctly stays lit and the settle only clears the inbox.
+                requires_action=True,
                 created_by=None,
                 data={
                     "api_id": str(spec.api_id),
@@ -339,13 +413,16 @@ class CatalogService:
         if self._is_stale(fetched_at):
             await self._safe_refresh()
 
-    async def _load_snapshot(self) -> tuple[list[dict[str, Any]], set[str], datetime | None]:
-        """Read the snapshot entries, coverage URLs, and freshness in one session."""
+    async def _load_snapshot(
+        self,
+    ) -> tuple[list[dict[str, Any]], set[str], set[str], datetime | None]:
+        """Read entries, coverage URLs, outdated URLs, and freshness in one session."""
         async with self._ctx.registry_db.session() as session:
             raw = await CatalogRepository.entries(session)
             registered_urls = await CatalogRepository.registered_spec_urls(session)
+            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
             fetched_at = await CatalogRepository.fetched_at(session)
-        return raw, registered_urls, fetched_at
+        return raw, registered_urls, outdated_urls, fetched_at
 
     # ── browse / get ─────────────────────────────────────────────────────────
 
@@ -355,6 +432,7 @@ class CatalogService:
         q: str | None = None,
         registered_only: bool = False,
         unregistered_only: bool = False,
+        outdated_only: bool = False,
         cursor: str | None = None,
         limit: int = 50,
     ) -> CatalogListView:
@@ -376,26 +454,35 @@ class CatalogService:
         (the standard keyset-vs-mutating-snapshot trade-off), but never crashes
         or loops. Refresh is rare (lazy, max-age gated), so this is acceptable.
         """
-        raw, registered_urls, fetched_at = await self._load_snapshot()
+        raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot()
         if self._is_stale(fetched_at):
             await self._safe_refresh()
-            raw, registered_urls, fetched_at = await self._load_snapshot()
+            raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot()
 
         all_entries = [mb.ManifestEntry.from_dict(d) for d in raw]
         catalog_total = len(all_entries)
         registered_count = sum(1 for e in all_entries if mb.is_registered(e, registered_urls))
+        # Outdated = registered AND its spec_url is in the outdated set. Count over the
+        # whole manifest (pre-filter/pre-page) so the status row is page-stable.
+        outdated_count = sum(
+            1
+            for e in all_entries
+            if mb.is_registered(e, registered_urls) and e.spec_url in outdated_urls
+        )
 
         scored = mb.score_entries(all_entries, q)
         if registered_only:
             scored = [(e, s) for e, s in scored if mb.is_registered(e, registered_urls)]
         elif unregistered_only:
             scored = [(e, s) for e, s in scored if not mb.is_registered(e, registered_urls)]
+        if outdated_only:
+            scored = [(e, s) for e, s in scored if e.spec_url in outdated_urls]
 
         after_api_id, after_score = decode_catalog_cursor(cursor) if cursor else (None, None)
         page = mb.paginate_entries(
             scored, after_api_id=after_api_id, after_score=after_score, limit=limit
         )
-        views = [self._to_view(e, registered_urls) for e in page.items]
+        views = [self._to_view(e, registered_urls, outdated_urls) for e in page.items]
         next_cursor = (
             encode_catalog_cursor(page.next_api_id, page.next_score)
             if page.has_more and page.next_api_id is not None
@@ -410,6 +497,7 @@ class CatalogService:
             manifest_age_seconds=age,
             has_more=page.has_more,
             next_cursor=next_cursor,
+            outdated_count=outdated_count,
         )
 
     async def get(self, api_id: str) -> CatalogEntryView:
@@ -418,20 +506,31 @@ class CatalogService:
         async with self._ctx.registry_db.session() as session:
             raw = await CatalogRepository.entries(session)
             registered_urls = await CatalogRepository.registered_spec_urls(session)
+            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
         match = next((d for d in raw if d.get("api_id") == api_id), None)
         if match is None:
             raise CatalogEntryNotFoundError(api_id)
-        return self._to_view(mb.ManifestEntry.from_dict(match), registered_urls)
+        return self._to_view(mb.ManifestEntry.from_dict(match), registered_urls, outdated_urls)
 
     @staticmethod
-    def _to_view(entry: mb.ManifestEntry, registered_spec_urls: set[str]) -> CatalogEntryView:
+    def _to_view(
+        entry: mb.ManifestEntry,
+        registered_spec_urls: set[str],
+        outdated_spec_urls: set[str] | None = None,
+    ) -> CatalogEntryView:
+        registered = mb.is_registered(entry, registered_spec_urls)
         return CatalogEntryView(
             api_id=entry.api_id,
             vendor=entry.vendor,
             path=entry.path or None,
             spec_url=entry.spec_url,
             github_url=entry.github_url or None,
-            registered=mb.is_registered(entry, registered_spec_urls),
+            registered=registered,
+            update_available=(
+                registered
+                and outdated_spec_urls is not None
+                and entry.spec_url in outdated_spec_urls
+            ),
         )
 
     # ── preview ──────────────────────────────────────────────────────────────
@@ -490,7 +589,11 @@ class CatalogService:
         """
         if not entry.spec_url:
             raise CatalogUnavailableError(f"catalog entry '{entry.api_id}' has no spec url")
-        source: dict[str, str] = {"type": "url", "url": entry.spec_url, "origin": "catalog"}
+        source: dict[str, str] = {
+            "type": "url",
+            "url": entry.spec_url,
+            "origin": ORIGIN_CATALOG,
+        }
         if entry.vendor:
             source["vendor"] = entry.vendor
         if entry.api_id:

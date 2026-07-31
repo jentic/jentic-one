@@ -967,6 +967,12 @@ components:
         operation_count:
           title: Operation Count
           type: integer
+        origin:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: 'Provenance of the current revision: `catalog` (imported from the public catalog), `overlay` (materialized from a confirmed overlay), or null (manual import).'
+          title: Origin
         revision_count:
           title: Revision Count
           type: integer
@@ -975,6 +981,17 @@ components:
             type: string
           title: Security Schemes
           type: array
+        source_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Upstream spec URL backing the current revision, when known (catalog linkage).
+          title: Source Url
+        update_available:
+          default: false
+          description: Whether the upstream spec at `source_url` has a notified update this API hasn't adopted yet (Flow-3). Re-importing clears it.
+          title: Update Available
+          type: boolean
         updated_at:
           format: date-time
           title: Updated At
@@ -1487,6 +1504,11 @@ components:
           - type: 'null'
           description: Fetchable OpenAPI spec URL the entry resolves to (used for import + coverage).
           title: Spec Url
+        update_available:
+          default: false
+          description: Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
+          title: Update Available
+          type: boolean
         vendor:
           anyOf:
           - type: string
@@ -1539,6 +1561,11 @@ components:
           - type: 'null'
           description: Opaque keyset cursor for the next page (null when done).
           title: Next Cursor
+        outdated_count:
+          default: 0
+          description: Count of whole-manifest registered entries with an upstream update available.
+          title: Outdated Count
+          type: integer
         registered_count:
           description: Count of whole-manifest entries already imported locally.
           title: Registered Count
@@ -9777,8 +9804,8 @@ paths:
 
         The catalog holds thousands of entries, so this is cursor-paginated like
         ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-        ``catalog_total``/``registered_count`` count the whole manifest, not the
-        page, so the Discover status row stays stable while scrolling.
+        ``catalog_total``/``registered_count``/``outdated_count`` count the whole
+        manifest, not the page, so the Discover status row stays stable while scrolling.
       operationId: listCatalog
       parameters:
       - in: query
@@ -9803,6 +9830,13 @@ paths:
         schema:
           default: false
           title: Unregistered Only
+          type: boolean
+      - in: query
+        name: outdated_only
+        required: false
+        schema:
+          default: false
+          title: Outdated Only
           type: boolean
       - in: query
         name: cursor

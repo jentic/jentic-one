@@ -20,6 +20,7 @@ import {
 	ApIsService,
 	ApiSpecService,
 	ApiOperationsService,
+	CatalogService,
 } from '@/shared/api';
 import {
 	toApiOperation,
@@ -255,6 +256,26 @@ export async function importSources(sources: ImportSource[]): Promise<ImportJob>
 		return { jobId: String(body.job_id ?? ''), status: String(body.status ?? 'queued') };
 	} catch (error) {
 		throw toWorkspaceError(error, 'Failed to start the import.');
+	}
+}
+
+/**
+ * Re-import a catalog-backed API from the public catalog to adopt an upstream
+ * spec update (Flow-3 "Update available"). Enqueues an async import of the
+ * catalog entry keyed by its `api_id` (`POST /catalog/{id}:import`) and returns
+ * the queued job — the same endpoint Discover uses to import. On success the
+ * API's `update_available` clears on the next `GET /apis` read.
+ *
+ * NOTE: sibling-module boundaries forbid reaching into Discover's repository, so
+ * this thin wrapper mirrors Discover's `importCatalogEntry` against the shared
+ * `CatalogService` (the repository tier is the sanctioned place to touch it).
+ */
+export async function reimportCatalogEntry(apiId: string): Promise<ImportJob> {
+	try {
+		const res = await CatalogService.importCatalogEntry({ apiId });
+		return { jobId: res.job_id, status: res.status };
+	} catch (error) {
+		throw toWorkspaceError(error, 'Failed to start the re-import.');
 	}
 }
 

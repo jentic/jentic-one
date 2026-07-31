@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from sqlalchemy import text
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -22,6 +24,7 @@ async def _seed_api(
     name: str = "api",
     version: str = "v1",
     promote: bool = True,
+    source_url: str | None = None,
 ) -> Api:
     """Seed a local Api with a revision (published+current when ``promote``)."""
     async with ctx.registry_db.session() as session:
@@ -33,6 +36,7 @@ async def _seed_api(
             state="published" if promote else "draft",
             spec_digest=f"sha256:{vendor}-{name}-{version}",
             source_type="url",
+            source_url=source_url,
         )
         session.add(revision)
         await session.flush()
@@ -49,6 +53,7 @@ async def _cleanup_apis(web_context: Context) -> AsyncGenerator[None]:
     yield
     async with web_context.registry_db.session() as session:
         await session.execute(text("UPDATE registry.apis SET current_revision_id = NULL"))
+        await session.execute(text("DELETE FROM registry.catalog_update_checks"))
         await session.execute(text("DELETE FROM registry.api_revisions"))
         await session.execute(text("DELETE FROM registry.apis"))
         await session.commit()
@@ -251,3 +256,44 @@ async def test_list_apis_paginates_across_boundary(
 
     assert sorted(seen) == ["page-0.com", "page-1.com", "page-2.com"]
     assert len(seen) == len(set(seen))  # no duplicates across pages
+
+
+async def test_list_and_detail_agree_on_update_available_for_published_over_catalog(
+    authed_client: TestClient, web_context: Context, _cleanup_apis: None
+) -> None:
+    """The /apis list and single-API detail must agree on ``update_available``.
+
+    Regression for ren-jentic M2: the list surface flags ``update_available`` purely on
+    ``api_id in outdated_api_ids`` (no gate), but the detail path used to short-circuit on
+    ``if current_revision.source_url is not None`` — so in the *documented* caveat case (a
+    manually PUBLISHED revision, ``source_url=None``, superseding a catalog import while the
+    upstream is still outdated) the list lit the badge and the detail returned False. An
+    operator would click a lit card and see nothing. The gate is now dropped so both key on
+    the (exact, api_id-scoped) outdated set.     Here we seed exactly that state — a published
+    current revision with no ``source_url`` plus a check row whose notified digest differs
+    from the served digest — and assert both surfaces report ``update_available=True``.
+    """
+    api = await _seed_api(web_context, vendor="published-over-catalog.com", source_url=None)
+    # A prior catalog import left a check row; upstream then advanced past what we now serve.
+    async with web_context.registry_db.transaction() as session:
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=api.id,
+            spec_url="https://upstream.example/openapi.json",
+            etag='"v2"',
+            digest="sha256:upstream-new",
+            checked_at=datetime.now(UTC),
+            notified_digest="sha256:upstream-new",  # != served f"sha256:{vendor}-api-v1"
+        )
+
+    list_resp = authed_client.get("/apis", params={"vendor": "published-over-catalog.com"})
+    assert list_resp.status_code == 200
+    list_items = list_resp.json()["data"]
+    assert len(list_items) == 1
+    assert list_items[0]["update_available"] is True
+
+    detail_resp = authed_client.get("/apis/published-over-catalog.com/api/v1")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["source_url"] is None  # the caveat precondition: manually published
+    assert detail["update_available"] is True  # must match the list, not short-circuit off

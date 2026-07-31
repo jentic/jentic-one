@@ -105,6 +105,25 @@ class ApiResponse(BaseModel):
     revision_count: int
     operation_count: int
     security_schemes: list[str]
+    origin: str | None = Field(
+        default=None,
+        description=(
+            "Provenance of the current revision: `catalog` (imported from the public "
+            "catalog), `overlay` (materialized from a confirmed overlay), or null (manual "
+            "import)."
+        ),
+    )
+    source_url: str | None = Field(
+        default=None,
+        description="Upstream spec URL backing the current revision, when known (catalog linkage).",
+    )
+    update_available: bool = Field(
+        default=False,
+        description=(
+            "Whether the upstream spec at `source_url` has a notified update this API "
+            "hasn't adopted yet (Flow-3). Re-importing clears it."
+        ),
+    )
     created_at: datetime
     updated_at: datetime
     links: ApiLinksResponse = Field(serialization_alias="_links")

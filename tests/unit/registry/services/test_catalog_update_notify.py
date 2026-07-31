@@ -15,8 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.registry.repos.revision_repo import RegisteredSpec
+from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
-from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.service import CatalogService, _is_upstream_tracked
 from jentic_one.registry.services.errors import CatalogUnavailableError
 from jentic_one.shared.models.events import EventType
 
@@ -31,6 +32,7 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     ctx.config.catalog.update_sweep_deadline_seconds = 300
     ctx.config.catalog.update_sweep_max_concurrency = 4
     ctx.config.ingest = MagicMock()
+    ctx.update_sweep_lock = asyncio.Lock()
     session = AsyncMock()
     for db in (ctx.registry_db, ctx.admin_db):
         db.transaction.return_value.__aenter__ = AsyncMock(return_value=session)
@@ -40,7 +42,7 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     return ctx
 
 
-def _spec(digest: str | None = "local-digest") -> RegisteredSpec:
+def _spec(digest: str | None = "local-digest", *, origin: str | None = "catalog") -> RegisteredSpec:
     return RegisteredSpec(
         api_id=_API_ID,
         source_url="https://raw.githubusercontent.com/x/y/main/openapi.json",
@@ -48,6 +50,7 @@ def _spec(digest: str | None = "local-digest") -> RegisteredSpec:
         vendor="acme",
         name="widgets",
         version="1.0.0",
+        origin=origin,
     )
 
 
@@ -163,7 +166,7 @@ async def test_probe_change_emits_event_once() -> None:
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
-        assert emit_kwargs["requires_action"] is False
+        assert emit_kwargs["requires_action"] is True
         assert emit_kwargs["data"]["upstream_digest"] == "upstream-new"
         upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
         assert upsert_kwargs["notified_digest"] == "upstream-new"
@@ -251,6 +254,24 @@ async def test_sweep_no_candidates_is_noop() -> None:
     ):
         await svc._run_update_notify_sweep()
         fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_when_lock_already_held() -> None:
+    """A sweep in flight (lock held) makes a concurrent trigger skip, not double-run.
+
+    Guards the in-process double-emit fix: the scanner and the read-path trigger share
+    ``Context.update_sweep_lock``; the second one to start must bail before touching the DB.
+    """
+    ctx = _make_ctx()
+    svc = CatalogService(ctx)
+    await ctx.update_sweep_lock.acquire()  # simulate an in-flight sweep
+    try:
+        with patch(f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify") as specs:
+            await svc._run_update_notify_sweep()
+            specs.assert_not_called()
+    finally:
+        ctx.update_sweep_lock.release()
 
 
 @pytest.mark.asyncio
@@ -383,6 +404,7 @@ async def test_sweep_bounds_concurrency() -> None:
             vendor="acme",
             name="widgets",
             version="1.0.0",
+            origin="catalog",
         )
         for i in range(6)
     ]
@@ -407,3 +429,139 @@ async def test_sweep_bounds_concurrency() -> None:
         await svc._run_update_notify_sweep()
 
     assert peak <= 2
+
+
+# ── origin-scoped candidate selection (Phase 4, OQ-3) ────────────────────────
+
+
+def test_is_upstream_tracked_catalog_origin_always() -> None:
+    spec = _spec(origin="catalog")
+    assert _is_upstream_tracked(spec, set()) is True
+
+
+def test_is_upstream_tracked_overlay_only_when_source_in_manifest() -> None:
+    spec = _spec(origin="overlay")
+    assert _is_upstream_tracked(spec, set()) is False
+    assert _is_upstream_tracked(spec, {spec.source_url}) is True
+
+
+def test_is_upstream_tracked_manual_only_when_source_in_manifest() -> None:
+    spec = _spec(origin=None)
+    assert _is_upstream_tracked(spec, set()) is False
+    assert _is_upstream_tracked(spec, {spec.source_url}) is True
+
+
+def test_is_upstream_tracked_other_origin_skipped() -> None:
+    spec = _spec(origin="imported")
+    assert _is_upstream_tracked(spec, {spec.source_url}) is False
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_manual_spec_not_in_manifest() -> None:
+    """A manual import whose source_url is not a catalog entry is never probed."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    manual = _spec(origin=None)
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[manual],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+            return_value=set(),  # not in the manifest → skipped
+        ),
+        patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
+    ):
+        await svc._run_update_notify_sweep()
+    probe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_probes_overlay_spec_in_manifest() -> None:
+    """An overlay-origin revision whose source_url is a catalog entry is probed."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    overlay = _spec(origin="overlay")
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[overlay],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+            return_value={overlay.source_url},
+        ),
+        patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
+    ):
+        await svc._run_update_notify_sweep()
+    probe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_manifest_query_for_pure_catalog() -> None:
+    """No manifest coverage query when every candidate is catalog-origin (common case)."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[_spec(origin="catalog")],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+        ) as spec_urls,
+        patch.object(svc, "_probe_one", new_callable=AsyncMock),
+    ):
+        await svc._run_update_notify_sweep()
+    spec_urls.assert_not_called()
+
+
+# ── catalog entry view: update_available derivation (Phase 4) ────────────────
+
+
+def _entry(
+    spec_url: str = "https://raw.githubusercontent.com/x/y/main/openapi.json",
+) -> mb.ManifestEntry:
+    return mb.ManifestEntry.from_dict(
+        {"api_id": "acme.com", "vendor": "acme.com", "path": "apis/acme", "spec_url": spec_url}
+    )
+
+
+def test_to_view_update_available_only_when_registered_and_outdated() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    # Registered + outdated → True.
+    v = CatalogService._to_view(entry, {url}, {url})
+    assert v.registered is True
+    assert v.update_available is True
+
+
+def test_to_view_not_outdated_when_not_registered() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    # In the outdated set but NOT registered locally → never update_available.
+    v = CatalogService._to_view(entry, set(), {url})
+    assert v.registered is False
+    assert v.update_available is False
+
+
+def test_to_view_registered_not_outdated() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    v = CatalogService._to_view(entry, {url}, set())
+    assert v.registered is True
+    assert v.update_available is False
+
+
+def test_to_view_defaults_when_outdated_set_omitted() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    v = CatalogService._to_view(entry, {url})
+    assert v.update_available is False

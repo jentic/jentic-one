@@ -14,6 +14,7 @@ export {
 	useRevisionActions,
 	useDeleteApi,
 	useImportSpec,
+	useReimportFromCatalog,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
 export type { UseImportSpec } from '@/modules/workspace/api/hooks';

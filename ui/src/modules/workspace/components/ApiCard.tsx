@@ -63,6 +63,11 @@ export function ApiCard({ api }: { api: WorkspaceApi }) {
 							{title}
 						</h3>
 						<div className="flex shrink-0 items-center gap-1.5">
+							{api.updateAvailable ? (
+								<Badge variant="warning" data-testid="update-available-badge">
+									Update available
+								</Badge>
+							) : null}
 							{isDraftOnly ? <Badge variant="pending">Draft</Badge> : null}
 							<ChevronRight
 								size={16}

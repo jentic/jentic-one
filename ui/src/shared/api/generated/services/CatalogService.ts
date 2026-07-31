@@ -17,8 +17,8 @@ export class CatalogService {
      *
      * The catalog holds thousands of entries, so this is cursor-paginated like
      * ``GET /apis``: follow ``next_cursor`` until ``has_more`` is false.
-     * ``catalog_total``/``registered_count`` count the whole manifest, not the
-     * page, so the Discover status row stays stable while scrolling.
+     * ``catalog_total``/``registered_count``/``outdated_count`` count the whole
+     * manifest, not the page, so the Discover status row stays stable while scrolling.
      * @returns CatalogListResponse Successful Response
      * @throws ApiError
      */
@@ -26,12 +26,14 @@ export class CatalogService {
         q,
         registeredOnly = false,
         unregisteredOnly = false,
+        outdatedOnly = false,
         cursor,
         limit = 50,
     }: {
         q?: (string | null),
         registeredOnly?: boolean,
         unregisteredOnly?: boolean,
+        outdatedOnly?: boolean,
         cursor?: (string | null),
         limit?: number,
     }): CancelablePromise<CatalogListResponse> {
@@ -42,6 +44,7 @@ export class CatalogService {
                 'q': q,
                 'registered_only': registeredOnly,
                 'unregistered_only': unregisteredOnly,
+                'outdated_only': outdatedOnly,
                 'cursor': cursor,
                 'limit': limit,
             },

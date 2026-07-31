@@ -21,8 +21,10 @@ from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
+from jentic_one.shared.events import settle_actionable_events
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType
+from jentic_one.shared.models.events import EventType
 
 logger = structlog.get_logger(__name__)
 
@@ -118,6 +120,14 @@ class ImportHandler:
                 failed=len(failures),
             )
 
+            # Flow-3 resolve path: a successful (re-)import adopts the upstream spec, so
+            # any outstanding ``catalog.update_available`` prompt for that API is now
+            # resolved — settle it best-effort so the action-inbox item clears. Keyed on
+            # the event payload's ``api_id``; a manual import that was never catalog-
+            # tracked simply has no matching event. Never fails the import.
+            for rev in revisions:
+                await self._settle_update_available(job_id, created_by, rev["api"], session)
+
             # Overlay materialization: link the confirmed overlay to the revision the
             # re-ingest just produced, so the served spec and the overlay agree on which
             # revision embodies the applied change. ``overlay_id`` is set only by
@@ -197,6 +207,54 @@ class ImportHandler:
                 job_id=job_id,
                 overlay_id=overlay_id,
             )
+
+    async def _settle_update_available(
+        self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
+    ) -> None:
+        """Clear any outstanding ``catalog.update_available`` for the (re-)imported API.
+
+        A successful import adopts the upstream spec, so the Flow-3 update prompt for that
+        API is resolved. Best-effort: resolve the local ``api_id`` from the spec triple,
+        then acknowledge matching actionable events (matched on the event payload's
+        ``api_id``). Never fails the import — the served spec is already correct; a missed
+        settle only leaves a stale inbox item that the next re-import clears.
+
+        ``session`` is the handler's own jobs/admin write session (events live in the admin
+        DB). We deliberately reuse it rather than opening a second admin transaction: the
+        worker already runs the handler inside an admin ``BEGIN IMMEDIATE`` (see
+        ``JobWorker._execute_handler``), and on SQLite's single writer a nested admin
+        transaction would deadlock against that outer one — no retry can win because the
+        blocker is our own call stack. Reusing the session also makes the ack atomic with
+        the import. The settle runs in a SAVEPOINT so a failure rolls back only itself,
+        leaving the surrounding import (and its completion event) intact.
+        """
+        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
+        if not (isinstance(vendor, str) and isinstance(name, str) and isinstance(version, str)):
+            return
+        try:
+            async with self._ctx.registry_db.session() as read_session:
+                resolved = await ApiRepository.get_by_identifier(
+                    read_session, vendor, name, version
+                )
+            if resolved is None:
+                return
+            async with session.begin_nested():
+                settled = await settle_actionable_events(
+                    session,
+                    event_type=EventType.CATALOG_UPDATE_AVAILABLE,
+                    acknowledged_by=actor_id,
+                    acknowledgement_note="Resolved by re-import of the upstream spec",
+                    data_match={"api_id": str(resolved.id)},
+                )
+            if settled:
+                logger.info(
+                    "catalog_update_available_settled",
+                    job_id=job_id,
+                    api_id=str(resolved.id),
+                    settled=settled,
+                )
+        except Exception:
+            logger.exception("catalog_update_available_settle_failed", job_id=job_id)
 
     async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
         """Link an overlay to its already-materialized revision after a duplicate re-ingest.

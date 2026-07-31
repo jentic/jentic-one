@@ -51,6 +51,20 @@ export interface WorkspaceApi {
 	securitySchemes: string[];
 	source?: string;
 	registered?: boolean;
+	/**
+	 * Provenance of the current revision (Flow-3): `catalog` (imported from the
+	 * public catalog), `overlay` (materialized from a confirmed overlay), or null
+	 * (manual import). Optional — only present once the Flow-3 backend fields land;
+	 * gates the one-click Re-import (safe only for `catalog` origin).
+	 */
+	origin?: string | null;
+	/** Upstream spec URL backing the current revision, when known (catalog linkage). */
+	sourceUrl?: string | null;
+	/**
+	 * Whether the upstream spec at `sourceUrl` has a notified update this API
+	 * hasn't adopted yet (Flow-3). Re-importing clears it.
+	 */
+	updateAvailable?: boolean;
 	createdAt: string;
 	updatedAt: string;
 }

@@ -27,6 +27,10 @@ class RegisteredSpec:
     vendor: str
     name: str
     version: str
+    #: Current revision's provenance marker (``"catalog"``, ``"overlay"``, or ``None``
+    #: for a manual import). The update-notify sweep uses it to decide whether the spec
+    #: is upstream-tracked (see ``ORIGIN_CATALOG`` / ``ORIGIN_OVERLAY``).
+    origin: str | None
 
 
 class ApiRevisionRepository:
@@ -318,6 +322,7 @@ class ApiRevisionRepository:
                 ApiRevision.api_id,
                 ApiRevision.source_url,
                 ApiRevision.spec_digest,
+                ApiRevision.origin,
                 Api.vendor,
                 Api.name,
                 Api.version,
@@ -334,7 +339,7 @@ class ApiRevisionRepository:
         )
         seen: set[uuid.UUID] = set()
         specs: list[RegisteredSpec] = []
-        for api_id, source_url, spec_digest, vendor, name, version in result.all():
+        for api_id, source_url, spec_digest, origin, vendor, name, version in result.all():
             if api_id in seen:
                 continue
             seen.add(api_id)
@@ -346,6 +351,7 @@ class ApiRevisionRepository:
                     vendor=vendor,
                     name=name,
                     version=version,
+                    origin=origin,
                 )
             )
         return specs

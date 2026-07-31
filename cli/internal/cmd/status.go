@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
+	"github.com/jentic/jentic-one/cli/internal/catalogclient"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/profile"
@@ -220,6 +221,24 @@ func (a *App) statusAgent(ctx context.Context, profileName, baseURL string) {
 		} else {
 			fmt.Fprintln(a.Out, "  "+theme.Dimf("identity check failed: %v", meErr))
 		}
+		a.statusCatalogUpdates(ctx, sess.Meta.BaseURL, tokens.AccessToken)
+	}
+}
+
+// statusCatalogUpdates reports how many registered APIs have an upstream update
+// available. Best-effort like the identity check: it runs only with an already
+// valid cached token, uses a tiny page (the count is whole-manifest, page-stable),
+// and degrades silently — a missing token, offline server, or old backend without
+// the field simply prints nothing (never errors out `status`).
+func (a *App) statusCatalogUpdates(ctx context.Context, baseURL, token string) {
+	res, err := catalogclient.New(baseURL).List(ctx, token, catalogclient.ListParams{Outdated: true, Limit: 1})
+	if err != nil {
+		return
+	}
+	if res.OutdatedCount > 0 {
+		fmt.Fprintln(a.Out, "  "+theme.Field("updates", fmt.Sprintf("%d available (run `jentic catalog outdated`)", res.OutdatedCount)))
+	} else {
+		fmt.Fprintln(a.Out, "  "+theme.Field("updates", "none"))
 	}
 }
 
