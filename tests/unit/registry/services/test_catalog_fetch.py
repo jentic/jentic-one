@@ -251,3 +251,35 @@ async def test_conditional_too_many_redirects_raises() -> None:
         await fetch_bytes_conditional(
             "https://example.com/openapi.json", config=IngestConfig(max_redirects=2)
         )
+
+
+@pytest.mark.asyncio
+async def test_conditional_sends_user_agent() -> None:
+    """The poller identifies itself with a descriptive User-Agent (politeness)."""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("user-agent"))
+        return httpx.Response(status_code=200, content=b"{}", headers={"etag": '"v1"'})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client):
+        await fetch_bytes_conditional("https://example.com/openapi.json", config=IngestConfig())
+    assert seen and seen[0] is not None
+    assert "jentic-one-catalog" in seen[0]
+
+
+@pytest.mark.asyncio
+async def test_conditional_304_propagates_refreshed_etag() -> None:
+    """A 304 that returns a *new* validator surfaces it so the next probe re-sends it."""
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code=304, headers={"etag": '"v1-refreshed"'})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with _patched(client):
+        result = await fetch_bytes_conditional(
+            "https://example.com/openapi.json", config=IngestConfig(), etag='"v1"'
+        )
+    assert result.not_modified is True
+    assert result.etag == '"v1-refreshed"'

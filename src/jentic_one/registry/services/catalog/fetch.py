@@ -25,6 +25,14 @@ class CatalogFetchError(Exception):
     """Raised when an upstream catalog document cannot be fetched or parsed."""
 
 
+#: Identify the catalog fetcher/update-notify poller to upstream hosts. Server-
+#: initiated recurring third-party fetches should announce themselves so operators
+#: can attribute traffic and hosts can apply sane rate limits (unidentified bots
+#: are throttled first). See the raw.githubusercontent poll path in the catalog
+#: update-notify sweep.
+_USER_AGENT = "jentic-one-catalog/1 (+https://github.com/jentic/jentic-one)"
+
+
 @dataclass(frozen=True)
 class ConditionalFetch:
     """Result of a conditional (``If-None-Match``) byte fetch.
@@ -57,9 +65,10 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
     max_bytes = config.max_spec_bytes
     try:
         async with httpx.AsyncClient(
-            timeout=config.fetch_timeout_s, follow_redirects=False
+            timeout=config.fetch_timeout_s,
+            follow_redirects=False,
         ) as client:
-            resp = await client.get(validated_url)
+            resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
             for _ in range(config.max_redirects):
                 if resp.status_code < 300 or resp.status_code >= 400:
                     break
@@ -70,7 +79,7 @@ async def fetch_json(url: str, *, config: IngestConfig) -> dict[str, Any]:
                     validated_url = validate_upstream_url(urljoin(validated_url, location))
                 except ValueError as exc:
                     raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
-                resp = await client.get(validated_url)
+                resp = await client.get(validated_url, headers={"user-agent": _USER_AGENT})
             else:
                 if 300 <= resp.status_code < 400:
                     raise CatalogFetchError("too many redirects")
@@ -120,12 +129,15 @@ async def fetch_bytes_conditional(
     except ValueError as exc:
         raise CatalogFetchError(f"unsafe URL rejected: {exc}") from exc
 
-    headers = {"If-None-Match": etag} if etag else None
+    headers = {"user-agent": _USER_AGENT}
+    if etag:
+        headers["If-None-Match"] = etag
     max_bytes = config.max_spec_bytes
     limit_mb = max_bytes / (1024 * 1024)
     try:
         async with httpx.AsyncClient(
-            timeout=config.fetch_timeout_s, follow_redirects=False
+            timeout=config.fetch_timeout_s,
+            follow_redirects=False,
         ) as client:
             resp = await client.get(validated_url, headers=headers)
             for _ in range(config.max_redirects):
