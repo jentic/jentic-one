@@ -247,7 +247,7 @@ describe('AgentDetailPage', () => {
 		// The feed lists this agent's executions only (agents-module fixture).
 		expect(await screen.findByText('github.create_issue')).toBeInTheDocument();
 		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
-		expect(screen.getByText('Execution volume (7d)')).toBeInTheDocument();
+		expect(screen.getByText('Execution volume · 7d')).toBeInTheDocument();
 
 		// The deep-link carries the actor filter into Monitor's URL contract.
 		const link = screen.getByRole('link', { name: /Open in Monitor/ });

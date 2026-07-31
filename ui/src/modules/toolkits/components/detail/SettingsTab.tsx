@@ -1,12 +1,6 @@
 import { useState } from 'react';
-import type {
-	CascadeDependentGroup,
-	CascadeDeleteDialog,
-	DangerZone,
-	IdentitySettingsCard,
-	toast,
-	type DangerZoneAction,
-} from '@/shared/ui';
+import { CascadeDeleteDialog, DangerZone, IdentitySettingsCard, toast } from '@/shared/ui';
+import type { CascadeDependentGroup, DangerZoneAction } from '@/shared/ui';
 import {
 	useDeleteToolkit,
 	useToolkitAgents,
