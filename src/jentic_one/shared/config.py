@@ -779,9 +779,9 @@ class CatalogConfig(BaseModel):
     # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
     # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
     # replicas that start in lock-step drift apart instead of all re-probing the
-    # upstream at the same interval boundary. Bounded (default 15%) so the cadence
-    # stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
-    update_sweep_jitter_ratio: float = 0.15
+    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
+    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
+    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class ServerConfig(BaseModel):

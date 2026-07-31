@@ -82,6 +82,17 @@ class CatalogUpdateScanner:
             self._running = False
             logger.info("catalog_update_scanner_stopped")
 
+    def _max_due_interval(self, interval: int) -> float:
+        """Upper bound of the jittered gate for the *current* interval.
+
+        ``interval * (1 + max(ratio, 0))`` — the ceiling ``_compute_due_interval`` can
+        return. Used to clamp a stale ``_due_interval`` (computed from an older, larger
+        interval) so a mid-run interval drop is honoured within one current-interval
+        ceiling rather than waiting out the old gate.
+        """
+        ratio = max(self._cfg.update_sweep_jitter_ratio, 0.0)
+        return interval * (1.0 + ratio)
+
     def _compute_due_interval(self, interval: int) -> float:
         """The jittered wait before the next sweep is due (thundering-herd spread).
 
@@ -103,8 +114,12 @@ class CatalogUpdateScanner:
         loop_now = asyncio.get_running_loop().time()
         # Gate on the jittered interval computed when the last sweep fired; on the very
         # first tick there's no prior sweep, so run immediately (then pick a jittered
-        # gate for the next cycle).
+        # gate for the next cycle). Clamp to the *current* interval's jitter ceiling so
+        # a mid-run drop in ``update_check_interval_seconds`` (if config is ever hot-
+        # reloaded) can't keep the scanner waiting on a stale, larger gate — the wait
+        # never exceeds what the current interval would itself allow.
         due = self._due_interval if self._due_interval is not None else float(interval)
+        due = min(due, self._max_due_interval(interval))
         if self._last_swept_at is not None and (loop_now - self._last_swept_at) < due:
             return
         # Stamp before running so a long sweep doesn't immediately re-trigger; the

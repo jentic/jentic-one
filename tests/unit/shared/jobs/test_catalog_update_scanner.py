@@ -117,3 +117,64 @@ async def test_next_cycle_gate_uses_jittered_interval() -> None:
         await scanner._tick()  # t=1100 → 1100 < 1150 → still gated, no re-sweep
     sweep.assert_awaited_once()
     assert scanner._due_interval == 1150.0
+
+
+@pytest.mark.asyncio
+async def test_first_tick_sweeps_immediately_with_jitter_enabled() -> None:
+    """Jitter must not gate the very first tick — it sweeps immediately, then jitters.
+
+    The first-tick path short-circuits on ``_last_swept_at is None`` before the gate
+    comparison, so an enabled jitter ratio can't delay the initial sweep. After it, the
+    next-cycle gate is a jittered value strictly above the raw interval (max draw).
+    """
+    scanner = CatalogUpdateScanner(_make_ctx(interval=1000, jitter_ratio=0.15))
+    with (
+        patch.object(scanner, "sweep", new_callable=AsyncMock) as sweep,
+        patch(
+            "jentic_one.shared.jobs.catalog_update_scanner.random.uniform",
+            return_value=0.15,
+        ),
+    ):
+        await scanner._tick()
+    sweep.assert_awaited_once()
+    assert scanner._due_interval == 1150.0
+
+
+@pytest.mark.asyncio
+async def test_lowered_interval_clamps_stale_gate() -> None:
+    """A mid-run drop in the interval must not leave the scanner on the old, larger gate.
+
+    Simulate config being lowered after a sweep: the stale ``_due_interval`` (from the
+    old 1000s interval → 1150) must be clamped to the *new* interval's jitter ceiling
+    (100 * 1.15 = 115), so an elapsed of 120 re-sweeps instead of waiting out the stale
+    gate. Guards the correctness-lens stale-gate finding.
+    """
+    scanner = CatalogUpdateScanner(_make_ctx(interval=1000, jitter_ratio=0.15))
+    scanner._last_swept_at = 0.0
+    scanner._due_interval = 1150.0  # gate frozen from the old large interval
+    scanner._cfg.update_check_interval_seconds = 100  # operator lowered it
+
+    times = iter([120.0])
+
+    class _Loop:
+        def time(self) -> float:
+            return next(times)
+
+    with (
+        patch.object(scanner, "sweep", new_callable=AsyncMock) as sweep,
+        patch("asyncio.get_running_loop", return_value=_Loop()),
+        patch(
+            "jentic_one.shared.jobs.catalog_update_scanner.random.uniform",
+            return_value=0.0,
+        ),
+    ):
+        await scanner._tick()  # elapsed 120 > clamped ceiling 115 → sweep
+    sweep.assert_awaited_once()
+
+
+def test_max_due_interval_is_current_ceiling() -> None:
+    scanner = CatalogUpdateScanner(_make_ctx(interval=200, jitter_ratio=0.25))
+    assert scanner._max_due_interval(200) == 250.0
+    # A negative ratio is floored at 0 → ceiling is exactly the interval.
+    scanner._cfg.update_sweep_jitter_ratio = -1.0
+    assert scanner._max_due_interval(200) == 200.0
