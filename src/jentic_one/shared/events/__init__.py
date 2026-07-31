@@ -18,6 +18,19 @@ logger = structlog.get_logger(__name__)
 _TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
+def valid_trace_id_or_none(trace_id: str | None) -> str | None:
+    """Coerce ``trace_id`` to ``None`` unless it is a valid 32-hex trace id.
+
+    ``emit_event`` raises on a malformed ``trace_id`` by contract; emit sites
+    that receive a caller-supplied value (raw headers, job payload defaults)
+    must sanitise through this helper so a garbage trace id degrades to an
+    uncorrelated event instead of failing the surrounding operation (#903).
+    """
+    if trace_id is not None and _TRACE_ID_PATTERN.match(trace_id):
+        return trace_id
+    return None
+
+
 def _validate_tags(type: str, tags: set[EventTag] | None) -> list[EventTag]:
     """Drop tags whose closed-enum type is not allowed for this event.
 

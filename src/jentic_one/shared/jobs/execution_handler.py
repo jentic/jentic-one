@@ -19,7 +19,6 @@ broker-side implementations injected at worker startup.
 from __future__ import annotations
 
 import base64
-import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -28,7 +27,7 @@ import structlog
 
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import SecurityConfig
-from jentic_one.shared.events import emit_event
+from jentic_one.shared.events import emit_event, valid_trace_id_or_none
 from jentic_one.shared.events.repeated_failure import maybe_emit_repeated_failure
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.jobs.protocols import (
@@ -45,7 +44,6 @@ from jentic_one.shared.url_validation import validate_upstream_url
 
 logger = structlog.get_logger(__name__)
 
-_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _MAX_EVENT_SUMMARY_LEN = 128
 # A far-future expiry so the resolved-identity dataclass is well-formed; the
 # worker only runs an already-authorized, enqueued job — the inbound token was
@@ -219,7 +217,7 @@ class ExecutionHandler:
         toolkit_id: str | None = None,
         operation_id: str | None = None,
     ) -> None:
-        event_trace_id = trace_id if _TRACE_ID_RE.match(trace_id) else None
+        event_trace_id = valid_trace_id_or_none(trace_id)
         try:
             if status == ExecutionStatus.COMPLETED:
                 await emit_event(
