@@ -296,7 +296,7 @@ async def test_safe_refresh_runs_sweep_after_successful_refresh() -> None:
         ),
         patch(f"{_SWEEP}.CatalogRepository.fetched_at", new_callable=AsyncMock, return_value=None),
         patch.object(svc, "refresh", new_callable=AsyncMock),
-        patch.object(svc, "_spawn_update_notify_sweep") as spawn,
+        patch.object(svc, "trigger_update_notify_sweep") as spawn,
     ):
         await svc._safe_refresh()
         spawn.assert_called_once()
@@ -316,7 +316,7 @@ async def test_safe_refresh_skips_sweep_when_refresh_fails() -> None:
         patch.object(
             svc, "refresh", new_callable=AsyncMock, side_effect=CatalogUnavailableError("x")
         ),
-        patch.object(svc, "_spawn_update_notify_sweep") as spawn,
+        patch.object(svc, "trigger_update_notify_sweep") as spawn,
     ):
         await svc._safe_refresh()
         spawn.assert_not_called()
@@ -332,9 +332,19 @@ async def test_spawn_sweep_detaches_and_runs_task() -> None:
         ran.set()
 
     with patch.object(svc, "_run_update_notify_sweep", side_effect=_fake_sweep):
-        svc._spawn_update_notify_sweep()
+        svc.trigger_update_notify_sweep()
         # Not yet awaited — the coroutine only runs once we yield to the loop.
         await asyncio.wait_for(ran.wait(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_spawn_sweep_noops_when_disabled() -> None:
+    """The kill switch (interval<=0) means no task is ever spawned."""
+    svc = CatalogService(_make_ctx(interval=0))
+    with patch.object(svc, "_run_update_notify_sweep", new_callable=AsyncMock) as run:
+        svc.trigger_update_notify_sweep()
+        await asyncio.sleep(0)  # give any (wrongly) spawned task a chance to run
+        run.assert_not_called()
 
 
 @pytest.mark.asyncio

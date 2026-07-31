@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -276,10 +276,19 @@ class ApiRevisionRepository:
 
         Joins each candidate revision to its API's identity + current spec digest so
         the update-notify sweep can build an event payload and dedupe without a
-        second query. One row per ``(api_id, source_url)``; an API with multiple
-        non-archived revisions from the same URL is de-duplicated by the caller via
-        the unique ``local_api_id`` check row.
+        second query. Exactly one row per ``api_id``: an API commonly has multiple
+        non-archived revisions (imports create drafts that are never auto-promoted),
+        so we must pick a **deterministic** one or the sweep would compare upstream
+        against a row-order-dependent digest/``source_url`` and fire spurious
+        notifications. Selection order: the API's ``current_revision_id`` if set,
+        then newest ``created_at``, then ``id`` as a final tiebreak (matching the
+        ``ix_api_revisions_api_id_created_at_id`` index).
         """
+        # 0 for the API's current revision, 1 otherwise — sorts current first.
+        current_first = case(
+            (ApiRevision.id == Api.current_revision_id, 0),
+            else_=1,
+        )
         result = await session.execute(
             select(
                 ApiRevision.api_id,
@@ -292,6 +301,12 @@ class ApiRevisionRepository:
             .join(Api, Api.id == ApiRevision.api_id)
             .where(ApiRevision.source_url.is_not(None))
             .where(ApiRevision.state != ApiRevisionState.ARCHIVED)
+            .order_by(
+                ApiRevision.api_id,
+                current_first,
+                ApiRevision.created_at.desc(),
+                ApiRevision.id,
+            )
         )
         seen: set[uuid.UUID] = set()
         specs: list[RegisteredSpec] = []

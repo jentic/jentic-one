@@ -124,3 +124,54 @@ async def test_registered_specs_for_notify_joins_identity_and_excludes_archived(
     assert spec.vendor == sample_api.vendor
     assert spec.name == sample_api.name
     assert spec.version == sample_api.version
+
+
+async def test_registered_specs_for_notify_picks_deterministic_revision(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """With >1 live revision, selection is deterministic: current_revision_id wins,
+    else newest created_at — never DB-row-order-dependent (would cause spurious
+    notifies against a stale digest/source_url)."""
+    older = ApiRevision(
+        api_id=sample_api.id,
+        state="published",
+        spec_digest="sha256:older",
+        source_type="url",
+        source_url="https://example.com/older.json",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = ApiRevision(
+        api_id=sample_api.id,
+        state="draft",
+        spec_digest="sha256:newer",
+        source_type="url",
+        source_url="https://example.com/newer.json",
+        created_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+    async with registry_db.session() as session:
+        session.add_all([older, newer])
+        await session.commit()
+        newer_id, older_id = newer.id, older.id
+
+    # No current_revision_id → newest created_at wins.
+    async with registry_db.session() as session:
+        specs = await ApiRevisionRepository.registered_specs_for_notify(session)
+    mine = [s for s in specs if s.api_id == sample_api.id]
+    assert len(mine) == 1
+    assert mine[0].spec_digest == "sha256:newer"
+    assert mine[0].source_url == "https://example.com/newer.json"
+
+    # current_revision_id set to the OLDER revision → it overrides recency.
+    async with registry_db.session() as session:
+        api = await session.get(Api, sample_api.id)
+        assert api is not None
+        api.current_revision_id = older_id
+        await session.commit()
+
+    async with registry_db.session() as session:
+        specs = await ApiRevisionRepository.registered_specs_for_notify(session)
+    mine = [s for s in specs if s.api_id == sample_api.id]
+    assert len(mine) == 1
+    assert mine[0].spec_digest == "sha256:older"
+    assert mine[0].source_url == "https://example.com/older.json"
+    assert newer_id != older_id  # sanity: two distinct revisions existed

@@ -153,22 +153,33 @@ class CatalogService:
             await self.refresh()
         except CatalogUnavailableError:
             return
-        self._spawn_update_notify_sweep()
+        self.trigger_update_notify_sweep()
 
-    def _spawn_update_notify_sweep(self) -> None:
+    def trigger_update_notify_sweep(self) -> None:
         """Fire-and-forget the update-notify sweep off the triggering read path.
+
+        Public entry point for both the lazy refresh-on-read (``_safe_refresh``) and
+        the explicit operator ``POST /catalog:refresh`` — an intentional "check
+        upstream now" should sweep too.
 
         The sweep issues up to N conditional GETs, so awaiting it inline would make
         an unlucky user's (max-age-gated) catalog read block on the whole batch. We
         detach it into a background task instead; failures are logged, never raised
         back to the reader. The task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
         before it finishes (this service instance is per-request and short-lived).
+
+        No-ops when the sweep is disabled (kill switch) so a disabled install never
+        spawns a throwaway task per refresh.
         """
+        if self._cfg.update_check_interval_seconds <= 0:
+            return
         try:
             task = asyncio.create_task(self._run_update_notify_sweep())
         except RuntimeError:
-            # No running loop (e.g. a sync test harness): run inline as a fallback.
-            logger.debug("catalog_update_sweep_no_loop_running_inline")
+            # No running event loop (only reachable from a sync caller, which the
+            # async refresh path never is). Skip rather than block; there is no
+            # safe inline fallback without a loop.
+            logger.debug("catalog_update_sweep_skipped_no_running_loop")
             return
         _SWEEP_TASKS.add(task)
 
