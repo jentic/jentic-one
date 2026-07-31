@@ -18,7 +18,7 @@ import {
 	EmptyRow,
 	ErrorAlert,
 } from '@/shared/ui';
-import { ruleSummary, toolkitCredDisplayName } from '@/shared/lib';
+import { apiIdentityTuple, ruleSummary, toolkitCredDisplayName } from '@/shared/lib';
 import {
 	useLinkAgentToToolkit,
 	useToolkit,
@@ -240,10 +240,10 @@ export function OverviewTab({
 												cred.credential_id}
 										</span>
 										<p className="text-muted-foreground truncate font-mono text-xs">
-											{(cred.api_vendor && cred.api_name
-												? `${cred.api_vendor}/${cred.api_name}`
-												: cred.api_vendor || cred.api_name) ||
-												cred.credential_id}
+											{apiIdentityTuple({
+												vendor: cred.api_vendor,
+												name: cred.api_name,
+											}) || cred.credential_id}
 										</p>
 										{/* The grant's gist in the platform's rule voice —
 										    "Blocks DELETE; Allows GET on 3 operations". */}

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { Button, DetailSection, EmptyRow, ErrorAlert } from '@/shared/ui';
 import { OperationsSummary } from '@/shared/app';
-import { toolkitCredDisplayName } from '@/shared/lib';
+import { apiIdentityTuple, toolkitCredDisplayName } from '@/shared/lib';
 import { useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
 import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
@@ -77,13 +77,13 @@ export function AccessTab({
 							// the credential id, so the row never renders blank.
 							const heading =
 								cred.label || toolkitCredDisplayName(cred) || cred.credential_id;
-							// Muted technical subtitle: the raw vendor/name tuple. Use `||`
-							// (not `??`) so an empty-string vendor falls through to apiName
-							// rather than printing blank.
-							const apiTuple =
-								cred.api_vendor && cred.api_name
-									? `${cred.api_vendor}/${cred.api_name}`
-									: cred.api_vendor || cred.api_name || '';
+							// Muted technical subtitle: the raw vendor/name tuple, via the
+							// shared helper so a tuple-shaped `api_name` doesn't render the
+							// vendor twice.
+							const apiTuple = apiIdentityTuple({
+								vendor: cred.api_vendor,
+								name: cred.api_name,
+							});
 							return (
 								<motion.div
 									key={cred.credential_id}

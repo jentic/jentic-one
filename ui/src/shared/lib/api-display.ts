@@ -201,11 +201,22 @@ function stripVendorPrefix(name: string, vendor: string): string {
 	// recognised TLD, peel it as part of the vendor prefix too. A tail that
 	// was ONLY the TLD (`vendor='posthog'`, `name='posthog-com'`) is a fully
 	// consumed mirror — return empty so the caller falls back to the vendor.
-	const tldMatch = /^([A-Za-z]+)(.*)$/.exec(tail);
-	if (tldMatch && TLD_SUFFIXES.has(tldMatch[1].toLowerCase())) {
-		const afterTld = tldMatch[2];
-		if (afterTld === '') return '';
-		if (PREFIX_SEPARATORS.test(afterTld)) return afterTld.replace(PREFIX_SEPARATORS, '');
+	//
+	// The peel is gated on the vendor NOT already carrying its own TLD: for
+	// `vendor='apple-com'`, `name='apple-com-app-store-connect'` the mirrored
+	// domain is already fully consumed by the prefix strip, so a leading
+	// TLD-shaped token (`app`, `ai`, `dev`, …) is a genuine part of the
+	// sub-API name — peeling it would truncate `App Store Connect` to
+	// `Store Connect`.
+	const vendorTokens = vendorLower.split(/[-_.:/\s|]+/).filter(Boolean);
+	const vendorHasTld = TLD_SUFFIXES.has(vendorTokens[vendorTokens.length - 1] ?? '');
+	if (!vendorHasTld) {
+		const tldMatch = /^([A-Za-z]+)(.*)$/.exec(tail);
+		if (tldMatch && TLD_SUFFIXES.has(tldMatch[1].toLowerCase())) {
+			const afterTld = tldMatch[2];
+			if (afterTld === '') return '';
+			if (PREFIX_SEPARATORS.test(afterTld)) return afterTld.replace(PREFIX_SEPARATORS, '');
+		}
 	}
 	return tail;
 }
@@ -285,4 +296,26 @@ export function apiRefDisplayName(input: {
 	// placeholder (`main`, `default`) must not surface as `Main` / `Default`.
 	if (name && !GENERIC_NAMES.has(name.toLowerCase())) return humanizeName(name);
 	return '';
+}
+
+/**
+ * Raw machine-identity subtitle: `vendor/name`, both fields verbatim.
+ *
+ * `name` on real data can itself be a `vendor/name`-shaped tuple
+ * (`posthog-com/posthog-com-posthog-api`) — the same shape
+ * {@link toolkitCredDisplayName} peels for its title. Concatenating naively
+ * would render the vendor twice (`posthog-com/posthog-com/…`), so when the
+ * tuple's leading segment repeats the vendor it is dropped before joining.
+ * Returns whichever single field exists when the other is absent, or `''`
+ * when both are.
+ */
+export function apiIdentityTuple(input: { vendor?: string | null; name?: string | null }): string {
+	const vendor = input.vendor ?? '';
+	const rawName = input.name ?? '';
+	let name = rawName;
+	if (vendor && rawName.toLowerCase().startsWith(`${vendor.toLowerCase()}/`)) {
+		name = rawName.slice(vendor.length + 1);
+	}
+	if (vendor && name) return `${vendor}/${name}`;
+	return vendor || name;
 }

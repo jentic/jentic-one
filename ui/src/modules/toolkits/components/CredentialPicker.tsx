@@ -15,7 +15,7 @@ import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Filter, KeyRound, Link as LinkIcon, SearchX } from 'lucide-react';
 import { AppLink, Badge, EmptyState, ErrorAlert, LoadingState, SearchInput } from '@/shared/ui';
 import { ROUTES } from '@/shared/app/routes';
-import { apiRefDisplayName } from '@/shared/lib';
+import { apiIdentityTuple, apiRefDisplayName } from '@/shared/lib';
 import { useBindableCredentials } from '@/modules/toolkits/api';
 import { CREDENTIAL_TYPE_LABELS, type BindableCredential } from '@/modules/toolkits/api/types';
 
@@ -167,15 +167,13 @@ function CredentialRow({
 		cred.provider ||
 		cred.credential_id;
 	// Muted technical subtitle: the raw vendor/name tuple when an API identity
-	// exists (using `||` so an empty-string vendor falls through to apiName
-	// rather than printing blank), else a guaranteed technical identifier
-	// (`credential_id`) so two identically-named creds with no API identity stay
-	// disambiguable. The title chain never promotes `credential_id`, so the
-	// subtitle is the row's last resort for telling rows apart.
-	const apiTuple =
-		cred.vendor && cred.apiName
-			? `${cred.vendor}/${cred.apiName}`
-			: cred.vendor || cred.apiName || '';
+	// exists (via the shared helper, which also peels a tuple-shaped `apiName`
+	// so the vendor doesn't render twice), else a guaranteed technical
+	// identifier (`credential_id`) so two identically-named creds with no API
+	// identity stay disambiguable. The title chain never promotes
+	// `credential_id`, so the subtitle is the row's last resort for telling
+	// rows apart.
+	const apiTuple = apiIdentityTuple({ vendor: cred.vendor, name: cred.apiName });
 	const subtitle = apiTuple || cred.credential_id;
 	return (
 		<button

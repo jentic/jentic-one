@@ -99,4 +99,5 @@ export {
 	titleFromApiId,
 	toolkitCredDisplayName,
 	apiRefDisplayName,
+	apiIdentityTuple,
 } from '@/shared/lib/api-display';

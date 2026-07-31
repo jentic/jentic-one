@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	apiIdentityTuple,
 	apiRefDisplayName,
 	humanizeDomainSlug,
 	humanizeName,
@@ -277,6 +278,27 @@ describe('apiRefDisplayName', () => {
 		).toBe('Posthog');
 	});
 
+	it('does not peel a TLD-shaped name token when the vendor already carries its TLD', () => {
+		// `vendor='apple-com'` already consumed its mirrored domain in the
+		// prefix strip, so a leading TLD-shaped token (`app`, `ai`, …) in the
+		// remaining tail is a genuine part of the sub-API name — peeling it
+		// would truncate `App Store Connect` to `Store Connect`.
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'apple-com',
+				name: 'apple-com-app-store-connect',
+			}),
+		).toBe('App Store Connect');
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'cloudflare-com',
+				name: 'cloudflare-com-ai-gateway',
+			}),
+		).toBe('Ai Gateway');
+	});
+
 	it('handles uppercase input case-insensitively', () => {
 		// The prefix match is case-insensitive and title-casing normalises the
 		// first letter only, so shouting payloads still strip and render.
@@ -373,6 +395,35 @@ describe('apiRefDisplayName', () => {
 		// as `Main`/`Default` — the exact placeholder this helper filters out.
 		expect(apiRefDisplayName({ displayName: null, vendor: null, name: 'main' })).toBe('');
 		expect(apiRefDisplayName({ displayName: null, vendor: null, name: 'default' })).toBe('');
+	});
+});
+
+describe('apiIdentityTuple', () => {
+	it('joins vendor and name with a slash', () => {
+		expect(apiIdentityTuple({ vendor: 'posthog-com', name: 'posthog-api' })).toBe(
+			'posthog-com/posthog-api',
+		);
+	});
+
+	it('does not double the vendor when name is itself a vendor/name tuple', () => {
+		// Real binding rows carry `api_name='posthog-com/posthog-com-posthog-api'`
+		// — the same shape toolkitCredDisplayName peels for its title. The
+		// subtitle must peel it too, or the vendor renders twice.
+		expect(
+			apiIdentityTuple({
+				vendor: 'posthog-com',
+				name: 'posthog-com/posthog-com-posthog-api',
+			}),
+		).toBe('posthog-com/posthog-com-posthog-api');
+		expect(apiIdentityTuple({ vendor: 'Posthog-Com', name: 'posthog-com/api' })).toBe(
+			'Posthog-Com/api',
+		);
+	});
+
+	it('falls back to the single present field, empty when both are absent', () => {
+		expect(apiIdentityTuple({ vendor: 'posthog-com', name: null })).toBe('posthog-com');
+		expect(apiIdentityTuple({ vendor: '', name: 'posthog-api' })).toBe('posthog-api');
+		expect(apiIdentityTuple({ vendor: null, name: null })).toBe('');
 	});
 });
 
