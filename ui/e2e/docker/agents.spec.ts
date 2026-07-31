@@ -86,7 +86,8 @@ test('a DCR-registered agent gets the identity console and can be renamed', asyn
 	// pre-filtered Monitor deep-link) still renders for an admin viewer —
 	// asserted unconditionally so a regression can't silently skip this check.
 	await page.getByRole('tab', { name: 'Activity' }).click();
-	const monitorLink = page.getByRole('link', { name: /Open in Monitor/ });
+	// Two links match (back row + feed card) — both share the same href.
+	const monitorLink = page.getByRole('link', { name: /Open Monitor/ }).first();
 	await expect(monitorLink).toBeVisible();
 	expect(await monitorLink.getAttribute('href')).toContain(`actor_id=${agent.clientId}`);
 

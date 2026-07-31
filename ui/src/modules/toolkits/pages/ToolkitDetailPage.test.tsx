@@ -153,21 +153,26 @@ describe('ToolkitDetailPage', () => {
 
 		await user.click(screen.getByRole('tab', { name: 'Activity' }));
 
-		// Volume chart (from /monitoring/usage?toolkit_id=…).
+		// Chart pair (from /monitoring/usage?toolkit_id=…): stacked volume + call trend.
 		expect(
-			await screen.findByRole('img', { name: /execution volume for this toolkit/i }),
+			await screen.findByRole('img', { name: /execution volume over the last 7d/i }),
 		).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /success rate per bucket/i })).toBeInTheDocument();
 
 		// Executions feed (from /executions?toolkit_id=…), including the denial.
 		expect(await screen.findByText(/github\.create_issue/)).toBeInTheDocument();
 		expect(screen.getByText(/denied by permission rule/i)).toBeInTheDocument();
 
-		// Deep-link into Monitor carries the toolkit filter.
-		const link = screen.getByRole('link', { name: /open monitor/i });
-		expect(link).toHaveAttribute(
-			'href',
-			expect.stringContaining('tab=executions&toolkit_id=tk_demo_github'),
-		);
+		// Deep-links into Monitor carry the toolkit filter — exactly two: the
+		// back-row link and the feed-card link.
+		const links = screen.getAllByRole('link', { name: /open monitor/i });
+		expect(links).toHaveLength(2);
+		for (const link of links) {
+			expect(link).toHaveAttribute(
+				'href',
+				expect.stringContaining('tab=executions&toolkit_id=tk_demo_github'),
+			);
+		}
 	});
 
 	it('hides the KPI strip and degrades the Activity tab for non-admins (403)', async () => {

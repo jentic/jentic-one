@@ -9,15 +9,13 @@ import {
 	ShieldCheck,
 	Unlink,
 } from 'lucide-react';
-import { Button, ErrorAlert } from '@/shared/ui';
+import { Button, DetailSection, EmptyRow, ErrorAlert } from '@/shared/ui';
 import { OperationsSummary } from '@/shared/app';
 import { useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
 import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
 import {
-	DetailSection,
-	EmptyRow,
 	panelMotion,
 	rowMotion,
 	toDisplayRules,

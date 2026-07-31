@@ -8,7 +8,16 @@ import {
 	Link as LinkIcon,
 	Unlink,
 } from 'lucide-react';
-import { ActorLabel, ActorStatusBadge, AppLink, Button, Dialog, ErrorAlert } from '@/shared/ui';
+import {
+	ActorLabel,
+	ActorStatusBadge,
+	AppLink,
+	Button,
+	DetailSection,
+	Dialog,
+	EmptyRow,
+	ErrorAlert,
+} from '@/shared/ui';
 import { ruleSummary } from '@/shared/lib';
 import {
 	useLinkAgentToToolkit,
@@ -21,12 +30,7 @@ import { AgentPicker } from '@/modules/toolkits/components/AgentPicker';
 import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { InlineConfirm } from '@/modules/toolkits/components/InlineConfirm';
 import { ToolkitAuditPanel } from '@/modules/toolkits/components/ToolkitAuditPanel';
-import {
-	DetailSection,
-	EmptyRow,
-	rowMotion,
-	toDisplayRules,
-} from '@/modules/toolkits/components/detail/shared';
+import { rowMotion, toDisplayRules } from '@/modules/toolkits/components/detail/shared';
 import { timeAgo } from '@/modules/toolkits/lib/time';
 import { ROUTE_PATHS, ROUTES } from '@/shared/app/routes';
 
