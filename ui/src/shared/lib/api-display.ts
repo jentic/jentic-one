@@ -162,6 +162,9 @@ export function titleFromApiId(apiId: string): string {
  */
 const GENERIC_NAMES = new Set(['', 'main', 'default']);
 
+/** Separator run between a mirrored vendor prefix and the sub-API tail. */
+const PREFIX_SEPARATORS = /^[-_.:/\s|]+/;
+
 /**
  * Peel a repeated vendor prefix off a sub-API `name`. Real payloads often
  * mirror the vendor into `name` — e.g. `vendor='posthog-com'`,
@@ -188,8 +191,23 @@ function stripVendorPrefix(name: string, vendor: string): string {
 	// separate the prefix with a hyphen/dot/underscore/slash, but also
 	// sometimes a space / colon / pipe (`posthog com posthog-api`), so treat
 	// all of those as separators too.
-	if (/^[-_.:/\s|]/.test(rest)) return rest.replace(/^[-_.:/\s|]+/, '');
-	return name;
+	if (!PREFIX_SEPARATORS.test(rest)) return name;
+	const tail = rest.replace(PREFIX_SEPARATORS, '');
+	// The mirrored prefix is often the vendor's DOMAIN form, not the bare
+	// vendor slug: `vendor='posthog'`, `name='posthog com posthog-api'` mirrors
+	// `posthog.com`. Stripping only the vendor slug would orphan the TLD token
+	// (`Com Posthog Api` — the exact double-render the strip exists to
+	// prevent, shifted one token right), so when the tail's LEADING token is a
+	// recognised TLD, peel it as part of the vendor prefix too. A tail that
+	// was ONLY the TLD (`vendor='posthog'`, `name='posthog-com'`) is a fully
+	// consumed mirror — return empty so the caller falls back to the vendor.
+	const tldMatch = /^([A-Za-z]+)(.*)$/.exec(tail);
+	if (tldMatch && TLD_SUFFIXES.has(tldMatch[1].toLowerCase())) {
+		const afterTld = tldMatch[2];
+		if (afterTld === '') return '';
+		if (PREFIX_SEPARATORS.test(afterTld)) return afterTld.replace(PREFIX_SEPARATORS, '');
+	}
+	return tail;
 }
 
 /**

@@ -244,18 +244,91 @@ describe('apiRefDisplayName', () => {
 		// space (and colon / pipe) must also be treated as a separator, else the
 		// prefix escapes the strip and the vendor renders twice.
 		expect(
-			apiRefDisplayName({
-				displayName: null,
-				vendor: 'posthog',
-				name: 'posthog com posthog-api',
-			}),
-		).toBe('Com Posthog Api');
-		expect(
 			apiRefDisplayName({ displayName: null, vendor: 'stripe', name: 'stripe:payments-api' }),
 		).toBe('Payments Api');
 		expect(
 			apiRefDisplayName({ displayName: null, vendor: 'slack', name: 'slack|events-api' }),
 		).toBe('Events Api');
+	});
+
+	it('peels a leading TLD token when the name mirrors the vendor DOMAIN, not the bare slug', () => {
+		// `vendor='posthog'` but the name mirrors `posthog.com` — stripping only
+		// the vendor slug would orphan the TLD (`Com Posthog Api`), the exact
+		// double-render bug class the strip exists to prevent, shifted one
+		// token right. The leading TLD peels as part of the vendor prefix.
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'posthog',
+				name: 'posthog com posthog-api',
+			}),
+		).toBe('Posthog Api');
+		expect(
+			apiRefDisplayName({ displayName: null, vendor: 'nytimes', name: 'nytimes-com-books' }),
+		).toBe('Books');
+	});
+
+	it('falls back to the vendor when the strip consumes the whole name (TLD-only remainder)', () => {
+		// `vendor='posthog'`, `name='posthog-com'`: the name is just the
+		// vendor's domain form, so nothing distinguishing remains — render the
+		// vendor (`Posthog`), never the orphaned remainder (`Com`).
+		expect(
+			apiRefDisplayName({ displayName: null, vendor: 'posthog', name: 'posthog-com' }),
+		).toBe('Posthog');
+	});
+
+	it('handles uppercase input case-insensitively', () => {
+		// The prefix match is case-insensitive and title-casing normalises the
+		// first letter only, so shouting payloads still strip and render.
+		expect(
+			apiRefDisplayName({
+				displayName: null,
+				vendor: 'POSTHOG-COM',
+				name: 'POSTHOG-COM-API',
+			}),
+		).toBe('API');
+		expect(apiRefDisplayName({ displayName: null, vendor: 'GITHUB-COM', name: 'main' })).toBe(
+			'GITHUB.COM',
+		);
+	});
+
+	it('is idempotent: feeding an output back in does not change it', () => {
+		// Display names round-trip through forms (the seeded credential name);
+		// re-deriving from an already-humanised string must be a no-op.
+		const once = apiRefDisplayName({
+			displayName: null,
+			vendor: 'nytimes-com',
+			name: 'nytimes-com-article-search',
+		});
+		expect(apiRefDisplayName({ displayName: null, vendor: 'nytimes-com', name: once })).toBe(
+			once,
+		);
+		const vendorOnly = apiRefDisplayName({
+			displayName: null,
+			vendor: 'posthog-com',
+			name: '',
+		});
+		expect(
+			apiRefDisplayName({ displayName: vendorOnly, vendor: 'posthog-com', name: '' }),
+		).toBe(vendorOnly);
+	});
+
+	it('agrees with toolkitCredDisplayName and titleFromApiId on one identity', () => {
+		// Cross-helper consistency pin: the same umbrella sub-API must render
+		// identically whichever DTO shape a surface happens to hold.
+		const fromRef = apiRefDisplayName({
+			displayName: null,
+			vendor: 'nytimes-com',
+			name: 'nytimes-com-article-search',
+		});
+		const fromBinding = toolkitCredDisplayName({
+			api_vendor: 'nytimes-com',
+			api_name: 'nytimes-com/nytimes-com-article-search',
+		});
+		const fromApiId = titleFromApiId('nytimes.com/article-search');
+		expect(fromRef).toBe('Article Search');
+		expect(fromBinding).toBe(fromRef);
+		expect(fromApiId).toBe(fromRef);
 	});
 
 	it('falls back to a humanised vendor when name is a generic placeholder', () => {
