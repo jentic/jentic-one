@@ -9750,7 +9750,8 @@ paths:
         required: false
         schema:
           anyOf:
-          - type: string
+          - maxLength: 500
+            type: string
           - type: 'null'
           title: Q
       - in: query

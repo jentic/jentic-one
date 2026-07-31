@@ -121,9 +121,9 @@ def test_whole_word_match_outranks_substring_match() -> None:
     entries = _entries("soundstripe.com", "stripe.com")
     scored = mb.score_entries(entries, "stripe")
     assert [e.api_id for e, _ in scored] == ["stripe.com", "soundstripe.com"]
-    # whole-token hit (3) strictly beats substring-only hit (1)
-    assert scored[0][1] == 3
-    assert scored[1][1] == 1
+    # same coverage (1 of 1 tokens, base 2), whole-token hit breaks the tie
+    assert scored[0][1] == 3  # coverage 1 x 2 + whole 1
+    assert scored[1][1] == 2  # coverage 1 x 2 + whole 0
 
 
 def test_whole_word_match_wins_regardless_of_alphabetical_order() -> None:
@@ -132,6 +132,36 @@ def test_whole_word_match_wins_regardless_of_alphabetical_order() -> None:
     entries = _entries("Mapbox", "box.com")
     scored = mb.score_entries(entries, "box")
     assert [e.api_id for e, _ in scored] == ["box.com", "Mapbox"]
+
+
+def test_whole_and_substring_hits_on_same_id_count_once_at_the_higher_tier() -> None:
+    # "box" matches box.mapbox.com both as the whole token "box" AND as a
+    # substring of "mapbox" — per query token it must count once, at the
+    # whole-token tier, never both (the if/elif in score_entry).
+    assert mb.score_entry("box.mapbox.com", ["box"]) == 3  # coverage 1 x 2 + whole 1
+
+
+def test_coverage_dominates_match_quality_on_multi_word_queries() -> None:
+    # Covering MORE of the query must always outrank covering less of it more
+    # "cleanly": for "google api", googleapis.com (both words, as substrings)
+    # must beat rest-api.com (one word, as a whole token) — otherwise every
+    # *-api.com entry in the catalog buries the obvious intent match.
+    entries = _entries("rest-api.com", "googleapis.com")
+    scored = mb.score_entries(entries, "google api")
+    assert [e.api_id for e, _ in scored] == ["googleapis.com", "rest-api.com"]
+    assert scored[0][1] == 6  # coverage 2 x 3 + whole 0
+    assert scored[1][1] == 4  # coverage 1 x 3 + whole 1
+
+
+def test_duplicate_query_tokens_are_deduplicated() -> None:
+    # "stripe stripe" ranks and scores exactly like "stripe" — duplicates would
+    # scale every entry uniformly (no ranking effect) at double the scan cost.
+    entries = _entries("soundstripe.com", "stripe.com")
+    assert mb.score_entries(entries, "stripe stripe") == mb.score_entries(entries, "stripe")
+
+
+def test_score_entry_empty_api_id_scores_zero() -> None:
+    assert mb.score_entry("", ["stripe"]) == 0
 
 
 def test_search_membership_unchanged_only_order_differs() -> None:
@@ -165,15 +195,15 @@ def test_score_entries_search_sorted_by_score_then_api_id() -> None:
 
 
 def test_score_entries_distinct_scores_rank_higher_first() -> None:
-    # A 2-token query yields distinct scores: matching both tokens as whole
-    # id-tokens (3+3=6) outranks matching only one (3).
+    # A 2-token query yields distinct scores: covering both tokens as whole
+    # id-tokens (2x3+2=8) outranks covering only one (1x3+1=4).
     entries = _entries("foo-bar.com", "foo-only.com", "bar-only.com", "nope.com")
     scored = mb.score_entries(entries, "foo bar")
     ids = [e.api_id for e, _ in scored]
-    # full match (6) first, then the two single-token hits (3) in api_id order, nope excluded
+    # full match (8) first, then the two single-token hits (4) in api_id order, nope excluded
     assert ids == ["foo-bar.com", "bar-only.com", "foo-only.com"]
-    assert scored[0][1] == 6
-    assert scored[1][1] == 3
+    assert scored[0][1] == 8
+    assert scored[1][1] == 4
 
 
 def _paginate_all(scored: list[tuple[mb.ManifestEntry, int | None]], limit: int) -> list[str]:
@@ -227,19 +257,19 @@ def test_paginate_last_full_page_reports_no_more() -> None:
 
 
 def test_paginate_search_walks_ranked_results_in_order_across_pages() -> None:
-    # Distinct scores via a 2-token query: the full match (both tokens whole, 6)
-    # must come out before the single-token hits (3), and the walk order must be
+    # Distinct scores via a 2-token query: the full match (both tokens whole, 8)
+    # must come out before the single-token hits (4), and the walk order must be
     # preserved across pages.
     entries = _entries("foo-bar.com", "foo-x.com", "bar-y.com", "unrelated.com")
     scored = mb.score_entries(entries, "foo bar")
     walked = _paginate_all(scored, limit=1)
-    # foo-bar (6) first; then the two single-token hits (3) in api_id order
+    # foo-bar (8) first; then the two single-token hits (4) in api_id order
     assert walked == ["foo-bar.com", "bar-y.com", "foo-x.com"]
     assert "unrelated.com" not in walked
 
 
 def test_paginate_search_equal_scores_walk_in_api_id_order() -> None:
-    # Single-token query => all matches score equally (the whole-token tier, 3);
+    # Single-token query => all matches score equally (whole-token hit, 3);
     # the (score, api_id) tie-break must yield ascending api_id order, with no
     # skips/dups, across pages.
     entries = _entries("foo-c.com", "foo-a.com", "foo-b.com", "nope.com")

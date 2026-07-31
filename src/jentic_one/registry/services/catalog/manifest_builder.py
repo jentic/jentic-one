@@ -134,39 +134,56 @@ def _tokenise(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", (text or "").lower())
 
 
-#: Points for a query token that equals a whole ``api_id`` token (e.g. query
-#: "stripe" vs the id token "stripe" in ``stripe.com``) — the strongest signal.
-_WHOLE_TOKEN_POINTS = 3
-#: Points for a query token that is only a substring of an ``api_id`` token
-#: (e.g. query "box" buried inside "mapbox") — a weak, incidental match.
-_SUBSTRING_POINTS = 1
+#: Encoding of the two ranking signals into one sortable integer (the cursor
+#: carries a single number). ``coverage`` — how many query tokens matched at
+#: all — is the dominant signal and preserves the pre-existing recall-fraction
+#: ordering exactly: matching more of the query always outranks matching less
+#: of it, no matter how "strong" the individual hits are (so a multi-word query
+#: like "google api" still ranks ``googleapis.com`` — both words covered —
+#: above the hundreds of ids that merely contain the whole word "api").
+#: ``whole`` — how many of those matches are whole ``api_id`` tokens rather
+#: than substrings buried in longer tokens — only breaks ties *within* a
+#: coverage class (the #604 fix: query "stripe" ranks ``stripe.com``, a whole
+#: token, above ``soundstripe.com``, a substring).
+#:
+#: ``score = coverage * (len(q_tokens) + 1) + whole`` is order-isomorphic to
+#: the tuple ``(coverage, whole)`` because ``whole <= coverage <= len(q_tokens)
+#: < len(q_tokens) + 1`` — the quality digit can never carry into the coverage
+#: digit. Scores are only ever compared within one query (the cursor is
+#: re-paired with the same ``q`` on each page), so the query-length-dependent
+#: base is safe.
 
 
 def score_entry(api_id: str, q_tokens: list[str]) -> int:
-    """Relevance score for an ``api_id`` against query tokens.
+    """Relevance score for an ``api_id`` against (deduplicated) query tokens.
 
-    Grades each query token by *how* it matches, not merely *whether* it does:
-    a whole-token match (the query word IS one of the id's words) scores higher
-    than an incidental substring match (the query word is buried inside a longer
-    id word). Scores are summed across query tokens, so an entry matching more of
-    the query — and matching it more strongly — ranks first.
+    Two signals, folded into one integer (see the encoding note above):
 
-    Integer points (not a 0-1 fraction) so match tiers add up cleanly and the
-    score is an exact, hashable sort key. A whole-token hit and a substring hit
-    are mutually exclusive per query token — a whole-token match already satisfies
-    the substring test, so it is scored once at the higher tier.
+    - **coverage** (dominant): the number of query tokens that match at all —
+      as a whole ``api_id`` token or as a substring of one. Identical to the
+      membership/recall predicate used since the original scorer.
+    - **whole-token quality** (tie-break): of the covered tokens, how many are
+      whole ``api_id`` tokens (query "stripe" IS the id token "stripe") rather
+      than incidental substrings ("box" buried inside "mapbox").
+
+    A whole-token hit and a substring hit are mutually exclusive per query
+    token — a whole-token match already satisfies the substring test, so it is
+    counted once, at the higher tier. Integer scores add and compare exactly,
+    so the sort key and the cursor round-trip without float error.
     """
     name_tokens = _tokenise(api_id)
-    if not name_tokens:
+    if not name_tokens or not q_tokens:
         return 0
     name_token_set = set(name_tokens)
-    score = 0
+    coverage = 0
+    whole = 0
     for t in q_tokens:
         if t in name_token_set:
-            score += _WHOLE_TOKEN_POINTS
+            coverage += 1
+            whole += 1
         elif any(t in nt for nt in name_tokens):
-            score += _SUBSTRING_POINTS
-    return score
+            coverage += 1
+    return coverage * (len(q_tokens) + 1) + whole
 
 
 def score_entries(
@@ -189,7 +206,10 @@ def score_entries(
     """
     if not q or not q.strip():
         return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
-    q_tokens = _tokenise(q)
+    # Dedupe tokens (order-preserving): duplicates would scale every entry's
+    # score uniformly — no ranking effect — while inflating scan cost, and the
+    # coverage encoding assumes each query token counts once.
+    q_tokens = list(dict.fromkeys(_tokenise(q)))
     if not q_tokens:
         return [(e, None) for e in sorted(entries, key=lambda e: e.api_id)]
     scored = [(e, score_entry(e.api_id, q_tokens)) for e in entries]
