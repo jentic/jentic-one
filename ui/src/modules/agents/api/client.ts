@@ -597,8 +597,15 @@ export async function fetchActorsUsage(
 	sinceDays = 7,
 ): Promise<Map<string, ActorUsage> | null> {
 	try {
+		// Window bounds ceiled to the next minute: the backend's aggregate uses
+		// a strict `started_at < until`, so a floored/now bound hides the
+		// current partial minute (#913); a fixed until also keeps the window an
+		// exact multiple of the bucket tier and the server cache key stable for
+		// a whole minute (a per-second `since` defeated it entirely).
+		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 		const res = await MonitoringService.getUsageStats({
-			since: Math.floor(Date.now() / 1000) - sinceDays * 86400,
+			since: until - sinceDays * 86400,
+			until,
 			groupBy: GroupBy.AGENT,
 			topLimit: 50,
 		});
@@ -652,8 +659,13 @@ export async function fetchActorUsageDetail(
 	sinceDays = 7,
 ): Promise<ActorUsageDetail | null> {
 	try {
+		// Next-minute-ceiled bounds — see fetchActorsUsage: includes the current
+		// partial minute (#913, the volume chart must never trail the
+		// executions feed) with a cache-stable, tier-exact window.
+		const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 		const res = await MonitoringService.getUsageStats({
-			since: Math.floor(Date.now() / 1000) - sinceDays * 86400,
+			since: until - sinceDays * 86400,
+			until,
 			agentId: actorId,
 			// `top` is irrelevant here (the window is already one actor).
 			topLimit: 1,

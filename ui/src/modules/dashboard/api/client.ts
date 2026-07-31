@@ -199,6 +199,11 @@ export async function fetchHasAgents(): Promise<boolean> {
 export interface UsageOverviewParams {
 	/** Unix-second window lower bound (the endpoint defaults `until` to now). */
 	since: number;
+	/** Unix-second window upper bound (exclusive). Sent explicitly so the
+	 * window width — which drives the backend's bucket-tier choice — is
+	 * deterministic, and ceiled so the current partial minute is included
+	 * (#913). */
+	until?: number;
 	/** Top-rows grouping dimension (defaults to `api` server-side). */
 	groupBy?: GroupBy;
 	/** How many top rows to return (1–50). */
@@ -218,6 +223,7 @@ export async function fetchUsageOverview(params: UsageOverviewParams): Promise<U
 	try {
 		return await MonitoringService.getUsageStats({
 			since: params.since,
+			until: params.until ?? null,
 			groupBy: params.groupBy ?? GroupBy.API,
 			topLimit: params.topLimit ?? 5,
 		});

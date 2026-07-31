@@ -178,10 +178,13 @@ export function useHasAgents() {
  * initializes (TDZ).
  *
  * The query key carries the range + lens tokens (not raw timestamps — those
- * would mint a new cache slice every refetch); the actual `since` bound is
- * computed at fetch time from the range, minute-floored to match the
- * endpoint's own `until` default, so refetches within the same minute are
- * cache-coherent.
+ * would mint a new cache slice every refetch); the actual window bounds are
+ * computed at fetch time, ceiled to the NEXT minute so (a) refetches within
+ * the same minute are cache-coherent server-side, (b) the window width stays
+ * exactly the range (the backend picks its bucket tier from `until - since`,
+ * so a server-defaulted `until` would tip a 24h window into the 6h tier),
+ * and (c) the current partial minute is included — the aggregate must never
+ * trail the executions feed (#913).
  *
  * `placeholderData: keepPreviousData` — flipping range/lens re-keys the query;
  * keeping the previous aggregate on screen (with `isFetching` signalling the
@@ -195,9 +198,10 @@ export function useUsageOverview(
 	return useQuery<UsageResponse, DashboardApiError>({
 		queryKey: dashboardKeys.usage(range, lens),
 		queryFn: () => {
-			const nowFloored = Math.floor(Date.now() / 60_000) * 60;
+			const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 			return fetchUsageOverview({
-				since: nowFloored - RANGE_SECONDS[range],
+				since: until - RANGE_SECONDS[range],
+				until,
 				groupBy: lens,
 			});
 		},

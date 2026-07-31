@@ -708,7 +708,11 @@ export function useActorUsageDetail(actorId: string | null) {
 		queryKey: ['agents-usage', 'detail', actorId],
 		queryFn: () => fetchActorUsageDetail(actorId as string),
 		enabled: actorId != null,
-		staleTime: 60 * 1000,
+		// Matches useActorExecutions below: the KPI/volume chart and the
+		// recent-executions feed render side by side and must go stale
+		// together, or the feed refreshes ahead of the chart and the two
+		// disagree for up to 30s (#913).
+		staleTime: 30 * 1000,
 		retry: false,
 	});
 }
