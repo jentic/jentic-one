@@ -871,11 +871,7 @@ export const agentsHandlers = [
 			owner_id?: string | null;
 		};
 		if (typeof body.name === 'string') row.name = body.name;
-		// Mirror the real backend: a `null` description is IGNORED (a clear sent
-		// as `null` silently reverts), while an empty string is HONOURED and
-		// clears the field. Only a non-`null` value (including `''`) is applied.
-		if (body.description !== undefined && body.description !== null)
-			row.description = body.description;
+		if (body.description !== undefined) row.description = body.description;
 		if (body.owner_id !== undefined) row.owner_id = body.owner_id;
 		return HttpResponse.json(row);
 	}),

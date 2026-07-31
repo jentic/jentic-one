@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
@@ -8,9 +9,10 @@ import {
 	Settings,
 	ShieldCheck,
 	ShieldOff,
+	Unplug,
 } from 'lucide-react';
 import { Button, EmptyState, TabNav } from '@/shared/ui';
-import { useToolkit } from '@/modules/toolkits/api';
+import { useToolkit, useToolkitAgents } from '@/modules/toolkits/api';
 import { OverviewTab } from '@/modules/toolkits/components/detail/OverviewTab';
 import { ActivityTab } from '@/modules/toolkits/components/detail/ActivityTab';
 import { AccessTab } from '@/modules/toolkits/components/detail/AccessTab';
@@ -63,10 +65,18 @@ export interface ToolkitDetailBodyProps {
 
 export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBodyProps) {
 	const { data: toolkit, isLoading } = useToolkit(toolkitId);
+	// Shares the Overview tab's query cache (same key), so this costs nothing
+	// extra when Overview is the active tab.
+	const { data: boundAgents } = useToolkitAgents(toolkitId);
 
 	const [searchParams, setSearchParams] = useSearchParams();
 	const tabParam = searchParams.get('tab');
 	const activeTab: ToolkitTab = isToolkitTab(tabParam) ? tabParam : 'overview';
+
+	// Set when a "Link an agent" CTA fires from a tab that doesn't host the
+	// picker (Access's post-bind prompt): switch to Overview AND open the
+	// picker there — the button must land in the picker, not on a tab.
+	const [linkAgentRequested, setLinkAgentRequested] = useState(false);
 
 	const setTab = (tab: string) => {
 		setSearchParams(
@@ -109,6 +119,27 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 		);
 
 	const suspended = !toolkit.active;
+	// A toolkit with credentials but NO bound agent serves nothing: this is the
+	// classic manual-setup dead end (issue #826) — the operator created the
+	// toolkit and bound a credential but never linked the agent, so every call
+	// still fails. Surface it inline rather than letting them discover it via
+	// an agent's 403. Suppressed while suspended (the danger banner owns that
+	// state), until the agents query resolves (no flash on load), and when the
+	// toolkit has API keys — key callers reach the credentials fine, so
+	// "serves nothing" would be false.
+	const hasUnservedCredentials =
+		!suspended &&
+		toolkit.credential_count > 0 &&
+		toolkit.key_count === 0 &&
+		boundAgents !== undefined &&
+		boundAgents.length === 0;
+
+	// The single source of truth for "a fresh bind would serve nothing" (the
+	// post-bind link-an-agent prompt's gate). Loading-safe: `undefined` (query
+	// still in flight) means NOT agentless — the prompt only ever fires on
+	// resolved evidence, never on a default empty array.
+	const agentless =
+		boundAgents !== undefined && boundAgents.length === 0 && toolkit.key_count === 0;
 
 	const tabOptions = [
 		{
@@ -162,6 +193,43 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				)}
 			</AnimatePresence>
 
+			<AnimatePresence initial={false}>
+				{hasUnservedCredentials && (
+					<motion.div key="no-agents-banner" {...panelMotion} className="overflow-hidden">
+						<div
+							className="border-warning/40 bg-warning/5 flex items-start gap-3 rounded-xl border p-4"
+							role="status"
+							data-testid="toolkit-no-agents-banner"
+						>
+							<div className="bg-warning/15 text-warning flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+								<Unplug className="h-5 w-5" />
+							</div>
+							<div className="min-w-0 flex-1">
+								<p className="text-warning font-heading text-sm font-semibold">
+									No agent is linked to this toolkit
+								</p>
+								<p className="text-muted-foreground mt-0.5 text-sm">
+									Its bound credential
+									{toolkit.credential_count === 1 ? ' is' : 's are'} not reachable
+									by any agent yet — link an agent{' '}
+									{activeTab === 'overview' ? 'below' : 'from the Overview tab'}{' '}
+									to put {toolkit.credential_count === 1 ? 'it' : 'them'} to use.
+								</p>
+							</div>
+							{activeTab !== 'overview' && (
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={() => setTab('overview')}
+								>
+									Go to Overview
+								</Button>
+							)}
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+
 			<UsageStrip toolkit={toolkit} />
 
 			<TabNav
@@ -181,10 +249,25 @@ export function ToolkitDetailBody({ toolkitId, onRequestClose }: ToolkitDetailBo
 				className="focus-visible:outline-none"
 			>
 				{activeTab === 'overview' && (
-					<OverviewTab toolkitId={toolkitId} onManageAccess={() => setTab('access')} />
+					<OverviewTab
+						toolkitId={toolkitId}
+						onManageAccess={() => setTab('access')}
+						agentless={agentless}
+						openLinkAgent={linkAgentRequested}
+						onLinkAgentOpened={() => setLinkAgentRequested(false)}
+					/>
 				)}
 				{activeTab === 'activity' && <ActivityTab toolkitId={toolkitId} />}
-				{activeTab === 'access' && <AccessTab toolkitId={toolkitId} />}
+				{activeTab === 'access' && (
+					<AccessTab
+						toolkitId={toolkitId}
+						agentless={agentless}
+						onLinkAgent={() => {
+							setLinkAgentRequested(true);
+							setTab('overview');
+						}}
+					/>
+				)}
 				{activeTab === 'keys' && <KeysTab toolkitId={toolkitId} suspended={suspended} />}
 				{activeTab === 'settings' && (
 					<SettingsTab toolkit={toolkit} onDeleted={onRequestClose} />

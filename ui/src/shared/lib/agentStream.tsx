@@ -172,6 +172,19 @@ function stringField(data: Record<string, unknown> | undefined, key: string): st
 	return typeof v === 'string' && v.length > 0 ? v : undefined;
 }
 
+/**
+ * Extract the trailing id from a HAL link like `/executions/{id}` or
+ * `/jobs/{id}` (query/hash stripped). The backend surfaces the linked
+ * execution/job only as such a link, not as a `data` field — see `adaptEvent`.
+ * Exported so module-side consumers (e.g. Monitor's Events drill-in) parse
+ * links with the same rules instead of re-deriving them.
+ */
+export function idFromLink(link: string | null | undefined): string | undefined {
+	if (!link) return undefined;
+	const id = decodeURIComponent(link.split(/[?#]/)[0].split('/').pop() ?? '');
+	return id.length > 0 ? id : undefined;
+}
+
 /** Build the grouping key. Consecutive same-key events collapse in the feed. */
 function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string {
 	const token =
@@ -203,13 +216,18 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		e.actor_type === 'agent' && typeof e.actor_id === 'string' && e.actor_id.length > 0
 			? e.actor_id
 			: undefined;
+	// The linked execution/job is surfaced as a HAL link (`_links.execution` =
+	// `/executions/{id}`, `_links.job` = `/jobs/{id}`), NOT as a `data` entry —
+	// so parse the id out of the link (last path segment) and prefer it over the
+	// `data` fallback. Without this the "View execution/job" deep-link never
+	// appeared for real events (their `data` carries no id). See issue #617.
 	const tokens: StreamTokens = {
 		trace_id: e.trace_id ?? stringField(data, 'trace_id'),
 		toolkit_id: stringField(data, 'toolkit_id'),
 		operation_id: stringField(data, 'operation_id'),
 		credential_id: stringField(data, 'credential_id'),
-		job_id: stringField(data, 'job_id'),
-		execution_id: stringField(data, 'execution_id'),
+		job_id: idFromLink(e._links?.job) ?? stringField(data, 'job_id'),
+		execution_id: idFromLink(e._links?.execution) ?? stringField(data, 'execution_id'),
 		access_request_id:
 			stringField(data, 'access_request_id') ?? stringField(data, 'request_id'),
 		// Precedence matters: explicit `data.agent_id` first, then the top-level
@@ -538,11 +556,21 @@ export function AgentStreamProvider({
 			try {
 				const updated = await acknowledgeEvent(eventId);
 				patchEvent(eventId, () => adaptEvent(updated));
+				// The ack happened outside React Query, and the SSE stream is a
+				// created_at-watermark poll that will never re-deliver an old event
+				// just because its acknowledged flag flipped — so eagerly refresh
+				// the other surfaces that count/list unacknowledged events (the
+				// Monitor Events tab and the dashboard action inbox), mirroring
+				// what `decide` does for approval surfaces.
+				void queryClient.invalidateQueries({
+					queryKey: sharedQueryKeys.monitorEventsRoot,
+				});
+				void queryClient.invalidateQueries({ queryKey: DASHBOARD_ROOT_KEY });
 			} catch {
 				patchEvent(eventId, markUnresolved);
 			}
 		},
-		[patchEvent, markResolved, markUnresolved],
+		[patchEvent, markResolved, markUnresolved, queryClient],
 	);
 
 	const decide = useCallback(
@@ -638,6 +666,17 @@ export function useAgentStream(): AgentStreamValue {
 	return ctx;
 }
 
+/**
+ * Provider-optional variant for module-side hooks that should SYNC with the
+ * stream when it's mounted (the app shell) but must not require it (tests,
+ * embedded surfaces). Monitor's acknowledge mutation uses this to flip the
+ * rail's in-memory copy of an event so the failure pill drops immediately —
+ * the SSE watermark poll never re-delivers an old event on an ack flip.
+ */
+export function useAgentStreamOptional(): AgentStreamValue | null {
+	return useContext(AgentStreamContext);
+}
+
 /* ------------------------------------------------------------------ */
 /* Toast scope + display helpers                                       */
 /* ------------------------------------------------------------------ */
@@ -672,6 +711,43 @@ export function matchesToastScope(severity: StreamSeverity, scope: ToastScope): 
 	return severity === 'critical';
 }
 
+/**
+ * A failure severity — `error` or `critical`. Failures are surfaced proactively
+ * (toast + persistent badge) regardless of the operator's toast scope, since a
+ * silently-failed unattended run is exactly what must never be missed (#671).
+ */
+export function isFailureSeverity(severity: StreamSeverity): boolean {
+	return severity === 'error' || severity === 'critical';
+}
+
+/**
+ * Count of unacknowledged failure events (error/critical) in the LOADED feed
+ * window (backlog seed + live inserts, capped) — the number shown on the
+ * rail's persistent failure badge (#671). Deliberately window-scoped: the pill
+ * is a "recent activity" signal, not a global unacked-failures query (that's
+ * the Monitor Events tab); labels around it say "recent" for that reason.
+ * Drops as the operator acknowledges each failing event.
+ */
+export function unacknowledgedFailureCount(events: StreamEvent[]): number {
+	let n = 0;
+	for (const ev of events) {
+		if (!ev.acknowledged && isFailureSeverity(ev.severity)) n += 1;
+	}
+	return n;
+}
+
+/**
+ * Badge-friendly rendering of a failure count: caps at "99+" so a runaway count
+ * can't overflow the narrow rail pill, and clamps pathological inputs (NaN,
+ * negatives, fractions) to a sane non-negative integer so the pill never shows
+ * "NaN" or "-1". The underlying number stays accurate for aria labels — this
+ * only shapes the visible glyphs.
+ */
+export function formatFailurePillCount(count: number): string {
+	const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+	return n > 99 ? '99+' : String(n);
+}
+
 export function severityStripeClass(s: StreamSeverity): string {
 	if (s === 'critical') return 'border-l-danger';
 	if (s === 'error') return 'border-l-danger';
@@ -685,6 +761,64 @@ export function formatStreamTime(tsMs: number): string {
 	const mm = d.getMinutes().toString().padStart(2, '0');
 	const ss = d.getSeconds().toString().padStart(2, '0');
 	return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Absolute local datetime split into a date line and a time line, so a tooltip
+ * can render it as two clean rows ("28 Jul 2026" / "13:02:01") instead of one
+ * string that wraps awkwardly into three (issue #705 tooltip polish).
+ */
+export function formatStreamDateTimeParts(tsMs: number): { date: string; time: string } {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return { date: '', time: '' };
+	const date = d.toLocaleDateString(undefined, {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+	});
+	const time = d.toLocaleTimeString(undefined, {
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
+	return { date, time };
+}
+
+/**
+ * Stable **local** `YYYY-MM-DD` key for detecting calendar-day boundaries in the
+ * feed. Built from local date parts (not `toISOString`, which is UTC and would
+ * mis-bucket events around midnight for non-UTC operators — the #705 reporter is
+ * UTC+1).
+ */
+export function streamDayKey(tsMs: number): string {
+	const d = new Date(tsMs);
+	if (Number.isNaN(d.getTime())) return '';
+	const y = d.getFullYear();
+	const m = (d.getMonth() + 1).toString().padStart(2, '0');
+	const day = d.getDate().toString().padStart(2, '0');
+	return `${y}-${m}-${day}`;
+}
+
+/**
+ * Human day-separator label for the rail feed: "Today" / "Yesterday" / else a
+ * compact weekday+date like "Thu 16 Jul". `now` is injectable for tests.
+ */
+export function formatStreamDayLabel(tsMs: number, now: number = Date.now()): string {
+	const key = streamDayKey(tsMs);
+	if (!key) return '';
+	if (key === streamDayKey(now)) return 'Today';
+	// "Yesterday" is the previous LOCAL calendar day. Rewinding by a fixed 24h in
+	// ms mislabels the day after a DST transition (the previous local day is 23h
+	// or 25h away), so step the Date's day-of-month instead — this stays correct
+	// across spring-forward / fall-back.
+	const y = new Date(now);
+	y.setDate(y.getDate() - 1);
+	if (key === streamDayKey(y.getTime())) return 'Yesterday';
+	return new Date(tsMs).toLocaleDateString(undefined, {
+		weekday: 'short',
+		day: 'numeric',
+		month: 'short',
+	});
 }
 
 /* ------------------------------------------------------------------ */
@@ -739,17 +873,37 @@ export type InlineActionSpec = {
 	requiresReason?: boolean;
 };
 
-/** Resolve a HAL `_links` URL or token into a router-relative monitor route. */
+/**
+ * Resolve a HAL `_links` URL or token into a router-relative monitor route.
+ *
+ * The detail-param vocabulary MUST match what the Monitor tabs read off the URL:
+ * the Executions tab opens its trace/execution sheet from `trace_id`/`execution_id`
+ * and the Jobs tab from `job_id` (the underscore names — see
+ * `modules/monitor/lib/links.ts` and the tabs' `searchParams.get(...)`). Emitting
+ * the short `trace`/`execution`/`job` aliases here switched the tab but left the
+ * detail sheet closed, so a rail "View execution" click looked like a dead end
+ * (issue #617). `trace_id="unknown"` is a placeholder for header-less runs and
+ * can't open a sheet, so it's never emitted as a trace link.
+ */
+const hasUsableTrace = (traceId: string | null | undefined): traceId is string =>
+	traceId != null && traceId !== '' && traceId !== 'unknown';
+
 const NAV = {
 	trace: (ev: StreamEvent) =>
-		ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null,
+		hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null,
 	execution: (ev: StreamEvent) => {
 		const id = ev.tokens.execution_id;
-		if (id) return `/monitor?tab=executions&execution=${encodeURIComponent(id)}`;
-		return ev.tokens.trace_id ? `/monitor?tab=executions&trace=${ev.tokens.trace_id}` : null;
+		if (id) return `/monitor?tab=executions&execution_id=${encodeURIComponent(id)}`;
+		return hasUsableTrace(ev.tokens.trace_id)
+			? `/monitor?tab=executions&trace_id=${encodeURIComponent(ev.tokens.trace_id)}`
+			: null;
 	},
 	job: (ev: StreamEvent) =>
-		ev.tokens.job_id ? `/monitor?tab=jobs&job=${encodeURIComponent(ev.tokens.job_id)}` : null,
+		ev.tokens.job_id
+			? `/monitor?tab=jobs&job_id=${encodeURIComponent(ev.tokens.job_id)}`
+			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
 };

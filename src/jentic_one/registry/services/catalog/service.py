@@ -17,13 +17,22 @@ Boundaries kept from D-005a:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+import structlog
+
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
+from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
-from jentic_one.registry.services.catalog.fetch import CatalogFetchError, fetch_json
+from jentic_one.registry.services.catalog.fetch import (
+    CatalogFetchError,
+    fetch_bytes_conditional,
+    fetch_json,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
@@ -31,9 +40,21 @@ from jentic_one.registry.services.errors import (
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
+from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.pagination import decode_catalog_cursor, encode_catalog_cursor
+
+logger = structlog.get_logger(__name__)
+
+#: Strong references to in-flight fire-and-forget sweep tasks. ``CatalogService``
+#: is constructed per-request and GC'd when the request returns, so a task held
+#: only on ``self`` could be collected mid-flight (asyncio keeps only weak refs to
+#: tasks). Parking them here until they finish keeps them alive; the done-callback
+#: discards on completion. Bounded in practice by the max-age + advisory-lock gates
+#: on the refresh that spawns them.
+_SWEEP_TASKS: set[asyncio.Task[None]] = set()
 
 
 @dataclass(frozen=True)
@@ -132,6 +153,184 @@ class CatalogService:
             await self.refresh()
         except CatalogUnavailableError:
             return
+        self.trigger_update_notify_sweep()
+
+    def trigger_update_notify_sweep(self) -> None:
+        """Fire-and-forget the update-notify sweep off the triggering read path.
+
+        Public entry point for both the lazy refresh-on-read (``_safe_refresh``) and
+        the explicit operator ``POST /catalog:refresh`` — an intentional "check
+        upstream now" should sweep too.
+
+        The sweep issues up to N conditional GETs, so awaiting it inline would make
+        an unlucky user's (max-age-gated) catalog read block on the whole batch. We
+        detach it into a background task instead; failures are logged, never raised
+        back to the reader. The task is parked in ``_SWEEP_TASKS`` so it isn't GC'd
+        before it finishes (this service instance is per-request and short-lived).
+
+        No-ops when the sweep is disabled (kill switch) so a disabled install never
+        spawns a throwaway task per refresh.
+        """
+        if self._cfg.update_check_interval_seconds <= 0:
+            return
+        try:
+            task = asyncio.create_task(self._run_update_notify_sweep())
+        except RuntimeError:
+            # No running event loop (only reachable from a sync caller, which the
+            # async refresh path never is). Skip rather than block; there is no
+            # safe inline fallback without a loop.
+            logger.debug("catalog_update_sweep_skipped_no_running_loop")
+            return
+        _SWEEP_TASKS.add(task)
+
+        def _done(t: asyncio.Task[None]) -> None:
+            _SWEEP_TASKS.discard(t)
+            if not t.cancelled() and (exc := t.exception()) is not None:
+                logger.warning("catalog_update_sweep_task_failed", exc_info=exc)
+
+        task.add_done_callback(_done)
+
+    async def _run_update_notify_sweep(self) -> None:
+        """Probe registered specs for upstream changes; emit an event on change.
+
+        Piggybacks on the (rare, max-age-gated) manifest refresh. For each
+        registered API with a spec URL, sends a conditional ``GET``
+        (``If-None-Match`` with the last-seen ETag) at most once per
+        ``update_check_interval_seconds``; a ``304`` or an unchanged digest is a
+        no-op, a changed digest emits ``catalog.update_available`` once (deduped on
+        ``last_notified_digest``). Upstream/DB failures are swallowed per API so a
+        flaky host never breaks the refresh or the rest of the batch. A ``0``
+        interval disables the sweep entirely (air-gapped kill switch).
+
+        Note the refresh's advisory lock is transaction-scoped (it guards only the
+        staleness check), so this sweep is **not** globally single-flight: a rare
+        concurrent double-refresh could emit a duplicate event for the same change.
+        That is deliberately tolerated — the event is idempotent for operators and
+        the next sweep dedupes on the persisted digest. Probes fan out with bounded
+        concurrency (``update_sweep_max_concurrency``, kept below the DB pool) under
+        a wall-clock budget (``update_sweep_deadline_seconds``) so a large or hostile
+        candidate set can't turn one refresh into an unbounded stall.
+        """
+        interval = self._cfg.update_check_interval_seconds
+        if interval <= 0:
+            return
+
+        async with self._ctx.registry_db.session() as session:
+            candidates = await ApiRevisionRepository.registered_specs_for_notify(session)
+        if not candidates:
+            return
+
+        now = utcnow()
+        sem = asyncio.Semaphore(max(1, self._cfg.update_sweep_max_concurrency))
+        stats = {"probed": 0, "failed": 0}
+
+        async def _guarded(spec: RegisteredSpec) -> None:
+            async with sem:
+                try:
+                    await self._probe_one(spec, now=now, interval=interval)
+                    stats["probed"] += 1
+                except Exception:  # best-effort per API, never break the sweep
+                    stats["failed"] += 1
+                    logger.warning(
+                        "catalog_update_probe_failed",
+                        api_id=str(spec.api_id),
+                        spec_url=spec.source_url,
+                        exc_info=True,
+                    )
+
+        started = asyncio.get_running_loop().time()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(_guarded(spec) for spec in candidates)),
+                timeout=self._cfg.update_sweep_deadline_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "catalog_update_sweep_deadline_hit",
+                candidates=len(candidates),
+                probed=stats["probed"],
+            )
+        logger.info(
+            "catalog_update_sweep_complete",
+            candidates=len(candidates),
+            probed=stats["probed"],
+            failed=stats["failed"],
+            duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
+        )
+
+    async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
+        """Conditionally fetch one registered spec and emit on a fresh change."""
+        async with self._ctx.registry_db.session() as session:
+            check = await CatalogUpdateCheckRepository.get(session, spec.api_id)
+
+        if check is not None and check.last_checked_at is not None:
+            age = (now - check.last_checked_at).total_seconds()
+            if age < interval:
+                return
+
+        prior_etag = check.last_seen_etag if check is not None else None
+        result = await fetch_bytes_conditional(
+            spec.source_url, config=self._ingest_cfg, etag=prior_etag
+        )
+
+        if result.not_modified or result.digest is None:
+            async with self._ctx.registry_db.transaction() as session:
+                await CatalogUpdateCheckRepository.upsert(
+                    session,
+                    local_api_id=spec.api_id,
+                    spec_url=spec.source_url,
+                    etag=result.etag,
+                    digest=None,
+                    checked_at=now,
+                )
+            return
+
+        upstream_digest = result.digest
+        last_notified = check.last_notified_digest if check is not None else None
+        # A change worth notifying: the upstream bytes differ from what backs the
+        # registered revision, and we have not already notified for this exact
+        # upstream digest. Comparing against spec_digest (not just last_seen)
+        # means a spec that reverts to the registered content stops notifying.
+        changed = upstream_digest != spec.spec_digest and upstream_digest != last_notified
+
+        notified_digest = upstream_digest if changed else None
+        async with self._ctx.registry_db.transaction() as session:
+            await CatalogUpdateCheckRepository.upsert(
+                session,
+                local_api_id=spec.api_id,
+                spec_url=spec.source_url,
+                etag=result.etag,
+                digest=upstream_digest,
+                checked_at=now,
+                notified_digest=notified_digest,
+            )
+
+        if not changed:
+            return
+
+        async with self._ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.CATALOG_UPDATE_AVAILABLE,
+                severity=EventSeverity.INFO,
+                summary=(f"Upstream spec updated for {spec.vendor}/{spec.name} ({spec.version})"),
+                # Informational until Flow-3 ships a resolve path (one-click re-import
+                # / dismiss-snooze per (api_id, digest) — Phase 4). Marking it
+                # requires_action now would pile unresolvable items into the action
+                # inbox (nothing the operator can do clears them), so it surfaces in
+                # the events feed only. Flip to True alongside the re-import affordance.
+                requires_action=False,
+                created_by=None,
+                data={
+                    "api_id": str(spec.api_id),
+                    "vendor": spec.vendor,
+                    "name": spec.name,
+                    "version": spec.version,
+                    "current_digest": spec.spec_digest,
+                    "upstream_digest": upstream_digest,
+                    "spec_url": spec.source_url,
+                },
+            )
 
     async def _refresh_if_stale(self) -> None:
         """Lazy refresh-on-read seam for the single-entry reads (``get``)."""

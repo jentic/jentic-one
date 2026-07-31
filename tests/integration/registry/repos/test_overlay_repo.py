@@ -247,6 +247,44 @@ async def test_set_status_deprecated(registry_db: DatabaseSession, sample_api: A
     assert fetched.deprecated_at is not None
 
 
+async def test_set_confirmed_revision(registry_db: DatabaseSession, sample_api: Api) -> None:
+    """set_confirmed_revision back-links the materialized revision onto the overlay."""
+    revision_id = uuid.uuid4()
+
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"m": 1}, created_by="usr_test"
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_confirmed_revision(session, overlay_id, revision_id)
+        await session.commit()
+
+    assert rows == 1
+
+    async with registry_db.session() as session:
+        fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
+
+    assert fetched is not None
+    assert fetched.confirmed_revision_id == revision_id
+    assert fetched.updated_at is not None
+
+
+async def test_set_confirmed_revision_missing_overlay_returns_zero(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A no-op update (unknown overlay) reports zero rows rather than raising."""
+    async with registry_db.session() as session:
+        rows = await OverlayRepository.set_confirmed_revision(
+            session, "ovr_0000000000000000000000", uuid.uuid4()
+        )
+        await session.commit()
+
+    assert rows == 0
+
+
 async def test_cascade_delete(registry_db: DatabaseSession, sample_api: Api) -> None:
     """Deleting the parent Api cascades to delete its overlays."""
     async with registry_db.session() as session:

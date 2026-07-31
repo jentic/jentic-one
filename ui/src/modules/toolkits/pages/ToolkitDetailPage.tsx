@@ -1,9 +1,10 @@
 import { useNavigate, useParams } from 'react-router';
-import { BackButton, PageHeader, PageShell } from '@/shared/ui';
+import { Activity } from 'lucide-react';
+import { AppLink, BackButton, PageHeader, PageShell } from '@/shared/ui';
 import { useToolkit } from '@/modules/toolkits/api';
 import { ToolkitDetailBody } from '@/modules/toolkits/components/ToolkitDetailBody';
 import { ToolkitKillSwitch } from '@/modules/toolkits/components/ToolkitKillSwitch';
-import { ROUTES } from '@/shared/app/routes';
+import { ROUTES, ROUTE_PATHS } from '@/shared/app/routes';
 
 /**
  * `/toolkits/:toolkitId` (→ `/app/toolkits/:toolkitId`) — full-page host for the
@@ -46,10 +47,17 @@ export function ToolkitDetailPage() {
 				}
 			/>
 
-			<div className="-mt-2">
+			<div className="-mt-2 flex items-center justify-between">
 				{/* Static link (not history-back): tab switches push history entries,
 				    so popping would step through tabs instead of leaving the page. */}
 				<BackButton to={ROUTES.toolkits} label="All toolkits" useHistory={false} />
+				{/* Same pre-filtered Monitor deep-link the agent console carries. */}
+				<AppLink
+					href={ROUTE_PATHS.monitorExecutions({ toolkitId })}
+					className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs font-medium transition-colors"
+				>
+					<Activity className="h-3.5 w-3.5" /> Open Monitor
+				</AppLink>
 			</div>
 
 			<ToolkitDetailBody

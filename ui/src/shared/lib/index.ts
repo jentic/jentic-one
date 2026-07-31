@@ -80,6 +80,14 @@ export { fetchActorDirectory } from '@/shared/lib/actorDirectory';
 // event reads identically in both surfaces.
 export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 
+// Narrow, module-consumable slices of the agent-stream data layer (NOT the
+// rail's React components): the HAL-link id parser (so Monitor's Events
+// drill-in and the rail parse links with the same rules) and the
+// provider-optional stream hook (so Monitor's acknowledge mutation can sync
+// the rail's in-memory copy when the shell's stream is mounted, and no-op in
+// tests/embedded surfaces where it isn't).
+export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+
 // API-identity display helpers — one humanising rule applied everywhere a
 // machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
 // friendly primary line. Originally lived in `modules/discover/api/adapters.ts`

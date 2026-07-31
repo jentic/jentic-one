@@ -240,12 +240,13 @@ async def test_final_page_has_no_more_and_null_cursor(
 async def test_search_pagination_walks_ranked_results_in_order(
     admin_client: TestClient, web_context: Context
 ) -> None:
-    # 2-token query gives distinct scores: foo-bar (1.0) outranks the 0.5 halves.
+    # 2-token query gives distinct scores: foo-bar (both tokens covered, 8)
+    # outranks the single-token halves (4 each).
     ids = ["foo-bar.com", "foo-x.com", "bar-y.com", "unrelated.com"]
     await _seed_snapshot(web_context, ids)
 
     walked = _walk_catalog(admin_client, q="foo bar", limit=1)
-    # order must be preserved across pages: full match first, then 0.5 by api_id
+    # order must be preserved across pages: full match first, then the 4s by api_id
     assert walked == ["foo-bar.com", "bar-y.com", "foo-x.com"]
     assert "unrelated.com" not in walked
 

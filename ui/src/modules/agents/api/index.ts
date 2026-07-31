@@ -20,7 +20,6 @@ export {
 	useEnableAgent,
 	useArchiveAgent,
 	useCreateAgent,
-	useUpdateAgent,
 	useGenerateAgentApiKey,
 	useRevokeAgentApiKey,
 	useGenerateServiceAccountApiKey,
@@ -42,6 +41,7 @@ export {
 	useActorUsageDetail,
 	useActorExecutions,
 	useActorAudit,
+	useUpdateAgent,
 	actorAccessRequestsKey,
 	actorAccessRequestsRootKey,
 } from '@/modules/agents/api/hooks';

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, KeyRound, ListChecks, ShieldBan, ShieldCheck } from 'lucide-react';
 import {
 	AppLink,
@@ -30,6 +30,12 @@ import { CredentialPicker } from '@/modules/toolkits/components/CredentialPicker
  *
  * Lifecycle: wizard — draft (selection, mode, rules) persists across casual
  * dismissals and resets only on a successful bind (dialog-state rule).
+ *
+ * When the bind lands on a toolkit that nothing can use yet (no linked agent,
+ * no API key — see `agentless`), the dialog holds open on a "link an agent?"
+ * prompt instead of closing into silence: the proactive half of the
+ * manual-setup dead-end fix (issue #826), complementing the detail page's
+ * reactive no-linked-agents banner.
  */
 
 type AccessMode = 'allow_all' | 'custom' | 'blocked';
@@ -75,6 +81,19 @@ export interface BindCredentialDialogProps {
 	onClose: () => void;
 	/** Credential ids already bound to this toolkit — hidden from the picker. */
 	boundIds: Set<string>;
+	/**
+	 * True when the freshly-bound credential would serve nothing: no agent is
+	 * linked to the toolkit and no API key exists. Enables the post-bind
+	 * "link an agent?" prompt — the proactive half of the manual-setup
+	 * dead-end fix (issue #826; the detail-page banner is the reactive half).
+	 */
+	agentless?: boolean;
+	/**
+	 * Opens the link-agent picker (every caller must end there — a button
+	 * labelled "Link an agent" may not land on a tab and stop). The post-bind
+	 * prompt is only offered when this is provided.
+	 */
+	onLinkAgent?: () => void;
 }
 
 export function BindCredentialDialog({
@@ -82,14 +101,34 @@ export function BindCredentialDialog({
 	open,
 	onClose,
 	boundIds,
+	agentless = false,
+	onLinkAgent,
 }: BindCredentialDialogProps) {
 	const bindCredential = useBindCredential(toolkitId);
 
 	const [selected, setSelected] = useState<BindableCredential | null>(null);
 	const [mode, setMode] = useState<AccessMode>('allow_all');
 	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
+	// Post-success state: the bind landed but nothing can use it yet — hold the
+	// dialog open on a "link an agent?" prompt instead of closing into silence.
+	const [showLinkPrompt, setShowLinkPrompt] = useState(false);
 
-	const step: 'pick' | 'access' = selected ? 'access' : 'pick';
+	// Transient flag, not user input: clear it whenever the dialog closes
+	// (dialog-state rule). The ref carries the *live* open state into the
+	// mutation callback — a bind resolving after an Escape-close must not arm
+	// the prompt for the next open (the callback's `open` prop is a stale
+	// closure by then).
+	const openRef = useRef(open);
+	useEffect(() => {
+		openRef.current = open;
+		if (!open) setShowLinkPrompt(false);
+	}, [open]);
+
+	const step: 'pick' | 'access' | 'linkPrompt' = showLinkPrompt
+		? 'linkPrompt'
+		: selected
+			? 'access'
+			: 'pick';
 
 	// Strip empty conditions the same way the permissions editor's save does, so
 	// the bind body never carries `methods: []` / `path: ""` noise (and prefix/
@@ -116,7 +155,12 @@ export function BindCredentialDialog({
 			{
 				onSuccess: () => {
 					reset();
-					onClose();
+					if (!openRef.current) return;
+					if (agentless && onLinkAgent) {
+						setShowLinkPrompt(true);
+					} else {
+						onClose();
+					}
 				},
 			},
 		);
@@ -130,7 +174,9 @@ export function BindCredentialDialog({
 			subtitle={
 				step === 'pick'
 					? 'Step 1 of 2 · pick a credential'
-					: 'Step 2 of 2 · decide what it may do'
+					: step === 'access'
+						? 'Step 2 of 2 · decide what it may do'
+						: 'Bound · one step left to put it to use'
 			}
 			size="lg"
 			footer={
@@ -138,6 +184,20 @@ export function BindCredentialDialog({
 					<Button variant="secondary" onClick={onClose}>
 						Cancel
 					</Button>
+				) : step === 'linkPrompt' ? (
+					<>
+						<Button variant="secondary" onClick={onClose}>
+							Not now
+						</Button>
+						<Button
+							onClick={() => {
+								onLinkAgent?.();
+								onClose();
+							}}
+						>
+							Link an agent
+						</Button>
+					</>
 				) : (
 					<>
 						<Button variant="secondary" onClick={() => setSelected(null)}>
@@ -164,6 +224,26 @@ export function BindCredentialDialog({
 						page.
 					</p>
 					<CredentialPicker boundIds={boundIds} onSelect={setSelected} enabled={open} />
+				</div>
+			) : step === 'linkPrompt' ? (
+				// role="status": the body swap after the bind unmounts the focused
+				// submit button, so announce the outcome (matches the detail page's
+				// no-agents banner).
+				<div
+					className="flex items-start gap-3"
+					role="status"
+					data-testid="bind-link-agent-prompt"
+				>
+					<div className="bg-accent-green/10 text-accent-green flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+						<ShieldCheck className="h-5 w-5" aria-hidden="true" />
+					</div>
+					<div className="min-w-0 flex-1">
+						<p className="text-foreground text-sm font-medium">Credential bound.</p>
+						<p className="text-muted-foreground mt-1 text-sm">
+							But no agent is linked to this toolkit yet, so nothing can reach the
+							credential — calls will only start working once an agent is linked.
+						</p>
+					</div>
 				</div>
 			) : (
 				selected && (

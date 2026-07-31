@@ -90,6 +90,50 @@ class PrerequisiteRepository:
         return result.scalar_one_or_none() is not None
 
     @staticmethod
+    async def agent_bound_to_any_toolkit(
+        session: AsyncSession, *, agent_id: str, toolkit_ids: list[str]
+    ) -> bool:
+        """Return True if the agent is bound to at least one of the given toolkits.
+
+        Batched variant of :meth:`agent_toolkit_binding_exists` for
+        satisfaction checks (issue #826). The current annotator only probes a
+        single resolved toolkit per item (ambiguous references are left
+        un-annotated), but the batched shape stays so future callers can check
+        several candidates in one query. Empty ``toolkit_ids`` short-circuits
+        to False.
+        """
+        if not toolkit_ids:
+            return False
+        placeholders = ", ".join(f":tk_{i}" for i in range(len(toolkit_ids)))
+        params: dict[str, object] = {f"tk_{i}": tid for i, tid in enumerate(toolkit_ids)}
+        params["agent_id"] = agent_id
+        result = await session.execute(
+            text(
+                "SELECT 1 FROM agent_toolkit_bindings "
+                f"WHERE agent_id = :agent_id AND toolkit_id IN ({placeholders}) LIMIT 1"
+            ),
+            params,
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
+    async def actor_scope_grant_exists(session: AsyncSession, *, actor_id: str, scope: str) -> bool:
+        """Return True if the actor already holds this scope grant (admin DB).
+
+        Mirrors the uniqueness key of ``EffectsRepository.grant_scope_to_actor``'s
+        idempotent insert (``(actor_id, scope)``), so "exists" here is exactly
+        "the grant effect would be a no-op".
+        """
+        result = await session.execute(
+            text(
+                "SELECT 1 FROM actor_scope_grants "
+                "WHERE actor_id = :actor_id AND scope = :scope LIMIT 1"
+            ),
+            {"actor_id": actor_id, "scope": scope},
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def list_toolkit_ids_for_agent(session: AsyncSession, *, agent_id: str) -> list[str]:
         """Return the ids of every toolkit the agent is actively bound to.
 

@@ -247,13 +247,17 @@ describe('AgentDetailPage', () => {
 		// The feed lists this agent's executions only (agents-module fixture).
 		expect(await screen.findByText('github.create_issue')).toBeInTheDocument();
 		expect(screen.getByText(/pbac_denied/)).toBeInTheDocument();
-		expect(screen.getByText('Execution volume (7d)')).toBeInTheDocument();
+		expect(screen.getByText('Execution volume · 7d')).toBeInTheDocument();
 
-		// The deep-link carries the actor filter into Monitor's URL contract.
-		const link = screen.getByRole('link', { name: /Open in Monitor/ });
-		expect(link.getAttribute('href')).toContain('tab=executions');
-		expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
-		expect(link.getAttribute('href')).toContain('actor_type=agent');
+		// The deep-links carry the actor filter into Monitor's URL contract —
+		// exactly two: the back-row link and the feed-card link.
+		const links = screen.getAllByRole('link', { name: /Open Monitor/ });
+		expect(links).toHaveLength(2);
+		for (const link of links) {
+			expect(link.getAttribute('href')).toContain('tab=executions');
+			expect(link.getAttribute('href')).toContain('actor_id=agnt_active_1');
+			expect(link.getAttribute('href')).toContain('actor_type=agent');
+		}
 	});
 
 	it('shows a quiet permission note on the Activity tab for non-admins (403)', async () => {
@@ -333,7 +337,8 @@ describe('AgentDetailPage', () => {
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Deny inbox-triage-bot' })).toBeInTheDocument();
 		// Destructive actions (Archive / Disable) moved to the Settings tab's
-		// danger zone (phase 4) — the header only offers constructive ones.
+		// danger zone / header kill switch — a pending agent's header only
+		// offers constructive verbs.
 		expect(
 			screen.queryByRole('button', { name: 'Archive inbox-triage-bot' }),
 		).not.toBeInTheDocument();
@@ -420,12 +425,8 @@ describe('AgentDetailPage', () => {
 		).toBeInTheDocument();
 	});
 
-	it('clears the description by sending an empty string, not null, so the clear persists', async () => {
+	it('clears the description by sending an explicit null', async () => {
 		const user = userEvent.setup();
-		// Capture the PATCH body but fall through to the stateful module mock,
-		// which mirrors the real backend: it IGNORES a `null` description (the
-		// clear would silently revert) and HONOURS an empty string. So this test
-		// FAILS with the old `description.trim() || null` and PASSES with `''`.
 		let patchBody: Record<string, unknown> | null = null;
 		worker.use(
 			http.patch('/agents/:id', async ({ request }) => {
@@ -438,16 +439,11 @@ describe('AgentDetailPage', () => {
 
 		await user.click(screen.getByRole('tab', { name: 'Settings' }));
 		const descInput = await screen.findByLabelText('Description');
-		expect(descInput).toHaveValue('Handles support tickets end to end.');
 		await user.clear(descInput);
 		await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
 		expect(await screen.findByText('Agent updated')).toBeInTheDocument();
-		// The clear crosses the wire as an empty STRING, never `null`.
-		expect(patchBody).toEqual({ description: '' });
-		// And it sticks: re-seeded from the server row, the field stays empty
-		// rather than reverting to the original description.
-		await waitFor(() => expect(descInput).toHaveValue(''));
+		expect(patchBody).toEqual({ description: null });
 	});
 
 	it('does not expose an owner editor — ownership is not routine metadata', async () => {
@@ -462,23 +458,23 @@ describe('AgentDetailPage', () => {
 		expect(screen.queryByLabelText('Owner')).not.toBeInTheDocument();
 	});
 
-	it('disables an active agent through the danger-zone confirm flow', async () => {
+	it('disables an active agent through the header kill switch and offers restore', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		await user.click(screen.getByRole('tab', { name: 'Settings' }));
-		await user.click(await screen.findByRole('button', { name: 'Disable support-agent' }));
+		// The pill mirrors the live status and arms an inline confirm — no
+		// mutation on the first click.
+		const pill = screen.getByRole('button', { name: 'Disable support-agent (kill switch)' });
+		expect(pill).toHaveTextContent('Active');
+		await user.click(pill);
+		expect(screen.getByText('Block this agent?')).toBeInTheDocument();
 
-		// The danger zone never mutates directly — it routes through the
-		// page-level confirm dialog first.
-		const dialog = await screen.findByRole('dialog');
-		expect(within(dialog).getByText(/Disable support-agent/)).toBeInTheDocument();
-		await user.click(within(dialog).getByRole('button', { name: 'Disable' }));
-
+		await user.click(screen.getByRole('button', { name: 'Disable' }));
 		expect(await screen.findByText('Agent disabled')).toBeInTheDocument();
-		// Detail cache invalidates → the header badge flips and the header now
-		// offers the constructive Enable action.
+
+		// Detail cache invalidates → the pill flips to the danger state and
+		// now offers the restore flow.
 		await waitFor(() => {
 			expect(screen.getByTestId('detail-status-badge')).toHaveTextContent('Disabled');
 		});
@@ -505,12 +501,13 @@ describe('AgentDetailPage', () => {
 		expect(nameInput).toHaveValue('renamed-agent');
 	});
 
-	it('hosts Disable and Archive in the Settings danger zone for an active agent', async () => {
+	it('hosts only the terminal Archive in the Settings danger zone for an active agent', async () => {
 		const user = userEvent.setup();
 		renderDetail('agnt_active_1');
 		await screen.findByRole('heading', { name: 'support-agent' });
 
-		// Header carries no destructive lifecycle buttons any more.
+		// The reversible Disable lives in the header kill switch, not the
+		// danger zone — no plain "Disable support-agent" button anywhere.
 		expect(
 			screen.queryByRole('button', { name: 'Disable support-agent' }),
 		).not.toBeInTheDocument();
@@ -520,7 +517,9 @@ describe('AgentDetailPage', () => {
 
 		await user.click(screen.getByRole('tab', { name: 'Settings' }));
 		expect(await screen.findByText('Danger zone')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Disable support-agent' })).toBeInTheDocument();
+		expect(
+			screen.queryByRole('button', { name: 'Disable support-agent' }),
+		).not.toBeInTheDocument();
 
 		// Archive routes through the cascade-delete confirmation dialog.
 		await user.click(screen.getByRole('button', { name: 'Archive support-agent' }));

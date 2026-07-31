@@ -1033,11 +1033,32 @@
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
-        "apis:write": [
+        "org:admin": [
+          "agents:read",
+          "agents:write",
           "apis:read",
-          "catalog:import"
+          "apis:write",
+          "audit:read",
+          "capabilities:execute",
+          "capabilities:read",
+          "catalog:import",
+          "config:read",
+          "config:write",
+          "credentials:read",
+          "credentials:write",
+          "events:read",
+          "events:write",
+          "executions:read",
+          "jobs:read",
+          "jobs:write",
+          "service-accounts:read",
+          "service-accounts:write",
+          "toolkits:read",
+          "toolkits:write",
+          "users:read",
+          "users:write"
         ]
       },
       "method": "POST",
@@ -1045,11 +1066,11 @@
       "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm",
       "public": false,
       "required_scopes": [
-        "apis:write"
+        "org:admin"
       ],
       "summary": "Confirm Overlay",
       "surface": "apis",
-      "typical_caller": "any"
+      "typical_caller": "operator"
     },
     {
       "actor_types": [

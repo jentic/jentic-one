@@ -6,6 +6,7 @@ from typing import NoReturn
 
 import structlog
 
+from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.toolkit_keys import ToolkitKey
 from jentic_one.control.core.schema.toolkit_permission_rules import ToolkitPermissionRule
 from jentic_one.control.core.schema.toolkits import Toolkit
@@ -43,6 +44,7 @@ from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.permissions.matching import compile_matcher
+from jentic_one.shared.schemas import ServedApiRef
 from jentic_one.shared.scopes import ORG_ADMIN
 
 logger = structlog.get_logger()
@@ -228,6 +230,36 @@ class ToolkitService:
             next_cursor = encode_cursor(last.created_at, last.id)
 
         return rows, has_more, next_cursor
+
+    async def served_apis(
+        self, toolkit_ids: list[str], *, identity: Identity
+    ) -> dict[str, list[ServedApiRef]]:
+        """Visible served APIs per toolkit, for annotating list/get responses.
+
+        Scoped by *credential* visibility, not toolkit visibility: a caller who
+        can see a toolkit only through a share or a binding learns which APIs it
+        serves only for credentials their own ``Credential`` read filter admits.
+        This keeps the sharing seam's invariant intact — a share grants
+        top-level visibility, not the bound credentials' metadata (the bindings
+        child endpoint stays owner-only). NULL ``api_name``/``api_version``
+        (the covers-all wildcard, #775) are preserved, matching ``/me``.
+        """
+        credential_filters = build_access_filters(
+            identity,
+            Credential,
+            bound_toolkit_ids=await self._bound_toolkit_ids(identity),
+            include_shared=True,
+        )
+        async with self._ctx.control_db.session() as session:
+            rows = await ToolkitRepository.list_served_apis(
+                session, toolkit_ids, credential_filters=credential_filters
+            )
+        served: dict[str, list[ServedApiRef]] = {}
+        for toolkit_id, vendor, name, version in rows:
+            served.setdefault(toolkit_id, []).append(
+                ServedApiRef(api_vendor=vendor, api_name=name, api_version=version)
+            )
+        return served
 
     async def list_agents(
         self,
