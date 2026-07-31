@@ -602,9 +602,11 @@ async def get_api_spec(
     overlays: bool = Query(default=True),
 ) -> Response:
     """Download the OpenAPI spec for the API's current (live) revision."""
-    # `overlays` is accepted for forward-compatibility; overlay merging is not
-    # implemented yet, so the flag is currently a no-op and bodies are identical
-    # regardless of its value.
+    # `overlays` is accepted for forward-compatibility with a future read-time merge.
+    # Confirmed overlays are applied by *materialization* (a confirm re-ingests the
+    # base spec with the overlay applied and promotes the result to the current
+    # revision), so the current revision already embodies confirmed overlays and this
+    # flag is currently a no-op — bodies are identical regardless of its value.
     svc = SpecDownloadService(ctx)
     doc = await svc.get_live_spec(vendor, name, version)
     return _spec_response(request, doc)
@@ -622,8 +624,10 @@ async def get_api_revision_spec(
     overlays: bool = Query(default=True),
 ) -> Response:
     """Download the OpenAPI spec for a specific revision."""
-    # `overlays` is accepted for forward-compatibility; overlay merging is not
-    # implemented yet, so the flag is currently a no-op.
+    # `overlays` is accepted for forward-compatibility with a future read-time merge.
+    # Confirmed overlays are applied by materialization (they produce their own
+    # revision), so a specific revision's body is served as-stored and this flag is
+    # currently a no-op.
     svc = SpecDownloadService(ctx)
     doc = await svc.get_revision_spec(vendor, name, version, revision_id)
     return _spec_response(request, doc)

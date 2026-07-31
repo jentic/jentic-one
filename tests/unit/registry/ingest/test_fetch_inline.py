@@ -7,6 +7,7 @@ import yaml
 
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.fetch import InlineSource, load_specification
+from jentic_one.shared.config import IngestConfig
 
 
 def _make_inline(
@@ -89,3 +90,16 @@ async def test_empty_content_raises_ingest_stage_error() -> None:
 async def test_whitespace_only_content_raises_ingest_stage_error() -> None:
     with pytest.raises(IngestStageError, match="empty"):
         await load_specification(_make_inline("   \n  "))
+
+
+@pytest.mark.asyncio
+async def test_inline_content_over_size_limit_is_rejected() -> None:
+    """Inline content bypasses the URL-fetch size checks, so it enforces its own cap.
+
+    Regression for a DoS gap where a huge inline import (e.g. a materialized overlay)
+    was ingested without any size bound.
+    """
+    cfg = IngestConfig(max_spec_bytes=100)
+    oversized = _SPEC_JSON + " " * 200  # valid JSON, > 100 bytes
+    with pytest.raises(IngestStageError, match="size limit"):
+        await load_specification(_make_inline(oversized, filename="spec.json"), config=cfg)

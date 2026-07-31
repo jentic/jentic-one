@@ -16,11 +16,9 @@ import { ArrowRight, Link as LinkIcon, Shield, Unlink } from 'lucide-react';
 import {
 	AppLink,
 	Button,
-	Card,
-	CardBody,
-	CardHeader,
-	CardTitle,
+	DetailSection,
 	Dialog,
+	EmptyRow,
 	ErrorAlert,
 	LoadingState,
 	ToolkitGlyph,
@@ -169,58 +167,56 @@ export function BoundToolkitsCard({
 
 	return (
 		<>
-			<Card>
-				<CardHeader className="flex flex-row items-center justify-between gap-2">
-					<div className="flex items-center gap-2">
-						<Shield className="text-primary h-4 w-4" />
-						<CardTitle>Bound toolkits</CardTitle>
-					</div>
-					{canBind && (
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => setBindToolkitOpen(true)}
-						>
-							<LinkIcon className="h-4 w-4" /> Bind toolkit
-						</Button>
-					)}
-				</CardHeader>
-				<CardBody className="space-y-2">
-					{toolkits.isPending ? (
-						<LoadingState size="sm" />
-					) : toolkits.error ? (
-						<ErrorAlert message={toolkits.error as Error} />
-					) : !toolkits.data || toolkits.data.length === 0 ? (
-						<div className="text-muted-foreground border-border/60 rounded-lg border border-dashed p-4 text-center text-sm">
-							{canBind
-								? 'No toolkits bound to this agent. Bind one to let this agent call its APIs.'
-								: agentStatus === 'pending'
-									? 'No toolkits bound. Approve this agent first — toolkits can only be bound to active agents.'
-									: 'No toolkits bound. Toolkits can only be bound to active agents.'}
-						</div>
-					) : (
-						toolkits.data.map((t) => (
-							<BoundToolkitRow
-								key={t.id}
-								toolkit={t}
-								confirming={unlinkToolkitId === t.toolkitId}
-								unbindPending={unbindToolkit.isPending}
-								onStartUnbind={() => setUnlinkToolkitId(t.toolkitId)}
-								onCancelUnbind={() => setUnlinkToolkitId(null)}
-								onConfirmUnbind={async () => {
-									try {
-										await unbindToolkit.mutateAsync(t.toolkitId);
-										setUnlinkToolkitId(null);
-									} catch {
-										// onError toasts; keep the row in the confirming
-										// state so the user can retry.
-									}
-								}}
-							/>
-						))
-					)}
-				</CardBody>
-			</Card>
+			<DetailSection
+				title="Bound toolkits"
+				icon={<Shield className="h-4 w-4" />}
+				action={
+					canBind
+						? {
+								label: (
+									<>
+										<LinkIcon className="h-4 w-4" /> Bind toolkit
+									</>
+								),
+								onClick: () => setBindToolkitOpen(true),
+							}
+						: undefined
+				}
+			>
+				{toolkits.isPending ? (
+					<LoadingState size="sm" />
+				) : toolkits.error ? (
+					<ErrorAlert message={toolkits.error as Error} />
+				) : !toolkits.data || toolkits.data.length === 0 ? (
+					<EmptyRow icon={<Shield />}>
+						{canBind
+							? 'No toolkits bound to this agent. Bind one to let this agent call its APIs.'
+							: agentStatus === 'pending'
+								? 'No toolkits bound. Approve this agent first — toolkits can only be bound to active agents.'
+								: 'No toolkits bound. Toolkits can only be bound to active agents.'}
+					</EmptyRow>
+				) : (
+					toolkits.data.map((t) => (
+						<BoundToolkitRow
+							key={t.id}
+							toolkit={t}
+							confirming={unlinkToolkitId === t.toolkitId}
+							unbindPending={unbindToolkit.isPending}
+							onStartUnbind={() => setUnlinkToolkitId(t.toolkitId)}
+							onCancelUnbind={() => setUnlinkToolkitId(null)}
+							onConfirmUnbind={async () => {
+								try {
+									await unbindToolkit.mutateAsync(t.toolkitId);
+									setUnlinkToolkitId(null);
+								} catch {
+									// onError toasts; keep the row in the confirming
+									// state so the user can retry.
+								}
+							}}
+						/>
+					))
+				)}
+			</DetailSection>
 
 			{/* Bind toolkit — agent-side picker mirroring the toolkit page's
 			 *  "Link agent" (#607). */}

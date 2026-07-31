@@ -66,7 +66,7 @@ async def list_catalog(
     request: Request,
     identity: Identity = get_current_identity(required_permissions=["capabilities:read"]),
     svc: CatalogService = Depends(get_catalog_service),
-    q: str | None = None,
+    q: str | None = Query(default=None, max_length=500),
     registered_only: bool = False,
     unregistered_only: bool = False,
     cursor: str | None = None,
@@ -187,6 +187,10 @@ async def refresh_catalog(
 ) -> JSONResponse:
     """Force a refresh of the catalog cache from the upstream manifest (org:admin)."""
     result = await svc.refresh()
+    # An explicit operator "refresh now" is the strongest "check upstream" signal,
+    # so trigger the update-notify sweep too (the lazy read path already does this
+    # via _safe_refresh). Fire-and-forget: never block the refresh response on it.
+    svc.trigger_update_notify_sweep()
     resp = CatalogRefreshResponse(count=result.count)
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 

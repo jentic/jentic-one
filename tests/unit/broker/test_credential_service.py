@@ -219,7 +219,7 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
         api_name="charges",
         api_version="v1",
         identity=_IDENTITY,
-        trace_id="trace_xyz",
+        trace_id="ab" * 16,
     )
 
     assert result.headers == {"Authorization": "injected"}
@@ -240,7 +240,45 @@ async def test_successful_inject_emits_one_audit_event(monkeypatch: pytest.Monke
     assert kwargs["api_name"] == "charges"
     assert kwargs["api_version"] == "v1"
     # #740: audit event joins to the triggering execution via trace_id.
-    assert kwargs["trace_id"] == "trace_xyz"
+    assert kwargs["trace_id"] == "ab" * 16
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_trace_id", ["unknown", "00-" + "a" * 32 + "-" + "b" * 16 + "-01"])
+async def test_inject_with_invalid_trace_id_emits_uncorrelated_audit_event(
+    monkeypatch: pytest.MonkeyPatch, bad_trace_id: str
+) -> None:
+    """A malformed trace_id degrades to an uncorrelated audit event, never a crash (#903).
+
+    ``emit_event`` raises ``ValueError`` on a trace_id that is not 32 lowercase
+    hex chars; before the guard, a request without a trace header (trace_id
+    ``"unknown"``) or with a raw W3C ``traceparent`` value 500'd the whole
+    execute request during credential injection.
+    """
+    _patch_resolved(monkeypatch, _resolved())
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.inject_auth",
+        lambda resolved, *, ctx, access_token=None: MagicMock(
+            headers={"Authorization": "injected"}, query_params={}, cookies={}
+        ),
+    )
+    audit = AsyncMock(return_value="evt_1")
+    monkeypatch.setattr(
+        "jentic_one.broker.services.credentials.orchestrator.emit_credential_access", audit
+    )
+
+    result = await CredentialService(_ctx()).inject(
+        api_vendor="stripe",
+        api_name="charges",
+        api_version="v1",
+        identity=_IDENTITY,
+        trace_id=bad_trace_id,
+    )
+
+    assert result.headers == {"Authorization": "injected"}
+    audit.assert_awaited_once()
+    assert audit.await_args is not None
+    assert audit.await_args.kwargs["trace_id"] is None
 
 
 @pytest.mark.asyncio

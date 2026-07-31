@@ -291,21 +291,28 @@ Offer this **only if the user says they can't wait for maintainer approval**. It
 *same overlay document* to the locally-registered API via the Jentic registry's native overlay
 API. The PR stays open — do not close it; this is not a fork.
 
-> **Honesty note (current platform behaviour):** the registry stores and confirms overlays,
-> but **does not yet apply them** — the `overlays=true` flag on the spec download endpoints is
-> a documented no-op, and the broker executes from the operation data extracted at import.
-> Confirming an overlay today records intent (auditable, ready for when application lands);
-> it does **not** change the served spec or broker behaviour. Until overlay application ships,
-> verification of the fix is the applied `openapi.json` on the PR branch (steps 4–6), not a
-> local execution. Tell the user this explicitly if they ask for the local fallback.
+> **Platform behaviour (current):** confirming an overlay now **materializes** it — the registry
+> re-ingests the base spec with the overlay applied and promotes the result to the API's current
+> revision, so the served spec (`GET …/openapi.json`) reflects the fix immediately after confirm.
+> Two things follow from this:
+> - **Confirm is an operator action** and requires the `org:admin` permission (not `apis:write`).
+>   Contributors *submit* overlays; an operator reviews and *confirms*. Use an `org:admin` token
+>   for the confirm call below, or ask an operator to confirm.
+> - **Verify locally first.** Because confirm rewrites what the platform serves, treat the local
+>   apply as the real verification of the fix: confirm, then re-download the spec and diff it
+>   against your PR-branch `openapi.json` (they should match). If the overlay can't be applied
+>   cleanly (drifted target, unsafe `servers[].url`), confirm is rejected and the overlay stays
+>   `pending` — fix the overlay (steps 3–6) and retry.
 
 The API must already exist in the local registry (import it from the catalog first if needed:
 `jentic catalog import <api_id>`). Then submit and confirm the overlay against the local control
-plane (default `http://127.0.0.1:8000`). Use the agent's token from the active profile.
+plane (default `http://127.0.0.1:8000`).
 
 ```
 BASE=http://127.0.0.1:8000
-TOKEN=$(jentic profile list --json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")  # or however the active token is exposed
+# Submit uses an apis:write token; confirm uses an org:admin token (may be the same
+# token if your profile has both). Adjust to however your active token is exposed.
+TOKEN=$(jentic profile list --json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
 V=<vendor>; N=<api>; VER=<version>
 
 # Submit the overlay (document is the SAME overlay.json used for the PR)
@@ -314,15 +321,23 @@ curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays" \
   -d "$(python3 -c "import json;print(json.dumps({'document':json.load(open('$OVL')),'contributed_by':'contribute-spec-fix skill'}))")"
 # → note the returned overlay "id" and the "_links.confirm" URL
 
-# Confirm it (pending → confirmed) so it takes effect
+# Confirm it (pending → confirmed) — requires org:admin. This materializes the overlay:
+# it re-ingests the base spec with the overlay applied and serves the result.
 curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' -d '{}'
 ```
 
-Then verify the submission was recorded (`GET $BASE/apis/$V/$N/$VER/overlays` lists it as
-`confirmed`). Do **not** claim the local broker now has the fix — per the honesty note above,
-application is not implemented yet. Tell the user: the overlay is registered locally and PR
-`<url>` is the path for the community — nothing here replaces it.
+Verify the fix actually landed on the served spec (this is the local verification of the fix):
+
+```
+# Give the ingest job a moment, then re-download and diff against your PR-branch spec.
+curl -sS "$BASE/apis/$V/$N/$VER/openapi.json" -H "Authorization: Bearer $TOKEN" > /tmp/served.json
+python3 -c "import json; print('served matches PR spec:', json.load(open('/tmp/served.json'))==json.load(open('$SPEC')))"
+```
+
+`served matches PR spec: True` confirms the local apply reproduces the PR-branch fix. The overlay
+is now materialized locally and PR `<url>` is still the path for the community — nothing here
+replaces it.
 
 ## Guardrails
 

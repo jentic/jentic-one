@@ -5,7 +5,7 @@
  * platform toaster) — shifted left of the rail at `xl+` so the two never
  * overlap. Mounted by the shell alongside `AgentRail`.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { X } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
@@ -13,6 +13,7 @@ import { StreamEventIcon } from '@/shared/app/rail/StreamEventIcon';
 import {
 	formatStreamTime,
 	inlineActionsFor,
+	isFailureSeverity,
 	matchesToastScope,
 	primaryDestinationFor,
 	RAIL_COLLAPSE_CHANGE_EVENT,
@@ -38,10 +39,12 @@ function readRailCollapsed(): boolean {
 
 const TOAST_TTL_MS = 6000;
 const MAX_TOASTS = 3;
+const MAX_DISMISSED_IDS = 500;
+const ASSERTIVE_COALESCE_MS = 5000;
 
 const KIND_LABEL = STREAM_KIND_LABEL;
 
-type Toast = StreamEvent & { addedAt: number };
+type Toast = StreamEvent & { addedAt: number; assertive: boolean };
 
 export function ToastHost() {
 	const { latest, acknowledge } = useAgentStream();
@@ -49,6 +52,21 @@ export function ToastHost() {
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [scope, setScope] = useState<ToastScope>(() => readToastScope());
 	const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
+	// Ids the operator has EXPLICITLY dismissed. The insert effect re-runs on
+	// every `scope` change with the same `latest`; without this a failure toast
+	// the operator closed would silently re-appear when scope flips, because the
+	// dedup guard below only inspects still-alive toasts. TTL-expiry does NOT go
+	// in here (#671: an unattended failure that merely timed out must be able to
+	// re-toast when it becomes eligible again). Bounded FIFO (mirrors the
+	// stream provider's delivered-ids guard) so a very long session can't grow
+	// the set without limit.
+	const dismissedIdsRef = useRef<Set<string>>(new Set());
+	const dismissedOrderRef = useRef<string[]>([]);
+	// Time of the last assertive (role="alert") announcement. Under a failure
+	// burst the visible stack caps at MAX_TOASTS but each insert would still
+	// fire its own interrupting screen-reader announcement — demote follow-ups
+	// inside the window to polite so AT users hear one interruption, not N.
+	const lastAssertiveAtRef = useRef(0);
 
 	// React to scope + rail-collapse changes (same-tab CustomEvent + cross-tab StorageEvent)
 	useEffect(() => {
@@ -72,17 +90,31 @@ export function ToastHost() {
 		};
 	}, []);
 
-	// Push the latest stream event into the toast queue if it matches scope
+	// Push the latest stream event into the toast queue if it matches scope.
+	// Failures (error/critical) always toast — even under scope `off` — so a
+	// silently-failed unattended run can't go unnoticed (#671).
 	useEffect(() => {
 		if (!latest) return;
-		if (!matchesToastScope(latest.severity, scope)) return;
+		if (dismissedIdsRef.current.has(latest.id)) return;
+		if (!isFailureSeverity(latest.severity) && !matchesToastScope(latest.severity, scope))
+			return;
 		setToasts((prev) => {
 			if (prev.some((t) => t.id === latest.id)) return prev;
-			return [{ ...latest, addedAt: Date.now() }, ...prev].slice(0, MAX_TOASTS);
+			const now = Date.now();
+			// First failure in a burst interrupts (assertive); follow-ups within
+			// the coalesce window are announced politely instead.
+			let assertive = false;
+			if (isFailureSeverity(latest.severity)) {
+				assertive = now - lastAssertiveAtRef.current > ASSERTIVE_COALESCE_MS;
+				if (assertive) lastAssertiveAtRef.current = now;
+			}
+			return [{ ...latest, addedAt: now, assertive }, ...prev].slice(0, MAX_TOASTS);
 		});
 	}, [latest, scope]);
 
-	// Auto-dismiss after TOAST_TTL_MS
+	// Auto-dismiss after TOAST_TTL_MS. TTL-expiry only drops the toast from the
+	// visible list — it must NOT record the id as dismissed, or an unattended
+	// failure that simply timed out could never re-toast (#671).
 	useEffect(() => {
 		if (toasts.length === 0) return undefined;
 		const t = window.setInterval(() => {
@@ -93,6 +125,14 @@ export function ToastHost() {
 	}, [toasts.length]);
 
 	function dismiss(id: string) {
+		if (!dismissedIdsRef.current.has(id)) {
+			dismissedIdsRef.current.add(id);
+			dismissedOrderRef.current.push(id);
+			while (dismissedOrderRef.current.length > MAX_DISMISSED_IDS) {
+				const oldest = dismissedOrderRef.current.shift();
+				if (oldest) dismissedIdsRef.current.delete(oldest);
+			}
+		}
 		setToasts((prev) => prev.filter((t) => t.id !== id));
 	}
 
@@ -180,11 +220,13 @@ function ToastCard({
 		? [{ kind: 'view_request', label: 'Review', opensRequest: true }]
 		: rawActions;
 	const critical = toast.severity === 'critical' || toast.severity === 'error';
+	// Burst coalescing: only the first failure inside the window interrupts.
+	const assertive = critical && toast.assertive;
 
 	return (
 		<div
-			role={critical ? 'alert' : 'status'}
-			aria-live={critical ? 'assertive' : 'polite'}
+			role={assertive ? 'alert' : 'status'}
+			aria-live={assertive ? 'assertive' : 'polite'}
 			tabIndex={onOpen ? 0 : undefined}
 			onClick={(e) => {
 				if (!onOpen) return;

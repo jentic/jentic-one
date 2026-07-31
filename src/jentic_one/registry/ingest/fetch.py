@@ -28,6 +28,11 @@ class InlineSource(BaseModel):
     version: str | None = None
     submitted_by: str | None = None
     origin: str | None = None
+    #: Optional provenance URL for inline content. Normally ``None`` (a genuine
+    #: paste has no URL), but overlay materialization re-ingests the base spec's
+    #: bytes inline and must carry the base ``source_url`` forward, or catalog
+    #: "registered" detection and the Flow-3 update-notify sweep lose the API.
+    source_url: str | None = None
 
 
 class UrlSource(BaseModel):
@@ -99,10 +104,16 @@ async def load_specification(
     size_limit_label = f"{max_bytes / (1024 * 1024):.1f} MB"
 
     if isinstance(source, InlineSource):
+        # Inline content bypasses the URL-fetch size checks below, so enforce the
+        # same cap here — otherwise an oversized inline import (e.g. a materialized
+        # overlay whose document blew up the spec) can exhaust memory and produce
+        # oversized DB rows.
+        if len(source.content.encode()) > max_bytes:
+            raise IngestStageError(f"inline content exceeds {size_limit_label} size limit")
         content = parse_spec_content(source.content, filename=source.filename)
         sha = hashlib.sha256(source.content.encode()).hexdigest()
         source_type = ApiRevisionSourceType.INLINE
-        source_url: str | None = None
+        source_url = source.source_url
         source_filename: str | None = source.filename
     else:
         try:

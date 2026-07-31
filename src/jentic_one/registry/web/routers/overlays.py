@@ -44,6 +44,9 @@ def _build_overlay_response(view: OverlayView, request: Request) -> OverlayRespo
         status=view.status,
         document=view.document,
         target_revision_id=str(view.target_revision_id) if view.target_revision_id else None,
+        confirmed_revision_id=(
+            str(view.confirmed_revision_id) if view.confirmed_revision_id else None
+        ),
         contributed_by=view.contributed_by,
         confirmed_by_execution_id=view.confirmed_by_execution_id,
         created_at=view.created_at,
@@ -71,6 +74,9 @@ def _build_overlay_list_item(
         status=item.status,
         document=item.document,
         target_revision_id=str(item.target_revision_id) if item.target_revision_id else None,
+        confirmed_revision_id=(
+            str(item.confirmed_revision_id) if item.confirmed_revision_id else None
+        ),
         contributed_by=item.contributed_by,
         confirmed_by_execution_id=item.confirmed_by_execution_id,
         created_at=item.created_at,
@@ -227,10 +233,16 @@ async def confirm_overlay(
     version: str,
     overlay_id: str,
     body: OverlayConfirmRequest,
-    identity: Identity = get_current_identity(required_permissions=["apis:write"]),
+    identity: Identity = get_current_identity(required_permissions=["org:admin"]),
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
-    """Confirm an overlay, transitioning from pending to confirmed."""
+    """Confirm an overlay, materializing it onto the served spec.
+
+    Requires ``org:admin``: confirming rewrites the API's served spec (it re-ingests
+    the base spec with the overlay applied and promotes the result to the current
+    revision), so it is an operator action, not a contributor one (contributors
+    ``submit`` overlays with ``apis:write``; an operator reviews and confirms).
+    """
     svc = OverlayService(ctx)
     view = await svc.confirm(
         vendor, name, version, overlay_id, execution_id=body.execution_id, identity=identity

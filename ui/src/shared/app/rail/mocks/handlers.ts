@@ -296,7 +296,24 @@ export const railEventsHandlers = [
 		const url = new URL(request.url);
 		const cursor = url.searchParams.get('cursor');
 		const limit = Number(url.searchParams.get('limit') ?? '25');
-		const sorted = [...events].sort(
+		// Honour the same filters the real backend applies so the Monitor Events
+		// tab's severity/status controls visibly narrow the list in mocked (Mode A)
+		// dev — not just against a real backend (issue #617). The rail itself never
+		// sends these params (it filters client-side), so unfiltered rail behaviour
+		// is unchanged.
+		const severities = url.searchParams.getAll('severity');
+		const eventTypes = url.searchParams.getAll('event_type');
+		const requiresAction = url.searchParams.get('requires_action');
+		const acknowledged = url.searchParams.get('acknowledged');
+		const filtered = events.filter((e) => {
+			if (severities.length && !severities.includes(e.severity)) return false;
+			if (eventTypes.length && !eventTypes.includes(e.type)) return false;
+			if (requiresAction != null && String(e.requires_action) !== requiresAction)
+				return false;
+			if (acknowledged != null && String(e.acknowledged) !== acknowledged) return false;
+			return true;
+		});
+		const sorted = [...filtered].sort(
 			(a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
 		);
 		const start = cursor ? sorted.findIndex((e) => e.event_id === cursor) + 1 : 0;

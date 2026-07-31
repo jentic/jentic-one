@@ -1721,7 +1721,7 @@ components:
           - additionalProperties: true
             type: object
           - type: 'null'
-          description: Redacted, type-specific projection (hints/last-N chars; never the secret).
+          description: 'Redacted, type-specific projection (hints/last-N chars; never the secret). For oauth2: client_id, token_url, grant_type (authorization_code | client_credentials), scopes, and — for authorization_code only — `connected`, whether the interactive sign-in completed and is still usable (null for other grants).'
           title: Details
         name:
           description: Human-readable label.
@@ -4708,6 +4708,12 @@ components:
         active:
           title: Active
           type: boolean
+        apis:
+          description: Distinct APIs served by this toolkit's credential bindings that are visible to the caller, sorted by vendor/name/version. NULL api_name/api_version mean the credential covers all names/versions for the vendor. Empty when no visible credentials are bound.
+          items:
+            $ref: '#/components/schemas/ServedApiRef'
+          title: Apis
+          type: array
         created_at:
           format: date-time
           title: Created At
@@ -5396,7 +5402,7 @@ info:
     name: Apache-2.0
   summary: HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).
   title: Jentic Control Plane API
-  version: 0.23.0
+  version: 0.24.0
 openapi: 3.1.0
 paths:
   /.well-known/jwks.json:
@@ -8492,7 +8498,13 @@ paths:
       - Overlays
   /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm:
     post:
-      description: Confirm an overlay, transitioning from pending to confirmed.
+      description: |-
+        Confirm an overlay, materializing it onto the served spec.
+
+        Requires ``org:admin``: confirming rewrites the API's served spec (it re-ingests
+        the base spec with the overlay applied and promotes the result to the current
+        revision), so it is an operator action, not a contributor one (contributors
+        ``submit`` overlays with ``apis:write``; an operator reviews and confirms).
       operationId: confirmOverlay
       parameters:
       - in: path
@@ -9750,7 +9762,8 @@ paths:
         required: false
         schema:
           anyOf:
-          - type: string
+          - maxLength: 500
+            type: string
           - type: 'null'
           title: Q
       - in: query

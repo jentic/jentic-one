@@ -23,6 +23,7 @@ signature elsewhere); here we only assert *it was the one invoked*.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -249,3 +250,36 @@ def test_ctx_from_metadata_rebuilds_credential_attribution() -> None:
     bare = _ctx_from_metadata(_request(base_metadata))
     assert bare.credential_id is None
     assert bare.credential_name is None
+
+
+def test_ctx_from_metadata_mints_a_valid_trace_id_for_garbage() -> None:
+    """Metadata without a usable trace_id yields a minted 32-hex id — never the
+    literal "unknown", which would be persisted on the execution record and
+    crash any emit site that trusts the context (#903)."""
+    for metadata in (
+        {"actor_id": "agt_abc123", "actor_type": "agent"},
+        {"actor_id": "agt_abc123", "actor_type": "agent", "trace_id": "unknown"},
+    ):
+        ctx_req = _ctx_from_metadata(
+            UpstreamExecRequest(
+                method="GET",
+                url="https://api.example.com/v1/things",
+                headers={},
+                body=None,
+                timeout_s=30.0,
+                metadata=metadata,
+            )
+        )
+        assert re.fullmatch(r"[0-9a-f]{32}", ctx_req.trace_id)
+
+    passthrough = _ctx_from_metadata(
+        UpstreamExecRequest(
+            method="GET",
+            url="https://api.example.com/v1/things",
+            headers={},
+            body=None,
+            timeout_s=30.0,
+            metadata={"actor_id": "agt_abc123", "actor_type": "agent", "trace_id": "a" * 32},
+        )
+    )
+    assert passthrough.trace_id == "a" * 32

@@ -9,7 +9,7 @@ from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository
-from jentic_one.shared.models import ApiRevisionSourceType
+from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionSourceType
 
 
 class ResolveApiStage(BasePipelineStage):
@@ -55,7 +55,18 @@ class CreateRevisionStage(BasePipelineStage):
         if existing is not None:
             raise DuplicateRevisionError()
         if spec.origin is not None:
-            await ApiRevisionRepository.archive_active_imported(ctx.session, api_id, spec.origin)
+            if spec.origin == ORIGIN_OVERLAY:
+                # A materialized overlay must supersede whatever revision is currently
+                # served — which may be an IMPORTED revision of a *different* origin
+                # (e.g. "catalog") or a manually-promoted PUBLISHED revision. The
+                # origin-scoped archive would leave those active and the new imported
+                # revision would then violate ix_api_revisions_one_active (one active
+                # revision per api). Archive every active revision (published+imported).
+                await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
+            else:
+                await ApiRevisionRepository.archive_active_imported(
+                    ctx.session, api_id, spec.origin
+                )
             revision = await ApiRevisionRepository.create_imported(
                 ctx.session,
                 api_id=api_id,
