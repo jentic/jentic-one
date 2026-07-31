@@ -958,3 +958,113 @@ describe('ToolkitDetailPage — no-linked-agents banner', () => {
 		expect(screen.queryByTestId('toolkit-no-agents-banner')).not.toBeInTheDocument();
 	});
 });
+
+describe('ToolkitDetailPage — post-bind link-an-agent prompt', () => {
+	/** Same keys-less override as the banner tests (see above). */
+	function stubKeylessToolkit(credentialCount = 1) {
+		worker.use(
+			http.get('/toolkits/:toolkitId', () =>
+				HttpResponse.json({
+					toolkit_id: 'tk_demo_github',
+					name: 'GitHub Tools',
+					description: null,
+					active: true,
+					created_by: 'admin@local',
+					created_at: '2026-05-01T10:00:00Z',
+					updated_at: null,
+					credential_count: credentialCount,
+					key_count: 0,
+				}),
+			),
+		);
+	}
+
+	it('holds the dialog open on a link prompt when nothing can use the bind', async () => {
+		// The proactive half of the #826 dead-end fix: a bind that lands on an
+		// agent-less, key-less toolkit serves nothing — instead of closing
+		// into silence, the dialog says so and offers the link-agent jump.
+		stubKeylessToolkit(0);
+		seedAgents({ bound: [], workspace: [] });
+		const credId = `cred_prompt_${Math.random().toString(36).slice(2, 7)}`;
+		seedCredentials([
+			{ credential_id: credId, name: 'Prompt key', type: 'api_key', vendor: 'prompt' },
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
+		await user.click(await screen.findByText('Prompt key'));
+		const dialog = screen.getByRole('dialog');
+		await user.click(await within(dialog).findByRole('button', { name: /^bind credential$/i }));
+
+		// The bind landed, but the dialog holds on the prompt instead of closing.
+		const prompt = await screen.findByTestId('bind-link-agent-prompt');
+		expect(prompt).toHaveTextContent(/no agent is linked to this toolkit yet/i);
+		// Announced, not just swapped in: the focused submit button unmounted.
+		expect(prompt).toHaveAttribute('role', 'status');
+
+		// The CTA must END in the link-agent picker (not merely land on the
+		// Overview tab and stop): the bind dialog closes, Overview activates,
+		// and the picker dialog is open.
+		await user.click(screen.getByRole('button', { name: 'Link an agent' }));
+		expect(await screen.findByRole('dialog', { name: /link agent/i })).toBeInTheDocument();
+		expect(screen.getByRole('tab', { name: /^Overview/ })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		expect(screen.queryByTestId('bind-link-agent-prompt')).not.toBeInTheDocument();
+	});
+
+	it('starts back at step 1 when reopened after dismissing the prompt', async () => {
+		// The prompt is transient state, not user input: "Not now" (or any
+		// close) must clear it, so the next open never lands on a stale
+		// "Credential bound." for a bind from a previous session.
+		stubKeylessToolkit(0);
+		seedAgents({ bound: [], workspace: [] });
+		const credId = `cred_reopen_${Math.random().toString(36).slice(2, 7)}`;
+		seedCredentials([
+			{ credential_id: credId, name: 'Reopen key', type: 'api_key', vendor: 'reopen' },
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
+		await user.click(await screen.findByText('Reopen key'));
+		const dialog = screen.getByRole('dialog');
+		await user.click(await within(dialog).findByRole('button', { name: /^bind credential$/i }));
+		await screen.findByTestId('bind-link-agent-prompt');
+
+		await user.click(screen.getByRole('button', { name: 'Not now' }));
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
+		expect(await screen.findByText(/step 1 of 2/i)).toBeInTheDocument();
+		expect(screen.queryByTestId('bind-link-agent-prompt')).not.toBeInTheDocument();
+	});
+
+	it('closes silently when an agent already serves the toolkit', async () => {
+		// Default handlers bind Support Bot — the bind is immediately useful,
+		// so no prompt (the existing close-on-success behavior is unchanged).
+		stubKeylessToolkit(0);
+		const credId = `cred_served_${Math.random().toString(36).slice(2, 7)}`;
+		seedCredentials([
+			{ credential_id: credId, name: 'Served key', type: 'api_key', vendor: 'served' },
+		]);
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: /^Access/ }));
+		await user.click(await screen.findByRole('button', { name: /^bind credential$/i }));
+		await user.click(await screen.findByText('Served key'));
+		const dialog = screen.getByRole('dialog');
+		await user.click(await within(dialog).findByRole('button', { name: /^bind credential$/i }));
+
+		await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+		expect(screen.queryByTestId('bind-link-agent-prompt')).not.toBeInTheDocument();
+	});
+});

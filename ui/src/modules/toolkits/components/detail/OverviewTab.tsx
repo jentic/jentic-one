@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
 	AlertTriangle,
@@ -50,9 +50,25 @@ export interface OverviewTabProps {
 	toolkitId: string;
 	/** Jump to the Access tab (the credentials summary's Manage action). */
 	onManageAccess: () => void;
+	/**
+	 * Loading-safe "a fresh bind would serve nothing" flag, derived once in
+	 * `ToolkitDetailBody` (false while the agents query is in flight). Gates
+	 * the bind dialog's post-bind link-an-agent prompt.
+	 */
+	agentless?: boolean;
+	/** One-shot signal: open the link-agent picker (e.g. arriving from the
+	 * Access tab's "Link an agent" CTA). Acknowledge via onLinkAgentOpened. */
+	openLinkAgent?: boolean;
+	onLinkAgentOpened?: () => void;
 }
 
-export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
+export function OverviewTab({
+	toolkitId,
+	onManageAccess,
+	agentless = false,
+	openLinkAgent = false,
+	onLinkAgentOpened,
+}: OverviewTabProps) {
 	const { data: toolkit } = useToolkit(toolkitId);
 	const { data: agents = [], isError: agentsError } = useToolkitAgents(toolkitId);
 	const { data: bindings = [], isError: bindingsError } = useToolkitBindings(toolkitId);
@@ -60,6 +76,15 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 	const unlinkAgent = useUnlinkAgentFromToolkit(toolkitId);
 	const [linkAgentOpen, setLinkAgentOpen] = useState(false);
 	const [bindOpen, setBindOpen] = useState(false);
+
+	// Consume the host's one-shot open-the-picker signal (Access tab's
+	// "Link an agent" must end in the picker, not just on this tab).
+	useEffect(() => {
+		if (openLinkAgent) {
+			setLinkAgentOpen(true);
+			onLinkAgentOpened?.();
+		}
+	}, [openLinkAgent, onLinkAgentOpened]);
 
 	const linkedAgentIds = new Set(agents.map((a) => a.agent_id));
 	const boundIds = new Set(bindings.map((b) => b.credential_id));
@@ -274,12 +299,15 @@ export function OverviewTab({ toolkitId, onManageAccess }: OverviewTabProps) {
 			</Dialog>
 
 			{/* Two-step bind wizard — the same component the Access tab opens, so
-			    binding reads identically wherever it starts. */}
+			    binding reads identically wherever it starts. The post-bind
+			    "link an agent?" prompt opens the link dialog hosted right here. */}
 			<BindCredentialDialog
 				toolkitId={toolkitId}
 				open={bindOpen}
 				onClose={() => setBindOpen(false)}
 				boundIds={boundIds}
+				agentless={agentless}
+				onLinkAgent={() => setLinkAgentOpen(true)}
 			/>
 		</div>
 	);

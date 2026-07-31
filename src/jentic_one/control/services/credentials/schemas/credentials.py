@@ -142,6 +142,15 @@ class OAuth2Redacted(BaseModel):
     token_url: str
     grant_type: str
     scopes: list[str] | None = None
+    # Whether the interactive sign-in completed and is still usable: a
+    # provider_account_ref (managed providers store no local token), or a live
+    # un-revoked token row that can still mint (has a refresh token, or an
+    # unexpired/never-expiring access token). Only meaningful for
+    # authorization_code credentials — client_credentials need no interactive
+    # step, so it stays None there. Lets list consumers (e.g. the fulfilment
+    # wizard's adopt picker) warn about a never-connected credential before
+    # adopting it.
+    connected: bool | None = None
 
 
 class NoAuthRedacted(BaseModel):

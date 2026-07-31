@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from jentic_one.control.web.schemas.permission_rules import BasePermissionRuleSchema
 from jentic_one.shared.permissions.matching import MatchMode
+from jentic_one.shared.schemas import ServedApiRef
 
 # --- Request models ---
 
@@ -139,6 +140,21 @@ class ToolkitResponse(BaseModel):
     active: bool
     key_count: int
     credential_count: int
+    # Distinct APIs served by the toolkit's credential bindings, so list
+    # consumers (e.g. the fulfilment wizard's adopt picker) can rank or badge
+    # toolkits by the API a plan targets without a per-toolkit child fetch.
+    # Scoped by the caller's credential visibility (see
+    # ``ToolkitService.served_apis``) — a sharee or bound agent sees only the
+    # APIs of credentials their own read filter admits.
+    apis: list[ServedApiRef] = Field(
+        default_factory=list,
+        description=(
+            "Distinct APIs served by this toolkit's credential bindings that "
+            "are visible to the caller, sorted by vendor/name/version. NULL "
+            "api_name/api_version mean the credential covers all names/versions "
+            "for the vendor. Empty when no visible credentials are bound."
+        ),
+    )
     created_by: str | None = None
     created_at: datetime
     updated_at: datetime | None = None

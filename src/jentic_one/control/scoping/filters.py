@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import exists, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from jentic_one.control.core.schema.access_requests import AccessRequest
@@ -106,9 +107,13 @@ def _binding_visibility_clause(
     if model is Toolkit:
         return Toolkit.id.in_(bound_toolkit_ids)
     if model is Credential:
-        subq = select(ToolkitCredentialBinding.credential_id).where(
-            ToolkitCredentialBinding.toolkit_id.in_(bound_toolkit_ids),
-            ToolkitCredentialBinding.credential_id == Credential.id,
+        # Alias so the subquery keeps its own FROM even when the outer query
+        # also selects from ToolkitCredentialBinding (e.g. the served-APIs
+        # aggregation join) — otherwise auto-correlation strips it away.
+        tcb = aliased(ToolkitCredentialBinding)
+        subq = select(tcb.credential_id).where(
+            tcb.toolkit_id.in_(bound_toolkit_ids),
+            tcb.credential_id == Credential.id,
         )
         return exists(subq)
     return None
