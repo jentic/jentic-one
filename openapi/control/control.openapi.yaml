@@ -1721,7 +1721,7 @@ components:
           - additionalProperties: true
             type: object
           - type: 'null'
-          description: Redacted, type-specific projection (hints/last-N chars; never the secret).
+          description: 'Redacted, type-specific projection (hints/last-N chars; never the secret). For oauth2: client_id, token_url, grant_type (authorization_code | client_credentials), scopes, and — for authorization_code only — `connected`, whether the interactive sign-in completed and is still usable (null for other grants).'
           title: Details
         name:
           description: Human-readable label.
@@ -4709,9 +4709,9 @@ components:
           title: Active
           type: boolean
         apis:
-          description: Distinct (vendor, name, version) APIs served by this toolkit's credential bindings, sorted by vendor/name/version. Empty when no credentials are bound.
+          description: Distinct APIs served by this toolkit's credential bindings that are visible to the caller, sorted by vendor/name/version. NULL api_name/api_version mean the credential covers all names/versions for the vendor. Empty when no visible credentials are bound.
           items:
-            $ref: '#/components/schemas/APIReference'
+            $ref: '#/components/schemas/ServedApiRef'
           title: Apis
           type: array
         created_at:

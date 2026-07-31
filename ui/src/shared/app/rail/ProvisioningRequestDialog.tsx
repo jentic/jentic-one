@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
 	ArrowLeft,
 	ArrowRight,
+	AlertTriangle,
 	CheckCircle2,
 	KeyRound,
 	MessageSquare,
@@ -104,6 +105,10 @@ interface ChainProgress {
 	/** The credential was adopted from existing credentials — no connect flow,
 	 * excluded from orphan discard on cancel. */
 	credentialAdopted: boolean;
+	/** The adopted credential was never connected (OAuth `connected === false`
+	 * at adoption time) — keeps the adopted-state panel warning instead of
+	 * declaring a working reuse. */
+	credentialUnconnected: boolean;
 	rules: PermissionRuleInput[];
 	/** Operator chose not to set this API up now; its items are denied at submit. */
 	skipped: boolean;
@@ -255,6 +260,7 @@ function seedChainProgress(chains: PlanChain[], agentName: string | undefined): 
 		credentialType: null,
 		credentialName: null,
 		credentialAdopted: false,
+		credentialUnconnected: false,
 		rules: proposedChainRules(chain),
 		skipped: chainUnfulfillable(chain),
 	}));
@@ -361,6 +367,7 @@ export function ProvisioningRequestDialog({
 				toolkitAdopted: cs.toolkitAdopted ?? false,
 				credentialName: cs.credentialName ?? null,
 				credentialAdopted: cs.credentialAdopted ?? false,
+				credentialUnconnected: cs.credentialUnconnected ?? false,
 			});
 		}
 		return { ...draft, chains: aligned };
@@ -620,6 +627,14 @@ export function ProvisioningRequestDialog({
 		setPendingToolkitChoice('');
 		setPendingCredentialChoice('');
 	}, [step, chainIndex]);
+	// Derived before JSX (file convention — no closures in the tree): the
+	// staged credential and whether it needs the unconnected-OAuth warning.
+	const pendingCredential =
+		chainCredentialOptions !== 'error' && chainCredentialOptions !== null
+			? chainCredentialOptions.find((c) => c.credential_id === pendingCredentialChoice)
+			: undefined;
+	const pendingUnconnectedOAuth =
+		pendingCredential !== undefined && isUnconnectedOAuth(pendingCredential);
 
 	/** Adopt an existing toolkit for the current chain. */
 	const handleAdoptToolkit = useCallback(
@@ -675,6 +690,7 @@ export function ProvisioningRequestDialog({
 				credentialType: cred.type,
 				credentialName: cred.name,
 				credentialAdopted: true,
+				credentialUnconnected: isUnconnectedOAuth(cred),
 			});
 			setStep('rules');
 		},
@@ -687,6 +703,7 @@ export function ProvisioningRequestDialog({
 			credentialType: null,
 			credentialName: null,
 			credentialAdopted: false,
+			credentialUnconnected: false,
 		});
 	}, [updateChain]);
 
@@ -747,6 +764,7 @@ export function ProvisioningRequestDialog({
 				credentialType: info.type,
 				credentialName: null,
 				credentialAdopted: false,
+				credentialUnconnected: false,
 			});
 			// An OAuth2 credential that needs a browser sign-in (authorization-code
 			// with an authorize URL) has NO token until the connect flow completes —
@@ -1038,19 +1056,20 @@ export function ProvisioningRequestDialog({
 		? satisfiedByItemId.get(chain.toolkitBind.id)
 		: undefined;
 	// Whether a toolkit already serves this chain's API (from the list
-	// response's `apis` aggregation): in the canonical manual-setup state
-	// (toolkit + credential exist, agent unbound) nothing is satisfied, so the
-	// wired-toolkit float never fires — ranking by served API rescues that
-	// exact case (issue #890). Vendor must match; names only when both are
-	// known — a version-less/name-less chain reference matches any row for the
-	// vendor, mirroring decide-time reference resolution's laxity.
+	// response's `apis` aggregation — ServedApiRef, NULL name/version meaning
+	// "covers all"): in the canonical manual-setup state (toolkit + credential
+	// exist, agent unbound) nothing is satisfied, so the wired-toolkit float
+	// never fires — ranking by served API rescues that exact case (issue
+	// #890). Vendor must match; names only when both are known — a NULL/empty
+	// name on either side matches any row for the vendor, mirroring
+	// decide-time reference resolution's laxity.
 	const chainNameSlug = chain?.apiRef.name ? slugifyApiField(chain.apiRef.name) : '';
 	const servesChainApi = (tk: ToolkitResponse) =>
 		chainVendor !== undefined &&
 		(tk.apis ?? []).some(
 			(api) =>
-				api.vendor === chainVendor &&
-				(!chainNameSlug || !api.name || api.name === chainNameSlug),
+				api.api_vendor === chainVendor &&
+				(!chainNameSlug || !api.api_name || api.api_name === chainNameSlug),
 		);
 	const toolkitPickerOptions =
 		existingToolkits === 'error' || existingToolkits === null
@@ -1470,7 +1489,11 @@ export function ProvisioningRequestDialog({
 																{tk.toolkit_id === wiredToolkitId
 																	? ' — already linked to this agent'
 																	: servesChainApi(tk)
-																		? ` — already serves ${chainLabel}`
+																		? // Fixed-width suffix (long names push past the
+																			// closed control's ellipsis) and hedged: a
+																			// NULL-name credential matches the vendor
+																			// laxly, so don't assert the exact API.
+																			' — already serves this API'
 																		: ''}
 															</option>
 														))}
@@ -1519,20 +1542,43 @@ export function ProvisioningRequestDialog({
 							>
 								{progress?.credentialId && progress.credentialAdopted ? (
 									<div className="max-w-md space-y-3">
-										<div className="border-success/30 bg-success/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
-											<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
-											<span>
-												Using existing credential{' '}
-												<span className="font-medium">
-													{progress.credentialName ??
-														credentialLabel ??
-														'credential'}
-												</span>{' '}
-												— reused as-is. Its sign-in isn’t re-verified; if it
-												has stopped working, calls will fail until you
-												reconnect it.
-											</span>
-										</div>
+										{progress.credentialUnconnected ? (
+											// The warning must not vanish at the moment it
+											// becomes binding: a never-connected adoption
+											// stays warning-toned, not a green success.
+											<div
+												className="border-warning/30 bg-warning/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm"
+												role="status"
+											>
+												<AlertTriangle className="text-warning h-5 w-5 shrink-0" />
+												<span>
+													Using existing credential{' '}
+													<span className="font-medium">
+														{progress.credentialName ??
+															credentialLabel ??
+															'credential'}
+													</span>{' '}
+													— it was never connected, so calls will fail
+													until someone connects it from the Credentials
+													page.
+												</span>
+											</div>
+										) : (
+											<div className="border-success/30 bg-success/5 flex items-center gap-2.5 rounded-lg border p-4 text-sm">
+												<CheckCircle2 className="text-success h-5 w-5 shrink-0" />
+												<span>
+													Using existing credential{' '}
+													<span className="font-medium">
+														{progress.credentialName ??
+															credentialLabel ??
+															'credential'}
+													</span>{' '}
+													— reused as-is. Its sign-in isn’t re-verified;
+													if it has stopped working, calls will fail until
+													you reconnect it.
+												</span>
+											</div>
+										)}
 										<Button
 											variant="ghost"
 											onClick={handleClearAdoptedCredential}
@@ -1617,27 +1663,22 @@ export function ProvisioningRequestDialog({
 																	cred.type}
 																)
 																{isUnconnectedOAuth(cred)
-																	? ' — not signed in yet'
+																	? ' — not connected yet'
 																	: ''}
 															</option>
 														))}
 													</Select>
-													{(() => {
-														const pending = chainCredentialOptions.find(
-															(cred) =>
-																cred.credential_id ===
-																pendingCredentialChoice,
-														);
-														return pending &&
-															isUnconnectedOAuth(pending) ? (
-															<p className="text-accent-orange text-sm">
-																This OAuth credential was never
-																signed in, so calls using it will
-																fail until someone completes its
-																sign-in from the Credentials page.
-															</p>
-														) : null;
-													})()}
+													{pendingUnconnectedOAuth && (
+														<p
+															className="text-warning text-sm"
+															role="status"
+														>
+															This OAuth credential was never
+															connected, so calls using it will fail
+															until someone connects it from the
+															Credentials page.
+														</p>
+													)}
 													{pendingCredentialChoice && (
 														<Button
 															variant="secondary"

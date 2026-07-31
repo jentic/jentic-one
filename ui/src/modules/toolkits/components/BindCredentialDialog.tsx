@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, KeyRound, ListChecks, ShieldBan, ShieldCheck } from 'lucide-react';
 import {
 	AppLink,
@@ -89,8 +89,9 @@ export interface BindCredentialDialogProps {
 	 */
 	agentless?: boolean;
 	/**
-	 * Where "Link an agent" leads (open the picker, or jump to the tab that
-	 * hosts it). The post-bind prompt is only offered when this is provided.
+	 * Opens the link-agent picker (every caller must end there — a button
+	 * labelled "Link an agent" may not land on a tab and stop). The post-bind
+	 * prompt is only offered when this is provided.
 	 */
 	onLinkAgent?: () => void;
 }
@@ -110,9 +111,20 @@ export function BindCredentialDialog({
 	const [rules, setRules] = useState<PermissionRuleInput[]>([]);
 	// Post-success state: the bind landed but nothing can use it yet — hold the
 	// dialog open on a "link an agent?" prompt instead of closing into silence.
-	const [justBound, setJustBound] = useState(false);
+	const [showLinkPrompt, setShowLinkPrompt] = useState(false);
 
-	const step: 'pick' | 'access' | 'linkPrompt' = justBound
+	// Transient flag, not user input: clear it whenever the dialog closes
+	// (dialog-state rule). The ref carries the *live* open state into the
+	// mutation callback — a bind resolving after an Escape-close must not arm
+	// the prompt for the next open (the callback's `open` prop is a stale
+	// closure by then).
+	const openRef = useRef(open);
+	useEffect(() => {
+		openRef.current = open;
+		if (!open) setShowLinkPrompt(false);
+	}, [open]);
+
+	const step: 'pick' | 'access' | 'linkPrompt' = showLinkPrompt
 		? 'linkPrompt'
 		: selected
 			? 'access'
@@ -132,11 +144,6 @@ export function BindCredentialDialog({
 		bindCredential.reset();
 	};
 
-	const close = () => {
-		setJustBound(false);
-		onClose();
-	};
-
 	const submit = () => {
 		if (!selected || customInvalid) return;
 		bindCredential.mutate(
@@ -148,8 +155,9 @@ export function BindCredentialDialog({
 			{
 				onSuccess: () => {
 					reset();
+					if (!openRef.current) return;
 					if (agentless && onLinkAgent) {
-						setJustBound(true);
+						setShowLinkPrompt(true);
 					} else {
 						onClose();
 					}
@@ -161,7 +169,7 @@ export function BindCredentialDialog({
 	return (
 		<Dialog
 			open={open}
-			onClose={close}
+			onClose={onClose}
 			title="Bind credential"
 			subtitle={
 				step === 'pick'
@@ -173,17 +181,16 @@ export function BindCredentialDialog({
 			size="lg"
 			footer={
 				step === 'pick' ? (
-					<Button variant="secondary" onClick={close}>
+					<Button variant="secondary" onClick={onClose}>
 						Cancel
 					</Button>
 				) : step === 'linkPrompt' ? (
 					<>
-						<Button variant="secondary" onClick={close}>
+						<Button variant="secondary" onClick={onClose}>
 							Not now
 						</Button>
 						<Button
 							onClick={() => {
-								setJustBound(false);
 								onLinkAgent?.();
 								onClose();
 							}}
@@ -219,7 +226,14 @@ export function BindCredentialDialog({
 					<CredentialPicker boundIds={boundIds} onSelect={setSelected} enabled={open} />
 				</div>
 			) : step === 'linkPrompt' ? (
-				<div className="flex items-start gap-3" data-testid="bind-link-agent-prompt">
+				// role="status": the body swap after the bind unmounts the focused
+				// submit button, so announce the outcome (matches the detail page's
+				// no-agents banner).
+				<div
+					className="flex items-start gap-3"
+					role="status"
+					data-testid="bind-link-agent-prompt"
+				>
 					<div className="bg-accent-green/10 text-accent-green flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
 						<ShieldCheck className="h-5 w-5" aria-hidden="true" />
 					</div>
@@ -227,8 +241,7 @@ export function BindCredentialDialog({
 						<p className="text-foreground text-sm font-medium">Credential bound.</p>
 						<p className="text-muted-foreground mt-1 text-sm">
 							But no agent is linked to this toolkit yet, so nothing can reach the
-							credential — calls will only start working once an agent is linked (or
-							an API key is issued).
+							credential — calls will only start working once an agent is linked.
 						</p>
 					</div>
 				</div>

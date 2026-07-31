@@ -36,7 +36,7 @@ export function AccessTab({
 	toolkitId: string;
 	/** No linked agent and no API key — enables the post-bind link prompt. */
 	agentless?: boolean;
-	/** Jump to the surface hosting the link-agent affordance (Overview). */
+	/** Switch to Overview AND open the link-agent picker there (host-wired). */
 	onLinkAgent?: () => void;
 }) {
 	const { data: bindings = [], isError: bindingsError } = useToolkitBindings(toolkitId);

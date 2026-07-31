@@ -537,9 +537,24 @@ class CredentialService:
             is_auth_code = stored_type == StoredCredentialType.OAUTH2_AUTHORIZATION_CODE
             connected: bool | None = None
             if is_auth_code:
-                # oauth_token is selectin-eager on the ORM, so this is free.
-                token = credential.oauth_token
-                connected = token is not None and token.revoked_at is None
+                # Managed providers (e.g. Pipedream) complete connect by
+                # stamping `provider_account_ref` without a local token row —
+                # the ref alone means the sign-in finished.
+                if credential.provider_account_ref:
+                    connected = True
+                else:
+                    # oauth_token is selectin-eager on the ORM, so this is free.
+                    token = credential.oauth_token
+                    if token is None or token.revoked_at is not None:
+                        connected = False
+                    else:
+                        # A live row that has expired with no refresh token
+                        # cannot mint again — the sign-in must be redone.
+                        connected = (
+                            token.encrypted_refresh_token is not None
+                            or token.expires_at is None
+                            or token.expires_at > datetime.now(UTC)
+                        )
             details = OAuth2Redacted(
                 client_id=occ.client_id if occ else "",
                 token_url=occ.token_url if occ else "",

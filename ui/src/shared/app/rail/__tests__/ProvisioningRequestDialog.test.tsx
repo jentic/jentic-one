@@ -934,7 +934,7 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 							updated_at: null,
 							credential_count: 1,
 							key_count: 0,
-							apis: [{ vendor: 'github-com', name: 'rest', version: '' }],
+							apis: [{ api_vendor: 'github-com', api_name: 'rest' }],
 						},
 						{
 							toolkit_id: 'tk_serves',
@@ -946,7 +946,7 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 							updated_at: null,
 							credential_count: 1,
 							key_count: 0,
-							apis: [{ vendor: 'open-meteo-com', name: 'forecast', version: '' }],
+							apis: [{ api_vendor: 'open-meteo-com', api_name: 'forecast' }],
 						},
 					],
 					has_more: false,
@@ -961,7 +961,10 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		const picker = await screen.findByLabelText(/use an existing toolkit/i);
 		const options = within(picker).getAllByRole('option');
 		// [0] is the placeholder; the serving toolkit floats above the rest.
-		expect(options[1]).toHaveTextContent(/Weather toolkit — already serves/);
+		// The badge is hedged/fixed-width ("this API", not the chain label):
+		// NULL-name credentials match laxly, and long names would push a long
+		// suffix past the closed control's ellipsis.
+		expect(options[1]).toHaveTextContent(/Weather toolkit — already serves this API/);
 		expect(options[2]).toHaveTextContent('Unrelated toolkit');
 		expect(options[2]).not.toHaveTextContent(/already serves/);
 	});
@@ -1015,14 +1018,23 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 
 		const picker = await screen.findByLabelText(/use an existing credential/i);
 		const options = within(picker).getAllByRole('option');
-		expect(options[1]).toHaveTextContent(/not signed in yet/);
+		expect(options[1]).toHaveTextContent(/not connected yet/);
 
 		// No warning until the risky option is actually staged.
-		expect(screen.queryByText(/was never signed in/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/was never connected/i)).not.toBeInTheDocument();
 		await user.selectOptions(picker, 'cred_oauth_pending');
-		expect(await screen.findByText(/was never signed in/i)).toBeInTheDocument();
+		expect(await screen.findByText(/was never connected/i)).toBeInTheDocument();
 		// The pick is still allowed — warned, not blocked.
 		expect(screen.getByRole('button', { name: 'Use this credential' })).toBeEnabled();
+
+		// Committing the pick must not flip the warning into a green success:
+		// stepping back to the credential step shows the adopted-state panel,
+		// which keeps the never-connected wording (the warning stays visible
+		// after it becomes binding).
+		await user.click(screen.getByRole('button', { name: 'Use this credential' }));
+		await user.click(await screen.findByRole('button', { name: /Back/ }));
+		expect(await screen.findByText(/it was never connected/i)).toBeInTheDocument();
+		expect(screen.queryByText(/reused as-is/i)).not.toBeInTheDocument();
 	});
 
 	it('offers a retry instead of silently collapsing when the toolkit list fails', async () => {

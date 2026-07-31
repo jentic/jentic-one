@@ -120,10 +120,12 @@ async def test_authorization_code_connected_flips_on_token(
     cred_writer_client: TestClient, web_context: Context
 ) -> None:
     """An authorization_code credential reports connected=False until its
-    sign-in lands a token row, then True — so list consumers (the fulfilment
-    wizard's adopt picker) can warn about a never-connected pick before it
-    fails at execute time (#890). grant_type is the honest stored grant, not
-    the historical client_credentials hardcode.
+    sign-in lands a usable token row, then True — and back to False when the
+    token is revoked or can no longer mint (expired with no refresh token).
+    Lets list consumers (the fulfilment wizard's adopt picker) warn about a
+    never-connected pick before it fails at execute time (#890). grant_type
+    is the honest stored grant, not the historical client_credentials
+    hardcode.
     """
     cred_id = _create_oauth2(
         cred_writer_client, grant_type="authorization_code", name="web-cred-connect"
@@ -155,11 +157,66 @@ async def test_authorization_code_connected_flips_on_token(
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["details"]["connected"] is True
 
+    # Expired with no refresh token: the row exists but cannot mint again —
+    # the sign-in must be redone, so the flag drops back to False.
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "UPDATE oauth_tokens SET expires_at = '2020-01-01T00:00:00Z' "
+                "WHERE id = 'oat_webtest_conn'"
+            )
+        )
+        await session.commit()
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["connected"] is False
+
+    # A refresh token rescues an expired access token (the broker re-mints).
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text(
+                "UPDATE oauth_tokens SET encrypted_refresh_token = 'enc-refresh' "
+                "WHERE id = 'oat_webtest_conn'"
+            )
+        )
+        await session.commit()
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["connected"] is True
+
+    # Revocation trumps everything.
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("UPDATE oauth_tokens SET revoked_at = now() WHERE id = 'oat_webtest_conn'")
+        )
+        await session.commit()
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["connected"] is False
+
+
+async def test_managed_provider_account_ref_counts_as_connected(
+    cred_writer_client: TestClient, web_context: Context
+) -> None:
+    """Managed providers (e.g. Pipedream) complete connect by stamping
+    `provider_account_ref` without a local token row — the ref alone must
+    read as connected, or the picker would warn forever on a working
+    credential.
+    """
+    cred_id = _create_oauth2(
+        cred_writer_client, grant_type="authorization_code", name="web-cred-managed"
+    )
+    async with web_context.control_db.session() as session:
+        await session.execute(
+            text("UPDATE credentials SET provider_account_ref = 'acc_webtest' WHERE id = :cred"),
+            {"cred": cred_id},
+        )
+        await session.commit()
+    got = cred_writer_client.get(f"/credentials/{cred_id}").json()
+    assert got["details"]["connected"] is True
+
 
 def test_client_credentials_has_no_connect_state(cred_writer_client: TestClient) -> None:
-    """client_credentials mints tokens automatically at execute time, so
-    connect state is meaningless there: the key is absent (None is dropped
-    from the wire), never a scary false."""
+    """client_credentials needs no interactive sign-in step, so connect state
+    is meaningless there: the key is absent (None is dropped from the wire),
+    never a scary false."""
     cred_id = _create_oauth2(
         cred_writer_client, grant_type="client_credentials", name="web-cred-cc"
     )

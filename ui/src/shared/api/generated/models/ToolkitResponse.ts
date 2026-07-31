@@ -2,16 +2,16 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { APIReference } from './APIReference';
+import type { ServedApiRef } from './ServedApiRef';
 /**
  * Toolkit response.
  */
 export type ToolkitResponse = {
     active: boolean;
     /**
-     * Distinct (vendor, name, version) APIs served by this toolkit's credential bindings, sorted by vendor/name/version. Empty when no credentials are bound.
+     * Distinct APIs served by this toolkit's credential bindings that are visible to the caller, sorted by vendor/name/version. NULL api_name/api_version mean the credential covers all names/versions for the vendor. Empty when no visible credentials are bound.
      */
-    apis?: Array<APIReference>;
+    apis?: Array<ServedApiRef>;
     created_at: string;
     created_by?: (string | null);
     credential_count: number;

@@ -176,19 +176,30 @@ export function AccessRequestItemCard({
 						</>
 					)}
 					{alreadySatisfied && (
-						<span
-							className="bg-accent-green/10 text-accent-green inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium"
-							title={
-								item.already_satisfied_by
-									? `Already satisfied by toolkit ${item.already_satisfied_by} — approving records the decision without redoing the setup.`
-									: 'What this item asks for already exists — approving records the decision without redoing the setup.'
-							}
-						>
+						<span className="bg-accent-green/10 text-accent-green inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium">
 							<CheckCircle2 className="h-3 w-3" aria-hidden="true" />
 							Already in place
 						</span>
 					)}
 				</div>
+
+				{/* The chip's substance in discernible text (not a hover-only
+				    `title`): keyboard/touch users and screen readers get the
+				    guidance too. No raw ids — the card has no name resolution, so
+				    an opaque `tk_…` would be noise, not information. */}
+				{alreadySatisfied && (
+					<div className="text-muted-foreground border-border bg-card/40 mt-2.5 flex items-start gap-1.5 rounded-lg border px-2.5 py-2 text-xs">
+						<Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+						<span>
+							{item.already_satisfied_by
+								? 'An existing toolkit already covers this item. '
+								: 'What this item asks for already exists. '}
+							{enforceable && rules.length > 0
+								? 'Approving records the decision and applies this item\u2019s access rules to the existing binding, replacing its current rules.'
+								: 'Approving records the decision without redoing the setup.'}
+						</span>
+					</div>
+				)}
 
 				{!scopeGrant && enforceable && (
 					<OperationsSummary rules={rules} targetLabel={label} />

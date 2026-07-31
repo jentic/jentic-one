@@ -108,9 +108,15 @@ describe('AccessRequestItemCard — already-satisfied hint', () => {
 			already_satisfied: true,
 		});
 		expect(screen.getByText('Already in place')).toBeInTheDocument();
+		// The guidance is discernible text (not a hover-only title), so keyboard
+		// and screen-reader users get it too.
+		expect(screen.getByText(/already exists/i)).toBeInTheDocument();
+		expect(
+			screen.getByText(/records the decision without redoing the setup/i),
+		).toBeInTheDocument();
 	});
 
-	it('names the satisfying toolkit in the chip tooltip when the hint carries it', () => {
+	it('credits an existing toolkit (never a raw id) when the hint names one', () => {
 		renderCard({
 			resource_type: 'toolkit',
 			action: 'bind',
@@ -118,10 +124,26 @@ describe('AccessRequestItemCard — already-satisfied hint', () => {
 			already_satisfied: true,
 			already_satisfied_by: 'tk_target',
 		});
-		expect(screen.getByText('Already in place')).toHaveAttribute(
-			'title',
-			expect.stringContaining('tk_target'),
-		);
+		expect(
+			screen.getByText(/an existing toolkit already covers this item/i),
+		).toBeInTheDocument();
+		// The card has no name resolution, so an opaque tk_… id would be noise —
+		// the notice must not leak it (the headline already shows resource_id).
+		expect(screen.queryByText(/satisfied by toolkit tk_target/i)).not.toBeInTheDocument();
+	});
+
+	it('warns that approving a satisfied credential.bind replaces the binding rules', () => {
+		// The satisfaction probe checks binding EXISTENCE only, while approve
+		// writes this item's rules over the live binding — the copy must not
+		// promise "without redoing the setup" when rules ride along.
+		renderCard({
+			resource_type: 'credential',
+			action: 'bind',
+			already_satisfied: true,
+			rules: [{ effect: 'allow', methods: ['GET'] }],
+		});
+		expect(screen.getByText(/replacing its current rules/i)).toBeInTheDocument();
+		expect(screen.queryByText(/without redoing the setup/i)).not.toBeInTheDocument();
 	});
 
 	it('renders nothing for false or not-computed hints', () => {
