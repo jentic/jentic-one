@@ -174,6 +174,34 @@ class ApiRevisionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def latest_archived_non_overlay(
+        session: AsyncSession, api_id: uuid.UUID, overlay_origin: str
+    ) -> uuid.UUID | None:
+        """The most-recently-archived non-overlay revision for an API, if any.
+
+        Used to *reconstruct* the revision an overlay materialize superseded when the
+        original confirm crashed after committing the re-ingest (which archived that
+        revision) but before back-linking it onto the overlay — the recovery re-ingest
+        no longer carries the superseded id in memory. A successful materialize archives
+        exactly the prior current (non-overlay) revision and nothing archives afterwards
+        until the next confirm, so the newest such archive is that superseded revision.
+        Best-effort: ``None`` if the API never had a non-overlay revision (a first-ever
+        materialize superseded nothing) — the overlay then legitimately has no rollback
+        target.
+        """
+        result = await session.execute(
+            select(ApiRevision.id)
+            .where(
+                ApiRevision.api_id == api_id,
+                ApiRevision.state == ApiRevisionState.ARCHIVED,
+                or_(ApiRevision.origin != overlay_origin, ApiRevision.origin.is_(None)),
+            )
+            .order_by(ApiRevision.archived_at.desc(), ApiRevision.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def delete_replaceable_by_digest(
         session: AsyncSession, api_id: uuid.UUID, spec_digest: str
     ) -> int:

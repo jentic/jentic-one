@@ -18,6 +18,7 @@ from jentic_one.registry.ingest.fetch import IngestSource, load_specification
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
@@ -308,14 +309,26 @@ class ImportHandler:
                 if api.current_revision.origin != ORIGIN_OVERLAY:
                     return False
                 assert api.current_revision_id is not None
+                # Reconstruct the revision this materialize superseded. The original
+                # confirm archived it before crashing pre-link, so it isn't in memory
+                # here — recover it as the newest archived non-overlay revision. Passed
+                # best-effort: set_confirmed_revision won't clobber an already-captured
+                # value, and None (first-ever materialize) leaves it NULL as intended.
+                superseded_id = await ApiRevisionRepository.latest_archived_non_overlay(
+                    session, api.id, ORIGIN_OVERLAY
+                )
                 updated = await OverlayRepository.set_confirmed_revision(
-                    session, overlay_id, api.current_revision_id
+                    session,
+                    overlay_id,
+                    api.current_revision_id,
+                    superseded_revision_id=superseded_id,
                 )
             logger.info(
                 "overlay_materialize_recovered_existing_revision",
                 job_id=job_id,
                 overlay_id=overlay_id,
                 revision_id=str(api.current_revision_id),
+                superseded_revision_id=str(superseded_id) if superseded_id else None,
                 linked=updated > 0,
             )
             return updated > 0

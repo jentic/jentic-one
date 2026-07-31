@@ -36,6 +36,10 @@ class CreateRevisionStage(BasePipelineStage):
 
     name: ClassVar[str] = "CreateRevisionStage"
     _requires: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
+    # Only ``revision_id`` is a *mandatory* output. This stage also conditionally
+    # produces ``superseded_revision_id`` (overlay materialize that replaced a current
+    # revision) — deliberately NOT declared here, since ``_produces`` keys are asserted
+    # present for every run; the ingestor reads that one via the non-raising ctx.get().
     _produces: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
