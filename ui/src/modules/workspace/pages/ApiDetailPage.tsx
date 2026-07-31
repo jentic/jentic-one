@@ -85,6 +85,7 @@ export default function ApiDetailPage() {
 	const title =
 		apiRefDisplayName({
 			displayName: api?.displayName,
+			catalogApiId: api?.catalogApiId,
 			vendor: apiKey.vendor,
 			name: apiKey.name,
 		}) || apiKey.vendor;

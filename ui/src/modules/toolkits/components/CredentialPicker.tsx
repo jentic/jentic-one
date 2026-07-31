@@ -60,10 +60,15 @@ export function CredentialPicker({
 			// typing what's on screen — e.g. `Article Search` for an NYT
 			// credential — returns the row rather than only matching the raw
 			// vendor/name machine identity.
-			const friendly = apiRefDisplayName({ vendor: c.vendor, name: c.apiName });
+			const friendly = apiRefDisplayName({
+				catalogApiId: c.catalogApiId,
+				vendor: c.vendor,
+				name: c.apiName,
+			});
 			return (
 				c.name.toLowerCase().includes(q) ||
 				friendly.toLowerCase().includes(q) ||
+				(c.catalogApiId?.toLowerCase().includes(q) ?? false) ||
 				(c.vendor?.toLowerCase().includes(q) ?? false) ||
 				(c.apiName?.toLowerCase().includes(q) ?? false) ||
 				(c.provider?.toLowerCase().includes(q) ?? false)
@@ -156,24 +161,32 @@ function CredentialRow({
 }) {
 	// Title = the user's own credential name when they've set one, so a renamed
 	// credential leads with that name (matching the credentials page). Fall back
-	// to the friendly API name — `apiRefDisplayName` strips a repeated vendor
-	// prefix so an NYT Article Search credential reads `Article Search` rather
-	// than `Nytimes.Com` — then provider / credential_id so we never render
-	// blank. We never show the derived API name as a *separate* line: the row is
-	// just the name (user's or derived) plus the mono vendor/name tuple.
+	// to the friendly API name — the persisted catalog slug when recorded, else
+	// the vendor/name tuple minus a repeated vendor prefix — then provider /
+	// credential_id so we never render blank. We never show the derived API
+	// name as a *separate* line: the row is just the name (user's or derived)
+	// plus the mono machine-identity subtitle.
 	const title =
 		cred.name ||
-		apiRefDisplayName({ vendor: cred.vendor, name: cred.apiName }) ||
+		apiRefDisplayName({
+			catalogApiId: cred.catalogApiId,
+			vendor: cred.vendor,
+			name: cred.apiName,
+		}) ||
 		cred.provider ||
 		cred.credential_id;
-	// Muted technical subtitle: the raw vendor/name tuple when an API identity
-	// exists (via the shared helper, which also peels a tuple-shaped `apiName`
-	// so the vendor doesn't render twice), else a guaranteed technical
-	// identifier (`credential_id`) so two identically-named creds with no API
-	// identity stay disambiguable. The title chain never promotes
-	// `credential_id`, so the subtitle is the row's last resort for telling
-	// rows apart.
-	const apiTuple = apiIdentityTuple({ vendor: cred.vendor, name: cred.apiName });
+	// Muted technical subtitle: the machine identity when one exists (the
+	// catalog slug verbatim, else the vendor/name tuple via the shared helper,
+	// which also peels a tuple-shaped `apiName` so the vendor doesn't render
+	// twice), else a guaranteed technical identifier (`credential_id`) so two
+	// identically-named creds with no API identity stay disambiguable. The
+	// title chain never promotes `credential_id`, so the subtitle is the row's
+	// last resort for telling rows apart.
+	const apiTuple = apiIdentityTuple({
+		catalogApiId: cred.catalogApiId,
+		vendor: cred.vendor,
+		name: cred.apiName,
+	});
 	const subtitle = apiTuple || cred.credential_id;
 	return (
 		<button

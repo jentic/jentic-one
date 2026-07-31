@@ -27,6 +27,7 @@ function titleFor(api: WorkspaceApi): string {
 	return (
 		apiRefDisplayName({
 			displayName: api.displayName,
+			catalogApiId: api.catalogApiId,
 			vendor: api.api.vendor,
 			name: api.api.name,
 		}) ||

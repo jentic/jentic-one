@@ -95,6 +95,9 @@ export interface BindableCredential {
 	vendor: string | null;
 	/** The API's `name` segment (sub-API path), for deriving a friendly title. */
 	apiName: string | null;
+	/** Catalog identity slug (`domain[/sub-api]`), when recorded — the
+	 * preferred friendly-title source. */
+	catalogApiId: string | null;
 	provider: string | null;
 }
 

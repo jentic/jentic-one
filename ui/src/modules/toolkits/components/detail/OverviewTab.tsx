@@ -241,6 +241,7 @@ export function OverviewTab({
 										</span>
 										<p className="text-muted-foreground truncate font-mono text-xs">
 											{apiIdentityTuple({
+												catalogApiId: cred.catalog_api_id,
 												vendor: cred.api_vendor,
 												name: cred.api_name,
 											}) || cred.credential_id}

@@ -6,6 +6,7 @@ import type { WorkspaceApi } from '@/modules/workspace/api';
 function makeApi(overrides: Partial<WorkspaceApi> = {}): WorkspaceApi {
 	return {
 		api: { vendor: 'github.com', name: 'main', version: '1.0.0', host: null },
+		catalogApiId: null,
 		displayName: null,
 		description: null,
 		iconUrl: null,

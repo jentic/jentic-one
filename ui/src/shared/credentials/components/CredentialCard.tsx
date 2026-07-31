@@ -40,13 +40,18 @@ export function CredentialCard({ cred, onEdit, onDelete, onConnect }: Credential
 	const vendor = cred.api.vendor ?? cred.name;
 	// Heading = the user's own `cred.name` when they've set one, so renaming a
 	// credential updates the card's title (matching the edit sheet's intent).
-	// Fall back to the friendly API name (`Article Search`, `Posthog.Com`) —
-	// then the raw tuple — so the card never leads with a blank line. We never
-	// render the derived API name as a *separate* line: the card shows just the
-	// name (user's or derived) plus the copyable mono tuple beneath.
+	// Fall back to the friendly API name — the persisted catalog slug when
+	// recorded (`Article Search`), else the humanised tuple — then the raw
+	// tuple — so the card never leads with a blank line. We never render the
+	// derived API name as a *separate* line: the card shows just the name
+	// (user's or derived) plus the copyable mono tuple beneath.
 	const title =
 		cred.name ||
-		apiRefDisplayName({ vendor: cred.api.vendor, name: cred.api.name }) ||
+		apiRefDisplayName({
+			catalogApiId: cred.catalog_api_id,
+			vendor: cred.api.vendor,
+			name: cred.api.name,
+		}) ||
 		formatApiReference(cred.api);
 
 	const subtitle =

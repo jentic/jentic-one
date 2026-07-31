@@ -48,13 +48,14 @@ describe('ApiPicker', () => {
 
 		await userEvent.type(screen.getByLabelText('Search APIs'), 'github');
 
-		// The catalog row leads with the friendly title derived from the
-		// server-supplied vendor (`github`, via the shared `apiRefDisplayName`) —
-		// the same casing the workspace rows use — rather than the raw
-		// `github.com` slug or a drifted `Github.Com`.
-		const row = await screen.findByText('Github', {}, { timeout: 3000 });
+		// The catalog row titles from the `api_id` slug exactly like Discover
+		// (#910): a bare-domain entry reads `github.com` verbatim, so the same
+		// API can't render one way on Discover and another way here. The row
+		// shows the slug as both title and mono subtitle, so scope the lookup
+		// to the title span.
+		const rows = await screen.findAllByText('github.com', {}, { timeout: 3000 });
 		expect(screen.getByText('From the Jentic public catalog')).toBeInTheDocument();
-		await userEvent.click(row);
+		await userEvent.click(rows[0]);
 
 		expect(onSelect).toHaveBeenCalledTimes(1);
 		const selected = onSelect.mock.calls[0][0] as SelectedApi;
@@ -72,26 +73,36 @@ describe('ApiPicker', () => {
 		// user hasn't edited the name). The label MUST equal the friendly title
 		// the row displays — otherwise the saved credential silently drifts from
 		// what the user saw. This asserts the whole chain: pick → SelectedApi →
-		// default saved name.
+		// default saved name. A sub-API entry titles from the slug's sub
+		// segment (`Article Search`), exactly like Discover.
 		resetApisStore(
 			[],
-			[{ entry: makeMockCatalogEntry({ apiId: 'github.com', vendor: 'github' }).entry }],
+			[
+				{
+					entry: makeMockCatalogEntry({
+						apiId: 'nytimes.com/article_search',
+						vendor: 'nytimes.com',
+					}).entry,
+				},
+			],
 		);
 		const onSelect = vi.fn();
 		renderWithProviders(<ApiPicker onSelect={onSelect} onManualEntry={vi.fn()} />);
 
-		await userEvent.type(screen.getByLabelText('Search APIs'), 'github');
-		const row = await screen.findByText('Github', {}, { timeout: 3000 });
+		await userEvent.type(screen.getByLabelText('Search APIs'), 'nytimes');
+		const row = await screen.findByText('Article Search', {}, { timeout: 3000 });
 		await userEvent.click(row);
 
 		const selected = onSelect.mock.calls[0][0] as SelectedApi;
-		expect(selected.label).toBe('Github');
+		expect(selected.label).toBe('Article Search');
 
 		// Seed a fresh form with an un-edited name (nameDirty = false): the
-		// default saved name is the friendly label, not the raw slug/vendor.
+		// default saved name is the friendly label, not the raw slug/vendor —
+		// and the picked slug rides along to be stored on the credential (#910).
 		const seeded = seedFormFromSelectedApi(EMPTY_FORM, selected, false);
-		expect(seeded.name).toBe('Github');
+		expect(seeded.name).toBe('Article Search');
 		expect(seeded.name).toBe(selected.label);
+		expect(seeded.catalogApiId).toBe('nytimes.com/article_search');
 	});
 
 	it('stores the server-supplied vendor and dedups against a workspace row', async () => {

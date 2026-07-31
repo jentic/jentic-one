@@ -260,6 +260,7 @@ export async function listBindableCredentials(): Promise<BindableCredential[]> {
 			type: c.type,
 			vendor: c.api?.vendor ?? null,
 			apiName: c.api?.name ?? null,
+			catalogApiId: c.catalog_api_id ?? null,
 			provider: c.provider ?? null,
 		}));
 	} catch (error) {

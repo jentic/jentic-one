@@ -138,6 +138,21 @@ describe('titleFromApiId', () => {
 });
 
 describe('toolkitCredDisplayName', () => {
+	it('titles from the persisted catalog slug when the binding carries one', () => {
+		// Binding rows expose `catalog_api_id` (#910); it wins over the stored
+		// vendor/name tuple so the row reads exactly like Discover.
+		expect(
+			toolkitCredDisplayName({
+				catalog_api_id: 'nytimes.com/article_search',
+				api_vendor: 'nytimes-com',
+				api_name: 'nytimes-com-article-search',
+			}),
+		).toBe('Article Search');
+		expect(
+			toolkitCredDisplayName({ catalog_api_id: 'stripe.com', api_vendor: 'stripe-com' }),
+		).toBe('stripe.com');
+	});
+
 	it('strips a repeated vendor prefix from the sub-API segment', () => {
 		// Real-world umbrella-vendor payload — the sub-API name mirrors the
 		// vendor. Stripping the prefix yields the Discover-style result
@@ -197,6 +212,36 @@ describe('toolkitCredDisplayName', () => {
 });
 
 describe('apiRefDisplayName', () => {
+	it('titles from the persisted catalog slug before any tuple heuristics', () => {
+		// The whole point of #910: when the row carries its catalog identity,
+		// the title derives from it exactly like Discover — no vendor-prefix
+		// guessing against the slugified tuple.
+		expect(
+			apiRefDisplayName({
+				catalogApiId: 'nytimes.com/article_search',
+				vendor: 'nytimes-com',
+				name: 'nytimes-com-article-search',
+			}),
+		).toBe('Article Search');
+		// Bare-domain slug renders verbatim, matching Discover's cards.
+		expect(
+			apiRefDisplayName({ catalogApiId: 'stripe.com', vendor: 'stripe-com', name: 'main' }),
+		).toBe('stripe.com');
+	});
+
+	it('lets an explicit displayName win over the catalog slug', () => {
+		expect(
+			apiRefDisplayName({
+				displayName: 'My NYT key',
+				catalogApiId: 'nytimes.com/article_search',
+			}),
+		).toBe('My NYT key');
+	});
+
+	it('treats a whitespace-only catalog slug as absent', () => {
+		expect(apiRefDisplayName({ catalogApiId: '  ', vendor: 'github-com' })).toBe('Github.Com');
+	});
+
 	it('returns the explicit displayName verbatim when set', () => {
 		expect(
 			apiRefDisplayName({
@@ -266,37 +311,13 @@ describe('apiRefDisplayName', () => {
 		).toBe('Events Api');
 	});
 
-	it('peels a leading TLD token when the name mirrors the vendor DOMAIN, not the bare slug', () => {
-		// `vendor='posthog'` but the name mirrors `posthog.com` — stripping only
-		// the vendor slug would orphan the TLD (`Com Posthog Api`), the exact
-		// double-render bug class the strip exists to prevent, shifted one
-		// token right. The leading TLD peels as part of the vendor prefix.
-		expect(
-			apiRefDisplayName({
-				displayName: null,
-				vendor: 'posthog',
-				name: 'posthog com posthog-api',
-			}),
-		).toBe('Posthog Api');
-		expect(
-			apiRefDisplayName({ displayName: null, vendor: 'nytimes', name: 'nytimes-com-books' }),
-		).toBe('Books');
-	});
-
-	it('falls back to the vendor when the strip consumes the whole name (TLD-only remainder)', () => {
-		// `vendor='posthog'`, `name='posthog-com'`: the name is just the
-		// vendor's domain form, so nothing distinguishing remains — render the
-		// vendor (`Posthog`), never the orphaned remainder (`Com`).
-		expect(
-			apiRefDisplayName({ displayName: null, vendor: 'posthog', name: 'posthog-com' }),
-		).toBe('Posthog');
-	});
-
-	it('does not peel a TLD-shaped name token when the vendor already carries its TLD', () => {
-		// `vendor='apple-com'` already consumed its mirrored domain in the
-		// prefix strip, so a leading TLD-shaped token (`app`, `ai`, …) in the
-		// remaining tail is a genuine part of the sub-API name — peeling it
-		// would truncate `App Store Connect` to `Store Connect`.
+	it('never peels tokens beyond the exact vendor prefix', () => {
+		// The strip is deliberately minimal: after consuming the exact vendor
+		// prefix, whatever remains is the sub-API name verbatim — a leading
+		// TLD-shaped token (`app`, `ai`, …) is genuine content, and peeling it
+		// would truncate `App Store Connect` to `Store Connect`. (Cleverer
+		// mirrored-domain guessing was deleted with #910 — rows that need it
+		// have the persisted `catalogApiId` instead.)
 		expect(
 			apiRefDisplayName({
 				displayName: null,
@@ -413,6 +434,18 @@ describe('apiRefDisplayName', () => {
 });
 
 describe('apiIdentityTuple', () => {
+	it('returns the persisted catalog slug verbatim when present', () => {
+		// The slug IS the machine identity the user picked — the subtitle shows
+		// it untouched instead of reconstructing a tuple.
+		expect(
+			apiIdentityTuple({
+				catalogApiId: 'nytimes.com/article_search',
+				vendor: 'nytimes-com',
+				name: 'nytimes-com-article-search',
+			}),
+		).toBe('nytimes.com/article_search');
+	});
+
 	it('joins vendor and name with a slash', () => {
 		expect(apiIdentityTuple({ vendor: 'posthog-com', name: 'posthog-api' })).toBe(
 			'posthog-com/posthog-api',

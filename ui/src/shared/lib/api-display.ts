@@ -1,13 +1,13 @@
 /**
  * API-identity display helpers — one shared humanising rule applied everywhere
- * a machine identity (`api_id`, `api_vendor`, `api_name`) needs to render as a
- * primary line for a human.
+ * a machine identity needs to render as a primary line for a human.
  *
- * The rule (`humanizeDomainSlug` / `humanizeName`) is originally from the
- * Discover module's catalog adapter; it lives here so every surface — Discover,
- * credential picker's catalog rows, the toolkit "Bound Credentials" row, the
- * toolkit "Bind API" picker — reads the same "friendly name" from whichever
- * identity field its DTO happens to carry.
+ * The preferred input is the **catalog identity slug** (`catalog_api_id`,
+ * e.g. `nytimes.com/article_search`) — persisted at import time and exposed on
+ * API, credential, and toolkit-binding DTOs (#910) — because it is the only
+ * identity form where the vendor and sub-API stay separable. Surfaces that
+ * predate the column (or manually-imported APIs) fall back to humanising the
+ * slugified `vendor`/`name` tuple.
  */
 
 /**
@@ -166,130 +166,34 @@ const GENERIC_NAMES = new Set(['', 'main', 'default']);
 const PREFIX_SEPARATORS = /^[-_.:/\s|]+/;
 
 /**
- * Peel a repeated vendor prefix off a sub-API `name`. Real payloads often
- * mirror the vendor into `name` — e.g. `vendor='posthog-com'`,
- * `name='posthog-com-posthog-api'` — so a naive humanisation renders
- * `Posthog Com Posthog Api`. Stripping the vendor prefix (with hyphen/dot/
- * underscore/slash separator, case-insensitive) yields `Posthog Api`, which
- * matches how Discover's `titleFromApiId` extracts the sub-API segment.
- * Returns the input unchanged when the prefix doesn't match.
+ * Peel a repeated vendor prefix off a sub-API `name`. Legacy rows (no
+ * `catalog_api_id`) often mirror the vendor into `name` — e.g.
+ * `vendor='nytimes-com'`, `name='nytimes-com-article-search'` — so a naive
+ * humanisation renders `Nytimes Com Article Search`. Stripping the exact
+ * vendor prefix (plus a separator) yields `Article Search`, matching what
+ * `titleFromApiId` derives when the slug is available.
+ *
+ * Deliberately minimal: only an EXACT, separator-delimited vendor prefix
+ * strips. Anything cleverer (e.g. peeling a mirrored-TLD token) belongs to the
+ * persisted slug now, not to guesswork here.
  */
 function stripVendorPrefix(name: string, vendor: string): string {
-	const nameLower = name.toLowerCase();
-	const vendorLower = vendor.toLowerCase();
-	if (!nameLower.startsWith(vendorLower)) return name;
+	if (!name.toLowerCase().startsWith(vendor.toLowerCase())) return name;
 	const rest = name.slice(vendor.length);
-	// The name is EXACTLY the vendor (`name === vendor`) — there's no
-	// distinguishing sub-API segment, so return empty and let the caller fall
-	// through to the single vendor humanisation. Otherwise the two paths would
-	// render the same identity two different ways (`humanizeName('github-com')`
-	// → `Github Com` vs `humanizeDomainSlug('github-com')` → `Github.Com`).
+	// The name is EXACTLY the vendor — no distinguishing sub-API segment;
+	// return empty so the caller falls back to the single vendor humanisation.
 	if (rest === '') return '';
 	// Require a separator after the prefix so `posthog` doesn't strip out of
-	// `posthograph`. An immediately-following alphanumeric means the vendor
-	// slug isn't actually a prefix, so leave the name alone. Real payloads
-	// separate the prefix with a hyphen/dot/underscore/slash, but also
-	// sometimes a space / colon / pipe (`posthog com posthog-api`), so treat
-	// all of those as separators too.
+	// `posthograph`.
 	if (!PREFIX_SEPARATORS.test(rest)) return name;
-	const tail = rest.replace(PREFIX_SEPARATORS, '');
-	// The mirrored prefix is often the vendor's DOMAIN form, not the bare
-	// vendor slug: `vendor='posthog'`, `name='posthog com posthog-api'` mirrors
-	// `posthog.com`. Stripping only the vendor slug would orphan the TLD token
-	// (`Com Posthog Api` — the exact double-render the strip exists to
-	// prevent, shifted one token right), so when the tail's LEADING token is a
-	// recognised TLD, peel it as part of the vendor prefix too. A tail that
-	// was ONLY the TLD (`vendor='posthog'`, `name='posthog-com'`) is a fully
-	// consumed mirror — return empty so the caller falls back to the vendor.
-	//
-	// The peel is gated on the vendor NOT already carrying its own TLD: for
-	// `vendor='apple-com'`, `name='apple-com-app-store-connect'` the mirrored
-	// domain is already fully consumed by the prefix strip, so a leading
-	// TLD-shaped token (`app`, `ai`, `dev`, …) is a genuine part of the
-	// sub-API name — peeling it would truncate `App Store Connect` to
-	// `Store Connect`.
-	const vendorTokens = vendorLower.split(/[-_.:/\s|]+/).filter(Boolean);
-	const vendorHasTld = TLD_SUFFIXES.has(vendorTokens[vendorTokens.length - 1] ?? '');
-	if (!vendorHasTld) {
-		const tldMatch = /^([A-Za-z]+)(.*)$/.exec(tail);
-		if (tldMatch && TLD_SUFFIXES.has(tldMatch[1].toLowerCase())) {
-			const afterTld = tldMatch[2];
-			if (afterTld === '') return '';
-			if (PREFIX_SEPARATORS.test(afterTld)) return afterTld.replace(PREFIX_SEPARATORS, '');
-		}
-	}
-	return tail;
+	return rest.replace(PREFIX_SEPARATORS, '');
 }
 
-/**
- * Toolkit-binding-row display name.
- *
- * The toolkit "Bound Credentials" DTO (`ToolkitCredentialBindingResponse`)
- * exposes `api_vendor` + `api_name` but **no** `api_id` — so we can't feed
- * `titleFromApiId` here. Instead we apply the same humanising rule to
- * whichever identity field is most informative:
- *   1. When `api_name` carries a real sub-API segment (not empty and not one
- *      of `GENERIC_NAMES`), humanise `stripVendorPrefix(api_name, api_vendor)`
- *      so `posthog-com/posthog-com-posthog-api` reads `Posthog Api` — the
- *      Discover-style output for the umbrella sub-API case.
- *   2. Otherwise humanise `api_vendor` (`posthog-com` → `Posthog.Com`).
- *   3. Empty when both are absent.
- */
-export function toolkitCredDisplayName(input: {
-	api_vendor?: string | null;
-	api_name?: string | null;
-}): string {
-	const vendor = input.api_vendor ?? '';
-	// `api_name` on real data can be a `vendor/name`-shaped tuple; peel that
-	// leading slash off first so the prefix strip below sees just the tail.
-	const rawName = input.api_name ?? '';
-	const tailAfterSlash = rawName.includes('/') ? (rawName.split('/').pop() ?? rawName) : rawName;
-	const stripped = vendor ? stripVendorPrefix(tailAfterSlash, vendor) : tailAfterSlash;
-	if (stripped && !GENERIC_NAMES.has(stripped.toLowerCase())) {
-		return humanizeName(stripped);
-	}
-	if (vendor) return humanizeDomainSlug(vendor);
-	// Only humanise a bare `api_name` when it isn't a generic placeholder,
-	// so a vendor-less `main` / `default` binding doesn't render as `Main`.
-	if (rawName && !GENERIC_NAMES.has(tailAfterSlash.toLowerCase()))
-		return humanizeName(tailAfterSlash);
-	return '';
-}
-
-/**
- * Local-API display name for the credential picker's workspace rows, the
- * workspace `ApiCard`, and the credential card's friendly sub-line.
- *
- * Every consumer shape falls back to `vendor/name` when a `display_name`
- * isn't set — which for a freshly-imported API is the common case, and
- * reads as the raw `posthog-com/posthog-com-posthog-api` tuple. So we route
- * that fallback through the same rule the toolkit surface uses:
- *   1. Explicit `displayName` wins verbatim (user-set label) — but only when
- *      it carries non-whitespace content; a whitespace-only string is treated
- *      as absent so it can't render as a blank primary line.
- *   2. `name` humanised, minus a repeated vendor prefix — so
- *      `vendor='nytimes-com', name='nytimes-com-article-search'` reads as
- *      `Article Search`, matching Discover. Generic names (`main`,
- *      `default`, ``) are skipped.
- *   3. Otherwise humanise `vendor` (`posthog-com` → `Posthog.Com`).
- *   4. Empty when nothing usable is present.
- */
-export function apiRefDisplayName(input: {
-	displayName?: string | null;
-	vendor?: string | null;
-	name?: string | null;
-}): string {
-	// A user-set label wins verbatim, but only when it carries non-whitespace
-	// content. Return the *trimmed* value so padded labels can't leak into
-	// headings (or the seeded credential name) — a whitespace-only string is
-	// treated as absent and falls through.
-	const dn = input.displayName?.trim();
-	if (dn) return dn;
-	const vendor = input.vendor ?? '';
-	const rawName = input.name ?? '';
-	// `name` on real data can itself be a `vendor/name`-shaped tuple (the same
-	// column feeds toolkitCredDisplayName's binding rows, which peel it) — take
-	// the tail so the prefix strip below sees just the sub-API segment.
+/** Shared legacy fallback: friendly name from the slugified vendor/name tuple. */
+function tupleDisplayName(vendor: string, rawName: string): string {
+	// `name` on real data can itself be a `vendor/name`-shaped tuple
+	// (`posthog-com/posthog-com-posthog-api`) — take the tail so the prefix
+	// strip sees just the sub-API segment.
 	const name = rawName.includes('/') ? (rawName.split('/').pop() ?? rawName) : rawName;
 	const stripped = vendor && name ? stripVendorPrefix(name, vendor) : name;
 	if (stripped && !GENERIC_NAMES.has(stripped.toLowerCase())) {
@@ -303,17 +207,65 @@ export function apiRefDisplayName(input: {
 }
 
 /**
- * Raw machine-identity subtitle: `vendor/name`, both fields verbatim.
+ * API display name for the credential picker rows, the workspace `ApiCard` /
+ * detail heading, and the credential card's friendly fallback.
  *
- * `name` on real data can itself be a `vendor/name`-shaped tuple
- * (`posthog-com/posthog-com-posthog-api`) — the same shape
- * {@link toolkitCredDisplayName} peels for its title. Concatenating naively
- * would render the vendor twice (`posthog-com/posthog-com/…`), so when the
- * tuple's leading segment repeats the vendor it is dropped before joining.
- * Returns whichever single field exists when the other is absent, or `''`
- * when both are.
+ *   1. Explicit `displayName` wins verbatim (user-set label) — but only when
+ *      it carries non-whitespace content; a whitespace-only string is treated
+ *      as absent so it can't render as a blank primary line.
+ *   2. `catalogApiId` (the persisted catalog slug) titles exactly like
+ *      Discover: sub-API segment humanised (`nytimes.com/article_search` →
+ *      `Article Search`), bare domain verbatim (`stripe.com`).
+ *   3. Legacy fallback — rows predating the persisted slug — humanises the
+ *      slugified `vendor`/`name` tuple, minus a repeated vendor prefix.
+ *   4. Empty when nothing usable is present.
  */
-export function apiIdentityTuple(input: { vendor?: string | null; name?: string | null }): string {
+export function apiRefDisplayName(input: {
+	displayName?: string | null;
+	catalogApiId?: string | null;
+	vendor?: string | null;
+	name?: string | null;
+}): string {
+	// A user-set label wins verbatim, but only when it carries non-whitespace
+	// content. Return the *trimmed* value so padded labels can't leak into
+	// headings (or the seeded credential name).
+	const dn = input.displayName?.trim();
+	if (dn) return dn;
+	const apiId = input.catalogApiId?.trim();
+	if (apiId) return titleFromApiId(apiId);
+	return tupleDisplayName(input.vendor ?? '', input.name ?? '');
+}
+
+/**
+ * Toolkit-binding-row display name — same rule as {@link apiRefDisplayName}
+ * keyed to the binding DTO's snake_case identity fields
+ * (`ToolkitCredentialBindingResponse`).
+ */
+export function toolkitCredDisplayName(input: {
+	catalog_api_id?: string | null;
+	api_vendor?: string | null;
+	api_name?: string | null;
+}): string {
+	const apiId = input.catalog_api_id?.trim();
+	if (apiId) return titleFromApiId(apiId);
+	return tupleDisplayName(input.api_vendor ?? '', input.api_name ?? '');
+}
+
+/**
+ * Raw machine-identity subtitle. The persisted catalog slug wins verbatim —
+ * it IS the machine identity (`nytimes.com/article_search`) and is what the
+ * user saw when they picked the API. Legacy rows join `vendor/name`, dropping
+ * a leading vendor repeat when `name` is itself a `vendor/name`-shaped tuple
+ * (so it can't render `posthog-com/posthog-com/…`). Returns whichever single
+ * field exists when the others are absent, or `''` when all are.
+ */
+export function apiIdentityTuple(input: {
+	catalogApiId?: string | null;
+	vendor?: string | null;
+	name?: string | null;
+}): string {
+	const apiId = input.catalogApiId?.trim();
+	if (apiId) return apiId;
 	const vendor = input.vendor ?? '';
 	const rawName = input.name ?? '';
 	let name = rawName;

@@ -44,12 +44,13 @@ const ROW_VARIANTS: Variants = {
 
 function localToSelected(row: ApiResponse): SelectedApi {
 	const ref = row.api;
-	// A workspace API without a `display_name` used to render the raw
-	// `vendor/name` tuple as its primary line — the exact case #631 flags on
-	// the credentials page's "Add credential" picker. Route the fallback
-	// through the shared helper so it reads `Posthog.Com` etc.
+	// Friendly primary line: explicit display_name, else the persisted catalog
+	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
+	// vendor/name humanisation — the exact case #631 flags on the credentials
+	// page's "Add credential" picker.
 	const label = apiRefDisplayName({
 		displayName: row.display_name,
+		catalogApiId: row.catalog_api_id,
 		vendor: ref.vendor,
 		name: ref.name,
 	});
@@ -58,6 +59,7 @@ function localToSelected(row: ApiResponse): SelectedApi {
 		vendor: ref.vendor,
 		name: ref.name,
 		version: ref.version,
+		apiId: row.catalog_api_id ?? undefined,
 		securitySchemeTypes: row.security_schemes ?? [],
 		label,
 	};
@@ -102,7 +104,7 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 		apiId: slug,
 		specUrl: entry.spec_url ?? undefined,
 		registered: entry.registered,
-		label: apiRefDisplayName({ vendor, name }),
+		label: apiRefDisplayName({ catalogApiId: slug, vendor, name }),
 	};
 }
 
@@ -129,12 +131,14 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 			// the row instead of only matching the raw machine identity.
 			const friendly = apiRefDisplayName({
 				displayName: r.display_name,
+				catalogApiId: r.catalog_api_id,
 				vendor: r.api?.vendor,
 				name: r.api?.name,
 			});
 			const hay = [
 				r.display_name,
 				friendly,
+				r.catalog_api_id,
 				r.description,
 				r.api?.vendor,
 				r.api?.name,

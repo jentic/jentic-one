@@ -77,14 +77,16 @@ export function AccessTab({
 							// the credential id, so the row never renders blank.
 							const heading =
 								cred.label || toolkitCredDisplayName(cred) || cred.credential_id;
-							// Muted technical subtitle: the raw vendor/name tuple, via the
-							// shared helper so a tuple-shaped `api_name` doesn't render the
-							// vendor twice. `credential_id` is the last-resort fallback for
+							// Muted technical subtitle: the persisted catalog slug when
+							// recorded, else the raw vendor/name tuple via the shared
+							// helper (a tuple-shaped `api_name` can't render the vendor
+							// twice). `credential_id` is the last-resort fallback for
 							// telling identically labelled rows apart (matching Overview
 							// and the picker) — unless the heading already IS the id, in
 							// which case repeating it is pure noise.
 							const subtitle =
 								apiIdentityTuple({
+									catalogApiId: cred.catalog_api_id,
 									vendor: cred.api_vendor,
 									name: cred.api_name,
 								}) || (heading === cred.credential_id ? '' : cred.credential_id);
