@@ -9,6 +9,7 @@ import type { WorkspaceApi } from '@/modules/workspace/api';
 function makeApi(overrides: Partial<WorkspaceApi> = {}): WorkspaceApi {
 	return {
 		api: { vendor: 'stripe.com', name: 'stripe-api', version: '1', host: 'api.stripe.com' },
+		catalogApiId: null,
 		displayName: 'Stripe',
 		description: null,
 		iconUrl: null,
@@ -79,6 +80,52 @@ describe('OverviewStrip — update-available re-import', () => {
 
 		// The catalog api_id threaded is the API's vendor (manifest domain).
 		await waitFor(() => expect(importedApiId).toBe('stripe.com'));
+		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+	});
+
+	it('threads the umbrella catalog_api_id (domain/sub), not the vendor, on re-import', async () => {
+		const user = userEvent.setup();
+		let importedApiId: string | null = null;
+		worker.use(
+			http.post('/catalog/*', ({ request }) => {
+				const url = new URL(request.url);
+				importedApiId = decodeURIComponent(
+					url.pathname.replace(/^\/catalog\//, ''),
+				).replace(/:import$/, '');
+				return HttpResponse.json(
+					{
+						job_id: 'job_reimport',
+						status: 'queued',
+						_links: { self: '/jobs/job_reimport' },
+					},
+					{ status: 202 },
+				);
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip
+					api={makeApi({
+						api: {
+							vendor: 'nytimes.com',
+							name: 'article-search',
+							version: '1',
+							host: null,
+						},
+						updateAvailable: true,
+						origin: 'catalog',
+						catalogApiId: 'nytimes.com/article_search',
+					})}
+				/>
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-reimport'));
+
+		// The full umbrella id is used — the bare vendor would 404 the re-import.
+		await waitFor(() => expect(importedApiId).toBe('nytimes.com/article_search'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
 	});
 });

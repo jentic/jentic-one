@@ -48,7 +48,7 @@ describe('workspace adapters', () => {
 		expect(api.registered).toBe(true);
 	});
 
-	it('maps the Flow-3 catalog-linkage fields (origin/source_url/update_available)', () => {
+	it('maps the Flow-3 catalog-linkage fields (origin/source_url/catalog_api_id/update_available)', () => {
 		const api = toWorkspaceApi({
 			api: { vendor: 'stripe.com', name: 'stripe-api', version: '1', host: null },
 			display_name: null,
@@ -60,12 +60,14 @@ describe('workspace adapters', () => {
 			security_schemes: [],
 			origin: 'catalog',
 			source_url: 'https://example.com/openapi.json',
+			catalog_api_id: 'nytimes.com/article_search',
 			update_available: true,
 			created_at: '',
 			updated_at: '',
 		});
 		expect(api.origin).toBe('catalog');
 		expect(api.sourceUrl).toBe('https://example.com/openapi.json');
+		expect(api.catalogApiId).toBe('nytimes.com/article_search');
 		expect(api.updateAvailable).toBe(true);
 	});
 
@@ -84,6 +86,9 @@ describe('workspace adapters', () => {
 		});
 		expect(api.origin).toBeUndefined();
 		expect(api.sourceUrl).toBeUndefined();
+		// catalog_api_id is #852's persisted column (always present, mapped via strOrNull),
+		// so an omitted field yields null rather than undefined.
+		expect(api.catalogApiId).toBeNull();
 		expect(api.updateAvailable).toBeUndefined();
 	});
 

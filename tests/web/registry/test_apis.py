@@ -22,6 +22,7 @@ async def _seed_api(
     name: str = "api",
     version: str = "v1",
     promote: bool = True,
+    source_url: str | None = None,
 ) -> Api:
     """Seed a local Api with a revision (published+current when ``promote``)."""
     async with ctx.registry_db.session() as session:
@@ -33,6 +34,7 @@ async def _seed_api(
             state="published" if promote else "draft",
             spec_digest=f"sha256:{vendor}-{name}-{version}",
             source_type="url",
+            source_url=source_url,
         )
         session.add(revision)
         await session.flush()

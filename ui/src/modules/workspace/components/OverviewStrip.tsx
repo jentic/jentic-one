@@ -62,11 +62,11 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	// disabled with a tooltip steering the user to resolve overlays first. When
 	// `origin` is absent (older backend), we gate conservatively on catalog only.
 	const isCatalogOrigin = api.origin === 'catalog';
-	// The catalog entry is addressed by its `api_id` (the manifest domain, e.g.
-	// `stripe.com`), which for a catalog-origin API equals the API's vendor. The
-	// `/apis` payload doesn't expose the catalog `api_id` directly, so we thread
-	// the vendor — correct for the common (non-umbrella) case.
-	const catalogApiId = api.api.vendor;
+	// The catalog entry is addressed by its `api_id`. For umbrella specs that id is
+	// `domain/sub` (e.g. `nytimes.com/article_search`), which the API's vendor alone
+	// can't resolve — so prefer the real `catalogApiId` surfaced by the backend and
+	// fall back to the vendor only for older backends that don't emit it.
+	const catalogApiId = api.catalogApiId ?? api.api.vendor;
 
 	return (
 		<section
