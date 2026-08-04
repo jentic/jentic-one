@@ -232,6 +232,9 @@ def test_update_overlay_rematerialize_forbidden(client: TestClient) -> None:
         )
 
     assert resp.status_code == 403
+
+
+def test_deprecate_overlay_204(client: TestClient) -> None:
     with patch(
         "jentic_one.registry.web.routers.overlays.OverlayService.deprecate",
         new_callable=AsyncMock,

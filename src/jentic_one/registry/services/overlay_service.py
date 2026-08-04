@@ -645,13 +645,13 @@ class OverlayService:
         Editing a materialized overlay must rewrite the served spec, so this mirrors
         :meth:`confirm`'s materialize machinery instead of an in-place field edit:
 
-        1. **Authorize (fail-closed, before any state read).** Re-materializing rewrites what
-           the platform serves — an operator action — so it requires ``overlays:confirm`` (not
-           the ``apis:write`` that edits a pending overlay). The gate runs *before* the
-           preconditions are read, so a caller without it gets 403 even for a not-live overlay
-           (rather than the 409 below): we refuse to read/leak materialization state to a
-           caller who can't act on it. Router ``apis:write`` + this ``overlays:confirm`` are
-           the effective requirement.
+        1. **Authorize (fail-closed, before any materialization-state precondition is read).**
+           Re-materializing rewrites what the platform serves — an operator action — so it
+           requires ``overlays:confirm`` (not the ``apis:write`` that edits a pending overlay).
+           The gate runs *before* the live/base preconditions are read, so a caller without it
+           gets 403 even for a not-live overlay (rather than the 409 below): we refuse to
+           read/leak materialization state to a caller who can't act on it. Router
+           ``apis:write`` + this ``overlays:confirm`` are the effective requirement.
         2. **Validate preconditions + apply the edit over the clean base, BEFORE persisting.**
            A short read checks the overlay is still live (CONFIRMED and its
            ``confirmed_revision_id`` is the API's current revision) and carries a recorded
@@ -671,15 +671,15 @@ class OverlayService:
            re-capturing when superseding an overlay revision) so a later rollback restores the
            clean upstream base, not an orphaned overlay output.
         """
-        # Fail-closed: enforce overlays:confirm FIRST, before reading any overlay state.
-        # This is deliberate. It means an apis:write-only caller editing an overlay that has
-        # since been rolled back / re-imported gets a 403 rather than the 409 the not-live
-        # precondition (below) would give — a small status-code imprecision we accept because
-        # the alternative (read state, then authorize) leaks materialization state (whether
-        # the overlay is/was live) to a caller who is not allowed to act on it. Security
-        # posture (no info leak, no state read before authz) beats 403-vs-409 fidelity. The
-        # router-level apis:write plus this overlays:confirm together form the effective
-        # requirement to re-materialize.
+        # Fail-closed: enforce overlays:confirm FIRST, before reading any materialization-state
+        # precondition (live/base). This is deliberate. It means an apis:write-only caller
+        # editing an overlay that has since been rolled back / re-imported gets a 403 rather
+        # than the 409 the not-live precondition (below) would give — a small status-code
+        # imprecision we accept because the alternative (read state, then authorize) leaks
+        # materialization state (whether the overlay is/was live) to a caller who is not
+        # allowed to act on it. Security posture (no info leak, no materialization-state read
+        # before authz) beats 403-vs-409 fidelity. The router-level apis:write plus this
+        # overlays:confirm together form the effective requirement to re-materialize.
         if not has_effective_permission(identity.permissions, "overlays:confirm"):
             raise OverlayRematerializeForbiddenError(overlay_id)
 
