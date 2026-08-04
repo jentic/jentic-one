@@ -134,6 +134,7 @@ export function toApiRevision(value: unknown): ApiRevision {
  */
 export function toOverlay(value: unknown): Overlay {
 	const r = asRecord(value);
+	const links = asRecord(r._links);
 	return {
 		id: str(r.id || r.overlay_id),
 		status: str(r.status),
@@ -143,5 +144,8 @@ export function toOverlay(value: unknown): Overlay {
 		deprecatedAt: strOrNull(r.deprecated_at),
 		targetRevisionId: strOrNull(r.target_revision_id),
 		confirmedRevisionId: strOrNull(r.confirmed_revision_id),
+		confirmHref: strOrNull(links.confirm),
+		rollbackHref: strOrNull(links.rollback),
+		deprecateHref: strOrNull(links.deprecate),
 	};
 }

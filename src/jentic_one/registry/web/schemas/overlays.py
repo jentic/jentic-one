@@ -36,13 +36,25 @@ class OverlayConfirmRequest(BaseModel):
 
 
 class OverlayLinksResponse(BaseModel):
-    """Hypermedia links for an overlay resource."""
+    """Hypermedia links for an overlay resource.
+
+    Links are advertised based on the overlay's *state validity* (mirroring the
+    revisions resource's promote/archive links), so a surface renders an action only
+    when it is applicable to the current status. They are not permission-scoped — the
+    ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
     self_link: str = Field(serialization_alias="self")
     api: str
+    #: Present only while PENDING (the only state confirm is valid).
     confirm: str | None = None
+    #: Present only while materialized (CONFIRMED with a confirmed_revision_id): the
+    #: state where rolling back to the superseded revision is meaningful.
+    rollback: str | None = None
+    #: Present unless already DEPRECATED (PENDING or CONFIRMED can be deprecated).
+    deprecate: str | None = None
 
 
 class OverlayResponse(BaseModel):

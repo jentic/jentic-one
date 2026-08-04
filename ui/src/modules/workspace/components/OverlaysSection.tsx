@@ -96,29 +96,18 @@ function OverlayRow({
 				</p>
 			</div>
 			<div className="flex shrink-0 gap-2">
-				{overlay.status === 'pending' ? (
-					<>
-						<Button
-							variant="secondary"
-							size="sm"
-							onClick={() => onConfirm(overlay.id)}
-							loading={pendingAction === 'confirm'}
-							data-testid="overlay-confirm"
-						>
-							Confirm
-						</Button>
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => onDeprecate(overlay.id)}
-							loading={pendingAction === 'deprecate'}
-							data-testid="overlay-deprecate"
-						>
-							Deprecate
-						</Button>
-					</>
+				{overlay.confirmHref ? (
+					<Button
+						variant="secondary"
+						size="sm"
+						onClick={() => onConfirm(overlay.id)}
+						loading={pendingAction === 'confirm'}
+						data-testid="overlay-confirm"
+					>
+						Confirm
+					</Button>
 				) : null}
-				{overlay.status === 'confirmed' ? (
+				{overlay.rollbackHref ? (
 					<Button
 						variant="ghost"
 						size="sm"
@@ -127,6 +116,17 @@ function OverlayRow({
 						data-testid="overlay-rollback"
 					>
 						Roll back
+					</Button>
+				) : null}
+				{overlay.deprecateHref ? (
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => onDeprecate(overlay.id)}
+						loading={pendingAction === 'deprecate'}
+						data-testid="overlay-deprecate"
+					>
+						Deprecate
 					</Button>
 				) : null}
 			</div>

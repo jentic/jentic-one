@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { renderWithProviders, screen, waitFor, userEvent } from '@/__tests__/test-utils';
 import { worker } from '@/mocks/browser';
@@ -24,8 +24,21 @@ function makeApi(overrides: Partial<WorkspaceApi> = {}): WorkspaceApi {
 }
 
 describe('OverviewStrip — update-available re-import', () => {
+	beforeEach(() => {
+		// The re-import hook now polls /jobs/{id} to a terminal state before it
+		// invalidates (so the "Update available" badge only clears once the new
+		// revision has actually landed). Default the poll to a completed job so the
+		// background loop resolves cleanly; individual tests can override.
+		worker.use(
+			http.get('/jobs/:id', ({ params }) =>
+				HttpResponse.json({ job_id: params.id, status: 'succeeded' }),
+			),
+		);
+	});
+
 	afterEach(() => {
 		clearAllToasts();
+		worker.resetHandlers();
 	});
 
 	it('shows no update banner when updateAvailable is absent', () => {
@@ -196,5 +209,37 @@ describe('OverviewStrip — update-available re-import', () => {
 		// The full umbrella id is used — the bare vendor would 404 the re-import.
 		await waitFor(() => expect(importedApiId).toBe('nytimes.com/article_search'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+	});
+
+	it('polls the re-import job to completion before signalling done (badge clears only after the revision lands)', async () => {
+		const user = userEvent.setup();
+		let jobPolled = false;
+		worker.use(
+			http.post('/catalog/*', () =>
+				HttpResponse.json({ job_id: 'job_reimport', status: 'queued' }, { status: 202 }),
+			),
+			// The job stays queued on the first poll and only then succeeds, proving
+			// the hook waits for a terminal state rather than acting on the 202.
+			http.get('/jobs/:id', ({ params }) => {
+				const status = jobPolled ? 'succeeded' : 'queued';
+				jobPolled = true;
+				return HttpResponse.json({ job_id: params.id, status });
+			}),
+		);
+
+		renderWithProviders(
+			<>
+				<OverviewStrip api={makeApi({ updateAvailable: true, origin: 'catalog' })} />
+				<Toaster />
+			</>,
+		);
+
+		await user.click(screen.getByTestId('workspace-reimport'));
+		// Queued ack fires immediately…
+		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+		// …and the completion toast only after the job reaches a terminal state,
+		// which is also when the API/revision caches are invalidated.
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
+		expect(jobPolled).toBe(true);
 	});
 });

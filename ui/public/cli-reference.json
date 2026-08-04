@@ -397,7 +397,7 @@
               "path": "jentic catalog outdated",
               "use": "outdated",
               "short": "List registered entries with an upstream update available",
-              "long": "outdated lists locally-registered catalog entries whose upstream spec has\na notified update the local revision hasn't adopted yet. Re-import to adopt.\nBy default, entries an operator has snoozed/muted are hidden; pass\n--include-snoozed to list them too.",
+              "long": "outdated lists locally-registered catalog entries whose upstream spec has\na notified update the local revision hasn't adopted yet. Review the change,\nthen re-import to adopt it. By default, entries an operator has snoozed/muted\nare hidden; pass --include-snoozed to list them too.",
               "flags": [
                 {
                   "name": "base-url",

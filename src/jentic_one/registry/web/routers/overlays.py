@@ -31,12 +31,31 @@ from jentic_one.shared.web.links import build_link
 router = APIRouter(prefix="/apis/{vendor}/{name}/{version}/overlays")
 
 
+def _overlay_links(
+    self_link: str,
+    api_path: str,
+    *,
+    status: str,
+    confirmed_revision_id: object | None,
+) -> OverlayLinksResponse:
+    """Build the state-valid action links for an overlay (see OverlayLinksResponse)."""
+    is_pending = status == OverlayStatus.PENDING
+    is_materialized = status == OverlayStatus.CONFIRMED and confirmed_revision_id is not None
+    is_deprecated = status == OverlayStatus.DEPRECATED
+    return OverlayLinksResponse(
+        self_link=self_link,
+        api=api_path,
+        confirm=f"{self_link}:confirm" if is_pending else None,
+        rollback=f"{self_link}:rollback" if is_materialized else None,
+        deprecate=self_link if not is_deprecated else None,
+    )
+
+
 def _build_overlay_response(view: OverlayView, request: Request) -> OverlayResponse:
     api_path = build_link(request, f"/apis/{view.vendor}/{view.name}/{view.version}")
     self_link = build_link(
         request, f"/apis/{view.vendor}/{view.name}/{view.version}/overlays/{view.id}"
     )
-    confirm_link = f"{self_link}:confirm" if view.status == OverlayStatus.PENDING else None
 
     return OverlayResponse(
         id=view.id,
@@ -53,10 +72,11 @@ def _build_overlay_response(view: OverlayView, request: Request) -> OverlayRespo
         updated_at=view.updated_at,
         confirmed_at=view.confirmed_at,
         deprecated_at=view.deprecated_at,
-        links=OverlayLinksResponse(
-            self_link=self_link,
-            api=api_path,
-            confirm=confirm_link,
+        links=_overlay_links(
+            self_link,
+            api_path,
+            status=view.status,
+            confirmed_revision_id=view.confirmed_revision_id,
         ),
     )
 
@@ -66,7 +86,6 @@ def _build_overlay_list_item(
 ) -> OverlayResponse:
     api_path = build_link(request, f"/apis/{vendor}/{name}/{version}")
     self_link = build_link(request, f"/apis/{vendor}/{name}/{version}/overlays/{item.id}")
-    confirm_link = f"{self_link}:confirm" if item.status == OverlayStatus.PENDING else None
 
     return OverlayResponse(
         id=item.id,
@@ -83,10 +102,11 @@ def _build_overlay_list_item(
         updated_at=item.updated_at,
         confirmed_at=item.confirmed_at,
         deprecated_at=item.deprecated_at,
-        links=OverlayLinksResponse(
-            self_link=self_link,
-            api=api_path,
-            confirm=confirm_link,
+        links=_overlay_links(
+            self_link,
+            api_path,
+            status=item.status,
+            confirmed_revision_id=item.confirmed_revision_id,
         ),
     )
 

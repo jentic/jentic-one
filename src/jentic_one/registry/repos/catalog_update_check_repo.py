@@ -123,6 +123,11 @@ class CatalogUpdateCheckRepository:
         surfaces — the callers that don't pass ``now``.) Pass an explicit ``now`` only to
         pin evaluation to a fixed instant (e.g. one clock read shared across a sweep, or a
         test).
+
+        Keys on ``last_notified_digest``, whereas the sweep-side emit suppression
+        (``CatalogService._is_snoozed``) keys on the digest currently being *emitted*. Those
+        agree because the sweep upserts ``last_notified_digest = upstream_digest`` before the
+        suppression check runs; see that method for the shared invariant.
         """
         if now is None:
             now = datetime.now(UTC)

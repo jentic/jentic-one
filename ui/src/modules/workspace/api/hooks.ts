@@ -521,42 +521,81 @@ export function useImportSpec(): UseImportSpec {
  * The API detail surface shows a "Re-import" affordance when the API reports
  * `update_available`. Clicking it re-runs the catalog import for the API's
  * catalog `api_id` (`POST /catalog/{id}:import`) — the same async job Discover
- * enqueues. We toast the queued job (mirroring Discover's "Import started"
- * surface) and, once queued, invalidate the API's detail cache so the freshly
- * cleared `update_available` (and any new revision count) re-reads on the next
- * fetch. The 202 doesn't mean the new revision has landed yet, so this is a
- * "queued" acknowledgement, not a completion.
+ * enqueues. Import is async: the 202 only means *queued*, and the new revision
+ * (which clears `update_available` server-side) doesn't exist yet. Invalidating
+ * on the 202 therefore re-reads the *stale* API and the "Update available" badge
+ * lingers until some unrelated later refetch. So — like `useImportSpec` — we
+ * poll the job to a terminal state and only then invalidate the API's detail +
+ * revision caches, so the cleared `update_available` and new revision are what
+ * re-reads. We toast the queued job immediately and again on completion.
  */
 export function useReimportFromCatalog(key: ApiKey) {
 	const queryClient = useQueryClient();
+	const [isReimporting, setIsReimporting] = useState(false);
+	const activeRef = useRef(true);
 
-	const mutation = useMutation({
-		mutationFn: (apiId: string) => reimportCatalogEntry(apiId),
-		onSuccess: (job) => {
-			toast({
-				variant: 'success',
-				title: 'Re-import started',
-				description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
-			});
-			// The re-import lands a new revision and clears `update_available`
-			// server-side; drop the API's detail + revision caches so both re-read.
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
-			queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+	// Flip the guard on unmount so an in-flight poll loop stops touching state
+	// (and breaks out at the next interval) instead of warning post-unmount.
+	useEffect(() => {
+		activeRef.current = true;
+		return () => {
+			activeRef.current = false;
+		};
+	}, []);
+
+	const reimport = useCallback(
+		async (apiId: string): Promise<void> => {
+			setIsReimporting(true);
+			try {
+				const job = await reimportCatalogEntry(apiId);
+				toast({
+					variant: 'success',
+					title: 'Re-import started',
+					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
+				});
+
+				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
+				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+					if (!activeRef.current) break;
+					status = await getJob(job.jobId);
+				}
+
+				// Only invalidate once the job has actually landed the new revision;
+				// otherwise the API re-reads stale and the "Update available" badge
+				// stays lit (the bug this poll fixes). A timeout without a terminal
+				// state still invalidates as a best effort — the next fetch is at
+				// worst as stale as before.
+				if (status.status === 'succeeded') {
+					toast({
+						variant: 'success',
+						title: 'Re-import complete',
+						description: `Adopted the latest catalog spec (job ${status.jobId}).`,
+					});
+				}
+				queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+				queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+			} catch (error: unknown) {
+				toast({
+					variant: 'error',
+					title: 'Re-import failed',
+					description:
+						error instanceof Error
+							? error.message
+							: 'Could not re-import from the catalog.',
+				});
+			} finally {
+				if (activeRef.current) setIsReimporting(false);
+			}
 		},
-		onError: (error: unknown) => {
-			toast({
-				variant: 'error',
-				title: 'Re-import failed',
-				description:
-					error instanceof Error
-						? error.message
-						: 'Could not re-import from the catalog.',
-			});
-		},
-	});
+		[queryClient, key],
+	);
 
 	return {
-		reimport: (apiId: string) => mutation.mutate(apiId),
-		isReimporting: mutation.isPending,
+		reimport: (apiId: string) => {
+			void reimport(apiId);
+		},
+		isReimporting,
 	};
 }

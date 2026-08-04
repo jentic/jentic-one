@@ -122,6 +122,16 @@ export interface Overlay {
 	deprecatedAt: string | null;
 	targetRevisionId: string | null;
 	confirmedRevisionId: string | null;
+	/**
+	 * Action links from `_links`; null when the action isn't valid for the
+	 * overlay's current status. Backend advertises these state-validity links
+	 * (mirroring revisions' promote/archive), so a surface renders an action only
+	 * when the backend offers it. The `overlays:confirm` permission gate on
+	 * confirm/rollback is still enforced server-side (403).
+	 */
+	confirmHref: string | null;
+	rollbackHref: string | null;
+	deprecateHref: string | null;
 }
 
 /** Result of enqueuing an import (`POST /apis` → 202). */

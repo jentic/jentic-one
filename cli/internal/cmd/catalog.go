@@ -116,9 +116,9 @@ func newCatalogOutdatedCmd(app *App, ident *identityOptions) *cobra.Command {
 		Use:   "outdated",
 		Short: "List registered entries with an upstream update available",
 		Long: "outdated lists locally-registered catalog entries whose upstream spec has\n" +
-			"a notified update the local revision hasn't adopted yet. Re-import to adopt.\n" +
-			"By default, entries an operator has snoozed/muted are hidden; pass\n" +
-			"--include-snoozed to list them too.",
+			"a notified update the local revision hasn't adopted yet. Review the change,\n" +
+			"then re-import to adopt it. By default, entries an operator has snoozed/muted\n" +
+			"are hidden; pass --include-snoozed to list them too.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.outdated = true

@@ -364,6 +364,13 @@ class CatalogService:
         ``snoozed_until`` expiry (None = mute-until-newer). It suppresses the sweep emit only
         while it matches the digest currently being observed and hasn't lapsed — a genuinely
         newer upstream digest won't match and re-notifies normally.
+
+        Keyed on ``upstream_digest`` (the digest the sweep is *emitting* for), whereas the
+        repo-side outdated-set exclusion (:meth:`CatalogUpdateCheckRepository._not_snoozed`)
+        keys on ``last_notified_digest``. Those agree because the sweep's emit path upserts
+        ``last_notified_digest = upstream_digest`` *before* this suppression check runs
+        (see :meth:`run_update_sweep`), so at decision time the two columns hold the same
+        value. Keep that upsert-before-check ordering if either predicate is edited.
         """
         snoozed_digest = getattr(check, "snoozed_digest", None)
         if snoozed_digest is None or snoozed_digest != upstream_digest:

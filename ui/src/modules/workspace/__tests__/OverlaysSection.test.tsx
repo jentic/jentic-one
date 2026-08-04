@@ -10,7 +10,7 @@ const KEY: ApiKey = { vendor: 'stripe.com', name: 'stripe-api', version: '1' };
 
 /** Raw overlay wire row (snake_case), as the backend emits it. */
 function rawOverlay(overrides: Record<string, unknown> = {}) {
-	return {
+	const base = {
 		id: 'ovl_abcdef123456',
 		status: 'pending',
 		created_by: 'alice@acme.dev',
@@ -20,6 +20,23 @@ function rawOverlay(overrides: Record<string, unknown> = {}) {
 		target_revision_id: 'rev_1',
 		confirmed_revision_id: null,
 		...overrides,
+	};
+	// Mirror the backend's state-validity `_links` (see OverlayLinksResponse) so the
+	// section's action gating is exercised as it is in production. An explicit
+	// `_links` override still wins.
+	const self = `/apis/acme/pets/v1/overlays/${base.id}`;
+	const isPending = base.status === 'pending';
+	const isMaterialized = base.status === 'confirmed' && base.confirmed_revision_id != null;
+	const isDeprecated = base.status === 'deprecated';
+	return {
+		_links: {
+			self,
+			api: '/apis/acme/pets/v1',
+			confirm: isPending ? `${self}:confirm` : null,
+			rollback: isMaterialized ? `${self}:rollback` : null,
+			deprecate: isDeprecated ? null : self,
+		},
+		...base,
 	};
 }
 
@@ -117,6 +134,35 @@ describe('OverlaysSection', () => {
 		await waitFor(() => expect(confirmed).toBe(true));
 	});
 
+	it('refetches the overlay list after a confirm (cache invalidation)', async () => {
+		let listFetches = 0;
+		worker.use(
+			http.get('/apis/:vendor/:name/:version/overlays', () => {
+				listFetches += 1;
+				// Report the overlay as still pending on every fetch so the confirm
+				// button stays present; we only care that the list is re-queried.
+				return HttpResponse.json({
+					data: [rawOverlay({ id: 'ovl_pending01', status: 'pending' })],
+					has_more: false,
+					next_cursor: null,
+				});
+			}),
+			http.post(
+				'/apis/:vendor/:name/:version/overlays/:id\\:confirm',
+				() => new HttpResponse(null, { status: 204 }),
+			),
+		);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		await screen.findByTestId('overlay-confirm');
+		await waitFor(() => expect(listFetches).toBe(1));
+
+		await userEvent.click(screen.getByTestId('overlay-confirm'));
+		// The action's onSuccess invalidates workspaceKeys.overlays(key), which
+		// forces the list query to re-run — so we see a second fetch.
+		await waitFor(() => expect(listFetches).toBeGreaterThanOrEqual(2));
+	});
+
 	it('rolls back a confirmed overlay only after the confirm dialog', async () => {
 		let rolledBack = false;
 		mockOverlays([
@@ -124,6 +170,7 @@ describe('OverlaysSection', () => {
 				id: 'ovl_confirmed',
 				status: 'confirmed',
 				confirmed_at: '2026-02-01T00:00:00Z',
+				confirmed_revision_id: 'rev_materialized',
 			}),
 		]);
 		worker.use(
