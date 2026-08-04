@@ -2,6 +2,7 @@ package localagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -281,7 +282,7 @@ func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	for _, g := range grantedDirs {
 		dirs = append(dirs, SessionDir{Path: filepath.Clean(g), Kind: AccessReadWrite})
 	}
-	for _, d := range execRouteDirs() {
+	for _, d := range execRouteDirs(agentHome) {
 		dirs = append(dirs, SessionDir{Path: d, Kind: AccessReadOnly})
 	}
 	return dirs
@@ -468,14 +469,24 @@ func deniedRootOf(p string) string {
 var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
 
 // execRouteDirs returns the executable directories on the agent's PATH that the
-// sandbox marks read-only: the sanctioned shared tool dirs plus the system bin
-// dirs, de-duplicated and filtered to those that exist. Making these
+// sandbox marks read-only: the agent's OWN ~/.local/bin (where `jentic run`
+// copies/installs the agent binary), the sanctioned shared tool dirs, and the
+// system bin dirs, de-duplicated and filtered to those that exist. Making these
 // write-denied is a non-negotiable boundary — it stops a compromised agent from
 // rewriting the binaries `jentic run` executes to shed its own sandbox next run.
-func execRouteDirs() []string {
+// The home-local dir matters most: it sits inside the agent's writable home, so
+// without an explicit last-emitted deny the home re-allow would leave the very
+// binary the launcher execs agent-writable.
+func execRouteDirs(agentHome string) []string {
+	var candidates []string
+	if agentHome != "" {
+		candidates = append(candidates, filepath.Join(agentHome, ".local", "bin"))
+	}
+	candidates = append(candidates, candidateSharedBinDirs...)
+	candidates = append(candidates, systemBinDirs...)
 	seen := map[string]bool{}
 	var out []string
-	for _, d := range append(append([]string{}, candidateSharedBinDirs...), systemBinDirs...) {
+	for _, d := range candidates {
 		d = filepath.Clean(d)
 		if seen[d] {
 			continue
@@ -572,14 +583,25 @@ func bwrapArgs(agentHome string, grantedDirs, cmdArgv []string) []string {
 	return quoted
 }
 
+// usernsClonePath is the Debian/Ubuntu sysctl knob that gates unprivileged user
+// namespaces. A var so tests can point the probe at a controlled path.
+var usernsClonePath = "/proc/sys/kernel/unprivileged_userns_clone"
+
 // unprivilegedUserNSEnabled reports whether the kernel permits unprivileged user
 // namespaces, which bubblewrap needs to build its mount namespace without root.
-// The sysctl is Debian/Ubuntu-specific; when the knob is absent (mainline kernels,
-// RHEL) unprivileged userns is generally on, so absence is treated as enabled.
+// The sysctl is Debian/Ubuntu-specific, so a clean NOT-EXIST is the normal state
+// on mainline/RHEL kernels — there unprivileged userns is generally on, and
+// absence is treated as enabled. Any OTHER read failure (a masked or
+// permission-denied /proc) means we could not actually probe the kernel, and is
+// treated as DISABLED: the whole confinement model errors closed, so the prereq
+// gate must not report "available" on a machine it couldn't verify.
 func unprivilegedUserNSEnabled() bool {
-	data, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
-	if err != nil {
+	data, err := os.ReadFile(usernsClonePath)
+	if errors.Is(err, os.ErrNotExist) {
 		return true // knob absent → not gated here
+	}
+	if err != nil {
+		return false // unreadable → fail closed, like the rest of confinement
 	}
 	return strings.TrimSpace(string(data)) != "0"
 }

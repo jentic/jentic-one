@@ -512,3 +512,101 @@ func TestConfinementAvailableAgreesWithMissingPrereqs(t *testing.T) {
 		}
 	}
 }
+
+// The userns probe distinguishes "knob absent" (mainline/RHEL kernels — userns
+// generally on, treated as enabled) from "knob unreadable" (masked or denied
+// /proc — the kernel could NOT be verified, so it must fail CLOSED like the rest
+// of the confinement model) and reads the sysctl value when it is present.
+func TestUnprivilegedUserNSProbe(t *testing.T) {
+	orig := usernsClonePath
+	t.Cleanup(func() { usernsClonePath = orig })
+	dir := t.TempDir()
+
+	// Knob absent → enabled (not gated on this kernel).
+	usernsClonePath = filepath.Join(dir, "does-not-exist")
+	if !unprivilegedUserNSEnabled() {
+		t.Error("absent knob must be treated as enabled")
+	}
+
+	// Knob present and set → the value decides.
+	usernsClonePath = filepath.Join(dir, "clone")
+	if err := os.WriteFile(usernsClonePath, []byte("0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if unprivilegedUserNSEnabled() {
+		t.Error("knob set to 0 must be treated as disabled")
+	}
+	if err := os.WriteFile(usernsClonePath, []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !unprivilegedUserNSEnabled() {
+		t.Error("knob set to 1 must be treated as enabled")
+	}
+
+	// Knob present but unreadable → fail closed (root can read anything, skip).
+	if os.Geteuid() == 0 {
+		t.Log("running as root; skipping the unreadable-knob case")
+		return
+	}
+	if err := os.Chmod(usernsClonePath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if unprivilegedUserNSEnabled() {
+		t.Error("an unreadable knob must fail closed (treated as disabled)")
+	}
+}
+
+// The agent's own ~/.local/bin — where `jentic run` copies/installs the agent
+// binary — must be in the read-only exec routes when it exists: it sits inside
+// the agent's writable home, so without an explicit write-deny the home
+// re-allow would leave the launched binary agent-writable (a self-modification
+// route). Both confinement builders consume it via SessionAccess.
+func TestAgentLocalBinIsReadOnlyExecRoute(t *testing.T) {
+	home := t.TempDir()
+	localBin := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(localBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	foundRO := false
+	for _, d := range SessionAccess(home, nil) {
+		if d.Path == localBin {
+			if d.Kind != AccessReadOnly {
+				t.Fatalf("%s must be read-only, got kind %v", localBin, d.Kind)
+			}
+			foundRO = true
+		}
+	}
+	if !foundRO {
+		t.Fatalf("SessionAccess(%s, nil) does not report %s as a read-only route", home, localBin)
+	}
+
+	// macOS: the write-deny must be emitted, and AFTER the home re-allow so
+	// last-match-wins keeps it authoritative inside the re-opened home.
+	p := SandboxProfile(home, nil)
+	deny := `(deny file-write* (subpath ` + sbplPath(localBin) + `))`
+	allowHome := `(allow file* (subpath ` + sbplPath(filepath.Clean(home)) + `))`
+	di, ai := strings.Index(p, deny), strings.Index(p, allowHome)
+	if di == -1 {
+		t.Fatalf("sandbox profile missing the ~/.local/bin write-deny:\n%s", p)
+	}
+	if ai != -1 && di < ai {
+		t.Errorf("~/.local/bin write-deny must come after the home re-allow (last-match-wins):\n%s", p)
+	}
+
+	// Linux: the ro-bind must land after any home bind so it masks it. Each
+	// returned token is individually shell-quoted; unquote for the assertions.
+	quoted := bwrapArgs(home, nil, []string{"/bin/bash", "-lc", "true"})
+	args := make([]string, len(quoted))
+	for i, q := range quoted {
+		args[i] = strings.Trim(q, "'")
+	}
+	joined := strings.Join(args, " ")
+	roBind := "--ro-bind " + localBin + " " + localBin
+	if !strings.Contains(joined, roBind) {
+		t.Fatalf("bwrap args missing the ~/.local/bin ro-bind:\n%s", joined)
+	}
+	if bi := strings.Index(joined, "--bind "+home); bi != -1 && strings.Index(joined, roBind) < bi {
+		t.Errorf("~/.local/bin ro-bind must come after the home bind (later mounts mask earlier ones):\n%s", joined)
+	}
+}
