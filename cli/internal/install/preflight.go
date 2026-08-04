@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -197,6 +198,16 @@ func dockerInfoOnce(ctx context.Context, timeout time.Duration) (string, bool) {
 	if ctx.Err() == context.DeadlineExceeded {
 		return "the Docker daemon did not respond in time (is it starting up or wedged?)", false
 	}
+	// A missing `docker` binary is a different problem from a stopped daemon:
+	// exec can't find the executable at all (empty output), so the generic
+	// "daemon not reachable" reason would misdiagnose it. Flag it distinctly so
+	// callers can point at the install docs instead of the "start Docker" hint
+	// (#954). This only bites a user who uninstalled Docker after installing —
+	// the runtime guards sit behind a compose-file check — but it should still
+	// read correctly.
+	if errors.Is(err, exec.ErrNotFound) {
+		return dockerNotInstalledDetail, false
+	}
 	if err != nil {
 		return firstLine(string(out)), false
 	}
@@ -238,6 +249,24 @@ const dockerDaemonRecoveryHint = "start your Docker daemon " +
 	"(Docker Desktop users: open it, or run `docker desktop start` on 4.37+; " +
 	"Linux: `sudo systemctl start docker`; Colima: `colima start`)"
 
+// dockerNotInstalledDetail is the reason the probe reports when the `docker`
+// binary itself is not on PATH (exec.ErrNotFound), as opposed to a present
+// binary whose daemon is down. Kept as a package constant so callers can tell
+// the two apart and swap the recovery guidance (#954).
+const dockerNotInstalledDetail = "the docker command was not found on PATH"
+
+// dockerNotInstalledHint is the "how to fix a missing Docker" guidance — it
+// points at installation rather than starting a daemon, since there is nothing
+// to start. Paired with dockerNotInstalledDetail.
+const dockerNotInstalledHint = "install Docker (https://docs.docker.com/get-docker/)"
+
+// dockerNotInstalled reports whether a probe detail means the binary is absent
+// (vs. a present-but-unresponsive daemon), so callers render the install hint
+// instead of the start-the-daemon hint.
+func dockerNotInstalled(detail string) bool {
+	return detail == dockerNotInstalledDetail
+}
+
 // DaemonError builds an actionable error for a present-but-unresponsive Docker
 // daemon, so the install fails fast here instead of crashing mid-build.
 func DaemonError(check CheckResult) error {
@@ -274,6 +303,11 @@ func RequireDockerDaemon(ctx context.Context, command string) error {
 	if healthy {
 		return nil
 	}
+	// A missing binary needs install guidance, not "start the daemon".
+	if dockerNotInstalled(detail) {
+		return fmt.Errorf("docker is required but not installed: %s — %s, "+
+			"then re-run `%s`", detail, dockerNotInstalledHint, command)
+	}
 	if detail == "" {
 		detail = daemonUnreachableFallback
 	}
@@ -285,6 +319,23 @@ func RequireDockerDaemon(ctx context.Context, command string) error {
 // daemon" guidance so callers outside this package (e.g. the doctor deploy
 // check) render the exact same advice as the fail-fast errors.
 func DockerDaemonRecoveryHint() string { return dockerDaemonRecoveryHint }
+
+// DockerNotInstalled reports whether a probe detail (from
+// DockerDaemonResponsiveQuick) means the `docker` binary is absent rather than
+// its daemon being down, so callers can pick DockerNotInstalledHint over
+// DockerDaemonRecoveryHint (#954).
+func DockerNotInstalled(detail string) bool { return dockerNotInstalled(detail) }
+
+// DockerNotInstalledHint returns the "install Docker" guidance for the
+// binary-absent case, mirroring DockerDaemonRecoveryHint for the daemon-down
+// case.
+func DockerNotInstalledHint() string { return dockerNotInstalledHint }
+
+// DockerNotInstalledDetail returns the exact probe reason emitted when the
+// `docker` binary is absent — the string DockerNotInstalled recognizes. Exposed
+// so callers/tests can reason about the binary-absent case without duplicating
+// the literal.
+func DockerNotInstalledDetail() string { return dockerNotInstalledDetail }
 
 // DockerDaemonResponsiveQuick is a single-round-trip daemon probe for callers
 // that must stay fast and non-blocking — `doctor` is read-only and should not

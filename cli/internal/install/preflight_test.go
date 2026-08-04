@@ -144,6 +144,12 @@ func TestRequireDockerDaemon(t *testing.T) {
 			command: "jenticctl stop",
 			want:    []string{"not reachable", "jenticctl stop"},
 		},
+		{
+			name:    "missing binary points at install docs, not the daemon-start hint",
+			probe:   func(context.Context) (string, bool) { return dockerNotInstalledDetail, false },
+			command: "jenticctl start",
+			want:    []string{"not installed", "was not found on PATH", "get-docker", "jenticctl start"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dockerDaemonProbe = tc.probe
@@ -158,6 +164,13 @@ func TestRequireDockerDaemon(t *testing.T) {
 				}
 			}
 		})
+	}
+
+	// The not-installed message must NOT tell the user to start a daemon —
+	// there's nothing to start.
+	dockerDaemonProbe = func(context.Context) (string, bool) { return dockerNotInstalledDetail, false }
+	if msg := RequireDockerDaemon(context.Background(), "jenticctl start").Error(); strings.Contains(msg, "start your Docker daemon") {
+		t.Errorf("not-installed error should not use the daemon-start hint: %q", msg)
 	}
 }
 
@@ -236,5 +249,25 @@ func TestDefaultDockerDaemonProbeCancelable(t *testing.T) {
 	}
 	if detail == "" {
 		t.Error("canceled probe should return a non-empty reason")
+	}
+}
+
+// TestProbeDistinguishesMissingBinary is the #954 guarantee: when the `docker`
+// binary is absent from PATH the probe reports a distinct "not installed"
+// reason (so callers can point at install docs) rather than the generic
+// daemon-down reason. Point PATH at an empty dir so the real exec can't find
+// docker regardless of the host.
+func TestProbeDistinguishesMissingBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	detail, healthy := dockerInfoOnce(context.Background(), 2*time.Second)
+	if healthy {
+		t.Fatal("no docker binary on PATH should not report healthy")
+	}
+	if detail != dockerNotInstalledDetail {
+		t.Errorf("missing binary detail = %q, want %q", detail, dockerNotInstalledDetail)
+	}
+	if !dockerNotInstalled(detail) {
+		t.Errorf("dockerNotInstalled did not recognize its own detail: %q", detail)
 	}
 }
