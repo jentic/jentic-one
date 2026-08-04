@@ -215,12 +215,18 @@ func DaemonError(check CheckResult) error {
 }
 
 // RequireDockerDaemon fails fast with an actionable error when the Docker daemon
-// is not responding, so runtime commands (`start`/`stop`) surface the same
-// "start Docker Desktop" guidance as install instead of a raw `docker compose`
-// transport error when Docker Desktop is closed (e.g. after a reboot). The
-// referenced command names the caller (e.g. "jenticctl start") so the recovery
-// path points back at what the operator ran. It returns nil when the daemon
-// answers. See jentic-one#783 and jentic-api-scorecard#224.
+// is not responding, so runtime commands (`start`/`stop`) surface a clear
+// recovery path when Docker Desktop is closed (e.g. after a reboot) instead of a
+// raw `docker compose` transport error. The referenced command names the caller
+// (e.g. "jenticctl start") so the recovery path points back at what the operator
+// ran. It returns nil when the daemon answers. See jentic-one#783 and
+// jentic-api-scorecard#224.
+//
+// It only reports the problem; it deliberately does NOT start Docker itself.
+// Client CLIs across the ecosystem (Testcontainers, act, Dagger) fail fast here
+// rather than silently launching the daemon, since Docker Desktop is packaged as
+// a user app, not a managed service. The message points at `docker desktop
+// start` (Docker Desktop 4.37+) so the operator has the one-liner to hand.
 func RequireDockerDaemon(command string) error {
 	detail, healthy := dockerDaemonHealth()
 	if healthy {
@@ -230,8 +236,8 @@ func RequireDockerDaemon(command string) error {
 		detail = "the Docker daemon is not reachable"
 	}
 	return fmt.Errorf("docker is installed but its daemon is not responding: %s — "+
-		"start Docker Desktop (or your docker daemon), wait for it to report healthy, "+
-		"then re-run `%s`", detail, command)
+		"start it with `docker desktop start` (or open Docker Desktop / start your docker daemon), "+
+		"wait for it to report healthy, then re-run `%s`", detail, command)
 }
 
 // DockerDaemonResponsiveQuick is a single-round-trip daemon probe for callers

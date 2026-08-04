@@ -126,7 +126,7 @@ func TestRequireDockerDaemon(t *testing.T) {
 		t.Fatal("stopped daemon should return an error")
 	}
 	msg := err.Error()
-	for _, want := range []string{"daemon is not responding", "Cannot connect to the Docker daemon", "start Docker Desktop", "jenticctl start"} {
+	for _, want := range []string{"daemon is not responding", "Cannot connect to the Docker daemon", "docker desktop start", "jenticctl start"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error missing %q: %q", want, msg)
 		}

@@ -127,7 +127,7 @@ func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 	_ = app.doctorE(context.Background(), offlineOpts())
 
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "start Docker Desktop"} {
+	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "docker desktop start"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("doctor output missing %q\n---\n%s", want, got)
 		}

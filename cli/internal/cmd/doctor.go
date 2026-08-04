@@ -215,7 +215,7 @@ func (d *doctor) checkDeploy(section string) {
 		// than inferred from a cryptic `docker compose ps` error (#783).
 		if detail, healthy := dockerDaemonProbe(); !healthy {
 			d.add(section, "docker daemon", statusFail, detail,
-				"start Docker Desktop (or your docker daemon), then `jenticctl start`")
+				"start it with `docker desktop start` (or open Docker Desktop), then `jenticctl start`")
 			return
 		}
 		out, err := install.ComposePs(composePath)
