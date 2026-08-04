@@ -125,12 +125,23 @@ func brokerPortFromManifest(a *App) string {
 
 // startDocker brings the generated docker-compose stack up in detached mode.
 func (a *App) startDocker(composePath string) error {
+	// The compose file proves a Docker install, but not that the daemon is up:
+	// with the daemon down (e.g. Docker Desktop closed after a reboot) `docker
+	// compose up` fails with a raw "Cannot connect to the Docker daemon" error.
+	// Probe first so we surface actionable recovery guidance (#783,
+	// jentic-api-scorecard#224). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung. This must come
+	// before the schema check below, which also needs a live daemon.
+	announceDaemonCheck(a.Out)
+	if err := requireDockerDaemon("jenticctl start"); err != nil {
+		return err
+	}
 	if err := a.ensureDockerSchema(composePath); err != nil {
 		return err
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Starting Docker stack ..."))
-	if err := install.ComposeUp(a.Out, composePath); err != nil {
+	if err := composeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack started."))

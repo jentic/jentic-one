@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -151,5 +155,35 @@ func TestApplyPromptTitle(t *testing.T) {
 				t.Errorf("applyPromptTitle(%v, %v, %v) = %q, want %q", tt.doCLI, tt.doStack, tt.brew, got, tt.want)
 			}
 		})
+	}
+}
+
+// A Docker install (compose file present) with a stopped daemon must fail fast
+// with the guard's actionable error, before the long image build / migrations
+// / compose up sequence surfaces a raw compose transport error.
+func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	sentinel := stubDaemonDown(t)
+
+	// The stack bring-up routes through the composeUp seam; a bypassed guard
+	// would reach it and fail loudly (mirrors start/stop).
+	origUp := composeUp
+	t.Cleanup(func() { composeUp = origUp })
+	composeUp = func(io.Writer, string) error {
+		t.Fatal("composeUp must not run when the daemon is down")
+		return nil
+	}
+
+	err := app.updateStackDocker("", false, false)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("update should surface the daemon guard error, got %v", err)
+	}
+	// The guard short-circuits before the image build header is rendered, so the
+	// build/migrations/compose-up sequence never starts (no real Docker call).
+	if got := app.Out.(*bytes.Buffer).String(); strings.Contains(got, "Build (Docker images)") {
+		t.Errorf("updateStackDocker ran past the guard when the daemon was down:\n%s", got)
 	}
 }
