@@ -55,6 +55,7 @@ export type { CatalogEntryLinksResponse } from './models/CatalogEntryLinksRespon
 export type { CatalogEntryResponse } from './models/CatalogEntryResponse';
 export type { CatalogListResponse } from './models/CatalogListResponse';
 export type { CatalogRefreshResponse } from './models/CatalogRefreshResponse';
+export type { CatalogSnoozeRequest } from './models/CatalogSnoozeRequest';
 export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
 export type { ConnectChallengeResponse } from './models/ConnectChallengeResponse';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';

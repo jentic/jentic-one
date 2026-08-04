@@ -1496,6 +1496,58 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "snoozeCatalogEntry",
+      "path": "/catalog/{api_id}:snooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Snooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "unsnoozeCatalogEntry",
+      "path": "/catalog/{api_id}:unsnooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Unsnooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "org:admin": [
           "agents:read",
           "agents:write",
@@ -4576,5 +4628,5 @@
     ],
     "total": 31
   },
-  "total": 154
+  "total": 156
 }

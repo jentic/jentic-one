@@ -116,9 +116,9 @@ func newCatalogOutdatedCmd(app *App, ident *identityOptions) *cobra.Command {
 		Use:   "outdated",
 		Short: "List registered entries with an upstream update available",
 		Long: "outdated lists locally-registered catalog entries whose upstream spec has\n" +
-			"changed since import (an update is available). Re-importing promotes the\n" +
-			"new spec to live, so this is a suggestion surface for operators — review\n" +
-			"before re-importing. Script-friendly with --json.",
+			"a notified update the local revision hasn't adopted yet. Re-import to adopt.\n" +
+			"By default, entries an operator has snoozed/muted are hidden; pass\n" +
+			"--include-snoozed to list them too.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.outdated = true
@@ -127,6 +127,8 @@ func newCatalogOutdatedCmd(app *App, ident *identityOptions) *cobra.Command {
 	}
 	cmd.Flags().IntVar(&o.limit, "limit", 50, "page size (1-200)")
 	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
+	cmd.Flags().BoolVar(&o.includeSnoozed, "include-snoozed", false,
+		"also list entries whose update notification has been snoozed/muted")
 	return cmd
 }
 
@@ -144,12 +146,13 @@ func newCatalogRefreshCmd(app *App, ident *identityOptions) *cobra.Command {
 // ── option structs ───────────────────────────────────────────────────────────
 
 type catalogListOptions struct {
-	registered   bool
-	unregistered bool
-	outdated     bool
-	limit        int
-	all          bool
-	json         bool
+	registered     bool
+	unregistered   bool
+	outdated       bool
+	limit          int
+	all            bool
+	json           bool
+	includeSnoozed bool
 }
 
 func (o *catalogListOptions) bind(cmd *cobra.Command) {
@@ -206,11 +209,12 @@ func (a *App) catalogList(ctx context.Context, ident *identityOptions, o *catalo
 		limit = 50
 	}
 	params := catalogclient.ListParams{
-		Q:            query,
-		Registered:   o.registered,
-		Unregistered: o.unregistered,
-		Outdated:     o.outdated,
-		Limit:        limit,
+		Q:              query,
+		Registered:     o.registered,
+		Unregistered:   o.unregistered,
+		Outdated:       o.outdated,
+		IncludeSnoozed: o.includeSnoozed,
+		Limit:          limit,
 	}
 
 	var entries []catalogclient.Entry

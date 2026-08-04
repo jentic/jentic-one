@@ -8,9 +8,10 @@ reads/writes go through :meth:`get` / :meth:`upsert` on that key.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import CursorResult, Select, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
@@ -31,7 +32,7 @@ class CatalogUpdateCheckRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    def _outdated_base() -> Select[tuple[uuid.UUID, str]]:
+    def _outdated_base(now: datetime | None = None) -> Select[tuple[uuid.UUID, str]]:
         """Shared selectable of ``(local_api_id, spec_url)`` for genuinely-outdated APIs.
 
         An API is *outdated* when its check row carries a ``last_notified_digest`` (a real
@@ -50,9 +51,33 @@ class CatalogUpdateCheckRepository:
         upstream. An API with no non-archived revision is excluded (nothing served to be
         outdated). Exposes both the ``local_api_id`` (for API-keyed surfaces) and the
         ``spec_url`` (for the manifest-keyed catalog list).
+
+        Snooze (C1, #925): a row is *also* excluded while an operator snooze covers the exact
+        change currently prompting — ``snoozed_digest == last_notified_digest`` and the snooze
+        hasn't expired (``snoozed_until IS NULL`` = mute-until-newer, or ``snoozed_until`` in
+        the future). Keying the snooze on ``last_notified_digest`` (not ``last_seen``) means a
+        genuinely *newer* upstream digest — which the sweep records as a new
+        ``last_notified_digest`` — no longer matches ``snoozed_digest``, so the badge re-lights
+        automatically for a real new change. ``include_snoozed=True`` on the callers bypasses
+        this so an operator can still list snoozed rows.
         """
-        # Rank each API's non-archived revisions exactly as the notify sweep does — current
-        # revision first, then newest — and keep only rank 1 (the served revision).
+        return CatalogUpdateCheckRepository._served_outdated_core().where(
+            CatalogUpdateCheckRepository._not_snoozed(now)
+        )
+
+    @staticmethod
+    def _served_outdated_core() -> Select[tuple[uuid.UUID, str]]:
+        """The outdated selectable *without* the snooze predicate — the shared core.
+
+        Ranks each API's non-archived revisions exactly as the notify sweep does (current
+        revision first, then newest ``created_at``, then ``id`` as the deterministic
+        tiebreak), keeps only rank 1 (the served revision), and returns the
+        ``(local_api_id, spec_url)`` rows whose ``last_notified_digest`` differs from that
+        served revision's digest. :meth:`_outdated_base` appends :meth:`_not_snoozed`;
+        :meth:`_outdated_base_unsnoozed` returns this as-is. Kept single-sourced so the
+        served-revision selection can never drift between the snoozed and include-snoozed
+        variants.
+        """
         served_rank = func.row_number().over(
             partition_by=ApiRevision.api_id,
             order_by=(
@@ -83,7 +108,38 @@ class CatalogUpdateCheckRepository:
         )
 
     @staticmethod
-    async def outdated_api_ids(session: AsyncSession) -> set[uuid.UUID]:
+    def _not_snoozed(now: datetime | None):  # type: ignore[no-untyped-def]
+        """WHERE predicate: the row's outstanding notify is NOT currently snoozed.
+
+        A snooze is active when it pins the currently-notified digest
+        (``snoozed_digest == last_notified_digest``) and hasn't expired. ``snoozed_until IS
+        NULL`` means mute-until-newer (no time expiry); a non-null ``snoozed_until`` is a
+        time-boxed snooze that lapses at that instant.
+
+        ``now`` defaults to the current UTC time when not supplied, so a caller that doesn't
+        thread a clock still correctly re-lights an *expired* time-boxed snooze rather than
+        pinning it forever. (Earlier this defaulted to "treat any non-null ``snoozed_until``
+        as active", which silently hid lapsed snoozes on the per-API and single-entry
+        surfaces — the callers that don't pass ``now``.) Pass an explicit ``now`` only to
+        pin evaluation to a fixed instant (e.g. one clock read shared across a sweep, or a
+        test).
+        """
+        if now is None:
+            now = datetime.now(UTC)
+        active_window: Any = CatalogUpdateCheck.snoozed_until.is_(None) | (
+            CatalogUpdateCheck.snoozed_until > now
+        )
+        snoozed = (
+            CatalogUpdateCheck.snoozed_digest.is_not(None)
+            & (CatalogUpdateCheck.snoozed_digest == CatalogUpdateCheck.last_notified_digest)
+            & active_window
+        )
+        return ~snoozed
+
+    @staticmethod
+    async def outdated_api_ids(
+        session: AsyncSession, *, now: datetime | None = None, include_snoozed: bool = False
+    ) -> set[uuid.UUID]:
         """Local ``api_id``s whose upstream has a notified update the served revision lacks.
 
         The API-keyed form of the outdated set. **Use this for per-API surfaces** (the
@@ -92,23 +148,85 @@ class CatalogUpdateCheckRepository:
         vendor + sub-APIs, or the same URL re-imported under a different identity). Testing
         ``source_url`` membership would then flag *every* API sharing that URL — including ones
         already up to date. Testing ``api_id`` membership is exact. See :meth:`_outdated_base`.
+
+        ``include_snoozed=True`` bypasses the snooze exclusion (C1) so an operator surface can
+        still list snoozed rows.
         """
-        sub = CatalogUpdateCheckRepository._outdated_base().subquery()
-        result = await session.execute(select(sub.c.local_api_id))
+        base = (
+            CatalogUpdateCheckRepository._outdated_base_unsnoozed()
+            if include_snoozed
+            else CatalogUpdateCheckRepository._outdated_base(now)
+        )
+        result = await session.execute(select(base.subquery().c.local_api_id))
         return {api_id for (api_id,) in result.all() if api_id is not None}
 
     @staticmethod
-    async def outdated_spec_urls(session: AsyncSession) -> set[str]:
+    async def outdated_spec_urls(
+        session: AsyncSession, *, now: datetime | None = None, include_snoozed: bool = False
+    ) -> set[str]:
         """Spec URLs whose upstream has a notified update the served revision hasn't adopted.
 
         The manifest-keyed form. **Use this only for the catalog list**, which is keyed on the
         manifest ``spec_url`` (each manifest entry maps to a distinct ``spec_url``), so URL
         membership is exact there. For per-API surfaces use :meth:`outdated_api_ids` instead —
         ``source_url`` is not unique across local APIs. See :meth:`_outdated_base`.
+
+        ``include_snoozed=True`` bypasses the snooze exclusion (C1).
         """
-        sub = CatalogUpdateCheckRepository._outdated_base().subquery()
-        result = await session.execute(select(sub.c.spec_url))
+        base = (
+            CatalogUpdateCheckRepository._outdated_base_unsnoozed()
+            if include_snoozed
+            else CatalogUpdateCheckRepository._outdated_base(now)
+        )
+        result = await session.execute(select(base.subquery().c.spec_url))
         return {url for (url,) in result.all() if url}
+
+    @staticmethod
+    def _outdated_base_unsnoozed() -> Select[tuple[uuid.UUID, str]]:
+        """:meth:`_outdated_base` without the snooze exclusion (include-snoozed surfaces)."""
+        return CatalogUpdateCheckRepository._served_outdated_core()
+
+    @staticmethod
+    async def snooze(
+        session: AsyncSession,
+        local_api_id: uuid.UUID,
+        *,
+        digest: str,
+        until: datetime | None,
+    ) -> int:
+        """Snooze the outstanding update for one API (C1, #925). Returns rowcount.
+
+        Pins ``snoozed_digest = digest`` (the operator-accepted upstream digest, normally the
+        row's current ``last_notified_digest``) and ``snoozed_until = until`` (None =
+        mute-until-newer). A newer upstream digest later overwrites ``last_notified_digest``,
+        so the ``snoozed_digest == last_notified_digest`` match in :meth:`_not_snoozed` no
+        longer holds and the badge re-lights — a real new change is never hidden. Operator-
+        gated + audited by the caller.
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(CatalogUpdateCheck)
+                .where(CatalogUpdateCheck.local_api_id == local_api_id)
+                .values(snoozed_digest=digest, snoozed_until=until)
+            ),
+        )
+        await session.flush()
+        return result.rowcount or 0
+
+    @staticmethod
+    async def unsnooze(session: AsyncSession, local_api_id: uuid.UUID) -> int:
+        """Clear any snooze for one API (C1). Returns rowcount."""
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(CatalogUpdateCheck)
+                .where(CatalogUpdateCheck.local_api_id == local_api_id)
+                .values(snoozed_digest=None, snoozed_until=None)
+            ),
+        )
+        await session.flush()
+        return result.rowcount or 0
 
     @staticmethod
     async def upsert(

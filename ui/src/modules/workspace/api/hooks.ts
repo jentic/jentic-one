@@ -18,7 +18,9 @@ import {
 import { toast } from '@/shared/ui';
 import {
 	archiveRevision,
+	confirmOverlay,
 	deleteApi,
+	deprecateOverlay,
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
@@ -26,9 +28,12 @@ import {
 	importSources,
 	listApis,
 	listOperations,
+	listOverlays,
 	listRevisions,
 	promoteRevision,
 	reimportCatalogEntry,
+	rollbackOverlay,
+	snoozeCatalogEntry,
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
@@ -38,6 +43,7 @@ import type {
 	CursorPage,
 	ImportSource,
 	JobStatus,
+	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 import { sharedQueryKeys } from '@/shared/api';
@@ -52,6 +58,7 @@ export const workspaceKeys = {
 	api: (key: ApiKey) => [...workspaceKeys.all, 'api', formatApiKey(key)] as const,
 	operations: (key: ApiKey) => [...workspaceKeys.all, 'operations', formatApiKey(key)] as const,
 	revisions: (key: ApiKey) => [...workspaceKeys.all, 'revisions', formatApiKey(key)] as const,
+	overlays: (key: ApiKey) => [...workspaceKeys.all, 'overlays', formatApiKey(key)] as const,
 	spec: (key: ApiKey) => [...workspaceKeys.all, 'spec', formatApiKey(key)] as const,
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
@@ -273,6 +280,148 @@ export function useRevisionActions(key: ApiKey) {
 		/** Which action is in flight, so a row spins only the button it triggered. */
 		pendingAction: (promote.isPending ? 'promote' : archive.isPending ? 'archive' : null) as
 			'promote' | 'archive' | null,
+	};
+}
+
+/** Overlays for an API (`GET /apis/{…}/overlays`). */
+export function useOverlays(key: ApiKey | null): UseQueryResult<CursorPage<Overlay>> {
+	return useQuery({
+		// A stable inert key while disabled — never the root `workspaceKeys.all`
+		// prefix, so a broad `invalidateQueries({ queryKey: workspaceKeys.all })`
+		// can't accidentally target this parked query.
+		queryKey: key
+			? workspaceKeys.overlays(key)
+			: [...workspaceKeys.all, 'overlays', 'disabled'],
+		queryFn: () => listOverlays({ key: key as ApiKey }),
+		enabled: key != null,
+	});
+}
+
+/**
+ * Confirm / rollback / deprecate an overlay, invalidating the API's overlay +
+ * revision/op/spec caches (a confirm/rollback rewrites the served spec, so the
+ * live revision, operations, and spec all change). Modeled on
+ * `useRevisionActions`: exposes per-overlay pending state so a row spins only
+ * the button it triggered.
+ */
+export function useOverlayActions(key: ApiKey) {
+	const queryClient = useQueryClient();
+
+	const invalidate = useCallback(() => {
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.overlays(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.operations(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+	}, [queryClient, key]);
+
+	const confirm = useMutation({
+		mutationFn: (overlayId: string) => confirmOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay confirmed' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Confirm failed',
+				description:
+					error instanceof Error ? error.message : 'Could not confirm the overlay.',
+			});
+		},
+	});
+
+	const rollback = useMutation({
+		mutationFn: (overlayId: string) => rollbackOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay rolled back' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Rollback failed',
+				description:
+					error instanceof Error ? error.message : 'Could not roll back the overlay.',
+			});
+		},
+	});
+
+	const deprecate = useMutation({
+		mutationFn: (overlayId: string) => deprecateOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay deprecated' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Deprecate failed',
+				description:
+					error instanceof Error ? error.message : 'Could not deprecate the overlay.',
+			});
+		},
+	});
+
+	const pendingOverlayId =
+		(confirm.isPending && (confirm.variables as string)) ||
+		(rollback.isPending && (rollback.variables as string)) ||
+		(deprecate.isPending && (deprecate.variables as string)) ||
+		null;
+
+	return {
+		confirm: (overlayId: string) => confirm.mutate(overlayId),
+		rollback: (overlayId: string) => rollback.mutate(overlayId),
+		deprecate: (overlayId: string) => deprecate.mutate(overlayId),
+		pendingOverlayId,
+		/** Which action is in flight, so a row spins only the button it triggered. */
+		pendingAction: (confirm.isPending
+			? 'confirm'
+			: rollback.isPending
+				? 'rollback'
+				: deprecate.isPending
+					? 'deprecate'
+					: null) as 'confirm' | 'rollback' | 'deprecate' | null,
+	};
+}
+
+/**
+ * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
+ *
+ * The "Update available" surface offers a Mute affordance that suppresses
+ * further update notifications until a NEWER upstream version appears
+ * (mute-until-newer → no `snoozed_until`). Keyed by the API's catalog `api_id`
+ * (the same id the re-import uses). On success we toast and invalidate the
+ * API's detail cache so the banner re-reads (the backend clears
+ * `update_available` while snoozed).
+ */
+export function useSnoozeCatalogUpdate(key: ApiKey) {
+	const queryClient = useQueryClient();
+
+	const mutation = useMutation({
+		mutationFn: (apiId: string) => snoozeCatalogEntry(apiId),
+		onSuccess: () => {
+			toast({
+				variant: 'success',
+				title: 'Updates muted',
+				description: "You won't be notified again until a newer version is published.",
+			});
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Mute failed',
+				description:
+					error instanceof Error ? error.message : 'Could not mute update notifications.',
+			});
+		},
+	});
+
+	return {
+		snooze: (apiId: string) => mutation.mutate(apiId),
+		isSnoozing: mutation.isPending,
 	};
 }
 

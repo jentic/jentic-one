@@ -18,6 +18,7 @@ Boundaries kept from D-005a:
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -34,17 +35,26 @@ from jentic_one.registry.services.catalog.fetch import (
     fetch_bytes_conditional,
     fetch_json,
 )
+from jentic_one.registry.services.catalog.flow3_metrics import (
+    record_reimport_from_catalog,
+    record_update_notified,
+    record_update_snoozed,
+)
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
+    NothingToSnoozeError,
     OverlaySupersedeForbiddenError,
+    SnoozeForbiddenError,
 )
+from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.events import emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
 from jentic_one.shared.models.jobs import JobKind
 from jentic_one.shared.models.registry import ORIGIN_CATALOG, ORIGIN_OVERLAY
@@ -347,6 +357,21 @@ class CatalogService:
         return EventType.CATALOG_UPDATE_AVAILABLE
 
     @staticmethod
+    def _is_snoozed(check: Any, upstream_digest: str, now: datetime) -> bool:
+        """True if an active operator snooze covers this exact upstream digest (C1).
+
+        A snooze pins ``snoozed_digest`` (the accepted upstream digest) and an optional
+        ``snoozed_until`` expiry (None = mute-until-newer). It suppresses the sweep emit only
+        while it matches the digest currently being observed and hasn't lapsed — a genuinely
+        newer upstream digest won't match and re-notifies normally.
+        """
+        snoozed_digest = getattr(check, "snoozed_digest", None)
+        if snoozed_digest is None or snoozed_digest != upstream_digest:
+            return False
+        snoozed_until = getattr(check, "snoozed_until", None)
+        return snoozed_until is None or snoozed_until > now
+
+    @staticmethod
     def _update_summary(
         event_class: str, spec: RegisteredSpec, overlay_id: str | None = None
     ) -> str:
@@ -426,6 +451,22 @@ class CatalogService:
         if not changed:
             return
 
+        # Snooze/mute (C1, #925): an operator accepted this exact upstream digest without
+        # adopting it, so suppress the *notification* while the snooze is active. We still ran
+        # the upsert above (recording last_notified_digest/class), so dedupe stays consistent
+        # and the badge stays suppressed via the shared outdated-set exclusion; we simply skip
+        # the emit here so no new inbox/rail item is created. A genuinely newer upstream digest
+        # won't match ``snoozed_digest`` and will emit normally. ``snoozed_until`` in the past
+        # means the snooze lapsed → emit again.
+        if check is not None and self._is_snoozed(check, upstream_digest, now):
+            logger.info(
+                "catalog_update_notify_snoozed",
+                api_id=str(spec.api_id),
+                upstream_digest=upstream_digest,
+                event_class=event_class,
+            )
+            return
+
         # For a conflict, resolve the live overlay's id so the actionable event can
         # deep-link to the overlay to keep/rollback (parallel to the refuse path). The
         # conflict class is only reached when the current revision *is* the live confirmed
@@ -470,8 +511,30 @@ class CatalogService:
                     # Present only for conflicts_overlay so the inbox card can deep-link to
                     # the overlay; None/absent for plain update_available.
                     "overlay_id": conflict_overlay_id,
+                    # L1 (#920): a structured "why" so the operator/author sees what
+                    # collided rather than a bare "your fix was removed". We do NOT parse +
+                    # JSONPath-diff the two specs here — the sweep is a hot per-API tick that
+                    # only fetched bytes + digest, and the full diff belongs on the on-demand
+                    # conflict view (which loads both specs once). Instead we carry the three
+                    # digests that pin the collision: the base the overlay was materialized
+                    # over (``base_digest``), what is served now (``served_digest`` = the
+                    # overlaid revision), and the diverged upstream (``upstream_digest``).
+                    # ``base_digest != upstream_digest`` is exactly the classify condition,
+                    # so a UI can state "upstream moved off the base your overlay was built
+                    # on" and offer keep/adopt with these anchors. Present only for the
+                    # conflict class.
+                    "conflict": (
+                        {
+                            "base_digest": spec.overlay_base_digest,
+                            "served_digest": spec.spec_digest,
+                            "upstream_digest": upstream_digest,
+                        }
+                        if event_class == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+                        else None
+                    ),
                 },
             )
+        record_update_notified(event_class)
 
     async def _refresh_if_stale(self) -> None:
         """Lazy refresh-on-read seam for the single-entry reads (``get``)."""
@@ -481,13 +544,19 @@ class CatalogService:
             await self._safe_refresh()
 
     async def _load_snapshot(
-        self,
+        self, *, include_snoozed: bool = False
     ) -> tuple[list[dict[str, Any]], set[str], set[str], datetime | None]:
-        """Read entries, coverage URLs, outdated URLs, and freshness in one session."""
+        """Read entries, coverage URLs, outdated URLs, and freshness in one session.
+
+        ``include_snoozed=True`` (C1/C2) makes the outdated set include snoozed rows, so an
+        operator surface (``catalog outdated --include-snoozed``) can still see muted entries.
+        """
         async with self._ctx.registry_db.session() as session:
             raw = await CatalogRepository.entries(session)
             registered_urls = await CatalogRepository.registered_spec_urls(session)
-            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+            outdated_urls = await CatalogUpdateCheckRepository.outdated_spec_urls(
+                session, now=utcnow(), include_snoozed=include_snoozed
+            )
             fetched_at = await CatalogRepository.fetched_at(session)
         return raw, registered_urls, outdated_urls, fetched_at
 
@@ -502,6 +571,7 @@ class CatalogService:
         outdated_only: bool = False,
         cursor: str | None = None,
         limit: int = 50,
+        include_snoozed: bool = False,
     ) -> CatalogListView:
         """List a keyset page of catalog entries (optionally filtered/ranked).
 
@@ -521,10 +591,14 @@ class CatalogService:
         (the standard keyset-vs-mutating-snapshot trade-off), but never crashes
         or loops. Refresh is rare (lazy, max-age gated), so this is acceptable.
         """
-        raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot()
+        raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot(
+            include_snoozed=include_snoozed
+        )
         if self._is_stale(fetched_at):
             await self._safe_refresh()
-            raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot()
+            raw, registered_urls, outdated_urls, fetched_at = await self._load_snapshot(
+                include_snoozed=include_snoozed
+            )
 
         all_entries = [mb.ManifestEntry.from_dict(d) for d in raw]
         catalog_total = len(all_entries)
@@ -762,13 +836,104 @@ class CatalogService:
         if supersede_overlay_id is not None:
             payload["supersede_overlay_id"] = supersede_overlay_id
         async with self._ctx.admin_db.transaction() as session:
-            return await enqueue_job(
+            job_id = await enqueue_job(
                 session,
                 JobKind.IMPORT,
                 created_by=identity.sub,
                 actor_type=identity.actor_type,
                 payload=payload,
             )
+        record_reimport_from_catalog()
+        return job_id
+
+    async def snooze_entry(
+        self, api_id: str, identity: Identity, *, until: datetime | None = None
+    ) -> None:
+        """Snooze the outstanding update notification for a catalog entry (C1, #925).
+
+        Operator action: quiet the "update available" badge for a known-and-accepted upstream
+        change without adopting it. Requires ``events:write`` (the existing operator scope for
+        managing platform events; not held by default agents) — a low-privilege agent must not
+        be able to hide a real upstream drift. Resolves the catalog entry's ``spec_url`` to the
+        local ``api_id`` via the served revision, pins the snooze to the digest the sweep last
+        notified for (so a genuinely newer change re-lights the badge), and audits it.
+
+        ``until=None`` mutes until a newer upstream digest lands (mute-per-API, the primary
+        affordance); a future ``until`` is a time-boxed snooze.
+        """
+        self._require_snooze_permission(identity)
+        entry = await self.get(api_id)
+        async with self._ctx.registry_db.transaction() as session:
+            resolved = await self._resolve_local_api(session, entry)
+            if resolved is None:
+                raise CatalogEntryNotFoundError(api_id)
+            local_api_id, check = resolved
+            digest = check.last_notified_digest if check is not None else None
+            if digest is None:
+                raise NothingToSnoozeError(api_id)
+            await CatalogUpdateCheckRepository.snooze(
+                session, local_api_id, digest=digest, until=until
+            )
+        record_update_snoozed()
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.API,
+            target_id=str(local_api_id),
+            actor_type=ActorType(identity.actor_type) if identity.actor_type else ActorType.USER,
+            actor_id=identity.sub,
+            after={
+                "catalog_update_snoozed": True,
+                "snoozed_until": until.isoformat() if until else None,
+            },
+            origin=None,
+        )
+
+    async def unsnooze_entry(self, api_id: str, identity: Identity) -> None:
+        """Clear a snooze for a catalog entry (C1). Operator-gated (``events:write``)."""
+        self._require_snooze_permission(identity)
+        entry = await self.get(api_id)
+        async with self._ctx.registry_db.transaction() as session:
+            resolved = await self._resolve_local_api(session, entry)
+            if resolved is None:
+                raise CatalogEntryNotFoundError(api_id)
+            local_api_id, _ = resolved
+            await CatalogUpdateCheckRepository.unsnooze(session, local_api_id)
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.UPDATE,
+            target_type=AuditTargetType.API,
+            target_id=str(local_api_id),
+            actor_type=ActorType(identity.actor_type) if identity.actor_type else ActorType.USER,
+            actor_id=identity.sub,
+            after={"catalog_update_snoozed": False},
+            origin=None,
+        )
+
+    @staticmethod
+    def _require_snooze_permission(identity: Identity) -> None:
+        """Snooze/unsnooze is an operator event-management action → ``events:write``."""
+        if not has_effective_permission(identity.permissions, "events:write"):
+            raise SnoozeForbiddenError()
+
+    async def _resolve_local_api(
+        self, session: Any, entry: CatalogEntryView
+    ) -> tuple[uuid.UUID, Any] | None:
+        """Resolve a catalog entry to its local ``(api_id, check_row)`` via the served spec_url.
+
+        Returns ``None`` when the entry isn't registered locally (no served revision whose
+        ``source_url`` matches the manifest ``spec_url``) — the caller maps that to a 404.
+        """
+        if entry.spec_url is None:
+            return None
+        current = await ApiRevisionRepository.current_revision_for_source_url(
+            session, entry.spec_url
+        )
+        if current is None:
+            return None
+        local_api_id, _revision_id = current
+        check = await CatalogUpdateCheckRepository.get(session, local_api_id)
+        return local_api_id, check
 
     async def ensure_imported(self, api_id: str, identity: Identity) -> str | None:
         """Hand-off seam for the Credentials PR (B6, deferred).

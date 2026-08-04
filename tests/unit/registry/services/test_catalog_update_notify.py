@@ -75,6 +75,10 @@ def _check(
     # against a plain update (the common case). Tests exercising the overlay-conflict
     # class pass notified_class explicitly.
     row.last_notified_event_class = notified_class if notified is not None else None
+    # C1 snooze fields default to "not snoozed" — a bare MagicMock attr is a truthy mock,
+    # which would make _is_snoozed spuriously suppress emits in unrelated tests.
+    row.snoozed_digest = None
+    row.snoozed_until = None
     return row
 
 
@@ -273,8 +277,76 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
         assert emit_kwargs["data"]["overlay_base_digest"] == "base-old"
         # The conflict event deep-links to the live overlay so a UI/CLI can keep/rollback.
         assert emit_kwargs["data"]["overlay_id"] == "ovr_live"
+        # L1 (#920): the conflict carries a structured "why" — the three digests that pin
+        # the collision (base the overlay was built on, served, diverged upstream).
+        conflict = emit_kwargs["data"]["conflict"]
+        assert conflict == {
+            "base_digest": "base-old",
+            "served_digest": "overlaid",
+            "upstream_digest": "upstream-new",
+        }
         upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
         assert upsert_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+
+
+@pytest.mark.asyncio
+async def test_probe_suppresses_emit_when_snoozed() -> None:
+    """C1: an active snooze on the observed upstream digest suppresses the emit.
+
+    The sweep still runs the upsert (so dedupe stays consistent + the outdated-set
+    exclusion applies) but skips creating a new inbox/rail item.
+    """
+    svc = CatalogService(_make_ctx())
+    snoozed_check = _check(
+        last_checked_at=None,
+        etag=None,
+        notified=None,
+    )
+    snoozed_check.snoozed_digest = "upstream-new"
+    snoozed_check.snoozed_until = None
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=snoozed_check,
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        # Still recorded the observation, but did NOT emit.
+        upsert.assert_awaited()
+        emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_probe_records_notify_metric() -> None:
+    """L6: a real notify increments the Flow-3 emit counter."""
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.record_update_notified") as metric,
+    ):
+        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        metric.assert_called_once_with(EventType.CATALOG_UPDATE_AVAILABLE)
 
 
 @pytest.mark.asyncio

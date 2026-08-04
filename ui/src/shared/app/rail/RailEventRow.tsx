@@ -32,6 +32,7 @@ import { DenyReasonField } from '@/shared/app/rail/DenyReasonField';
 import {
 	formatStreamTime,
 	formatStreamDateTimeParts,
+	conflictHint,
 	inlineActionsFor,
 	primaryDestinationFor,
 	severityStripeClass,
@@ -92,7 +93,11 @@ export function RailEventRow({
 	const [pendingReasonFor, setPendingReasonFor] = useState<InlineActionSpec | null>(null);
 	const [reason, setReason] = useState('');
 	const headline = KIND_LABEL[ev.kind];
-	const submeta = [ev.tokens.toolkit_id, ev.meta].filter(Boolean).join(' · ');
+	// The conflict "why" hint (if any) rides in the detail line alongside the
+	// event's own meta, so a `catalog.update_conflicts_overlay` row explains the
+	// digest drift without a new layout element.
+	const hint = conflictHint(ev);
+	const submeta = [ev.tokens.toolkit_id, ev.meta, hint].filter(Boolean).join(' · ');
 	const dest = onNavigate ? primaryDestinationFor(ev) : null;
 	const navProps = dest
 		? {

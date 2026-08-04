@@ -251,3 +251,30 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
         )
         self.api_id = api_id
         self.overlay_id = overlay_id
+
+
+class SnoozeForbiddenError(RegistryServiceError):
+    """Raised when a caller lacks the operator scope to snooze/mute a catalog update (C1).
+
+    Snoozing quiets a real upstream-drift notification, so it is an operator event-management
+    action gated on ``events:write`` — a low-privilege agent must not be able to hide a genuine
+    upstream change. Maps to HTTP 403.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Snoozing a catalog update notification requires the 'events:write' permission."
+        )
+
+
+class NothingToSnoozeError(RegistryServiceError):
+    """Raised when snoozing an entry that has no outstanding notified update (C1).
+
+    A snooze pins the digest the sweep last notified for; with nothing notified there is no
+    change to accept, so the request is a no-op error rather than silently creating a snooze
+    that matches nothing. Maps to HTTP 409.
+    """
+
+    def __init__(self, api_id: str) -> None:
+        super().__init__(f"Catalog entry '{api_id}' has no outstanding update to snooze")
+        self.api_id = api_id

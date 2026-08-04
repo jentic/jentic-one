@@ -8,7 +8,7 @@ identity, excludes archived revisions, and de-duplicates per API.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -210,3 +210,180 @@ async def test_registered_specs_for_notify_picks_deterministic_revision(
     assert mine[0].spec_digest == "sha256:older"
     assert mine[0].source_url == "https://example.com/older.json"
     assert newer_id != older_id  # sanity: two distinct revisions existed
+
+
+async def _seed_outdated(
+    registry_db: DatabaseSession, api: Api, *, served_digest: str, notified_digest: str
+) -> None:
+    """Seed a served revision + a check row notified at a different digest (outdated)."""
+    now = datetime.now(UTC)
+    async with registry_db.session() as session:
+        rev = ApiRevision(
+            api_id=api.id,
+            state="published",
+            spec_digest=served_digest,
+            source_type="url",
+            source_url="https://example.com/openapi.json",
+        )
+        session.add(rev)
+        await session.flush()
+        fetched = await session.get(Api, api.id)
+        assert fetched is not None
+        fetched.current_revision_id = rev.id
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=api.id,
+            spec_url="https://example.com/openapi.json",
+            etag='"v1"',
+            digest=notified_digest,
+            checked_at=now,
+            notified_digest=notified_digest,
+            notified_event_class="catalog.update_available",
+        )
+        await session.commit()
+
+
+async def test_snooze_excludes_from_outdated_and_unsnooze_restores(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """An active snooze on the notified digest drops the API from the outdated set (C1).
+
+    ``include_snoozed=True`` still lists it, and ``unsnooze`` restores it.
+    """
+    await _seed_outdated(
+        registry_db, sample_api, served_digest="sha256:served", notified_digest="sha256:up"
+    )
+    now = datetime.now(UTC)
+
+    async with registry_db.session() as session:
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session, now=now)
+        assert sample_api.id in ids
+
+    # Snooze the exact notified digest → excluded from the default outdated set.
+    async with registry_db.session() as session:
+        rows = await CatalogUpdateCheckRepository.snooze(
+            session, sample_api.id, digest="sha256:up", until=None
+        )
+        await session.commit()
+        assert rows == 1
+
+    async with registry_db.session() as session:
+        assert sample_api.id not in await CatalogUpdateCheckRepository.outdated_api_ids(
+            session, now=now
+        )
+        # ...but include_snoozed still surfaces it.
+        assert sample_api.id in await CatalogUpdateCheckRepository.outdated_api_ids(
+            session, now=now, include_snoozed=True
+        )
+
+    async with registry_db.session() as session:
+        rows = await CatalogUpdateCheckRepository.unsnooze(session, sample_api.id)
+        await session.commit()
+        assert rows == 1
+
+    async with registry_db.session() as session:
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session, now=now)
+        assert sample_api.id in ids
+
+
+async def test_snooze_does_not_hide_a_newer_digest(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """Snoozing digest A must NOT hide a genuinely newer digest B (auto-clear on newer)."""
+    await _seed_outdated(
+        registry_db, sample_api, served_digest="sha256:served", notified_digest="sha256:A"
+    )
+    now = datetime.now(UTC)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.snooze(
+            session, sample_api.id, digest="sha256:A", until=None
+        )
+        await session.commit()
+
+    # A newer upstream lands: the sweep records a new last_notified_digest = B.
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            spec_url="https://example.com/openapi.json",
+            etag='"v2"',
+            digest="sha256:B",
+            checked_at=now,
+            notified_digest="sha256:B",
+            notified_event_class="catalog.update_available",
+        )
+        await session.commit()
+
+    # snoozed_digest (A) no longer matches last_notified_digest (B) → outdated again.
+    async with registry_db.session() as session:
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session, now=now)
+        assert sample_api.id in ids
+
+
+async def test_expired_snooze_no_longer_excludes(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A snooze whose ``snoozed_until`` is in the past no longer suppresses the badge."""
+    await _seed_outdated(
+        registry_db, sample_api, served_digest="sha256:served", notified_digest="sha256:up"
+    )
+    now = datetime.now(UTC)
+    past = datetime(2000, 1, 1, tzinfo=UTC)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.snooze(
+            session, sample_api.id, digest="sha256:up", until=past
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session, now=now)
+        assert sample_api.id in ids
+
+
+async def test_expired_snooze_re_lights_without_explicit_now(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A lapsed time-boxed snooze re-lights even when the caller doesn't thread ``now``.
+
+    Regression: the per-API surfaces (``/apis`` list, single-API view) and the single
+    catalog ``get()`` call ``outdated_api_ids``/``outdated_spec_urls`` *without* ``now``.
+    ``_not_snoozed`` used to treat any non-null ``snoozed_until`` as still-active when
+    ``now`` was None, so an expired time-boxed snooze stayed hidden forever on those
+    surfaces. ``_not_snoozed`` now defaults ``now`` to the current UTC time, so a lapsed
+    snooze correctly re-enters the outdated set with no clock threaded.
+    """
+    await _seed_outdated(
+        registry_db, sample_api, served_digest="sha256:served", notified_digest="sha256:up"
+    )
+    past = datetime(2000, 1, 1, tzinfo=UTC)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.snooze(
+            session, sample_api.id, digest="sha256:up", until=past
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        # No `now` passed — the default clock must still see the snooze as expired.
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert sample_api.id in ids
+        urls = await CatalogUpdateCheckRepository.outdated_spec_urls(session)
+        assert "https://example.com/openapi.json" in urls
+
+
+async def test_future_snooze_still_excludes_without_explicit_now(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A still-active (future ``snoozed_until``) snooze stays hidden under the default clock."""
+    await _seed_outdated(
+        registry_db, sample_api, served_digest="sha256:served", notified_digest="sha256:up"
+    )
+    future = datetime.now(UTC) + timedelta(days=1)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.snooze(
+            session, sample_api.id, digest="sha256:up", until=future
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
+        assert sample_api.id not in ids

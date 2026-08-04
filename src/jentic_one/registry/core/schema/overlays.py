@@ -38,6 +38,16 @@ class Overlay(AuditableMixin, RegistryBase):
         ForeignKey("apis.id", ondelete="CASCADE"),
         nullable=False,
     )
+    #: The base revision the overlay was authored against (D2, #928). **Advisory, not a
+    #: hard target.** It is load-bearing at exactly one point — ``OverlayService.confirm``
+    #: passes it to ``_load_base_spec`` to pick which base the overlay materializes over —
+    #: and it is a drift *signal* at submit (flagged when it != the API's current revision).
+    #: Everywhere else it is echoed into read responses only. It is deliberately NOT a
+    #: per-target-materialization key: we do not build overlays that pin to an arbitrary
+    #: historical revision. No FK (the base may be pruned); a NULL/stale value falls back to
+    #: the API's current revision at confirm. Kept (not dropped) because it is load-bearing at
+    #: confirm — the trap the issue calls out is treating it as more than advisory elsewhere,
+    #: which this note forecloses. See ``docs/overlays.md`` (stacking contract).
     target_revision_id: Mapped[uuid.UUID | None] = mapped_column(GUID(), nullable=True)
     #: The revision produced by materializing this overlay (set by the ingest job on
     #: a successful confirm). Distinct from ``target_revision_id`` (the base revision

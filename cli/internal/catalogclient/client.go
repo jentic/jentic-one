@@ -134,12 +134,13 @@ type ImportResult struct {
 
 // ListParams holds the query options for List.
 type ListParams struct {
-	Q            string
-	Registered   bool
-	Unregistered bool
-	Outdated     bool
-	Cursor       string
-	Limit        int
+	Q              string
+	Registered     bool
+	Unregistered   bool
+	Outdated       bool
+	IncludeSnoozed bool
+	Cursor         string
+	Limit          int
 }
 
 // List returns a keyset page of catalog entries.
@@ -156,6 +157,9 @@ func (c *Client) List(ctx context.Context, token string, p ListParams) (*ListRes
 	}
 	if p.Outdated {
 		q.Set("outdated_only", "true")
+	}
+	if p.IncludeSnoozed {
+		q.Set("include_snoozed", "true")
 	}
 	if p.Cursor != "" {
 		q.Set("cursor", p.Cursor)
