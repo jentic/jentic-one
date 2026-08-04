@@ -86,6 +86,18 @@ class CreateRevisionStage(BasePipelineStage):
                 # only skip when the current revision belongs to the very overlay this job
                 # materializes. The previous overlay revision is still archived below either
                 # way (retained in the chain).
+                # Capture race (backend review S2, tracked): this reads api.current_revision_id
+                # at *worker* time. The service guards live.current_revision_id ==
+                # confirmed_revision_id before enqueue, but if an authorized catalog re-import
+                # (A4b) lands between enqueue and this (async) ingest, current is no longer this
+                # overlay's revision → _is_self_rematerialize won't match → we'd capture the new
+                # current as the superseded target, moving the rollback target off the clean
+                # base. This window is inherent to the existing async-materialize design (confirm
+                # has the same shape) and is not newly introduced by D1; the conservative
+                # fail-closed direction (capture rather than skip) means the worst case is a
+                # rollback target that points at a still-valid revision, never a stripped one.
+                # See spec-flywheel-tracker.md (Flow-3 deferred: worker re-assert of the
+                # pre-enqueue confirmed revision before deciding capture).
                 api = await ApiRepository.get_by_id(ctx.session, api_id)
                 if (
                     api is not None
@@ -158,8 +170,18 @@ class CreateRevisionStage(BasePipelineStage):
         capture the current revision as the new overlay's rollback target — so we only treat it
         as a self-re-materialize when the overlay backing the current revision is exactly the
         one this job carries. Cheap: a single indexed lookup, and only when both ids are known.
+
+        Defense-in-depth (security review S2/N2): ``overlay_id`` is a server-set field on the
+        job payload (no client ingest schema exposes it; see ``supersede_active`` trust note
+        above), and this method is only reached from the ``origin == ORIGIN_OVERLAY`` branch —
+        i.e. a server-initiated overlay materialize. We additionally require the well-formed
+        ``ovr_`` prefix so a malformed/spoofed value fails *closed* (returns False → the
+        current revision is captured as the superseded target, the conservative outcome that
+        preserves a rollback target) rather than silently skipping capture. A wrong skip is the
+        only dangerous direction here (it would strip a rollback target), so an unrecognized
+        id must never skip.
         """
-        if overlay_id is None:
+        if overlay_id is None or not overlay_id.startswith("ovr_"):
             return False
         owner = await OverlayRepository.get_live_confirmed_for_revision(
             ctx.session, api_id, current_revision_id
