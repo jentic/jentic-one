@@ -37,6 +37,12 @@ collide). The serving layer is the only component that knows which mode it's
 in, so it exposes that path to the SPA via a tiny JSON config endpoint
 (``GET /app-config.json``) the SPA fetches on boot — replacing the older
 ``index.html`` HTML-rewrite. The bundle is served byte-for-byte as built.
+
+Cache policy is applied by :class:`SPACacheHeadersMiddleware`: the unversioned
+shell is revalidated on every navigation while Vite's content-hashed assets are
+cached immutably. Without it a browser can serve a stale ``index.html`` that
+names the *previous* build's assets, so a correctly-upgraded server still
+renders the old UI (#945).
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ from pathlib import Path
 import structlog
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _logger = structlog.get_logger(__name__)
 
@@ -56,6 +63,25 @@ _logger = structlog.get_logger(__name__)
 # is a true 404. Kept in lockstep with the UI's Vite ``base`` and React Router
 # ``basename`` (both ``/app`` — see ``ui/vite.config.ts`` / ``ui/src/main.tsx``).
 SPA_MOUNT_PATH = "/app"
+
+# Subpath under the SPA mount holding Vite's content-hashed build output
+# (``/app/assets/index-<hash>.js``). A new build emits new filenames, so these
+# URLs are immutable and safe to cache forever — see :data:`_IMMUTABLE_CACHE`.
+_ASSETS_PREFIX = f"{SPA_MOUNT_PATH}/assets/"
+
+# Cache policy for content-hashed assets: the hash *is* the version, so a URL's
+# bytes never change and the client need never revalidate. One year is the
+# conventional maximum (RFC 9111 caps practical freshness lifetimes there).
+_IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+
+# Cache policy for the SPA shell (``index.html``) and every deep-link URL that
+# falls back to it. The filename is *not* versioned, so a cached shell keeps
+# referencing the previous build's hashed assets and the app renders stale
+# indefinitely after an upgrade. ``no-cache`` does not mean "don't store" — it
+# means "always revalidate before reuse", so the existing ``ETag`` still yields
+# a cheap 304 when the build is unchanged, but a new build is picked up on the
+# next navigation without a manual hard reload (#945).
+_REVALIDATE_CACHE = "no-cache"
 
 # Fixed, mode-independent path the SPA fetches on boot to learn deploy-mode
 # facts (currently just the admin health path). Served at the site root (NOT
@@ -137,6 +163,77 @@ def _resolve_static_dir() -> Path | None:
     return _resolve_dev_static_dir()
 
 
+def _cache_control_for(path: str) -> str:
+    """Return the ``Cache-Control`` value for an SPA path.
+
+    Content-hashed assets are immutable; everything else under the mount is (or
+    falls back to) the unversioned shell and must be revalidated.
+    """
+    if path.startswith(_ASSETS_PREFIX):
+        return _IMMUTABLE_CACHE
+    return _REVALIDATE_CACHE
+
+
+class SPACacheHeadersMiddleware:
+    """Stamp cache policy on SPA responses so an upgrade is picked up.
+
+    ``app.frontend()`` serves the bundle with an ``ETag`` but no
+    ``Cache-Control``, and it exposes no hook to add one. Without an explicit
+    directive a browser applies *heuristic* freshness to ``index.html`` and may
+    reuse it for a long time without revalidating. Since the shell names the
+    hashed asset files, a stale shell keeps loading the previous build's JS/CSS
+    and the app renders the old UI indefinitely after a correct server-side
+    upgrade — indistinguishable, from the operator's seat, from a broken
+    update (#945).
+
+    So the shell (and every deep-link path that falls back to it) is served
+    ``no-cache``: still cached, but always revalidated, which the existing
+    ``ETag`` turns into a cheap 304 when nothing changed. The hashed assets
+    under ``/app/assets/`` go the other way and are cached immutably — their URL
+    changes whenever their bytes do, so revalidating them is pure waste.
+
+    Implemented as **pure ASGI middleware** (not ``BaseHTTPMiddleware``) for the
+    same reason as ``RequestIDMiddleware``: it operates on ``scope``/``send``
+    without materialising a Starlette ``Response`` or wrapping the downstream
+    app in a cancel scope (#627).
+
+    Only responses under :data:`SPA_MOUNT_PATH` are touched, and an explicit
+    ``Cache-Control`` already set by a route is never overwritten — the
+    middleware fills a gap, it does not impose policy on API responses.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self._owns(scope.get("path", "")):
+            await self._app(scope, receive, send)
+            return
+        await self._app(scope, receive, self._with_cache_control(send, scope["path"]))
+
+    @staticmethod
+    def _owns(path: str) -> bool:
+        """Whether path is the SPA mount itself or lives under it.
+
+        Guards against a sibling prefix (``/apple-touch-icon.png``,
+        ``/application/...``) matching on a bare ``startswith``.
+        """
+        return path == SPA_MOUNT_PATH or path.startswith(f"{SPA_MOUNT_PATH}/")
+
+    @staticmethod
+    def _with_cache_control(send: Send, path: str) -> Send:
+        directive = _cache_control_for(path).encode("latin-1")
+
+        async def wrapped(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                if not any(name.lower() == b"cache-control" for name, _ in headers):
+                    message = {**message, "headers": [*headers, (b"cache-control", directive)]}
+            await send(message)
+
+        return wrapped
+
+
 def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     """Serve the built SPA on ``app`` if a bundle is packaged.
 
@@ -203,6 +300,12 @@ def mount_spa(app: FastAPI, *, health_path: str = "/health") -> bool:
     # routes never live under /app anyway, so this only governs unknown /app/*
     # subpaths (always SPA routes in practice).
     app.frontend(SPA_MOUNT_PATH, directory=str(static_dir), fallback="auto")
+
+    # Cache policy for the bundle. ``app.frontend()`` sets an ETag but no
+    # Cache-Control, which lets browsers heuristically cache the unversioned
+    # shell and keep rendering a previous build's assets after an upgrade
+    # (#945). See :class:`SPACacheHeadersMiddleware`.
+    app.add_middleware(SPACacheHeadersMiddleware)
 
     # Flag consumed by the shared 401 handler (app_factory): only when an SPA
     # is actually mounted does an anonymous HTML navigation that 401s get

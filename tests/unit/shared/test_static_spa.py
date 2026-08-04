@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 import jentic_one.shared.web.static as static_mod
@@ -246,6 +247,119 @@ def test_app_config_endpoint_is_not_shadowed_by_frontend(
     resp = client.get(APP_CONFIG_PATH, headers=_HTML_HEADERS)
     assert resp.status_code == 200
     assert resp.json() == {"healthPath": "/health"}
+
+
+def test_shell_is_revalidated_and_hashed_assets_are_immutable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for #945: the shell must not be heuristically cacheable.
+
+    ``app.frontend()`` sets an ETag but no Cache-Control. With no directive a
+    browser may reuse ``index.html`` without revalidating, and since the shell
+    names the hashed asset files it keeps loading the *previous* build — the app
+    renders the old UI after a correct server-side upgrade.
+
+    So the shell revalidates (``no-cache``) while the content-hashed assets,
+    whose URL changes whenever their bytes do, are cached immutably.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    # The shell, at the mount root and via a deep-link fallback.
+    for path in (f"{SPA_MOUNT_PATH}/", f"{SPA_MOUNT_PATH}/agents/some-id/settings"):
+        resp = client.get(path, headers=_HTML_HEADERS)
+        assert resp.status_code == 200, path
+        assert resp.headers["cache-control"] == "no-cache", path
+
+    # A hashed asset is immutable: cached forever, never revalidated.
+    asset = client.get(f"{SPA_MOUNT_PATH}/assets/app.js")
+    assert asset.status_code == 200
+    assert asset.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_shell_revalidation_still_yields_304_when_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``no-cache`` must stay cheap: revalidation, not re-download.
+
+    The point of ``no-cache`` (rather than ``no-store``) is that the shell is
+    still cached — the client just has to ask first. The ETag turns that ask
+    into a 304 with no body while the build is unchanged, so the correctness fix
+    does not cost a full shell fetch per navigation.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    first = client.get(f"{SPA_MOUNT_PATH}/", headers=_HTML_HEADERS)
+    etag = first.headers["etag"]
+
+    revalidated = client.get(f"{SPA_MOUNT_PATH}/", headers={**_HTML_HEADERS, "If-None-Match": etag})
+    assert revalidated.status_code == 304
+    assert not revalidated.content
+    # The directive must be present on the 304 too, or the client has nothing to
+    # apply for the *next* navigation.
+    assert revalidated.headers["cache-control"] == "no-cache"
+
+
+def test_cache_headers_do_not_leak_outside_the_spa_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The middleware owns /app only; API responses keep their own policy.
+
+    Also pins the prefix boundary: a sibling path that merely *starts with*
+    ``/app`` (``/app-config.json``, ``/apple-touch-icon.png``) is not the SPA
+    and must not be stamped.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    router = APIRouter()
+
+    @router.get("/users")
+    def _users() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    app.include_router(router)
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    assert "cache-control" not in client.get("/users").headers
+    # /app-config.json is a real route outside the mount despite the prefix.
+    assert "cache-control" not in client.get(APP_CONFIG_PATH).headers
+
+
+def test_explicit_cache_control_is_not_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The middleware fills a gap; it never overrides a deliberate policy.
+
+    A route under the mount that sets its own Cache-Control keeps it, so this
+    stays a default rather than an imposition.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+
+    @app.get(f"{SPA_MOUNT_PATH}/live-thing", include_in_schema=False)
+    async def _live() -> JSONResponse:
+        return JSONResponse({"v": 1}, headers={"Cache-Control": "no-store"})
+
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    resp = client.get(f"{SPA_MOUNT_PATH}/live-thing")
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
 
 
 def _make_source_checkout(tmp_path: Path, *, with_bundle: bool) -> Path:
