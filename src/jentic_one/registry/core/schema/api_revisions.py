@@ -72,6 +72,14 @@ class ApiRevision(AuditableMixin, RegistryBase):
     state: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
     origin: Mapped[str | None] = mapped_column(String(50), nullable=True)
     spec_digest: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    #: For an overlay-origin revision: the ``spec_digest`` of the *base* revision this
+    #: overlay was materialized on top of (the revision it superseded). Lets the Flow-3
+    #: sweep compare upstream changes against the overlay's **base** rather than the
+    #: overlaid digest, so it can tell "upstream unchanged vs base" (no-op) from
+    #: "upstream changed vs base" (a genuine conflict). NULL for non-overlay revisions
+    #: and for pre-existing overlay revisions (A3 treats NULL as "unknown base → today's
+    #: served-digest compare"; lazy self-heal on the next re-materialize).
+    overlay_base_digest: Mapped[str | None] = mapped_column(String(100), nullable=True)
     source_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)

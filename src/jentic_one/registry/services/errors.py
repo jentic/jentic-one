@@ -122,6 +122,23 @@ class OverlayStateConflictError(RegistryServiceError):
         self.action = action
 
 
+class OverlayRollbackTargetMissingError(RegistryServiceError):
+    """Raised when a confirmed overlay cannot be rolled back to a prior revision.
+
+    Rollback (A5b) promotes the overlay's ``superseded_revision_id`` back to current.
+    This is raised when that target is unknown (a first-ever materialize superseded
+    nothing, or a pre-A5a overlay never recorded it) or the target revision is no longer
+    restorable (deleted / not archived) — there is no deterministic revision to serve, so
+    the caller must resolve manually (e.g. re-import upstream) rather than the rollback
+    silently doing nothing.
+    """
+
+    def __init__(self, overlay_id: str, detail: str) -> None:
+        super().__init__(f"Cannot roll back overlay '{overlay_id}': {detail}")
+        self.overlay_id = overlay_id
+        self.detail = detail
+
+
 class OverlayApplyConflictError(RegistryServiceError):
     """Raised when a confirmed overlay cannot be materialized onto its base spec.
 
@@ -212,3 +229,25 @@ class CatalogUnavailableError(RegistryServiceError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
+
+
+class OverlaySupersedeForbiddenError(RegistryServiceError):
+    """Raised when a re-import would supersede a live overlay but the caller can't.
+
+    A4b (privilege-inversion guard): re-importing an upstream spec over an API whose
+    current revision is a live *confirmed* overlay would silently discard the operator's
+    materialized fix. That is an operator action, so it requires ``overlays:confirm``.
+    When the enqueuing caller lacks it, the import is refused (rather than silently
+    reverting the fix) and an operator-facing ``catalog.update_conflicts_overlay`` event
+    is re-emitted so a privileged operator can decide. The caller sees a 403.
+    """
+
+    def __init__(self, api_id: str, overlay_id: str) -> None:
+        super().__init__(
+            f"Re-importing '{api_id}' would supersede confirmed overlay '{overlay_id}', "
+            "which discards an operator's fix. This requires the 'overlays:confirm' "
+            "permission — ask an operator to run the re-import, or roll back the overlay "
+            "if the fix should be retired."
+        )
+        self.api_id = api_id
+        self.overlay_id = overlay_id

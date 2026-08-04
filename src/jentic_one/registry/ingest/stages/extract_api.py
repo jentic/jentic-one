@@ -77,9 +77,27 @@ class CreateRevisionStage(BasePipelineStage):
                     ctx.produce("superseded_revision_id", api.current_revision_id, uuid.UUID)
                 await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
             else:
-                await ApiRevisionRepository.archive_active_imported(
-                    ctx.session, api_id, spec.origin
-                )
+                if spec.supersede_active:
+                    # A4b: an authorized catalog re-import that replaces a *live confirmed
+                    # overlay*. The overlay's current revision is overlay-origin, so the
+                    # origin-scoped archive below would leave it active and the new catalog
+                    # revision would violate ix_api_revisions_one_active. Archive every
+                    # active revision instead (the overlay is auto-deprecated by the
+                    # handler in the same transaction; see ImportHandler).
+                    #
+                    # Trust boundary: ``supersede_active`` is a *server-set* flag. It is
+                    # only ever stamped by ``CatalogService.import_entry`` after an
+                    # enqueue-time ``overlays:confirm`` scope check; no client-facing
+                    # ingest schema (``ApiSourceUrl``/``ApiSourceInline``) exposes it, and
+                    # Pydantic's ``extra="ignore"`` drops any injected key. This stage
+                    # therefore trusts the flag by construction. If a future route ever
+                    # forwards a raw ``sources`` payload, that route MUST re-assert the
+                    # scope before enqueue — the privilege boundary lives at enqueue time.
+                    await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
+                else:
+                    await ApiRevisionRepository.archive_active_imported(
+                        ctx.session, api_id, spec.origin
+                    )
             revision = await ApiRevisionRepository.create_imported(
                 ctx.session,
                 api_id=api_id,
@@ -89,6 +107,7 @@ class CreateRevisionStage(BasePipelineStage):
                 source_url=spec.source_url,
                 source_filename=spec.source_filename,
                 submitted_by=spec.submitted_by,
+                overlay_base_digest=spec.overlay_base_digest,
                 created_by=ctx.created_by,
             )
         else:

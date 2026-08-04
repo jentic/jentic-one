@@ -1059,6 +1059,32 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "overlays:confirm": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rollbackOverlay",
+      "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback",
+      "public": false,
+      "required_scopes": [
+        "overlays:confirm"
+      ],
+      "summary": "Rollback Overlay",
+      "surface": "apis",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Agent-facing (typically agent / service-account / toolkit)",
       "implied_scopes": {
         "apis:read": []
@@ -4550,5 +4576,5 @@
     ],
     "total": 31
   },
-  "total": 153
+  "total": 154
 }

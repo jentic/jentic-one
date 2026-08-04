@@ -55,6 +55,13 @@ class CatalogUpdateCheck(RegistryBase):
     last_seen_etag: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_seen_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_notified_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The event *class* that ``last_notified_digest`` was emitted under
+    #: (``catalog.update_available`` vs ``catalog.update_conflicts_overlay``). The sweep
+    #: dedupes on the pair ``(last_notified_digest, last_notified_event_class)`` so a
+    #: digest re-classified between the two classes (e.g. an overlaid API whose upstream
+    #: now collides with the overlay's base) emits the new class **once** instead of
+    #: being wrongly deduped against the old one. NULL until the first notify.
+    last_notified_event_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), nullable=False, default=utcnow, server_default=func.now()

@@ -49,6 +49,16 @@ class IngestSpecification(BaseModel):
     # display surfaces can derive friendly titles without reverse-engineering
     # the slugified vendor/name tuple.
     catalog_api_id: str | None = None
+    #: Overlay-only: the base revision's ``spec_digest`` this overlay was materialized
+    #: over (distinct from ``sha``, which is the overlaid digest). Persisted on the
+    #: resulting ``api_revisions`` row so the Flow-3 sweep can diff upstream against the
+    #: overlay's base. NULL for non-overlay ingests.
+    overlay_base_digest: str | None = None
+    #: Authorized-supersede flag (A4b): when a catalog re-import is allowed to replace a
+    #: live confirmed overlay, the current revision may be overlay-origin (not catalog),
+    #: so the stage must archive *every* active revision rather than only the same-origin
+    #: one. Set only by the scope-checked enqueue path; ``False`` for ordinary imports.
+    supersede_active: bool = False
 
     def to_log_string(self) -> str:
         fields = self.model_dump(exclude={"content"})

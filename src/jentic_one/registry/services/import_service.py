@@ -7,6 +7,7 @@ It fetches/parses OpenAPI/Arazzo sources and creates draft ApiRevisions.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -24,7 +25,7 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events import settle_actionable_events
 from jentic_one.shared.jobs.handlers import JobResultPayload
-from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType
+from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType, OverlayStatus
 from jentic_one.shared.models.events import EventType
 
 logger = structlog.get_logger(__name__)
@@ -70,6 +71,7 @@ class ImportHandler:
             payload = payload or {}
             sources = payload.get("sources", [])
             overlay_id = payload.get("overlay_id")
+            supersede_overlay_id = payload.get("supersede_overlay_id")
             resolved_actor_type = ActorType(actor_type) if actor_type else ActorType.USER
             revisions: list[dict[str, Any]] = []
             failures: list[str] = []
@@ -134,6 +136,37 @@ class ImportHandler:
             for rev in revisions:
                 await self._settle_update_available(job_id, created_by, rev["api"], session)
 
+            # A4b worker step: an authorized catalog re-import that supersedes a live
+            # confirmed overlay. The re-ingest archived the overlay's revision (the
+            # supersede_active stage archived *all* active revisions), so the served spec
+            # is now the fresh upstream. Auto-deprecate the overlay so its lifecycle
+            # reflects reality. Two cases reach a correct end state:
+            #   - clean first run: the fresh revision was created this attempt; deprecate.
+            #   - duplicate-on-retry: a prior attempt already committed the fresh revision
+            #     and made it current, then crashed *before* the (separate-transaction)
+            #     deprecate. The retry re-ingests identical content → DuplicateRevisionError
+            #     → no new revision, a failure. Without recovery the deprecate is skipped
+            #     and the job dead-letters, leaving the overlay stuck CONFIRMED over an
+            #     archived revision. So treat "served spec is already the fresh upstream"
+            #     as success and (idempotently, CAS on CONFIRMED) deprecate + settle.
+            recovered_supersede = False
+            if supersede_overlay_id:
+                if revisions and not failures:
+                    await self._deprecate_superseded_overlay(job_id, str(supersede_overlay_id))
+                elif not revisions and len(sources) == 1:
+                    recovered_api_id = await self._recover_supersede(
+                        job_id, str(supersede_overlay_id), sources[0]
+                    )
+                    recovered_supersede = recovered_api_id is not None
+                    if recovered_api_id is not None:
+                        # The served spec is already the fresh upstream; settle the Flow-3
+                        # prompts the (now-durable) adoption resolved, mirroring the clean
+                        # path. Keyed on the resolved api_id — the URL source carries no
+                        # version triple to re-resolve from.
+                        await self._settle_events_for_api_id(
+                            job_id, created_by, recovered_api_id, session
+                        )
+
             # Overlay materialization: link the confirmed overlay to the revision the
             # re-ingest just produced, so the served spec and the overlay agree on which
             # revision embodies the applied change. ``overlay_id`` is set only by
@@ -176,8 +209,15 @@ class ImportHandler:
             #
             # Exception: an overlay recovery job whose only failure was "identical
             # content already exists" *did* achieve its goal (the revision exists and
-            # we linked it above) — treat it as success, not a failed job.
-            if failures and not revisions and not recovered_overlay_link:
+            # we linked it above) — treat it as success, not a failed job. Same for a
+            # supersede re-import recovered on duplicate-retry (fresh upstream already
+            # served, overlay deprecated) — see _recover_supersede.
+            if (
+                failures
+                and not revisions
+                and not recovered_overlay_link
+                and not recovered_supersede
+            ):
                 raise IngestJobError(
                     f"all {len(sources)} import source(s) failed: " + "; ".join(failures)
                 )
@@ -235,16 +275,108 @@ class ImportHandler:
                 overlay_id=overlay_id,
             )
 
+    async def _deprecate_superseded_overlay(self, job_id: str, overlay_id: str) -> None:
+        """Auto-deprecate an overlay superseded by an authorized catalog re-import (A4b).
+
+        The re-ingest already archived the overlay's materialized revision and made the
+        fresh upstream the served spec; this only flips the overlay's own lifecycle to
+        DEPRECATED (CAS on it still being CONFIRMED) so status reflects reality. Runs in
+        its own registry_db transaction — a failure here does not undo the durable
+        re-ingest, so it is logged rather than raised (the served spec is already correct;
+        only the overlay's status label lags and can be repaired).
+        """
+        try:
+            async with self._ctx.registry_db.transaction() as session:
+                demoted = await OverlayRepository.set_status(
+                    session,
+                    overlay_id,
+                    OverlayStatus.DEPRECATED,
+                    deprecated_at=datetime.now(UTC),
+                    expected_status=OverlayStatus.CONFIRMED,
+                )
+            if demoted == 0:
+                logger.warning(
+                    "overlay_supersede_not_deprecated",
+                    job_id=job_id,
+                    overlay_id=overlay_id,
+                    reason="overlay_not_confirmed_or_missing",
+                )
+        except Exception:
+            logger.exception(
+                "overlay_supersede_deprecate_failed",
+                job_id=job_id,
+                overlay_id=overlay_id,
+            )
+
+    async def _recover_supersede(
+        self, job_id: str, overlay_id: str, source: Any
+    ) -> uuid.UUID | None:
+        """Recover an interrupted A4b supersede after a duplicate-on-retry re-ingest.
+
+        Mirrors ``_recover_overlay_link`` for the supersede path. A prior attempt already
+        committed the fresh upstream revision and made it current, then crashed before the
+        separate-transaction deprecate ran; the retry re-ingests identical content and
+        fails with ``DuplicateRevisionError`` (no new revision). Returns the resolved
+        ``api_id`` — so the caller completes the job (instead of dead-lettering) and settles
+        events — when the served revision is now a *non-overlay* (upstream) revision,
+        meaning the supersede's durable effect already landed. In that case it also
+        (idempotently, CAS on CONFIRMED) deprecates the overlay to finish the interrupted
+        step. Returns ``None`` for a genuine failure (served revision is still the overlay,
+        or identity can't be resolved).
+
+        Identity is resolved by the source's upstream ``url`` (the catalog ``spec_url``),
+        *not* the (vendor, name, version) triple: the production supersede source is a
+        ``type:"url"`` payload built by ``CatalogService._to_import_source`` that has no
+        ``version`` key (the version isn't known until the spec is fetched). Keying on the
+        served revision's ``source_url`` — the same provenance the enqueue-time gate uses
+        (``current_revision_for_source_url``) — is what lets this fire on the real path.
+        """
+        src = source if isinstance(source, dict) else {}
+        url = src.get("url")
+        if not isinstance(url, str):
+            return None
+        try:
+            async with self._ctx.registry_db.session() as session:
+                current = await ApiRevisionRepository.current_revision_for_source_url(session, url)
+                if current is None:
+                    return None
+                api_id, current_revision_id = current
+                origin = await ApiRevisionRepository.origin_of(session, current_revision_id)
+                if origin is None:
+                    return None
+                # The supersede's durable effect is "served revision is the fresh upstream"
+                # (non-overlay). If the current revision is still the overlay, the prior
+                # attempt did not actually supersede — this is a real duplicate failure.
+                if origin == ORIGIN_OVERLAY:
+                    return None
+            logger.info(
+                "overlay_supersede_recovered_existing_revision",
+                job_id=job_id,
+                overlay_id=overlay_id,
+                revision_id=str(current_revision_id),
+            )
+        except Exception:
+            logger.exception(
+                "overlay_supersede_recovery_failed", job_id=job_id, overlay_id=overlay_id
+            )
+            return None
+        # Finish the interrupted deprecate (idempotent: CAS on CONFIRMED — a no-op if a
+        # prior attempt already demoted it).
+        await self._deprecate_superseded_overlay(job_id, overlay_id)
+        return api_id
+
     async def _settle_update_available(
         self, job_id: str, actor_id: str, api: dict[str, Any], session: Any
     ) -> None:
-        """Clear any outstanding ``catalog.update_available`` for the (re-)imported API.
+        """Clear outstanding Flow-3 update prompts for the (re-)imported API.
 
-        A successful import adopts the upstream spec, so the Flow-3 update prompt for that
-        API is resolved. Best-effort: resolve the local ``api_id`` from the spec triple,
-        then acknowledge matching actionable events (matched on the event payload's
-        ``api_id``). Never fails the import — the served spec is already correct; a missed
-        settle only leaves a stale inbox item that the next re-import clears.
+        A successful import adopts the upstream spec, so both the routine
+        ``catalog.update_available`` prompt **and** any ``catalog.update_conflicts_overlay``
+        prompt (A4c — the operator adopted upstream over an overlay) are resolved for that
+        API. Best-effort: resolve the local ``api_id`` from the spec triple, then
+        acknowledge matching actionable events of either class (matched on the event
+        payload's ``api_id``). Never fails the import — the served spec is already correct;
+        a missed settle only leaves a stale inbox item that the next re-import clears.
 
         ``session`` is the handler's own jobs/admin write session (events live in the admin
         DB). We deliberately reuse it rather than opening a second admin transaction: the
@@ -252,7 +384,7 @@ class ImportHandler:
         ``JobWorker._execute_handler``), and on SQLite's single writer a nested admin
         transaction would deadlock against that outer one — no retry can win because the
         blocker is our own call stack. Reusing the session also makes the ack atomic with
-        the import. The settle runs in a SAVEPOINT so a failure rolls back only itself,
+        the import. Each settle runs in a SAVEPOINT so a failure rolls back only itself,
         leaving the surrounding import (and its completion event) intact.
         """
         vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
@@ -265,23 +397,51 @@ class ImportHandler:
                 )
             if resolved is None:
                 return
-            async with session.begin_nested():
-                settled = await settle_actionable_events(
-                    session,
-                    event_type=EventType.CATALOG_UPDATE_AVAILABLE,
-                    acknowledged_by=actor_id,
-                    acknowledgement_note="Resolved by re-import of the upstream spec",
-                    data_match={"api_id": str(resolved.id)},
-                )
-            if settled:
-                logger.info(
-                    "catalog_update_available_settled",
-                    job_id=job_id,
-                    api_id=str(resolved.id),
-                    settled=settled,
-                )
         except Exception:
             logger.exception("catalog_update_available_settle_failed", job_id=job_id)
+            return
+        await self._settle_events_for_api_id(job_id, actor_id, resolved.id, session)
+
+    async def _settle_events_for_api_id(
+        self, job_id: str, actor_id: str, api_id: uuid.UUID, session: Any
+    ) -> None:
+        """Ack both Flow-3 update event classes for a resolved ``api_id``.
+
+        Split from ``_settle_update_available`` so callers that already hold the resolved
+        ``api_id`` (e.g. the supersede-recovery path, whose URL source carries no version
+        triple to re-resolve) can settle directly. Per-type isolation: settle each event
+        class in its own SAVEPOINT + try, so a failure settling one class (e.g. the plain
+        update) does not skip the other — for the A4c adopt-over-overlay case the conflict
+        event is the one that most matters, and it must be acked even if the plain-update
+        settle errors first.
+        """
+        for event_type in (
+            EventType.CATALOG_UPDATE_AVAILABLE,
+            EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
+        ):
+            try:
+                async with session.begin_nested():
+                    settled = await settle_actionable_events(
+                        session,
+                        event_type=event_type,
+                        acknowledged_by=actor_id,
+                        acknowledgement_note="Resolved by re-import of the upstream spec",
+                        data_match={"api_id": str(api_id)},
+                    )
+                if settled:
+                    logger.info(
+                        "catalog_update_event_settled",
+                        job_id=job_id,
+                        api_id=str(api_id),
+                        event_type=event_type,
+                        settled=settled,
+                    )
+            except Exception:
+                logger.exception(
+                    "catalog_update_event_settle_failed",
+                    job_id=job_id,
+                    event_type=event_type,
+                )
 
     async def _recover_overlay_link(self, job_id: str, overlay_id: str, source: Any) -> bool:
         """Link an overlay to its already-materialized revision after a duplicate re-ingest.

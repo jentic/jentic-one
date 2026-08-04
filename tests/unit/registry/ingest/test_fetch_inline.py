@@ -1,6 +1,7 @@
 """Tests for inline spec loading via load_specification."""
 
 import hashlib
+from typing import Any
 
 import pytest
 import yaml
@@ -10,9 +11,7 @@ from jentic_one.registry.ingest.fetch import InlineSource, load_specification
 from jentic_one.shared.config import IngestConfig
 
 
-def _make_inline(
-    content: str, filename: str = "openapi.yaml", **kwargs: str | None
-) -> InlineSource:
+def _make_inline(content: str, filename: str = "openapi.yaml", **kwargs: Any) -> InlineSource:
     return InlineSource(type="inline", content=content, filename=filename, **kwargs)
 
 

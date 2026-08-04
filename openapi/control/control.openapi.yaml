@@ -8646,6 +8646,94 @@ paths:
       summary: Confirm Overlay
       tags:
       - Overlays
+  /apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback:
+    post:
+      description: |-
+        Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+
+        Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
+        rewrites the API's served spec (it archives the overlay's materialized revision and
+        promotes the prior revision back to current), so it is the same operator action as
+        confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
+        carry a recorded superseded revision that is still restorable; otherwise a 409 is
+        returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
+        changes.
+      operationId: rollbackOverlay
+      parameters:
+      - in: path
+        name: vendor
+        required: true
+        schema:
+          title: Vendor
+          type: string
+      - in: path
+        name: name
+        required: true
+        schema:
+          title: Name
+          type: string
+      - in: path
+        name: version
+        required: true
+        schema:
+          title: Version
+          type: string
+      - in: path
+        name: overlay_id
+        required: true
+        schema:
+          title: Overlay Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Rollback Overlay
+      tags:
+      - Overlays
   /apis/{vendor}/{name}/{version}/revisions:
     get:
       description: List revisions for an API with optional state filter and cursor pagination.

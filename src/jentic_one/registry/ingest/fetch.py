@@ -13,6 +13,7 @@ from jentic_one.registry.ingest.api_identifier import resolve_api_identifier
 from jentic_one.registry.ingest.exc import IngestStageError
 from jentic_one.registry.ingest.models import IngestSpecification, SpecType
 from jentic_one.shared.config import IngestConfig
+from jentic_one.shared.egress import build_pinned_transport
 from jentic_one.shared.models import ApiRevisionSourceType
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -37,6 +38,13 @@ class InlineSource(BaseModel):
     #: catalog-originated spec (e.g. overlay materialization). ``None`` for
     #: genuine pastes.
     catalog_api_id: str | None = None
+    #: Overlay-only: the base revision's ``spec_digest`` this overlay is materialized
+    #: over. Propagated onto the resulting revision so the Flow-3 sweep diffs upstream
+    #: against the overlay's base rather than the overlaid digest. ``None`` otherwise.
+    overlay_base_digest: str | None = None
+    #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
+    #: confirmed overlay. Set only by the scope-checked enqueue path.
+    supersede_active: bool = False
 
 
 class UrlSource(BaseModel):
@@ -53,6 +61,10 @@ class UrlSource(BaseModel):
     #: imports. Persisted verbatim on the Api row (the `api_name` copy of the
     #: same slug gets slugified and loses the separable structure).
     catalog_api_id: str | None = None
+    #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
+    #: confirmed overlay (the current revision is then overlay-origin, so the stage must
+    #: archive every active revision). Set only by the scope-checked enqueue path.
+    supersede_active: bool = False
 
 
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
@@ -131,7 +143,9 @@ async def load_specification(
 
         try:
             async with httpx.AsyncClient(
-                timeout=cfg.fetch_timeout_s, follow_redirects=False
+                timeout=cfg.fetch_timeout_s,
+                follow_redirects=False,
+                transport=build_pinned_transport(cfg.egress),
             ) as client:
                 resp = await client.get(validated_url)
                 for _ in range(cfg.max_redirects):
@@ -193,4 +207,6 @@ async def load_specification(
         submitted_by=source.submitted_by,
         origin=source.origin,
         catalog_api_id=source.catalog_api_id,
+        overlay_base_digest=getattr(source, "overlay_base_digest", None),
+        supersede_active=source.supersede_active,
     )

@@ -255,3 +255,27 @@ async def confirm_overlay(
 
     resp = _build_overlay_response(view, request)
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
+
+
+@router.post("/{overlay_id}:rollback", status_code=204)
+async def rollback_overlay(
+    vendor: str,
+    name: str,
+    version: str,
+    overlay_id: str,
+    identity: Identity = get_current_identity(required_permissions=["overlays:confirm"]),
+    ctx: Context = Depends(get_ctx),
+) -> Response:
+    """Un-confirm a materialized overlay, restoring the revision it superseded (A5b).
+
+    Requires ``overlays:confirm`` — the symmetric inverse of confirm. Rolling back
+    rewrites the API's served spec (it archives the overlay's materialized revision and
+    promotes the prior revision back to current), so it is the same operator action as
+    confirm, not a contributor one. The overlay must be CONFIRMED, currently live, and
+    carry a recorded superseded revision that is still restorable; otherwise a 409 is
+    returned (``overlay_conflict`` or ``overlay_rollback_target_missing``) and nothing
+    changes.
+    """
+    svc = OverlayService(ctx)
+    await svc.rollback(vendor, name, version, overlay_id, identity=identity)
+    return Response(status_code=204)
