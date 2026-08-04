@@ -39,6 +39,34 @@ func TestUpdateNeeded(t *testing.T) {
 	}
 }
 
+// TestUpdateNeededStackRefGatesIndependently is the regression test for #943:
+// a CLI-only version bump must not make a stale stack look current. The stack
+// half is gated on the manifest's stack_ref, so when the CLI reached the latest
+// release but the stack never rebuilt, `update` must still offer the rebuild.
+func TestUpdateNeededStackRefGatesIndependently(t *testing.T) {
+	const latest = "v0.25.0"
+	// The wedge: CLI swapped to v0.25.0, stack still on the v0.24.0 build.
+	wedged := &config.Manifest{Ref: latest, StackRef: "v0.24.0", CLIVersion: latest}
+	stackVersion := firstNonEmpty(wedged.ResolvedStackRef(), wedged.CLIVersion)
+	if !updateNeeded(false, true, wedged.CLIVersion, stackVersion, latest) {
+		t.Error("stale stack with a current CLI reported nothing to rebuild (#943 regression)")
+	}
+
+	// Once the stack rebuild is recorded, the same invocation is a no-op.
+	rebuilt := &config.Manifest{Ref: latest, StackRef: latest, CLIVersion: latest}
+	stackVersion = firstNonEmpty(rebuilt.ResolvedStackRef(), rebuilt.CLIVersion)
+	if updateNeeded(false, true, rebuilt.CLIVersion, stackVersion, latest) {
+		t.Error("fully-updated install still offered a rebuild")
+	}
+
+	// A legacy manifest (no stack_ref) keeps its previous meaning via Ref.
+	legacy := &config.Manifest{Ref: "v0.24.0", CLIVersion: latest}
+	stackVersion = firstNonEmpty(legacy.ResolvedStackRef(), legacy.CLIVersion)
+	if !updateNeeded(false, true, legacy.CLIVersion, stackVersion, latest) {
+		t.Error("legacy manifest with a stale ref reported nothing to rebuild")
+	}
+}
+
 // TestResolveCtlTargetResolvesManifestSymlink covers the manifest branch: a
 // recorded BinaryPath that is a PATH symlink (what `jenticctl install` records
 // under a linked install) must resolve to the real file so the update swaps

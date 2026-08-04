@@ -653,18 +653,26 @@ print_path_hint() {
 # which repo/ref/commit to track. We write the CLI fields here; `jenticctl install`
 # fills in the stack fields (mode, db). binary_path records the primary
 # (jenticctl) binary; the sibling jentic binary is co-located in the same dir.
-# Preserve any previously recorded mode/db so a CLI-only re-install doesn't wipe
-# the stack metadata.
+# Preserve any previously recorded stack-owned fields (mode/db/broker_port and
+# stack_ref) so a CLI-only re-install doesn't wipe the stack metadata.
 write_manifest() {
-  local home_dir manifest now prev_mode prev_db
+  local home_dir manifest now prev_mode prev_db prev_broker_port prev_stack_ref
   home_dir="${JENTIC_HOME:-$HOME/.jentic}"
   manifest="$home_dir/install.json"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   prev_mode=""
   prev_db=""
+  prev_broker_port=""
+  prev_stack_ref=""
   if [ -f "$manifest" ]; then
-    prev_mode="$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
-    prev_db="$(sed -n 's/.*"db"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
+    prev_mode="$(manifest_field "$manifest" mode)"
+    prev_db="$(manifest_field "$manifest" db)"
+    prev_broker_port="$(manifest_field "$manifest" broker_port)"
+    # stack_ref records what the *stack* was last built from. This script only
+    # ever builds the CLI binaries, so carrying it over is what stops a CLI
+    # update from advertising the stack as current (jentic-one#943). Losing it
+    # would silently re-wedge users on a stale stack.
+    prev_stack_ref="$(manifest_field "$manifest" stack_ref)"
   fi
 
   mkdir -p "$home_dir"
@@ -672,16 +680,24 @@ write_manifest() {
     printf '{\n'
     printf '  "repo": "%s",\n' "$JENTIC_REPO"
     printf '  "ref": "%s",\n' "$JENTIC_REF"
+    if [ -n "$prev_stack_ref" ]; then printf '  "stack_ref": "%s",\n' "$prev_stack_ref"; fi
     printf '  "commit": "%s",\n' "${BUILT_COMMIT:-none}"
     printf '  "cli_version": "%s",\n' "$JENTIC_REF"
     printf '  "binary_path": "%s",\n' "$INSTALLED_PATH"
     if [ -n "$prev_mode" ]; then printf '  "mode": "%s",\n' "$prev_mode"; fi
     if [ -n "$prev_db" ]; then printf '  "db": "%s",\n' "$prev_db"; fi
+    if [ -n "$prev_broker_port" ]; then printf '  "broker_port": "%s",\n' "$prev_broker_port"; fi
     printf '  "installed_at": "%s"\n' "$now"
     printf '}\n'
   } > "$manifest"
   chmod 0600 "$manifest" 2>/dev/null || true
   ok "Recorded manifest ${C_DIM}->${C_RESET} ${manifest}"
+}
+
+# manifest_field extracts a top-level string value from the install manifest by
+# key. Kept to sed so the installer stays dependency-free (no jq).
+manifest_field() {
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -n1
 }
 
 # --- verify -----------------------------------------------------------------

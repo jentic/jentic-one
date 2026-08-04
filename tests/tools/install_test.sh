@@ -170,6 +170,52 @@ else
   pass "detect_platform: unsupported arch exits non-zero"
 fi
 
+# --- write_manifest preserves stack-owned fields across a CLI-only run ---
+# This script only ever builds the CLI binaries. `stack_ref` records what the
+# *stack* was last built from, so dropping it would let a CLI update advertise a
+# stale stack as current and wedge later updates (jentic-one#943). mode/db/
+# broker_port are likewise owned by `jenticctl install`.
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-home.XXXXXX")"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.24.0",
+  "stack_ref": "v0.24.0",
+  "commit": "aaaaaaa",
+  "cli_version": "v0.24.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "mode": "docker",
+  "db": "postgres",
+  "broker_port": "8100",
+  "installed_at": "2026-01-01T00:00:00Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.25.0" \
+    BUILT_COMMIT="bbbbbbb" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_contains "write_manifest: advances ref to the new CLI build" "$manifest_out" '"ref": "v0.25.0"'
+assert_contains "write_manifest: preserves stack_ref (#943)" "$manifest_out" '"stack_ref": "v0.24.0"'
+assert_contains "write_manifest: preserves mode" "$manifest_out" '"mode": "docker"'
+assert_contains "write_manifest: preserves db" "$manifest_out" '"db": "postgres"'
+assert_contains "write_manifest: preserves broker_port" "$manifest_out" '"broker_port": "8100"'
+
+# A fresh install (no prior manifest) must not emit an empty stack_ref: the
+# stack has not been built yet, and `""` would parse as a real (bogus) value.
+rm -f "$tmp_home/install.json"
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.25.0" \
+    BUILT_COMMIT="bbbbbbb" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_not_contains "write_manifest: fresh install omits stack_ref" "$manifest_out" 'stack_ref'
+rm -rf "$tmp_home"
+
 # --- highest_release_tag: latest canonical release tag from ls-remote output ---
 # Mirrors the Go highestReleaseTag (cli/internal/update/version.go): keep only
 # clean vX.Y.Z tags; ignore cli/v* noise, pre-releases, and peeled "^{}" lines.

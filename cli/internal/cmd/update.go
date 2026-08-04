@@ -74,6 +74,12 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	fmt.Fprint(a.Out, a.brandHeader(opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
+	// Surface the stack's own recorded build separately from the CLI's. They
+	// advance independently, and a silent divergence is exactly what left users
+	// on a stale stack with no visible cause (#943).
+	if stackRef := manifest.ResolvedStackRef(); stackRef != "" {
+		fmt.Fprintln(a.Out, theme.Field("stack", stackRef))
+	}
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
 	}
@@ -127,7 +133,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	// stack may lag behind, so the stack half must not key off the CLI binary.
 	// A --ref override always proceeds (the user asked for a specific build);
 	// re-run with --ref to force a rebuild at a pinned version.
-	stackVersion := firstNonEmpty(manifest.Ref, cliVersion)
+	stackVersion := firstNonEmpty(manifest.ResolvedStackRef(), cliVersion)
 	if !pinned && latestKnown && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
@@ -166,8 +172,26 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		if err := a.updateStack(manifest.Mode); err != nil {
 			return err
 		}
+		// Only now is the stack genuinely at `ref`. Recording it earlier (or
+		// alongside the CLI half) is what let a failed/skipped stack rebuild
+		// advertise itself as current and wedge every later update (#943).
+		a.recordStackBuild(ref)
 	}
 	return nil
+}
+
+// recordStackBuild persists the ref the stack was just built from, so the next
+// `update` gates the stack half on what was actually built. Best-effort: the
+// rebuild already succeeded, so a manifest write failure must not fail the
+// command — it only costs a redundant rebuild next time.
+func (a *App) recordStackBuild(ref string) {
+	m, _, err := config.LoadManifest(a.Paths)
+	if err != nil {
+		return
+	}
+	if err := m.RecordStackBuild(a.Paths, ref); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record stack version: %v", err))
+	}
 }
 
 // brewUpgradeCLI refreshes a Homebrew-managed CLI by delegating to
