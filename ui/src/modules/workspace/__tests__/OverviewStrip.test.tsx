@@ -96,6 +96,8 @@ describe('OverviewStrip — update-available re-import', () => {
 		await user.click(confirm);
 		await waitFor(() => expect(importedApiId).toBe('stripe.com'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+		// Await the async poll's completion toast so the state update settles inside act().
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
 	it('mutes update notifications via the snooze endpoint on click', async () => {
@@ -163,6 +165,7 @@ describe('OverviewStrip — update-available re-import', () => {
 		// The catalog api_id threaded is the API's vendor (manifest domain).
 		await waitFor(() => expect(importedApiId).toBe('stripe.com'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
 	it('threads the umbrella catalog_api_id (domain/sub), not the vendor, on re-import', async () => {
@@ -209,6 +212,7 @@ describe('OverviewStrip — update-available re-import', () => {
 		// The full umbrella id is used — the bare vendor would 404 the re-import.
 		await waitFor(() => expect(importedApiId).toBe('nytimes.com/article_search'));
 		expect(await screen.findByText('Re-import started')).toBeInTheDocument();
+		expect(await screen.findByText('Re-import complete')).toBeInTheDocument();
 	});
 
 	it('polls the re-import job to completion before signalling done (badge clears only after the revision lands)', async () => {
