@@ -8,7 +8,7 @@ from typing import ClassVar
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
-from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository
+from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, OverlayRepository
 from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionSourceType
 
 
@@ -72,8 +72,28 @@ class CreateRevisionStage(BasePipelineStage):
                 # *before* the archive) so the overlay can record it for a later
                 # deterministic rollback (A5b). None if the API had no current revision
                 # (a first-ever materialize) — the overlay then has no rollback target.
+                #
+                # Re-materialize on edit (D1): when the current revision is the output of
+                # *this same overlay* (an edit re-materializing over its unchanged clean
+                # base), do NOT re-capture a superseded id: that would move the overlay's
+                # rollback target from the original clean base onto its own previous output,
+                # so a later rollback would restore an orphaned overlay revision instead of
+                # the clean upstream base. Producing nothing makes the worker pass None, and
+                # set_confirmed_revision preserves the existing clean-base pointer (never
+                # clobbers with None). But a *stacked* confirm — a different overlay B being
+                # materialized over overlay A's live output — must still capture A's revision
+                # as B's superseded target (B is a new overlay with a NULL pointer), so we
+                # only skip when the current revision belongs to the very overlay this job
+                # materializes. The previous overlay revision is still archived below either
+                # way (retained in the chain).
                 api = await ApiRepository.get_by_id(ctx.session, api_id)
-                if api is not None and api.current_revision_id is not None:
+                if (
+                    api is not None
+                    and api.current_revision_id is not None
+                    and not await self._is_self_rematerialize(
+                        ctx, api_id, api.current_revision_id, spec.overlay_id
+                    )
+                ):
                     ctx.produce("superseded_revision_id", api.current_revision_id, uuid.UUID)
                 await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
             else:
@@ -122,6 +142,29 @@ class CreateRevisionStage(BasePipelineStage):
                 created_by=ctx.created_by,
             )
         ctx.produce("revision_id", revision.id, uuid.UUID)
+
+    @staticmethod
+    async def _is_self_rematerialize(
+        ctx: PipelineContext,
+        api_id: uuid.UUID,
+        current_revision_id: uuid.UUID,
+        overlay_id: str | None,
+    ) -> bool:
+        """True when this overlay ingest re-materializes the overlay that owns the current revision.
+
+        A re-materialize-on-edit (D1) supersedes the overlay's *own* previous output, so the
+        overlay must keep its original clean-base ``superseded_revision_id`` (don't re-capture).
+        A stacked confirm of a *different* overlay over a live overlay's output must instead
+        capture the current revision as the new overlay's rollback target — so we only treat it
+        as a self-re-materialize when the overlay backing the current revision is exactly the
+        one this job carries. Cheap: a single indexed lookup, and only when both ids are known.
+        """
+        if overlay_id is None:
+            return False
+        owner = await OverlayRepository.get_live_confirmed_for_revision(
+            ctx.session, api_id, current_revision_id
+        )
+        return owner is not None and owner.id == overlay_id
 
 
 CreateDraftRevisionStage = CreateRevisionStage

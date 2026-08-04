@@ -59,6 +59,13 @@ class IngestSpecification(BaseModel):
     #: so the stage must archive *every* active revision rather than only the same-origin
     #: one. Set only by the scope-checked enqueue path; ``False`` for ordinary imports.
     supersede_active: bool = False
+    #: Overlay-only: the id of the overlay this materialize job is (re-)materializing. Lets
+    #: ``CreateRevisionStage`` tell a *re-materialize of the same overlay* (skip re-capturing
+    #: ``superseded_revision_id`` so the overlay keeps its original clean base for rollback,
+    #: D1) apart from a *stacked confirm of a different overlay* over a live overlay's output
+    #: (which must capture the current revision as the new overlay's superseded target). NULL
+    #: for non-overlay ingests. Server-set (never client-controlled), like ``supersede_active``.
+    overlay_id: str | None = None
 
     def to_log_string(self) -> str:
         fields = self.model_dump(exclude={"content"})

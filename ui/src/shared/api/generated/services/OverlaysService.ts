@@ -165,6 +165,16 @@ export class OverlaysService {
     /**
      * Update Overlay
      * Update an overlay's document or target revision.
+     *
+     * Editing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an
+     * ordinary contributor edit — ``apis:write``. Editing a *materialized* overlay
+     * (CONFIRMED and currently serving) instead **re-materializes** it: the edited document
+     * is re-applied over the overlay's original pre-overlay base and re-ingested, rewriting
+     * the API's served spec (D1). That is an operator action, so it additionally requires
+     * ``overlays:confirm``; a caller with only ``apis:write`` gets a 403
+     * (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
+     * overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
+     * if no clean base was recorded to re-apply over.
      * @returns any Successful Response
      * @throws ApiError
      */
