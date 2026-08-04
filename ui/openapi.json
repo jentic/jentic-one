@@ -14762,7 +14762,7 @@
         ]
       },
       "patch": {
-        "description": "Update an overlay's document or target revision.",
+        "description": "Update an overlay's document or target revision.\n\nEditing a *pending* overlay (or a stuck CONFIRMED-but-unmaterialized one) is an\nordinary contributor edit — ``apis:write``. Editing a *materialized* overlay\n(CONFIRMED and currently serving) instead **re-materializes** it: the edited document\nis re-applied over the overlay's original pre-overlay base and re-ingested, rewriting\nthe API's served spec (D1). That is an operator action, so it additionally requires\n``overlays:confirm``; a caller with only ``apis:write`` gets a 403\n(``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the\noverlay is no longer the live revision, and with ``overlay_rollback_target_missing``\nif no clean base was recorded to re-apply over.",
         "operationId": "updateOverlay",
         "parameters": [
           {

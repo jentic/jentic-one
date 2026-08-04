@@ -22,6 +22,7 @@ from jentic_one.registry.services.errors import (
     OperationNotFoundError,
     OverlayApplyConflictError,
     OverlayNotFoundError,
+    OverlayRematerializeForbiddenError,
     OverlayRollbackTargetMissingError,
     OverlayStateConflictError,
     OverlaySupersedeForbiddenError,
@@ -49,6 +50,10 @@ _ERROR_MAP: dict[type[Exception], tuple[int, str]] = {
     # lacks overlays:confirm. 403 (not 409) — it's an authorization decision, and an
     # operator-facing conflict event was re-emitted for someone who can resolve it.
     OverlaySupersedeForbiddenError: (403, "overlay_supersede_forbidden"),
+    # Editing a materialized overlay re-materializes it onto the served spec (D1), which
+    # is an operator action requiring overlays:confirm. A caller with only apis:write is
+    # refused with 403 rather than silently rewriting what the platform serves.
+    OverlayRematerializeForbiddenError: (403, "overlay_rematerialize_forbidden"),
     # Snooze/mute (C1): quieting a real upstream-drift notification is an operator
     # event-management action (events:write). A caller without it gets 403.
     SnoozeForbiddenError: (403, "snooze_forbidden"),

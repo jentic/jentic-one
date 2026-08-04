@@ -621,6 +621,339 @@ async def test_overlay_rollback_conflict_when_not_live(
         assert api.current_revision_id == base_revision_id
 
 
+async def _rematerialize_via_service(
+    handler: ImportHandler,
+    integration_context: Context,
+    *,
+    vendor: str,
+    name: str,
+    version: str,
+    overlay_id: str,
+    document: dict[str, Any],
+    identity: Identity,
+) -> uuid.UUID:
+    """Drive OverlayService.update's re-materialize and run the enqueued job.
+
+    Integration tests have no worker polling admin_db, so capture the job payload the
+    service enqueues (the unit under test builds it — clean base + overlaid doc) and run
+    it through the handler here, returning the new revision id. This exercises the whole
+    D1 path: service authorize/guard/apply → enqueue → worker ingest/relink.
+    """
+    captured: dict[str, Any] = {}
+
+    async def _capture(self: OverlayService, *args: Any, **kwargs: Any) -> None:
+        captured["overlaid_spec"] = kwargs["overlaid_spec"]
+        captured["base_source_url"] = kwargs["base_source_url"]
+        captured["base_digest"] = kwargs["base_digest"]
+
+    with patch.object(OverlayService, "_enqueue_materialize_job", _capture):
+        await OverlayService(integration_context).update(
+            vendor, name, version, overlay_id, document=document, identity=identity
+        )
+
+    assert "overlaid_spec" in captured, "re-materialize did not enqueue a job"
+    result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(captured["overlaid_spec"]),
+                    "filename": "openapi.json",
+                    "vendor": vendor,
+                    "api_name": name,
+                    "version": version,
+                    "origin": "overlay",
+                    "source_url": captured["base_source_url"],
+                    "overlay_base_digest": captured["base_digest"],
+                    "overlay_id": overlay_id,
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by=identity.sub,
+    )
+    return uuid.UUID(result.body["revisions"][0]["revision_id"])
+
+
+async def test_rematerialize_on_edit_reapplies_over_clean_base_and_keeps_chain(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """D1: editing a live confirmed overlay re-materializes over the ORIGINAL clean base.
+
+    Sets up the committed post-materialize state (base archived, overlay revision current
+    and CONFIRMED, superseded/confirmed linked). Editing the overlay document via
+    ``OverlayService.update`` must:
+
+    - re-apply the *edited* document over the pre-overlay clean base (not the overlay's own
+      output — no double-apply),
+    - promote a new overlay revision to current and archive the prior overlay revision
+      (the full chain is retained),
+    - keep ``superseded_revision_id`` pointing at the clean base (so a later rollback still
+      restores upstream, not an orphaned overlay output),
+    - relink ``confirmed_revision_id`` to the new revision.
+    """
+    handler = ImportHandler(integration_context)
+    base_revision_id = await _import_base(
+        handler, vendor="rem-vendor", name="rem-api", version="1.0.0", origin="catalog"
+    )
+    async with registry_db.session() as session:
+        base_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        base_digest = base_rev.spec_digest
+        api = (await session.execute(select(Api).where(Api.vendor == "rem-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    # First materialize (the confirm path): overlay v1 becomes current over the clean base.
+    v1_id = await _rematerialize_via_service_first(
+        handler, api_id, overlay_id, base_digest, registry_db
+    )
+
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
+
+    # Edit the overlay: rewrite servers to a *different* URL than the first materialize.
+    edited_doc = {
+        "overlay": "1.0.0",
+        "actions": [
+            {"target": "$.servers", "remove": True},
+            {"target": "$", "update": {"servers": [{"url": "https://edited.example.com"}]}},
+        ],
+    }
+    v2_id = await _rematerialize_via_service(
+        handler,
+        integration_context,
+        vendor="rem-vendor",
+        name="rem-api",
+        version="1.0.0",
+        overlay_id=overlay_id,
+        document=edited_doc,
+        identity=identity,
+    )
+    assert v2_id not in (base_revision_id, v1_id)
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == v2_id  # new revision is served
+
+        v2_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == v2_id))
+        ).scalar_one()
+        # Applied over the CLEAN base (its overlay_base_digest is the base's), not v1.
+        assert v2_rev.overlay_base_digest == base_digest
+
+        v1_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == v1_id))
+        ).scalar_one()
+        assert v1_rev.state == "archived"  # prior overlay revision retained, archived
+        base_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        assert base_rev.state == "archived"  # clean base still archived
+
+        spec_file = (
+            await session.execute(select(SpecFile).where(SpecFile.revision_id == v2_id))
+        ).scalar_one()
+        # The EDITED servers are served, proving the edit re-applied over the clean base.
+        assert spec_file.content["servers"] == [{"url": "https://edited.example.com"}]
+
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.confirmed_revision_id == v2_id
+        # Superseded pointer stays the CLEAN base across the edit (not moved onto v1).
+        assert overlay_row.superseded_revision_id == base_revision_id
+
+    # A rollback after the edit restores the clean base (not the orphaned v1 output).
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+    await OverlayService(integration_context).rollback(
+        "rem-vendor", "rem-api", "1.0.0", overlay_id, identity=identity
+    )
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == base_revision_id
+
+
+async def _rematerialize_via_service_first(
+    handler: ImportHandler,
+    api_id: uuid.UUID,
+    overlay_id: str,
+    base_digest: str | None,
+    registry_db: DatabaseSession,
+) -> uuid.UUID:
+    """Run the initial materialize job (confirm path) and flip the overlay to CONFIRMED."""
+    result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "Overlay Base", "version": "1.0.0"},
+                            "servers": [{"url": "https://new.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "rem-vendor",
+                    "api_name": "rem-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "overlay_base_digest": base_digest,
+                    "overlay_id": overlay_id,
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    v1_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+    return v1_id
+
+
+async def test_stacked_overlay_confirm_captures_prior_overlay_as_superseded(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """Confirming overlay B over live overlay A captures A's revision as B's superseded target.
+
+    Regression guard for the D1 superseded-capture skip: that skip must fire only for a
+    *re-materialize of the same overlay*, NOT for a *different* overlay stacked on a live
+    overlay's output. If the skip over-fired here, overlay B would get a NULL
+    superseded_revision_id and could never be rolled back or re-materialized. Confirm B is
+    linked to A's revision and can roll back to it.
+    """
+    handler = ImportHandler(integration_context)
+    base_revision_id = await _import_base(
+        handler, vendor="stk-vendor", name="stk-api", version="1.0.0", origin="catalog"
+    )
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "stk-vendor"))).scalar_one()
+        api_id = api.id
+        overlay_a = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay_a)
+        await session.commit()
+        overlay_a_id = overlay_a.id
+
+    def _overlaid(url: str) -> str:
+        return json.dumps(
+            {
+                "openapi": "3.1.0",
+                "info": {"title": "Overlay Base", "version": "1.0.0"},
+                "servers": [{"url": url}],
+                "paths": {
+                    "/items": {
+                        "get": {
+                            "operationId": "listItems",
+                            "responses": {"200": {"description": "OK"}},
+                        }
+                    }
+                },
+            }
+        )
+
+    async def _materialize(overlay_id: str, url: str) -> uuid.UUID:
+        result = await handler.execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "inline",
+                        "content": _overlaid(url),
+                        "filename": "openapi.json",
+                        "vendor": "stk-vendor",
+                        "api_name": "stk-api",
+                        "version": "1.0.0",
+                        "origin": "overlay",
+                        "source_url": "https://catalog.example.com/base.json",
+                        "overlay_id": overlay_id,
+                    }
+                ],
+                "overlay_id": overlay_id,
+            },
+            created_by="usr_test",
+        )
+        rev = uuid.UUID(result.body["revisions"][0]["revision_id"])
+        async with registry_db.session() as s:
+            await s.execute(
+                update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+            )
+            await s.commit()
+        return rev
+
+    # Confirm A over the clean base → A's revision is current, superseded = clean base.
+    rev_a = await _materialize(overlay_a_id, "https://a.example.com")
+    async with registry_db.session() as session:
+        a_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_a_id))
+        ).scalar_one()
+        assert a_row.superseded_revision_id == base_revision_id
+
+    # A different overlay B, stacked over A's live output.
+    async with registry_db.session() as session:
+        overlay_b = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay_b)
+        await session.commit()
+        overlay_b_id = overlay_b.id
+
+    rev_b = await _materialize(overlay_b_id, "https://b.example.com")
+    assert rev_b not in (base_revision_id, rev_a)
+
+    async with registry_db.session() as session:
+        b_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_b_id))
+        ).scalar_one()
+        # THE REGRESSION GUARD: B captured A's revision as its superseded target (not NULL,
+        # not the clean base) — the D1 skip did not over-fire for a different overlay.
+        assert b_row.superseded_revision_id == rev_a
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == rev_b
+
+    # B can be rolled back deterministically, restoring A's revision (not the clean base).
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
+    await OverlayService(integration_context).rollback(
+        "stk-vendor", "stk-api", "1.0.0", overlay_b_id, identity=identity
+    )
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == rev_a
+
+
 async def test_authorized_supersede_reimport_deprecates_overlay(
     integration_context: Context,
     registry_db: DatabaseSession,

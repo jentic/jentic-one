@@ -15,6 +15,8 @@ from jentic_one.registry.services.errors import (
     NoCurrentRevisionError,
     OverlayApplyConflictError,
     OverlayNotFoundError,
+    OverlayRematerializeForbiddenError,
+    OverlayRollbackTargetMissingError,
     OverlayStateConflictError,
 )
 from jentic_one.registry.services.overlay_service import (
@@ -26,6 +28,11 @@ from jentic_one.registry.services.overlay_service import (
 from jentic_one.shared.auth.identity import Identity
 
 _IDENTITY = Identity(sub="usr_test", email="test@example.com")
+#: An operator identity that holds overlays:confirm — required to re-materialize an
+#: overlay on edit (D1). The plain _IDENTITY above holds only the route floor (apis:write).
+_OPERATOR = Identity(
+    sub="usr_operator", email="operator@example.com", permissions=["overlays:confirm"]
+)
 
 _BASE_SPEC = {
     "openapi": "3.0.0",
@@ -90,6 +97,7 @@ def _make_overlay(
     overlay.document = {"overlay": "1.0", "actions": []}
     overlay.target_revision_id = None
     overlay.confirmed_revision_id = confirmed_revision_id
+    overlay.superseded_revision_id = None
     overlay.contributed_by = "agent"
     overlay.confirmed_by_execution_id = None
     overlay.created_at = datetime(2024, 6, 1, tzinfo=UTC)
@@ -272,7 +280,7 @@ async def test_update_pending_succeeds() -> None:
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
-            side_effect=[overlay, updated_overlay],
+            side_effect=[overlay, overlay, updated_overlay],
         ),
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
@@ -294,10 +302,16 @@ async def test_update_pending_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_confirmed_raises_conflict() -> None:
+async def test_update_materialized_without_confirm_scope_forbidden() -> None:
+    """Editing a materialized overlay re-materializes it — an operator action.
+
+    A caller with only ``apis:write`` (the ordinary contributor scope, no
+    ``overlays:confirm``) editing a live materialized overlay is refused with a 403
+    (``OverlayRematerializeForbiddenError``) before anything is mutated — it would
+    otherwise rewrite the served spec.
+    """
     ctx = _make_ctx()
-    api = _make_api()
-    # A fully materialized confirmed overlay (confirmed_revision_id set) stays immutable.
+    api = _make_api_with_revision()
     overlay = _make_overlay(status="confirmed", confirmed_revision_id=uuid.uuid4())
 
     with (
@@ -311,6 +325,207 @@ async def test_update_confirmed_raises_conflict() -> None:
             new_callable=AsyncMock,
             return_value=overlay,
         ),
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        with pytest.raises(OverlayRematerializeForbiddenError) as exc_info:
+            await svc.update(
+                "acme",
+                "pets",
+                "v1",
+                "ovr_abc123def456ghi789",
+                document=_GOOD_DOC,
+                identity=_IDENTITY,
+            )
+        assert exc_info.value.overlay_id == "ovr_abc123def456ghi789"
+    mock_enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_re_materializes_over_clean_base() -> None:
+    """Editing a live materialized overlay re-applies the edit over the ORIGINAL base.
+
+    The base to re-apply over is the overlay's ``superseded_revision_id`` (its pre-overlay
+    base), never its own current output. The edited document is persisted, then a
+    re-ingest job is enqueued carrying the overlaid spec built from the clean base + the
+    base's provenance/digest.
+    """
+    ctx = _make_ctx()
+    overlay_rev = uuid.uuid4()
+    clean_base_rev = uuid.uuid4()
+    api = _make_api()
+    api.current_revision_id = overlay_rev  # the overlay is live (current == confirmed rev)
+
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    overlay.superseded_revision_id = clean_base_rev
+
+    live = MagicMock()
+    live.current_revision_id = overlay_rev
+
+    base_revision = MagicMock()
+    base_revision.source_url = "https://catalog.example.com/pets.json"
+    base_revision.spec_digest = "sha256:cleanbase"
+    spec_file = MagicMock()
+    spec_file.content = _BASE_SPEC
+
+    refreshed = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, overlay, overlay, refreshed],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=1,
+        ) as mock_update,
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRevisionRepository.get_for_api",
+            new_callable=AsyncMock,
+            return_value=base_revision,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.SpecFileRepository.get_for_revision",
+            new_callable=AsyncMock,
+            return_value=spec_file,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+            return_value="job_1",
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.update(
+            "acme",
+            "pets",
+            "v1",
+            "ovr_abc123def456ghi789",
+            document=_GOOD_DOC,
+            identity=_OPERATOR,
+        )
+
+    # The document edit was persisted (no reset_to_pending on a re-materialize).
+    assert mock_update.await_count == 1
+    assert mock_update.call_args.kwargs.get("reset_to_pending", False) is False
+    # A re-ingest was enqueued with the overlaid spec built from the CLEAN base.
+    mock_enqueue.assert_awaited_once()
+    payload = mock_enqueue.call_args.kwargs["payload"]
+    assert payload["overlay_id"] == "ovr_abc123def456ghi789"
+    source = payload["sources"][0]
+    assert source["origin"] == "overlay"
+    assert source["overlay_base_digest"] == "sha256:cleanbase"
+    assert source["source_url"] == "https://catalog.example.com/pets.json"
+    overlaid = json.loads(source["content"])
+    # _GOOD_DOC rewrites servers onto the clean base — proving apply ran over _BASE_SPEC.
+    assert overlaid["servers"] == [{"url": "https://new.example.com"}]
+    assert view.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_metadata_only_is_in_place_field_edit() -> None:
+    """A metadata-only edit (document=None) of a materialized overlay does NOT re-materialize.
+
+    Changing only advisory metadata (e.g. target_revision_id) rewrites nothing served, so it
+    stays an ordinary in-place field edit: no re-ingest is enqueued, and it does not require
+    overlays:confirm (the plain apis:write _IDENTITY suffices).
+    """
+    ctx = _make_ctx()
+    api = _make_api()
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=uuid.uuid4())
+    updated = _make_overlay(status="confirmed", confirmed_revision_id=overlay.confirmed_revision_id)
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, overlay, updated],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=1,
+        ) as mock_update,
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.update(
+            "acme",
+            "pets",
+            "v1",
+            "ovr_abc123def456ghi789",
+            document=None,
+            target_revision_id=uuid.uuid4(),
+            identity=_IDENTITY,
+        )
+
+    mock_enqueue.assert_not_awaited()  # no re-ingest for a metadata-only edit
+    assert mock_update.await_count == 1
+    assert mock_update.call_args.kwargs["document"] is None
+    assert view.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_not_live_conflicts() -> None:
+    """Re-materialize refuses when the overlay is no longer the live revision.
+
+    If the API's current revision has moved off the overlay's confirmed revision (rolled
+    back or re-imported since), there is no deterministic served spec to re-materialize
+    onto — raise a conflict and enqueue nothing.
+    """
+    ctx = _make_ctx()
+    overlay_rev = uuid.uuid4()
+    api = _make_api()
+    api.current_revision_id = overlay_rev
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    overlay.superseded_revision_id = uuid.uuid4()
+
+    live = MagicMock()
+    live.current_revision_id = uuid.uuid4()  # moved off the overlay revision
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, overlay],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
     ):
         svc = OverlayService(ctx)
         with pytest.raises(OverlayStateConflictError) as exc_info:
@@ -319,11 +534,150 @@ async def test_update_confirmed_raises_conflict() -> None:
                 "pets",
                 "v1",
                 "ovr_abc123def456ghi789",
-                document={"actions": []},
-                identity=_IDENTITY,
+                document=_GOOD_DOC,
+                identity=_OPERATOR,
             )
         assert exc_info.value.action == "update"
-        assert exc_info.value.current_state == "confirmed"
+    mock_enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_in_tx_race_bails_without_enqueue() -> None:
+    """The in-tx re-read guard bails idempotently when the overlay changed during apply.
+
+    Preconditions pass on the short read and the edit is applied over the clean base, but by
+    the time we re-read inside the persist transaction the overlay's superseded_revision_id
+    has moved (a concurrent rollback/re-import/edit landed). The guard must NOT persist or
+    enqueue — it returns the current view idempotently (the persisted doc and the enqueued
+    revision must always agree; re-issuing the PATCH self-heals).
+    """
+    ctx = _make_ctx()
+    overlay_rev = uuid.uuid4()
+    clean_base_rev = uuid.uuid4()
+    api = _make_api()
+    api.current_revision_id = overlay_rev
+
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    overlay.superseded_revision_id = clean_base_rev
+
+    live = MagicMock()
+    live.current_revision_id = overlay_rev
+
+    base_revision = MagicMock()
+    base_revision.source_url = "https://catalog.example.com/pets.json"
+    base_revision.spec_digest = "sha256:cleanbase"
+    spec_file = MagicMock()
+    spec_file.content = _BASE_SPEC
+
+    # The in-tx re-read returns an overlay whose clean base has since moved — the guard's
+    # `current.superseded_revision_id != base_revision_id` branch fires and bails.
+    raced = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    raced.superseded_revision_id = uuid.uuid4()
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            # routing read, short-read, in-tx re-read (raced → bail).
+            side_effect=[overlay, overlay, raced],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRevisionRepository.get_for_api",
+            new_callable=AsyncMock,
+            return_value=base_revision,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.SpecFileRepository.get_for_revision",
+            new_callable=AsyncMock,
+            return_value=spec_file,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",
+            new_callable=AsyncMock,
+            return_value=1,
+        ) as mock_update,
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        view = await svc.update(
+            "acme",
+            "pets",
+            "v1",
+            "ovr_abc123def456ghi789",
+            document=_GOOD_DOC,
+            identity=_OPERATOR,
+        )
+
+    # Bailed idempotently: neither persisted the edit nor enqueued a re-ingest.
+    mock_update.assert_not_awaited()
+    mock_enqueue.assert_not_awaited()
+    # Returned the current (raced) view rather than raising.
+    assert view.status == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_update_materialized_without_superseded_base_raises() -> None:
+    """Re-materialize needs a recorded clean base to re-apply over.
+
+    A first-ever materialize superseded nothing (``superseded_revision_id`` is NULL), so
+    there is no clean base to re-apply the edit over — surface
+    ``OverlayRollbackTargetMissingError`` (409) rather than double-applying.
+    """
+    ctx = _make_ctx()
+    overlay_rev = uuid.uuid4()
+    api = _make_api()
+    api.current_revision_id = overlay_rev
+    overlay = _make_overlay(status="confirmed", confirmed_revision_id=overlay_rev)
+    overlay.superseded_revision_id = None
+
+    live = MagicMock()
+    live.current_revision_id = overlay_rev
+
+    with (
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_identifier",
+            new_callable=AsyncMock,
+            return_value=api,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.ApiRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=live,
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
+            new_callable=AsyncMock,
+            side_effect=[overlay, overlay],
+        ),
+        patch(
+            "jentic_one.registry.services.overlay_service.enqueue_job",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        svc = OverlayService(ctx)
+        with pytest.raises(OverlayRollbackTargetMissingError):
+            await svc.update(
+                "acme",
+                "pets",
+                "v1",
+                "ovr_abc123def456ghi789",
+                document=_GOOD_DOC,
+                identity=_OPERATOR,
+            )
+    mock_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -350,7 +704,7 @@ async def test_update_stuck_confirmed_resets_to_pending() -> None:
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.get_for_api",
             new_callable=AsyncMock,
-            side_effect=[stuck, reset],
+            side_effect=[stuck, stuck, reset],
         ),
         patch(
             "jentic_one.registry.services.overlay_service.OverlayRepository.update_fields",

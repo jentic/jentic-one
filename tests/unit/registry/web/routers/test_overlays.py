@@ -16,6 +16,7 @@ from jentic.problem_details import ProblemDetailException, problem_detail_except
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
     OverlayNotFoundError,
+    OverlayRematerializeForbiddenError,
     OverlayStateConflictError,
 )
 from jentic_one.registry.services.overlay_service import OverlayPage, OverlayPageItem, OverlayView
@@ -216,6 +217,21 @@ def test_update_overlay_conflict(client: TestClient) -> None:
         )
 
     assert resp.status_code == 409
+
+
+def test_update_overlay_rematerialize_forbidden(client: TestClient) -> None:
+    """Editing a materialized overlay without overlays:confirm maps to 403 (D1)."""
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.update",
+        new_callable=AsyncMock,
+        side_effect=OverlayRematerializeForbiddenError(_OVERLAY_ID),
+    ):
+        resp = client.patch(
+            f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}",
+            json={"document": {"x": 1}},
+        )
+
+    assert resp.status_code == 403
 
 
 def test_deprecate_overlay_204(client: TestClient) -> None:

@@ -45,6 +45,12 @@ class InlineSource(BaseModel):
     #: Authorized-supersede flag (A4b): a catalog re-import allowed to replace a live
     #: confirmed overlay. Set only by the scope-checked enqueue path.
     supersede_active: bool = False
+    #: Overlay-only: the id of the overlay being (re-)materialized. Propagated to the
+    #: ingest spec so ``CreateRevisionStage`` can distinguish a re-materialize of the same
+    #: overlay (keep the clean-base ``superseded_revision_id``) from a stacked confirm of a
+    #: different overlay over a live overlay's output (capture the current revision). Set
+    #: only by the confirm/re-materialize enqueue path. ``None`` for non-overlay sources.
+    overlay_id: str | None = None
 
 
 class UrlSource(BaseModel):
@@ -209,4 +215,5 @@ async def load_specification(
         catalog_api_id=source.catalog_api_id,
         overlay_base_digest=getattr(source, "overlay_base_digest", None),
         supersede_active=source.supersede_active,
+        overlay_id=getattr(source, "overlay_id", None),
     )

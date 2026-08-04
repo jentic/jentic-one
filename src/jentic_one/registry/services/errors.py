@@ -253,6 +253,27 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
         self.overlay_id = overlay_id
 
 
+class OverlayRematerializeForbiddenError(RegistryServiceError):
+    """Raised when editing a *materialized* overlay would re-materialize it, but the caller can't.
+
+    D1: editing a CONFIRMED, live overlay re-applies the edited document over its base and
+    re-ingests it — rewriting the API's served spec, exactly like a confirm. That is an
+    operator action, so it requires ``overlays:confirm`` (the same gate as confirm/rollback),
+    not just the ``apis:write`` an ordinary contributor holds to edit a *pending* overlay. A
+    caller with only ``apis:write`` editing a materialized overlay is refused with a 403
+    rather than silently rewriting what the platform serves. (Editing a pending — or a
+    stuck-unmaterialized — overlay stays ``apis:write``: it changes nothing served.)
+    """
+
+    def __init__(self, overlay_id: str) -> None:
+        super().__init__(
+            f"Editing confirmed overlay '{overlay_id}' re-materializes it onto the served "
+            "spec, which requires the 'overlays:confirm' permission. Ask an operator to make "
+            "the edit, or edit it while it is still pending."
+        )
+        self.overlay_id = overlay_id
+
+
 class SnoozeForbiddenError(RegistryServiceError):
     """Raised when a caller lacks the operator scope to snooze/mute a catalog update (C1).
 
