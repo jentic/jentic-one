@@ -201,6 +201,16 @@ func (a *App) resetProfile(ctx context.Context, cfg *config.FileConfig, opts *re
 		}
 	}
 
+	// --delete-home only takes effect when this reset actually tears the account
+	// down — i.e. it's the last agent profile AND teardown is confirmed (never on
+	// a lone --force, which removes just the profile). Warn rather than silently
+	// ignore the flag, so the operator isn't left believing the home was purged.
+	if opts.deleteHome && (!lastAgentProfile || opts.force) {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"--delete-home has no effect here: it only applies when a reset tears the whole "+
+				"agent account down. Run `jentic reset` (no argument) to remove the account and its home."))
+	}
+
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  jentic reset will PERMANENTLY remove profile '"+name+"'"+
 		ownerTag(ref)+" (key, tokens, registration). This cannot be undone."))
@@ -508,6 +518,8 @@ func (a *App) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))
 	if !deleteHome && plan.homeDir != "" {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  The agent's home was kept and re-owned to you: "+plan.homeDir))
+		fmt.Fprintln(a.Out, theme.Dim.Render("  Seeded agent/provider config (e.g. ~/.claude, ~/.aws, ~/.codex) was removed from it; "+
+			"re-run with --delete-home to remove the whole home."))
 	}
 	return nil
 }
@@ -656,6 +668,21 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 			What: "remove the agent's jentic identity " + plan.configDir,
 			Cmd:  localagent.RemoveAgentIdentityCmd(plan.configDir),
 		})
+	}
+
+	// (1d) When the home is KEPT, also purge any config/provider credentials that
+	// seeding copied in (e.g. ~/.claude.json's API key, ~/.aws, ~/.codex/auth.json).
+	// Re-owning the home to the operator otherwise leaves a live provider secret the
+	// operator handed the agent sitting in the kept tree. When the home is being
+	// deleted the rm below covers it, so this only runs on the keep path.
+	if plan.homeDir != "" && !deleteHome {
+		if scrub := localagent.ScrubSeededConfigCmd(localagent.SeededConfigDirs(plan.homeDir)); scrub != nil {
+			steps = append(steps, localagent.AccountStep{
+				What:       "remove seeded agent/provider config from the kept home",
+				Cmd:        scrub,
+				BestEffort: true,
+			})
+		}
 	}
 
 	// (2) Settle the home: delete only on explicit acceptance, else re-own it to

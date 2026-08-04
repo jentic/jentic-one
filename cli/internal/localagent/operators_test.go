@@ -122,3 +122,44 @@ func TestAgentLocalBinDir(t *testing.T) {
 		t.Fatalf("AgentLocalBinDir = %q", got)
 	}
 }
+
+func TestSeededConfigDirsCoversOperatorsAndProvidersUnderHome(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	got := SeededConfigDirs(home)
+	set := map[string]bool{}
+	for _, p := range got {
+		set[p] = true
+	}
+	// Every runnable operator's config dir must be scrubbed…
+	for _, rel := range []string{".claude", ".codex", ".cursor", ".hermes"} {
+		if !set[filepath.Join(home, rel)] {
+			t.Errorf("SeededConfigDirs missing %s\n%v", rel, got)
+		}
+	}
+	// …plus the provider dirs seeding can copy in.
+	for _, rel := range []string{".aws", ".config/gcloud"} {
+		if !set[filepath.Join(home, rel)] {
+			t.Errorf("SeededConfigDirs missing provider dir %s\n%v", rel, got)
+		}
+	}
+	// Everything stays under the agent home (no escape).
+	for _, p := range got {
+		if !IsUnderHome(home, p) {
+			t.Errorf("SeededConfigDirs returned a path outside the home: %q", p)
+		}
+	}
+}
+
+func TestScrubSeededConfigCmd(t *testing.T) {
+	if ScrubSeededConfigCmd(nil) != nil {
+		t.Error("ScrubSeededConfigCmd(nil) must be a no-op (nil)")
+	}
+	cmd := ScrubSeededConfigCmd([]string{"/Users/Shared/a/.aws", "/Users/Shared/a/.codex"})
+	if cmd == nil {
+		t.Fatal("expected a command for a non-empty list")
+	}
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "rm -rf") || !strings.Contains(joined, ".aws") || !strings.Contains(joined, ".codex") {
+		t.Errorf("scrub command = %q, want rm -rf of both dirs", joined)
+	}
+}

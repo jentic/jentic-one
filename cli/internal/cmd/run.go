@@ -73,8 +73,9 @@ func newRunCmd(app *App) *cobra.Command {
 			"agent cannot read the operator's keys, browser session, or the jentic-one\n" +
 			"credential store. It provisions the agent's binary for that account if\n" +
 			"missing, resolves filesystem access to the working directory (granting a\n" +
-			"scoped ACL only when the operator confirms), and starts the session in a\n" +
-			"login shell so no operator environment leaks.\n\n" +
+			"scoped ACL only when the operator confirms), and starts the session as\n" +
+			"the agent's own Unix user in a fresh login shell, so the operator's\n" +
+			"environment and secrets are not inherited by the agent.\n\n" +
 			"Runnable agents: " + strings.Join(localagent.Known(), ", ") + ".\n" +
 			"(\"generic\" is a skill-only operator — it has no binary and cannot be run;\n" +
 			"use `jentic skill` to write its onboarding docs instead.)\n\n" +
@@ -829,7 +830,7 @@ var errCancelled = errors.New("cancelled")
 func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir, sessionProfile string, agentArgs []string) error {
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		var b strings.Builder
-		b.WriteString("fully locked-down agent sessions aren't available on this machine:\n")
+		b.WriteString("confined agent sessions aren't available on this machine:\n")
 		for _, p := range missing {
 			fmt.Fprintf(&b, "  • %s\n", p.Reason)
 			if p.Hint != "" {

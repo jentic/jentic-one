@@ -1111,6 +1111,51 @@ func ScrubSecretsCmd(paths []string) *exec.Cmd {
 	}
 	return exec.Command("sudo", "sh", "-c", b.String()) //nolint:gosec // paths are descriptor-derived, home-constrained, and shell-quoted.
 }
+
+// SeededConfigDirs returns the absolute config/credential paths that config
+// seeding could have copied INTO the agent's home — every runnable descriptor's
+// ConfigPaths (e.g. ~/.claude, ~/.codex, ~/.hermes) plus the known provider dirs
+// (~/.aws, ~/.config/gcloud) — expanded against agentHome and constrained to lie
+// under it. `jentic reset` uses this to purge seeded operator credentials from a
+// KEPT (re-owned) home, so a live API key the operator handed the agent doesn't
+// outlive the account teardown. Deduplicated; order is stable for display.
+func SeededConfigDirs(agentHome string) []string {
+	cleanHome := filepath.Clean(agentHome)
+	seen := map[string]bool{}
+	var out []string
+	add := func(rel string) {
+		abs := expandTilde(rel, agentHome)
+		if abs == "" || !IsUnderHome(cleanHome, abs) || seen[abs] {
+			return
+		}
+		seen[abs] = true
+		out = append(out, abs)
+	}
+	for _, id := range Known() {
+		for _, p := range Registry[id].ConfigPaths {
+			add(p)
+		}
+	}
+	// Provider config dirs seeded by DetectProvider (Bedrock/Vertex).
+	add("~/.aws")
+	add("~/.config/gcloud")
+	return out
+}
+
+// ScrubSeededConfigCmd removes the given absolute seeded-config paths from a kept
+// agent home, run as root because the tree may still be agent-owned when this
+// runs. Recursive (`rm -rf`) because these are directories, but every path is
+// pre-constrained to the agent's home by SeededConfigDirs. Returns nil when there
+// is nothing to scrub so the caller can skip the step cleanly.
+func ScrubSeededConfigCmd(paths []string) *exec.Cmd {
+	if len(paths) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-rf"}, paths...)
+	return exec.Command("sudo", args...) //nolint:gosec // paths are descriptor-derived and home-constrained.
+}
+
+// ProviderConfig describes the LLM provider an operator's Claude Code setup
 // authenticates against, and the local config paths that hold that provider's
 // settings. It is derived from the env block of ~/.claude/settings.json.
 type ProviderConfig struct {

@@ -35,19 +35,32 @@ the agent can already read/write/execute the target and, if not, offers
 **Allow** / **Open in agent's home** (default) / **Cancel**. An **Allow** for a
 path under `~` is built from three layers.
 
-### Layer 0 — default-deny is the confinement profile
+### Layer 0 — the confinement profile (targeted human-home deny)
 
 The agent process is launched under a per-session confinement profile
 (sandbox-exec on macOS, bwrap on Linux) that **denies every human-home root
 (`/Users`, `/home`) except the paths this session legitimately needs** — see
 [`sandbox-exec-plan.md`](sandbox-exec-plan.md). The re-allow list is the agent's
 own home, the granted directories, and metadata-traversal on their ancestors;
-everything else under `/Users` and `/home` is invisible to the agent regardless of
-its mode. We add **no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because
+everything else **under `/Users` and `/home`** is invisible to the agent regardless
+of its mode. We add **no** ACL to `~` itself, and we no longer `chmod 700 ~`. Because
 in-home confidentiality now rests on the profile being applied, `jentic run`
 **errors closed** when confinement is unavailable rather than launching an exposed
 session. This is the layer that makes the per-entry non-negotiable (grant `~/a`,
 hide `~/b`) hold — the ACLs below only ever *open* access; they never trim it.
+
+> **This is a targeted home-deny, not a strict `(deny default)` jail.** The base
+> profile stays permissive — `(allow default)` on macOS, a full `--dev-bind / /`
+> on Linux — so the agent's own runtime dependencies (its binary, dylibs, `/tmp`,
+> `/dev`, loopback socket, the shared toolchain) can't fail to start on an OS or
+> agent update. Only the human-home roots are then carved out and selectively
+> re-opened. Consequently paths **outside** `/Users` and `/home` — outbound
+> network, process execution, `/tmp`, `/etc`, `/Library`, `/opt` — remain
+> reachable; this layer is a **filesystem credential boundary around human homes**,
+> not a network/exec jail. Confidentiality of anything a would-be exfiltrator could
+> reach outside a human home (e.g. the network to send it over) is out of this
+> layer's scope; front the provider with an LLM proxy to keep provider keys out of
+> the agent account entirely.
 
 The same profile also marks the **executable/CLI routes** on the agent's PATH
 (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`, and the sanctioned
@@ -238,9 +251,21 @@ native mechanism with the same shape:
 per-entry non-negotiable exactly, (b) needs no root, (c) writes nothing to disk
 and self-cleans on exit, and (d) has a real native mechanism on *both* OSes — so
 "works on Linux and macOS" is met by a thin per-OS launcher shim rather than one
-portable call. It also composes with the existing model: the 700 home + ACL grants
-stay as defense-in-depth, and confinement narrows what the agent process can
-actually reach within them.
+portable call.
+
+> **What actually shipped is the *targeted-home-deny* variant of this axis, not
+> the idealized `(deny default)` above.** The table presents the conceptual
+> primitive (deny everything, re-allow the grants); the implementation
+> ([`confine.go`](../../../cli/internal/localagent/confine.go)) keeps the base
+> **permissive** — `(allow default)` on macOS, `--dev-bind / /` on Linux — then
+> denies the human-home roots and re-opens the grants, so the agent's own runtime
+> deps never break on an OS/agent update. The per-entry guarantee inside `/Users`
+> and `/home` still holds (grant `~/a`, `~/b` invisible); the difference is that
+> paths *outside* a human home (network, `/tmp`, `/etc`, process-exec) stay
+> reachable. See Layer 0 above for the precise scope. The `chmod 700 ~` step this
+> section originally paired with confinement has since been **removed**, so the
+> profile is now the *sole* in-home barrier — there is no 700-home fallback behind
+> it.
 
 **Open risks to resolve before committing.**
 
