@@ -53,7 +53,10 @@ class Ingestor:
 
                 async with self._ctx.registry_db.transaction() as session:
                     pipeline_ctx = PipelineContext(
-                        session=session, specification=spec, created_by=created_by
+                        session=session,
+                        specification=spec,
+                        created_by=created_by,
+                        config=self._ctx.config,
                     )
                     pipeline = PipelineFactory.from_specification(
                         spec, include_search_text=include_search_text
