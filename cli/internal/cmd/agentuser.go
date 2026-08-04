@@ -352,10 +352,12 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 			fmt.Fprintln(a.Out, theme.Dim.Render(
 				"Passwordless launch enabled (scoped to becoming the agent user, never root)."))
 		}
-	} else {
-		// The toggle is authoritative BOTH ways: on a reuse run where the operator
+	} else if reused {
+		// The toggle is authoritative BOTH ways: on a REUSE run where the operator
 		// now declines passwordless, remove any rule an earlier run installed so a
-		// stale NOPASSWD drop-in can't outlive the operator's current choice.
+		// stale NOPASSWD drop-in can't outlive the operator's current choice. Only
+		// on reuse — a freshly created account never had a rule installed, so we
+		// skip the (no-op) privileged call and its sudo prompt there.
 		// Best-effort and idempotent — a no-op when no rule is present.
 		revoke := localagent.RemoveSudoersCmd(fields.name)
 		revoke.Stdout, revoke.Stderr = a.Out, io.Discard

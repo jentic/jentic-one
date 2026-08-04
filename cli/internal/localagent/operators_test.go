@@ -97,6 +97,13 @@ func TestExpandedSecretPathsStaysUnderAgentHome(t *testing.T) {
 	if got := ExpandedSecretPaths(home, evil); len(got) != 0 {
 		t.Fatalf("ExpandedSecretPaths dropped nothing for escaping path: %v", got)
 	}
+
+	// A "~" entry that cleans to the home itself must NOT make the scrub target the
+	// whole home — it must be dropped, so a bad descriptor can't become rm $HOME.
+	homeItself := Descriptor{SecretConfigPaths: []string{"~", "~/"}}
+	if got := ExpandedSecretPaths(home, homeItself); len(got) != 0 {
+		t.Fatalf("ExpandedSecretPaths must drop the home root itself, got: %v", got)
+	}
 }
 
 func TestScrubSecretsCmd(t *testing.T) {
@@ -142,10 +149,14 @@ func TestSeededConfigDirsCoversOperatorsAndProvidersUnderHome(t *testing.T) {
 			t.Errorf("SeededConfigDirs missing provider dir %s\n%v", rel, got)
 		}
 	}
-	// Everything stays under the agent home (no escape).
+	// Everything stays under the agent home (no escape), and the home ROOT itself
+	// is never returned — a reset scrub must target descendants, never rm $HOME.
 	for _, p := range got {
 		if !IsUnderHome(home, p) {
 			t.Errorf("SeededConfigDirs returned a path outside the home: %q", p)
+		}
+		if filepath.Clean(p) == filepath.Clean(home) {
+			t.Errorf("SeededConfigDirs returned the home root itself: %q", p)
 		}
 	}
 }

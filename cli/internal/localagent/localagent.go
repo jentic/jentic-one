@@ -78,7 +78,7 @@ var Registry = map[string]Descriptor{
 		ID:         "codex",
 		Binary:     "codex",
 		ProbePaths: []string{"~/.local/bin/codex", "~/.codex/bin/codex"},
-		Install:    "curl -fsSL https://raw.githubusercontent.com/openai/codex/main/install.sh | bash",
+		Install:    "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
 		// The Codex CLI ships as a self-contained Rust binary, so copying the
 		// operator's copy is offered as the default provision route.
 		SingleBinary: true,
@@ -1084,7 +1084,10 @@ func ExpandedSecretPaths(agentHome string, desc Descriptor) []string {
 	var out []string
 	for _, p := range desc.SecretConfigPaths {
 		abs := expandTilde(p, agentHome)
-		if abs == "" || !IsUnderHome(cleanHome, abs) {
+		// Must be a STRICT descendant: a descriptor entry of "~" (or one that
+		// cleans to the home itself) must never make the scrub target the whole
+		// home. IsUnderHome is true for the home itself, so exclude that case here.
+		if abs == "" || filepath.Clean(abs) == cleanHome || !IsUnderHome(cleanHome, abs) {
 			continue
 		}
 		out = append(out, abs)
@@ -1105,7 +1108,7 @@ func ScrubSecretsCmd(paths []string) *exec.Cmd {
 		return nil
 	}
 	var b strings.Builder
-	b.WriteString("rm -f")
+	b.WriteString("rm -f --")
 	for _, p := range paths {
 		b.WriteString(" " + shellQuote(p))
 	}
@@ -1125,7 +1128,10 @@ func SeededConfigDirs(agentHome string) []string {
 	var out []string
 	add := func(rel string) {
 		abs := expandTilde(rel, agentHome)
-		if abs == "" || !IsUnderHome(cleanHome, abs) || seen[abs] {
+		// Strict descendant only: never let a "~" entry (which cleans to the home
+		// itself) turn this into `rm -rf $HOME`. IsUnderHome accepts the home root,
+		// so exclude it explicitly.
+		if abs == "" || filepath.Clean(abs) == cleanHome || !IsUnderHome(cleanHome, abs) || seen[abs] {
 			return
 		}
 		seen[abs] = true
@@ -1151,7 +1157,9 @@ func ScrubSeededConfigCmd(paths []string) *exec.Cmd {
 	if len(paths) == 0 {
 		return nil
 	}
-	args := append([]string{"rm", "-rf"}, paths...)
+	// `--` ends option parsing so a path can never be mistaken for an rm flag
+	// (belt-and-braces — every path here is an absolute home descendant).
+	args := append([]string{"rm", "-rf", "--"}, paths...)
 	return exec.Command("sudo", args...) //nolint:gosec // paths are descriptor-derived and home-constrained.
 }
 
