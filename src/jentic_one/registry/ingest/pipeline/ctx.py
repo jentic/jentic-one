@@ -18,11 +18,22 @@ class PipelineContext:
     """Carries session, specification, and a typed data bag between pipeline stages."""
 
     def __init__(
-        self, *, session: Any, specification: IngestSpecification, created_by: str
+        self,
+        *,
+        session: Any,
+        specification: IngestSpecification,
+        created_by: str,
+        config: Any | None = None,
     ) -> None:
         self.session: Any = session
         self.specification = specification
         self.created_by = created_by
+        #: The loaded AppConfig, when the caller provides it (the ingestor
+        #: does). Registered extension stages read their own config section via
+        #: ``ctx.config.extension("<name>")`` to gate themselves — built-in
+        #: stages must keep taking feature flags explicitly (like
+        #: include_search_text) rather than growing implicit config reads.
+        self.config: Any | None = config
         self._data: dict[str, Any] = {}
 
     def produce(self, key: str, value: Any, expected_type: type) -> None:
