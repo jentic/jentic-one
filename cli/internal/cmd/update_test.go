@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -139,7 +140,16 @@ func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
 	}
 	sentinel := stubDaemonDown(t)
 
-	err := app.updateStackDocker()
+	// The stack bring-up routes through the composeUp seam; a bypassed guard
+	// would reach it and fail loudly (mirrors start/stop).
+	origUp := composeUp
+	t.Cleanup(func() { composeUp = origUp })
+	composeUp = func(io.Writer, string) error {
+		t.Fatal("composeUp must not run when the daemon is down")
+		return nil
+	}
+
+	err := app.updateStackDocker(false)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("update should surface the daemon guard error, got %v", err)
 	}

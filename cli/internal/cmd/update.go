@@ -153,6 +153,21 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 
+	// In a *combined* docker-mode run, probe the daemon here — before updateCLI
+	// swaps the binaries — so a stopped daemon fails fast instead of leaving new
+	// binaries against an old, un-rebuilt stack. Scoped to doCLI so we don't
+	// probe/announce twice on the stack-only path (updateStackDocker guards
+	// itself); the daemonChecked flag then tells the stack step to skip its own
+	// probe here. The probe may poll (~30s) for a cold-starting daemon.
+	daemonChecked := false
+	if doCLI && doStack && manifest.Mode == config.ModeDocker && proc.FileExists(a.Paths.ComposePath()) {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl update"); err != nil {
+			return err
+		}
+		daemonChecked = true
+	}
+
 	if doCLI {
 		if brewManaged {
 			if err := a.brewUpgradeCLI(ctx, latest, latestKnown); err != nil {
@@ -163,7 +178,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	if doStack {
-		if err := a.updateStack(manifest.Mode); err != nil {
+		if err := a.updateStack(manifest.Mode, daemonChecked); err != nil {
 			return err
 		}
 	}
@@ -371,13 +386,13 @@ func binaryVersion(path string) (string, error) {
 // updateStack rebuilds and restarts the installed server in place, reusing the
 // existing jentic-one.yaml (no wizard). It dispatches on the recorded deploy
 // mode; an empty/unknown mode is treated as a local install.
-func (a *App) updateStack(mode string) error {
+func (a *App) updateStack(mode string, daemonChecked bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
 
 	if mode == config.ModeDocker {
-		return a.updateStackDocker()
+		return a.updateStackDocker(daemonChecked)
 	}
 	return a.updateStackLocal()
 }
@@ -410,8 +425,11 @@ func (a *App) updateStackLocal() error {
 }
 
 // updateStackDocker rebuilds the app image, applies migrations in a one-shot
-// container, and recreates the running stack with the new image.
-func (a *App) updateStackDocker() error {
+// container, and recreates the running stack with the new image. daemonChecked
+// is true when updateE already probed the daemon up front (combined run), so we
+// skip a redundant second probe/announce; a standalone/stack-only call passes
+// false and probes here.
+func (a *App) updateStackDocker(daemonChecked bool) error {
 	composePath := a.Paths.ComposePath()
 	if !proc.FileExists(composePath) {
 		return fmt.Errorf("no compose stack at %s — run `jenticctl install` first", composePath)
@@ -421,9 +439,11 @@ func (a *App) updateStackDocker() error {
 	// long image build — otherwise the build/migrations/up sequence surfaces a
 	// raw compose transport error deep into the run. The probe may poll (~30s)
 	// for a cold-starting daemon, so announce it first (see start.go/stop.go).
-	announceDaemonCheck(a.Out)
-	if err := requireDockerDaemon("jenticctl update"); err != nil {
-		return err
+	if !daemonChecked {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl update"); err != nil {
+			return err
+		}
 	}
 
 	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
@@ -442,7 +462,7 @@ func (a *App) updateStackDocker() error {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
-	if err := install.ComposeUp(a.Out, composePath); err != nil {
+	if err := composeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (docker)."))
