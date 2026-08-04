@@ -133,6 +133,16 @@ func dockerDaemonHealth() (detail string, healthy bool) {
 	return dockerDaemonProbe()
 }
 
+// daemonProbeBackoff is the pause between daemon probe attempts. Kept named so
+// the "~30s total" arithmetic in defaultDockerDaemonProbe stays self-documenting
+// (4 × 6s timeout + 3 × daemonProbeBackoff).
+const daemonProbeBackoff = 2 * time.Second
+
+// daemonUnreachableFallback is the generic reason used when a probe can't
+// extract a more specific one from Docker's output. Shared so every daemon-down
+// message reads the same when there's nothing more precise to show.
+const daemonUnreachableFallback = "the Docker daemon is not reachable"
+
 // defaultDockerDaemonProbe checks whether the Docker daemon answers a
 // server-side request. A LookPath-present client whose daemon is stopped/wedged
 // returns a non-zero exit with "Cannot connect to the Docker daemon" / "Is the
@@ -155,7 +165,7 @@ func defaultDockerDaemonProbe() (string, bool) {
 		}
 		lastDetail = detail
 		if i < attempts-1 {
-			time.Sleep(2 * time.Second)
+			time.Sleep(daemonProbeBackoff)
 		}
 	}
 	if lastDetail == "" {
@@ -190,7 +200,7 @@ func firstLine(s string) string {
 			return t
 		}
 	}
-	return "the Docker daemon is not reachable"
+	return daemonUnreachableFallback
 }
 
 // UnhealthyDaemon returns the docker check whose daemon probe failed, if any.
@@ -220,7 +230,7 @@ const dockerDaemonRecoveryHint = "start your Docker daemon " +
 func DaemonError(check CheckResult) error {
 	detail := check.DaemonDetail
 	if detail == "" {
-		detail = "the Docker daemon is not reachable"
+		detail = daemonUnreachableFallback
 	}
 	return fmt.Errorf("docker is installed but its daemon is not responding: %s — %s, "+
 		"wait until `docker info` succeeds, then re-run `jenticctl install`", detail, dockerDaemonRecoveryHint)
@@ -251,7 +261,7 @@ func RequireDockerDaemon(command string) error {
 		return nil
 	}
 	if detail == "" {
-		detail = "the Docker daemon is not reachable"
+		detail = daemonUnreachableFallback
 	}
 	return fmt.Errorf("docker is installed but its daemon is not responding: %s — %s, "+
 		"wait until `docker info` succeeds, then re-run `%s`", detail, dockerDaemonRecoveryHint, command)
@@ -269,8 +279,7 @@ func DockerDaemonRecoveryHint() string { return dockerDaemonRecoveryHint }
 // Desktop; it answers within `timeout`. It returns a short human reason (empty
 // when healthy) and whether the daemon answered.
 func DockerDaemonResponsiveQuick(timeout time.Duration) (detail string, healthy bool) {
-	detail, ok := dockerInfoOnce(timeout)
-	return detail, ok
+	return dockerInfoOnce(timeout)
 }
 
 // RenderPreflight returns a styled checklist of the probe results.
@@ -316,7 +325,7 @@ func MissingError(missing []CheckResult) error {
 		} else if r.DaemonChecked && !r.Healthy {
 			detail := r.DaemonDetail
 			if detail == "" {
-				detail = "the Docker daemon is not reachable"
+				detail = daemonUnreachableFallback
 			}
 			fmt.Fprintf(&hints, "\n  docker daemon: %s — %s, then re-run", detail, dockerDaemonRecoveryHint)
 		}
