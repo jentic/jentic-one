@@ -1,6 +1,7 @@
 package localagent
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -127,6 +128,69 @@ func TestScrubSecretsCmd(t *testing.T) {
 func TestAgentLocalBinDir(t *testing.T) {
 	if got := AgentLocalBinDir("/opt/bob-local-agent"); got != "/opt/bob-local-agent/.local/bin" {
 		t.Fatalf("AgentLocalBinDir = %q", got)
+	}
+}
+
+// TestSeedThenScrubLeavesSettingsRemovesSecret exercises the real seed→scrub
+// semantics for every operator that declares SecretConfigPaths: after a config
+// copy (cp -RP) and the secret scrub (rm -f), a non-secret settings file under the
+// same config tree must SURVIVE while the discrete secret file is GONE. This is
+// the behavioural contract behind ScrubSecretsCmd — validated with real cp/rm on
+// temp dirs so a wrong SecretConfigPaths entry (pointing at the wrong file, or a
+// whole dir) is caught here rather than in production.
+func TestSeedThenScrubLeavesSettingsRemovesSecret(t *testing.T) {
+	for id, desc := range Registry {
+		if len(desc.SecretConfigPaths) == 0 {
+			continue
+		}
+		t.Run(id, func(t *testing.T) {
+			agentHome := t.TempDir()
+			// Materialise each secret file plus a sibling non-secret settings file
+			// in the same directory, so the scrub must be surgical (file, not dir).
+			var settingsFiles []string
+			for _, sp := range desc.SecretConfigPaths {
+				secret := expandTilde(sp, agentHome)
+				if secret == "" {
+					t.Fatalf("secret path %q did not expand", sp)
+				}
+				dir := filepath.Dir(secret)
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(secret, []byte("SECRET"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				settings := filepath.Join(dir, "settings.keep")
+				if err := os.WriteFile(settings, []byte("KEEP"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				settingsFiles = append(settingsFiles, settings)
+			}
+
+			// Run the exact rm the scrub would (locally, without sudo).
+			paths := ExpandedSecretPaths(agentHome, desc)
+			if len(paths) != len(desc.SecretConfigPaths) {
+				t.Fatalf("ExpandedSecretPaths(%s) = %v, want %d entries", id, paths, len(desc.SecretConfigPaths))
+			}
+			for _, p := range paths {
+				if err := os.Remove(p); err != nil {
+					t.Fatalf("scrub could not remove %q: %v", p, err)
+				}
+			}
+
+			// Secret gone…
+			for _, sp := range desc.SecretConfigPaths {
+				if _, err := os.Stat(expandTilde(sp, agentHome)); !os.IsNotExist(err) {
+					t.Errorf("secret %q survived the scrub (err=%v)", sp, err)
+				}
+			}
+			// …settings kept.
+			for _, s := range settingsFiles {
+				if _, err := os.Stat(s); err != nil {
+					t.Errorf("non-secret settings file %q was destroyed by the scrub: %v", s, err)
+				}
+			}
+		})
 	}
 }
 

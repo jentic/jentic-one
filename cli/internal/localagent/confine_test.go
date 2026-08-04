@@ -179,6 +179,37 @@ func TestSessionAccessClassifiesAndFeedsSandbox(t *testing.T) {
 	}
 }
 
+// TestSessionAccessGrantOfOwnBinDirIsReadOnlyNotDuplicated guards the pathological
+// case where the operator grants the agent write access to its OWN ~/.local/bin.
+// The launched-binary route is non-negotiably read-only, so that grant must NOT
+// also surface as a read/write entry — otherwise the same path shows up in both
+// the RW and RO sets (misleading `profile view`, and a RW re-open the RO deny then
+// silently overrides). It must appear exactly once, read-only.
+func TestSessionAccessGrantOfOwnBinDirIsReadOnlyNotDuplicated(t *testing.T) {
+	home := "/Users/Shared/bob-local-agent"
+	binDir := AgentLocalBinDir(home)
+	dirs := SessionAccess(home, []string{binDir})
+
+	var rwHits, roHits int
+	for _, d := range dirs {
+		if d.Path != binDir {
+			continue
+		}
+		switch d.Kind {
+		case AccessReadWrite:
+			rwHits++
+		case AccessReadOnly:
+			roHits++
+		}
+	}
+	if rwHits != 0 {
+		t.Errorf("agent's own ~/.local/bin must not be re-opened read/write even when granted (rw hits=%d)", rwHits)
+	}
+	if roHits != 1 {
+		t.Errorf("agent's own ~/.local/bin must appear exactly once as read-only (ro hits=%d)", roHits)
+	}
+}
+
 func TestSbplPathEscaping(t *testing.T) {
 	got := sbplPath(`/tmp/a"b\c`)
 	want := `"/tmp/a\"b\\c"`

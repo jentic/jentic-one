@@ -279,8 +279,21 @@ func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	if agentHome != "" {
 		dirs = append(dirs, SessionDir{Path: filepath.Clean(agentHome), Kind: AccessReadWrite})
 	}
+	// The agent's OWN ~/.local/bin is always read-only (see below). If the operator
+	// also granted exactly that path, drop the redundant read/write entry: the RO
+	// deny would override it anyway, and listing it as both read/write AND read-only
+	// (in `profile view` and in the SBPL/bwrap args) is misleading. A grant of a
+	// PARENT (e.g. ~/.local) is kept — only the bin leaf itself becomes read-only.
+	var roBin string
+	if agentHome != "" {
+		roBin = filepath.Clean(AgentLocalBinDir(agentHome))
+	}
 	for _, g := range grantedDirs {
-		dirs = append(dirs, SessionDir{Path: filepath.Clean(g), Kind: AccessReadWrite})
+		clean := filepath.Clean(g)
+		if roBin != "" && clean == roBin {
+			continue
+		}
+		dirs = append(dirs, SessionDir{Path: clean, Kind: AccessReadWrite})
 	}
 	for _, d := range execRouteDirs(agentHome) {
 		dirs = append(dirs, SessionDir{Path: d, Kind: AccessReadOnly})
@@ -293,8 +306,8 @@ func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	// the next (still-confined) launch. Marking it read-only closes that self-rewrite
 	// — and because the RO routes are emitted LAST (SBPL last-match / Linux --ro-bind
 	// after --bind), this write-deny wins over the home's read/write re-open.
-	if agentHome != "" {
-		dirs = append(dirs, SessionDir{Path: AgentLocalBinDir(agentHome), Kind: AccessReadOnly})
+	if roBin != "" {
+		dirs = append(dirs, SessionDir{Path: roBin, Kind: AccessReadOnly})
 	}
 	return dirs
 }
