@@ -17,6 +17,8 @@ definition — this page links them into one workflow.
 | `register_config` | `jentic_one.shared.config` | Add a top-level config section validated by your own pydantic model. |
 | `register_target` | `jentic_one.migrations.targets` | Add an isolated migration target to the ordered upgrade/rollback sequence. |
 | `register_telemetry_event` | `jentic_one.shared.telemetry.events` | Forward extra telemetry events without editing the closed enum. |
+| `register_strategy` | `jentic_one.registry.repos.search.registry` | Register a `SearchStrategy` under a new `(dialect, search_mode)` pair. |
+| `register_pipeline_stage` | `jentic_one.registry.ingest.pipeline.stage_registry` | Append extra ingest stages that run after the built-in pipeline, inside the same transaction. |
 | `jentic_one.testing` | `jentic_one.testing` | Compliance base classes that prove your implementations honor the seam contracts. |
 | `pkg/core.AppContainer` | `cli/pkg/core` (Go) | Compose your own CLI binary with extra command groups. |
 
@@ -61,6 +63,40 @@ register_telemetry_event("my_ext.thing_happened", "thing_happened")
 
 Read your validated config back with `AppConfig.extension("my_ext")`, which
 returns your model instance (or `None` if the section is absent).
+
+You can also append **ingest pipeline stages**. Registered stages run after
+every built-in stage (in registration order; when several packages register
+stages, cross-package order is their import order — register from one place if
+relative order matters), see the full context bag the built-ins produced
+(`operation_ids`, `revision_id`, …), and share the ingest transaction — a
+failing extension stage rolls back the whole ingest. Gate yourself on your own
+config section; the registry is config-blind:
+
+```python
+import uuid
+
+from jentic_one.registry.ingest.pipeline import (
+    PipelineContext,
+    PipelineStageSpec,
+    register_pipeline_stage,
+)
+from jentic_one.registry.ingest.stages import BasePipelineStage
+
+
+class EmbedOperationsStage(BasePipelineStage):
+    _requires = {"operation_ids": set, "revision_id": uuid.UUID}
+
+    async def _run(self, ctx: PipelineContext) -> None:
+        cfg = ctx.config.extension("my_ext") if ctx.config else None
+        if cfg is None or not cfg.enabled:
+            return  # feature-gated: registered unconditionally, no-op when off
+        ...  # embed ctx.require("operation_ids", set) on ctx.session
+
+
+register_pipeline_stage(
+    PipelineStageSpec(name="my_ext.embed_operations", factory=EmbedOperationsStage)
+)
+```
 
 ### 2. Build an `AppContainer` and compose the app
 
