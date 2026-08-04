@@ -70,7 +70,16 @@ Resolve `$ARGUMENTS` to a spec at
 `apis/openapi/<vendor>/<api>/<version>/openapi.json` in the jentic-public-apis checkout.
 Read the relevant section and confirm with the user exactly what's wrong and what the fixed
 value should be (e.g. "servers only has the US host; add an EU host"). Note the `<vendor>`,
-`<api>`, and `<version>` path segments — you need them for both the PR and the local apply.
+`<api>`, and `<version>` **folder** path segments — you need them for the PR (they define where
+the overlay file lives).
+
+> **Folder path ≠ registry identity.** The `jentic-public-apis` folder segments are *not* the
+> identity the registry serves under. On import the registry **slugifies** identity from the
+> spec's own `info` block: `vendor` from `x-vendor`/`contact.name` and `name` from `info.title`,
+> each lowercased with non-`[a-z0-9-]` → `-` (so `posthog.com` → `posthog-com`). Do **not** reuse
+> the folder segments in `/apis/...` URLs — they will 404. For the local-apply steps (9–10) get
+> the registry identity from the registry itself after import (shown there) and use *that* for
+> `$V/$N/$VER`.
 
 ### 2. Branch off the latest main
 
@@ -300,7 +309,8 @@ API. The PR stays open — do not close it; this is not a fork.
 
 > **Platform behaviour (current):** confirming an overlay now **materializes** it — the registry
 > re-ingests the base spec with the overlay applied and promotes the result to the API's current
-> revision, so the served spec (`GET …/openapi`) reflects the fix immediately after confirm.
+> revision, so the served spec (`GET …/openapi`) reflects the fix once the (async) materialize
+> job completes — usually a moment after confirm, not synchronously.
 > Two things follow from this:
 > - **Confirm is an operator action** and requires the `overlays:confirm` permission (not
 >   `apis:write`). Contributors *submit* overlays; an operator reviews and *confirms*. Use a
@@ -313,7 +323,9 @@ API. The PR stays open — do not close it; this is not a fork.
 >   `pending` — fix the overlay (steps 3–6) and retry.
 
 The API must already exist in the local registry (import it from the catalog first if needed:
-`jentic catalog import <api_id>`). Then submit and confirm the overlay against the local control
+`jentic catalog import <api_id>`, where `<api_id>` is the catalog entry id — the dotted
+`<vendor>/<api>` form, e.g. `posthog.com/posthog-api`). Then resolve the **registry** identity
+(slugified — not the folder segments) and submit + confirm the overlay against the local control
 plane (default `http://127.0.0.1:8000`).
 
 ```
@@ -322,7 +334,19 @@ BASE=http://127.0.0.1:8000
 # same token if your profile has both; an org:admin token also satisfies confirm).
 # Adjust to however your active token is exposed.
 TOKEN=$(jentic profile list --json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
-V=<vendor>; N=<api>; VER=<version>
+
+# Resolve the registry identity for the catalog entry you imported. The registry slugifies
+# vendor/name from the spec's info block, so these differ from the jentic-public-apis folder
+# segments (posthog.com → posthog-com; name = slug of info.title). Match the imported API by
+# its catalog_api_id and read back the slugified (vendor, name, version) to use below.
+API_ID=<api_id>   # the dotted catalog id, e.g. posthog.com/posthog-api
+read V N VER SRC < <(curl -sS "$BASE/apis" -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import json,sys; \
+apis=json.load(sys.stdin).get('data', []); \
+m=next((x for x in apis if x.get('catalog_api_id')=='$API_ID'), None); \
+a=(m or {}).get('api', {}); \
+print(a.get('vendor',''), a.get('name',''), a.get('version',''), (m or {}).get('source_url',''))")
+echo "registry identity: $V/$N/$VER   source_url: $SRC"   # empty ⇒ not imported yet; import first
 
 # Submit the overlay (document is the SAME overlay.json used for the PR)
 curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays" \
@@ -374,7 +398,8 @@ pending for this API:
 
 ```
 BASE=http://127.0.0.1:8000
-V=<vendor>; N=<api>; VER=<version>
+# Reuse the registry identity + source_url resolved in step 9 ($V/$N/$VER/$SRC). If you
+# start fresh here, re-resolve them the same way (GET /apis, match on catalog_api_id).
 # Is there ANY pending update? (API view; boolean, no class):
 curl -sS "$BASE/apis/$V/$N/$VER" -H "Authorization: Bearer $TOKEN" \
   | python3 -c "import json,sys; a=json.load(sys.stdin); \
@@ -386,16 +411,18 @@ print('update_available:', a.get('update_available'))"
 # routine adopt path. The conflict event's data carries the overlay_id to act on.
 # (Events live on the admin/control plane; listing needs an events:read token — an
 # org:admin/operator token has it.)
-curl -sS "$BASE/events?event_type=catalog.update_conflicts_overlay&requires_action=true" \
+curl -sS "$BASE/events?event_type=catalog.update_conflicts_overlay&requires_action=true&acknowledged=false" \
   -H "Authorization: Bearer $OPERATOR_TOKEN" \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
-mine=[e for e in evs if (e.get('data') or {}).get('vendor')=='$V']; \
+mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
 print('conflicts_overlay pending:', bool(mine)); \
 print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
-# Note: this filters on data.vendor, which the *sweep*-emitted conflict event carries.
-# A refuse-path conflict event (logged when an under-scoped caller attempts the adopt)
-# carries api_id/overlay_id/spec_url but NOT vendor — match on data.api_id to catch those.
+# Match on data.spec_url (the upstream URL) — it is present on BOTH the sweep-emitted conflict
+# event and the refuse-path event (logged when an under-scoped caller attempts the adopt), and
+# it equals the API's source_url you read in step 9. Do NOT filter on data.vendor: the sweep
+# event carries the *slugified* vendor and the refuse-path event carries no vendor at all, so a
+# vendor filter silently misses real rows. (data.api_id is the local UUID, not the catalog id.)
 ```
 
 **Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the

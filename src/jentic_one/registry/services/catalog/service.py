@@ -347,10 +347,16 @@ class CatalogService:
         return EventType.CATALOG_UPDATE_AVAILABLE
 
     @staticmethod
-    def _update_summary(event_class: str, spec: RegisteredSpec) -> str:
+    def _update_summary(
+        event_class: str, spec: RegisteredSpec, overlay_id: str | None = None
+    ) -> str:
         who = f"{spec.vendor}/{spec.name} ({spec.version})"
         if event_class == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY:
-            return f"Upstream spec changed under a confirmed overlay for {who}"
+            ovl = f" {overlay_id}" if overlay_id else ""
+            return (
+                f"Upstream spec changed under confirmed overlay{ovl} for {who} — adopt "
+                "upstream (needs catalog:import + overlays:confirm) or keep the overlay"
+            )
         return f"Upstream spec updated for {who}"
 
     async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
@@ -438,7 +444,7 @@ class CatalogService:
                 session,
                 type=event_class,
                 severity=EventSeverity.INFO,
-                summary=self._update_summary(event_class, spec),
+                summary=self._update_summary(event_class, spec, conflict_overlay_id),
                 # Actionable: an operator can resolve it by re-importing the upstream spec
                 # (one-click in the UI / `jentic catalog outdated` + import in the CLI),
                 # which the ImportHandler settles via ``settle_actionable_events`` keyed on
@@ -706,6 +712,17 @@ class CatalogService:
         # Intentionally NOT digest-deduped (unlike the sweep): each refused attempt is a
         # distinct operator-relevant signal, and they all settle together on the eventual
         # authorized import.
+        #
+        # The refusing actor is recorded via structlog (server-side, not exposed by the
+        # events API) rather than in the event ``data`` — event payloads are readable by any
+        # ``events:read`` holder, and the actor subject is attribution that belongs in logs/
+        # audit, not a broadly-readable notification.
+        logger.info(
+            "overlay_supersede_refused",
+            api_id=str(api_id),
+            overlay_id=overlay.id,
+            refused_actor=identity.sub,
+        )
         async with self._ctx.admin_db.transaction() as session:
             await emit_event_best_effort(
                 session,
@@ -723,7 +740,6 @@ class CatalogService:
                     "overlay_id": overlay.id,
                     "spec_url": entry.spec_url,
                     "event_class": EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
-                    "refused_actor": identity.sub,
                 },
             )
         raise OverlaySupersedeForbiddenError(entry.api_id, overlay.id)

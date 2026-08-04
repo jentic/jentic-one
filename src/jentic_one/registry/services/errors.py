@@ -244,8 +244,10 @@ class OverlaySupersedeForbiddenError(RegistryServiceError):
 
     def __init__(self, api_id: str, overlay_id: str) -> None:
         super().__init__(
-            f"Re-importing '{api_id}' would supersede confirmed overlay '{overlay_id}'; "
-            "this requires the 'overlays:confirm' permission"
+            f"Re-importing '{api_id}' would supersede confirmed overlay '{overlay_id}', "
+            "which discards an operator's fix. This requires the 'overlays:confirm' "
+            "permission — ask an operator to run the re-import, or roll back the overlay "
+            "if the fix should be retired."
         )
         self.api_id = api_id
         self.overlay_id = overlay_id
