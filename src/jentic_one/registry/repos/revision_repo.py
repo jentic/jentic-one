@@ -31,6 +31,12 @@ class RegisteredSpec:
     #: for a manual import). The update-notify sweep uses it to decide whether the spec
     #: is upstream-tracked (see ``ORIGIN_CATALOG`` / ``ORIGIN_OVERLAY``).
     origin: str | None
+    #: For an overlay-origin current revision: the ``spec_digest`` of the base the
+    #: overlay was materialized over. The sweep compares the upstream digest against
+    #: this base to classify a change as a plain "update available" vs one that
+    #: "conflicts with the overlay". ``None`` for non-overlay revisions and for overlay
+    #: revisions materialized before A2 shipped the column (treated as "unknown base").
+    overlay_base_digest: str | None = None
 
 
 class ApiRevisionRepository:
@@ -76,6 +82,7 @@ class ApiRevisionRepository:
         source_filename: str | None = None,
         source_content_id: uuid.UUID | None = None,
         submitted_by: str | None = None,
+        overlay_base_digest: str | None = None,
         created_by: str,
     ) -> ApiRevision:
         revision = ApiRevision(
@@ -88,6 +95,7 @@ class ApiRevisionRepository:
             source_filename=source_filename,
             source_content_id=source_content_id,
             submitted_by=submitted_by,
+            overlay_base_digest=overlay_base_digest,
             promoted_at=datetime.now(UTC),
             created_by=created_by,
         )
@@ -200,6 +208,96 @@ class ApiRevisionRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def current_revision_for_source_url(
+        session: AsyncSession, source_url: str
+    ) -> tuple[uuid.UUID, uuid.UUID] | None:
+        """The (api_id, current_revision_id) of a local API served from ``source_url``.
+
+        Resolves a catalog entry (identified by its upstream ``spec_url``) to the locally
+        registered API and its *current* revision, so the A4 collision check can ask
+        whether re-importing that upstream would supersede a live confirmed overlay. Keys
+        on the current revision's ``source_url`` — the same provenance the Flow-3 sweep
+        uses — and requires the API to actually have a current revision (a bare draft
+        import that was never promoted has none, so there's nothing to supersede).
+        Returns ``None`` when no such API is registered.
+        """
+        result = await session.execute(
+            select(Api.id, Api.current_revision_id)
+            .join(ApiRevision, ApiRevision.id == Api.current_revision_id)
+            .where(ApiRevision.source_url == source_url)
+            .limit(1)
+        )
+        row = result.first()
+        if row is None or row[1] is None:
+            return None
+        return (row[0], row[1])
+
+    @staticmethod
+    async def origin_of(session: AsyncSession, revision_id: uuid.UUID) -> str | None:
+        """The ``origin`` of a revision by id, or ``None`` if it doesn't exist.
+
+        A minimal single-column lookup used by the supersede-recovery path to decide
+        whether the served revision is the fresh upstream (non-overlay) — i.e. whether an
+        interrupted supersede's durable effect already landed — without materializing the
+        whole ORM row.
+        """
+        result = await session.execute(
+            select(ApiRevision.origin).where(ApiRevision.id == revision_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def archive_one(session: AsyncSession, revision_id: uuid.UUID) -> int:
+        """Archive a single *active* revision by id (CAS on state). Returns rowcount.
+
+        Used by overlay rollback (A5b): the current overlay revision is archived in the
+        same txn as restoring the superseded one, guarded on ``state IN (published,
+        imported)`` so a concurrent transition that already archived it yields rowcount 0
+        (the caller aborts rather than double-acting).
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(ApiRevision)
+                .where(
+                    ApiRevision.id == revision_id,
+                    ApiRevision.state.in_(
+                        [ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED]
+                    ),
+                )
+                .values(state=ApiRevisionState.ARCHIVED, archived_at=datetime.now(UTC))
+                .execution_options(synchronize_session="fetch")
+            ),
+        )
+        await session.flush()
+        return result.rowcount
+
+    @staticmethod
+    async def restore_archived_to_imported(session: AsyncSession, revision_id: uuid.UUID) -> int:
+        """Un-archive a revision (ARCHIVED → IMPORTED), clearing ``archived_at``.
+
+        Rollback (A5b) restores the revision an overlay superseded so it can serve again.
+        CAS on ``state == ARCHIVED`` so only a genuinely archived revision is restored
+        (rowcount 0 otherwise). The caller archives the current overlay revision *first*
+        in the same txn, so the one-active partial unique index is never transiently
+        violated (never two active revisions at once).
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(ApiRevision)
+                .where(
+                    ApiRevision.id == revision_id,
+                    ApiRevision.state == ApiRevisionState.ARCHIVED,
+                )
+                .values(state=ApiRevisionState.IMPORTED, archived_at=None)
+                .execution_options(synchronize_session="fetch")
+            ),
+        )
+        await session.flush()
+        return result.rowcount
 
     @staticmethod
     async def delete_replaceable_by_digest(
@@ -351,6 +449,7 @@ class ApiRevisionRepository:
                 ApiRevision.source_url,
                 ApiRevision.spec_digest,
                 ApiRevision.origin,
+                ApiRevision.overlay_base_digest,
                 Api.vendor,
                 Api.name,
                 Api.version,
@@ -367,7 +466,16 @@ class ApiRevisionRepository:
         )
         seen: set[uuid.UUID] = set()
         specs: list[RegisteredSpec] = []
-        for api_id, source_url, spec_digest, origin, vendor, name, version in result.all():
+        for (
+            api_id,
+            source_url,
+            spec_digest,
+            origin,
+            overlay_base_digest,
+            vendor,
+            name,
+            version,
+        ) in result.all():
             if api_id in seen:
                 continue
             seen.add(api_id)
@@ -380,6 +488,7 @@ class ApiRevisionRepository:
                     name=name,
                     version=version,
                     origin=origin,
+                    overlay_base_digest=overlay_base_digest,
                 )
             )
         return specs

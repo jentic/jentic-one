@@ -120,6 +120,7 @@ class CatalogUpdateCheckRepository:
         digest: str | None,
         checked_at: datetime,
         notified_digest: str | None = None,
+        notified_event_class: str | None = None,
         sync_notified: bool = False,
     ) -> CatalogUpdateCheck:
         """Insert or update the observation for ``local_api_id`` and return the row.
@@ -127,6 +128,13 @@ class CatalogUpdateCheckRepository:
         ``notified_digest`` is only written when non-``None`` — a probe that
         observes no change (or a ``304``) must not clear the digest that last
         produced an event, or the dedupe would re-fire on the next real change.
+
+        ``notified_event_class`` records *which* event class that digest fired under
+        (``catalog.update_available`` vs ``catalog.update_conflicts_overlay``). It is
+        written on the same branches as ``last_notified_digest`` (real notify or a
+        sync-revert) so the dedupe pair ``(last_notified_digest, last_notified_event_class)``
+        stays consistent — a digest that re-classifies between the two classes is not
+        wrongly deduped against the prior class.
 
         ``sync_notified`` is the one exception to that "never lower the digest"
         rule: when the caller observes that the *upstream is back in sync with the
@@ -159,6 +167,9 @@ class CatalogUpdateCheckRepository:
                 last_seen_etag=etag,
                 last_seen_digest=digest,
                 last_notified_digest=digest if sync_notified else notified_digest,
+                last_notified_event_class=(
+                    notified_event_class if (sync_notified or notified_digest is not None) else None
+                ),
                 last_checked_at=checked_at,
             )
             session.add(row)
@@ -172,8 +183,10 @@ class CatalogUpdateCheckRepository:
                 # Upstream is back in sync with the served revision: pin the notified
                 # digest to it so the outdated read surface clears (see docstring).
                 row.last_notified_digest = digest
+                row.last_notified_event_class = notified_event_class
             elif notified_digest is not None:
                 row.last_notified_digest = notified_digest
+                row.last_notified_event_class = notified_event_class
             row.last_checked_at = checked_at
         await session.flush()
         return row

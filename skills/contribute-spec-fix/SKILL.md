@@ -1,6 +1,6 @@
 ---
 name: contribute-spec-fix
-description: Fix a broken OpenAPI spec in jentic-public-apis with an OpenAPI Overlay, validate it (spectral lint + idempotency check), and contribute it back via a PR to the community catalog. Falls back to applying the same overlay to the local Jentic registry if the user can't wait for maintainer approval. Use when an API spec is wrong/incomplete (bad server URL, missing enum, wrong content-type, missing param, etc.) and the fix should reach the community project, not just the local box.
+description: Fix a broken OpenAPI spec in jentic-public-apis with an OpenAPI Overlay, validate it (spectral lint + idempotency check), and contribute it back via a PR to the community catalog. Falls back to applying the same overlay to the local Jentic registry if the user can't wait for maintainer approval, and closes the loop by reacting when the upstream spec later changes (adopt update, or resolve an upstream-vs-overlay conflict). Use when an API spec is wrong/incomplete (bad server URL, missing enum, wrong content-type, missing param, etc.) and the fix should reach the community project, not just the local box.
 argument-hint: [vendor/api or path to the broken spec]
 ---
 
@@ -32,6 +32,13 @@ instead; this skill only fixes specs that already exist.
      ┌─────────────────────────────────────────────┐
      │  FALLBACK: apply the SAME overlay to the      │  ← unblocks the user now;
      │  local Jentic registry — PR stays open        │    PR is still the source of truth
+     └─────────────────────────────────────────────┘
+                │
+                ▼  (later: the registry keeps watching upstream)
+     ┌─────────────────────────────────────────────┐
+     │  upstream spec changes  ──►  registry emits:  │
+     │   • update_available      → re-import to adopt│  ← fix merged upstream? adopt + retire
+     │   • update_conflicts_overlay → operator picks │  ← never silently overwrites the fix
      └─────────────────────────────────────────────┘
 ```
 
@@ -293,7 +300,7 @@ API. The PR stays open — do not close it; this is not a fork.
 
 > **Platform behaviour (current):** confirming an overlay now **materializes** it — the registry
 > re-ingests the base spec with the overlay applied and promotes the result to the API's current
-> revision, so the served spec (`GET …/openapi.json`) reflects the fix immediately after confirm.
+> revision, so the served spec (`GET …/openapi`) reflects the fix immediately after confirm.
 > Two things follow from this:
 > - **Confirm is an operator action** and requires the `overlays:confirm` permission (not
 >   `apis:write`). Contributors *submit* overlays; an operator reviews and *confirms*. Use a
@@ -335,13 +342,112 @@ Verify the fix actually landed on the served spec (this is the local verificatio
 
 ```
 # Give the ingest job a moment, then re-download and diff against your PR-branch spec.
-curl -sS "$BASE/apis/$V/$N/$VER/openapi.json" -H "Authorization: Bearer $TOKEN" > /tmp/served.json
+# The served-spec route is `…/openapi` (JSON by content negotiation) — there is no
+# `…/openapi.json` route on the registry.
+curl -sS "$BASE/apis/$V/$N/$VER/openapi" -H "Authorization: Bearer $TOKEN" > /tmp/served.json
 python3 -c "import json; print('served matches PR spec:', json.load(open('/tmp/served.json'))==json.load(open('$SPEC')))"
 ```
 
 `served matches PR spec: True` confirms the local apply reproduces the PR-branch fix. The overlay
 is now materialized locally and PR `<url>` is still the path for the community — nothing here
 replaces it.
+
+### 10. Close the loop — react when upstream changes later
+
+The flywheel isn't "submit and forget". Once an overlay is materialized locally, the registry
+keeps watching the API's **upstream** spec (the catalog `spec_url`) and, when it changes,
+surfaces an actionable event so a human isn't lied to about state. Two outcomes, and they need
+**different** reactions — the platform tells you which via the event **type**:
+
+- **`catalog.update_available`** — upstream changed, but not in a way that collides with your
+  overlay's base. Routine: re-import the upstream to adopt it. If your fix was already merged into
+  `jentic-public-apis` (your PR landed), the upstream now *contains* the fix and the overlay is
+  redundant — adopting upstream is the right move and the overlay can be retired.
+- **`catalog.update_conflicts_overlay`** — upstream changed *against the very base your overlay was
+  materialized over*. Adopting upstream would **supersede your fix**. This is deliberately an
+  operator decision, not an automatic overwrite: the system will **not** silently discard the
+  overlay.
+
+Check for these — the class distinction lives in the **event type**, not in the API view (which
+only carries a boolean `update_available`). Query the events surface and branch on which class is
+pending for this API:
+
+```
+BASE=http://127.0.0.1:8000
+V=<vendor>; N=<api>; VER=<version>
+# Is there ANY pending update? (API view; boolean, no class):
+curl -sS "$BASE/apis/$V/$N/$VER" -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import json,sys; a=json.load(sys.stdin); \
+print('origin          :', a.get('origin')); \
+print('update_available:', a.get('update_available'))"
+
+# WHICH class? Look for an actionable conflict event for this API. If this returns a row,
+# it's the operator-decision path; if empty (but update_available is true), it's the
+# routine adopt path. The conflict event's data carries the overlay_id to act on.
+# (Events live on the admin/control plane; listing needs an events:read token — an
+# org:admin/operator token has it.)
+curl -sS "$BASE/events?event_type=catalog.update_conflicts_overlay&requires_action=true" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+  | python3 -c "import json,sys; \
+evs=json.load(sys.stdin).get('data', []); \
+mine=[e for e in evs if (e.get('data') or {}).get('vendor')=='$V']; \
+print('conflicts_overlay pending:', bool(mine)); \
+print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
+# Note: this filters on data.vendor, which the *sweep*-emitted conflict event carries.
+# A refuse-path conflict event (logged when an under-scoped caller attempts the adopt)
+# carries api_id/overlay_id/spec_url but NOT vendor — match on data.api_id to catch those.
+```
+
+**Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the
+change is unrelated and you no longer need the overlay): re-import the catalog entry. A plain
+re-import adopts the upstream spec and **settles the event** automatically. This needs
+`catalog:import` (an `apis:write` token implies it):
+
+```
+curl -sS -X POST "$BASE/catalog/<api_id>:import" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
+```
+
+**Reacting to `catalog.update_conflicts_overlay`** (upstream diverged from your fix's base): this
+is an operator call with two clean options — **never** hand-edit around it:
+
+1. **Keep your fix, ignore upstream for now.** Do nothing; the served spec stays your overlay. The
+   event stays in the inbox as a truthful "there's a divergence" flag. If your PR is still open,
+   the real resolution is landing it upstream.
+2. **Adopt upstream and retire the overlay** (you've decided upstream wins). Re-importing the
+   catalog entry over a *live confirmed overlay* is doubly gated: the `:import` route itself
+   requires **`catalog:import`**, and superseding the overlay additionally requires
+   **`overlays:confirm`** (because it discards an operator's fix). So the caller needs **both**
+   scopes — an `org:admin` token satisfies both by implication; `overlays:confirm` *alone* is
+   rejected by the route guard before the supersede is even evaluated. An authorized re-import
+   auto-deprecates the overlay and serves the fresh upstream in one step; a caller with
+   `catalog:import` but **not** `overlays:confirm` is **refused** (403 `overlay_supersede_forbidden`)
+   and the conflict is re-surfaced for someone who can decide — the fix is never silently reverted.
+
+```
+# $OPERATOR_TOKEN: a profile whose token holds BOTH catalog:import and overlays:confirm
+# (or org:admin, which implies both). Derive it like $TOKEN from an operator profile, e.g.
+#   OPERATOR_TOKEN=$(jentic profile list --json | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
+# — ask an operator to run this if your agent profile lacks the scopes.
+# Authorized adopt-upstream. The platform detects the live overlay and supersedes it because
+# you hold overlays:confirm; the same call by a catalog:import-only token returns 403.
+curl -sS -X POST "$BASE/catalog/<api_id>:import" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' -d '{}'
+```
+
+If instead you decide the overlay was the right answer and want to **undo** a materialization you
+just made (e.g. confirmed the wrong overlay), roll it back — this restores the exact revision the
+overlay superseded (also `overlays:confirm`):
+
+```
+curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:rollback" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' -d '{}'
+```
+
+The loop is closed when the served spec, the overlay's lifecycle status, and the action inbox all
+agree: either upstream was adopted (overlay `deprecated`, event settled) or the fix is deliberately
+retained (overlay `confirmed`, divergence flagged but not hidden).
+
 
 ## Guardrails
 
@@ -353,3 +459,9 @@ replaces it.
   `False` or lint shows any error / new finding code.
 - **Reserve the local apply for genuine impatience.** If the user is fine waiting, the PR alone is
   the outcome.
+- **Never hand-resolve an upstream conflict.** When the registry emits
+  `catalog.update_conflicts_overlay`, adopt upstream via a scoped re-import or deliberately keep the
+  overlay — never edit the served spec by hand to paper over the divergence. Adopting upstream over
+  a live confirmed overlay requires **both** `catalog:import` (route) and `overlays:confirm`
+  (supersede) — i.e. an `org:admin` token or both scopes; the platform refuses with a 403 (not a
+  silent revert) if you lack `overlays:confirm`.

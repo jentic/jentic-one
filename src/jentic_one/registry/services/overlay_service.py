@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
+from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.registry.repos.spec_file_repo import SpecFileRepository
 from jentic_one.registry.services.errors import (
     ApiNotFoundError,
@@ -24,6 +25,7 @@ from jentic_one.registry.services.errors import (
     NoCurrentRevisionError,
     OverlayApplyConflictError,
     OverlayNotFoundError,
+    OverlayRollbackTargetMissingError,
     OverlayStateConflictError,
     SpecFileMissingError,
 )
@@ -194,12 +196,14 @@ class OverlayService:
         version: str,
         overlay_id: str,
         target_revision_id: uuid.UUID | None = None,
-    ) -> tuple[dict[str, Any], str | None]:
-        """Load the base revision's spec content + source_url an overlay applies to.
+    ) -> tuple[dict[str, Any], str | None, str | None]:
+        """Load the base revision's spec content + source_url + digest an overlay applies to.
 
-        The base is the API's current (live) revision. Returns the parsed spec dict
-        and its ``source_url`` (so the materialized revision keeps the same catalog
-        provenance for Flow-3 update detection).
+        The base is the API's current (live) revision. Returns the parsed spec dict,
+        its ``source_url`` (so the materialized revision keeps the same catalog
+        provenance for Flow-3 update detection), and its ``spec_digest`` (persisted on
+        the materialized revision as ``overlay_base_digest`` so the sweep can diff
+        upstream against the overlay's base rather than the overlaid digest).
 
         NOTE: materialization always applies to the *current* revision, not to the
         overlay's ``target_revision_id`` (the base it was authored against). Structural
@@ -231,7 +235,8 @@ class OverlayService:
             if spec_file is None:
                 raise SpecFileMissingError(str(api.current_revision_id))
             source_url = api.current_revision.source_url if api.current_revision else None
-            return dict(spec_file.content), source_url
+            base_digest = api.current_revision.spec_digest if api.current_revision else None
+            return dict(spec_file.content), source_url, base_digest
 
     def _apply_and_validate(
         self, overlay_id: str, base_content: dict[str, Any], document: dict[str, Any]
@@ -280,6 +285,7 @@ class OverlayService:
         overlay_id: str,
         overlaid_spec: dict[str, Any],
         base_source_url: str | None,
+        base_digest: str | None,
         identity: Identity,
     ) -> None:
         """Enqueue the re-ingest that rewrites the served spec for a confirmed overlay."""
@@ -293,6 +299,7 @@ class OverlayService:
             "submitted_by": identity.sub,
             "origin": ORIGIN_OVERLAY,
             "source_url": base_source_url,
+            "overlay_base_digest": base_digest,
         }
         async with self._ctx.admin_db.transaction() as session:
             await enqueue_job(
@@ -592,7 +599,7 @@ class OverlayService:
         # Load the base spec + its provenance (source_url) and materialize BEFORE
         # flipping state, so a drifted/unsafe overlay is rejected while it is still
         # pending — no torn confirm, no orphaned ingest job.
-        base_content, base_source_url = await self._load_base_spec(
+        base_content, base_source_url, base_digest = await self._load_base_spec(
             vendor, name, version, overlay_id, target_revision_id
         )
         overlaid = self._apply_and_validate(overlay_id, base_content, document)
@@ -653,6 +660,7 @@ class OverlayService:
             overlay_id=overlay_id,
             overlaid_spec=overlaid,
             base_source_url=base_source_url,
+            base_digest=base_digest,
             identity=identity,
         )
 
@@ -697,5 +705,114 @@ class OverlayService:
             actor_type=identity.actor_type,
             actor_id=identity.sub,
             target_parent_id=str(api.id),
+            origin=identity.origin.value,
+        )
+
+    async def rollback(
+        self, vendor: str, name: str, version: str, overlay_id: str, *, identity: Identity
+    ) -> None:
+        """Un-confirm a materialized overlay: restore the revision it superseded (A5b).
+
+        Reverses a confirm. The overlay must be CONFIRMED and *currently live* (its
+        ``confirmed_revision_id`` is the API's current revision), and must carry a
+        ``superseded_revision_id`` (recorded at materialize time, A5a) that is still an
+        archived revision. In one registry transaction, guarded by compare-and-swaps so a
+        concurrent confirm/re-import can't double-flip:
+
+        1. archive the current overlay revision (CAS on it being active),
+        2. restore the superseded revision (ARCHIVED → IMPORTED),
+        3. flip ``current_revision_id`` overlay → superseded (CAS on the expected prior),
+        4. mark the overlay DEPRECATED (CAS on CONFIRMED).
+
+        Ordering archive-before-restore keeps the one-active partial unique index
+        satisfied throughout (never two active revisions). Any CAS returning 0 means
+        another transition raced us; we raise a state conflict and change nothing.
+        """
+        if not overlay_id.startswith("ovr_"):
+            raise OverlayNotFoundError(overlay_id, vendor, name, version)
+
+        api = await self._resolve_api(vendor, name, version)
+
+        async with self._ctx.registry_db.transaction() as session:
+            overlay = await OverlayRepository.get_for_api(session, api.id, overlay_id)
+            if overlay is None:
+                raise OverlayNotFoundError(overlay_id, vendor, name, version)
+            if overlay.status != OverlayStatus.CONFIRMED:
+                raise OverlayStateConflictError(
+                    overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
+                )
+
+            live = await ApiRepository.get_by_id(session, api.id)
+            overlay_revision_id = overlay.confirmed_revision_id
+            if (
+                overlay_revision_id is None
+                or live is None
+                or live.current_revision_id != overlay_revision_id
+            ):
+                # The overlay isn't the currently-served revision (already rolled back,
+                # re-imported, or never fully materialized) — nothing deterministic to
+                # reverse here.
+                raise OverlayStateConflictError(
+                    overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
+                )
+
+            superseded_id = overlay.superseded_revision_id
+            if superseded_id is None:
+                raise OverlayRollbackTargetMissingError(
+                    overlay_id,
+                    "no superseded revision was recorded (a first-ever materialize "
+                    "superseded nothing, or the overlay predates superseded-revision "
+                    "tracking) — resolve manually, e.g. by re-importing upstream",
+                )
+
+            # 1. Archive the current overlay revision (CAS on it being active).
+            if await ApiRevisionRepository.archive_one(session, overlay_revision_id) == 0:
+                raise OverlayStateConflictError(
+                    overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
+                )
+            # 2. Restore the superseded revision (must still be archived).
+            restored = await ApiRevisionRepository.restore_archived_to_imported(
+                session, superseded_id
+            )
+            if restored == 0:
+                raise OverlayRollbackTargetMissingError(
+                    overlay_id,
+                    f"superseded revision '{superseded_id}' is no longer restorable "
+                    "(deleted or not archived) — resolve manually",
+                )
+            # 3. Flip current overlay → superseded (CAS on the expected prior pointer).
+            flipped = await ApiRepository.compare_and_set_current_revision(
+                session,
+                api.id,
+                expected_revision_id=overlay_revision_id,
+                new_revision_id=superseded_id,
+            )
+            if flipped == 0:
+                raise OverlayStateConflictError(
+                    overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
+                )
+            # 4. Mark the overlay DEPRECATED (CAS on it still being CONFIRMED).
+            now = datetime.now(UTC)
+            demoted = await OverlayRepository.set_status(
+                session,
+                overlay_id,
+                OverlayStatus.DEPRECATED,
+                deprecated_at=now,
+                expected_status=OverlayStatus.CONFIRMED,
+            )
+            if demoted == 0:
+                raise OverlayStateConflictError(
+                    overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
+                )
+
+        await record_audit_best_effort(
+            self._ctx,
+            action=AuditAction.DEPRECATE,
+            target_type=AuditTargetType.OVERLAY,
+            target_id=overlay_id,
+            actor_type=identity.actor_type,
+            actor_id=identity.sub,
+            target_parent_id=str(api.id),
+            reason=f"rolled back; restored revision {overlay.superseded_revision_id}",
             origin=identity.origin.value,
         )

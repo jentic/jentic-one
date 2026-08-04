@@ -369,3 +369,41 @@ async def test_cascade_delete(registry_db: DatabaseSession, sample_api: Api) -> 
         fetched = await OverlayRepository.get_for_api(session, sample_api.id, overlay_id)
 
     assert fetched is None
+
+
+async def test_get_live_confirmed_for_api_ignores_link_lag(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """get_live_confirmed_for_api returns the CONFIRMED overlay even with a NULL link.
+
+    Regression: the Flow-3 sweep enriches a ``conflicts_overlay`` event with the overlay
+    id via this lookup. ``confirmed_revision_id`` is linked *lazily* by the materialize
+    path, so it can be NULL while the overlay is already CONFIRMED and its revision served.
+    The lookup must key on ``(api_id, status==CONFIRMED)`` — not the revision link — or the
+    event drops the overlay id (caught by the manual flywheel E2E, missed by mocked units).
+    """
+    async with registry_db.session() as session:
+        overlay = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"x": 1}, created_by="usr_test"
+        )
+        # CONFIRMED but not yet linked to a materialized revision (the lazy-link window).
+        await OverlayRepository.set_status(
+            session, overlay.id, OverlayStatus.CONFIRMED, confirmed_at=datetime.now(UTC)
+        )
+        await session.commit()
+        overlay_id = overlay.id
+
+    async with registry_db.session() as session:
+        found = await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id)
+        assert found is not None and found.id == overlay_id
+        assert found.confirmed_revision_id is None  # link still lagging
+
+    # A deprecated overlay is not "live".
+    async with registry_db.session() as session:
+        await OverlayRepository.set_status(
+            session, overlay_id, OverlayStatus.DEPRECATED, deprecated_at=datetime.now(UTC)
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        assert await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id) is None

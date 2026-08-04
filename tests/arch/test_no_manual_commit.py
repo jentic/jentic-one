@@ -20,6 +20,31 @@ ALLOWED_FILES = frozenset(
 
 MIGRATIONS_DIR = SRC_ROOT / "migrations"
 
+#: Receiver names that denote a DB session/connection — the objects whose bare
+#: ``commit()``/``rollback()`` this rule governs. Matched against the last attribute
+#: segment (``self.session`` → ``session``) or a plain variable name. In addition to
+#: these exact names, any receiver whose name ends in ``session``/``_session``/``_conn``
+#: is treated as a session (covers multi-DB handlers using ``admin_session``,
+#: ``control_session``, ``read_session``, ``audit_session``, etc.) so the invariant
+#: cannot be dodged by a differently-named session binding.
+_SESSION_RECEIVER_NAMES = frozenset({"session", "conn", "connection", "db_session", "sess"})
+
+
+def _is_session_receiver(node: ast.expr) -> bool:
+    """True if *node* names a DB session/connection (vs an arbitrary service object)."""
+    if isinstance(node, ast.Name):
+        name: str | None = node.id
+    elif isinstance(node, ast.Attribute):
+        name = node.attr
+    else:
+        return False
+    return (
+        name in _SESSION_RECEIVER_NAMES
+        or name.endswith("session")
+        or name.endswith("_conn")
+        or name == "conn"
+    )
+
 
 def _check_file(filepath: Path) -> list[str]:
     """Return violation messages if the file calls session.commit() or session.rollback().
@@ -47,6 +72,12 @@ def _check_file(filepath: Path) -> list[str]:
         if not isinstance(func, ast.Attribute):
             continue
         if func.attr in ("commit", "rollback"):
+            # Only flag calls on a *session/connection* receiver — the transaction
+            # primitives this rule governs. Domain services may legitimately expose a
+            # method named ``rollback`` (e.g. OverlayService.rollback un-confirms an
+            # overlay); that is not a raw session.rollback() and must not trip the rule.
+            if not _is_session_receiver(func.value):
+                continue
             line = source_lines[node.lineno - 1] if node.lineno <= len(source_lines) else ""
             if "# arch-allow: manual-commit" in line:
                 continue

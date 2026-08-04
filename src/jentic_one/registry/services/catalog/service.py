@@ -26,6 +26,7 @@ import structlog
 
 from jentic_one.registry.repos.catalog_repo import CatalogRepository
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
+from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository, RegisteredSpec
 from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import (
@@ -36,8 +37,10 @@ from jentic_one.registry.services.catalog.fetch import (
 from jentic_one.registry.services.errors import (
     CatalogEntryNotFoundError,
     CatalogUnavailableError,
+    OverlaySupersedeForbiddenError,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
 from jentic_one.shared.events import emit_event_best_effort
@@ -320,6 +323,36 @@ class CatalogService:
             duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
         )
 
+    def _classify_update(self, spec: RegisteredSpec, upstream_digest: str) -> str:
+        """Classify a detected upstream change as plain-update vs overlay-conflict.
+
+        The served revision carries an overlay only when it is overlay-origin. In that
+        case the overlay was materialized over a *base* whose digest we persist as
+        ``overlay_base_digest`` (A2). If the upstream now differs from that base, adopting
+        it would supersede the operator's overlay — an operator decision, not a routine
+        nudge — so we classify it as ``CATALOG_UPDATE_CONFLICTS_OVERLAY``.
+
+        Everything else is a plain ``CATALOG_UPDATE_AVAILABLE``:
+        - non-overlay revisions (catalog/manual imports) have no overlay to conflict with;
+        - overlay revisions materialized before A2 have a NULL base digest (unknown base):
+          we cannot prove a conflict, so we fall back to the safe, non-alarming class and
+          let the next re-materialize self-heal the column.
+        """
+        if (
+            spec.origin == ORIGIN_OVERLAY
+            and spec.overlay_base_digest is not None
+            and upstream_digest != spec.overlay_base_digest
+        ):
+            return EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        return EventType.CATALOG_UPDATE_AVAILABLE
+
+    @staticmethod
+    def _update_summary(event_class: str, spec: RegisteredSpec) -> str:
+        who = f"{spec.vendor}/{spec.name} ({spec.version})"
+        if event_class == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY:
+            return f"Upstream spec changed under a confirmed overlay for {who}"
+        return f"Upstream spec updated for {who}"
+
     async def _probe_one(self, spec: RegisteredSpec, *, now: datetime, interval: int) -> None:
         """Conditionally fetch one registered spec and emit on a fresh change."""
         async with self._ctx.registry_db.session() as session:
@@ -349,14 +382,23 @@ class CatalogService:
 
         upstream_digest = result.digest
         last_notified = check.last_notified_digest if check is not None else None
+        last_notified_class = check.last_notified_event_class if check is not None else None
         # A change worth notifying: the upstream bytes differ from what backs the
         # registered revision, and we have not already notified for this exact
-        # upstream digest. Comparing against spec_digest (not just last_seen)
-        # means a spec that reverts to the registered content stops notifying.
+        # (upstream digest, event class) pair. Comparing against spec_digest (not just
+        # last_seen) means a spec that reverts to the registered content stops
+        # notifying. The event class is part of the dedupe key so a digest that
+        # re-classifies (e.g. an overlaid API whose upstream now collides with the
+        # overlay's base) still fires the new class exactly once.
         in_sync = upstream_digest == spec.spec_digest
-        changed = not in_sync and upstream_digest != last_notified
+        event_class = self._classify_update(spec, upstream_digest)
+        changed = not in_sync and (upstream_digest, event_class) != (
+            last_notified,
+            last_notified_class,
+        )
 
         notified_digest = upstream_digest if changed else None
+        notified_event_class = event_class if changed else None
         async with self._ctx.registry_db.transaction() as session:
             await CatalogUpdateCheckRepository.upsert(
                 session,
@@ -366,6 +408,7 @@ class CatalogService:
                 digest=upstream_digest,
                 checked_at=now,
                 notified_digest=notified_digest,
+                notified_event_class=notified_event_class,
                 # Upstream matches the served revision again (e.g. a bad publish was
                 # reverted): pin last_notified_digest to it so the outdated read surface
                 # clears. Otherwise a revert leaves the badge stuck lit with no operator
@@ -377,12 +420,25 @@ class CatalogService:
         if not changed:
             return
 
+        # For a conflict, resolve the live overlay's id so the actionable event can
+        # deep-link to the overlay to keep/rollback (parallel to the refuse path). The
+        # conflict class is only reached when the current revision *is* the live confirmed
+        # overlay, so this resolves to exactly that overlay (best-effort: None if a race
+        # already moved it — the event still carries api_id + event_class).
+        conflict_overlay_id: str | None = None
+        if event_class == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY:
+            async with self._ctx.registry_db.session() as session:
+                live_overlay = await OverlayRepository.get_live_confirmed_for_api(
+                    session, spec.api_id
+                )
+            conflict_overlay_id = live_overlay.id if live_overlay is not None else None
+
         async with self._ctx.admin_db.transaction() as session:
             await emit_event_best_effort(
                 session,
-                type=EventType.CATALOG_UPDATE_AVAILABLE,
+                type=event_class,
                 severity=EventSeverity.INFO,
-                summary=(f"Upstream spec updated for {spec.vendor}/{spec.name} ({spec.version})"),
+                summary=self._update_summary(event_class, spec),
                 # Actionable: an operator can resolve it by re-importing the upstream spec
                 # (one-click in the UI / `jentic catalog outdated` + import in the CLI),
                 # which the ImportHandler settles via ``settle_actionable_events`` keyed on
@@ -403,6 +459,11 @@ class CatalogService:
                     "current_digest": spec.spec_digest,
                     "upstream_digest": upstream_digest,
                     "spec_url": spec.source_url,
+                    "event_class": event_class,
+                    "overlay_base_digest": spec.overlay_base_digest,
+                    # Present only for conflicts_overlay so the inbox card can deep-link to
+                    # the overlay; None/absent for plain update_available.
+                    "overlay_id": conflict_overlay_id,
                 },
             )
 
@@ -605,17 +666,92 @@ class CatalogService:
             source["catalog_api_id"] = entry.api_id
         return source
 
+    async def _authorize_overlay_supersede(
+        self, entry: CatalogEntryView, identity: Identity
+    ) -> str | None:
+        """Gate a re-import that would supersede a live confirmed overlay (A4b).
+
+        Returns the overlay id to auto-deprecate when the caller is authorized to
+        supersede it (so the enqueued job can stamp ``supersede_overlay_id``), ``None``
+        when there is no live overlay to supersede (ordinary re-import), or raises
+        :class:`OverlaySupersedeForbiddenError` when a supersede is required but the
+        caller lacks ``overlays:confirm`` — re-emitting an operator-facing conflict event
+        so the fix is not silently discarded.
+
+        The check keys on the catalog entry's ``spec_url`` (the upstream provenance) to
+        find the locally-served current revision and asks whether that revision *is* a
+        confirmed overlay's materialization. Only that case is a supersede; a plain
+        catalog-origin current revision imports normally.
+        """
+        if not entry.spec_url:
+            return None
+        async with self._ctx.registry_db.session() as session:
+            current = await ApiRevisionRepository.current_revision_for_source_url(
+                session, entry.spec_url
+            )
+            if current is None:
+                return None
+            api_id, current_revision_id = current
+            overlay = await OverlayRepository.get_live_confirmed_for_revision(
+                session, api_id, current_revision_id
+            )
+        if overlay is None:
+            return None
+
+        if has_effective_permission(identity.permissions, "overlays:confirm"):
+            return overlay.id
+
+        # Refuse: do not enqueue a silent revert. Re-surface the conflict for an operator
+        # who can decide (confirm-scope holder), keyed on api_id so it settles on resolve.
+        # Intentionally NOT digest-deduped (unlike the sweep): each refused attempt is a
+        # distinct operator-relevant signal, and they all settle together on the eventual
+        # authorized import.
+        async with self._ctx.admin_db.transaction() as session:
+            await emit_event_best_effort(
+                session,
+                type=EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
+                severity=EventSeverity.INFO,
+                summary=(
+                    f"Re-import of {entry.api_id} was refused: adopting upstream would "
+                    f"supersede confirmed overlay {overlay.id} "
+                    "(needs catalog:import + overlays:confirm)"
+                ),
+                requires_action=True,
+                created_by=None,
+                data={
+                    "api_id": str(api_id),
+                    "overlay_id": overlay.id,
+                    "spec_url": entry.spec_url,
+                    "event_class": EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY,
+                    "refused_actor": identity.sub,
+                },
+            )
+        raise OverlaySupersedeForbiddenError(entry.api_id, overlay.id)
+
     async def import_entry(self, api_id: str, identity: Identity) -> str:
-        """Enqueue an async url-import for a catalog entry; return the job id."""
+        """Enqueue an async url-import for a catalog entry; return the job id.
+
+        If re-importing would supersede a live confirmed overlay, the caller must hold
+        ``overlays:confirm`` (A4b); an authorized supersede stamps ``supersede_overlay_id``
+        on the job so the worker auto-deprecates the overlay in the re-ingest transaction.
+        An unauthorized caller is refused (``OverlaySupersedeForbiddenError``) rather than
+        silently reverting the operator's fix.
+        """
         entry = await self.get(api_id)
+        supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
         source = self._to_import_source(entry)
+        if supersede_overlay_id is not None:
+            source["supersede_active"] = "true"
+        payload: dict[str, Any] = {"sources": [source]}
+        if supersede_overlay_id is not None:
+            payload["supersede_overlay_id"] = supersede_overlay_id
         async with self._ctx.admin_db.transaction() as session:
             return await enqueue_job(
                 session,
                 JobKind.IMPORT,
                 created_by=identity.sub,
                 actor_type=identity.actor_type,
-                payload={"sources": [source]},
+                payload=payload,
             )
 
     async def ensure_imported(self, api_id: str, identity: Identity) -> str | None:

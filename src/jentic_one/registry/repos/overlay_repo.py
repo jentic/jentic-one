@@ -57,6 +57,60 @@ class OverlayRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_live_confirmed_for_revision(
+        session: AsyncSession, api_id: uuid.UUID, revision_id: uuid.UUID
+    ) -> Overlay | None:
+        """The CONFIRMED overlay whose materialization *is* the given revision, if any.
+
+        Used by the re-import collision check (A4a): "does adopting an upstream change
+        for this API supersede a live operator overlay?" is answered by asking whether
+        the API's current revision was itself produced by confirming an overlay. We match
+        on ``confirmed_revision_id == revision_id`` (not merely ``status==CONFIRMED``) so a
+        stale/relinked CONFIRMED overlay that no longer backs the served revision is not
+        mistaken for the live one. At most one overlay can back a given revision (each
+        materialize produces a fresh revision), so this returns 0 or 1.
+        """
+        result = await session.execute(
+            select(Overlay).where(
+                Overlay.api_id == api_id,
+                Overlay.status == OverlayStatus.CONFIRMED,
+                Overlay.confirmed_revision_id == revision_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_live_confirmed_for_api(
+        session: AsyncSession, api_id: uuid.UUID
+    ) -> Overlay | None:
+        """The live CONFIRMED overlay for *api_id* (for actionable-event enrichment).
+
+        Used by the Flow-3 sweep: once an upstream change is *already* classified as
+        ``conflicts_overlay`` (the API's current revision is overlay-origin and carries an
+        ``overlay_base_digest``), this returns the overlay to deep-link for keep/rollback.
+
+        Deliberately keyed on ``(api_id, status==CONFIRMED)`` and **not** on
+        ``confirmed_revision_id == current_revision_id``: an overlay's
+        ``confirmed_revision_id`` is linked lazily by the materialize path (it can transiently
+        be NULL while the overlay revision is already served — see
+        ``get_live_confirmed_for_revision`` / the confirm→materialize seam), so requiring the
+        link here would drop the overlay id from a legitimately-fired conflict event. At most
+        one overlay per API is CONFIRMED at a time (rollback/supersede deprecate the prior
+        one before another can confirm), so this returns 0 or 1. If two ever raced, the
+        oldest-confirmed is returned deterministically.
+
+        This is enrichment only; the *authorization* decision (A4b) still uses the strict
+        revision-keyed :meth:`get_live_confirmed_for_revision`.
+        """
+        result = await session.execute(
+            select(Overlay)
+            .where(Overlay.api_id == api_id, Overlay.status == OverlayStatus.CONFIRMED)
+            .order_by(Overlay.confirmed_at.asc().nulls_last(), Overlay.id.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def list_page(
         session: AsyncSession,
         *,

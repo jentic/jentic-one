@@ -47,6 +47,7 @@ async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_
             digest="digest-2",
             checked_at=now,
             notified_digest="digest-2",
+            notified_event_class="catalog.update_conflicts_overlay",
         )
         await session.commit()
 
@@ -54,6 +55,8 @@ async def test_upsert_inserts_then_updates(registry_db: DatabaseSession, sample_
     assert again.last_seen_etag == '"v2"'
     assert again.last_seen_digest == "digest-2"
     assert again.last_notified_digest == "digest-2"
+    # The event class the digest fired under round-trips (part of the dedupe key).
+    assert again.last_notified_event_class == "catalog.update_conflicts_overlay"
 
 
 async def test_upsert_does_not_clear_notified_digest_on_none(
@@ -124,6 +127,38 @@ async def test_registered_specs_for_notify_joins_identity_and_excludes_archived(
     assert spec.vendor == sample_api.vendor
     assert spec.name == sample_api.name
     assert spec.version == sample_api.version
+    # Non-overlay revision → no overlay base digest.
+    assert spec.overlay_base_digest is None
+
+
+async def test_registered_specs_for_notify_threads_overlay_base_digest(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """An overlay-origin current revision surfaces its overlay_base_digest to the sweep.
+
+    A3 classifies an upstream change as a conflict by comparing the upstream digest to
+    the overlay's base — so the notify query must carry ``overlay_base_digest`` through.
+    """
+    async with registry_db.session() as session:
+        rev = ApiRevision(
+            api_id=sample_api.id,
+            state="published",
+            origin="overlay",
+            spec_digest="sha256:overlaid",
+            overlay_base_digest="sha256:base",
+            source_type="url",
+            source_url="https://example.com/openapi.json",
+        )
+        session.add(rev)
+        await session.commit()
+
+    async with registry_db.session() as session:
+        specs = await ApiRevisionRepository.registered_specs_for_notify(session)
+
+    mine = [s for s in specs if s.api_id == sample_api.id]
+    assert len(mine) == 1
+    assert mine[0].origin == "overlay"
+    assert mine[0].overlay_base_digest == "sha256:base"
 
 
 async def test_registered_specs_for_notify_picks_deterministic_revision(

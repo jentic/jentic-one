@@ -19,7 +19,10 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.services.errors import OverlayStateConflictError
 from jentic_one.registry.services.import_service import ImportHandler
+from jentic_one.registry.services.overlay_service import OverlayService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 
@@ -386,6 +389,13 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
     )
 
     async with registry_db.session() as session:
+        base_rev_pre = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        base_digest = base_rev_pre.spec_digest
+    assert base_digest is not None
+
+    async with registry_db.session() as session:
         api = (await session.execute(select(Api).where(Api.vendor == "ovl-vendor"))).scalar_one()
         api_id = api.id
         overlay = Overlay(
@@ -424,6 +434,7 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
                     "version": "1.0.0",
                     "origin": "overlay",
                     "source_url": "https://catalog.example.com/base.json",
+                    "overlay_base_digest": base_digest,
                 }
             ],
             "overlay_id": overlay_id,
@@ -451,6 +462,9 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
         ).scalar_one()
         assert new_rev.origin == "overlay"
         assert new_rev.source_url == "https://catalog.example.com/base.json"
+        # A2: the base spec's digest is persisted on the materialized overlay revision
+        # so the Flow-3 sweep can diff upstream against the overlay's base.
+        assert new_rev.overlay_base_digest == base_digest
 
         spec_file = (
             await session.execute(select(SpecFile).where(SpecFile.revision_id == new_revision_id))
@@ -462,6 +476,347 @@ async def test_overlay_materialization_rewrites_served_spec_and_links_revision(
         ).scalar_one()
         assert overlay_row.confirmed_revision_id == new_revision_id
         assert overlay_row.superseded_revision_id == base_revision_id
+
+
+async def test_overlay_rollback_restores_superseded_revision(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A5b: rollback un-confirms a live overlay and restores the revision it superseded.
+
+    Sets up the committed post-materialize state (base archived, overlay revision current
+    and CONFIRMED with confirmed_/superseded_revision_id linked), then rolls back via
+    OverlayService. The served revision must revert to the base (un-archived, current),
+    the overlay revision must be archived, and the overlay must be DEPRECATED.
+    """
+    handler = ImportHandler(integration_context)
+    base_revision_id = await _import_base(
+        handler, vendor="rb-vendor", name="rb-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "rb-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    # Materialize the overlay (the job the confirm would enqueue).
+    result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "RB", "version": "1.0.0"},
+                            "servers": [{"url": "https://new.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "rb-vendor",
+                    "api_name": "rb-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
+
+    # Flip the overlay to CONFIRMED (the confirm service does this via CAS; the raw
+    # materialize job only links the revision). Rollback requires CONFIRMED.
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    identity = Identity(
+        sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"]
+    )
+    await OverlayService(integration_context).rollback(
+        "rb-vendor", "rb-api", "1.0.0", overlay_id, identity=identity
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        # Served revision reverted to the base.
+        assert api.current_revision_id == base_revision_id
+
+        base_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        assert base_rev.state == "imported"  # restored (un-archived)
+        assert base_rev.archived_at is None
+
+        overlay_rev = (
+            await session.execute(
+                select(ApiRevision).where(ApiRevision.id == overlay_revision_id)
+            )
+        ).scalar_one()
+        assert overlay_rev.state == "archived"  # the overlay's revision is retired
+
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.status == "deprecated"
+        assert overlay_row.deprecated_at is not None
+
+
+async def test_overlay_rollback_conflict_when_not_live(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """Rollback of an overlay that isn't the currently-served revision is a 409 no-op.
+
+    A CONFIRMED overlay whose confirmed_revision_id is not the API's current revision
+    (already superseded/rolled back) must raise a state conflict and change nothing.
+    """
+    handler = ImportHandler(integration_context)
+    base_revision_id = await _import_base(
+        handler, vendor="rb2-vendor", name="rb2-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "rb2-vendor"))).scalar_one()
+        api_id = api.id
+        # A CONFIRMED overlay that points at some *other* (not current) revision.
+        overlay = Overlay(
+            api_id=api_id,
+            document=_OVERLAY_DOC,
+            status="confirmed",
+            confirmed_revision_id=uuid.uuid4(),
+            superseded_revision_id=base_revision_id,
+            created_by="usr_test",
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    identity = Identity(
+        sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"]
+    )
+    with pytest.raises(OverlayStateConflictError):
+        await OverlayService(integration_context).rollback(
+            "rb2-vendor", "rb2-api", "1.0.0", overlay_id, identity=identity
+        )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        # Unchanged: base is still current, nothing rolled.
+        assert api.current_revision_id == base_revision_id
+
+
+async def test_authorized_supersede_reimport_deprecates_overlay(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A4b: an authorized catalog re-import over a live confirmed overlay supersedes it.
+
+    Sets up a live confirmed overlay (its materialized revision is current), then runs
+    the catalog re-import job the scope-checked enqueue path would produce — carrying
+    ``supersede_active`` on the source and ``supersede_overlay_id`` on the payload. The
+    fresh catalog revision must become current (the overlay revision archived) and the
+    overlay must be auto-DEPRECATED in the same job.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="sup-vendor", name="sup-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "sup-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    # Materialize + confirm the overlay so it is the live served revision.
+    result = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "SUP", "version": "1.0.0"},
+                            "servers": [{"url": "https://overlaid.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "sup-vendor",
+                    "api_name": "sup-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = uuid.UUID(result.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    # The scope-checked enqueue path stamps supersede_active + supersede_overlay_id.
+    reimport = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "SUP", "version": "1.0.0"},
+                            "servers": [{"url": "https://upstream-fresh.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "sup-vendor",
+                    "api_name": "sup-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_id,
+        },
+        created_by="usr_operator",
+    )
+    new_revision_id = uuid.UUID(reimport.body["revisions"][0]["revision_id"])
+    assert new_revision_id != overlay_revision_id
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        # The fresh catalog revision is now served.
+        assert api.current_revision_id == new_revision_id
+
+        overlay_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == overlay_revision_id))
+        ).scalar_one()
+        assert overlay_rev.state == "archived"
+
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.status == "deprecated"
+        assert overlay_row.deprecated_at is not None
+
+    # --- Simulate a crash between the committed re-ingest and the separate-transaction
+    # deprecate: reset the overlay to CONFIRMED (as if the deprecate never committed) and
+    # re-run the *identical* supersede job. The re-ingest now hits DuplicateRevisionError
+    # (fresh revision already exists + is current), so there are no new revisions and a
+    # failure — the retry must RECOVER (not dead-letter): served spec is already the fresh
+    # upstream, so _recover_supersede completes the job and re-deprecates the overlay.
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    retry = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "SUP", "version": "1.0.0"},
+                            "servers": [{"url": "https://upstream-fresh.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "sup-vendor",
+                    "api_name": "sup-api",
+                    # NB: NO "version" key, and a "url" that equals the served revision's
+                    # source_url — deliberately mirroring the PRODUCTION supersede source
+                    # (CatalogService._to_import_source builds a type:"url" payload with no
+                    # version). This proves _recover_supersede resolves identity by url
+                    # (current_revision_for_source_url), not by the vendor/name/version
+                    # triple the real path never carries.
+                    "url": "https://catalog.example.com/base.json",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_id,
+        },
+        created_by="usr_operator",
+    )
+    # The job completed (did not raise / dead-letter) with no new revision.
+    assert retry.body["revisions"] == []
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        # Served spec unchanged: still the fresh upstream from the first pass.
+        assert api.current_revision_id == new_revision_id
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        # Recovery re-ran the idempotent CAS deprecate.
+        assert overlay_row.status == "deprecated"
 
 
 async def test_overlay_materialization_archives_active_revision_of_other_origin(
