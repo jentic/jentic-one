@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterator
+from typing import ClassVar
+
 import pytest
 import structlog
 from sqlalchemy import select
@@ -16,6 +20,13 @@ from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestPipelineError
 from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.ingest.models import ApiIdentifier, IngestSpecification, SpecType
+from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
+from jentic_one.registry.ingest.pipeline.stage_registry import (
+    _REGISTERED_STAGES,
+    PipelineStageSpec,
+    register_pipeline_stage,
+)
+from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.session import DatabaseSession
 from jentic_one.shared.models import ApiRevisionSourceType
@@ -261,3 +272,79 @@ def _reimport_spec() -> IngestSpecification:
     spec = _build_spec(sha="same_digest_xyz")
     spec.origin = "catalog"
     return spec
+
+
+# ── register_pipeline_stage seam: registered stages run inside the ingest ────
+
+
+@pytest.fixture()
+def _isolated_stage_registry() -> Iterator[None]:
+    """Snapshot/restore the process-global stage registry around a test."""
+    before = dict(_REGISTERED_STAGES)
+    _REGISTERED_STAGES.clear()
+    try:
+        yield
+    finally:
+        _REGISTERED_STAGES.clear()
+        _REGISTERED_STAGES.update(before)
+
+
+class _CaptureStage(BasePipelineStage):
+    """Extension stage that records what it saw from the pipeline context."""
+
+    name = "TestCaptureStage"
+    _requires: ClassVar[dict[str, type]] = {"operation_ids": set, "revision_id": uuid.UUID}
+
+    captured: ClassVar[dict[str, object]] = {}
+
+    async def _run(self, ctx: PipelineContext) -> None:
+        type(self).captured = {
+            "operation_ids": ctx.require("operation_ids", set),
+            "revision_id": ctx.require("revision_id", uuid.UUID),
+            "config": ctx.config,
+        }
+
+
+class _FailingStage(BasePipelineStage):
+    name = "TestFailingStage"
+
+    async def _run(self, ctx: PipelineContext) -> None:
+        msg = "extension stage exploded"
+        raise RuntimeError(msg)
+
+
+async def test_registered_stage_runs_inside_ingest(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+    _isolated_stage_registry: None,
+) -> None:
+    """A registered extension stage runs last, sees the built-ins' context
+    products, and receives the loaded AppConfig for self-gating."""
+    _CaptureStage.captured = {}
+    register_pipeline_stage(PipelineStageSpec(name="test.capture", factory=_CaptureStage))
+
+    result = await Ingestor(ingest_context).ingest(_build_spec(), created_by="usr_test")
+
+    assert _CaptureStage.captured, "registered stage never ran"
+    assert _CaptureStage.captured["revision_id"] == result.revision_id
+    assert len(_CaptureStage.captured["operation_ids"]) == result.operation_count  # type: ignore[arg-type]
+    assert _CaptureStage.captured["config"] is ingest_context.config
+
+
+async def test_failing_registered_stage_rolls_back_ingest(
+    ingest_context: Context,
+    registry_db: DatabaseSession,
+    clean_registry: None,
+    _isolated_stage_registry: None,
+) -> None:
+    """A failing extension stage surfaces as IngestPipelineError and rolls back
+    everything the built-in stages persisted — exactly like a built-in failure."""
+    register_pipeline_stage(PipelineStageSpec(name="test.failing", factory=_FailingStage))
+
+    with pytest.raises(IngestPipelineError, match="extension stage exploded"):
+        await Ingestor(ingest_context).ingest(_build_spec(), created_by="usr_test")
+
+    async with registry_db.session() as session:
+        apis = (await session.execute(select(Api))).unique().scalars().all()
+        assert apis == [], "failed extension stage must roll back the whole ingest"

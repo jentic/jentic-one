@@ -13,6 +13,7 @@ from jentic_one.registry.ingest.pipeline.stage_registry import (
     _REGISTERED_STAGES,
     PipelineStageSpec,
     register_pipeline_stage,
+    registered_pipeline_stage_specs,
     registered_pipeline_stages,
 )
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
@@ -72,23 +73,41 @@ def test_registration_order_is_execution_order() -> None:
     assert isinstance(pipeline.stages[-1], _OtherExtensionStage)
 
 
-def test_duplicate_name_is_rejected() -> None:
+def test_identical_reregistration_is_idempotent() -> None:
+    spec = PipelineStageSpec(name="ext", factory=_ExtensionStage)
+    register_pipeline_stage(spec)
+    # Same frozen spec again (double import) — no-op, not an error.
+    register_pipeline_stage(PipelineStageSpec(name="ext", factory=_ExtensionStage))
+
+    assert registered_pipeline_stage_specs() == (spec,)
+
+
+def test_conflicting_name_is_rejected() -> None:
     register_pipeline_stage(PipelineStageSpec(name="ext", factory=_ExtensionStage))
     with pytest.raises(ValueError, match="already registered"):
         register_pipeline_stage(PipelineStageSpec(name="ext", factory=_OtherExtensionStage))
 
 
-def test_spec_type_filter_excludes_non_matching() -> None:
-    # No other SpecType exists yet, so prove the filter via an empty set (matches
-    # nothing) against the None default (matches everything).
+def test_empty_spec_types_filter_is_rejected() -> None:
+    with pytest.raises(ValueError, match="empty spec_types"):
+        register_pipeline_stage(
+            PipelineStageSpec(name="never", factory=_ExtensionStage, spec_types=frozenset())
+        )
+
+
+def test_spec_type_filter_and_none_default() -> None:
+    # Only one SpecType exists today, so prove the filter's two live branches:
+    # an explicit matching set and the None default (matches everything).
     register_pipeline_stage(
-        PipelineStageSpec(name="never", factory=_ExtensionStage, spec_types=frozenset())
+        PipelineStageSpec(
+            name="openapi_only", factory=_ExtensionStage, spec_types=frozenset({SpecType.OPENAPI})
+        )
     )
     register_pipeline_stage(PipelineStageSpec(name="always", factory=_OtherExtensionStage))
 
     stages = registered_pipeline_stages(SpecType.OPENAPI)
 
-    assert [type(s) for s in stages] == [_OtherExtensionStage]
+    assert [type(s) for s in stages] == [_ExtensionStage, _OtherExtensionStage]
 
 
 def test_fresh_instance_per_pipeline_build() -> None:
@@ -100,18 +119,36 @@ def test_fresh_instance_per_pipeline_build() -> None:
     assert first is not second
 
 
+def test_registered_specs_snapshot_is_a_copy() -> None:
+    spec = PipelineStageSpec(name="ext", factory=_ExtensionStage)
+    register_pipeline_stage(spec)
+
+    snapshot = registered_pipeline_stage_specs()
+
+    assert snapshot == (spec,)
+    assert isinstance(snapshot, tuple)  # immutable view, not the live registry
+
+
 def test_unregistered_pipeline_shape_is_unchanged() -> None:
+    # Full stage-type sequence, not just length: with nothing registered the
+    # factory output is identical to the hardcoded built-in pipeline.
     with_search = PipelineFactory.from_specification(_openapi_spec(), include_search_text=True)
     without = PipelineFactory.from_specification(_openapi_spec())
 
-    assert isinstance(with_search.stages[-1], BuildSearchTextForOperationsStage)
-    assert len(with_search.stages) == len(without.stages) + 1
+    with_search_types = [type(s) for s in with_search.stages]
+    without_types = [type(s) for s in without.stages]
+
+    assert with_search_types == [*without_types, BuildSearchTextForOperationsStage]
+    assert registered_pipeline_stage_specs() == ()
 
 
 def test_pipeline_context_carries_optional_config() -> None:
     sentinel = object()
     ctx = PipelineContext(
-        session=None, specification=_openapi_spec(), created_by="usr_test", config=sentinel
+        session=None,
+        specification=_openapi_spec(),
+        created_by="usr_test",
+        config=sentinel,  # type: ignore[arg-type]
     )
     assert ctx.config is sentinel
 

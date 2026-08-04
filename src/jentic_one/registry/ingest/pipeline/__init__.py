@@ -5,6 +5,7 @@ from jentic_one.registry.ingest.pipeline.pipeline import BasePipeline, Pipeline,
 from jentic_one.registry.ingest.pipeline.stage_registry import (
     PipelineStageSpec,
     register_pipeline_stage,
+    registered_pipeline_stage_specs,
     registered_pipeline_stages,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "PipelineFactory",
     "PipelineStageSpec",
     "register_pipeline_stage",
+    "registered_pipeline_stage_specs",
     "registered_pipeline_stages",
 ]

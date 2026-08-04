@@ -65,10 +65,12 @@ Read your validated config back with `AppConfig.extension("my_ext")`, which
 returns your model instance (or `None` if the section is absent).
 
 You can also append **ingest pipeline stages**. Registered stages run after
-every built-in stage (in registration order), see the full context bag the
-built-ins produced (`operation_ids`, `revision_id`, …), and share the ingest
-transaction — a failing extension stage rolls back the whole ingest. Gate
-yourself on your own config section; the registry is config-blind:
+every built-in stage (in registration order; when several packages register
+stages, cross-package order is their import order — register from one place if
+relative order matters), see the full context bag the built-ins produced
+(`operation_ids`, `revision_id`, …), and share the ingest transaction — a
+failing extension stage rolls back the whole ingest. Gate yourself on your own
+config section; the registry is config-blind:
 
 ```python
 import uuid
@@ -78,11 +80,10 @@ from jentic_one.registry.ingest.pipeline import (
     PipelineStageSpec,
     register_pipeline_stage,
 )
-from jentic_one.registry.ingest.stages.base import BasePipelineStage
+from jentic_one.registry.ingest.stages import BasePipelineStage
 
 
 class EmbedOperationsStage(BasePipelineStage):
-    name = "EmbedOperationsStage"
     _requires = {"operation_ids": set, "revision_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
