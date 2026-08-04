@@ -362,6 +362,59 @@ def test_explicit_cache_control_is_not_overwritten(
     assert resp.headers["cache-control"] == "no-store"
 
 
+def test_missing_hashed_asset_is_not_cached_immutably(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 404 for a hashed asset must NOT be cached for a year.
+
+    "This URL is immutable" is only true of a response that served the bytes. A
+    404 under ``/app/assets/`` is transient — a client on a freshly-loaded shell
+    requesting an asset from a replica still serving the previous build, or a
+    partially-synced deploy. Pinning that for a year would leave a permanently
+    broken UI that no *later* deploy could repair, which is the same class of
+    failure this middleware exists to prevent.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    missing = client.get(f"{SPA_MOUNT_PATH}/assets/index-DOESNOTEXIST.js")
+    assert missing.status_code == 404
+    assert "immutable" not in missing.headers.get("cache-control", "")
+    assert missing.headers["cache-control"] == "no-cache"
+
+    # The successful case still gets the immutable treatment.
+    present = client.get(f"{SPA_MOUNT_PATH}/assets/app.js")
+    assert present.status_code == 200
+    assert present.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_asset_304_keeps_the_immutable_directive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 304 is the cache working, so it must keep the immutable directive.
+
+    Excluding non-200s must not accidentally sweep up 304s: dropping the
+    directive there would leave the client with nothing to apply next time.
+    """
+    static_dir = _make_static_bundle(tmp_path)
+    monkeypatch.setattr(static_mod, "_resolve_static_dir", lambda: static_dir)
+
+    app = FastAPI()
+    mount_spa(app)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    first = client.get(f"{SPA_MOUNT_PATH}/assets/app.js")
+    revalidated = client.get(
+        f"{SPA_MOUNT_PATH}/assets/app.js", headers={"If-None-Match": first.headers["etag"]}
+    )
+    assert revalidated.status_code == 304
+    assert revalidated.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
 def _make_source_checkout(tmp_path: Path, *, with_bundle: bool) -> Path:
     """Simulate a source checkout: a repo root with pyproject.toml and ui/dist."""
     tmp_path.mkdir(parents=True, exist_ok=True)

@@ -163,13 +163,23 @@ def _resolve_static_dir() -> Path | None:
     return _resolve_dev_static_dir()
 
 
-def _cache_control_for(path: str) -> str:
-    """Return the ``Cache-Control`` value for an SPA path.
+def _cache_control_for(path: str, status: int) -> str:
+    """Return the ``Cache-Control`` value for an SPA response.
 
     Content-hashed assets are immutable; everything else under the mount is (or
     falls back to) the unversioned shell and must be revalidated.
+
+    ``status`` gates the immutable directive because "this URL's bytes never
+    change" is only true of a response that actually *served* those bytes. A
+    ``404`` for a hashed asset is transient — a client that loaded a new shell
+    while a replica still served the old build, or a partially-synced deploy —
+    and caching it for a year would pin a broken UI that no later deploy could
+    repair. Negative and error responses therefore revalidate.
+
+    ``304 Not Modified`` counts as success: it is the cache *working*, and the
+    directive has to survive on it or the client has nothing to apply next time.
     """
-    if path.startswith(_ASSETS_PREFIX):
+    if path.startswith(_ASSETS_PREFIX) and (200 <= status < 300 or status == 304):
         return _IMMUTABLE_CACHE
     return _REVALIDATE_CACHE
 
@@ -190,7 +200,10 @@ class SPACacheHeadersMiddleware:
     ``no-cache``: still cached, but always revalidated, which the existing
     ``ETag`` turns into a cheap 304 when nothing changed. The hashed assets
     under ``/app/assets/`` go the other way and are cached immutably — their URL
-    changes whenever their bytes do, so revalidating them is pure waste.
+    changes whenever their bytes do, so revalidating them is pure waste. The
+    immutable directive is applied only to a *successful* asset response: a
+    transient 404 (mid-deploy skew) cached for a year would pin a broken UI that
+    no later deploy could repair.
 
     Implemented as **pure ASGI middleware** (not ``BaseHTTPMiddleware``) for the
     same reason as ``RequestIDMiddleware``: it operates on ``scope``/``send``
@@ -222,12 +235,11 @@ class SPACacheHeadersMiddleware:
 
     @staticmethod
     def _with_cache_control(send: Send, path: str) -> Send:
-        directive = _cache_control_for(path).encode("latin-1")
-
         async def wrapped(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = message.get("headers", [])
                 if not any(name.lower() == b"cache-control" for name, _ in headers):
+                    directive = _cache_control_for(path, message["status"]).encode("latin-1")
                     message = {**message, "headers": [*headers, (b"cache-control", directive)]}
             await send(message)
 
