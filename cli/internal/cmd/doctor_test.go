@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/install"
 )
 
 // offlineOpts points the server probe at a closed port so doctor never depends
@@ -156,6 +157,45 @@ func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 		if d.checks[i].name == "deploy" {
 			t.Errorf("deploy check should return early on a down daemon, not record a `deploy` row: %+v", d.checks[i])
 		}
+	}
+}
+
+// When the `docker` binary is missing (not merely a stopped daemon), doctor's
+// deploy check reports it under a `docker` row pointing at install docs rather
+// than the "start your Docker daemon" hint (#954).
+func TestDoctorReportsDockerNotInstalled(t *testing.T) {
+	orig := doctorDockerProbe
+	t.Cleanup(func() { doctorDockerProbe = orig })
+	// Mirror what the real probe returns when the binary is absent.
+	notInstalled := install.DockerNotInstalledDetail()
+	doctorDockerProbe = func(context.Context) (string, bool) { return notInstalled, false }
+
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkDeploy("Server")
+
+	var row *check
+	for i := range d.checks {
+		if d.checks[i].name == "docker" {
+			row = &d.checks[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("deploy check did not record a `docker` row for a missing binary: %+v", d.checks)
+	}
+	if row.status != statusWarn {
+		t.Errorf("missing docker should be statusWarn (CI-safe), got %v", row.status)
+	}
+	if !strings.Contains(row.hint, "get-docker") {
+		t.Errorf("missing-docker hint should point at install docs, got %q", row.hint)
+	}
+	if strings.Contains(row.hint, "start your Docker daemon") {
+		t.Errorf("missing-docker hint should not tell the user to start a daemon: %q", row.hint)
 	}
 }
 

@@ -218,8 +218,15 @@ func (d *doctor) checkDeploy(section string) {
 		// and the sibling `control`/`compose ps` checks also warn on a
 		// not-running dependency — a down daemon shouldn't flip the exit code.
 		if detail, healthy := doctorDockerProbe(d.ctx); !healthy {
-			d.add(section, "docker daemon", statusWarn, detail,
-				install.DockerDaemonRecoveryHint()+", then `jenticctl start`")
+			// A missing binary points at install docs; a present-but-down
+			// daemon points at starting it (#954).
+			hint := install.DockerDaemonRecoveryHint() + ", then `jenticctl start`"
+			name := "docker daemon"
+			if install.DockerNotInstalled(detail) {
+				hint = install.DockerNotInstalledHint()
+				name = "docker"
+			}
+			d.add(section, name, statusWarn, detail, hint)
 			return
 		}
 		out, err := install.ComposePs(composePath)
