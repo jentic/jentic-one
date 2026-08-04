@@ -108,10 +108,18 @@ def _run_check(order: list[str]) -> int:
     The output is line-oriented and stable because `jenticctl` parses it to
     decide whether starting the stack is safe.
     """
-    # The overall verdict is the most severe per-database state: one lagging
-    # database makes the whole stack unsafe to start.
-    severity = {STATE_CURRENT: 0, STATE_PENDING: 1, STATE_UNINITIALIZED: 2}
-    worst = STATE_CURRENT
+    # The overall verdict is the state demanding the most caution, which is
+    # ``pending`` — NOT the "worst-looking" one. The caller responds to these
+    # states in opposite ways: ``uninitialized`` is migrated unattended (nothing
+    # to lose), while ``pending`` aborts so the operator can take a backup.
+    #
+    # So a mixed stack — say a newly added database target with no version table
+    # alongside an existing one behind head — must report ``pending``. Ranking
+    # ``uninitialized`` higher would let the "no data to lose" path run
+    # forward-only migrations across every database, including the ones holding
+    # data, silently bypassing the very safeguard this check exists to provide.
+    caution = {STATE_CURRENT: 0, STATE_UNINITIALIZED: 1, STATE_PENDING: 2}
+    verdict = STATE_CURRENT
     for db_name in order:
         state, current, heads = status(db_name)
         print(
@@ -119,10 +127,10 @@ def _run_check(order: list[str]) -> int:
             f"head={','.join(heads) or '-'}",
             flush=True,
         )
-        if severity[state] > severity[worst]:
-            worst = state
-    print(f"OVERALL {worst}", flush=True)
-    return 0 if worst == STATE_CURRENT else CHECK_EXIT_NEEDS_MIGRATION
+        if caution[state] > caution[verdict]:
+            verdict = state
+    print(f"OVERALL {verdict}", flush=True)
+    return 0 if verdict == STATE_CURRENT else CHECK_EXIT_NEEDS_MIGRATION
 
 
 def main(argv: list[str] | None = None) -> int:

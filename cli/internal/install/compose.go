@@ -534,10 +534,17 @@ const (
 // to SchemaUnknown, because a caller cannot act on a non-answer: blocking a
 // start because a diagnostic broke would be worse than the problem being
 // diagnosed. Only a verdict the runner actually printed is authoritative.
-func ComposeSchemaState(composePath string) SchemaState {
+//
+// w receives progress and, when no verdict could be read, the check's own output.
+// The probe pulls/starts a database container, so it is not instant; without a
+// line explaining the pause `start` looks hung. And silently swallowing the
+// output would make the one case that needs explaining — "why did it not
+// notice?" — undiagnosable.
+func ComposeSchemaState(w io.Writer, composePath string) SchemaState {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return SchemaUnknown
 	}
+	fmt.Fprintln(w, mutedStyle.Render("Checking database schema ..."))
 	//nolint:gosec // composePath is CLI-managed under JENTIC_HOME.
 	out, _ := exec.Command("docker", migrateCheckArgs(composePath)...).CombinedOutput()
 
@@ -545,8 +552,24 @@ func ComposeSchemaState(composePath string) SchemaState {
 	// design* when migrations are needed, so the printed verdict — not the exit
 	// code — is what carries the answer. No verdict (an old image without
 	// `--check`, no daemon, an unreachable database) means undeterminable.
-	state, _ := parseSchemaVerdict(string(out))
+	state, ok := parseSchemaVerdict(string(out))
+	if !ok {
+		fmt.Fprintln(w, mutedStyle.Render("  could not determine schema state; continuing"))
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+			fmt.Fprintln(w, mutedStyle.Render(indentLines(trimmed, "  ")))
+		}
+	}
 	return state
+}
+
+// indentLines prefixes every line of s, so borrowed subprocess output stays
+// visually subordinate to the CLI's own messages.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // parseSchemaVerdict extracts the OVERALL line that `migrations.run --check`

@@ -1,6 +1,7 @@
 package install
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,7 +73,7 @@ func TestComposeSchemaStateReadsVerdict(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stubDocker(t, tc.stdout, tc.exit, filepath.Join(t.TempDir(), "args"))
-			if got := ComposeSchemaState("/tmp/compose.yaml"); got != tc.want {
+			if got := ComposeSchemaState(io.Discard, "/tmp/compose.yaml"); got != tc.want {
 				t.Errorf("state = %v, want %v", got, tc.want)
 			}
 		})
@@ -98,7 +99,7 @@ func TestComposeSchemaStateUnknownWhenUndeterminable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stubDocker(t, tc.stdout, tc.exit, filepath.Join(t.TempDir(), "args"))
-			if got := ComposeSchemaState("/tmp/compose.yaml"); got != SchemaUnknown {
+			if got := ComposeSchemaState(io.Discard, "/tmp/compose.yaml"); got != SchemaUnknown {
 				t.Errorf("state = %v, want SchemaUnknown", got)
 			}
 		})
@@ -113,7 +114,7 @@ func TestComposeSchemaStateProbeIsReadOnly(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args")
 	stubDocker(t, "OVERALL current", 0, argsFile)
 
-	ComposeSchemaState("/tmp/compose.yaml")
+	ComposeSchemaState(io.Discard, "/tmp/compose.yaml")
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("read recorded args: %v", err)
@@ -133,11 +134,55 @@ func TestComposeSchemaStateProbeIsReadOnly(t *testing.T) {
 	}
 }
 
+// TestComposeSchemaStateSurfacesAnUndeterminableProbe: when the check cannot
+// produce a verdict, `start` carries on by design — so the operator's only clue
+// that the safety net was skipped is what gets printed. Swallowing the output
+// would make the one case that needs explaining ("why did it not notice?")
+// undiagnosable. The probe also pulls/starts a database container, so it must
+// announce itself or `start` looks hung.
+func TestComposeSchemaStateSurfacesAnUndeterminableProbe(t *testing.T) {
+	stubDocker(t, "Cannot connect to the Docker daemon at unix:///var/run/docker.sock", 1,
+		filepath.Join(t.TempDir(), "args"))
+
+	var out strings.Builder
+	if got := ComposeSchemaState(&out, "/tmp/compose.yaml"); got != SchemaUnknown {
+		t.Fatalf("state = %v, want SchemaUnknown", got)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Checking database schema") {
+		t.Errorf("probe must announce itself (it is slow):\n%s", got)
+	}
+	if !strings.Contains(got, "could not determine") {
+		t.Errorf("an undeterminable probe must say so:\n%s", got)
+	}
+	if !strings.Contains(got, "Cannot connect to the Docker daemon") {
+		t.Errorf("the check's own output is the only diagnostic; it must not be swallowed:\n%s", got)
+	}
+}
+
+// TestComposeSchemaStateQuietOnASuccessfulVerdict: the failure diagnostics above
+// must not turn every ordinary `start` into a wall of subprocess output.
+func TestComposeSchemaStateQuietOnASuccessfulVerdict(t *testing.T) {
+	stubDocker(t, "STATUS jentic current current=abc head=abc\nOVERALL current", 0,
+		filepath.Join(t.TempDir(), "args"))
+
+	var out strings.Builder
+	if got := ComposeSchemaState(&out, "/tmp/compose.yaml"); got != SchemaCurrent {
+		t.Fatalf("state = %v, want SchemaCurrent", got)
+	}
+	if strings.Contains(out.String(), "could not determine") {
+		t.Errorf("a clean verdict must not warn:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "STATUS jentic") {
+		t.Errorf("per-database detail is for the failure path only:\n%s", out.String())
+	}
+}
+
 // TestComposeSchemaStateUnknownWithoutDocker: no docker at all is undeterminable
 // rather than an error, so a local-mode or docker-less environment is unaffected.
 func TestComposeSchemaStateUnknownWithoutDocker(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if got := ComposeSchemaState("/tmp/compose.yaml"); got != SchemaUnknown {
+	if got := ComposeSchemaState(io.Discard, "/tmp/compose.yaml"); got != SchemaUnknown {
 		t.Errorf("state = %v, want SchemaUnknown", got)
 	}
 }

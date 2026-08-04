@@ -159,7 +159,7 @@ func (a *App) startDocker(composePath string) error {
 // An undeterminable state never blocks the start: refusing because a diagnostic
 // failed would be a worse regression than the bug being fixed.
 func (a *App) ensureDockerSchema(composePath string) error {
-	switch install.ComposeSchemaState(composePath) {
+	switch install.ComposeSchemaState(a.Out, composePath) {
 	case install.SchemaUnknown, install.SchemaCurrent:
 		return nil
 

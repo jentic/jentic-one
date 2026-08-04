@@ -143,6 +143,41 @@ def test_check_reports_pending_when_any_database_is_behind(
     assert f"STATUS {_DB} pending" in out
 
 
+def test_check_reports_pending_when_one_database_is_behind_and_another_is_wiped(
+    sqlite_stack: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A mixed stack must report ``pending`` — the state demanding most caution.
+
+    The two states get opposite responses from the caller: ``uninitialized`` is
+    migrated unattended (nothing to lose), while ``pending`` aborts the start so
+    the operator can take a backup first. So the overall verdict cannot be the
+    "worst-looking" state; it has to be the most cautious one.
+
+    Ranking ``uninitialized`` higher would let the "no data to lose" path run
+    forward-only migrations across *every* database, including the one holding
+    data that is behind head — silently bypassing the safeguard this check
+    exists to provide. Realistic trigger: a newly added database target
+    alongside existing ones, or a partially wiped volume set.
+
+    The wiped database is deliberately the last one checked, so a verdict that
+    merely reflects iteration order cannot pass.
+    """
+    order = list(run_mod._valid_dbs())
+    behind, wiped_db = order[0], order[-1]
+    run_mod.main([])
+    run_mod.downgrade(behind, "-1")
+    (sqlite_stack / f"{wiped_db}.db").unlink()
+    capsys.readouterr()
+
+    code = run_mod.main(["--check"])
+    out = capsys.readouterr().out
+
+    assert f"STATUS {behind} pending" in out
+    assert f"STATUS {wiped_db} uninitialized" in out
+    assert "OVERALL pending" in out, f"a mixed stack must not auto-migrate:\n{out}"
+    assert code == CHECK_EXIT_NEEDS_MIGRATION
+
+
 def test_check_does_not_migrate(sqlite_stack: Path) -> None:
     """End-to-end read-only guarantee for the CLI entrypoint."""
     assert run_mod.main(["--check"]) == CHECK_EXIT_NEEDS_MIGRATION
