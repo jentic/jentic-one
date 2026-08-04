@@ -111,11 +111,12 @@ func TestDotFor(t *testing.T) {
 	}
 }
 
-// With a compose install and a stopped daemon, doctor reports an explicit,
-// actionable "docker daemon" warning rather than inferring it from a cryptic
-// `docker compose ps` error (#783). It stays a warning (not a fail) so doctor
-// keeps a zero exit — safe to wire into CI — and it returns before touching real
-// `docker compose ps`.
+// With a compose install and a stopped daemon, the deploy check records an
+// explicit, actionable "docker daemon" WARNING (not a fail) rather than
+// inferring it from a cryptic `docker compose ps` error (#783). Keeping it a
+// warning is what lets doctor stay a zero-exit, CI-safe diagnostic. We assert on
+// the specific check rather than doctor's aggregate exit, since other checks'
+// severity varies by environment (e.g. CI vs a dev box).
 func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 	orig := doctorDockerProbe
 	t.Cleanup(func() { doctorDockerProbe = orig })
@@ -125,21 +126,35 @@ func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
-	// A down daemon is a warning, not a failure, so doctor must still exit zero.
-	if err := app.doctorE(context.Background(), offlineOpts()); err != nil {
-		t.Fatalf("a down daemon should warn, not fail doctor; got error: %v", err)
-	}
 
-	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "docker desktop start", "colima start"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("doctor output missing %q\n---\n%s", want, got)
+	d := &doctor{app: app}
+	d.checkDeploy("Server")
+
+	var daemon *check
+	for i := range d.checks {
+		if d.checks[i].name == "docker daemon" {
+			daemon = &d.checks[i]
+			break
+		}
+	}
+	if daemon == nil {
+		t.Fatalf("deploy check did not record a `docker daemon` row: %+v", d.checks)
+	}
+	if daemon.status != statusWarn {
+		t.Errorf("down daemon should be statusWarn (CI-safe, zero exit), got %v", daemon.status)
+	}
+	if !strings.Contains(daemon.detail, "Cannot connect to the Docker daemon") {
+		t.Errorf("daemon detail = %q, want the probe's reason", daemon.detail)
+	}
+	for _, want := range []string{"docker desktop start", "colima start"} {
+		if !strings.Contains(daemon.hint, want) {
+			t.Errorf("daemon hint missing %q: %q", want, daemon.hint)
 		}
 	}
 	// The check must return early, never falling through to real `docker compose ps`.
-	for _, absent := range []string{"docker compose ps failed", "docker compose ("} {
-		if strings.Contains(got, absent) {
-			t.Errorf("doctor should not reach `docker compose ps` when the daemon is down; saw %q\n---\n%s", absent, got)
+	for i := range d.checks {
+		if d.checks[i].name == "deploy" {
+			t.Errorf("deploy check should return early on a down daemon, not record a `deploy` row: %+v", d.checks[i])
 		}
 	}
 }
