@@ -295,7 +295,7 @@ func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 		}
 		dirs = append(dirs, SessionDir{Path: clean, Kind: AccessReadWrite})
 	}
-	for _, d := range execRouteDirs(agentHome) {
+	for _, d := range execRouteDirs() {
 		dirs = append(dirs, SessionDir{Path: d, Kind: AccessReadOnly})
 	}
 	// The agent's OWN ~/.local/bin is where the launched binary lives (CopyBinaryCmd
@@ -492,25 +492,20 @@ func deniedRootOf(p string) string {
 // run the tools it needs but never overwrite any executable on its PATH.
 var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
 
-// execRouteDirs returns the executable directories on the agent's PATH that the
-// sandbox marks read-only: the agent's OWN ~/.local/bin (where `jentic run`
-// copies/installs the agent binary), the sanctioned shared tool dirs, and the
+// execRouteDirs returns the SHARED executable directories on the agent's PATH
+// that the sandbox marks read-only: the sanctioned shared tool dirs plus the
 // system bin dirs, de-duplicated and filtered to those that exist. Making these
 // write-denied is a non-negotiable boundary — it stops a compromised agent from
 // rewriting the binaries `jentic run` executes to shed its own sandbox next run.
-// The home-local dir matters most: it sits inside the agent's writable home, so
-// without an explicit last-emitted deny the home re-allow would leave the very
-// binary the launcher execs agent-writable.
-func execRouteDirs(agentHome string) []string {
-	var candidates []string
-	if agentHome != "" {
-		candidates = append(candidates, filepath.Join(agentHome, ".local", "bin"))
-	}
-	candidates = append(candidates, candidateSharedBinDirs...)
-	candidates = append(candidates, systemBinDirs...)
+// The agent's OWN ~/.local/bin — the route that matters most, since it sits
+// inside the writable agent home — is handled by SessionAccess directly: it is
+// included UNCONDITIONALLY (a not-yet-provisioned dir must still be denied so a
+// mid-session mkdir can't open a self-rewrite route), so it doesn't belong in
+// this existence-filtered set.
+func execRouteDirs() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, d := range candidates {
+	for _, d := range append(append([]string{}, candidateSharedBinDirs...), systemBinDirs...) {
 		d = filepath.Clean(d)
 		if seen[d] {
 			continue
@@ -627,12 +622,9 @@ var usernsClonePath = "/proc/sys/kernel/unprivileged_userns_clone"
 // error-closed, so an inconclusive probe must fail closed rather than let
 // ConfinementAvailable claim a boundary it can't confirm.
 func unprivilegedUserNSEnabled() bool {
-	data, err := os.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
+	data, err := os.ReadFile(usernsClonePath)
 	if err != nil {
 		return errors.Is(err, os.ErrNotExist) // absent → enabled; unreadable → fail closed
-	}
-	if err != nil {
-		return false // unreadable → fail closed, like the rest of confinement
 	}
 	return strings.TrimSpace(string(data)) != "0"
 }
