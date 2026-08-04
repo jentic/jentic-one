@@ -185,6 +185,32 @@ func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
 	}
 }
 
+// The outer sudo argv must name the shell by its ABSOLUTE path. sudo resolves a
+// bare command name against its environment's PATH — and the launch hands sudo
+// the curated launchEnv, which deliberately carries no PATH. With no sudoers
+// secure_path to fall back on (macOS's default sudoers sets none), a bare `bash`
+// fails the launch with "sudo: bash: command not found". The absolute path also
+// matches the sudoers NOPASSWD rule exactly.
+func TestConfineLaunchCmdUsesAbsoluteShell(t *testing.T) {
+	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
+		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+
+	// argv shape: sudo -u <user> -H <shell> -c <snippet> — the shell is the
+	// third-to-last arg and must be the absolute agentLaunchShell.
+	shell := cmd.Args[len(cmd.Args)-3]
+	if shell != agentLaunchShell {
+		t.Errorf("outer shell must be the absolute %s (sudo can't resolve a bare name without PATH), got %q", agentLaunchShell, shell)
+	}
+
+	// The precondition that makes the absolute path load-bearing: the curated
+	// launch env really does carry no PATH for sudo to resolve a bare name with.
+	for _, kv := range cmd.Env {
+		if strings.HasPrefix(kv, "PATH=") {
+			t.Errorf("launch env must not carry PATH, got %q", kv)
+		}
+	}
+}
+
 // launchEnv forwards only the allowlisted terminal/locale hints, and never a
 // sensitive or arbitrary operator variable.
 func TestLaunchEnvIsAllowlisted(t *testing.T) {

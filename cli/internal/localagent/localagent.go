@@ -549,9 +549,10 @@ const sudoersPath = "/etc/sudoers.d/jentic-agent"
 // bash that agentBashArgs runs as the agent user (probe, grant, and the confined
 // launch all go through it). The passwordless rule is scoped to exactly this
 // command, so the grant is "run bash as the agent user without a password" — not
-// a general root grant. It is `/bin/bash` on both macOS and Linux (present in
-// sudo's default secure_path on both), matching the resolution of the unqualified
-// `bash` in agentBashArgs.
+// a general root grant. It is `/bin/bash` on both macOS and Linux, and the sudo
+// argv names it by this ABSOLUTE path: sudo resolves a bare command name against
+// its environment's PATH, which the curated launch env deliberately omits, and
+// macOS's default sudoers sets no secure_path to fall back on.
 const agentLaunchShell = "/bin/bash"
 
 // SudoersRule is the single sudoers line that lets operator become agentUser via
@@ -637,13 +638,19 @@ func IsUnderHome(home, dir string) bool {
 // agentBashArgs builds the sudo argv that runs snippet as agentUser in a login
 // bash. Shared by every agent invocation (probe, grant, and the confined launch).
 //
-// We use `sudo -u <user> -H bash -lc` rather than `sudo -i`: `-i` re-serializes
-// the command through the login shell (mangling any multi-token/multi-line
-// snippet), while plain sudo passes argv straight through. `-H` points HOME at
-// the agent's home and `bash -l` still sources the agent's login profiles (so a
-// PATH export we added there is honoured).
+// We use `sudo -u <user> -H /bin/bash -lc` rather than `sudo -i`: `-i`
+// re-serializes the command through the login shell (mangling any
+// multi-token/multi-line snippet), while plain sudo passes argv straight
+// through. `-H` points HOME at the agent's home and `bash -l` still sources the
+// agent's login profiles (so a PATH export we added there is honoured). The
+// shell is named by its ABSOLUTE path (agentLaunchShell): sudo resolves a bare
+// command name against ITS environment's PATH, which is empty on the launch
+// path (launchEnv carries no PATH) and not guaranteed by sudoers `secure_path`
+// (macOS's default sudoers sets none) — a bare `bash` fails there with
+// "sudo: bash: command not found". The absolute path needs no resolution and is
+// the exact command the sudoers NOPASSWD rule is scoped to.
 func agentBashArgs(agentUser, snippet string) []string {
-	return []string{"-u", agentUser, "-H", "bash", "-lc", snippet}
+	return []string{"-u", agentUser, "-H", agentLaunchShell, "-lc", snippet}
 }
 
 // agentCmd builds `sudo -u <user> -H bash -lc <snippet>` with the working
@@ -669,11 +676,13 @@ func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 // outer shell must source NO agent-owned rc, so no agent code runs before the
 // confinement wrapper takes hold. The login shell (which sources rc, honouring the
 // agent's ~/.local/bin PATH export) is run INSIDE the wrapper by confineExec, so
-// rc is honoured but only under confinement. The sudoers passwordless rule is
-// scoped to the /bin/bash command path (not its arguments), so login vs non-login
+// rc is honoured but only under confinement. The shell is the ABSOLUTE
+// agentLaunchShell for the same reason as agentBashArgs — the launch env carries
+// no PATH for sudo to resolve a bare name with — and the sudoers passwordless
+// rule is scoped to that command path (not its arguments), so login vs non-login
 // makes no difference to what the rule matches.
 func agentBashArgsNoLogin(agentUser, snippet string) []string {
-	return []string{"-u", agentUser, "-H", "bash", "-c", snippet}
+	return []string{"-u", agentUser, "-H", agentLaunchShell, "-c", snippet}
 }
 
 // sensitiveEnvVars are environment variables that must never carry from the
