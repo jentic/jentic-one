@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -23,7 +24,7 @@ func TestStopDockerFailsFastWhenDaemonDown(t *testing.T) {
 		return nil
 	}
 
-	err := app.stopE(&stopOptions{})
+	err := app.stopE(context.Background(), &stopOptions{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("stop should surface the daemon guard error, got %v", err)
 	}
@@ -48,7 +49,7 @@ func TestStopDockerVolumesFailsFastBeforeConfirm(t *testing.T) {
 		return nil
 	}
 
-	err := app.stopE(&stopOptions{volumes: true})
+	err := app.stopE(context.Background(), &stopOptions{volumes: true})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("stop --volumes should surface the daemon guard error before confirming, got %v", err)
 	}

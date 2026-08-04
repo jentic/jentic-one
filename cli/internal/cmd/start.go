@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -26,8 +27,8 @@ func newStartCmd(app *App) *cobra.Command {
 			"It requires a completed `jenticctl install` (a generated config and a built\n" +
 			"venv); if either is missing it tells you to run `jenticctl install` first.",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return app.startE(opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.startE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.config, "config", "",
@@ -35,12 +36,12 @@ func newStartCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) startE(opts *startOptions) error {
+func (a *App) startE(ctx context.Context, opts *startOptions) error {
 	// A generated compose file marks a Docker install: drive the stack with
 	// docker compose instead of the local background process.
 	composePath := a.Paths.ComposePath()
 	if proc.FileExists(composePath) {
-		return a.startDocker(composePath)
+		return a.startDocker(ctx, composePath)
 	}
 
 	pidPath := a.Paths.AppPIDPath()
@@ -124,7 +125,7 @@ func brokerPortFromManifest(a *App) string {
 }
 
 // startDocker brings the generated docker-compose stack up in detached mode.
-func (a *App) startDocker(composePath string) error {
+func (a *App) startDocker(ctx context.Context, composePath string) error {
 	// The compose file proves a Docker install, but not that the daemon is up:
 	// with the daemon down (e.g. Docker Desktop closed after a reboot) `docker
 	// compose up` fails with a raw "Cannot connect to the Docker daemon" error.
@@ -133,7 +134,7 @@ func (a *App) startDocker(composePath string) error {
 	// (~30s), so announce it — otherwise the command looks hung. This must come
 	// before the schema check below, which also needs a live daemon.
 	announceDaemonCheck(a.Out)
-	if err := requireDockerDaemon("jenticctl start"); err != nil {
+	if err := requireDockerDaemon(ctx, "jenticctl start"); err != nil {
 		return err
 	}
 	if err := a.ensureDockerSchema(composePath); err != nil {

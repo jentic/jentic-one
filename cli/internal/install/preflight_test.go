@@ -1,9 +1,11 @@
 package install
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMissing(t *testing.T) {
@@ -39,7 +41,7 @@ func TestPreflightProbesRequirements(t *testing.T) {
 	// requirement; the probe should return one result per requirement.
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
-	results := Preflight(d)
+	results := Preflight(context.Background(), d)
 	if len(results) == 0 {
 		t.Fatal("expected at least one preflight result")
 	}
@@ -114,20 +116,20 @@ func TestRequireDockerDaemon(t *testing.T) {
 	t.Cleanup(func() { dockerDaemonProbe = orig })
 
 	// Healthy daemon → no error, so `start`/`stop` proceed.
-	dockerDaemonProbe = func() (string, bool) { return "", true }
-	if err := RequireDockerDaemon("jenticctl start"); err != nil {
+	dockerDaemonProbe = func(context.Context) (string, bool) { return "", true }
+	if err := RequireDockerDaemon(context.Background(), "jenticctl start"); err != nil {
 		t.Errorf("healthy daemon should not error, got %v", err)
 	}
 
 	for _, tc := range []struct {
 		name    string
-		probe   func() (string, bool)
+		probe   func(context.Context) (string, bool)
 		command string
 		want    []string
 	}{
 		{
 			name:    "down with detail names the caller and stays runtime-agnostic",
-			probe:   func() (string, bool) { return "Cannot connect to the Docker daemon", false },
+			probe:   func(context.Context) (string, bool) { return "Cannot connect to the Docker daemon", false },
 			command: "jenticctl start",
 			// Leads with the generic instruction, then Docker Desktop / Linux /
 			// Colima specifics, and names the command the operator ran.
@@ -138,14 +140,14 @@ func TestRequireDockerDaemon(t *testing.T) {
 		},
 		{
 			name:    "down with empty detail falls back to a usable reason",
-			probe:   func() (string, bool) { return "", false },
+			probe:   func(context.Context) (string, bool) { return "", false },
 			command: "jenticctl stop",
 			want:    []string{"not reachable", "jenticctl stop"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dockerDaemonProbe = tc.probe
-			err := RequireDockerDaemon(tc.command)
+			err := RequireDockerDaemon(context.Background(), tc.command)
 			if err == nil {
 				t.Fatal("stopped daemon should return an error")
 			}
@@ -173,11 +175,11 @@ func TestPreflightDaemonProbeSeam(t *testing.T) {
 
 	orig := dockerDaemonProbe
 	t.Cleanup(func() { dockerDaemonProbe = orig })
-	dockerDaemonProbe = func() (string, bool) { return "daemon stopped", false }
+	dockerDaemonProbe = func(context.Context) (string, bool) { return "daemon stopped", false }
 
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
-	results := Preflight(d)
+	results := Preflight(context.Background(), d)
 
 	var sawDocker bool
 	for _, r := range results {
@@ -200,5 +202,39 @@ func TestPreflightDaemonProbeSeam(t *testing.T) {
 	}
 	if !sawDocker {
 		t.Fatal("expected a docker requirement in the docker-path preflight")
+	}
+}
+
+// TestDefaultDockerDaemonProbeCancelable is the core #953 guarantee: an operator
+// who hits Ctrl-C (a canceled context) doesn't have to sit through the full
+// ~30s cold-start polling window. With an already-canceled ctx the real probe
+// must give up promptly rather than sleeping out every attempt/backoff.
+func TestDefaultDockerDaemonProbeCancelable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // canceled before we even start probing
+
+	done := make(chan struct{})
+	var detail string
+	var healthy bool
+	start := time.Now()
+	go func() {
+		detail, healthy = defaultDockerDaemonProbe(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("canceled probe did not return promptly — it appears to be waiting out the full polling window")
+	}
+
+	if elapsed := time.Since(start); elapsed >= 15*time.Second {
+		t.Errorf("probe took %s; a canceled ctx should short-circuit the ~30s window", elapsed)
+	}
+	if healthy {
+		t.Error("canceled probe reported the daemon healthy")
+	}
+	if detail == "" {
+		t.Error("canceled probe should return a non-empty reason")
 	}
 }

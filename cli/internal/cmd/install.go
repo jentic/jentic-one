@@ -166,7 +166,7 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// venv (from the local checkout if we're inside the repo, otherwise clone
 	// from GitHub first) and apply migrations.
 	if local {
-		if err := installLocal(a, draft, out); err != nil {
+		if err := installLocal(cmd.Context(), a, draft, out); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -184,7 +184,7 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// installDocker records the true outcome on draft.AppStarted (a failed
 	// `compose up` is non-fatal and leaves it false).
 	if docker {
-		if err := a.installDocker(draft, out, logsDir, opts.noStart); err != nil {
+		if err := a.installDocker(cmd.Context(), draft, out, logsDir, opts.noStart); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -346,8 +346,8 @@ func (a *App) writeCLIConfig(draft *install.Draft) {
 // the combined app image (from the local checkout or a fresh clone), write the
 // generated docker-compose stack, apply migrations in a one-shot container, and
 // optionally bring the stack up. Mirrors installLocal for the Docker path.
-func (a *App) installDocker(draft *install.Draft, configPath, logsDir string, noStart bool) error {
-	results := install.Preflight(draft)
+func (a *App) installDocker(ctx context.Context, draft *install.Draft, configPath, logsDir string, noStart bool) error {
+	results := install.Preflight(ctx, draft)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderPreflight(results))
 	if missing := install.Missing(results); len(missing) > 0 {
@@ -435,7 +435,7 @@ func (a *App) startAppBackground(draft *install.Draft, configPath, logsDir strin
 	fmt.Fprintln(a.Out, theme.Successf("  Broker started (pid %d, port %s)", brokerPID, draft.BrokerPort))
 }
 
-func installLocal(a *App, draft *install.Draft, configPath string) error {
+func installLocal(ctx context.Context, a *App, draft *install.Draft, configPath string) error {
 	venvDir := a.Paths.VenvPath()
 	srcDir := a.Paths.SrcPath()
 
@@ -444,7 +444,7 @@ func installLocal(a *App, draft *install.Draft, configPath string) error {
 	install.EnsureUv(a.Out)
 
 	// Preflight: confirm required tools are available before doing any work.
-	results := install.Preflight(draft)
+	results := install.Preflight(ctx, draft)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderPreflight(results))
 	if missing := install.Missing(results); len(missing) > 0 {

@@ -182,7 +182,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	daemonChecked := false
 	if doCLI && doStack && manifest.Mode == config.ModeDocker && proc.FileExists(a.Paths.ComposePath()) {
 		announceDaemonCheck(a.Out)
-		if err := requireDockerDaemon("jenticctl update"); err != nil {
+		if err := requireDockerDaemon(ctx, "jenticctl update"); err != nil {
 			return err
 		}
 		daemonChecked = true
@@ -198,7 +198,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	if doStack {
-		if err := a.updateStack(manifest.Mode, ref, pinned, daemonChecked); err != nil {
+		if err := a.updateStack(ctx, manifest.Mode, ref, pinned, daemonChecked); err != nil {
 			return err
 		}
 		// Only now is the stack genuinely at `ref`. Recording it earlier (or
@@ -427,20 +427,20 @@ func binaryVersion(path string) (string, error) {
 // the stack is built from — the same one the CLI half targets, so the two halves
 // stay in lockstep. daemonChecked is true when updateE already probed the Docker
 // daemon up front (combined run), so the docker path skips a redundant probe.
-func (a *App) updateStack(mode, ref string, pinned, daemonChecked bool) error {
+func (a *App) updateStack(ctx context.Context, mode, ref string, pinned, daemonChecked bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
 
 	if mode == config.ModeDocker {
-		return a.updateStackDocker(ref, pinned, daemonChecked)
+		return a.updateStackDocker(ctx, ref, pinned, daemonChecked)
 	}
-	return a.updateStackLocal(ref, pinned)
+	return a.updateStackLocal(ctx, ref, pinned)
 }
 
 // updateStackLocal pulls the source, reinstalls into the existing venv, applies
 // migrations, and restarts the app if it was running.
-func (a *App) updateStackLocal(ref string, pinned bool) error {
+func (a *App) updateStackLocal(ctx context.Context, ref string, pinned bool) error {
 	configPath := a.Paths.InstallConfigPath()
 	if !proc.FileExists(configPath) {
 		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
@@ -460,7 +460,7 @@ func (a *App) updateStackLocal(ref string, pinned bool) error {
 		return fmt.Errorf("migrations failed: %w", err)
 	}
 
-	a.restartLocalIfRunning()
+	a.restartLocalIfRunning(ctx)
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (local)."))
 	return nil
 }
@@ -470,7 +470,7 @@ func (a *App) updateStackLocal(ref string, pinned bool) error {
 // is true when updateE already probed the daemon up front (combined run), so we
 // skip a redundant second probe/announce; a standalone/stack-only call passes
 // false and probes here.
-func (a *App) updateStackDocker(ref string, pinned, daemonChecked bool) error {
+func (a *App) updateStackDocker(ctx context.Context, ref string, pinned, daemonChecked bool) error {
 	composePath := a.Paths.ComposePath()
 	if !proc.FileExists(composePath) {
 		return fmt.Errorf("no compose stack at %s — run `jenticctl install` first", composePath)
@@ -482,7 +482,7 @@ func (a *App) updateStackDocker(ref string, pinned, daemonChecked bool) error {
 	// for a cold-starting daemon, so announce it first (see start.go/stop.go).
 	if !daemonChecked {
 		announceDaemonCheck(a.Out)
-		if err := requireDockerDaemon("jenticctl update"); err != nil {
+		if err := requireDockerDaemon(ctx, "jenticctl update"); err != nil {
 			return err
 		}
 	}
@@ -512,7 +512,7 @@ func (a *App) updateStackDocker(ref string, pinned, daemonChecked bool) error {
 
 // restartLocalIfRunning bounces the background app so the rebuilt code takes
 // effect, but only when it was already running; otherwise it leaves it stopped.
-func (a *App) restartLocalIfRunning() {
+func (a *App) restartLocalIfRunning(ctx context.Context) {
 	_, running, _ := proc.LivePID(a.Paths.AppPIDPath())
 	if !running {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  app not running — start it with `jenticctl start`"))
@@ -520,8 +520,8 @@ func (a *App) restartLocalIfRunning() {
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Infof("Restarting app ..."))
-	_ = a.stopE(&stopOptions{timeout: 10 * time.Second})
-	_ = a.startE(&startOptions{})
+	_ = a.stopE(ctx, &stopOptions{timeout: 10 * time.Second})
+	_ = a.startE(ctx, &startOptions{})
 }
 
 func confirmApply(doCLI, doStack, brewCLI bool, repo, ref string) (bool, error) {

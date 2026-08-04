@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -33,8 +34,8 @@ func newStopCmd(app *App) *cobra.Command {
 			"(SQLite data or the managed Postgres data dir). Use it to recover from an\n" +
 			"incompatible Postgres image upgrade. This destroys the database.",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return app.stopE(opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.stopE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 10*time.Second,
@@ -46,12 +47,12 @@ func newStopCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) stopE(opts *stopOptions) error {
+func (a *App) stopE(ctx context.Context, opts *stopOptions) error {
 	// A generated compose file marks a Docker install: tear the stack down with
 	// docker compose instead of signalling a local process.
 	composePath := a.Paths.ComposePath()
 	if proc.FileExists(composePath) {
-		return a.stopDocker(opts, composePath)
+		return a.stopDocker(ctx, opts, composePath)
 	}
 
 	if opts.volumes {
@@ -114,14 +115,14 @@ func (a *App) stopProcess(pidPath, label string, timeout time.Duration) error {
 // stopDocker tears down the Docker stack. With --volumes it also removes the
 // stack's data volumes (`down -v`), which destroys the database; it confirms
 // first unless --yes is set.
-func (a *App) stopDocker(opts *stopOptions, composePath string) error {
+func (a *App) stopDocker(ctx context.Context, opts *stopOptions, composePath string) error {
 	// `docker compose down` needs a live daemon; with the daemon down it fails
 	// with a raw transport error. Probe first (before the destructive --volumes
 	// confirmation prompt) so a stopped daemon yields actionable recovery
 	// guidance instead (#783). The probe can wait out a cold-starting daemon
 	// (~30s), so announce it — otherwise the command looks hung.
 	announceDaemonCheck(a.Out)
-	if err := requireDockerDaemon("jenticctl stop"); err != nil {
+	if err := requireDockerDaemon(ctx, "jenticctl stop"); err != nil {
 		return err
 	}
 	if !opts.volumes {

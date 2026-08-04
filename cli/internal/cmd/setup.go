@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -33,8 +34,8 @@ func newSetupCmd(app *App) *cobra.Command {
 			"further users from the admin UI. Run `jenticctl install` first if you have\n" +
 			"not set up locally yet.",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return app.setupE(opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.setupE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.config, "config", "",
@@ -46,7 +47,7 @@ func newSetupCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) setupE(opts *setupOptions) error {
+func (a *App) setupE(ctx context.Context, opts *setupOptions) error {
 	// A generated compose file marks a Docker install: the admin is created in a
 	// one-shot app container. Probe the daemon up front — before prompting for
 	// credentials — so a user on a stopped daemon isn't asked to type an email
@@ -56,7 +57,7 @@ func (a *App) setupE(opts *setupOptions) error {
 	dockerInstall := proc.FileExists(composePath)
 	if dockerInstall {
 		announceDaemonCheck(a.Out)
-		if err := requireDockerDaemon("jenticctl setup"); err != nil {
+		if err := requireDockerDaemon(ctx, "jenticctl setup"); err != nil {
 			return err
 		}
 	}

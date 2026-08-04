@@ -16,8 +16,9 @@ import (
 //
 // It can block up to ~30s while the underlying probe waits out a cold-starting
 // daemon, so callers must announce the check first (via announceDaemonCheck)
-// or the command looks like it hung. Tests that swap this global must not run
-// with t.Parallel().
+// or the command looks like it hung. The ctx (the command's context) lets an
+// operator cancel that wait with Ctrl-C (#953). Tests that swap this global
+// must not run with t.Parallel().
 var requireDockerDaemon = install.RequireDockerDaemon
 
 // composeUp / composeDown / composeDownVolumes are package-level seams over the

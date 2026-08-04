@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -177,7 +178,7 @@ func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
 		return nil
 	}
 
-	err := app.updateStackDocker("", false, false)
+	err := app.updateStackDocker(context.Background(), "", false, false)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("update should surface the daemon guard error, got %v", err)
 	}

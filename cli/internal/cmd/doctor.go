@@ -203,9 +203,9 @@ func (d *doctor) checkServer() {
 // (empty when healthy) and whether the daemon answered. It is a fast,
 // single-round-trip probe (distinct from install's ~30s polling probe): doctor
 // is read-only and must not block for the full cold-start window when the daemon
-// is simply down.
-var doctorDockerProbe = func() (string, bool) {
-	return install.DockerDaemonResponsiveQuick(2 * time.Second)
+// is simply down. The ctx lets doctor's overall run be canceled (Ctrl-C).
+var doctorDockerProbe = func(ctx context.Context) (string, bool) {
+	return install.DockerDaemonResponsiveQuick(ctx, 2*time.Second)
 }
 
 func (d *doctor) checkDeploy(section string) {
@@ -217,7 +217,7 @@ func (d *doctor) checkDeploy(section string) {
 		// is documented as safe to wire into CI ("warnings keep a zero exit"),
 		// and the sibling `control`/`compose ps` checks also warn on a
 		// not-running dependency — a down daemon shouldn't flip the exit code.
-		if detail, healthy := doctorDockerProbe(); !healthy {
+		if detail, healthy := doctorDockerProbe(d.ctx); !healthy {
 			d.add(section, "docker daemon", statusWarn, detail,
 				install.DockerDaemonRecoveryHint()+", then `jenticctl start`")
 			return

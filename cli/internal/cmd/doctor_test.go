@@ -120,14 +120,14 @@ func TestDotFor(t *testing.T) {
 func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 	orig := doctorDockerProbe
 	t.Cleanup(func() { doctorDockerProbe = orig })
-	doctorDockerProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
+	doctorDockerProbe = func(context.Context) (string, bool) { return "Cannot connect to the Docker daemon", false }
 
 	app := testApp(t)
 	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
 
-	d := &doctor{app: app}
+	d := &doctor{app: app, ctx: context.Background()}
 	d.checkDeploy("Server")
 
 	var daemon *check
