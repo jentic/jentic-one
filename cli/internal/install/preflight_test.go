@@ -109,6 +109,38 @@ func TestDaemonError(t *testing.T) {
 	}
 }
 
+func TestRequireDockerDaemon(t *testing.T) {
+	orig := dockerDaemonProbe
+	t.Cleanup(func() { dockerDaemonProbe = orig })
+
+	// Healthy daemon → no error, so `start`/`stop` proceed.
+	dockerDaemonProbe = func() (string, bool) { return "", true }
+	if err := RequireDockerDaemon("jenticctl start"); err != nil {
+		t.Errorf("healthy daemon should not error, got %v", err)
+	}
+
+	// Stopped daemon → actionable error naming the caller's command.
+	dockerDaemonProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
+	err := RequireDockerDaemon("jenticctl start")
+	if err == nil {
+		t.Fatal("stopped daemon should return an error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"daemon is not responding", "Cannot connect to the Docker daemon", "start Docker Desktop", "jenticctl start"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q: %q", want, msg)
+		}
+	}
+
+	// A down daemon with no detail still yields a usable fallback reason.
+	dockerDaemonProbe = func() (string, bool) { return "", false }
+	if err := RequireDockerDaemon("jenticctl stop"); err == nil ||
+		!strings.Contains(err.Error(), "not reachable") ||
+		!strings.Contains(err.Error(), "jenticctl stop") {
+		t.Errorf("empty-detail down daemon: %v", err)
+	}
+}
+
 func TestPreflightDaemonProbeSeam(t *testing.T) {
 	// Stub a `docker` on PATH so Preflight's LookPath succeeds (and the daemon
 	// branch is reached) regardless of whether the host has Docker installed,

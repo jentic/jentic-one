@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,6 +108,29 @@ func TestDotFor(t *testing.T) {
 	}
 	if dotFor(statusFail) != dotFail() {
 		t.Error("statusFail should map to dotFail")
+	}
+}
+
+// With a compose install and a stopped daemon, doctor reports an explicit,
+// actionable "docker daemon" failure rather than inferring it from a cryptic
+// `docker compose ps` error (#783).
+func TestDoctorReportsDockerDaemonDown(t *testing.T) {
+	orig := dockerDaemonProbe
+	t.Cleanup(func() { dockerDaemonProbe = orig })
+	dockerDaemonProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
+
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	// A failing check makes doctor exit non-zero; the error is expected here.
+	_ = app.doctorE(context.Background(), offlineOpts())
+
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "start Docker Desktop"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("doctor output missing %q\n---\n%s", want, got)
+		}
 	}
 }
 

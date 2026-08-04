@@ -214,6 +214,37 @@ func DaemonError(check CheckResult) error {
 		"then re-run `jenticctl install`", detail)
 }
 
+// RequireDockerDaemon fails fast with an actionable error when the Docker daemon
+// is not responding, so runtime commands (`start`/`stop`) surface the same
+// "start Docker Desktop" guidance as install instead of a raw `docker compose`
+// transport error when Docker Desktop is closed (e.g. after a reboot). The
+// referenced command names the caller (e.g. "jenticctl start") so the recovery
+// path points back at what the operator ran. It returns nil when the daemon
+// answers. See jentic-one#783 and jentic-api-scorecard#224.
+func RequireDockerDaemon(command string) error {
+	detail, healthy := dockerDaemonHealth()
+	if healthy {
+		return nil
+	}
+	if detail == "" {
+		detail = "the Docker daemon is not reachable"
+	}
+	return fmt.Errorf("docker is installed but its daemon is not responding: %s — "+
+		"start Docker Desktop (or your docker daemon), wait for it to report healthy, "+
+		"then re-run `%s`", detail, command)
+}
+
+// DockerDaemonResponsiveQuick is a single-round-trip daemon probe for callers
+// that must stay fast and non-blocking — `doctor` is read-only and should not
+// hang for the full cold-start polling window when the daemon is simply down.
+// Unlike RequireDockerDaemon it does not tolerate a cold-starting Docker
+// Desktop; it answers within `timeout`. It returns a short human reason (empty
+// when healthy) and whether the daemon answered.
+func DockerDaemonResponsiveQuick(timeout time.Duration) (detail string, healthy bool) {
+	detail, ok := dockerInfoOnce(timeout)
+	return detail, ok
+}
+
 // RenderPreflight returns a styled checklist of the probe results.
 func RenderPreflight(results []CheckResult) string {
 	var b strings.Builder

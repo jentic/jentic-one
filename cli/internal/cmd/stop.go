@@ -115,6 +115,12 @@ func (a *App) stopProcess(pidPath, label string, timeout time.Duration) error {
 // stack's data volumes (`down -v`), which destroys the database; it confirms
 // first unless --yes is set.
 func (a *App) stopDocker(opts *stopOptions, composePath string) error {
+	// `docker compose down` needs a live daemon; with Docker Desktop closed it
+	// fails with a raw transport error. Probe first so a stopped daemon yields
+	// the actionable "start Docker Desktop" guidance instead (#783).
+	if err := requireDockerDaemon("jenticctl stop"); err != nil {
+		return err
+	}
 	if !opts.volumes {
 		fmt.Fprintln(a.Out, theme.Infof("Stopping Docker stack ..."))
 		if err := install.ComposeDown(a.Out, composePath); err != nil {

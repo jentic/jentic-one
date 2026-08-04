@@ -16,6 +16,13 @@ type startOptions struct {
 	config string
 }
 
+// requireDockerDaemon guards the Docker runtime commands (`start`/`stop`)
+// against a stopped daemon, surfacing the installer's actionable "start Docker
+// Desktop" guidance instead of a raw `docker compose` transport error. It is a
+// package-level seam so tests can simulate an up/down daemon without a real
+// Docker (#783, jentic-api-scorecard#224).
+var requireDockerDaemon = install.RequireDockerDaemon
+
 func newStartCmd(app *App) *cobra.Command {
 	opts := &startOptions{}
 	cmd := &cobra.Command{
@@ -124,6 +131,14 @@ func brokerPortFromManifest(a *App) string {
 
 // startDocker brings the generated docker-compose stack up in detached mode.
 func (a *App) startDocker(composePath string) error {
+	// The compose file proves a Docker install, but not that the daemon is up:
+	// with Docker Desktop closed (common after a reboot) `docker compose up`
+	// fails with a raw "Cannot connect to the Docker daemon" error. Probe first
+	// so we surface the same actionable "start Docker Desktop" guidance the
+	// installer does (#783, jentic-api-scorecard#224).
+	if err := requireDockerDaemon("jenticctl start"); err != nil {
+		return err
+	}
 	fmt.Fprintln(a.Out, theme.Infof("Starting Docker stack ..."))
 	if err := install.ComposeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)

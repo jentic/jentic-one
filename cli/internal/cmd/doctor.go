@@ -198,9 +198,26 @@ func (d *doctor) checkServer() {
 	d.checkDeploy(section)
 }
 
+// dockerDaemonProbe is the seam doctor's deploy check runs through so tests can
+// simulate a stopped daemon without a real Docker. It returns a short reason
+// (empty when healthy) and whether the daemon answered. It is a fast,
+// single-round-trip probe: doctor is read-only and must not block for the full
+// cold-start polling window when the daemon is simply down.
+var dockerDaemonProbe = func() (string, bool) {
+	return install.DockerDaemonResponsiveQuick(2 * time.Second)
+}
+
 func (d *doctor) checkDeploy(section string) {
 	composePath := d.app.Paths.ComposePath()
 	if proc.FileExists(composePath) {
+		// A compose install needs a live daemon. Probe it directly so a stopped
+		// Docker Desktop is reported as an explicit, actionable failure rather
+		// than inferred from a cryptic `docker compose ps` error (#783).
+		if detail, healthy := dockerDaemonProbe(); !healthy {
+			d.add(section, "docker daemon", statusFail, detail,
+				"start Docker Desktop (or your docker daemon), then `jenticctl start`")
+			return
+		}
 		out, err := install.ComposePs(composePath)
 		if err != nil {
 			d.add(section, "deploy", statusWarn, "docker compose ps failed: "+err.Error(), "is the Docker daemon running?")
