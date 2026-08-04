@@ -29,6 +29,7 @@ import {
 import { OverviewStrip } from '@/modules/workspace/components/OverviewStrip';
 import { OperationsSection } from '@/modules/workspace/components/OperationsSection';
 import { RevisionsSection } from '@/modules/workspace/components/RevisionsSection';
+import { OverlaysSection } from '@/modules/workspace/components/OverlaysSection';
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
 import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@/modules/workspace/api';
 import type { ApiKey } from '@/modules/workspace/api';
@@ -162,6 +163,7 @@ export default function ApiDetailPage() {
 					<OverviewStrip api={api} />
 					<OperationsSection apiKey={apiKey} totalCount={api.operationCount} />
 					<RevisionsSection apiKey={apiKey} />
+					<OverlaysSection apiKey={apiKey} />
 				</>
 			)}
 

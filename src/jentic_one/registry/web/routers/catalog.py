@@ -19,7 +19,7 @@ query-param/opaque-key scheme if a generated client can't honour raw slashes.)
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from jentic.problem_details import BadRequest, ProblemDetailException
 
@@ -31,6 +31,7 @@ from jentic_one.registry.web.schemas.catalog import (
     CatalogEntryResponse,
     CatalogListResponse,
     CatalogRefreshResponse,
+    CatalogSnoozeRequest,
     OperationPreviewListResponse,
     PreviewInfoResponse,
     PreviewOperationResponse,
@@ -40,6 +41,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.pagination import InvalidCursorError
 from jentic_one.shared.web import get_current_identity
 from jentic_one.shared.web.links import build_link
+from jentic_one.shared.web.openapi_responses import conflict
 
 router = APIRouter()
 
@@ -71,6 +73,7 @@ async def list_catalog(
     registered_only: bool = False,
     unregistered_only: bool = False,
     outdated_only: bool = False,
+    include_snoozed: bool = False,
     cursor: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> JSONResponse:
@@ -106,6 +109,7 @@ async def list_catalog(
             outdated_only=outdated_only,
             cursor=cursor,
             limit=limit,
+            include_snoozed=include_snoozed,
         )
     except InvalidCursorError:
         raise BadRequest(detail="Invalid pagination cursor", instance="/catalog") from None
@@ -228,3 +232,37 @@ async def import_catalog_entry(
         links=ApiImportLinksResponse(self_link=build_link(request, f"/jobs/{job_id}")),
     )
     return JSONResponse(status_code=202, content=resp.model_dump(by_alias=True))
+
+
+@router.post(
+    "/catalog/{api_id:path}:snooze",
+    status_code=204,
+    responses=conflict("The catalog entry has no outstanding update to snooze."),
+)
+async def snooze_catalog_entry(
+    api_id: str,
+    body: CatalogSnoozeRequest | None = None,
+    identity: Identity = get_current_identity(required_permissions=["events:write"]),
+    svc: CatalogService = Depends(get_catalog_service),
+) -> Response:
+    """Snooze the outstanding update notification for a catalog entry (C1, #925).
+
+    Operator action (``events:write``): quiet the "update available" badge for a
+    known-and-accepted upstream change without adopting it. Body is optional — omit or send
+    ``{"snoozed_until": null}`` to mute until a newer upstream digest lands (the primary
+    per-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A
+    genuinely newer upstream change re-lights the badge automatically.
+    """
+    await svc.snooze_entry(api_id, identity, until=body.snoozed_until if body else None)
+    return Response(status_code=204)
+
+
+@router.post("/catalog/{api_id:path}:unsnooze", status_code=204)
+async def unsnooze_catalog_entry(
+    api_id: str,
+    identity: Identity = get_current_identity(required_permissions=["events:write"]),
+    svc: CatalogService = Depends(get_catalog_service),
+) -> Response:
+    """Clear a snooze for a catalog entry (C1). Operator action (``events:write``)."""
+    await svc.unsnooze_entry(api_id, identity)
+    return Response(status_code=204)

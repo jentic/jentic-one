@@ -47,6 +47,20 @@ func newSetupCmd(app *App) *cobra.Command {
 }
 
 func (a *App) setupE(opts *setupOptions) error {
+	// A generated compose file marks a Docker install: the admin is created in a
+	// one-shot app container. Probe the daemon up front — before prompting for
+	// credentials — so a user on a stopped daemon isn't asked to type an email
+	// and password only to be told the daemon is down afterwards. The probe may
+	// poll (~30s) for a cold-starting daemon, so announce it (see start.go).
+	composePath := a.Paths.ComposePath()
+	dockerInstall := proc.FileExists(composePath)
+	if dockerInstall {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl setup"); err != nil {
+			return err
+		}
+	}
+
 	prompt := credentialPrompt{
 		heading:       "First-run setup",
 		subheading:    "Create the first administrator. This runs once; afterwards manage users in the UI.",
@@ -70,10 +84,7 @@ func (a *App) setupE(opts *setupOptions) error {
 
 	fmt.Fprintln(a.Out, theme.Infof("Creating the first admin account ..."))
 
-	// A generated compose file marks a Docker install: create the admin in a
-	// one-shot app container. Otherwise drive the local venv directly.
-	composePath := a.Paths.ComposePath()
-	if proc.FileExists(composePath) {
+	if dockerInstall {
 		if err := install.ComposeCreateAdmin(a.Out, composePath, opts.email, opts.password); err != nil {
 			return fmt.Errorf("create admin (docker): %w", err)
 		}

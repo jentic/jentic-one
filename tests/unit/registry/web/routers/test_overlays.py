@@ -289,6 +289,9 @@ def test_confirm_link_present_when_pending(client: TestClient) -> None:
     body = resp.json()
     assert body["_links"]["confirm"] is not None
     assert ":confirm" in body["_links"]["confirm"]
+    # A pending overlay can be deprecated but not rolled back (nothing materialized).
+    assert body["_links"]["deprecate"] is not None
+    assert body["_links"]["rollback"] is None
 
 
 def test_confirm_link_absent_when_confirmed(client: TestClient) -> None:
@@ -302,3 +305,51 @@ def test_confirm_link_absent_when_confirmed(client: TestClient) -> None:
 
     body = resp.json()
     assert body["_links"]["confirm"] is None
+
+
+def test_rollback_link_present_when_materialized(client: TestClient) -> None:
+    # A materialized overlay (CONFIRMED + confirmed_revision_id) advertises rollback +
+    # deprecate, but not confirm.
+    view = _make_view(status="confirmed", confirmed_revision_id=uuid.uuid4())
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["rollback"] is not None
+    assert ":rollback" in body["_links"]["rollback"]
+    assert body["_links"]["deprecate"] is not None
+    assert body["_links"]["confirm"] is None
+
+
+def test_rollback_link_absent_when_confirmed_but_unmaterialized(client: TestClient) -> None:
+    # CONFIRMED with no confirmed_revision_id (materialize not linked): rollback is not
+    # offered, since there is no materialized revision to restore from.
+    view = _make_view(status="confirmed", confirmed_revision_id=None)
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["rollback"] is None
+
+
+def test_no_action_links_when_deprecated(client: TestClient) -> None:
+    view = _make_view(status="deprecated")
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    body = resp.json()
+    assert body["_links"]["confirm"] is None
+    assert body["_links"]["rollback"] is None
+    assert body["_links"]["deprecate"] is None

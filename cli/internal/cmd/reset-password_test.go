@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -53,5 +56,28 @@ func TestResetPasswordRequiresInstall(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "install") {
 		t.Errorf("error = %q, want it to point at `jenticctl install`", err.Error())
+	}
+}
+
+// A Docker install (compose file present) with a stopped daemon must fail fast
+// with the guard's actionable error, before the one-shot reset container is
+// started (which would otherwise surface a raw compose transport error).
+func TestResetPasswordDockerFailsFastWhenDaemonDown(t *testing.T) {
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	sentinel := stubDaemonDown(t)
+
+	err := app.resetPasswordE(&resetPasswordOptions{
+		yes:      true,
+		email:    "user@example.com",
+		password: "a-strong-password",
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("reset-password should surface the daemon guard error, got %v", err)
+	}
+	if got := app.Out.(*bytes.Buffer).String(); strings.Contains(got, "Temporary password set") {
+		t.Errorf("reset-password ran past the guard when the daemon was down:\n%s", got)
 	}
 }

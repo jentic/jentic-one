@@ -45,6 +45,20 @@ func newResetPasswordCmd(app *App) *cobra.Command {
 }
 
 func (a *App) resetPasswordE(opts *resetPasswordOptions) error {
+	// A generated compose file marks a Docker install: the reset runs in a
+	// one-shot app container. Probe the daemon up front — before prompting for
+	// credentials — so a user on a stopped daemon isn't asked to type an email
+	// and password only to be told the daemon is down afterwards. The probe may
+	// poll (~30s) for a cold-starting daemon, so announce it (see start.go).
+	composePath := a.Paths.ComposePath()
+	dockerInstall := proc.FileExists(composePath)
+	if dockerInstall {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl reset-password"); err != nil {
+			return err
+		}
+	}
+
 	prompt := credentialPrompt{
 		heading:       "Reset a user's password",
 		subheading:    "Set a one-time temporary password. The user must change it at next sign-in.",
@@ -68,10 +82,7 @@ func (a *App) resetPasswordE(opts *resetPasswordOptions) error {
 
 	fmt.Fprintln(a.Out, theme.Infof("Setting a temporary password for %s ...", opts.email))
 
-	// A generated compose file marks a Docker install: reset inside a one-shot
-	// app container. Otherwise drive the local venv directly.
-	composePath := a.Paths.ComposePath()
-	if proc.FileExists(composePath) {
+	if dockerInstall {
 		if err := install.ComposeResetPassword(a.Out, composePath, opts.email, opts.password); err != nil {
 			return fmt.Errorf("reset password (docker): %w", err)
 		}

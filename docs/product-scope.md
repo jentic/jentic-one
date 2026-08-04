@@ -45,7 +45,8 @@ The runtime surfaces (from the public code / `README.md`):
   upstream call per execution (single-call interceptor pipeline), run as its own
   service.
 - **Registry** — catalogue of registered APIs (immutable revisions, operations,
-  security schemes, servers); **APIs only**.
+  security schemes, servers); **APIs only**. Operator/agent spec fixes are applied as
+  [overlays](overlays.md) (see the stacking contract + update loop there).
 - **Control** — credential storage + toolkit/credential bindings + access-request
   lifecycle.
 - **Admin** — operator accounts, role-based permissions/access grants, async jobs,

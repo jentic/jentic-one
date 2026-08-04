@@ -58,6 +58,18 @@ class OverlayRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_by_id(session: AsyncSession, overlay_id: str) -> Overlay | None:
+        """Fetch an overlay by its id alone (no api scoping).
+
+        Used by worker-side paths that hold only the overlay id — e.g. the A4b
+        auto-deprecate, which needs the overlay's ``created_by`` (author) + ``api_id`` to
+        emit the attributed ``overlay.deprecated`` notification (L2). Read-only; the
+        status flip itself is a separate CAS via :meth:`set_status`.
+        """
+        result = await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_live_confirmed_for_revision(
         session: AsyncSession, api_id: uuid.UUID, revision_id: uuid.UUID
     ) -> Overlay | None:

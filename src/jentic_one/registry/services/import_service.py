@@ -20,13 +20,17 @@ from jentic_one.registry.ingest.ingestor import Ingestor
 from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
+from jentic_one.registry.services.catalog.flow3_metrics import (
+    record_overlay_auto_deprecated,
+    record_update_settled,
+)
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
-from jentic_one.shared.events import settle_actionable_events
+from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.jobs.handlers import JobResultPayload
 from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType, OverlayStatus
-from jentic_one.shared.models.events import EventType
+from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger(__name__)
 
@@ -152,10 +156,19 @@ class ImportHandler:
             recovered_supersede = False
             if supersede_overlay_id:
                 if revisions and not failures:
-                    await self._deprecate_superseded_overlay(job_id, str(supersede_overlay_id))
+                    await self._deprecate_superseded_overlay(
+                        job_id,
+                        str(supersede_overlay_id),
+                        actor_id=created_by,
+                        actor_type=actor_type,
+                    )
                 elif not revisions and len(sources) == 1:
                     recovered_api_id = await self._recover_supersede(
-                        job_id, str(supersede_overlay_id), sources[0]
+                        job_id,
+                        str(supersede_overlay_id),
+                        sources[0],
+                        actor_id=created_by,
+                        actor_type=actor_type,
                     )
                     recovered_supersede = recovered_api_id is not None
                     if recovered_api_id is not None:
@@ -275,7 +288,9 @@ class ImportHandler:
                 overlay_id=overlay_id,
             )
 
-    async def _deprecate_superseded_overlay(self, job_id: str, overlay_id: str) -> None:
+    async def _deprecate_superseded_overlay(
+        self, job_id: str, overlay_id: str, *, actor_id: str, actor_type: str | None
+    ) -> None:
         """Auto-deprecate an overlay superseded by an authorized catalog re-import (A4b).
 
         The re-ingest already archived the overlay's materialized revision and made the
@@ -284,9 +299,17 @@ class ImportHandler:
         its own registry_db transaction — a failure here does not undo the durable
         re-ingest, so it is logged rather than raised (the served spec is already correct;
         only the overlay's status label lags and can be repaired).
+
+        L2 (#921): on a successful demote we emit an attributed ``overlay.deprecated``
+        event so the overlay is not *silently* flipped behind the audit log. ``actor_id``/
+        ``actor_type`` are the authorizing operator (the job's ``created_by``); the event
+        also carries the overlay's own author (``created_by``) so a UI can notify them and
+        show "deprecated by re-import on <date>" (L3). Emitted best-effort in the admin DB
+        (events live there), requires_action=False — a notification, not an inbox item.
         """
         try:
             async with self._ctx.registry_db.transaction() as session:
+                overlay = await OverlayRepository.get_by_id(session, overlay_id)
                 demoted = await OverlayRepository.set_status(
                     session,
                     overlay_id,
@@ -301,6 +324,15 @@ class ImportHandler:
                     overlay_id=overlay_id,
                     reason="overlay_not_confirmed_or_missing",
                 )
+                return
+            await self._emit_overlay_deprecated(
+                job_id=job_id,
+                overlay=overlay,
+                overlay_id=overlay_id,
+                actor_id=actor_id,
+                actor_type=actor_type,
+            )
+            record_overlay_auto_deprecated()
         except Exception:
             logger.exception(
                 "overlay_supersede_deprecate_failed",
@@ -308,8 +340,50 @@ class ImportHandler:
                 overlay_id=overlay_id,
             )
 
+    async def _emit_overlay_deprecated(
+        self,
+        *,
+        job_id: str,
+        overlay: Any,
+        overlay_id: str,
+        actor_id: str,
+        actor_type: str | None,
+    ) -> None:
+        """Emit the attributed ``overlay.deprecated`` notification (L2/L3).
+
+        Best-effort in the admin DB. ``author`` is the overlay's own ``created_by`` (whom
+        to notify); ``actor_id``/``actor_type`` is the operator who ran the superseding
+        re-import. Swallows failures — the demote already committed; a missed notification
+        must not fail (or retry-loop) the import job.
+        """
+        author = getattr(overlay, "created_by", None) if overlay is not None else None
+        api_id = getattr(overlay, "api_id", None) if overlay is not None else None
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                await emit_event_best_effort(
+                    session,
+                    type=EventType.OVERLAY_DEPRECATED,
+                    severity=EventSeverity.INFO,
+                    summary=(
+                        f"Overlay {overlay_id} was deprecated by an authorized catalog "
+                        "re-import that adopted the upstream spec"
+                    ),
+                    requires_action=False,
+                    created_by=actor_id,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    data={
+                        "overlay_id": overlay_id,
+                        "api_id": str(api_id) if api_id is not None else None,
+                        "author": author,
+                        "reason": "superseded_by_catalog_reimport",
+                    },
+                )
+        except Exception:
+            logger.exception("overlay_deprecated_emit_failed", job_id=job_id, overlay_id=overlay_id)
+
     async def _recover_supersede(
-        self, job_id: str, overlay_id: str, source: Any
+        self, job_id: str, overlay_id: str, source: Any, *, actor_id: str, actor_type: str | None
     ) -> uuid.UUID | None:
         """Recover an interrupted A4b supersede after a duplicate-on-retry re-ingest.
 
@@ -362,7 +436,9 @@ class ImportHandler:
             return None
         # Finish the interrupted deprecate (idempotent: CAS on CONFIRMED — a no-op if a
         # prior attempt already demoted it).
-        await self._deprecate_superseded_overlay(job_id, overlay_id)
+        await self._deprecate_superseded_overlay(
+            job_id, overlay_id, actor_id=actor_id, actor_type=actor_type
+        )
         return api_id
 
     async def _settle_update_available(
@@ -436,6 +512,7 @@ class ImportHandler:
                         event_type=event_type,
                         settled=settled,
                     )
+                    record_update_settled(settled)
             except Exception:
                 logger.exception(
                     "catalog_update_event_settle_failed",

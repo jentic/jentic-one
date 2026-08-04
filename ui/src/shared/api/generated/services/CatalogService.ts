@@ -6,6 +6,7 @@ import type { ApiImportResponse } from '../models/ApiImportResponse';
 import type { CatalogEntryResponse } from '../models/CatalogEntryResponse';
 import type { CatalogListResponse } from '../models/CatalogListResponse';
 import type { CatalogRefreshResponse } from '../models/CatalogRefreshResponse';
+import type { CatalogSnoozeRequest } from '../models/CatalogSnoozeRequest';
 import type { OperationPreviewListResponse } from '../models/OperationPreviewListResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -27,6 +28,7 @@ export class CatalogService {
         registeredOnly = false,
         unregisteredOnly = false,
         outdatedOnly = false,
+        includeSnoozed = false,
         cursor,
         limit = 50,
     }: {
@@ -34,6 +36,7 @@ export class CatalogService {
         registeredOnly?: boolean,
         unregisteredOnly?: boolean,
         outdatedOnly?: boolean,
+        includeSnoozed?: boolean,
         cursor?: (string | null),
         limit?: number,
     }): CancelablePromise<CatalogListResponse> {
@@ -45,6 +48,7 @@ export class CatalogService {
                 'registered_only': registeredOnly,
                 'unregistered_only': unregisteredOnly,
                 'outdated_only': outdatedOnly,
+                'include_snoozed': includeSnoozed,
                 'cursor': cursor,
                 'limit': limit,
             },
@@ -144,6 +148,71 @@ export class CatalogService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/catalog/{api_id}:import',
+            path: {
+                'api_id': apiId,
+            },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Snooze Catalog Entry
+     * Snooze the outstanding update notification for a catalog entry (C1, #925).
+     *
+     * Operator action (``events:write``): quiet the "update available" badge for a
+     * known-and-accepted upstream change without adopting it. Body is optional — omit or send
+     * ``{"snoozed_until": null}`` to mute until a newer upstream digest lands (the primary
+     * per-API affordance); send an ISO-8601 ``snoozed_until`` for a time-boxed snooze. A
+     * genuinely newer upstream change re-lights the badge automatically.
+     * @returns void
+     * @throws ApiError
+     */
+    public static snoozeCatalogEntry({
+        apiId,
+        requestBody,
+    }: {
+        apiId: string,
+        requestBody?: (CatalogSnoozeRequest | null),
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/catalog/{api_id}:snooze',
+            path: {
+                'api_id': apiId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                409: `The catalog entry has no outstanding update to snooze.`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Unsnooze Catalog Entry
+     * Clear a snooze for a catalog entry (C1). Operator action (``events:write``).
+     * @returns void
+     * @throws ApiError
+     */
+    public static unsnoozeCatalogEntry({
+        apiId,
+    }: {
+        apiId: string,
+    }): CancelablePromise<void> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/catalog/{api_id}:unsnooze',
             path: {
                 'api_id': apiId,
             },

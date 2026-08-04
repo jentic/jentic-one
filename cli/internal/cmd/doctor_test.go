@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -107,6 +108,54 @@ func TestDotFor(t *testing.T) {
 	}
 	if dotFor(statusFail) != dotFail() {
 		t.Error("statusFail should map to dotFail")
+	}
+}
+
+// With a compose install and a stopped daemon, the deploy check records an
+// explicit, actionable "docker daemon" WARNING (not a fail) rather than
+// inferring it from a cryptic `docker compose ps` error (#783). Keeping it a
+// warning is what lets doctor stay a zero-exit, CI-safe diagnostic. We assert on
+// the specific check rather than doctor's aggregate exit, since other checks'
+// severity varies by environment (e.g. CI vs a dev box).
+func TestDoctorReportsDockerDaemonDown(t *testing.T) {
+	orig := doctorDockerProbe
+	t.Cleanup(func() { doctorDockerProbe = orig })
+	doctorDockerProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
+
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app}
+	d.checkDeploy("Server")
+
+	var daemon *check
+	for i := range d.checks {
+		if d.checks[i].name == "docker daemon" {
+			daemon = &d.checks[i]
+			break
+		}
+	}
+	if daemon == nil {
+		t.Fatalf("deploy check did not record a `docker daemon` row: %+v", d.checks)
+	}
+	if daemon.status != statusWarn {
+		t.Errorf("down daemon should be statusWarn (CI-safe, zero exit), got %v", daemon.status)
+	}
+	if !strings.Contains(daemon.detail, "Cannot connect to the Docker daemon") {
+		t.Errorf("daemon detail = %q, want the probe's reason", daemon.detail)
+	}
+	for _, want := range []string{"docker desktop start", "colima start"} {
+		if !strings.Contains(daemon.hint, want) {
+			t.Errorf("daemon hint missing %q: %q", want, daemon.hint)
+		}
+	}
+	// The check must return early, never falling through to real `docker compose ps`.
+	for i := range d.checks {
+		if d.checks[i].name == "deploy" {
+			t.Errorf("deploy check should return early on a down daemon, not record a `deploy` row: %+v", d.checks[i])
+		}
 	}
 }
 

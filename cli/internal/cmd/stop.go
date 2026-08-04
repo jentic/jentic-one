@@ -115,9 +115,18 @@ func (a *App) stopProcess(pidPath, label string, timeout time.Duration) error {
 // stack's data volumes (`down -v`), which destroys the database; it confirms
 // first unless --yes is set.
 func (a *App) stopDocker(opts *stopOptions, composePath string) error {
+	// `docker compose down` needs a live daemon; with the daemon down it fails
+	// with a raw transport error. Probe first (before the destructive --volumes
+	// confirmation prompt) so a stopped daemon yields actionable recovery
+	// guidance instead (#783). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung.
+	announceDaemonCheck(a.Out)
+	if err := requireDockerDaemon("jenticctl stop"); err != nil {
+		return err
+	}
 	if !opts.volumes {
 		fmt.Fprintln(a.Out, theme.Infof("Stopping Docker stack ..."))
-		if err := install.ComposeDown(a.Out, composePath); err != nil {
+		if err := composeDown(a.Out, composePath); err != nil {
 			return fmt.Errorf("docker compose down: %w", err)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Stopped Docker stack."))
@@ -136,10 +145,16 @@ func (a *App) stopDocker(opts *stopOptions, composePath string) error {
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Stopping Docker stack and removing volumes ..."))
-	if err := install.ComposeDownVolumes(a.Out, composePath); err != nil {
+	if err := composeDownVolumes(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose down -v: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stopped Docker stack and removed its data volumes."))
+	// The database is gone, so the next `start` comes up on an empty volume.
+	// `start` now creates the schema itself, but say so here too: this is the
+	// moment the operator loses their data, and it is where they will look when
+	// their login stops working.
+	fmt.Fprintln(a.Out, theme.Dim.Render("  the database was deleted; `jenticctl start` will recreate an empty schema"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  you will need to create the admin user again"))
 	return nil
 }
 

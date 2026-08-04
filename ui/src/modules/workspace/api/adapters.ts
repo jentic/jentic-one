@@ -11,6 +11,7 @@ import type {
 	ApiRef,
 	ApiRevision,
 	CursorPage,
+	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 
@@ -123,5 +124,28 @@ export function toApiRevision(value: unknown): ApiRevision {
 		createdAt: str(r.created_at),
 		promoteHref: strOrNull(links.promote),
 		archiveHref: strOrNull(links.archive),
+	};
+}
+
+/**
+ * Overlay row → `Overlay`. The overlay list/get responses are typed `any` on
+ * this branch's generated client, so this is the single boundary that casts the
+ * raw JSON into the module's typed shape (same pattern as `toWorkspaceApi`).
+ */
+export function toOverlay(value: unknown): Overlay {
+	const r = asRecord(value);
+	const links = asRecord(r._links);
+	return {
+		id: str(r.id || r.overlay_id),
+		status: str(r.status),
+		createdBy: strOrNull(r.created_by),
+		createdAt: str(r.created_at),
+		confirmedAt: strOrNull(r.confirmed_at),
+		deprecatedAt: strOrNull(r.deprecated_at),
+		targetRevisionId: strOrNull(r.target_revision_id),
+		confirmedRevisionId: strOrNull(r.confirmed_revision_id),
+		confirmHref: strOrNull(links.confirm),
+		rollbackHref: strOrNull(links.rollback),
+		deprecateHref: strOrNull(links.deprecate),
 	};
 }

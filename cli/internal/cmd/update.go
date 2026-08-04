@@ -74,6 +74,12 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	fmt.Fprint(a.Out, a.brandHeader(opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
+	// Surface the stack's own recorded build separately from the CLI's. They
+	// advance independently, and a silent divergence is exactly what left users
+	// on a stale stack with no visible cause (#943).
+	if stackRef := manifest.ResolvedStackRef(); stackRef != "" {
+		fmt.Fprintln(a.Out, theme.Field("stack", stackRef))
+	}
 	if !found {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  (no install manifest; using build-time metadata)"))
 	}
@@ -120,6 +126,20 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		return errors.New("--ref cannot pin a Homebrew-managed CLI (brew only ships the latest release); use --stack-only, or reinstall from source via tools/install.sh")
 	}
 
+	// A pinned ref cannot be applied to a local checkout: the stack builds from
+	// the operator's own working tree (cwd walk or $JENTIC_SRC), and syncing that
+	// to a ref would clobber their work. Refuse rather than build something other
+	// than what was asked for — silently ignoring the pin is the bug being fixed
+	// here (#949).
+	if doStack && pinned {
+		if plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned); plan.PinnedRefIgnored() {
+			return fmt.Errorf("--ref %s cannot be applied: the stack builds from the local checkout at %s, "+
+				"so the ref would be ignored. Check out %s there yourself and re-run without --ref, "+
+				"or unset %s to build from a managed clone",
+				ref, plan.SourceDir, ref, install.SrcEnv)
+		}
+	}
+
 	// When the latest release is not newer than what's installed there's
 	// nothing to rebuild. Each requested half is gated on its own recorded
 	// version (see updateNeeded): they normally move in lockstep, but a
@@ -127,7 +147,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	// stack may lag behind, so the stack half must not key off the CLI binary.
 	// A --ref override always proceeds (the user asked for a specific build);
 	// re-run with --ref to force a rebuild at a pinned version.
-	stackVersion := firstNonEmpty(manifest.Ref, cliVersion)
+	stackVersion := firstNonEmpty(manifest.ResolvedStackRef(), cliVersion)
 	if !pinned && latestKnown && !updateNeeded(doCLI, doStack, cliVersion, stackVersion, latest) {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Successf("Already up to date (%s); nothing to rebuild.", latest))
@@ -153,6 +173,21 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 
+	// In a *combined* docker-mode run, probe the daemon here — before updateCLI
+	// swaps the binaries — so a stopped daemon fails fast instead of leaving new
+	// binaries against an old, un-rebuilt stack. Scoped to doCLI so we don't
+	// probe/announce twice on the stack-only path (updateStackDocker guards
+	// itself); the daemonChecked flag then tells the stack step to skip its own
+	// probe here. The probe may poll (~30s) for a cold-starting daemon.
+	daemonChecked := false
+	if doCLI && doStack && manifest.Mode == config.ModeDocker && proc.FileExists(a.Paths.ComposePath()) {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl update"); err != nil {
+			return err
+		}
+		daemonChecked = true
+	}
+
 	if doCLI {
 		if brewManaged {
 			if err := a.brewUpgradeCLI(ctx, latest, latestKnown); err != nil {
@@ -163,11 +198,29 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	if doStack {
-		if err := a.updateStack(manifest.Mode); err != nil {
+		if err := a.updateStack(manifest.Mode, ref, pinned, daemonChecked); err != nil {
 			return err
 		}
+		// Only now is the stack genuinely at `ref`. Recording it earlier (or
+		// alongside the CLI half) is what let a failed/skipped stack rebuild
+		// advertise itself as current and wedge every later update (#943).
+		a.recordStackBuild(ref)
 	}
 	return nil
+}
+
+// recordStackBuild persists the ref the stack was just built from, so the next
+// `update` gates the stack half on what was actually built. Best-effort: the
+// rebuild already succeeded, so a manifest write failure must not fail the
+// command — it only costs a redundant rebuild next time.
+func (a *App) recordStackBuild(ref string) {
+	m, _, err := config.LoadManifest(a.Paths)
+	if err != nil {
+		return
+	}
+	if err := m.RecordStackBuild(a.Paths, ref); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("warning: could not record stack version: %v", err))
+	}
 }
 
 // brewUpgradeCLI refreshes a Homebrew-managed CLI by delegating to
@@ -370,28 +423,31 @@ func binaryVersion(path string) (string, error) {
 
 // updateStack rebuilds and restarts the installed server in place, reusing the
 // existing jentic-one.yaml (no wizard). It dispatches on the recorded deploy
-// mode; an empty/unknown mode is treated as a local install.
-func (a *App) updateStack(mode string) error {
+// mode; an empty/unknown mode is treated as a local install. ref is the git ref
+// the stack is built from — the same one the CLI half targets, so the two halves
+// stay in lockstep. daemonChecked is true when updateE already probed the Docker
+// daemon up front (combined run), so the docker path skips a redundant probe.
+func (a *App) updateStack(mode, ref string, pinned, daemonChecked bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
 
 	if mode == config.ModeDocker {
-		return a.updateStackDocker()
+		return a.updateStackDocker(ref, pinned, daemonChecked)
 	}
-	return a.updateStackLocal()
+	return a.updateStackLocal(ref, pinned)
 }
 
 // updateStackLocal pulls the source, reinstalls into the existing venv, applies
 // migrations, and restarts the app if it was running.
-func (a *App) updateStackLocal() error {
+func (a *App) updateStackLocal(ref string, pinned bool) error {
 	configPath := a.Paths.InstallConfigPath()
 	if !proc.FileExists(configPath) {
 		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
 	}
 
 	install.EnsureUv(a.Out)
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
+	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderHeader())
 	if err := plan.Execute(a.Out); err != nil {
@@ -410,14 +466,28 @@ func (a *App) updateStackLocal() error {
 }
 
 // updateStackDocker rebuilds the app image, applies migrations in a one-shot
-// container, and recreates the running stack with the new image.
-func (a *App) updateStackDocker() error {
+// container, and recreates the running stack with the new image. daemonChecked
+// is true when updateE already probed the daemon up front (combined run), so we
+// skip a redundant second probe/announce; a standalone/stack-only call passes
+// false and probes here.
+func (a *App) updateStackDocker(ref string, pinned, daemonChecked bool) error {
 	composePath := a.Paths.ComposePath()
 	if !proc.FileExists(composePath) {
 		return fmt.Errorf("no compose stack at %s — run `jenticctl install` first", composePath)
 	}
 
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
+	// Fail fast with an actionable message when the daemon is down, before the
+	// long image build — otherwise the build/migrations/up sequence surfaces a
+	// raw compose transport error deep into the run. The probe may poll (~30s)
+	// for a cold-starting daemon, so announce it first (see start.go/stop.go).
+	if !daemonChecked {
+		announceDaemonCheck(a.Out)
+		if err := requireDockerDaemon("jenticctl update"); err != nil {
+			return err
+		}
+	}
+
+	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
 	if err := plan.BuildImages(a.Out); err != nil {
@@ -433,7 +503,7 @@ func (a *App) updateStackDocker() error {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, install.RenderStartHeader())
-	if err := install.ComposeUp(a.Out, composePath); err != nil {
+	if err := composeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (docker)."))

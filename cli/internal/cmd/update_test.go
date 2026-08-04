@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -36,6 +40,34 @@ func TestUpdateNeeded(t *testing.T) {
 					tt.doCLI, tt.doStack, tt.cliVersion, tt.stackVersion, tt.latest, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestUpdateNeededStackRefGatesIndependently is the regression test for #943:
+// a CLI-only version bump must not make a stale stack look current. The stack
+// half is gated on the manifest's stack_ref, so when the CLI reached the latest
+// release but the stack never rebuilt, `update` must still offer the rebuild.
+func TestUpdateNeededStackRefGatesIndependently(t *testing.T) {
+	const latest = "v0.25.0"
+	// The wedge: CLI swapped to v0.25.0, stack still on the v0.24.0 build.
+	wedged := &config.Manifest{Ref: latest, StackRef: "v0.24.0", CLIVersion: latest}
+	stackVersion := firstNonEmpty(wedged.ResolvedStackRef(), wedged.CLIVersion)
+	if !updateNeeded(false, true, wedged.CLIVersion, stackVersion, latest) {
+		t.Error("stale stack with a current CLI reported nothing to rebuild (#943 regression)")
+	}
+
+	// Once the stack rebuild is recorded, the same invocation is a no-op.
+	rebuilt := &config.Manifest{Ref: latest, StackRef: latest, CLIVersion: latest}
+	stackVersion = firstNonEmpty(rebuilt.ResolvedStackRef(), rebuilt.CLIVersion)
+	if updateNeeded(false, true, rebuilt.CLIVersion, stackVersion, latest) {
+		t.Error("fully-updated install still offered a rebuild")
+	}
+
+	// A legacy manifest (no stack_ref) keeps its previous meaning via Ref.
+	legacy := &config.Manifest{Ref: "v0.24.0", CLIVersion: latest}
+	stackVersion = firstNonEmpty(legacy.ResolvedStackRef(), legacy.CLIVersion)
+	if !updateNeeded(false, true, legacy.CLIVersion, stackVersion, latest) {
+		t.Error("legacy manifest with a stale ref reported nothing to rebuild")
 	}
 }
 
@@ -123,5 +155,35 @@ func TestApplyPromptTitle(t *testing.T) {
 				t.Errorf("applyPromptTitle(%v, %v, %v) = %q, want %q", tt.doCLI, tt.doStack, tt.brew, got, tt.want)
 			}
 		})
+	}
+}
+
+// A Docker install (compose file present) with a stopped daemon must fail fast
+// with the guard's actionable error, before the long image build / migrations
+// / compose up sequence surfaces a raw compose transport error.
+func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+	sentinel := stubDaemonDown(t)
+
+	// The stack bring-up routes through the composeUp seam; a bypassed guard
+	// would reach it and fail loudly (mirrors start/stop).
+	origUp := composeUp
+	t.Cleanup(func() { composeUp = origUp })
+	composeUp = func(io.Writer, string) error {
+		t.Fatal("composeUp must not run when the daemon is down")
+		return nil
+	}
+
+	err := app.updateStackDocker("", false, false)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("update should surface the daemon guard error, got %v", err)
+	}
+	// The guard short-circuits before the image build header is rendered, so the
+	// build/migrations/compose-up sequence never starts (no real Docker call).
+	if got := app.Out.(*bytes.Buffer).String(); strings.Contains(got, "Build (Docker images)") {
+		t.Errorf("updateStackDocker ran past the guard when the daemon was down:\n%s", got)
 	}
 }

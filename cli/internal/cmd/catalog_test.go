@@ -80,11 +80,42 @@ func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
 	if !strings.Contains(gotQuery, "outdated_only=true") {
 		t.Errorf("server saw query %q, want outdated_only=true", gotQuery)
 	}
+	// The snooze filter is opt-in: without --include-snoozed the param must be
+	// absent, so snoozed entries stay hidden by default (the user-facing contract).
+	if strings.Contains(gotQuery, "include_snoozed") {
+		t.Errorf("server saw query %q, include_snoozed must be absent by default", gotQuery)
+	}
 	got := app.Out.(*bytes.Buffer).String()
 	for _, want := range []string{"stripe.com", "UPDATE AVAILABLE", "1 update(s) available"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("outdated output missing %q\n---\n%s", want, got)
 		}
+	}
+}
+
+func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{
+			"data":[],"catalog_total":0,"registered_count":0,"outdated_count":0,
+			"manifest_age_seconds":0,"has_more":false,"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	ident := &identityOptions{baseURL: srv.URL}
+	opts := &catalogListOptions{limit: 50, outdated: true, includeSnoozed: true}
+	if err := app.catalogList(context.Background(), ident, opts, ""); err != nil {
+		t.Fatalf("catalogList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "include_snoozed=true") {
+		t.Errorf("server saw query %q, want include_snoozed=true", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "outdated_only=true") {
+		t.Errorf("server saw query %q, want outdated_only=true", gotQuery)
 	}
 }
 

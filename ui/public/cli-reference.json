@@ -397,12 +397,18 @@
               "path": "jentic catalog outdated",
               "use": "outdated",
               "short": "List registered entries with an upstream update available",
-              "long": "outdated lists locally-registered catalog entries whose upstream spec has\nchanged since import (an update is available). Re-importing promotes the\nnew spec to live, so this is a suggestion surface for operators — review\nbefore re-importing. Script-friendly with --json.",
+              "long": "outdated lists locally-registered catalog entries whose upstream spec has\na notified update the local revision hasn't adopted yet. Review the change,\nthen re-import to adopt it. By default, entries an operator has snoozed/muted\nare hidden; pass --include-snoozed to list them too.",
               "flags": [
                 {
                   "name": "base-url",
                   "type": "string",
                   "usage": "Jentic control-plane base URL"
+                },
+                {
+                  "name": "include-snoozed",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "also list entries whose update notification has been snoozed/muted"
                 },
                 {
                   "name": "json",
