@@ -697,6 +697,24 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
         )
         await session.commit()
 
+    # The fresh upstream content the catalog re-import adopts. Reused verbatim by the retry's
+    # mocked fetch below so the retry re-ingests identical bytes → DuplicateRevisionError.
+    fresh_upstream = json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "SUP", "version": "1.0.0"},
+            "servers": [{"url": "https://upstream-fresh.example.com"}],
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+
     # The scope-checked enqueue path stamps supersede_active + supersede_overlay_id.
     reimport = await handler.execute(
         job_id=str(uuid.uuid4()),
@@ -705,21 +723,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
             "sources": [
                 {
                     "type": "inline",
-                    "content": json.dumps(
-                        {
-                            "openapi": "3.1.0",
-                            "info": {"title": "SUP", "version": "1.0.0"},
-                            "servers": [{"url": "https://upstream-fresh.example.com"}],
-                            "paths": {
-                                "/items": {
-                                    "get": {
-                                        "operationId": "listItems",
-                                        "responses": {"200": {"description": "OK"}},
-                                    }
-                                }
-                            },
-                        }
-                    ),
+                    "content": fresh_upstream,
                     "filename": "openapi.json",
                     "vendor": "sup-vendor",
                     "api_name": "sup-api",
@@ -764,47 +768,45 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
         )
         await session.commit()
 
-    retry = await handler.execute(
-        job_id=str(uuid.uuid4()),
-        session=None,
-        payload={
-            "sources": [
-                {
-                    "type": "inline",
-                    "content": json.dumps(
-                        {
-                            "openapi": "3.1.0",
-                            "info": {"title": "SUP", "version": "1.0.0"},
-                            "servers": [{"url": "https://upstream-fresh.example.com"}],
-                            "paths": {
-                                "/items": {
-                                    "get": {
-                                        "operationId": "listItems",
-                                        "responses": {"200": {"description": "OK"}},
-                                    }
-                                }
-                            },
-                        }
-                    ),
-                    "filename": "openapi.json",
-                    "vendor": "sup-vendor",
-                    "api_name": "sup-api",
-                    # NB: NO "version" key, and a "url" that equals the served revision's
-                    # source_url — deliberately mirroring the PRODUCTION supersede source
-                    # (CatalogService._to_import_source builds a type:"url" payload with no
-                    # version). This proves _recover_supersede resolves identity by url
-                    # (current_revision_for_source_url), not by the vendor/name/version
-                    # triple the real path never carries.
-                    "url": "https://catalog.example.com/base.json",
-                    "origin": "catalog",
-                    "source_url": "https://catalog.example.com/base.json",
-                    "supersede_active": "true",
-                }
-            ],
-            "supersede_overlay_id": overlay_id,
-        },
-        created_by="usr_operator",
-    )
+    # Faithfully mirror the PRODUCTION supersede source: a ``type:"url"`` payload with NO
+    # version key (CatalogService._to_import_source builds exactly this — the version isn't
+    # known until the spec is fetched). Mock the HTTP fetch to return the *identical* fresh
+    # upstream bytes so the re-ingest actually runs through load_specification/Ingestor and
+    # raises DuplicateRevisionError — the real trigger _recover_supersede handles. This proves
+    # _recover_supersede resolves identity by url (current_revision_for_source_url), not by a
+    # vendor/name/version triple the real path never carries.
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.text = fresh_upstream
+    mock_response.content = fresh_upstream.encode()
+    mock_response.headers = {"content-length": str(len(fresh_upstream.encode()))}
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client
+    ):
+        retry = await handler.execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/base.json",
+                        "vendor": "sup-vendor",
+                        "api_name": "sup-api",
+                        "origin": "catalog",
+                        "source_url": "https://catalog.example.com/base.json",
+                        "supersede_active": "true",
+                    }
+                ],
+                "supersede_overlay_id": overlay_id,
+            },
+            created_by="usr_operator",
+        )
     # The job completed (did not raise / dead-letter) with no new revision.
     assert retry.body["revisions"] == []
 

@@ -7,11 +7,12 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, cast
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, case, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.core.schema.overlays import Overlay
 from jentic_one.shared.models import OverlayStatus
 
@@ -89,23 +90,42 @@ class OverlayRepository:
         ``conflicts_overlay`` (the API's current revision is overlay-origin and carries an
         ``overlay_base_digest``), this returns the overlay to deep-link for keep/rollback.
 
-        Deliberately keyed on ``(api_id, status==CONFIRMED)`` and **not** on
-        ``confirmed_revision_id == current_revision_id``: an overlay's
-        ``confirmed_revision_id`` is linked lazily by the materialize path (it can transiently
-        be NULL while the overlay revision is already served — see
-        ``get_live_confirmed_for_revision`` / the confirm→materialize seam), so requiring the
-        link here would drop the overlay id from a legitimately-fired conflict event. At most
-        one overlay per API is CONFIRMED at a time (rollback/supersede deprecate the prior
-        one before another can confirm), so this returns 0 or 1. If two ever raced, the
-        oldest-confirmed is returned deterministically.
+        Prefers the overlay whose ``confirmed_revision_id`` **is** the API's current served
+        revision — that is unambiguously the live one. Falls back to the newest-confirmed
+        overlay only when no CONFIRMED overlay is linked to the current revision yet, which
+        covers the lazy-link window: the materialize path promotes the overlay revision to
+        current *before* it stamps ``confirmed_revision_id``, so for a brief window the live
+        overlay is CONFIRMED with a NULL link while its revision is already served (dropping
+        the id here would blank the conflict event). ``confirmed_revision_id`` cannot be
+        keyed strictly (unlike :meth:`get_live_confirmed_for_revision`, the A4b *authorization*
+        path) for that reason.
+
+        Note the confirm path does not itself deprecate a prior CONFIRMED overlay, so two
+        CONFIRMED rows for one API are reachable (confirm A, then confirm B stacks B on A's
+        output and makes B current, leaving A CONFIRMED-but-superseded). The
+        current-revision-link preference returns **B** (the live one); newest-confirmed is the
+        correct fallback for the lazy-link window because the most recently materialized
+        overlay is the one now served. Returns 0 or 1.
 
         This is enrichment only; the *authorization* decision (A4b) still uses the strict
         revision-keyed :meth:`get_live_confirmed_for_revision`.
         """
+        # 0 when the overlay's confirmed_revision_id IS the current served revision (the
+        # unambiguous live overlay), 1 otherwise — sorts the linked-live overlay first, then
+        # newest-confirmed as the lazy-link fallback.
+        current_first = case(
+            (Overlay.confirmed_revision_id == Api.current_revision_id, 0),
+            else_=1,
+        )
         result = await session.execute(
             select(Overlay)
+            .join(Api, Api.id == Overlay.api_id)
             .where(Overlay.api_id == api_id, Overlay.status == OverlayStatus.CONFIRMED)
-            .order_by(Overlay.confirmed_at.asc().nulls_last(), Overlay.id.asc())
+            .order_by(
+                current_first,
+                Overlay.confirmed_at.desc().nulls_last(),
+                Overlay.id.desc(),
+            )
             .limit(1)
         )
         return result.scalar_one_or_none()

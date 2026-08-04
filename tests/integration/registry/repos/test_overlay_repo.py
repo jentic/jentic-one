@@ -7,8 +7,9 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
+from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.overlay_repo import OverlayRepository
 from jentic_one.shared.db.session import DatabaseSession
@@ -407,3 +408,54 @@ async def test_get_live_confirmed_for_api_ignores_link_lag(
 
     async with registry_db.session() as session:
         assert await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id) is None
+
+
+async def test_get_live_confirmed_for_api_prefers_live_link_over_recency(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """With 2+ CONFIRMED overlays, prefer the one backing the current revision.
+
+    The confirm path does not deprecate a prior CONFIRMED overlay, so stacking confirm A
+    then confirm B leaves both CONFIRMED. The sweep's deep-link must point at the overlay
+    whose materialization *is* the served revision — keyed on
+    ``confirmed_revision_id == Api.current_revision_id`` — not merely the newest/oldest by
+    ``confirmed_at``. Here A is confirmed *later* but B backs the current revision, so B wins.
+    """
+    async with registry_db.session() as session:
+        rev_b = ApiRevision(
+            api_id=sample_api.id, state="imported", spec_digest="sha256:b", source_type="url"
+        )
+        session.add(rev_b)
+        await session.flush()
+        rev_b_id = rev_b.id
+        await session.execute(
+            update(Api).where(Api.id == sample_api.id).values(current_revision_id=rev_b_id)
+        )
+
+        overlay_a = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"a": 1}, created_by="usr_test"
+        )
+        overlay_b = await OverlayRepository.create(
+            session, api_id=sample_api.id, document={"b": 1}, created_by="usr_test"
+        )
+        # B backs the current revision but was confirmed EARLIER; A is confirmed LATER but is
+        # the superseded/stacked overlay. Newest-confirmed would wrongly pick A.
+        await OverlayRepository.set_status(
+            session,
+            overlay_b.id,
+            OverlayStatus.CONFIRMED,
+            confirmed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        await OverlayRepository.set_confirmed_revision(session, overlay_b.id, rev_b_id)
+        await OverlayRepository.set_status(
+            session,
+            overlay_a.id,
+            OverlayStatus.CONFIRMED,
+            confirmed_at=datetime(2026, 6, 1, tzinfo=UTC),
+        )
+        await session.commit()
+        overlay_b_id = overlay_b.id
+
+    async with registry_db.session() as session:
+        found = await OverlayRepository.get_live_confirmed_for_api(session, sample_api.id)
+        assert found is not None and found.id == overlay_b_id
