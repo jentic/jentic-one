@@ -16,26 +16,6 @@ type startOptions struct {
 	config string
 }
 
-// requireDockerDaemon guards the Docker-backed commands (`start`, `stop`,
-// `update`, `setup`, `reset-password`) against a stopped daemon, surfacing
-// actionable recovery guidance instead of a raw `docker compose` transport
-// error. It is a package-level seam so tests can simulate an up/down daemon
-// without a real Docker (#783, jentic-api-scorecard#224).
-//
-// It can block up to ~30s while the underlying probe waits out a cold-starting
-// daemon, so callers must announce the check first (see e.g.
-// startDocker/stopDocker) or the command looks like it hung.
-var requireDockerDaemon = install.RequireDockerDaemon
-
-// composeUp / composeDown / composeDownVolumes are package-level seams over the
-// install package's docker-compose helpers so the runtime commands can be
-// tested (guard pass-through, output) without shelling out to a real Docker.
-var (
-	composeUp          = install.ComposeUp
-	composeDown        = install.ComposeDown
-	composeDownVolumes = install.ComposeDownVolumes
-)
-
 func newStartCmd(app *App) *cobra.Command {
 	opts := &startOptions{}
 	cmd := &cobra.Command{
@@ -150,7 +130,7 @@ func (a *App) startDocker(composePath string) error {
 	// Probe first so we surface actionable recovery guidance (#783,
 	// jentic-api-scorecard#224). The probe can wait out a cold-starting daemon
 	// (~30s), so announce it — otherwise the command looks hung.
-	fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
+	announceDaemonCheck(a.Out)
 	if err := requireDockerDaemon("jenticctl start"); err != nil {
 		return err
 	}

@@ -421,7 +421,7 @@ func (a *App) updateStackDocker() error {
 	// long image build — otherwise the build/migrations/up sequence surfaces a
 	// raw compose transport error deep into the run. The probe may poll (~30s)
 	// for a cold-starting daemon, so announce it first (see start.go/stop.go).
-	fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
+	announceDaemonCheck(a.Out)
 	if err := requireDockerDaemon("jenticctl update"); err != nil {
 		return err
 	}

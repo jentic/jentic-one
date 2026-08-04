@@ -224,7 +224,8 @@ func (d *doctor) checkDeploy(section string) {
 		}
 		out, err := install.ComposePs(composePath)
 		if err != nil {
-			d.add(section, "deploy", statusWarn, "docker compose ps failed: "+err.Error(), "is the Docker daemon running?")
+			d.add(section, "deploy", statusWarn, "docker compose ps failed: "+err.Error(),
+				install.DockerDaemonRecoveryHint())
 			return
 		}
 		d.add(section, "deploy", statusPass, "docker compose ("+composeSummary(out)+")", "")

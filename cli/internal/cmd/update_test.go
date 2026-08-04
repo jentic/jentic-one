@@ -143,7 +143,8 @@ func TestUpdateStackDockerFailsFastWhenDaemonDown(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("update should surface the daemon guard error, got %v", err)
 	}
-	// The guard short-circuits before the image build header is rendered.
+	// The guard short-circuits before the image build header is rendered, so the
+	// build/migrations/compose-up sequence never starts (no real Docker call).
 	if got := app.Out.(*bytes.Buffer).String(); strings.Contains(got, "Build (Docker images)") {
 		t.Errorf("updateStackDocker ran past the guard when the daemon was down:\n%s", got)
 	}

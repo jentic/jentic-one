@@ -141,8 +141,10 @@ func dockerDaemonHealth() (detail string, healthy bool) {
 // launch, so we poll a few times before declaring it down rather than failing
 // on a single short timeout and sending the operator down a false "wedged" path.
 func defaultDockerDaemonProbe() (string, bool) {
-	// Up to ~24s total: a snappy daemon answers on the first try in well under a
-	// second; a cold-starting one usually comes up within this window.
+	// Up to ~30s total (4 attempts × 6s timeout + 3 × 2s backoff): a snappy
+	// daemon answers on the first try in well under a second; a cold-starting
+	// one usually comes up within this window. Matches the "~30s" the callers
+	// advertise before probing.
 	const attempts = 4
 	const perAttempt = 6 * time.Second
 	var lastDetail string

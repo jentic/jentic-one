@@ -120,7 +120,7 @@ func (a *App) stopDocker(opts *stopOptions, composePath string) error {
 	// confirmation prompt) so a stopped daemon yields actionable recovery
 	// guidance instead (#783). The probe can wait out a cold-starting daemon
 	// (~30s), so announce it — otherwise the command looks hung.
-	fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
+	announceDaemonCheck(a.Out)
 	if err := requireDockerDaemon("jenticctl stop"); err != nil {
 		return err
 	}
