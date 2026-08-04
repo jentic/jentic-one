@@ -140,6 +140,12 @@ func (a *App) stopDocker(opts *stopOptions, composePath string) error {
 		return fmt.Errorf("docker compose down -v: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stopped Docker stack and removed its data volumes."))
+	// The database is gone, so the next `start` comes up on an empty volume.
+	// `start` now creates the schema itself, but say so here too: this is the
+	// moment the operator loses their data, and it is where they will look when
+	// their login stops working.
+	fmt.Fprintln(a.Out, theme.Dim.Render("  the database was deleted; `jenticctl start` will recreate an empty schema"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  you will need to create the admin user again"))
 	return nil
 }
 

@@ -195,6 +195,18 @@ def do_run_migrations(connection: Connection) -> None:
         # etc.) only commit their own work, never a sibling's.
         transaction_per_migration=True,
     )
+    # Read-only status probe (``migrations.run --check``): the caller stashed a
+    # dict to be filled with the revisions this database is actually stamped at.
+    #
+    # Safety here comes from the *caller* invoking ``alembic current`` rather
+    # than ``upgrade``: that runs this env under ``dont_mutate=True`` with a
+    # no-op migration function, so nothing can be applied. Returning early is a
+    # belt-and-braces guard that also skips opening a pointless transaction — it
+    # is not the thing that makes the probe safe.
+    probe = config.attributes.get("status_probe")
+    if probe is not None:
+        probe["current"] = sorted(context.get_context().get_current_heads())
+        return
     with context.begin_transaction():
         context.run_migrations()
 
