@@ -202,6 +202,17 @@ func UnhealthyDaemon(results []CheckResult) (CheckResult, bool) {
 	return CheckResult{}, false
 }
 
+// dockerDaemonRecoveryHint is the one canonical "how to bring the daemon back"
+// phrase, reused by every daemon-down message (install, start/stop, doctor) so
+// the guidance can't drift between touch points. It leads with the
+// runtime-agnostic instruction so Colima / Linux dockerd / Podman / Rancher
+// users aren't sent down a Docker-Desktop-only path, then offers the
+// Docker-Desktop convenience (the `docker desktop start` CLI needs Docker
+// Desktop 4.37+, hence the version caveat inline).
+const dockerDaemonRecoveryHint = "start your Docker daemon " +
+	"(Docker Desktop users: open it, or run `docker desktop start` on 4.37+; " +
+	"Linux: `sudo systemctl start docker`; Colima: `colima start`)"
+
 // DaemonError builds an actionable error for a present-but-unresponsive Docker
 // daemon, so the install fails fast here instead of crashing mid-build.
 func DaemonError(check CheckResult) error {
@@ -209,24 +220,29 @@ func DaemonError(check CheckResult) error {
 	if detail == "" {
 		detail = "the Docker daemon is not reachable"
 	}
-	return fmt.Errorf("docker is installed but its daemon is not responding: %s — "+
-		"start Docker Desktop (or your docker daemon), wait for it to report healthy, "+
-		"then re-run `jenticctl install`", detail)
+	return fmt.Errorf("docker is installed but its daemon is not responding: %s — %s, "+
+		"wait until `docker info` succeeds, then re-run `jenticctl install`", detail, dockerDaemonRecoveryHint)
 }
 
 // RequireDockerDaemon fails fast with an actionable error when the Docker daemon
 // is not responding, so runtime commands (`start`/`stop`) surface a clear
-// recovery path when Docker Desktop is closed (e.g. after a reboot) instead of a
-// raw `docker compose` transport error. The referenced command names the caller
-// (e.g. "jenticctl start") so the recovery path points back at what the operator
-// ran. It returns nil when the daemon answers. See jentic-one#783 and
-// jentic-api-scorecard#224.
+// recovery path when the daemon is down (e.g. Docker Desktop closed after a
+// reboot) instead of a raw `docker compose` transport error. The referenced
+// command names the caller (e.g. "jenticctl start") so the recovery path points
+// back at what the operator ran. It returns nil when the daemon answers. See
+// jentic-one#783 and jentic-api-scorecard#224.
 //
 // It only reports the problem; it deliberately does NOT start Docker itself.
 // Client CLIs across the ecosystem (Testcontainers, act, Dagger) fail fast here
 // rather than silently launching the daemon, since Docker Desktop is packaged as
-// a user app, not a managed service. The message points at `docker desktop
-// start` (Docker Desktop 4.37+) so the operator has the one-liner to hand.
+// a user app, not a managed service. The recovery hint (dockerDaemonRecoveryHint)
+// leads with a runtime-agnostic instruction so non-Docker-Desktop users aren't
+// misled.
+//
+// The probe (dockerDaemonHealth) polls for up to ~30s to tolerate a
+// cold-starting daemon, so callers should announce the check before invoking
+// this — otherwise the command appears to hang. See the callers in
+// internal/cmd/start.go and stop.go.
 func RequireDockerDaemon(command string) error {
 	detail, healthy := dockerDaemonHealth()
 	if healthy {
@@ -235,10 +251,14 @@ func RequireDockerDaemon(command string) error {
 	if detail == "" {
 		detail = "the Docker daemon is not reachable"
 	}
-	return fmt.Errorf("docker is installed but its daemon is not responding: %s — "+
-		"start it with `docker desktop start` (or open Docker Desktop / start your docker daemon), "+
-		"wait for it to report healthy, then re-run `%s`", detail, command)
+	return fmt.Errorf("docker is installed but its daemon is not responding: %s — %s, "+
+		"wait until `docker info` succeeds, then re-run `%s`", detail, dockerDaemonRecoveryHint, command)
 }
+
+// DockerDaemonRecoveryHint returns the canonical "how to start the Docker
+// daemon" guidance so callers outside this package (e.g. the doctor deploy
+// check) render the exact same advice as the fail-fast errors.
+func DockerDaemonRecoveryHint() string { return dockerDaemonRecoveryHint }
 
 // DockerDaemonResponsiveQuick is a single-round-trip daemon probe for callers
 // that must stay fast and non-blocking — `doctor` is read-only and should not
@@ -296,7 +316,7 @@ func MissingError(missing []CheckResult) error {
 			if detail == "" {
 				detail = "the Docker daemon is not reachable"
 			}
-			fmt.Fprintf(&hints, "\n  docker daemon: %s — start Docker Desktop and re-run", detail)
+			fmt.Fprintf(&hints, "\n  docker daemon: %s — %s, then re-run", detail, dockerDaemonRecoveryHint)
 		}
 	}
 	return fmt.Errorf("missing required tool(s) or daemons down: %s — install/start and re-run:%s",

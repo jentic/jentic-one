@@ -198,12 +198,13 @@ func (d *doctor) checkServer() {
 	d.checkDeploy(section)
 }
 
-// dockerDaemonProbe is the seam doctor's deploy check runs through so tests can
+// doctorDockerProbe is the seam doctor's deploy check runs through so tests can
 // simulate a stopped daemon without a real Docker. It returns a short reason
 // (empty when healthy) and whether the daemon answered. It is a fast,
-// single-round-trip probe: doctor is read-only and must not block for the full
-// cold-start polling window when the daemon is simply down.
-var dockerDaemonProbe = func() (string, bool) {
+// single-round-trip probe (distinct from install's ~30s polling probe): doctor
+// is read-only and must not block for the full cold-start window when the daemon
+// is simply down.
+var doctorDockerProbe = func() (string, bool) {
 	return install.DockerDaemonResponsiveQuick(2 * time.Second)
 }
 
@@ -211,11 +212,14 @@ func (d *doctor) checkDeploy(section string) {
 	composePath := d.app.Paths.ComposePath()
 	if proc.FileExists(composePath) {
 		// A compose install needs a live daemon. Probe it directly so a stopped
-		// Docker Desktop is reported as an explicit, actionable failure rather
-		// than inferred from a cryptic `docker compose ps` error (#783).
-		if detail, healthy := dockerDaemonProbe(); !healthy {
-			d.add(section, "docker daemon", statusFail, detail,
-				"start it with `docker desktop start` (or open Docker Desktop), then `jenticctl start`")
+		// daemon is reported explicitly rather than inferred from a cryptic
+		// `docker compose ps` error (#783). Keep it a warning, not a fail: doctor
+		// is documented as safe to wire into CI ("warnings keep a zero exit"),
+		// and the sibling `control`/`compose ps` checks also warn on a
+		// not-running dependency — a down daemon shouldn't flip the exit code.
+		if detail, healthy := doctorDockerProbe(); !healthy {
+			d.add(section, "docker daemon", statusWarn, detail,
+				install.DockerDaemonRecoveryHint()+", then `jenticctl start`")
 			return
 		}
 		out, err := install.ComposePs(composePath)

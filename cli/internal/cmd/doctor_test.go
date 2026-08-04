@@ -112,24 +112,34 @@ func TestDotFor(t *testing.T) {
 }
 
 // With a compose install and a stopped daemon, doctor reports an explicit,
-// actionable "docker daemon" failure rather than inferring it from a cryptic
-// `docker compose ps` error (#783).
+// actionable "docker daemon" warning rather than inferring it from a cryptic
+// `docker compose ps` error (#783). It stays a warning (not a fail) so doctor
+// keeps a zero exit — safe to wire into CI — and it returns before touching real
+// `docker compose ps`.
 func TestDoctorReportsDockerDaemonDown(t *testing.T) {
-	orig := dockerDaemonProbe
-	t.Cleanup(func() { dockerDaemonProbe = orig })
-	dockerDaemonProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
+	orig := doctorDockerProbe
+	t.Cleanup(func() { doctorDockerProbe = orig })
+	doctorDockerProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
 
 	app := testApp(t)
 	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
-	// A failing check makes doctor exit non-zero; the error is expected here.
-	_ = app.doctorE(context.Background(), offlineOpts())
+	// A down daemon is a warning, not a failure, so doctor must still exit zero.
+	if err := app.doctorE(context.Background(), offlineOpts()); err != nil {
+		t.Fatalf("a down daemon should warn, not fail doctor; got error: %v", err)
+	}
 
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "docker desktop start"} {
+	for _, want := range []string{"docker daemon", "Cannot connect to the Docker daemon", "docker desktop start", "colima start"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("doctor output missing %q\n---\n%s", want, got)
+		}
+	}
+	// The check must return early, never falling through to real `docker compose ps`.
+	for _, absent := range []string{"docker compose ps failed", "docker compose ("} {
+		if strings.Contains(got, absent) {
+			t.Errorf("doctor should not reach `docker compose ps` when the daemon is down; saw %q\n---\n%s", absent, got)
 		}
 	}
 }

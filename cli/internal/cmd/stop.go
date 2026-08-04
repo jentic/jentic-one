@@ -115,15 +115,18 @@ func (a *App) stopProcess(pidPath, label string, timeout time.Duration) error {
 // stack's data volumes (`down -v`), which destroys the database; it confirms
 // first unless --yes is set.
 func (a *App) stopDocker(opts *stopOptions, composePath string) error {
-	// `docker compose down` needs a live daemon; with Docker Desktop closed it
-	// fails with a raw transport error. Probe first so a stopped daemon yields
-	// the actionable "start Docker Desktop" guidance instead (#783).
+	// `docker compose down` needs a live daemon; with the daemon down it fails
+	// with a raw transport error. Probe first (before the destructive --volumes
+	// confirmation prompt) so a stopped daemon yields actionable recovery
+	// guidance instead (#783). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung.
+	fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
 	if err := requireDockerDaemon("jenticctl stop"); err != nil {
 		return err
 	}
 	if !opts.volumes {
 		fmt.Fprintln(a.Out, theme.Infof("Stopping Docker stack ..."))
-		if err := install.ComposeDown(a.Out, composePath); err != nil {
+		if err := composeDown(a.Out, composePath); err != nil {
 			return fmt.Errorf("docker compose down: %w", err)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Stopped Docker stack."))
@@ -142,7 +145,7 @@ func (a *App) stopDocker(opts *stopOptions, composePath string) error {
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Stopping Docker stack and removing volumes ..."))
-	if err := install.ComposeDownVolumes(a.Out, composePath); err != nil {
+	if err := composeDownVolumes(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose down -v: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stopped Docker stack and removed its data volumes."))

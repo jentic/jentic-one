@@ -103,7 +103,7 @@ func TestDaemonError(t *testing.T) {
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "daemon is not responding") ||
-		!strings.Contains(msg, "start Docker Desktop") ||
+		!strings.Contains(msg, "docker desktop start") ||
 		!strings.Contains(msg, "Is the docker daemon running?") {
 		t.Errorf("daemon error not actionable: %q", msg)
 	}
@@ -119,25 +119,43 @@ func TestRequireDockerDaemon(t *testing.T) {
 		t.Errorf("healthy daemon should not error, got %v", err)
 	}
 
-	// Stopped daemon → actionable error naming the caller's command.
-	dockerDaemonProbe = func() (string, bool) { return "Cannot connect to the Docker daemon", false }
-	err := RequireDockerDaemon("jenticctl start")
-	if err == nil {
-		t.Fatal("stopped daemon should return an error")
-	}
-	msg := err.Error()
-	for _, want := range []string{"daemon is not responding", "Cannot connect to the Docker daemon", "docker desktop start", "jenticctl start"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error missing %q: %q", want, msg)
-		}
-	}
-
-	// A down daemon with no detail still yields a usable fallback reason.
-	dockerDaemonProbe = func() (string, bool) { return "", false }
-	if err := RequireDockerDaemon("jenticctl stop"); err == nil ||
-		!strings.Contains(err.Error(), "not reachable") ||
-		!strings.Contains(err.Error(), "jenticctl stop") {
-		t.Errorf("empty-detail down daemon: %v", err)
+	for _, tc := range []struct {
+		name    string
+		probe   func() (string, bool)
+		command string
+		want    []string
+	}{
+		{
+			name:    "down with detail names the caller and stays runtime-agnostic",
+			probe:   func() (string, bool) { return "Cannot connect to the Docker daemon", false },
+			command: "jenticctl start",
+			// Leads with the generic instruction, then Docker Desktop / Linux /
+			// Colima specifics, and names the command the operator ran.
+			want: []string{
+				"daemon is not responding", "Cannot connect to the Docker daemon",
+				"start your Docker daemon", "docker desktop start", "colima start", "jenticctl start",
+			},
+		},
+		{
+			name:    "down with empty detail falls back to a usable reason",
+			probe:   func() (string, bool) { return "", false },
+			command: "jenticctl stop",
+			want:    []string{"not reachable", "jenticctl stop"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dockerDaemonProbe = tc.probe
+			err := RequireDockerDaemon(tc.command)
+			if err == nil {
+				t.Fatal("stopped daemon should return an error")
+			}
+			msg := err.Error()
+			for _, want := range tc.want {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error missing %q: %q", want, msg)
+				}
+			}
+		})
 	}
 }
 

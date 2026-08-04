@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"errors"
+	"io"
 	"os"
 	"testing"
 )
@@ -15,23 +16,40 @@ func TestStopDockerFailsFastWhenDaemonDown(t *testing.T) {
 	}
 	sentinel := stubDaemonDown(t)
 
+	origDown := composeDown
+	t.Cleanup(func() { composeDown = origDown })
+	composeDown = func(io.Writer, string) error {
+		t.Fatal("composeDown must not run when the daemon is down")
+		return nil
+	}
+
 	err := app.stopE(&stopOptions{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("stop should surface the daemon guard error, got %v", err)
 	}
 }
 
-// The guard applies to the destructive --volumes path too (the confirmation
-// prompt is downstream of the guard, so a down daemon fails before prompting).
-func TestStopDockerVolumesFailsFastWhenDaemonDown(t *testing.T) {
+// The guard must run BEFORE the destructive --volumes confirmation prompt.
+// Deliberately omit `yes: true`: if the guard is correctly first, a down daemon
+// returns the sentinel and the interactive `huh` confirm is never reached (so
+// the test doesn't block on stdin). A regression that moved the guard below the
+// prompt would hang here instead of returning — proving the ordering.
+func TestStopDockerVolumesFailsFastBeforeConfirm(t *testing.T) {
 	app := testApp(t)
 	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
 		t.Fatalf("write compose: %v", err)
 	}
 	sentinel := stubDaemonDown(t)
 
-	err := app.stopE(&stopOptions{volumes: true, yes: true})
+	origDownV := composeDownVolumes
+	t.Cleanup(func() { composeDownVolumes = origDownV })
+	composeDownVolumes = func(io.Writer, string) error {
+		t.Fatal("composeDownVolumes must not run when the daemon is down")
+		return nil
+	}
+
+	err := app.stopE(&stopOptions{volumes: true})
 	if !errors.Is(err, sentinel) {
-		t.Fatalf("stop --volumes should surface the daemon guard error, got %v", err)
+		t.Fatalf("stop --volumes should surface the daemon guard error before confirming, got %v", err)
 	}
 }

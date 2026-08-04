@@ -17,11 +17,24 @@ type startOptions struct {
 }
 
 // requireDockerDaemon guards the Docker runtime commands (`start`/`stop`)
-// against a stopped daemon, surfacing the installer's actionable "start Docker
-// Desktop" guidance instead of a raw `docker compose` transport error. It is a
-// package-level seam so tests can simulate an up/down daemon without a real
-// Docker (#783, jentic-api-scorecard#224).
+// against a stopped daemon, surfacing actionable recovery guidance instead of a
+// raw `docker compose` transport error. It is a package-level seam so tests can
+// simulate an up/down daemon without a real Docker (#783,
+// jentic-api-scorecard#224).
+//
+// It can block up to ~30s while the underlying probe waits out a cold-starting
+// daemon, so callers must announce the check first (see startDocker/stopDocker)
+// or the command looks like it hung.
 var requireDockerDaemon = install.RequireDockerDaemon
+
+// composeUp / composeDown / composeDownVolumes are package-level seams over the
+// install package's docker-compose helpers so the runtime commands can be
+// tested (guard pass-through, output) without shelling out to a real Docker.
+var (
+	composeUp          = install.ComposeUp
+	composeDown        = install.ComposeDown
+	composeDownVolumes = install.ComposeDownVolumes
+)
 
 func newStartCmd(app *App) *cobra.Command {
 	opts := &startOptions{}
@@ -132,15 +145,17 @@ func brokerPortFromManifest(a *App) string {
 // startDocker brings the generated docker-compose stack up in detached mode.
 func (a *App) startDocker(composePath string) error {
 	// The compose file proves a Docker install, but not that the daemon is up:
-	// with Docker Desktop closed (common after a reboot) `docker compose up`
-	// fails with a raw "Cannot connect to the Docker daemon" error. Probe first
-	// so we surface the same actionable "start Docker Desktop" guidance the
-	// installer does (#783, jentic-api-scorecard#224).
+	// with the daemon down (e.g. Docker Desktop closed after a reboot) `docker
+	// compose up` fails with a raw "Cannot connect to the Docker daemon" error.
+	// Probe first so we surface actionable recovery guidance (#783,
+	// jentic-api-scorecard#224). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung.
+	fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
 	if err := requireDockerDaemon("jenticctl start"); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Infof("Starting Docker stack ..."))
-	if err := install.ComposeUp(a.Out, composePath); err != nil {
+	if err := composeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack started."))
