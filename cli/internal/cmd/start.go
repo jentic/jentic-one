@@ -16,15 +16,15 @@ type startOptions struct {
 	config string
 }
 
-// requireDockerDaemon guards the Docker runtime commands (`start`/`stop`)
-// against a stopped daemon, surfacing actionable recovery guidance instead of a
-// raw `docker compose` transport error. It is a package-level seam so tests can
-// simulate an up/down daemon without a real Docker (#783,
-// jentic-api-scorecard#224).
+// requireDockerDaemon guards the Docker-backed commands (`start`, `stop`,
+// `update`, `setup`, `reset-password`) against a stopped daemon, surfacing
+// actionable recovery guidance instead of a raw `docker compose` transport
+// error. It is a package-level seam so tests can simulate an up/down daemon
+// without a real Docker (#783, jentic-api-scorecard#224).
 //
 // It can block up to ~30s while the underlying probe waits out a cold-starting
-// daemon, so callers must announce the check first (see startDocker/stopDocker)
-// or the command looks like it hung.
+// daemon, so callers must announce the check first (see e.g.
+// startDocker/stopDocker) or the command looks like it hung.
 var requireDockerDaemon = install.RequireDockerDaemon
 
 // composeUp / composeDown / composeDownVolumes are package-level seams over the

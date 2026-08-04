@@ -74,6 +74,13 @@ func (a *App) setupE(opts *setupOptions) error {
 	// one-shot app container. Otherwise drive the local venv directly.
 	composePath := a.Paths.ComposePath()
 	if proc.FileExists(composePath) {
+		// The admin is created in a one-shot app container, so a stopped daemon
+		// would otherwise surface a raw compose error. Announce the probe first
+		// since it may poll (~30s) for a cold-starting daemon (see start.go).
+		fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
+		if err := requireDockerDaemon("jenticctl setup"); err != nil {
+			return err
+		}
 		if err := install.ComposeCreateAdmin(a.Out, composePath, opts.email, opts.password); err != nil {
 			return fmt.Errorf("create admin (docker): %w", err)
 		}

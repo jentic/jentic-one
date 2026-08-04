@@ -72,6 +72,13 @@ func (a *App) resetPasswordE(opts *resetPasswordOptions) error {
 	// app container. Otherwise drive the local venv directly.
 	composePath := a.Paths.ComposePath()
 	if proc.FileExists(composePath) {
+		// The reset runs in a one-shot app container, so a stopped daemon would
+		// otherwise surface a raw compose error. Announce the probe first since
+		// it may poll (~30s) for a cold-starting daemon (see start.go).
+		fmt.Fprintln(a.Out, theme.Infof("Checking the Docker daemon (waiting up to ~30s if it is still starting) ..."))
+		if err := requireDockerDaemon("jenticctl reset-password"); err != nil {
+			return err
+		}
 		if err := install.ComposeResetPassword(a.Out, composePath, opts.email, opts.password); err != nil {
 			return fmt.Errorf("reset password (docker): %w", err)
 		}
