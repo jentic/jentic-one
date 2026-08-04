@@ -67,8 +67,9 @@ func requirementsFor(d *Draft) []Requirement {
 	return reqs
 }
 
-// Preflight probes every Requirement for the chosen path.
-func Preflight(d *Draft) []CheckResult {
+// Preflight probes every Requirement for the chosen path. ctx bounds the Docker
+// daemon probe so a cold-start wait can be canceled (Ctrl-C).
+func Preflight(ctx context.Context, d *Draft) []CheckResult {
 	reqs := requirementsFor(d)
 	results := make([]CheckResult, 0, len(reqs))
 	for _, req := range reqs {
@@ -83,7 +84,7 @@ func Preflight(d *Draft) []CheckResult {
 			// so we can fail fast with an actionable "start Docker" message.
 			if req.Name == "docker" {
 				res.DaemonChecked = true
-				if detail, ok := dockerDaemonHealth(); ok {
+				if detail, ok := dockerDaemonHealth(ctx); ok {
 					res.Healthy = true
 				} else {
 					res.DaemonDetail = detail
@@ -125,12 +126,14 @@ func toolVersion(name string) string {
 
 // dockerDaemonProbe is the seam the daemon-health check runs through so tests
 // can simulate a stopped/unhealthy daemon without a real Docker. It returns a
-// short reason (empty when healthy) and whether the daemon answered.
+// short reason (empty when healthy) and whether the daemon answered. The ctx
+// lets callers cancel the (up to ~30s) cold-start wait — e.g. an operator who
+// hits Ctrl-C once they realize the daemon is down (#953).
 var dockerDaemonProbe = defaultDockerDaemonProbe
 
 // dockerDaemonHealth reports whether the Docker daemon is up and responsive.
-func dockerDaemonHealth() (detail string, healthy bool) {
-	return dockerDaemonProbe()
+func dockerDaemonHealth(ctx context.Context) (detail string, healthy bool) {
+	return dockerDaemonProbe(ctx)
 }
 
 // daemonProbeBackoff is the pause between daemon probe attempts. Kept named so
@@ -150,22 +153,27 @@ const daemonUnreachableFallback = "the Docker daemon is not reachable"
 // halfway through (#653). A cold Docker Desktop can take 15–40s to answer after
 // launch, so we poll a few times before declaring it down rather than failing
 // on a single short timeout and sending the operator down a false "wedged" path.
-func defaultDockerDaemonProbe() (string, bool) {
+func defaultDockerDaemonProbe(ctx context.Context) (string, bool) {
 	// Up to ~30s total (4 attempts × 6s timeout + 3 × 2s backoff): a snappy
 	// daemon answers on the first try in well under a second; a cold-starting
 	// one usually comes up within this window. Matches the "~30s" the callers
-	// advertise before probing.
+	// advertise before probing. A canceled ctx (Ctrl-C) short-circuits the wait.
 	const attempts = 4
 	const perAttempt = 6 * time.Second
 	var lastDetail string
 	for i := range attempts {
-		detail, ok := dockerInfoOnce(perAttempt)
+		detail, ok := dockerInfoOnce(ctx, perAttempt)
 		if ok {
 			return "", true
 		}
 		lastDetail = detail
 		if i < attempts-1 {
-			time.Sleep(daemonProbeBackoff)
+			// Cancelable backoff: return promptly if the caller gave up.
+			select {
+			case <-ctx.Done():
+				return "the Docker daemon check was canceled", false
+			case <-time.After(daemonProbeBackoff):
+			}
 		}
 	}
 	if lastDetail == "" {
@@ -174,13 +182,18 @@ func defaultDockerDaemonProbe() (string, bool) {
 	return lastDetail, false
 }
 
-// dockerInfoOnce runs a single `docker info` round-trip with the given timeout.
-func dockerInfoOnce(timeout time.Duration) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// dockerInfoOnce runs a single `docker info` round-trip, bounded by the smaller
+// of the given timeout and the caller's ctx.
+func dockerInfoOnce(ctx context.Context, timeout time.Duration) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// `--format {{.ServerVersion}}` forces a round-trip to the daemon and keeps
 	// the output to one line we can show; a stopped daemon errors here.
 	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.ServerVersion}}").CombinedOutput()
+	// A caller cancellation reads as a canceled context, not a dead daemon.
+	if ctx.Err() == context.Canceled {
+		return "the Docker daemon check was canceled", false
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return "the Docker daemon did not respond in time (is it starting up or wedged?)", false
 	}
@@ -254,9 +267,10 @@ func DaemonError(check CheckResult) error {
 // The probe (dockerDaemonHealth) polls for up to ~30s to tolerate a
 // cold-starting daemon, so callers should announce the check before invoking
 // this — otherwise the command appears to hang. See the callers in
-// internal/cmd/start.go and stop.go.
-func RequireDockerDaemon(command string) error {
-	detail, healthy := dockerDaemonHealth()
+// internal/cmd/start.go and stop.go. The ctx (the command's context) lets an
+// operator cancel that wait with Ctrl-C (#953).
+func RequireDockerDaemon(ctx context.Context, command string) error {
+	detail, healthy := dockerDaemonHealth(ctx)
 	if healthy {
 		return nil
 	}
@@ -276,10 +290,10 @@ func DockerDaemonRecoveryHint() string { return dockerDaemonRecoveryHint }
 // that must stay fast and non-blocking — `doctor` is read-only and should not
 // hang for the full cold-start polling window when the daemon is simply down.
 // Unlike RequireDockerDaemon it does not tolerate a cold-starting Docker
-// Desktop; it answers within `timeout`. It returns a short human reason (empty
-// when healthy) and whether the daemon answered.
-func DockerDaemonResponsiveQuick(timeout time.Duration) (detail string, healthy bool) {
-	return dockerInfoOnce(timeout)
+// Desktop; it answers within `timeout` (or when ctx is canceled). It returns a
+// short human reason (empty when healthy) and whether the daemon answered.
+func DockerDaemonResponsiveQuick(ctx context.Context, timeout time.Duration) (detail string, healthy bool) {
+	return dockerInfoOnce(ctx, timeout)
 }
 
 // RenderPreflight returns a styled checklist of the probe results.

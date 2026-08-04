@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -30,7 +31,7 @@ func TestSetupNonInteractiveValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := testApp(t)
-			err := app.setupE(tc.opts)
+			err := app.setupE(context.Background(), tc.opts)
 			if err == nil {
 				t.Fatalf("expected validation error, got nil")
 			}
@@ -46,7 +47,7 @@ func TestSetupNonInteractiveValidation(t *testing.T) {
 // passed validation and the command tried to act.
 func TestSetupRequiresInstall(t *testing.T) {
 	app := testApp(t)
-	err := app.setupE(&setupOptions{
+	err := app.setupE(context.Background(), &setupOptions{
 		yes:      true,
 		email:    "admin@example.com",
 		password: "a-strong-password",
@@ -69,7 +70,7 @@ func TestSetupDockerFailsFastWhenDaemonDown(t *testing.T) {
 	}
 	sentinel := stubDaemonDown(t)
 
-	err := app.setupE(&setupOptions{
+	err := app.setupE(context.Background(), &setupOptions{
 		yes:      true,
 		email:    "admin@example.com",
 		password: "a-strong-password",

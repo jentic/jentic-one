@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -30,7 +31,7 @@ func TestResetPasswordNonInteractiveValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := testApp(t)
-			err := app.resetPasswordE(tc.opts)
+			err := app.resetPasswordE(context.Background(), tc.opts)
 			if err == nil {
 				t.Fatalf("expected validation error, got nil")
 			}
@@ -46,7 +47,7 @@ func TestResetPasswordNonInteractiveValidation(t *testing.T) {
 // passed validation and the command tried to act.
 func TestResetPasswordRequiresInstall(t *testing.T) {
 	app := testApp(t)
-	err := app.resetPasswordE(&resetPasswordOptions{
+	err := app.resetPasswordE(context.Background(), &resetPasswordOptions{
 		yes:      true,
 		email:    "user@example.com",
 		password: "a-strong-password",
@@ -69,7 +70,7 @@ func TestResetPasswordDockerFailsFastWhenDaemonDown(t *testing.T) {
 	}
 	sentinel := stubDaemonDown(t)
 
-	err := app.resetPasswordE(&resetPasswordOptions{
+	err := app.resetPasswordE(context.Background(), &resetPasswordOptions{
 		yes:      true,
 		email:    "user@example.com",
 		password: "a-strong-password",

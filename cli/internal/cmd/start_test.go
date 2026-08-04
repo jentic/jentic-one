@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -17,7 +18,7 @@ func stubDaemonDown(t *testing.T) error {
 	orig := requireDockerDaemon
 	t.Cleanup(func() { requireDockerDaemon = orig })
 	sentinel := errors.New("docker daemon is not responding: start Docker Desktop")
-	requireDockerDaemon = func(string) error { return sentinel }
+	requireDockerDaemon = func(context.Context, string) error { return sentinel }
 	return sentinel
 }
 
@@ -27,7 +28,7 @@ func stubDaemonUp(t *testing.T) {
 	t.Helper()
 	orig := requireDockerDaemon
 	t.Cleanup(func() { requireDockerDaemon = orig })
-	requireDockerDaemon = func(string) error { return nil }
+	requireDockerDaemon = func(context.Context, string) error { return nil }
 }
 
 // A Docker install (compose file present) with a stopped daemon must fail fast
@@ -47,7 +48,7 @@ func TestStartDockerFailsFastWhenDaemonDown(t *testing.T) {
 		return nil
 	}
 
-	err := app.startE(&startOptions{})
+	err := app.startE(context.Background(), &startOptions{})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("start should surface the daemon guard error, got %v", err)
 	}
@@ -76,7 +77,7 @@ func TestStartDockerProceedsWhenDaemonUp(t *testing.T) {
 		return nil
 	}
 
-	if err := app.startE(&startOptions{}); err != nil {
+	if err := app.startE(context.Background(), &startOptions{}); err != nil {
 		t.Fatalf("start with a healthy daemon should succeed, got %v", err)
 	}
 	if upCalls != 1 {

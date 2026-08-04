@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -31,8 +32,8 @@ func newResetPasswordCmd(app *App) *cobra.Command {
 			"reset. It also clears any login lockout. Drives the app's reset path against\n" +
 			"the running stack (Docker compose) or the local install (venv).",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return app.resetPasswordE(opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.resetPasswordE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.config, "config", "",
@@ -44,7 +45,7 @@ func newResetPasswordCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) resetPasswordE(opts *resetPasswordOptions) error {
+func (a *App) resetPasswordE(ctx context.Context, opts *resetPasswordOptions) error {
 	// A generated compose file marks a Docker install: the reset runs in a
 	// one-shot app container. Probe the daemon up front — before prompting for
 	// credentials — so a user on a stopped daemon isn't asked to type an email
@@ -54,7 +55,7 @@ func (a *App) resetPasswordE(opts *resetPasswordOptions) error {
 	dockerInstall := proc.FileExists(composePath)
 	if dockerInstall {
 		announceDaemonCheck(a.Out)
-		if err := requireDockerDaemon("jenticctl reset-password"); err != nil {
+		if err := requireDockerDaemon(ctx, "jenticctl reset-password"); err != nil {
 			return err
 		}
 	}
