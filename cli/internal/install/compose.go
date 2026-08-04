@@ -527,37 +527,26 @@ const (
 	SchemaPending
 )
 
-// checkExitNeedsMigration is the exit code `migrations.run --check` uses for
-// "not at head". Kept distinct from 1 so a genuine failure of the check (bad
-// config, database unreachable) is not misread as a schema verdict.
-const checkExitNeedsMigration = 3
-
 // ComposeSchemaState reports whether the stack's databases are migrated, without
 // modifying them. It runs `migrations.run --check` in a one-shot app container.
 //
-// Any failure to *obtain* an answer yields SchemaUnknown with a nil error: the
-// caller cannot act on a non-answer, and blocking a start on a broken
-// diagnostic would be worse than the problem being diagnosed. Only the schema
-// verdict itself is authoritative.
-func ComposeSchemaState(composePath string) (SchemaState, error) {
+// It deliberately returns no error. Any failure to *obtain* an answer collapses
+// to SchemaUnknown, because a caller cannot act on a non-answer: blocking a
+// start because a diagnostic broke would be worse than the problem being
+// diagnosed. Only a verdict the runner actually printed is authoritative.
+func ComposeSchemaState(composePath string) SchemaState {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return SchemaUnknown, nil
+		return SchemaUnknown
 	}
 	//nolint:gosec // composePath is CLI-managed under JENTIC_HOME.
-	out, err := exec.Command("docker", migrateCheckArgs(composePath)...).CombinedOutput()
-	text := string(out)
+	out, _ := exec.Command("docker", migrateCheckArgs(composePath)...).CombinedOutput()
 
-	// Parse the verdict first: it is the authoritative signal, and `--check`
-	// exits non-zero *by design* when migrations are needed.
-	if state, ok := parseSchemaVerdict(text); ok {
-		return state, nil
-	}
-	if err != nil {
-		// No verdict and a failure: an old image without `--check` (argparse
-		// exits 2), no docker daemon, an unreachable database. Undeterminable.
-		return SchemaUnknown, nil
-	}
-	return SchemaUnknown, nil
+	// The exit status is intentionally ignored: `--check` exits non-zero *by
+	// design* when migrations are needed, so the printed verdict — not the exit
+	// code — is what carries the answer. No verdict (an old image without
+	// `--check`, no daemon, an unreachable database) means undeterminable.
+	state, _ := parseSchemaVerdict(string(out))
+	return state
 }
 
 // parseSchemaVerdict extracts the OVERALL line that `migrations.run --check`

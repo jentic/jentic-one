@@ -72,11 +72,7 @@ func TestComposeSchemaStateReadsVerdict(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stubDocker(t, tc.stdout, tc.exit, filepath.Join(t.TempDir(), "args"))
-			got, err := ComposeSchemaState("/tmp/compose.yaml")
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tc.want {
+			if got := ComposeSchemaState("/tmp/compose.yaml"); got != tc.want {
 				t.Errorf("state = %v, want %v", got, tc.want)
 			}
 		})
@@ -102,11 +98,7 @@ func TestComposeSchemaStateUnknownWhenUndeterminable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stubDocker(t, tc.stdout, tc.exit, filepath.Join(t.TempDir(), "args"))
-			got, err := ComposeSchemaState("/tmp/compose.yaml")
-			if err != nil {
-				t.Fatalf("an undeterminable probe must not error, got: %v", err)
-			}
-			if got != SchemaUnknown {
+			if got := ComposeSchemaState("/tmp/compose.yaml"); got != SchemaUnknown {
 				t.Errorf("state = %v, want SchemaUnknown", got)
 			}
 		})
@@ -121,9 +113,7 @@ func TestComposeSchemaStateProbeIsReadOnly(t *testing.T) {
 	argsFile := filepath.Join(t.TempDir(), "args")
 	stubDocker(t, "OVERALL current", 0, argsFile)
 
-	if _, err := ComposeSchemaState("/tmp/compose.yaml"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	ComposeSchemaState("/tmp/compose.yaml")
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatalf("read recorded args: %v", err)
@@ -147,11 +137,7 @@ func TestComposeSchemaStateProbeIsReadOnly(t *testing.T) {
 // rather than an error, so a local-mode or docker-less environment is unaffected.
 func TestComposeSchemaStateUnknownWithoutDocker(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	got, err := ComposeSchemaState("/tmp/compose.yaml")
-	if err != nil {
-		t.Fatalf("missing docker must not error, got: %v", err)
-	}
-	if got != SchemaUnknown {
+	if got := ComposeSchemaState("/tmp/compose.yaml"); got != SchemaUnknown {
 		t.Errorf("state = %v, want SchemaUnknown", got)
 	}
 }

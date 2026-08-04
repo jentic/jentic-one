@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,22 +159,22 @@ func (a *App) startDocker(composePath string) error {
 // An undeterminable state never blocks the start: refusing because a diagnostic
 // failed would be a worse regression than the bug being fixed.
 func (a *App) ensureDockerSchema(composePath string) error {
-	state, err := install.ComposeSchemaState(composePath)
-	if err != nil || state == install.SchemaUnknown || state == install.SchemaCurrent {
+	switch install.ComposeSchemaState(composePath) {
+	case install.SchemaUnknown, install.SchemaCurrent:
 		return nil
-	}
 
-	if state == install.SchemaPending {
-		return fmt.Errorf("database schema is behind this build — start aborted.\n" +
+	case install.SchemaPending:
+		return errors.New("database schema is behind this build — start aborted.\n" +
 			"  Back up your data, then apply migrations:\n" +
 			"    jenticctl update --stack-only\n" +
 			"  (starting now would run the app against a schema it does not match)")
-	}
 
-	fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))
-	if err := install.RunComposeMigrations(a.Out, composePath); err != nil {
-		return fmt.Errorf("could not initialize the database schema: %w", err)
+	case install.SchemaUninitialized:
+		fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))
+		if err := install.RunComposeMigrations(a.Out, composePath); err != nil {
+			return fmt.Errorf("could not initialize the database schema: %w", err)
+		}
+		fmt.Fprintln(a.Out, theme.Successf("Schema created."))
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Schema created."))
 	return nil
 }
