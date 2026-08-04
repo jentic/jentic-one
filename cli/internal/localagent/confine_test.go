@@ -66,6 +66,26 @@ func TestSandboxProfileMarksExecRoutesReadOnly(t *testing.T) {
 	}
 }
 
+// TestSandboxProfileMarksAgentLocalBinReadOnly is the regression guard for the
+// downgraded Chain-1 residual: the agent's OWN ~/.local/bin (where its launched
+// binary lives, inside its read/write home) must be write-denied, and that deny
+// must come AFTER the home re-allow so it wins by last-match. Otherwise a
+// compromised agent could overwrite its own `claude`/`codex`/… and re-detonate.
+func TestSandboxProfileMarksAgentLocalBinReadOnly(t *testing.T) {
+	agentHome := "/Users/Shared/alice-local-agent"
+	p := SandboxProfile(agentHome, nil)
+	localBinDeny := `(deny file-write* (subpath "` + agentHome + `/.local/bin"))`
+	if !strings.Contains(p, localBinDeny) {
+		t.Errorf("agent's own ~/.local/bin must be write-denied\n%s", p)
+	}
+	homeAllowAt := strings.Index(p, `(allow file* (subpath "`+agentHome+`"))`)
+	binDenyAt := strings.Index(p, localBinDeny)
+	if homeAllowAt < 0 || binDenyAt < 0 || binDenyAt < homeAllowAt {
+		t.Errorf("~/.local/bin write-deny must come after the home re-allow (allow@%d deny@%d)",
+			homeAllowAt, binDenyAt)
+	}
+}
+
 func TestSandboxProfileIgnoresGrantsOutsideHome(t *testing.T) {
 	p := SandboxProfile("/Users/Shared/agent", []string{"/opt/data", "/srv/things"})
 	// Grants outside every denied home root are already covered by (allow

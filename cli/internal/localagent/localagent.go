@@ -45,9 +45,22 @@ type Descriptor struct {
 	// settings. They may include provider-specific credentials the operator has
 	// stored locally — see CopyConfigCmd's caveat.
 	ConfigPaths []string
+	// SecretConfigPaths are discrete credential files that live INSIDE a seeded
+	// ConfigPaths tree but hold nothing but secrets (e.g. Codex's
+	// "~/.codex/auth.json", Hermes's "~/.hermes/.env"). Unlike Claude — where the
+	// API key is embedded in the very config the agent needs — these are separable
+	// credential files, so after seeding they are scrubbed from the agent's home
+	// by default (ScrubSecretsCmd): the agent inherits the operator's SETTINGS but
+	// authenticates as itself, keeping the operator's raw keys out of the agent
+	// account. Tilde-relative, expanded per user.
+	SecretConfigPaths []string
 }
 
-// Registry is the set of known agents. New agents are added as rows here.
+// Registry is the set of known RUNNABLE agents — the ones `jentic run <id>` can
+// launch as a confined agent user. New runnable agents are added as rows here.
+// It deliberately does NOT include skill-only operators (see SkillOnly): those
+// are targets `jentic skill` writes onboarding docs for but that `jentic run`
+// cannot launch (e.g. "generic", which has no binary).
 var Registry = map[string]Descriptor{
 	"claude": {
 		ID:           "claude",
@@ -61,6 +74,65 @@ var Registry = map[string]Descriptor{
 		// still authenticates separately on first launch.
 		ConfigPaths: []string{"~/.claude", "~/.claude.json"},
 	},
+	"codex": {
+		ID:         "codex",
+		Binary:     "codex",
+		ProbePaths: []string{"~/.local/bin/codex", "~/.codex/bin/codex"},
+		Install:    "curl -fsSL https://raw.githubusercontent.com/openai/codex/main/install.sh | bash",
+		// The Codex CLI ships as a self-contained Rust binary, so copying the
+		// operator's copy is offered as the default provision route.
+		SingleBinary: true,
+		// Codex keeps its config, auth, and MCP settings under ~/.codex/. Seeding
+		// it hands the agent the operator's Codex setup; note ~/.codex/auth.json
+		// carries an API key — scrubbed by ScrubSecretsCmd before the agent runs.
+		ConfigPaths:       []string{"~/.codex"},
+		SecretConfigPaths: []string{"~/.codex/auth.json"},
+	},
+	"cursor": {
+		ID:         "cursor",
+		Binary:     "cursor-agent",
+		ProbePaths: []string{"~/.local/bin/cursor-agent"},
+		Install:    "curl https://cursor.com/install -fsS | bash",
+		// cursor-agent installs via its own script into ~/.local/bin (it is not a
+		// single copyable file — the installer lays down a versioned tree), so the
+		// install route is the only provision path. This targets the HEADLESS
+		// cursor-agent CLI, not the Cursor GUI, which cannot run under a separate
+		// confined Unix account.
+		SingleBinary: false,
+		// cursor-agent keeps its config/session state under ~/.cursor/.
+		ConfigPaths: []string{"~/.cursor"},
+	},
+	"hermes": {
+		ID:         "hermes",
+		Binary:     "hermes",
+		ProbePaths: []string{"~/.local/bin/hermes"},
+		Install:    "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+		// The Hermes installer builds a Python venv + git checkout under
+		// ~/.hermes/hermes-agent and symlinks the launcher into ~/.local/bin — not
+		// a single copyable file, so provisioning uses the install route only.
+		SingleBinary: false,
+		// Hermes keeps config and sessions under ~/.hermes/ (config.yaml + .env).
+		// ~/.hermes/.env holds provider API keys — scrubbed by ScrubSecretsCmd
+		// before the agent runs.
+		ConfigPaths:       []string{"~/.hermes"},
+		SecretConfigPaths: []string{"~/.hermes/.env"},
+	},
+}
+
+// SkillOnly is the set of skillgen operators that `jentic run` intentionally
+// cannot launch: they name a skill/instruction target rather than a runnable
+// coding-agent binary. Kept alongside Registry so the unknown-agent error can
+// tell "skill-only operator" apart from a genuine typo, and so a registry-parity
+// test can assert every skillgen operator is either runnable or listed here.
+var SkillOnly = map[string]struct{}{
+	"generic": {}, // AGENTS.md placement only — no binary to run
+}
+
+// IsSkillOnly reports whether id names a known skill-only operator (a valid
+// operator that `jentic run` cannot launch because it has no runnable binary).
+func IsSkillOnly(id string) bool {
+	_, ok := SkillOnly[id]
+	return ok
 }
 
 // Known returns the sorted list of known agent identifiers, for error messages.
@@ -114,6 +186,16 @@ func DefaultHomeDir(agentUser string) string {
 // extra configuration.
 func AgentConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".jentic")
+}
+
+// AgentLocalBinDir returns the agent's own ~/.local/bin — the home-local
+// executable route where CopyBinaryCmd / the install route place the launched
+// agent binary and which EnsureLocalBinOnPathCmd prepends to the agent's login
+// PATH. It is the single source of truth for that path, shared by the binary
+// provisioner and the confinement layer (which marks it read-only so a
+// compromised agent can't rewrite its own launched binary).
+func AgentLocalBinDir(homeDir string) string {
+	return filepath.Join(homeDir, ".local", "bin")
 }
 
 // AccountStep is one privileged step in creating the agent account, paired with
@@ -991,7 +1073,44 @@ func CopyConfigCmd(agentUser, agentHome, operatorHome string, srcs []string) *ex
 	return exec.Command("sudo", "sh", "-c", script) //nolint:gosec // agentUser/paths are config/descriptor-derived and Go-resolved, shell-quoted.
 }
 
-// ProviderConfig describes the LLM provider an operator's Claude Code setup
+// ExpandedSecretPaths returns the descriptor's SecretConfigPaths expanded against
+// agentHome — the discrete credential files that were seeded INTO the agent's
+// home and must be scrubbed. Each result is guaranteed to lie under agentHome
+// (a tilde-relative descriptor entry that somehow escaped is dropped), so a
+// crafted descriptor can never turn the scrub into a delete outside the agent's
+// own home.
+func ExpandedSecretPaths(agentHome string, desc Descriptor) []string {
+	cleanHome := filepath.Clean(agentHome)
+	var out []string
+	for _, p := range desc.SecretConfigPaths {
+		abs := expandTilde(p, agentHome)
+		if abs == "" || !IsUnderHome(cleanHome, abs) {
+			continue
+		}
+		out = append(out, abs)
+	}
+	return out
+}
+
+// ScrubSecretsCmd removes the given absolute secret files from the agent's home
+// after seeding, so the operator's raw provider keys (Codex's auth.json, Hermes's
+// .env) don't come to rest in the agent account: the agent inherits the settings
+// but authenticates as itself. It runs as root because the seeded tree is owned
+// by the agent and lives under a restricted home. `rm -f` on each exact,
+// Go-resolved path — no globs, no recursion — and returns nil when there is
+// nothing to scrub so callers can no-op cleanly. Paths are pre-constrained to the
+// agent's home by ExpandedSecretPaths.
+func ScrubSecretsCmd(paths []string) *exec.Cmd {
+	if len(paths) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("rm -f")
+	for _, p := range paths {
+		b.WriteString(" " + shellQuote(p))
+	}
+	return exec.Command("sudo", "sh", "-c", b.String()) //nolint:gosec // paths are descriptor-derived, home-constrained, and shell-quoted.
+}
 // authenticates against, and the local config paths that hold that provider's
 // settings. It is derived from the env block of ~/.claude/settings.json.
 type ProviderConfig struct {

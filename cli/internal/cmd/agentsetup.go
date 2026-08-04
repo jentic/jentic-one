@@ -74,8 +74,29 @@ func (a *App) ensureAgentConfig(ctx context.Context, prefs seedPrefs, agentUser 
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("seed agent config: %w", err)
 	}
+	if err := a.scrubSeededSecrets(agentHome, desc); err != nil {
+		return err
+	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("  These are the operator's settings; the agent still authenticates as itself on first launch."))
 	a.printProviderSecretWarning()
+	return nil
+}
+
+// scrubSeededSecrets deletes the operator's discrete credential files (e.g.
+// Codex's auth.json, Hermes's .env) that the config copy just placed in the
+// agent's home, so the agent inherits the operator's SETTINGS but not their raw
+// keys — it authenticates as itself. Claude has no such file (its key is embedded
+// in the config the agent needs), so this is a no-op there.
+func (a *App) scrubSeededSecrets(agentHome string, desc localagent.Descriptor) error {
+	scrub := localagent.ScrubSecretsCmd(localagent.ExpandedSecretPaths(agentHome, desc))
+	if scrub == nil {
+		return nil
+	}
+	scrub.Stdout, scrub.Stderr = a.Out, a.Err
+	if err := scrub.Run(); err != nil {
+		return fmt.Errorf("scrub seeded %s secrets: %w", desc.ID, err)
+	}
+	fmt.Fprintln(a.Out, theme.Dim.Render("  Removed the operator's saved API credentials from the seeded config; the agent authenticates as itself."))
 	return nil
 }
 

@@ -39,14 +39,19 @@ func TestProviderToggleTitle(t *testing.T) {
 }
 
 func TestFirstKnownAgent(t *testing.T) {
-	// A launchable local agent among the selected operators resolves.
-	id, desc, ok := firstKnownAgent([]string{"cursor", "claude", "generic"})
-	if !ok || id != "claude" || desc.Binary != "claude" {
-		t.Fatalf("firstKnownAgent = (%q, %+v, %v), want claude", id, desc, ok)
+	// firstKnownAgent returns the FIRST selected operator that maps to a runnable
+	// local agent, skipping skill-only operators (generic).
+	id, desc, ok := firstKnownAgent([]string{"generic", "cursor", "claude"})
+	if !ok || id != "cursor" || desc.Binary != "cursor-agent" {
+		t.Fatalf("firstKnownAgent = (%q, %+v, %v), want cursor (first runnable)", id, desc, ok)
 	}
-	// Operators with no launchable local agent resolve to nothing.
-	if _, _, ok := firstKnownAgent([]string{"cursor", "generic", "codex"}); ok {
-		t.Fatal("did not expect a known local agent among non-launchable operators")
+	// Claude still resolves when it's the first runnable one.
+	if id, _, ok := firstKnownAgent([]string{"generic", "claude", "codex"}); !ok || id != "claude" {
+		t.Fatalf("firstKnownAgent first-runnable = %q (ok=%v), want claude", id, ok)
+	}
+	// A selection with only skill-only operators resolves to nothing.
+	if _, _, ok := firstKnownAgent([]string{"generic"}); ok {
+		t.Fatal("did not expect a runnable agent among skill-only operators")
 	}
 	if _, _, ok := firstKnownAgent(nil); ok {
 		t.Fatal("did not expect a known agent for an empty selection")

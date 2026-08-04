@@ -65,7 +65,8 @@ type agentSetup struct {
 // secrets — then seeds config per the operator's toggles.
 //
 // operators is the list of selected operator names (from chooseAdapters); we act
-// on the first one that maps to a known local coding agent (today: claude).
+// on the first one that maps to a known local coding agent (claude, codex,
+// cursor, or hermes — the runnable entries in localagent.Registry).
 func (a *App) setupAgentUser(ctx context.Context, operators []string, interactive bool) (agentSetup, error) {
 	agentID, desc, ok := firstKnownAgent(operators)
 	if !ok {

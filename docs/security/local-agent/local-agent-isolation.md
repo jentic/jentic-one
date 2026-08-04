@@ -32,11 +32,12 @@ jentic reset
 
 The agent-user account is **created as part of onboarding** — there is no
 separate `agent-user setup` command. After you choose an operator (Claude,
-Cursor, …), `jentic bootstrap` and `jenticctl wizard` both offer to isolate it
-behind a dedicated Unix user; the account-creation step is shared between the two
-the same way the skill step is (see below). Everything else — provisioning the
-agent's binary, seeding config, granting a working directory, launching in a
-fresh login shell — is handled inside `jentic run` as guided prompts. Management
+Codex, Cursor, or Hermes), `jentic bootstrap` and `jenticctl wizard` both offer to
+isolate it behind a dedicated Unix user; the account-creation step is shared
+between the two the same way the skill step is (see below). Everything else —
+provisioning the agent's binary, seeding config, granting a working directory,
+launching in a fresh login shell — is handled inside `jentic run` as guided
+prompts. Management
 shortcuts:
 
 ```bash
@@ -409,10 +410,13 @@ jentic run <agent> [path] [flags] [-- <agent-args>...]
 jentic run -- <agent> [agent-args...]
 ```
 
-- **`<agent>`** — a known coding-agent identifier (`claude`, …), selecting only
-  the **binary/descriptor** (binary name, how to detect it, how to install/copy
-  it). It does **not** select an account or an identity: there is one shared agent
-  account, and identity is chosen by the checked-out profile (see below).
+- **`<agent>`** — a known **runnable** coding-agent identifier (`claude`, `codex`,
+  `cursor`, `hermes`), selecting only the **binary/descriptor** (binary name, how
+  to detect it, how to install/copy it). It does **not** select an account or an
+  identity: there is one shared agent account, and identity is chosen by the
+  checked-out profile (see below). `generic` is a **skill-only** operator — it
+  names an `AGENTS.md` placement target for `jentic skill`, has no binary, and is
+  rejected by `jentic run` with a message that says so.
 - **`[path]`** — working directory for the session; defaults to the current dir.
 - **Flags** (all optional — the command is fully interactive without them):
   `--home`, `--allow-dir`/`--no-allow-dir`, `--seed-config`/`--no-seed-config`,
@@ -515,10 +519,21 @@ via a curated copy is a possible future addition, but is out of scope today.
 ### Step 3 — config seeding (opt-in, once, never clobbers)
 
 Provisioning gives a runnable tool but not the operator's *settings*. After the
-binary step `jentic run` offers, once and opt-in, to copy the agent's config
-(`~/.claude`, `~/.claude.json`) into the agent's home. Guards: it only runs when
-the agent has no config of its own yet (a re-run never overwrites the agent's
-evolved settings), it's off by default, and `--yes` declines.
+binary step `jentic run` offers, once and opt-in, to copy the agent's config into
+the agent's home — for Claude that is `~/.claude` + `~/.claude.json`, for Codex
+`~/.codex`, for Cursor `~/.cursor`, for Hermes `~/.hermes` (each descriptor's
+`ConfigPaths`). Guards: it only runs when the agent has no config of its own yet
+(a re-run never overwrites the agent's evolved settings), it's off by default, and
+`--yes` declines.
+
+**Per-operator secret scrubbing.** Some operators keep their provider API key in a
+*discrete* credential file inside that config tree — Codex's `~/.codex/auth.json`,
+Hermes's `~/.hermes/.env`. Unlike Claude, where the key is embedded in the very
+config the agent needs, these are separable, so after seeding `jentic run` deletes
+them from the agent's home (each descriptor's `SecretConfigPaths`, scrubbed with a
+non-recursive `rm -f` on the exact home-constrained path). The agent inherits the
+operator's *settings* but authenticates as itself — the operator's raw key never
+comes to rest in the agent account.
 
 **Provider-aware seeding.** Copying `~/.claude` alone isn't enough when Claude
 Code is pointed at a cloud provider: that provider's credentials live elsewhere.
