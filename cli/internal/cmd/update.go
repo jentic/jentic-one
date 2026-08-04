@@ -126,7 +126,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	// than what was asked for — silently ignoring the pin is the bug being fixed
 	// here (#949).
 	if doStack && pinned {
-		if plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref); plan.PinnedRefIgnored() {
+		if plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned); plan.PinnedRefIgnored() {
 			return fmt.Errorf("--ref %s cannot be applied: the stack builds from the local checkout at %s, "+
 				"so the ref would be ignored. Check out %s there yourself and re-run without --ref, "+
 				"or unset %s to build from a managed clone",
@@ -177,7 +177,7 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		}
 	}
 	if doStack {
-		if err := a.updateStack(manifest.Mode, ref); err != nil {
+		if err := a.updateStack(manifest.Mode, ref, pinned); err != nil {
 			return err
 		}
 	}
@@ -387,27 +387,27 @@ func binaryVersion(path string) (string, error) {
 // mode; an empty/unknown mode is treated as a local install. ref is the git ref
 // the stack is built from — the same one the CLI half targets, so the two halves
 // stay in lockstep.
-func (a *App) updateStack(mode, ref string) error {
+func (a *App) updateStack(mode, ref string, pinned bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
 
 	if mode == config.ModeDocker {
-		return a.updateStackDocker(ref)
+		return a.updateStackDocker(ref, pinned)
 	}
-	return a.updateStackLocal(ref)
+	return a.updateStackLocal(ref, pinned)
 }
 
 // updateStackLocal pulls the source, reinstalls into the existing venv, applies
 // migrations, and restarts the app if it was running.
-func (a *App) updateStackLocal(ref string) error {
+func (a *App) updateStackLocal(ref string, pinned bool) error {
 	configPath := a.Paths.InstallConfigPath()
 	if !proc.FileExists(configPath) {
 		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
 	}
 
 	install.EnsureUv(a.Out)
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref)
+	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderHeader())
 	if err := plan.Execute(a.Out); err != nil {
@@ -427,13 +427,13 @@ func (a *App) updateStackLocal(ref string) error {
 
 // updateStackDocker rebuilds the app image, applies migrations in a one-shot
 // container, and recreates the running stack with the new image.
-func (a *App) updateStackDocker(ref string) error {
+func (a *App) updateStackDocker(ref string, pinned bool) error {
 	composePath := a.Paths.ComposePath()
 	if !proc.FileExists(composePath) {
 		return fmt.Errorf("no compose stack at %s — run `jenticctl install` first", composePath)
 	}
 
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref)
+	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath()).AtRef(ref, pinned)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
 	if err := plan.BuildImages(a.Out); err != nil {

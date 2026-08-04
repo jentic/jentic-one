@@ -77,12 +77,16 @@ type BuildPlan struct {
 	// GitURL is the clone source (set when FromGit is true).
 	GitURL string
 	// Ref pins the git ref (tag, branch, or commit) the source is synced to
-	// before building. Empty means "track the remote's default branch", which is
-	// the right default for `install` and an unpinned `update`. When set, the
-	// build MUST land on exactly this ref or fail — silently building something
-	// else is how `update --ref vX.Y.Z` used to produce a stack built from main
-	// (#949).
+	// before building. Empty means "track the remote's default branch". When set,
+	// the build MUST land on exactly this ref or fail — silently building
+	// something else is how `update --ref vX.Y.Z` used to produce a stack built
+	// from main (#949).
 	Ref string
+	// RefPinned records that Ref came from an explicit `--ref`, rather than being
+	// the release tag `update` resolves on its own. Only an operator's explicit
+	// pin is worth reporting as "ignored" when it cannot be applied; saying that
+	// about a ref they never typed reads as if their input was discarded.
+	RefPinned bool
 }
 
 // PlanLocalBuild decides whether to build from a local checkout or to clone the
@@ -94,19 +98,21 @@ func PlanLocalBuild(venvDir, cloneDir string) BuildPlan {
 	return BuildPlan{SourceDir: cloneDir, VenvDir: venvDir, FromGit: true, GitURL: GitURL}
 }
 
-// AtRef returns a copy of the plan pinned to ref. An empty ref is a no-op, so
-// callers can pass through whatever they resolved without branching.
-func (p BuildPlan) AtRef(ref string) BuildPlan {
+// AtRef returns a copy of the plan targeting ref. pinned distinguishes an
+// explicit `--ref` from a ref the caller resolved itself. An empty ref is a
+// no-op, so callers can pass through whatever they resolved without branching.
+func (p BuildPlan) AtRef(ref string, pinned bool) BuildPlan {
 	p.Ref = ref
+	p.RefPinned = pinned && ref != ""
 	return p
 }
 
-// PinnedRefIgnored reports whether a caller-requested ref cannot be honoured
+// PinnedRefIgnored reports whether an explicitly requested ref cannot be honoured
 // because the build reads a local checkout rather than a managed clone. The
 // working tree belongs to the operator, so syncing it to a ref would clobber
 // their work; the caller must surface this instead of implying the ref was used.
 func (p BuildPlan) PinnedRefIgnored() bool {
-	return p.Ref != "" && !p.FromGit
+	return p.RefPinned && !p.FromGit
 }
 
 // VenvPython returns the python interpreter path inside the given venv dir.
@@ -137,7 +143,7 @@ func (p BuildPlan) writeSourceLine(b *strings.Builder) {
 		return
 	}
 	b.WriteString("  source: " + commandStyle.Render(p.SourceDir) + " (local checkout)\n")
-	if p.Ref != "" {
+	if p.PinnedRefIgnored() {
 		b.WriteString(warnStyle.Render("  note:   --ref "+p.Ref+
 			" does not apply to a local checkout; building it as-is") + "\n")
 	}
@@ -254,24 +260,8 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 		// the published repo. $SourceDir is a throwaway build checkout under
 		// ~/.jentic (never a tree the user edits), so matching the requested
 		// target exactly is the correct, always-succeeding sync.
-		//
-		// A shallow clone (`--depth 1`) only has the default branch's tip, so an
-		// explicit ref must be fetched before it can be resolved — otherwise a
-		// pinned tag looks "missing" in an existing build checkout.
-		fetch := append(append([]string{}, common...), "fetch", "--prune", "--tags", "origin")
-		if p.Ref != "" {
-			fetch = append(fetch, p.Ref)
-		}
-		if err := runGit(w, p.SourceDir, fetch...); err != nil {
-			return fmt.Errorf("fetch source: %w", err)
-		}
-		target, err := p.resetTarget(p.SourceDir)
-		if err != nil {
+		if err := p.syncTo(w, common); err != nil {
 			return err
-		}
-		reset := append(append([]string{}, common...), "reset", "--hard", target)
-		if err := runGit(w, p.SourceDir, reset...); err != nil {
-			return fmt.Errorf("sync source to %s: %w", target, err)
 		}
 		return nil
 	}
@@ -279,56 +269,54 @@ func (p BuildPlan) fetchSource(w io.Writer) error {
 		return fmt.Errorf("create source parent: %w", err)
 	}
 
-	args := append(append([]string{}, common...), "clone", "--depth", "1")
-	// `clone --branch` accepts a tag or a branch (not a bare commit), which
-	// covers the release tags `update` pins by default. A ref it cannot resolve
-	// this way still lands via the fetch+reset path below.
-	if p.Ref != "" {
-		args = append(args, "--branch", p.Ref)
-	}
-	args = append(args, p.GitURL, p.SourceDir)
+	// Clone the default branch even when a ref is requested, then move onto the
+	// ref below. `clone --branch <tag>` would be one step shorter but implies
+	// --single-branch, which rewrites remote.origin.fetch to just that tag and
+	// leaves no origin/<default-branch>. A later *unpinned* build could then
+	// never reset, so pinning once would permanently wedge the managed checkout
+	// (found reviewing #949). Cloning unpinned keeps the refspec general, and
+	// makes one code path serve tags, branches and bare commit SHAs alike.
+	args := append(append([]string{}, common...), "clone", "--depth", "1", p.GitURL, p.SourceDir)
 	if err := runGit(w, "", args...); err != nil {
-		// A commit SHA (or a ref this git can't --branch) fails the pinned clone.
-		// Fall back to a plain clone plus an explicit fetch+reset, which resolves
-		// anything the remote will serve.
-		if p.Ref != "" {
-			if fallbackErr := p.clonePinnedFallback(w, common); fallbackErr == nil {
-				return nil
-			}
-		}
 		if os.Getenv("GITHUB_TOKEN") == "" {
 			return fmt.Errorf("clone failed — %s is likely private. To build from a local "+
 				"checkout instead (no token needed), set %s=/path/to/jentic-one and re-run; "+
 				"or set a token with 'repo' read scope: GITHUB_TOKEN=ghp_xxx jenticctl install: %w",
 				p.GitURL, SrcEnv, err)
 		}
-		return fmt.Errorf("clone failed (check the ref and your token's access): %w", err)
+		return fmt.Errorf("clone failed (check your token's access): %w", err)
 	}
-	return nil
+	return p.syncTo(w, common)
 }
 
-// clonePinnedFallback handles a Ref that `clone --branch` cannot resolve (most
-// notably a bare commit SHA): clone the default branch, then fetch and hard
-// reset onto the requested ref.
-func (p BuildPlan) clonePinnedFallback(w io.Writer, common []string) error {
-	// The failed attempt may have left a partial directory behind.
-	if err := os.RemoveAll(p.SourceDir); err != nil {
-		return err
+// syncTo points the build checkout at the requested target: the pinned Ref, or
+// origin's default branch when unpinned. Shared by the fresh-clone and
+// existing-checkout paths so both resolve a ref identically.
+func (p BuildPlan) syncTo(w io.Writer, common []string) error {
+	// --force is required, not cosmetic: since git 2.20 a fetch will not move an
+	// existing tag, and exits non-zero with "would clobber existing tag". Any
+	// upstream tag that gets re-pointed (a re-cut release, the OSS re-baseline
+	// this fetch+reset design exists to survive) would otherwise break every
+	// later install/update against ~/.jentic/src until it was deleted by hand.
+	//
+	// A shallow clone only carries the default branch's tip, so a pinned ref has
+	// to be named explicitly here or it cannot be resolved at all.
+	fetch := append(append([]string{}, common...), "fetch", "--prune", "--tags", "--force", "origin")
+	if p.Ref != "" {
+		fetch = append(fetch, p.Ref)
 	}
-	clone := append(append([]string{}, common...), "clone", p.GitURL, p.SourceDir)
-	if err := runGit(w, "", clone...); err != nil {
-		return err
-	}
-	fetch := append(append([]string{}, common...), "fetch", "--tags", "origin", p.Ref)
 	if err := runGit(w, p.SourceDir, fetch...); err != nil {
-		return err
+		return fmt.Errorf("fetch source: %w", err)
 	}
 	target, err := p.resetTarget(p.SourceDir)
 	if err != nil {
 		return err
 	}
 	reset := append(append([]string{}, common...), "reset", "--hard", target)
-	return runGit(w, p.SourceDir, reset...)
+	if err := runGit(w, p.SourceDir, reset...); err != nil {
+		return fmt.Errorf("sync source to %s: %w", target, err)
+	}
+	return nil
 }
 
 // resetTarget resolves what `git reset --hard` should land on. With no Ref that
