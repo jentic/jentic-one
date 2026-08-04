@@ -263,9 +263,7 @@ class ApiRevisionRepository:
                 update(ApiRevision)
                 .where(
                     ApiRevision.id == revision_id,
-                    ApiRevision.state.in_(
-                        [ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED]
-                    ),
+                    ApiRevision.state.in_([ApiRevisionState.PUBLISHED, ApiRevisionState.IMPORTED]),
                 )
                 .values(state=ApiRevisionState.ARCHIVED, archived_at=datetime.now(UTC))
                 .execution_options(synchronize_session="fetch")

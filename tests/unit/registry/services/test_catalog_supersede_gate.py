@@ -101,9 +101,7 @@ async def test_collision_with_confirm_scope_authorizes_supersede() -> None:
         ),
         patch(f"{_SVC}.emit_event_best_effort", new_callable=AsyncMock) as emit,
     ):
-        result = await svc._authorize_overlay_supersede(
-            _entry(), _identity(["overlays:confirm"])
-        )
+        result = await svc._authorize_overlay_supersede(_entry(), _identity(["overlays:confirm"]))
     assert result == "ovr_abc"
     emit.assert_not_awaited()  # authorized: no operator-facing refusal event
 
@@ -177,6 +175,7 @@ async def test_import_entry_stamps_supersede_when_authorized() -> None:
     ):
         job_id = await svc.import_entry("acme.com/widgets/1.0.0", _identity(["overlays:confirm"]))
     assert job_id == "job_1"
+    assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
     assert payload["supersede_overlay_id"] == "ovr_1"
     assert payload["sources"][0]["supersede_active"] == "true"
@@ -199,6 +198,7 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
         patch(f"{_SVC}.enqueue_job", new_callable=AsyncMock, return_value="job_2") as enqueue,
     ):
         await svc.import_entry("acme.com/widgets/1.0.0", _identity(["catalog:import"]))
+    assert enqueue.await_args is not None
     payload = enqueue.await_args.kwargs["payload"]
     assert "supersede_overlay_id" not in payload
     assert "supersede_active" not in payload["sources"][0]

@@ -337,9 +337,7 @@ class ImportHandler:
             return None
         try:
             async with self._ctx.registry_db.session() as session:
-                current = await ApiRevisionRepository.current_revision_for_source_url(
-                    session, url
-                )
+                current = await ApiRevisionRepository.current_revision_for_source_url(session, url)
                 if current is None:
                     return None
                 api_id, current_revision_id = current

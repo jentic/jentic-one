@@ -550,9 +550,7 @@ async def test_overlay_rollback_restores_superseded_revision(
         )
         await session.commit()
 
-    identity = Identity(
-        sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"]
-    )
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
     await OverlayService(integration_context).rollback(
         "rb-vendor", "rb-api", "1.0.0", overlay_id, identity=identity
     )
@@ -569,9 +567,7 @@ async def test_overlay_rollback_restores_superseded_revision(
         assert base_rev.archived_at is None
 
         overlay_rev = (
-            await session.execute(
-                select(ApiRevision).where(ApiRevision.id == overlay_revision_id)
-            )
+            await session.execute(select(ApiRevision).where(ApiRevision.id == overlay_revision_id))
         ).scalar_one()
         assert overlay_rev.state == "archived"  # the overlay's revision is retired
 
@@ -613,9 +609,7 @@ async def test_overlay_rollback_conflict_when_not_live(
         await session.commit()
         overlay_id = overlay.id
 
-    identity = Identity(
-        sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"]
-    )
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
     with pytest.raises(OverlayStateConflictError):
         await OverlayService(integration_context).rollback(
             "rb2-vendor", "rb2-api", "1.0.0", overlay_id, identity=identity
@@ -785,9 +779,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch(
-        "jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client
-    ):
+    with patch("jentic_one.registry.ingest.fetch.httpx.AsyncClient", return_value=mock_client):
         retry = await handler.execute(
             job_id=str(uuid.uuid4()),
             session=None,

@@ -33,7 +33,7 @@ _SESSION_RECEIVER_NAMES = frozenset({"session", "conn", "connection", "db_sessio
 def _is_session_receiver(node: ast.expr) -> bool:
     """True if *node* names a DB session/connection (vs an arbitrary service object)."""
     if isinstance(node, ast.Name):
-        name: str | None = node.id
+        name: str = node.id
     elif isinstance(node, ast.Attribute):
         name = node.attr
     else:
