@@ -64,6 +64,7 @@ export function ApiCard({ api }: { api: WorkspaceApi }) {
 						</h3>
 						<div className="flex shrink-0 items-center gap-1.5">
 							{api.updateAvailable ? (
+								// C2: snooze affordance could also attach here (#926)
 								<Badge variant="warning" data-testid="update-available-badge">
 									Update available
 								</Badge>

@@ -16,7 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.registry.services.catalog.service import CatalogService
-from jentic_one.registry.services.errors import OverlaySupersedeForbiddenError
+from jentic_one.registry.services.errors import (
+    NothingToSnoozeError,
+    OverlaySupersedeForbiddenError,
+    SnoozeForbiddenError,
+)
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.models.events import EventType
 
@@ -202,3 +206,65 @@ async def test_import_entry_ordinary_when_no_collision() -> None:
     payload = enqueue.await_args.kwargs["payload"]
     assert "supersede_overlay_id" not in payload
     assert "supersede_active" not in payload["sources"][0]
+
+
+# ── C1 snooze gate (#925) ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_snooze_entry_forbidden_without_events_write() -> None:
+    """Snoozing requires events:write — a catalog:import-only caller is refused (403)."""
+    svc = CatalogService(_make_ctx())
+    with (
+        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch(f"{_SVC}.CatalogUpdateCheckRepository.snooze", new_callable=AsyncMock) as snooze,
+        pytest.raises(SnoozeForbiddenError),
+    ):
+        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["catalog:import"]))
+    snooze.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_snooze_entry_happy_path_records_metric_and_audits() -> None:
+    """events:write caller snoozes the last-notified digest, increments metric, audits."""
+    svc = CatalogService(_make_ctx())
+    check = MagicMock()
+    check.last_notified_digest = "sha256:up"
+    with (
+        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(
+            svc,
+            "_resolve_local_api",
+            new_callable=AsyncMock,
+            return_value=(_API_ID, check),
+        ),
+        patch(
+            f"{_SVC}.CatalogUpdateCheckRepository.snooze", new_callable=AsyncMock, return_value=1
+        ) as snooze,
+        patch(f"{_SVC}.record_update_snoozed") as metric,
+        patch(f"{_SVC}.record_audit_best_effort", new_callable=AsyncMock) as audit,
+    ):
+        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["events:write"]))
+    assert snooze.await_args is not None
+    assert snooze.await_args.kwargs["digest"] == "sha256:up"
+    assert snooze.await_args.kwargs["until"] is None
+    metric.assert_called_once()
+    audit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_snooze_entry_nothing_to_snooze_when_never_notified() -> None:
+    """No last_notified_digest → NothingToSnoozeError (409), no snooze written."""
+    svc = CatalogService(_make_ctx())
+    check = MagicMock()
+    check.last_notified_digest = None
+    with (
+        patch.object(svc, "get", new_callable=AsyncMock, return_value=_entry()),
+        patch.object(
+            svc, "_resolve_local_api", new_callable=AsyncMock, return_value=(_API_ID, check)
+        ),
+        patch(f"{_SVC}.CatalogUpdateCheckRepository.snooze", new_callable=AsyncMock) as snooze,
+        pytest.raises(NothingToSnoozeError),
+    ):
+        await svc.snooze_entry("acme.com/widgets/1.0.0", _identity(["events:write"]))
+    snooze.assert_not_awaited()

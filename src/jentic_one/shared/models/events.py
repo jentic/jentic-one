@@ -46,6 +46,14 @@ class EventType:
     # sweep once per (digest, class) pair.
     CATALOG_UPDATE_CONFLICTS_OVERLAY = "catalog.update_conflicts_overlay"
 
+    # An overlay's lifecycle changed in a way a human should see beyond the audit log
+    # (L2/L3): today emitted when an authorized catalog re-import auto-deprecates a
+    # live confirmed overlay (A4b). Carries the deprecating actor + reason so the
+    # overlay author is attributed/notified and the UI can surface "deprecated by
+    # re-import on <date>" rather than a silent status flip behind the audit log.
+    # requires_action=False — it is a notification, not an inbox item.
+    OVERLAY_DEPRECATED = "overlay.deprecated"
+
     # --- Product-telemetry event types (issue #446) ----------------------
     # These flow through emit_event (the single entry point) like any other
     # internal event; the ones present in TELEMETRY_EVENTS are also forwarded
@@ -101,6 +109,7 @@ class EventType:
             UNAUTHORIZED_ACCESS_ATTEMPT,
             CATALOG_UPDATE_AVAILABLE,
             CATALOG_UPDATE_CONFLICTS_OVERLAY,
+            OVERLAY_DEPRECATED,
             INSTANCE_INITIALIZED,
             INSTANCE_BOOTED,
             CREDENTIAL_STORED,

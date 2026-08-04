@@ -76,6 +76,7 @@ export function CardStatusPill({
 				{spec.label}
 			</span>
 			{showUpdate && (
+				// C2: snooze affordance could also attach here (#926)
 				<span
 					data-testid={SPEC.updateAvailable.testId}
 					className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0 text-[11px] font-medium whitespace-nowrap ring-1 ${SPEC.updateAvailable.cls}`}

@@ -27,14 +27,14 @@ func TestListSendsParamsAndDecodes(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL)
-	res, err := c.List(context.Background(), "tok", ListParams{Q: "pay", Registered: true, Outdated: true, Limit: 25})
+	res, err := c.List(context.Background(), "tok", ListParams{Q: "pay", Registered: true, Outdated: true, IncludeSnoozed: true, Limit: 25})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if gotAuth != "Bearer tok" {
 		t.Errorf("auth header = %q", gotAuth)
 	}
-	for _, want := range []string{"q=pay", "registered_only=true", "outdated_only=true", "limit=25"} {
+	for _, want := range []string{"q=pay", "registered_only=true", "outdated_only=true", "include_snoozed=true", "limit=25"} {
 		if !contains(gotQuery, want) {
 			t.Errorf("query %q missing %q", gotQuery, want)
 		}

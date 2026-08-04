@@ -321,6 +321,10 @@ API. The PR stays open — do not close it; this is not a fork.
 >   against your PR-branch `openapi.json` (they should match). If the overlay can't be applied
 >   cleanly (drifted target, unsafe `servers[].url`), confirm is rejected and the overlay stays
 >   `pending` — fix the overlay (steps 3–6) and retry.
+> - **Stacking is cumulative, last-confirmed-wins, with no per-overlay unwind.** Confirming a
+>   second overlay materializes it over the first; the only reversal is a rollback of the most
+>   recent overlay (restoring the revision it superseded). See the
+>   [overlay stacking contract](../../docs/overlays.md) before authoring overlapping fixes.
 
 The API must already exist in the local registry (import it from the catalog first if needed:
 `jentic catalog import <api_id>`, where `<api_id>` is the catalog entry id — the dotted

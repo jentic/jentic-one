@@ -62,6 +62,16 @@ class CatalogUpdateCheck(RegistryBase):
     #: now collides with the overlay's base) emits the new class **once** instead of
     #: being wrongly deduped against the old one. NULL until the first notify.
     last_notified_event_class: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Snooze/mute (C1, #925). When an operator accepts a known upstream change without
+    #: adopting it, they can quiet the badge for this API. ``snoozed_digest`` pins the
+    #: exact upstream digest that was snoozed and ``snoozed_until`` an optional expiry
+    #: (NULL = mute until a *newer* digest lands). The sweep suppresses the emit and the
+    #: shared outdated-set selectable excludes the row while a snooze is active for the
+    #: currently-observed digest; a genuinely newer upstream digest auto-clears the snooze
+    #: (it no longer matches ``snoozed_digest``) so a real new change is never hidden.
+    #: Operator-gated (``events:write``) and audited — never a default-agent action.
+    snoozed_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    snoozed_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), nullable=False, default=utcnow, server_default=func.now()

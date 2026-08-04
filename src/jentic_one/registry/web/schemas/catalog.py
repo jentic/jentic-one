@@ -2,7 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class CatalogSnoozeRequest(BaseModel):
+    """Body for ``POST /catalog/{api_id}:snooze`` (C1, #925).
+
+    ``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary
+    per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
+    provide an ISO-8601 timestamp for a time-boxed snooze that lapses at that instant.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    snoozed_until: datetime | None = Field(
+        default=None,
+        description=(
+            "Optional expiry for the snooze (ISO-8601). Null = mute until a newer upstream "
+            "digest is observed."
+        ),
+    )
 
 
 class CatalogEntryLinksResponse(BaseModel):
