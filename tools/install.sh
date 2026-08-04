@@ -673,6 +673,17 @@ write_manifest() {
     # update from advertising the stack as current (jentic-one#943). Losing it
     # would silently re-wedge users on a stale stack.
     prev_stack_ref="$(manifest_field "$manifest" stack_ref)"
+    # Backfill for manifests written before stack_ref existed. Such a manifest
+    # records the stack's build only in `ref`, which we are about to overwrite
+    # with the newly installed CLI ref. Without this, the old value is lost and
+    # ResolvedStackRef() falls back to the *new* `ref`, so a stale stack reports
+    # itself current — re-creating #943 on the very first CLI-only re-install,
+    # which is exactly when it bites. `mode` is written by `jenticctl install`,
+    # so its presence is what distinguishes "a stack was installed at this ref"
+    # from a CLI-only install that never built one.
+    if [ -z "$prev_stack_ref" ] && [ -n "$prev_mode" ]; then
+      prev_stack_ref="$(manifest_field "$manifest" ref)"
+    fi
   fi
 
   mkdir -p "$home_dir"

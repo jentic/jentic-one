@@ -216,6 +216,61 @@ manifest_out="$(cat "$tmp_home/install.json")"
 assert_not_contains "write_manifest: fresh install omits stack_ref" "$manifest_out" 'stack_ref'
 rm -rf "$tmp_home"
 
+# --- write_manifest: backfill stack_ref for pre-stack_ref manifests ------------
+# Every manifest written before stack_ref existed records the stack's build only
+# in `ref` — the field a CLI-only re-install overwrites. Losing it makes
+# ResolvedStackRef() fall back to the *new* `ref`, so a stale stack reports
+# itself current: #943, re-created on the first CLI-only re-install, which is
+# precisely when the wedge occurs. `mode` is written by `jenticctl install`, so
+# its presence is what says "a stack was built at this ref".
+tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-home.XXXXXX")"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.25.0",
+  "commit": "f4cb196",
+  "cli_version": "v0.25.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "mode": "docker",
+  "db": "postgres",
+  "installed_at": "2026-08-04T10:42:27Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.26.0" \
+    BUILT_COMMIT="ccccccc" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_contains "write_manifest: legacy manifest advances ref" "$manifest_out" '"ref": "v0.26.0"'
+assert_contains "write_manifest: backfills stack_ref from the old ref (#943)" \
+  "$manifest_out" '"stack_ref": "v0.25.0"'
+
+# A legacy manifest with no `mode` never had a stack built, so there is nothing
+# to backfill — inventing a stack_ref would claim a stack that does not exist.
+rm -f "$tmp_home/install.json"
+cat > "$tmp_home/install.json" <<'EOF'
+{
+  "repo": "jentic/jentic-one",
+  "ref": "v0.25.0",
+  "commit": "f4cb196",
+  "cli_version": "v0.25.0",
+  "binary_path": "/opt/homebrew/bin/jenticctl",
+  "installed_at": "2026-08-04T10:42:27Z"
+}
+EOF
+(
+  export JENTIC_HOME="$tmp_home"
+  JENTIC_REPO="jentic/jentic-one" JENTIC_REF="v0.26.0" \
+    BUILT_COMMIT="ccccccc" INSTALLED_PATH="/opt/homebrew/bin/jenticctl" \
+    write_manifest >/dev/null 2>&1
+)
+manifest_out="$(cat "$tmp_home/install.json")"
+assert_not_contains "write_manifest: CLI-only legacy manifest omits stack_ref" \
+  "$manifest_out" 'stack_ref'
+rm -rf "$tmp_home"
+
 # --- highest_release_tag: latest canonical release tag from ls-remote output ---
 # Mirrors the Go highestReleaseTag (cli/internal/update/version.go): keep only
 # clean vX.Y.Z tags; ignore cli/v* noise, pre-releases, and peeled "^{}" lines.
