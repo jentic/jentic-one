@@ -781,7 +781,7 @@ func (a *App) confirmPlainGrant(agentUser, dir string) (bool, error) {
 // is deliberately no "grant anyway" option — a banned path is a non-negotiable
 // boundary, so this returns (false, ...) in every non-error case.
 func (a *App) confirmBannedPath(agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
-	fmt.Fprintln(a.Out, theme.Error.Render("⚠  "+strings.ToUpper(dir)))
+	fmt.Fprintln(a.Out, theme.Error.Render("⚠  "+dir))
 	fmt.Fprintln(a.Out, theme.Warnf("   %s can't be granted access here: %s.", agentUser, verdict.Reason))
 	fmt.Fprintln(a.Out, theme.Dim.Render("   This directory is a protected boundary and cannot be handed to the agent."))
 
