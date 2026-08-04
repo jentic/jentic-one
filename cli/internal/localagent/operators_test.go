@@ -107,6 +107,52 @@ func TestExpandedSecretPathsStaysUnderAgentHome(t *testing.T) {
 	}
 }
 
+// TestScrubTargetsNeverEscapeHomeAdversarial throws a matrix of hostile
+// descriptor paths at BOTH scrub-target builders and asserts every result stays
+// a strict descendant of the agent home. This is the last line of defense: the
+// Registry is trusted, but a future edit (or a merge) could slip a bad entry in,
+// and these builders feed `sudo rm`. Nothing here may resolve to the home root
+// or anything outside it.
+func TestScrubTargetsNeverEscapeHomeAdversarial(t *testing.T) {
+	home := "/Users/Shared/eve-local-agent"
+	cleanHome := filepath.Clean(home)
+
+	hostile := []string{
+		"~/../../etc/shadow",           // climb out via ..
+		"~/../..",                      // climb to a high ancestor
+		"~/../" + filepath.Base(home),  // sibling with same leaf name
+		"/etc/passwd",                  // bare absolute, no tilde
+		"/",                            // filesystem root
+		"~/foo/../../../root/.ssh/id",  // valid prefix then climb out
+		"~",                            // the home itself
+		"~/",                           // the home itself (trailing slash)
+		"~/.ssh/../../../../etc/hosts", // deep climb
+		"",                             // empty
+	}
+
+	assertUnderHome := func(t *testing.T, label string, got []string) {
+		t.Helper()
+		for _, p := range got {
+			cp := filepath.Clean(p)
+			if cp == cleanHome {
+				t.Errorf("%s: produced the HOME ROOT itself (%q) — would rm the whole home", label, p)
+			}
+			if !IsUnderHome(cleanHome, cp) {
+				t.Errorf("%s: produced a path OUTSIDE the home: %q", label, p)
+			}
+		}
+	}
+
+	// ExpandedSecretPaths: feed the whole hostile set as one descriptor.
+	assertUnderHome(t, "ExpandedSecretPaths",
+		ExpandedSecretPaths(home, Descriptor{SecretConfigPaths: hostile}))
+
+	// SeededConfigDirs is fixed to the real registry + provider dirs, so its inputs
+	// aren't attacker-controlled — but reconfirm none of its outputs is the home
+	// root or outside it, since it also feeds `sudo rm -rf`.
+	assertUnderHome(t, "SeededConfigDirs", SeededConfigDirs(home))
+}
+
 func TestScrubSecretsCmd(t *testing.T) {
 	if ScrubSecretsCmd(nil) != nil {
 		t.Error("ScrubSecretsCmd(nil) should be a no-op (nil), so callers can skip cleanly")
@@ -229,12 +275,25 @@ func TestScrubSeededConfigCmd(t *testing.T) {
 	if ScrubSeededConfigCmd(nil) != nil {
 		t.Error("ScrubSeededConfigCmd(nil) must be a no-op (nil)")
 	}
-	cmd := ScrubSeededConfigCmd([]string{"/Users/Shared/a/.aws", "/Users/Shared/a/.codex"})
+	paths := []string{"/Users/Shared/a/.aws", "/Users/Shared/a/.codex"}
+	cmd := ScrubSeededConfigCmd(paths)
 	if cmd == nil {
 		t.Fatal("expected a command for a non-empty list")
 	}
-	joined := strings.Join(cmd.Args, " ")
-	if !strings.Contains(joined, "rm -rf") || !strings.Contains(joined, ".aws") || !strings.Contains(joined, ".codex") {
-		t.Errorf("scrub command = %q, want rm -rf of both dirs", joined)
+	// Injection-proof shape: a DIRECT sudo argv (never `sh -c`), `rm -rf`, then a
+	// `--` guard, then each path as its OWN argv element. This is what stops a path
+	// beginning with '-' from being read as a flag and stops any shell metachar in
+	// a path from being interpreted — there is no shell in the loop at all.
+	want := []string{"sudo", "rm", "-rf", "--", paths[0], paths[1]}
+	if len(cmd.Args) != len(want) {
+		t.Fatalf("argv = %v, want %v", cmd.Args, want)
+	}
+	for i := range want {
+		if cmd.Args[i] != want[i] {
+			t.Errorf("argv[%d] = %q, want %q (full: %v)", i, cmd.Args[i], want[i], cmd.Args)
+		}
+	}
+	if cmd.Args[0] == "sh" || (len(cmd.Args) > 1 && cmd.Args[1] == "-c") {
+		t.Errorf("scrub must not route through a shell: %v", cmd.Args)
 	}
 }
