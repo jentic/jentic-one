@@ -262,7 +262,7 @@ def test_broker_e2e_sigv4_to_real_opensearch(
     api_ref = result["revisions"][0]["api"]
 
     # 2. Toolkit + sigv4 credential through the real control plane.
-    _, _ = provision_toolkit_and_credential(
+    toolkit_id, credential_id = provision_toolkit_and_credential(
         base_url,
         test_agent,
         credential_body={
@@ -281,6 +281,16 @@ def test_broker_e2e_sigv4_to_real_opensearch(
             "aws_service": "aoss",
         },
     )
+
+    # The broker default-denies bindings with zero permission rules, so allow
+    # GET across this (single-endpoint, throwaway) API before executing.
+    _, status = authed_request(
+        f"{base_url}/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
+        method="PUT",
+        token=test_agent.owner_token,
+        body=[{"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"}],
+    )
+    assert status == 200, f"binding permission rules failed: {status}"
 
     # 3. Execute through the broker proxy — the signing runner does the rest.
     raw, status, _headers = broker_call(

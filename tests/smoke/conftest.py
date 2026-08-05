@@ -85,7 +85,7 @@ def authed_request(
     *,
     method: str = "GET",
     token: str | None = None,
-    body: dict[str, Any] | None = None,
+    body: dict[str, Any] | list[Any] | None = None,
 ) -> tuple[dict[str, Any] | list[Any] | None, int]:
     """Make an HTTP request with optional Bearer auth.
 

@@ -268,6 +268,17 @@ def step_provision(
         ),
         201,
     )
+    # The broker default-denies a binding with zero permission rules, so grant
+    # GET on all paths of this (single-endpoint, throwaway) API.
+    _expect(
+        "binding permission rules",
+        client.put(
+            f"/toolkits/{toolkit_id}/credentials/{credential_id}/permissions",
+            headers=auth,
+            json=[{"effect": "allow", "methods": ["GET"], "path": "/", "match_mode": "prefix"}],
+        ),
+        200,
+    )
     print(f"      toolkit {toolkit_id}, credential {credential_id}")
     return toolkit_id, credential_id
 
