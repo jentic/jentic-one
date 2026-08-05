@@ -28,6 +28,8 @@ import {
 	type OAuth2CreateRequest,
 	type OAuth2UpdateRequest,
 	type RuntimeConfig,
+	type Sigv4CreateRequest,
+	type Sigv4UpdateRequest,
 } from '@/shared/api';
 
 export { CredentialType };
@@ -48,6 +50,8 @@ export type {
 	OAuth2CreateRequest,
 	OAuth2UpdateRequest,
 	RuntimeConfig,
+	Sigv4CreateRequest,
+	Sigv4UpdateRequest,
 };
 
 /** A single credential as returned by list/get/patch (secrets redacted). */
@@ -55,11 +59,19 @@ export type Credential = CredentialRedactedResponse;
 
 /** The discriminated create body. `type` is the discriminator. */
 export type CredentialCreateRequest =
-	BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest;
+	| BearerTokenCreateRequest
+	| ApiKeyCreateRequest
+	| BasicAuthCreateRequest
+	| OAuth2CreateRequest
+	| Sigv4CreateRequest;
 
 /** The discriminated update/rotate body. `type` is the discriminator. */
 export type CredentialUpdateRequest =
-	BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest;
+	| BearerTokenUpdateRequest
+	| ApiKeyUpdateRequest
+	| BasicAuthUpdateRequest
+	| OAuth2UpdateRequest
+	| Sigv4UpdateRequest;
 
 /** Where an api_key credential is injected. Mirrors `CredentialLocation`. */
 export type CredentialKeyLocation = 'header' | 'query';
@@ -80,6 +92,7 @@ export const CREDENTIAL_TYPE_ORDER: readonly CredentialType[] = [
 	CredentialType.API_KEY,
 	CredentialType.BASIC,
 	CredentialType.OAUTH2,
+	CredentialType.SIGV4,
 ];
 
 /** Human label for each credential type. */
@@ -89,6 +102,7 @@ export const CREDENTIAL_TYPE_LABELS: Record<CredentialType, string> = {
 	[CredentialType.BASIC]: 'Basic auth',
 	[CredentialType.OAUTH2]: 'OAuth 2.0',
 	[CredentialType.NO_AUTH]: 'No authentication',
+	[CredentialType.SIGV4]: 'AWS SigV4',
 };
 
 /** One-line description for each credential type, shown on the type cards. */
@@ -98,6 +112,7 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS: Record<CredentialType, string> = {
 	[CredentialType.BASIC]: 'A username and password pair.',
 	[CredentialType.OAUTH2]: 'Client credentials exchanged for access tokens.',
 	[CredentialType.NO_AUTH]: 'No credential — the API is called without authentication.',
+	[CredentialType.SIGV4]: 'AWS access keys used to sign requests (SigV4).',
 };
 
 /**
@@ -111,6 +126,14 @@ export interface CredentialDetails {
 	location?: CredentialKeyLocation | string;
 	/** api_key: the header/query param name carrying the key. */
 	field_name?: string;
+	/** sigv4: the public AWS access key id (non-secret). */
+	access_key_id?: string;
+	/** sigv4: signing region (e.g. us-east-1). */
+	aws_region?: string;
+	/** sigv4: signing service (e.g. aoss, execute-api). */
+	aws_service?: string;
+	/** sigv4: whether a session token is currently stored (never its value). */
+	has_session_token?: boolean;
 	/** A redacted hint (e.g. last-N chars) — never the secret. */
 	hint?: string;
 	[key: string]: unknown;

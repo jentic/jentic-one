@@ -61,6 +61,13 @@ class ResolvedCredential(BaseModel):
     token_expires_at: datetime | None = None
     provider_account_ref: str | None = None
 
+    # sigv4
+    access_key_id: str | None = None
+    encrypted_secret_access_key: str | None = None
+    encrypted_session_token: str | None = None
+    aws_region: str | None = None
+    aws_service: str | None = None
+
 
 class CredentialResolver:
     """Resolves a credential for an API tuple from the control DB."""
@@ -235,6 +242,22 @@ class CredentialResolver:
                 stored_type=stored_type,
                 provider=credential.provider,
                 server_variables=credential.server_variables,
+            )
+
+        if wire_type == CredentialType.SIGV4:
+            sig = credential.sigv4_credential
+            return ResolvedCredential(
+                credential_id=credential.id,
+                name=credential.name,
+                wire_type=wire_type,
+                stored_type=stored_type,
+                provider=credential.provider,
+                server_variables=credential.server_variables,
+                access_key_id=sig.access_key_id if sig else None,
+                encrypted_secret_access_key=sig.encrypted_secret_access_key if sig else None,
+                encrypted_session_token=sig.encrypted_session_token if sig else None,
+                aws_region=sig.region if sig else None,
+                aws_service=sig.service if sig else None,
             )
 
         raise CredentialNotProvisionedError(

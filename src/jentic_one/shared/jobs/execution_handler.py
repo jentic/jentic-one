@@ -106,6 +106,7 @@ class ExecutionHandler:
         headers: dict[str, str] = {}
         credential_id: str | None = None
         credential_name: str | None = None
+        signing = None
         if self._credential_injector is not None and api_vendor:
             injection = await self._credential_injector.inject(
                 api_vendor=api_vendor,
@@ -118,6 +119,7 @@ class ExecutionHandler:
             upstream_url, headers = applied.url, applied.headers
             credential_id = injection.credential_id
             credential_name = injection.credential_name
+            signing = injection.signing
             if injection.server_variables:
                 upstream_url = validate_upstream_url(upstream_url, self._egress)
 
@@ -136,6 +138,7 @@ class ExecutionHandler:
                     headers=headers,
                     body=body,
                     timeout_s=self._timeout,
+                    signing=signing,
                     metadata={
                         "execution_id": execution_id,
                         "trace_id": trace_id,

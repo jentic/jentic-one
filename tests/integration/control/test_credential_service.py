@@ -13,6 +13,7 @@ from jentic_one.control.core.schema.credentials import Credential
 from jentic_one.control.core.schema.customer_api_keys import CustomerAPIKey
 from jentic_one.control.core.schema.oauth_client_credentials import OAuthClientCredential
 from jentic_one.control.core.schema.oauth_tokens import OAuthToken
+from jentic_one.control.core.schema.sigv4_credentials import Sigv4Credential
 from jentic_one.control.core.schema.token_value_credentials import TokenValueCredential
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
@@ -30,6 +31,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     CredentialUpdate,
     OAuth2Full,
     OAuth2Redacted,
+    Sigv4Full,
+    Sigv4Redacted,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
@@ -53,6 +56,7 @@ async def clean_credentials(control_db: DatabaseSession) -> AsyncGenerator[None,
         await session.execute(delete(BasicCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
+        await session.execute(delete(Sigv4Credential))
         await session.execute(delete(Credential))
         await session.commit()
     yield
@@ -62,6 +66,7 @@ async def clean_credentials(control_db: DatabaseSession) -> AsyncGenerator[None,
         await session.execute(delete(BasicCredential))
         await session.execute(delete(OAuthClientCredential))
         await session.execute(delete(CustomerAPIKey))
+        await session.execute(delete(Sigv4Credential))
         await session.execute(delete(Credential))
         await session.commit()
 
@@ -245,6 +250,143 @@ async def test_create_basic_auth(svc: CredentialService, clean_credentials: None
     redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
     assert isinstance(redacted.details, BasicAuthRedacted)
     assert redacted.details.username == "admin"
+
+
+async def test_create_sigv4(svc: CredentialService, clean_credentials: None) -> None:
+    """Create sigv4: echoes the secret once; redacted shows only preview + scope."""
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="OpenSearch prod",
+            api=_api(),
+            access_key_id="AKIAEXAMPLE12345",
+            secret_access_key="wJalrXUtnFEMI-super-secret",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(result.secret, Sigv4Full)
+    assert result.secret.access_key_id == "AKIAEXAMPLE12345"
+    assert result.secret.secret_access_key == "wJalrXUtnFEMI-super-secret"
+    assert result.secret.aws_region == "us-east-1"
+    assert result.secret.aws_service == "aoss"
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, Sigv4Redacted)
+    assert redacted.details.access_key_id == "AKIAEXAMPLE12345"
+    assert redacted.details.aws_region == "us-east-1"
+    assert redacted.details.aws_service == "aoss"
+    assert redacted.details.has_session_token is False
+    # The secret preview must never expose the full secret.
+    assert redacted.details.secret_preview is not None
+    assert redacted.details.secret_preview != "wJalrXUtnFEMI-super-secret"
+
+
+async def test_create_sigv4_with_session_token(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """A session token is stored and surfaced as has_session_token, never echoed redacted."""
+    result = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Temp creds",
+            api=_api(),
+            access_key_id="ASIAEXAMPLE12345",
+            secret_access_key="temp-secret",
+            session_token="FQoGZXIvEXAMPLE",
+            aws_region="eu-west-1",
+            aws_service="execute-api",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(result.secret, Sigv4Full)
+    assert result.secret.session_token == "FQoGZXIvEXAMPLE"
+
+    redacted = await svc.get(result.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(redacted.details, Sigv4Redacted)
+    assert redacted.details.has_session_token is True
+
+
+async def test_create_sigv4_missing_region_rejected(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    with pytest.raises(InvalidCredentialInputError):
+        await svc.create(
+            CredentialCreate(
+                type=CredentialType.SIGV4,
+                name="No region",
+                api=_api(),
+                access_key_id="AKIAEXAMPLE12345",
+                secret_access_key="secret",
+                aws_service="aoss",
+            ),
+            identity=_ADMIN_IDENTITY,
+        )
+
+
+async def test_update_sigv4_rotates_keypair(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """Rotating both key halves updates the stored secret preview."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Rotate me",
+            api=_api(),
+            access_key_id="AKIAOLDKEY000000",
+            secret_access_key="old-secret-aaa",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    before = await svc.get(created.credential_id, identity=_ADMIN_IDENTITY)
+    assert isinstance(before.details, Sigv4Redacted)
+    old_preview = before.details.secret_preview
+    old_updated_at = before.updated_at
+
+    updated = await svc.update(
+        created.credential_id,
+        CredentialUpdate(
+            type=CredentialType.SIGV4,
+            access_key_id="AKIANEWKEY000000",
+            secret_access_key="brand-new-secret-zzz",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert isinstance(updated.details, Sigv4Redacted)
+    assert updated.details.access_key_id == "AKIANEWKEY000000"
+    assert updated.details.secret_preview != old_preview
+    # A key rotation is a real mutation: updated_at must advance (honest signal,
+    # #881) and it must leave an audit trail — both are gated on ``changed``.
+    assert old_updated_at is not None
+    assert updated.updated_at is not None
+    assert updated.updated_at > old_updated_at
+
+
+async def test_update_sigv4_half_keypair_rejected(
+    svc: CredentialService, clean_credentials: None
+) -> None:
+    """access_key_id without its secret (or vice versa) is a 400, not a partial write."""
+    created = await svc.create(
+        CredentialCreate(
+            type=CredentialType.SIGV4,
+            name="Half rotate",
+            api=_api(),
+            access_key_id="AKIAKEY000000000",
+            secret_access_key="secret",
+            aws_region="us-east-1",
+            aws_service="aoss",
+        ),
+        identity=_ADMIN_IDENTITY,
+    )
+    with pytest.raises(InvalidCredentialInputError):
+        await svc.update(
+            created.credential_id,
+            CredentialUpdate(type=CredentialType.SIGV4, access_key_id="AKIANEWKEY000000"),
+            identity=_ADMIN_IDENTITY,
+        )
 
 
 async def test_create_basic_auth_long_snapshot_version(

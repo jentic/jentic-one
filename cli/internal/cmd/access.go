@@ -848,15 +848,22 @@ func (a *App) printMe(me *accessclient.Me) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Toolkit bindings"))
 	if len(me.ToolkitBindings) == 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("none — you cannot execute yet; run `jentic access request --toolkit <vendor/name>`"))
-		return
-	}
-	for _, b := range me.ToolkitBindings {
-		if b.Name != "" {
-			fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.Name)+"  "+theme.Dim.Render(b.ToolkitID))
-		} else {
-			fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitID))
+	} else {
+		for _, b := range me.ToolkitBindings {
+			if b.Name != "" {
+				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.Name)+"  "+theme.Dim.Render(b.ToolkitID))
+			} else {
+				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitID))
+			}
 		}
 	}
+
+	// whoami answers "what can I do?" for the control-plane (scopes, toolkits); the
+	// filesystem side of that answer lives in `profile view`, which maps every
+	// directory the agent can reach. Point at it so an agent has one place to learn
+	// its full access surface.
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("To see which directories you can access, run `jentic profile view`."))
 }
 
 func (a *App) printRequestList(reqs []accessclient.Request, hasMore bool) {

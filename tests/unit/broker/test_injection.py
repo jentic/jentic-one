@@ -171,6 +171,73 @@ def test_inject_no_auth_injects_nothing() -> None:
     assert result.cookies == {}
 
 
+def test_inject_sigv4_returns_signing_material_not_headers() -> None:
+    # SigV4 can't produce a static header — it hands decrypted material forward
+    # for the signing runner to sign the final request (#776).
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4",
+        name="sigv4",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="AKIAEXAMPLE",
+        encrypted_secret_access_key="enc:secret",
+        encrypted_session_token=None,
+        aws_region="us-east-1",
+        aws_service="aoss",
+    )
+    ctx = _make_ctx({"enc:secret": "decrypted-secret"})
+
+    result = inject_auth(resolved, ctx=ctx)
+
+    assert result.headers == {}
+    assert result.query_params == {}
+    assert result.cookies == {}
+    assert result.signing is not None
+    assert result.signing.access_key_id == "AKIAEXAMPLE"
+    assert result.signing.secret_access_key == "decrypted-secret"
+    assert result.signing.region == "us-east-1"
+    assert result.signing.service == "aoss"
+    assert result.signing.session_token is None
+
+
+def test_inject_sigv4_decrypts_session_token() -> None:
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4_st",
+        name="sigv4st",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="ASIAEXAMPLE",
+        encrypted_secret_access_key="enc:secret",
+        encrypted_session_token="enc:token",
+        aws_region="eu-west-1",
+        aws_service="execute-api",
+    )
+    ctx = _make_ctx({"enc:secret": "s", "enc:token": "session-tok"})
+
+    result = inject_auth(resolved, ctx=ctx)
+
+    assert result.signing is not None
+    assert result.signing.session_token == "session-tok"
+
+
+def test_inject_sigv4_missing_secret_raises() -> None:
+    resolved = ResolvedCredential(
+        credential_id="cred_sigv4_bad",
+        name="sigv4bad",
+        wire_type=CredentialType.SIGV4,
+        stored_type=StoredCredentialType.AWS_SIGV4,
+        provider="static",
+        access_key_id="AKIAEXAMPLE",
+        encrypted_secret_access_key=None,
+        aws_region="us-east-1",
+        aws_service="aoss",
+    )
+    with pytest.raises(ValueError, match="missing encrypted_secret_access_key"):
+        inject_auth(resolved, ctx=MagicMock())
+
+
 def test_inject_unknown_wire_type_raises() -> None:
     # An unknown wire type must fail loudly, not silently inject nothing — a quiet
     # empty injection would send an unauthenticated request (B4 / Ren review).

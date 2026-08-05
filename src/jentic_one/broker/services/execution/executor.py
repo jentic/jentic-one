@@ -71,6 +71,7 @@ class PipelineExecutor(UpstreamExecutor):
             actor_id=request.metadata["actor_id"],
             actor_type=request.metadata["actor_type"],
             origin=request.metadata.get("origin"),
+            signing=request.signing,
         )
         result = outcome.result
         return UpstreamExecResult(

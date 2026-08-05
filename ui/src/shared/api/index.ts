@@ -146,6 +146,8 @@ export type { BearerTokenCreateRequest } from '@/shared/api/generated/models/Bea
 export type { BearerTokenUpdateRequest } from '@/shared/api/generated/models/BearerTokenUpdateRequest';
 export type { OAuth2CreateRequest } from '@/shared/api/generated/models/OAuth2CreateRequest';
 export type { OAuth2UpdateRequest } from '@/shared/api/generated/models/OAuth2UpdateRequest';
+export type { Sigv4CreateRequest } from '@/shared/api/generated/models/Sigv4CreateRequest';
+export type { Sigv4UpdateRequest } from '@/shared/api/generated/models/Sigv4UpdateRequest';
 export type { APIReference } from '@/shared/api/generated/models/APIReference';
 export type { APIReferenceRequest } from '@/shared/api/generated/models/APIReferenceRequest';
 export type { RuntimeConfig } from '@/shared/api/generated/models/RuntimeConfig';

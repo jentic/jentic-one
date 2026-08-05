@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.aws.sigv4 import SigV4Material
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,12 @@ class InjectedAuth:
     dropped (a headers-only return would lose both). Cookie entries are merged
     into the outbound ``Cookie`` header by the call-site (sync router / worker).
     Server-variable entries are substituted into the upstream URL template.
+
+    ``signing`` carries **decrypted** SigV4 material (exactly as the plaintext
+    bearer/basic values above ride in ``headers``); it is applied by the signing
+    runner against the final method/URL/body and is never persisted. Its
+    ``__repr__`` elides the secret so an enclosing dataclass ``repr`` can't leak
+    it.
 
     ``credential_id`` / ``credential_name`` attribute the material back to the
     stored credential the resolver chose (#740) so downstream call-sites can
@@ -33,6 +40,7 @@ class InjectedAuth:
     server_variables: dict[str, str] | None = None
     credential_id: str | None = None
     credential_name: str | None = None
+    signing: SigV4Material | None = None
 
 
 class CredentialInjector(Protocol):
@@ -77,6 +85,9 @@ class UpstreamExecRequest:
     # toolkit, operation, trace, execution id) — opaque to the worker, consumed
     # by the executor when it persists the ``executions`` row.
     metadata: dict[str, Any]
+    # SigV4 signing material, when the resolved credential is a sigv4 type; the
+    # runner signs the final request. None for every other credential type.
+    signing: SigV4Material | None = None
 
 
 @dataclass(frozen=True, slots=True)

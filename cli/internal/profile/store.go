@@ -192,6 +192,17 @@ func (p *Profile) ClearTokens() error {
 	return nil
 }
 
+// Delete removes the profile's entire on-disk directory — its key, tokens,
+// metadata, and any API key — irreversibly. A missing directory is not an error
+// (the profile is already gone). This is the storage half of a full identity
+// teardown; callers are responsible for confirming the destruction first.
+func (p *Profile) Delete() error {
+	if err := os.RemoveAll(p.dir); err != nil {
+		return fmt.Errorf("remove profile %q: %w", p.Name, err)
+	}
+	return nil
+}
+
 // writeFileAtomic writes data to a temp file in the same dir then renames it
 // into place, ensuring the destination has the requested perms.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

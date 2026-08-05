@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { CopyButton, Input, Label, Select, ScopePicker } from '@/shared/ui';
+import { Checkbox, CopyButton, Input, Label, Select, ScopePicker } from '@/shared/ui';
 import {
 	CredentialType,
 	KEY_LOCATIONS,
@@ -39,6 +39,18 @@ export interface CredentialFormState {
 	authorizeUrl: string;
 	grantType: string;
 	scopes: string;
+	// sigv4 (AWS Signature V4)
+	accessKeyId: string;
+	secretAccessKey: string;
+	sessionToken: string;
+	/**
+	 * Edit-only: request deletion of a stored (expired) STS session token
+	 * without rotating the keypair. Maps to `clear_session_token` on the wire.
+	 * A new `sessionToken` value takes precedence over this flag.
+	 */
+	clearSessionToken: boolean;
+	awsRegion: string;
+	awsService: string;
 	/**
 	 * Values for OpenAPI server variables (e.g. Atlassian `{your-domain}`),
 	 * keyed by variable name. Collected from the spec's `servers[].variables`
@@ -67,6 +79,12 @@ export const EMPTY_FORM: CredentialFormState = {
 	authorizeUrl: '',
 	grantType: '',
 	scopes: '',
+	accessKeyId: '',
+	secretAccessKey: '',
+	sessionToken: '',
+	clearSessionToken: false,
+	awsRegion: '',
+	awsService: '',
 	serverVars: {},
 };
 
@@ -107,6 +125,12 @@ interface FieldsProps {
 	 * name (a wrong binding causes upstream 401s — #589).
 	 */
 	fieldNameWarning?: string;
+	/**
+	 * sigv4 edit-only: whether the loaded credential currently stores a session
+	 * token. When true, the form offers a "Clear session token" control so an
+	 * expired STS token can be dropped without a full keypair rotation.
+	 */
+	hasStoredSessionToken?: boolean;
 }
 
 /** Scope-picker wiring lifted to the parent (owns selection + auto-select). */
@@ -136,6 +160,7 @@ export function CredentialTypeFields({
 	callbackUrl,
 	providers,
 	fieldNameWarning,
+	hasStoredSessionToken,
 }: FieldsProps) {
 	const secretHint = mode === 'edit' ? 'Leave blank to keep the current value.' : undefined;
 	// The api_key parameter binding (field name + location) is derived from the
@@ -247,6 +272,88 @@ export function CredentialTypeFields({
 						autoComplete="off"
 						value={state.password}
 						onChange={(e): void => onChange({ password: e.target.value })}
+					/>
+				</Field>
+			</>
+		);
+	}
+
+	if (type === CredentialType.SIGV4) {
+		return (
+			<>
+				<Field
+					label="Access key ID"
+					required={mode === 'create'}
+					error={errors.accessKeyId}
+				>
+					<Input
+						autoComplete="off"
+						value={state.accessKeyId}
+						onChange={(e): void => onChange({ accessKeyId: e.target.value })}
+						placeholder="AKIA…"
+					/>
+				</Field>
+				<Field
+					label="Secret access key"
+					required={mode === 'create'}
+					hint={secretHint}
+					error={errors.secretAccessKey}
+				>
+					<Input
+						type="password"
+						showPasswordToggle
+						autoComplete="off"
+						value={state.secretAccessKey}
+						onChange={(e): void => onChange({ secretAccessKey: e.target.value })}
+					/>
+				</Field>
+				<Field
+					label="Session token"
+					hint="Optional — only for temporary (STS) credentials. Expires; re-save when it does."
+					error={errors.sessionToken}
+				>
+					<Input
+						type="password"
+						showPasswordToggle
+						autoComplete="off"
+						value={state.sessionToken}
+						onChange={(e): void =>
+							onChange({
+								sessionToken: e.target.value,
+								// Typing a replacement supersedes a pending clear.
+								...(e.target.value ? { clearSessionToken: false } : {}),
+							})
+						}
+						disabled={state.clearSessionToken}
+					/>
+				</Field>
+				{mode === 'edit' && hasStoredSessionToken && (
+					<Checkbox
+						checked={state.clearSessionToken}
+						onChange={(checked): void =>
+							onChange({
+								clearSessionToken: checked,
+								// Clearing and rotating the token are mutually exclusive.
+								...(checked ? { sessionToken: '' } : {}),
+							})
+						}
+						size="sm"
+					>
+						Clear the stored session token (for an expired STS token)
+					</Checkbox>
+				)}
+				<Field label="Region" required={mode === 'create'} error={errors.awsRegion}>
+					<Input
+						value={state.awsRegion}
+						onChange={(e): void => onChange({ awsRegion: e.target.value })}
+						placeholder="us-east-1"
+					/>
+				</Field>
+				<Field label="Service" required={mode === 'create'} error={errors.awsService}>
+					<Input
+						value={state.awsService}
+						onChange={(e): void => onChange({ awsService: e.target.value })}
+						placeholder="aoss, execute-api, s3…"
 					/>
 				</Field>
 			</>

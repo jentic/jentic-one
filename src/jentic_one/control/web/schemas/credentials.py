@@ -152,12 +152,42 @@ class NoAuthCreateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class Sigv4CreateRequest(BaseModel):
+    """Create request for sigv4 (AWS Signature V4) credentials."""
+
+    type: Literal["sigv4"]
+    name: str = Field(description="Human-readable label for the credential.")
+    api: APIReferenceRequest = Field(
+        description="Loose (vendor, name, version) API identity tuple."
+    )
+    provider: str = Field(
+        default="static", description="Credential provider; 'static' for stored secrets."
+    )
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str = Field(description="AWS access key id (public identifier).")
+    secret_access_key: str = Field(
+        description="AWS secret access key. Stored encrypted; never returned after create."
+    )
+    session_token: str | None = Field(
+        default=None,
+        description=(
+            "Optional temporary-credential session token (STS). Expires; re-save when it does."
+        ),
+    )
+    aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
+    aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialCreateRequest = Annotated[
     BearerTokenCreateRequest
     | ApiKeyCreateRequest
     | BasicAuthCreateRequest
     | OAuth2CreateRequest
-    | NoAuthCreateRequest,
+    | NoAuthCreateRequest
+    | Sigv4CreateRequest,
     Field(discriminator="type"),
 ]
 
@@ -236,8 +266,30 @@ class OAuth2UpdateRequest(BaseModel):
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
 
+class Sigv4UpdateRequest(BaseModel):
+    """Update request for sigv4 credentials (key rotation / scope edit)."""
+
+    type: Literal["sigv4"]
+    name: str | None = None
+    active: bool | None = None
+    runtime_config: RuntimeConfig | None = None
+    server_variables: dict[str, str] | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
+    session_token: str | None = None
+    clear_session_token: bool = False
+    aws_region: str | None = None
+    aws_service: str | None = None
+
+    _check_server_variables = field_validator("server_variables")(_validate_server_variables)
+
+
 CredentialUpdateRequest = Annotated[
-    BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest,
+    BearerTokenUpdateRequest
+    | ApiKeyUpdateRequest
+    | BasicAuthUpdateRequest
+    | OAuth2UpdateRequest
+    | Sigv4UpdateRequest,
     Field(discriminator="type"),
 ]
 
