@@ -13,6 +13,7 @@ from jentic_one.control.repos import (
     CredentialRepository,
     CustomerAPIKeyRepository,
     OAuthClientCredentialRepository,
+    Sigv4CredentialRepository,
     TokenValueCredentialRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
@@ -42,6 +43,8 @@ from jentic_one.control.services.credentials.schemas.credentials import (
     OAuth2Full,
     OAuth2Redacted,
     ProviderDiscoveryEntry,
+    Sigv4Full,
+    Sigv4Redacted,
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
@@ -145,7 +148,9 @@ class CredentialService:
                 server_variables=payload.server_variables,
             )
 
-            secret: ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full | NoAuthFull
+            secret: (
+                ApiKeyFull | BearerTokenFull | BasicAuthFull | OAuth2Full | NoAuthFull | Sigv4Full
+            )
 
             if payload.type == CredentialType.BEARER_TOKEN:
                 assert payload.token
@@ -237,6 +242,34 @@ class CredentialService:
                 # the broker injects nothing for it. This lets a provisioning
                 # plan reach first execution without a credential secret (#603).
                 secret = NoAuthFull()
+            elif payload.type == CredentialType.SIGV4:
+                assert payload.access_key_id
+                assert payload.secret_access_key
+                assert payload.aws_region
+                assert payload.aws_service
+                encrypted = encryption.encrypt(payload.secret_access_key)
+                preview = encryption.preview(payload.secret_access_key)
+                encrypted_session = (
+                    encryption.encrypt(payload.session_token) if payload.session_token else None
+                )
+                await Sigv4CredentialRepository.create(
+                    session,
+                    credential_id=credential.id,
+                    access_key_id=payload.access_key_id,
+                    encrypted_secret_access_key=encrypted,
+                    secret_preview=preview,
+                    encrypted_session_token=encrypted_session,
+                    region=payload.aws_region,
+                    service=payload.aws_service,
+                    created_by=identity.sub,
+                )
+                secret = Sigv4Full(
+                    access_key_id=payload.access_key_id,
+                    secret_access_key=payload.secret_access_key,
+                    session_token=payload.session_token,
+                    aws_region=payload.aws_region,
+                    aws_service=payload.aws_service,
+                )
             else:
                 raise InvalidCredentialInputError(f"Unsupported credential type: {payload.type}")
 
@@ -455,6 +488,47 @@ class CredentialService:
                 )
                 changed = True
 
+            elif payload.type == CredentialType.SIGV4:
+                # A keypair rotation must supply both halves together; the
+                # access_key_id alone is meaningless without its secret.
+                if (payload.access_key_id is None) != (payload.secret_access_key is None):
+                    raise InvalidCredentialInputError(
+                        "access_key_id and secret_access_key must be rotated together"
+                    )
+                encrypted_sig = (
+                    encryption.encrypt(payload.secret_access_key)
+                    if payload.secret_access_key
+                    else None
+                )
+                sig_preview = (
+                    encryption.preview(payload.secret_access_key)
+                    if payload.secret_access_key
+                    else None
+                )
+                encrypted_session = (
+                    encryption.encrypt(payload.session_token) if payload.session_token else None
+                )
+                if (
+                    payload.access_key_id is not None
+                    or encrypted_sig is not None
+                    or encrypted_session is not None
+                    or payload.clear_session_token
+                    or payload.aws_region is not None
+                    or payload.aws_service is not None
+                ):
+                    await Sigv4CredentialRepository.update(
+                        session,
+                        credential_id,
+                        access_key_id=payload.access_key_id,
+                        encrypted_secret_access_key=encrypted_sig,
+                        secret_preview=sig_preview,
+                        encrypted_session_token=encrypted_session,
+                        clear_session_token=payload.clear_session_token,
+                        region=payload.aws_region,
+                        service=payload.aws_service,
+                    )
+                    changed = True
+
             credential = await CredentialRepository.get_by_id(session, credential_id)
             assert credential is not None
             if changed:
@@ -517,6 +591,7 @@ class CredentialService:
             | BasicAuthRedacted
             | OAuth2Redacted
             | NoAuthRedacted
+            | Sigv4Redacted
         )
 
         if wire_type == CredentialType.BEARER_TOKEN:
@@ -570,6 +645,15 @@ class CredentialService:
             )
         elif wire_type == CredentialType.NO_AUTH:
             details = NoAuthRedacted()
+        elif wire_type == CredentialType.SIGV4:
+            sig = credential.sigv4_credential
+            details = Sigv4Redacted(
+                access_key_id=sig.access_key_id if sig else "",
+                secret_preview=sig.secret_preview if sig else None,
+                has_session_token=bool(sig and sig.encrypted_session_token),
+                aws_region=sig.region if sig else "",
+                aws_service=sig.service if sig else "",
+            )
         else:
             details = BearerTokenRedacted(token_preview=None)
 
@@ -617,6 +701,15 @@ class CredentialService:
                 raise InvalidCredentialInputError("Field 'client_id' is required for oauth2")
             if not payload.client_secret:
                 raise InvalidCredentialInputError("Field 'client_secret' is required for oauth2")
+        elif payload.type == CredentialType.SIGV4:
+            if not payload.access_key_id:
+                raise InvalidCredentialInputError("Field 'access_key_id' is required for sigv4")
+            if not payload.secret_access_key:
+                raise InvalidCredentialInputError("Field 'secret_access_key' is required for sigv4")
+            if not payload.aws_region:
+                raise InvalidCredentialInputError("Field 'aws_region' is required for sigv4")
+            if not payload.aws_service:
+                raise InvalidCredentialInputError("Field 'aws_service' is required for sigv4")
 
     @staticmethod
     def _canonical_api_scope(api: APIReference) -> CredentialScope:

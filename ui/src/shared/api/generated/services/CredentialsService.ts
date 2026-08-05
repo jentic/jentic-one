@@ -17,6 +17,8 @@ import type { NoAuthCreateRequest } from '../models/NoAuthCreateRequest';
 import type { OAuth2CreateRequest } from '../models/OAuth2CreateRequest';
 import type { OAuth2UpdateRequest } from '../models/OAuth2UpdateRequest';
 import type { ProviderDiscoveryResponse } from '../models/ProviderDiscoveryResponse';
+import type { Sigv4CreateRequest } from '../models/Sigv4CreateRequest';
+import type { Sigv4UpdateRequest } from '../models/Sigv4UpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -63,7 +65,7 @@ export class CredentialsService {
     public static createCredential({
         requestBody,
     }: {
-        requestBody: (BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest | NoAuthCreateRequest),
+        requestBody: (BearerTokenCreateRequest | ApiKeyCreateRequest | BasicAuthCreateRequest | OAuth2CreateRequest | NoAuthCreateRequest | Sigv4CreateRequest),
     }): CancelablePromise<CredentialCreateResponse> {
         return __request(OpenAPI, {
             method: 'POST',
@@ -217,7 +219,7 @@ export class CredentialsService {
         requestBody,
     }: {
         credentialId: string,
-        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest),
+        requestBody: (BearerTokenUpdateRequest | ApiKeyUpdateRequest | BasicAuthUpdateRequest | OAuth2UpdateRequest | Sigv4UpdateRequest),
     }): CancelablePromise<CredentialRedactedResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',

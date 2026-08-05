@@ -7,6 +7,7 @@ const VARIANT: Record<CredentialType, 'default' | 'success' | 'warning' | 'pendi
 	[CredentialType.BASIC]: 'warning',
 	[CredentialType.OAUTH2]: 'pending',
 	[CredentialType.NO_AUTH]: 'default',
+	[CredentialType.SIGV4]: 'success',
 };
 
 /** Small pill that labels a credential's auth type with a stable color. */

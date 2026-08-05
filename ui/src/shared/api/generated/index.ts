@@ -157,6 +157,8 @@ export type { ServiceAccountResponse } from './models/ServiceAccountResponse';
 export type { ServiceAccountScopesRequest } from './models/ServiceAccountScopesRequest';
 export type { ServiceAccountScopesResponse } from './models/ServiceAccountScopesResponse';
 export type { SetPermissionsRequest } from './models/SetPermissionsRequest';
+export type { Sigv4CreateRequest } from './models/Sigv4CreateRequest';
+export type { Sigv4UpdateRequest } from './models/Sigv4UpdateRequest';
 export type { TokenRequest } from './models/TokenRequest';
 export type { TokenResponse } from './models/TokenResponse';
 export type { ToolkitAgentListResponse } from './models/ToolkitAgentListResponse';

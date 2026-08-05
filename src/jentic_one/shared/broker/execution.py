@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.schemas import APIReference
 
 
@@ -44,6 +45,10 @@ class RunnerRequest:
     headers: dict[str, str] = field(default_factory=dict)
     body: bytes | None = None
     timeout_s: float = 30.0
+    # SigV4 signing material when the resolved credential is a sigv4 type; the
+    # signing runner signs this exact (method, url, body) and merges the auth
+    # headers. None for all other credential types (static injection covers them).
+    signing: SigV4Material | None = None
 
 
 @dataclass(frozen=True, slots=True)

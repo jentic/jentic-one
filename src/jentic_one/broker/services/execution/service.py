@@ -27,6 +27,7 @@ from jentic_one.broker.services.execution.pipeline import (
     ExecutionContext,
     ExecutionOutcome,
 )
+from jentic_one.shared.aws.sigv4 import SigV4Material
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.config import SecurityConfig
 from jentic_one.shared.events import emit_event, valid_trace_id_or_none
@@ -125,6 +126,7 @@ async def run_execution(
     actor_type: str,
     origin: str | None = None,
     security_config: SecurityConfig | None = None,
+    signing: SigV4Material | None = None,
 ) -> ExecutionOutcome:
     """Run the upstream call through the injected ``Broker`` and persist the record.
 
@@ -156,6 +158,7 @@ async def run_execution(
         headers=headers or {},
         body=body,
         timeout_s=timeout,
+        signing=signing,
     )
     exec_context = ExecutionContext(
         execution_id=execution_id,
