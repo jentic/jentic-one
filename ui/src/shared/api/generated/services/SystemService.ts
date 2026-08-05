@@ -4,8 +4,6 @@
 /* eslint-disable */
 import type { HealthResponse } from '../models/HealthResponse';
 import type { InstanceIdentityResponse } from '../models/InstanceIdentityResponse';
-import type { LatestReleaseResponse } from '../models/LatestReleaseResponse';
-import type { LatestReleaseSetRequest } from '../models/LatestReleaseSetRequest';
 import type { VersionResponse } from '../models/VersionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -23,36 +21,6 @@ export class SystemService {
             url: '/admin/health',
             errors: {
                 400: `Bad Request`,
-                422: `Unprocessable Entity`,
-                500: `Internal Server Error`,
-                503: `Service Unavailable`,
-            },
-        });
-    }
-    /**
-     * Report the latest available release
-     * Record the latest available app release (operator/CLI action).
-     *
-     * The value is normalized to a bare ``X.Y.Z`` and upserted into the singleton
-     * ``latest_releases`` row; the public ``GET /system/version`` reads it to decide
-     * whether to advertise an update.
-     * @returns LatestReleaseResponse Successful Response
-     * @throws ApiError
-     */
-    public static setLatestRelease({
-        requestBody,
-    }: {
-        requestBody: LatestReleaseSetRequest,
-    }): CancelablePromise<LatestReleaseResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/admin/system/latest-release',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                400: `Bad Request`,
-                401: `Unauthorized`,
-                403: `Forbidden`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -157,14 +125,14 @@ export class SystemService {
         });
     }
     /**
-     * Running and latest-known app version
-     * Return the running version and the latest release known to this backend.
+     * Running and latest-available app version
+     * Return the running version and the latest available release.
      *
      * Requires an authenticated session (any valid caller; no special
      * permission). The SPA reads it from inside the signed-in shell to show the
-     * current version and, when a newer release has been reported, an update
-     * banner. Gating it keeps the exact running build off unauthenticated
-     * fingerprinting while costing nothing (every consumer is already signed in).
+     * current version and, when a newer release is available, an update banner.
+     * The latest release is resolved best-effort (cached); on any failure it is
+     * ``null`` and no banner shows.
      * @returns VersionResponse Successful Response
      * @throws ApiError
      */

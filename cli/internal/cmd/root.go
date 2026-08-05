@@ -30,9 +30,12 @@ func newBaseRoot(app *App, binary string) *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// Print the jentic wordmark before every command (TTY only; see banner).
+		// Print the jentic wordmark before every command (TTY only; see banner),
+		// then nudge if a newer release is available (stderr, throttled; see
+		// maybeNudgeUpdate).
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			app.banner(cmd)
+			app.maybeNudgeUpdate(cmd)
 		},
 	}
 

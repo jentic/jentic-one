@@ -21,7 +21,6 @@ from jentic_one.admin.web.routers import (
     jobs,
     monitoring,
     permissions,
-    system,
     users,
 )
 from jentic_one.shared.auth.api_key_resolver import (
@@ -61,7 +60,6 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (audit.router, "", []),
         (monitoring.router, "", []),
         (config.router, "", []),
-        (system.router, "", []),
     ]
 
 

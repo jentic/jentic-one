@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Banner } from '@/shared/ui/Banner';
 import { useVersionInfo } from '@/shared/hooks';
+import { usePermission, ORG_ADMIN } from '@/shared/auth/usePermission';
 
 const DISMISSED_KEY = 'j1.updateBanner.dismissedVersion';
 
@@ -25,6 +26,11 @@ function writeDismissed(version: string): void {
 /**
  * Shell banner announcing a newer app release.
  *
+ * Admin-only: upgrading is an operator action (`jenticctl update` on the host),
+ * so only an org admin sees the banner — a non-admin can't act on it and it
+ * would just be noise. The current-version line in the user menu still shows for
+ * everyone.
+ *
  * Shows only when the backend reports `update_available` and the user has not
  * already dismissed *this* version — dismissal persists the dismissed version
  * string, so a later release re-shows the banner (dismissing 0.26 still surfaces
@@ -32,10 +38,11 @@ function writeDismissed(version: string): void {
  * line (React Query dedupes), so mounting it here is free.
  */
 export function UpdateBanner() {
+	const isAdmin = usePermission(ORG_ADMIN);
 	const { latest, update_available } = useVersionInfo();
 	const [dismissed, setDismissed] = useState<string | null>(() => readDismissed());
 
-	if (!update_available || !latest || latest === dismissed) return null;
+	if (!isAdmin || !update_available || !latest || latest === dismissed) return null;
 
 	const dismiss = () => {
 		writeDismissed(latest);

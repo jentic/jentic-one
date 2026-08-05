@@ -11,7 +11,7 @@ export type VersionResponse = {
      */
     current: string;
     /**
-     * The latest release version reported to this backend (by `jenticctl update`), without a leading 'v'. Null when nothing has been reported yet or this surface has no admin database.
+     * The latest published release of jentic-one, without a leading 'v'. Null when the backend can't determine it (update check disabled, air-gapped, a remote backend, or GitHub was unreachable).
      */
     latest?: (string | null);
     /**

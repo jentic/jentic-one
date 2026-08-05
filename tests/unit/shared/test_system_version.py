@@ -1,9 +1,14 @@
 """Unit tests for the version endpoint (``GET /system/version``).
 
-Reads the running ``__version__`` (always) and the last-known-latest release
-from the admin DB (only when present). On a surface without the admin database
-it degrades to ``latest=null`` / ``update_available=false`` rather than erroring,
-which is exactly the fast (DB-less) path exercised here.
+Reports the running ``__version__`` (always) and the latest available release,
+resolved server-side from GitHub by ``ReleaseChecker`` (cached, best-effort).
+When the release check is disabled/air-gapped, a remote backend, or GitHub is
+unreachable, it degrades to ``latest=null`` / ``update_available=false`` rather
+than erroring.
+
+Most tests disable the release check in config so they make no network call and
+``latest`` is deterministically ``null``; a dedicated test stubs the GitHub
+fetch to exercise the "update available" verdict and the in-process cache.
 
 The endpoint requires an authenticated session (any valid caller, no special
 permission), so the behaviour tests inject a fixed identity via the canonical
@@ -15,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -24,12 +30,16 @@ from jentic_one.control.web.app import create_app as create_control_app
 from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.context import Context
+from jentic_one.shared.release_check import CatalogFetchError
 from jentic_one.shared.web.app_factory import create_combined_app
 from jentic_one.shared.web.deps import resolve_identity
 
 
-def _ctx(sample_config_dict: dict[str, Any]) -> Context:
-    return Context(AppConfig.model_validate(dict(sample_config_dict)))
+def _ctx(sample_config_dict: dict[str, Any], *, release_check: bool = False) -> Context:
+    """A Context with the release check off by default (no egress in tests)."""
+    cfg = dict(sample_config_dict)
+    cfg["release_check"] = {"enabled": release_check}
+    return Context(AppConfig.model_validate(cfg))
 
 
 def _authed(app: FastAPI) -> FastAPI:
@@ -50,7 +60,7 @@ def _authed_client(ctx: Context, surfaces: list[str]) -> TestClient:
 
 
 def test_version_endpoint_reports_current(sample_config_dict: dict[str, Any]) -> None:
-    """Without an admin DB the endpoint still reports the running version."""
+    """With the release check off the endpoint still reports the running version."""
     client = _authed_client(_ctx(sample_config_dict), ["control"])
 
     resp = client.get("/system/version")
@@ -58,7 +68,74 @@ def test_version_endpoint_reports_current(sample_config_dict: dict[str, Any]) ->
     assert resp.status_code == 200
     data = resp.json()
     assert data["current"] == __version__
-    # No admin DB on a control-only surface, so nothing has been reported.
+    # Release check disabled -> latest unknown, no banner.
+    assert data["latest"] is None
+    assert data["update_available"] is False
+
+
+def test_version_endpoint_surfaces_a_newer_release(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer GitHub release lights up ``update_available`` (fetch is stubbed)."""
+    calls = 0
+
+    async def _fake_fetch(url: str, *, config: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"tag_name": "v999.0.0"}
+
+    monkeypatch.setattr("jentic_one.shared.release_check.fetch_json", _fake_fetch)
+
+    ctx = _ctx(sample_config_dict, release_check=True)
+    client = _authed_client(ctx, ["control"])
+
+    data = client.get("/system/version").json()
+    assert data["current"] == __version__
+    assert data["latest"] == "999.0.0"
+    assert data["update_available"] is True
+
+    # Second read is served from the in-process cache — GitHub is hit once.
+    client.get("/system/version")
+    assert calls == 1
+
+
+def test_version_endpoint_degrades_when_github_unreachable(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fetch failure degrades to latest=null (no banner), never a 500."""
+
+    async def _boom(url: str, *, config: Any) -> dict[str, Any]:
+        raise CatalogFetchError("offline")
+
+    monkeypatch.setattr("jentic_one.shared.release_check.fetch_json", _boom)
+
+    ctx = _ctx(sample_config_dict, release_check=True)
+    client = _authed_client(ctx, ["control"])
+
+    resp = client.get("/system/version")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["latest"] is None
+    assert data["update_available"] is False
+
+
+def test_version_endpoint_skips_check_on_remote_backend(
+    sample_config_dict: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A remote backend never phones GitHub (the operator can't self-update it)."""
+
+    async def _unexpected(url: str, *, config: Any) -> dict[str, Any]:
+        raise AssertionError("remote backend must not fetch releases")
+
+    monkeypatch.setattr("jentic_one.shared.release_check.fetch_json", _unexpected)
+
+    cfg = dict(sample_config_dict)
+    cfg["release_check"] = {"enabled": True}
+    cfg["server"] = {**cfg.get("server", {}), "backend": "remote"}
+    ctx = Context(AppConfig.model_validate(cfg))
+    client = _authed_client(ctx, ["control"])
+
+    data = client.get("/system/version").json()
     assert data["latest"] is None
     assert data["update_available"] is False
 

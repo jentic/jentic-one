@@ -480,8 +480,8 @@ def create_surface_app(
         app.include_router(get_instance_router())
         # Running/latest version so the signed-in SPA can show the current
         # version and an update banner. Authenticated (any valid session; not
-        # published unauthenticated). Reads the admin DB when present, else
-        # degrades to latest=null.
+        # published unauthenticated). The latest release is resolved server-side
+        # from GitHub (cached, best-effort), degrading to latest=null on failure.
         app.include_router(get_system_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
@@ -587,8 +587,9 @@ def create_combined_app(
     root.include_router(get_instance_router())
 
     # Running/latest version so the signed-in SPA can show the current version
-    # and an update banner. Authenticated (any valid session). Reads the admin DB
-    # when present, else degrades to null.
+    # and an update banner. Authenticated (any valid session). The latest release
+    # is resolved server-side from GitHub (cached, best-effort), degrading to
+    # latest=null on failure.
     root.include_router(get_system_router())
 
     # Extension point: injected routers/installers mount after all built-in

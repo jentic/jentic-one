@@ -281,30 +281,6 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
-        "instance:write": []
-      },
-      "method": "POST",
-      "operation_id": "setLatestRelease",
-      "path": "/admin/system/latest-release",
-      "public": false,
-      "required_scopes": [
-        "instance:write"
-      ],
-      "summary": "Report the latest available release",
-      "surface": "admin",
-      "typical_caller": "operator"
-    },
-    {
-      "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
-      ],
-      "auth_note": null,
-      "authenticated": true,
-      "group": "Operator-facing (typically a human operator / admin)",
-      "implied_scopes": {
         "agents:read": []
       },
       "method": "GET",
@@ -1588,7 +1564,6 @@
           "events:read",
           "events:write",
           "executions:read",
-          "instance:write",
           "jobs:read",
           "jobs:write",
           "overlays:confirm",
@@ -2183,7 +2158,6 @@
           "events:read",
           "events:write",
           "executions:read",
-          "instance:write",
           "jobs:read",
           "jobs:write",
           "overlays:confirm",
@@ -2233,7 +2207,6 @@
           "events:read",
           "events:write",
           "executions:read",
-          "instance:write",
           "jobs:read",
           "jobs:write",
           "overlays:confirm",
@@ -2884,7 +2857,7 @@
       "path": "/system/version",
       "public": false,
       "required_scopes": [],
-      "summary": "Running and latest-known app version",
+      "summary": "Running and latest-available app version",
       "surface": "system",
       "typical_caller": "any"
     },
@@ -3800,7 +3773,6 @@
               "events:read",
               "events:write",
               "executions:read",
-              "instance:write",
               "jobs:read",
               "jobs:write",
               "overlays:confirm",
@@ -3827,7 +3799,6 @@
               "events:read",
               "events:write",
               "executions:read",
-              "instance:write",
               "jobs:read",
               "jobs:write",
               "overlays:confirm",
@@ -4183,22 +4154,6 @@
         ]
       },
       {
-        "blurb": "System/instance metadata, such as the latest available release.",
-        "label": "Instance",
-        "name": "instance",
-        "scopes": [
-          {
-            "action": "write",
-            "description": "Record system/instance metadata (e.g. the latest available release reported by the CLI); operator action, never an agent default",
-            "family": "instance",
-            "implies": [],
-            "implies_transitive": [],
-            "is_superuser": false,
-            "name": "instance:write"
-          }
-        ]
-      },
-      {
         "blurb": "Read access an agent has to the resources owned by the human who created it. Granted to agents by default; never grants write.",
         "label": "Owner-scoped reads",
         "name": "owner",
@@ -4469,15 +4424,6 @@
         "name": "executions:read"
       },
       {
-        "action": "write",
-        "description": "Record system/instance metadata (e.g. the latest available release reported by the CLI); operator action, never an agent default",
-        "family": "instance",
-        "implies": [],
-        "implies_transitive": [],
-        "is_superuser": false,
-        "name": "instance:write"
-      },
-      {
         "action": "read",
         "description": "Read job status and results",
         "family": "jobs",
@@ -4519,7 +4465,6 @@
           "events:read",
           "events:write",
           "executions:read",
-          "instance:write",
           "jobs:read",
           "jobs:write",
           "overlays:confirm",
@@ -4546,7 +4491,6 @@
           "events:read",
           "events:write",
           "executions:read",
-          "instance:write",
           "jobs:read",
           "jobs:write",
           "overlays:confirm",
@@ -4702,7 +4646,7 @@
         "name": "users:write"
       }
     ],
-    "total": 32
+    "total": 31
   },
-  "total": 158
+  "total": 157
 }

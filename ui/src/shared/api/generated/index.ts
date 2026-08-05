@@ -96,8 +96,6 @@ export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } fro
 export type { JobLinksResponse } from './models/JobLinksResponse';
 export type { JobListResponse } from './models/JobListResponse';
 export type { JobResponse } from './models/JobResponse';
-export type { LatestReleaseResponse } from './models/LatestReleaseResponse';
-export type { LatestReleaseSetRequest } from './models/LatestReleaseSetRequest';
 export type { LoginRequest } from './models/LoginRequest';
 export type { LoginResponse } from './models/LoginResponse';
 export type { MeAgent } from './models/MeAgent';

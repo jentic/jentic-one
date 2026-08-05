@@ -4045,36 +4045,6 @@
         "title": "JobResponse",
         "type": "object"
       },
-      "LatestReleaseResponse": {
-        "description": "The stored latest-release version (normalized, no leading 'v').",
-        "properties": {
-          "version": {
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "version"
-        ],
-        "title": "LatestReleaseResponse",
-        "type": "object"
-      },
-      "LatestReleaseSetRequest": {
-        "description": "Body for reporting the latest available release.",
-        "properties": {
-          "version": {
-            "description": "The latest release version, e.g. 'v0.26.0' or '0.26.0'.",
-            "minLength": 1,
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "version"
-        ],
-        "title": "LatestReleaseSetRequest",
-        "type": "object"
-      },
       "LoginRequest": {
         "description": "Credentials for login.",
         "properties": {
@@ -8335,7 +8305,7 @@
                 "type": "null"
               }
             ],
-            "description": "The latest release version reported to this backend (by `jenticctl update`), without a leading 'v'. Null when nothing has been reported yet or this surface has no admin database.",
+            "description": "The latest published release of jentic-one, without a leading 'v'. Null when the backend can't determine it (update check disabled, air-gapped, a remote backend, or GitHub was unreachable).",
             "title": "Latest"
           },
           "update_available": {
@@ -10474,151 +10444,6 @@
         },
         "security": [],
         "summary": "Health",
-        "tags": [
-          "System"
-        ]
-      }
-    },
-    "/admin/system/latest-release": {
-      "post": {
-        "description": "Record the latest available app release (operator/CLI action).\n\nThe value is normalized to a bare ``X.Y.Z`` and upserted into the singleton\n``latest_releases`` row; the public ``GET /system/version`` reads it to decide\nwhether to advertise an update.",
-        "operationId": "setLatestRelease",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LatestReleaseSetRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LatestReleaseResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The request was malformed or failed a precondition.",
-                  "instance": "/example/path",
-                  "status": 400,
-                  "title": "Bad Request",
-                  "type": "bad_request"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "401": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "Authentication is required or the bearer token is invalid.",
-                  "instance": "/example/path",
-                  "status": 401,
-                  "title": "Unauthorized",
-                  "type": "unauthorized"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Unauthorized"
-          },
-          "403": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The authenticated principal lacks the required permission.",
-                  "instance": "/example/path",
-                  "status": 403,
-                  "title": "Forbidden",
-                  "type": "forbidden"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Forbidden"
-          },
-          "422": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "Request validation failed; see errors[] for details.",
-                  "errors": [
-                    {
-                      "detail": "Field 'name' must not be blank.",
-                      "pointer": "#/name"
-                    }
-                  ],
-                  "instance": "/example/path",
-                  "status": 422,
-                  "title": "Unprocessable Entity",
-                  "type": "validation_error"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
-          },
-          "500": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "An unexpected error occurred.",
-                  "instance": "/example/path",
-                  "status": 500,
-                  "title": "Internal Server Error",
-                  "type": "server_error"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Internal Server Error"
-          },
-          "503": {
-            "content": {
-              "application/problem+json": {
-                "example": {
-                  "detail": "The database is temporarily unavailable; please retry.",
-                  "instance": "/example/path",
-                  "status": 503,
-                  "title": "Service Unavailable",
-                  "type": "database_unavailable"
-                },
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetail"
-                }
-              }
-            },
-            "description": "Service Unavailable"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "summary": "Report the latest available release",
         "tags": [
           "System"
         ]
@@ -27674,7 +27499,7 @@
     },
     "/system/version": {
       "get": {
-        "description": "Return the running version and the latest release known to this backend.\n\nRequires an authenticated session (any valid caller; no special\npermission). The SPA reads it from inside the signed-in shell to show the\ncurrent version and, when a newer release has been reported, an update\nbanner. Gating it keeps the exact running build off unauthenticated\nfingerprinting while costing nothing (every consumer is already signed in).",
+        "description": "Return the running version and the latest available release.\n\nRequires an authenticated session (any valid caller; no special\npermission). The SPA reads it from inside the signed-in shell to show the\ncurrent version and, when a newer release is available, an update banner.\nThe latest release is resolved best-effort (cached); on any failure it is\n``null`` and no banner shows.",
         "operationId": "getVersion",
         "responses": {
           "200": {
@@ -27693,7 +27518,7 @@
             "BearerAuth": []
           }
         ],
-        "summary": "Running and latest-known app version",
+        "summary": "Running and latest-available app version",
         "tags": [
           "System"
         ]
