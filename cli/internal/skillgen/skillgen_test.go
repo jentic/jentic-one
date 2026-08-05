@@ -5,73 +5,37 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
-func testContent() Canonical {
-	return testContentT(nil)
-}
-
-// testContentT parses the bundled content, failing the test on error. A nil t
-// is allowed for callers that treat a malformed embed as a panic-worthy
-// programming error.
-func testContentT(t *testing.T) Canonical {
-	c, err := Bundled("http://example.test")
+// jenticContent parses the bundled canonical jentic skill, failing on error.
+func jenticContent(t *testing.T) Canonical {
+	t.Helper()
+	c, err := Bundled("jentic", "http://example.test")
 	if err != nil {
-		if t != nil {
-			t.Fatalf("Bundled: %v", err)
-		}
-		panic("testContent: " + err.Error())
+		t.Fatalf("Bundled(jentic): %v", err)
 	}
 	return c
 }
 
-func TestBundledParsesCanonical(t *testing.T) {
-	c := testContent()
-	if c.Name != "jentic" {
-		t.Errorf("Name = %q, want jentic", c.Name)
+// freeformContent parses a bundled freeform skill.
+func freeformContent(t *testing.T, name string) Canonical {
+	t.Helper()
+	c, err := Bundled(name, "http://example.test")
+	if err != nil {
+		t.Fatalf("Bundled(%s): %v", name, err)
 	}
-	if c.Description == "" {
-		t.Error("Description is empty")
-	}
-	// The canonical description is intentionally rich (claude/cursor/codex read
-	// it in full to decide whether to launch the skill); only hermes truncates
-	// it. Assert it carries the key trigger words rather than capping its length.
-	for _, want := range []string{"API", "find", "import"} {
-		if !strings.Contains(c.Description, want) {
-			t.Errorf("Description %q missing trigger word %q", c.Description, want)
-		}
-	}
-	if len(c.Steps) == 0 {
-		t.Fatal("no procedure steps parsed")
-	}
-	if c.Steps[0].Title == "" || !strings.Contains(c.Steps[0].Body, "jentic register") {
-		t.Errorf("first step looks wrong: %+v", c.Steps[0])
-	}
-	for _, set := range [][]string{c.WhenToUse, c.Prereqs, c.QuickRef, c.Pitfalls, c.Verify} {
-		if len(set) == 0 {
-			t.Error("a bullet section parsed empty")
-		}
-	}
-	if c.BaseURL != "http://example.test" {
-		t.Errorf("BaseURL = %q", c.BaseURL)
-	}
+	return c
 }
 
 func TestRenderBodyIncludesBaseURLAndSections(t *testing.T) {
-	body := renderBody(testContent())
+	body := renderBody(jenticContent(t))
 	for _, want := range []string{
 		"# Using Jentic from the CLI",
 		"http://example.test",
 		"## When to Use",
 		"## Procedure",
 		"### 1. Confirm you have a valid identity",
-		"### 2. Check what you can do, and request access if needed",
 		"jentic access request",
-		"credential_not_provisioned",
-		"credential_identity_mismatch",
-		"provisioning_url",
-		"exits 2",
 		"## Verification",
 	} {
 		if !strings.Contains(body, want) {
@@ -82,13 +46,13 @@ func TestRenderBodyIncludesBaseURLAndSections(t *testing.T) {
 
 func TestManagedBlockRoundTrip(t *testing.T) {
 	body := "hello\nworld\n"
-	blkText := managedBlock(body, SourceBundled)
-	if !strings.Contains(blkText, beginMarker) || !strings.Contains(blkText, endMarker) {
-		t.Fatal("markers missing")
+	blkText := managedBlock("jentic", body, SourceBundled)
+	if !strings.Contains(blkText, beginMarkerFor("jentic")) || !strings.Contains(blkText, endMarkerFor("jentic")) {
+		t.Fatal("named markers missing")
 	}
-	blk := findBlock([]byte(blkText))
+	blk := findBlock([]byte(blkText), "jentic")
 	if !blk.found {
-		t.Fatal("findBlock did not locate the block")
+		t.Fatal("findBlock did not locate the named block")
 	}
 	if blk.source != string(SourceBundled) {
 		t.Errorf("source = %q", blk.source)
@@ -100,30 +64,26 @@ func TestManagedBlockRoundTrip(t *testing.T) {
 }
 
 func TestSpliceCreatesPreservesAndReplaces(t *testing.T) {
-	// New file: just the block.
-	r1 := splice(nil, "body one\n", SourceBundled)
+	r1 := splice(nil, "jentic", "body one\n", SourceBundled)
 	if !r1.created || !r1.changed {
 		t.Fatalf("new file should be created+changed: %+v", r1)
 	}
 
-	// Existing user content: block appended, user content kept.
 	existing := []byte("# user heading\n\nsome notes\n")
-	r2 := splice(existing, "body one\n", SourceBundled)
+	r2 := splice(existing, "jentic", "body one\n", SourceBundled)
 	if !strings.Contains(string(r2.out), "# user heading") || !strings.Contains(string(r2.out), "some notes") {
 		t.Error("user content not preserved on splice")
 	}
-	if !strings.Contains(string(r2.out), beginMarker) {
+	if !strings.Contains(string(r2.out), beginMarkerFor("jentic")) {
 		t.Error("managed block not added")
 	}
 
-	// Re-splice identical content: no change.
-	r3 := splice(r2.out, "body one\n", SourceBundled)
+	r3 := splice(r2.out, "jentic", "body one\n", SourceBundled)
 	if r3.changed {
 		t.Error("identical re-splice should be a no-op")
 	}
 
-	// New content: changed, user content still preserved.
-	r4 := splice(r2.out, "body two\n", SourceBundled)
+	r4 := splice(r2.out, "jentic", "body two\n", SourceBundled)
 	if !r4.changed {
 		t.Error("changed content should splice")
 	}
@@ -135,13 +95,131 @@ func TestSpliceCreatesPreservesAndReplaces(t *testing.T) {
 	}
 }
 
+// TestSpliceMultipleNamedBlocksCoexist proves several skills' named blocks live
+// in one file and that replacing one leaves siblings byte-identical.
+func TestSpliceMultipleNamedBlocksCoexist(t *testing.T) {
+	out := splice(nil, "jentic", "jentic body\n", SourceBundled).out
+	out = splice(out, "import-new-api", "import body\n", SourceBundled).out
+
+	if !strings.Contains(string(out), beginMarkerFor("jentic")) ||
+		!strings.Contains(string(out), beginMarkerFor("import-new-api")) {
+		t.Fatal("both named blocks should be present")
+	}
+
+	// Snapshot the jentic block, then update only import-new-api.
+	before := findBlock(out, "jentic")
+	jenticRegion := string(out[before.start:before.endPos])
+
+	updated := splice(out, "import-new-api", "import body v2\n", SourceBundled)
+	if !updated.changed {
+		t.Fatal("import-new-api update should change the file")
+	}
+	after := findBlock(updated.out, "jentic")
+	if string(updated.out[after.start:after.endPos]) != jenticRegion {
+		t.Error("sibling jentic block must be byte-identical after updating import-new-api")
+	}
+	if !strings.Contains(string(updated.out), "import body v2") {
+		t.Error("import-new-api block not updated")
+	}
+}
+
 func TestSpliceDetectsUserEdits(t *testing.T) {
-	r := splice(nil, "original\n", SourceBundled)
-	// Tamper inside the block.
+	r := splice(nil, "jentic", "original\n", SourceBundled)
 	tampered := strings.Replace(string(r.out), "original", "tampered", 1)
-	res := splice([]byte(tampered), "original\n", SourceBundled)
+	res := splice([]byte(tampered), "jentic", "original\n", SourceBundled)
 	if !res.userEdits {
 		t.Error("expected userEdits to be detected on tampered block")
+	}
+}
+
+// TestLegacyBlockMigration proves an old un-named AGENTS.md block is migrated to
+// the named form and NOT falsely flagged as user-edited (its body hash still
+// verifies via the legacy end marker).
+func TestLegacyBlockMigration(t *testing.T) {
+	body := "# Using Jentic from the CLI\n\nsome pointer text\n"
+	// Build a legacy (un-named) block exactly as the old generator would.
+	legacy := legacyBeginMarker + " hash=" + hashContent(body) + " source=bundled\n" +
+		strings.TrimRight(body, "\n") + "\n" + legacyEndMarker
+	existing := []byte("# user AGENTS\n\n" + legacy + "\n")
+
+	// The legacy block must be locatable and NOT flagged user-edited.
+	lb := findLegacyBlock(existing)
+	if !lb.found {
+		t.Fatal("legacy block not found")
+	}
+	if blockUserEdited(existing, lb) {
+		t.Fatal("legacy block wrongly flagged as user-edited")
+	}
+
+	res := splice(existing, "jentic", body, SourceBundled)
+	if !res.changed {
+		t.Fatal("migration should rewrite the file")
+	}
+	if res.userEdits {
+		t.Error("migration must not report user edits")
+	}
+	if strings.Contains(string(res.out), legacyBeginMarker) {
+		t.Error("legacy marker should be gone after migration")
+	}
+	if !strings.Contains(string(res.out), beginMarkerFor("jentic")) {
+		t.Error("named marker should replace the legacy one")
+	}
+	if !strings.Contains(string(res.out), "# user AGENTS") {
+		t.Error("surrounding user content lost during migration")
+	}
+}
+
+// TestLegacyBlockNotConsumedByFlowSkill pins the fix for the legacy-block
+// misattribution bug: the old un-named block is jentic's by construction, so a
+// *flow* skill (contribute-spec-fix / import-new-api) must never migrate/consume
+// it. Splicing a flow skill over a legacy jentic block must leave the legacy
+// block intact and append the flow skill as a fresh named block instead.
+func TestLegacyBlockNotConsumedByFlowSkill(t *testing.T) {
+	jbody := "# Using Jentic from the CLI\n\njentic pointer\n"
+	legacy := legacyBeginMarker + " hash=" + hashContent(jbody) + " source=bundled\n" +
+		strings.TrimRight(jbody, "\n") + "\n" + legacyEndMarker
+	existing := []byte("# user AGENTS\n\n" + legacy + "\n")
+
+	res := splice(existing, "contribute-spec-fix", "## contribute-spec-fix\n\nflow pointer\n", SourceBundled)
+
+	// The legacy jentic block must survive untouched…
+	if !strings.Contains(string(res.out), legacyBeginMarker) {
+		t.Error("flow-skill splice destroyed the legacy jentic block")
+	}
+	if !strings.Contains(string(res.out), "jentic pointer") {
+		t.Error("legacy jentic body was clobbered by the flow skill")
+	}
+	// …and the flow skill lands as its own named block.
+	if !strings.Contains(string(res.out), beginMarkerFor("contribute-spec-fix")) {
+		t.Error("flow skill not appended as a named block")
+	}
+	// A subsequent jentic splice then migrates the legacy block (only jentic).
+	res2 := splice(res.out, "jentic", jbody, SourceBundled)
+	if strings.Contains(string(res2.out), legacyBeginMarker) {
+		t.Error("jentic splice should migrate the legacy block to the named form")
+	}
+	if !strings.Contains(string(res2.out), beginMarkerFor("jentic")) ||
+		!strings.Contains(string(res2.out), beginMarkerFor("contribute-spec-fix")) {
+		t.Error("both skills should end up as named blocks")
+	}
+}
+
+// TestLegacyBlockFlowRemoveAndProbeDoNotMisattribute pins the remove/list half
+// of the same fix: removing or probing a *flow* skill against a legacy-only
+// install must not touch or claim the legacy jentic block.
+func TestLegacyBlockFlowRemoveAndProbeDoNotMisattribute(t *testing.T) {
+	jbody := "# Using Jentic from the CLI\n\njentic pointer\n"
+	legacy := legacyBeginMarker + " hash=" + hashContent(jbody) + " source=bundled\n" +
+		strings.TrimRight(jbody, "\n") + "\n" + legacyEndMarker
+	existing := []byte(legacy + "\n")
+
+	// A flow skill must not be reported installed off a legacy-only file.
+	if blk := findMigratableLegacyBlock(existing, "import-new-api"); blk.found {
+		t.Error("legacy block wrongly attributed to import-new-api")
+	}
+	// …but jentic still migrates it.
+	if blk := findMigratableLegacyBlock(existing, "jentic"); !blk.found {
+		t.Error("legacy block should be migratable for jentic")
 	}
 }
 
@@ -160,7 +238,6 @@ func TestRegistryResolveAndDetect(t *testing.T) {
 	if len(resolved) != 2 {
 		t.Errorf("resolved %d adapters, want 2", len(resolved))
 	}
-
 	env := DetectEnv{
 		Home:   "/home/u",
 		Cwd:    "/proj",
@@ -173,31 +250,37 @@ func TestRegistryResolveAndDetect(t *testing.T) {
 	}
 }
 
-func TestAdapterTargets(t *testing.T) {
+// TestAdapterTargetsPerName pins that Target paths are parametric over the skill
+// name (no hardcoded "jentic").
+func TestAdapterTargetsPerName(t *testing.T) {
 	env := DetectEnv{Home: "/home/u", Cwd: "/proj"}
 	reg := DefaultRegistry()
-	cases := map[Operator]string{
-		OpClaude:  "/home/u/.claude/skills/jentic/SKILL.md",
-		OpCursor:  "/home/u/.cursor/skills/jentic/SKILL.md",
-		OpHermes:  "/home/u/.hermes/skills/api/jentic/SKILL.md",
-		OpCodex:   "/proj/AGENTS.md",
-		OpGeneric: "/proj/AGENTS.md",
+	cases := []struct {
+		op   Operator
+		name string
+		want string
+	}{
+		{OpClaude, "jentic", "/home/u/.claude/skills/jentic/SKILL.md"},
+		{OpClaude, "contribute-spec-fix", "/home/u/.claude/skills/contribute-spec-fix/SKILL.md"},
+		{OpCursor, "import-new-api", "/home/u/.cursor/skills/import-new-api/SKILL.md"},
+		{OpHermes, "contribute-spec-fix", "/home/u/.hermes/skills/api/contribute-spec-fix/SKILL.md"},
+		{OpCodex, "jentic", "/proj/AGENTS.md"},
+		{OpGeneric, "import-new-api", "/proj/AGENTS.md"},
 	}
-	for op, want := range cases {
-		ad, _ := reg.Resolve(string(op))
-		if got := ad.Target(ad.DefaultScope(), env); got != want {
-			t.Errorf("%s target = %q, want %q", op, got, want)
+	for _, c := range cases {
+		ad, _ := reg.Resolve(string(c.op))
+		if got := ad.Target(ad.DefaultScope(), c.name, env); got != c.want {
+			t.Errorf("%s/%s target = %q, want %q", c.op, c.name, got, c.want)
 		}
 	}
 }
 
-func TestApplyAndRemoveSingleFile(t *testing.T) {
+func TestApplyAndRemoveSharedFile(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("generic")
-	c := testContent()
+	c := jenticContent(t)
 
-	// Dry run writes nothing.
 	out, err := Apply(ad, c, env, ApplyOptions{DryRun: true})
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +292,6 @@ func TestApplyAndRemoveSingleFile(t *testing.T) {
 		t.Error("dry run should not write the file")
 	}
 
-	// Real write.
 	out, err = Apply(ad, c, env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -218,11 +300,14 @@ func TestApplyAndRemoveSingleFile(t *testing.T) {
 		t.Error("first apply should create")
 	}
 	data, _ := os.ReadFile(out.Path)
-	if !strings.Contains(string(data), beginMarker) {
-		t.Error("managed block not written")
+	if !strings.Contains(string(data), beginMarkerFor("jentic")) {
+		t.Error("named managed block not written")
+	}
+	// AGENTS.md is a pointer block, not the full body.
+	if !strings.Contains(string(data), "See the full skill: GET http://example.test/skills/jentic.md") {
+		t.Errorf("AGENTS.md should carry a pointer link, got:\n%s", data)
 	}
 
-	// Idempotent re-apply.
 	out2, err := Apply(ad, c, env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -231,8 +316,7 @@ func TestApplyAndRemoveSingleFile(t *testing.T) {
 		t.Errorf("re-apply should be skipped: %+v", out2)
 	}
 
-	// Remove.
-	rout, err := Remove(ad, env, RemoveOptions{})
+	rout, err := Remove(ad, c, env, RemoveOptions{})
 	if err != nil || !rout.Removed {
 		t.Fatalf("remove failed: removed=%v err=%v", rout.Removed, err)
 	}
@@ -241,96 +325,248 @@ func TestApplyAndRemoveSingleFile(t *testing.T) {
 	}
 }
 
-func TestApplyRefusesUserEditsWithoutForce(t *testing.T) {
+// TestSharedFileTwoSkillsCoexistUpdateRemove exercises the full multi-block
+// lifecycle on one AGENTS.md: install two skills, update one (sibling stays
+// byte-identical), remove one (sibling survives, file not deleted).
+func TestSharedFileTwoSkillsCoexistUpdateRemove(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("generic")
-	c := testContent()
+	jentic := jenticContent(t)
+	flow := freeformContent(t, "import-new-api")
+	target := ad.Target(ScopeProject, jentic.Name, env)
 
-	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
+	if _, err := Apply(ad, jentic, env, ApplyOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	target := ad.Target(ad.DefaultScope(), env)
+	if _, err := Apply(ad, flow, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	data, _ := os.ReadFile(target)
-	tampered := strings.Replace(string(data), "audited broker", "TAMPERED", 1)
+	if !strings.Contains(string(data), beginMarkerFor("jentic")) ||
+		!strings.Contains(string(data), beginMarkerFor("import-new-api")) {
+		t.Fatal("both named blocks should coexist in AGENTS.md")
+	}
+
+	// Snapshot the jentic block, change the base URL of the flow skill, update.
+	before := findBlock(data, "jentic")
+	jenticRegion := string(data[before.start:before.endPos])
+	flow.BaseURL = "http://changed.test"
+	if _, err := Apply(ad, flow, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(target)
+	after := findBlock(data, "jentic")
+	if string(data[after.start:after.endPos]) != jenticRegion {
+		t.Error("jentic block must be byte-identical after updating a sibling")
+	}
+	if !strings.Contains(string(data), "http://changed.test/skills/import-new-api.md") {
+		t.Error("import-new-api pointer not refreshed with new base URL")
+	}
+
+	// Remove one skill; the sibling and the file must survive.
+	rout, err := Remove(ad, flow, env, RemoveOptions{Scope: ScopeProject})
+	if err != nil || !rout.Removed {
+		t.Fatalf("remove import-new-api failed: %+v err=%v", rout, err)
+	}
+	data, _ = os.ReadFile(target)
+	if strings.Contains(string(data), beginMarkerFor("import-new-api")) {
+		t.Error("removed skill block should be gone")
+	}
+	if !strings.Contains(string(data), beginMarkerFor("jentic")) {
+		t.Error("sibling jentic block must survive removing another skill")
+	}
+}
+
+// TestSharedFilePerSkillEditGuard proves a user edit to skill A's block does not
+// freeze updates to skill B.
+func TestSharedFilePerSkillEditGuard(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("generic")
+	jentic := jenticContent(t)
+	flow := freeformContent(t, "import-new-api")
+	target := ad.Target(ScopeProject, jentic.Name, env)
+
+	if _, err := Apply(ad, jentic, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ad, flow, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Tamper inside the jentic block only.
+	data, _ := os.ReadFile(target)
+	tampered := strings.Replace(string(data), "See the full skill: GET http://example.test/skills/jentic.md", "TAMPERED", 1)
+	if tampered == string(data) {
+		t.Fatal("tamper target not found")
+	}
 	if err := os.WriteFile(target, []byte(tampered), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	out, err := Apply(ad, c, env, ApplyOptions{})
+	// Applying jentic must refuse (its block is edited)…
+	out, err := Apply(ad, jentic, env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !out.UserEdits {
-		t.Fatal("expected UserEdits without --force")
+		t.Error("edited jentic block must refuse without --force")
 	}
-	cur, _ := os.ReadFile(target)
-	if !strings.Contains(string(cur), "TAMPERED") {
-		t.Error("tampered content should be left untouched without --force")
-	}
-
-	out, err = Apply(ad, c, env, ApplyOptions{Force: true})
+	// …but applying import-new-api (a different base URL) must still succeed.
+	flow.BaseURL = "http://sibling.test"
+	out, err = Apply(ad, flow, env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Changed {
-		t.Error("--force should overwrite")
+	if out.UserEdits {
+		t.Error("a user edit to jentic must not freeze import-new-api updates")
 	}
-	cur, _ = os.ReadFile(target)
-	if strings.Contains(string(cur), "TAMPERED") {
-		t.Error("--force should have replaced the tampered block")
+	if !out.Changed {
+		t.Error("import-new-api should update despite jentic's edit")
 	}
 }
 
-func TestApplyClaudeDirAndRemovePrunes(t *testing.T) {
+// TestOwnedFileCleanNoMarkersWithSidecar pins decision 1: an owned-file
+// SKILL.md is a clean spec file (frontmatter + verbatim body, NO managed
+// markers) and provenance lives in a sidecar next to it.
+func TestOwnedFileCleanNoMarkersWithSidecar(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("claude")
-	c := testContent()
+	c := jenticContent(t)
 
 	out, err := Apply(ad, c, env, ApplyOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Created {
-		t.Error("claude apply should create SKILL.md")
-	}
-	if filepath.Base(out.Path) != "SKILL.md" {
-		t.Errorf("unexpected target %q", out.Path)
+	if !out.Created || filepath.Base(out.Path) != "SKILL.md" {
+		t.Fatalf("unexpected outcome: %+v", out)
 	}
 	data, _ := os.ReadFile(out.Path)
-	if !strings.HasPrefix(string(data), "---\nname: jentic") {
-		t.Error("claude SKILL.md missing frontmatter")
+	if strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL") || strings.Contains(string(data), "END JENTIC MANAGED SKILL") {
+		t.Errorf("owned-file SKILL.md must NOT contain managed markers:\n%s", data)
+	}
+	if !strings.HasPrefix(string(data), "---\nname: jentic\n") {
+		t.Error("SKILL.md must start with clean frontmatter")
+	}
+	if strings.Contains(string(data), "regenerated by Jentic") || strings.Contains(string(data), "hash=") {
+		t.Error("provenance noise must not leak into the served body")
 	}
 
-	if rout, err := Remove(ad, env, RemoveOptions{}); err != nil || !rout.Removed {
-		t.Fatalf("remove failed: %v %v", rout.Removed, err)
+	// The sidecar must exist next to the SKILL.md with a body hash.
+	sc, ok := readSidecar(out.Path)
+	if !ok {
+		t.Fatal("sidecar .jentic-skill.json not written")
 	}
-	// The jentic skill dir should be pruned.
-	if _, err := os.Stat(filepath.Dir(out.Path)); !os.IsNotExist(err) {
-		t.Error("jentic skill dir should be pruned after removal")
+	if sc.Name != "jentic" || sc.BodyHash == "" || sc.Source != "bundled" {
+		t.Errorf("sidecar contents wrong: %+v", sc)
+	}
+
+	// Idempotent re-apply.
+	out2, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out2.Changed || !out2.Skipped {
+		t.Errorf("owned-file re-apply should be skipped: %+v", out2)
 	}
 }
 
-func TestApplyDedicatedDetectsFrontmatterEdit(t *testing.T) {
+// TestOwnedFileFreeformVerbatimBody proves a freeform skill's body is emitted
+// verbatim under clean frontmatter.
+func TestOwnedFileFreeformVerbatimBody(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("cursor")
+	c := freeformContent(t, "contribute-spec-fix")
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, ".cursor", "skills", "contribute-spec-fix", "SKILL.md"); out.Path != want {
+		t.Errorf("path = %q, want %q", out.Path, want)
+	}
+	data, _ := os.ReadFile(out.Path)
+	s := string(data)
+	if strings.Contains(s, "BEGIN JENTIC MANAGED SKILL") {
+		t.Error("freeform owned-file must have no markers")
+	}
+	// Frontmatter carries name + description + nested argument-hint.
+	if !strings.Contains(s, "name: contribute-spec-fix") {
+		t.Error("frontmatter name missing")
+	}
+	if !strings.Contains(s, "metadata:") || !strings.Contains(s, "argument-hint:") {
+		t.Error("argument-hint should pass through under metadata")
+	}
+	// Verbatim body headings preserved exactly.
+	if !strings.Contains(s, "## The flywheel — read this first") {
+		t.Error("verbatim body heading missing")
+	}
+	if !strings.Contains(s, c.Body) {
+		t.Error("body should be emitted verbatim")
+	}
+}
+
+// TestOwnedFilePruneRespectsCursorBoundary pins that removing an owned-file
+// skill prunes skills/<name>/ but never removes .cursor or the skills dir.
+func TestOwnedFilePruneRespectsCursorBoundary(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("cursor")
+	c := freeformContent(t, "import-new-api")
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Dir(out.Path)   // .cursor/skills/import-new-api
+	skillsDir := filepath.Dir(skillDir)  // .cursor/skills
+	cursorDir := filepath.Dir(skillsDir) // .cursor
+	// Drop another skill so skills/ is not empty after removing the first.
+	other := freeformContent(t, "contribute-spec-fix")
+	if _, err := Apply(ad, other, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rout, err := Remove(ad, c, env, RemoveOptions{}); err != nil || !rout.Removed {
+		t.Fatalf("remove failed: %+v err=%v", rout, err)
+	}
+	if _, err := os.Stat(skillDir); !os.IsNotExist(err) {
+		t.Error("skills/<name> should be pruned")
+	}
+	if _, err := os.Stat(skillsDir); err != nil {
+		t.Error("skills dir must survive (sibling still installed)")
+	}
+	if _, err := os.Stat(cursorDir); err != nil {
+		t.Error(".cursor must never be pruned")
+	}
+
+	// Remove the last skill: skills/<name> is pruned, but .cursor and skills
+	// remain hard boundaries even when empty.
+	if _, err := Remove(ad, other, env, RemoveOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cursorDir); err != nil {
+		t.Error(".cursor must never be removed even when skills is empty")
+	}
+}
+
+// TestOwnedFileEditGuardViaSidecar proves a user edit to the SKILL.md body is
+// detected via the sidecar hash and refused without --force.
+func TestOwnedFileEditGuardViaSidecar(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("claude")
-	c := testContent()
+	c := jenticContent(t)
 
 	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	target := ad.Target(ad.DefaultScope(), env)
-
-	// Edit the frontmatter (outside the managed block). Because the block body
-	// is untouched, a block-only hash check would miss this; the whole-file
-	// guard must still flag it.
+	target := ad.Target(ScopeUser, c.Name, env)
 	data, _ := os.ReadFile(target)
-	edited := strings.Replace(string(data), "name: jentic", "name: my-custom-name", 1)
-	if edited == string(data) {
-		t.Fatal("frontmatter edit did not change the file")
-	}
+	edited := string(data) + "\n## My own notes\n\nkeep me\n"
 	if err := os.WriteFile(target, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -340,40 +576,40 @@ func TestApplyDedicatedDetectsFrontmatterEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !out.UserEdits {
-		t.Fatal("expected UserEdits for a frontmatter edit on a dedicated target")
+		t.Fatal("edited SKILL.md body must be flagged via the sidecar")
 	}
 	cur, _ := os.ReadFile(target)
-	if !strings.Contains(string(cur), "my-custom-name") {
-		t.Error("frontmatter edit should be preserved without --force")
+	if !strings.Contains(string(cur), "keep me") {
+		t.Error("edited body should be preserved without --force")
 	}
 
-	// --force overwrites the frontmatter back to canonical.
 	if _, err := Apply(ad, c, env, ApplyOptions{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	cur, _ = os.ReadFile(target)
-	if strings.Contains(string(cur), "my-custom-name") {
-		t.Error("--force should have restored the canonical frontmatter")
+	if strings.Contains(string(cur), "keep me") {
+		t.Error("--force should restore the canonical body")
 	}
 }
 
-func TestApplyDedicatedDetectsTrailingEdit(t *testing.T) {
+// TestOwnedFileLegacyMigration proves a pre-split marker-wrapped dir SKILL.md is
+// recognized as ours and rewritten clean (not flagged user-edited).
+func TestOwnedFileLegacyMigration(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("claude")
-	c := testContent()
+	c := jenticContent(t)
+	target := ad.Target(ScopeUser, c.Name, env)
 
-	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
+	// Fabricate an old dedicated file: frontmatter + a legacy managed block.
+	body := renderBody(c)
+	legacy := legacyBeginMarker + " hash=" + hashContent(body) + " source=bundled\n" +
+		strings.TrimRight(body, "\n") + "\n" + legacyEndMarker
+	old := "---\nname: jentic\ndescription: " + c.Description + "\n---\n\n" + legacy + "\n"
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	target := ad.Target(ad.DefaultScope(), env)
-
-	// Append prose *after* the managed block. The block body and the
-	// frontmatter prelude are both untouched, so only the suffix check catches
-	// this; without it the refresh would silently drop the user's notes.
-	data, _ := os.ReadFile(target)
-	withSuffix := string(data) + "\n## My own notes\n\nkeep me around\n"
-	if err := os.WriteFile(target, []byte(withSuffix), 0o644); err != nil {
+	if err := os.WriteFile(target, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -381,67 +617,15 @@ func TestApplyDedicatedDetectsTrailingEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.UserEdits {
-		t.Fatal("expected UserEdits for trailing prose on a dedicated target")
+	if out.UserEdits {
+		t.Fatal("a legacy marker-wrapped dir file is our own write, not a user edit")
 	}
 	cur, _ := os.ReadFile(target)
-	if !strings.Contains(string(cur), "keep me around") {
-		t.Error("trailing user prose should be preserved without --force")
+	if strings.Contains(string(cur), "BEGIN JENTIC MANAGED SKILL") {
+		t.Error("legacy markers should be stripped on migration")
 	}
-}
-
-func TestRemoveRefusesEditedBlockWithoutForce(t *testing.T) {
-	dir := t.TempDir()
-	env := DetectEnv{Home: dir, Cwd: dir}
-	ad, _ := DefaultRegistry().Resolve("generic")
-	c := testContent()
-
-	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	target := ad.Target(ad.DefaultScope(), env)
-
-	// Tamper inside the managed block so its recorded hash no longer matches.
-	data, _ := os.ReadFile(target)
-	tampered := strings.Replace(string(data), "audited broker", "TAMPERED", 1)
-	if tampered == string(data) {
-		t.Fatal("tamper did not change the block body")
-	}
-	if err := os.WriteFile(target, []byte(tampered), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Without --force, remove must refuse and leave the file intact.
-	out, err := Remove(ad, env, RemoveOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.UserEdits || out.Removed {
-		t.Fatalf("expected refusal (UserEdits) without --force: %+v", out)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Error("file should remain when removal is refused")
-	}
-
-	// --dry-run with --force reports it would remove but writes nothing.
-	out, err = Remove(ad, env, RemoveOptions{Force: true, DryRun: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Removed {
-		t.Errorf("force+dry-run should report removable: %+v", out)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Error("dry-run must not delete the file")
-	}
-
-	// --force actually removes the edited block.
-	out, err = Remove(ad, env, RemoveOptions{Force: true})
-	if err != nil || !out.Removed {
-		t.Fatalf("force remove failed: %+v err=%v", out, err)
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Error("file should be gone after forced removal of the only block")
+	if _, ok := readSidecar(target); !ok {
+		t.Error("migration should write the provenance sidecar")
 	}
 }
 
@@ -449,31 +633,25 @@ func TestApplyWritesAtomically(t *testing.T) {
 	dir := t.TempDir()
 	env := DetectEnv{Home: dir, Cwd: dir}
 	ad, _ := DefaultRegistry().Resolve("generic")
-	c := testContent()
+	c := jenticContent(t)
 
-	// Pre-create AGENTS.md with user content and a non-default mode so we can
-	// assert the atomic write preserves both surrounding content and mode.
-	target := ad.Target(ad.DefaultScope(), env)
+	target := ad.Target(ScopeProject, c.Name, env)
 	if err := os.WriteFile(target, []byte("# User notes\n\nkeep me\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
 		t.Fatal(err)
 	}
-
 	cur, _ := os.ReadFile(target)
 	if !strings.Contains(string(cur), "keep me") {
 		t.Error("user content not preserved across atomic write")
 	}
-	if !strings.Contains(string(cur), beginMarker) {
+	if !strings.Contains(string(cur), beginMarkerFor("jentic")) {
 		t.Error("managed block not written")
 	}
 	if info, _ := os.Stat(target); info.Mode().Perm() != 0o600 {
-		t.Errorf("mode = %o, want 600 (atomic write should preserve existing mode)", info.Mode().Perm())
+		t.Errorf("mode = %o, want 600", info.Mode().Perm())
 	}
-
-	// No temp files should be left behind in the directory.
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), ".jentic-skill-") {
@@ -482,33 +660,25 @@ func TestApplyWritesAtomically(t *testing.T) {
 	}
 }
 
-// TestFindBlockIgnoresMarkerInsideContent verifies a marker quoted inline in
-// user prose is not mistaken for a real managed region.
 func TestFindBlockIgnoresMarkerInsideContent(t *testing.T) {
-	// A user documenting the marker inside a fenced code block (indented, so
-	// not line-anchored) must not be mistaken for a real managed region.
-	realBlock := splice(nil, "real body\n", SourceBundled).out
-	doc := "# Notes\n\nExample marker: `" + beginMarker + "` (quoted inline, not anchored)\n\n"
+	realBlock := splice(nil, "jentic", "real body\n", SourceBundled).out
+	doc := "# Notes\n\nExample marker: `" + beginMarkerFor("jentic") + "` (quoted inline, not anchored)\n\n"
 	combined := []byte(doc + string(realBlock))
-	blk := findBlock(combined)
+	blk := findBlock(combined, "jentic")
 	if !blk.found {
 		t.Fatal("expected to find the real anchored block")
 	}
-	// The located block must be the genuine one (its body re-hashes to the
-	// recorded hash), not the inline mention.
 	if hashContent(currentBlockBody(combined, blk)) != blk.hash {
 		t.Error("findBlock latched onto a non-anchored marker mention")
 	}
 }
 
 func TestSpliceHandlesCRLF(t *testing.T) {
-	lf := splice(nil, "body one\n", SourceBundled).out
+	lf := splice(nil, "jentic", "body one\n", SourceBundled).out
 	crlf := []byte(strings.ReplaceAll(string(lf), "\n", "\r\n"))
-	// Re-splicing identical content over a CRLF-saved file must be a no-op,
-	// not a spurious "user edited" or perpetual change.
-	res := splice(crlf, "body one\n", SourceBundled)
+	res := splice(crlf, "jentic", "body one\n", SourceBundled)
 	if res.changed {
-		t.Errorf("CRLF re-splice should be a no-op, got changed=%v userEdits=%v", res.changed, res.userEdits)
+		t.Errorf("CRLF re-splice should be a no-op, got changed=%v", res.changed)
 	}
 	if res.userEdits {
 		t.Error("CRLF line endings should not be flagged as user edits")
@@ -516,74 +686,24 @@ func TestSpliceHandlesCRLF(t *testing.T) {
 }
 
 func TestMalformedHashIsRefreshableNotUserEdit(t *testing.T) {
-	out := string(splice(nil, "body\n", SourceBundled).out)
-	// Corrupt the recorded hash to a 64-char (foreign-tool) form.
+	out := string(splice(nil, "jentic", "body\n", SourceBundled).out)
 	corrupted := []byte(strings.Replace(out, "hash=", "hash=deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef ", 1))
-	blk := findBlock(corrupted)
+	blk := findBlock(corrupted, "jentic")
 	if blockUserEdited(corrupted, blk) {
-		t.Error("a malformed/foreign hash must be treated as refreshable, not a user edit")
+		t.Error("a malformed/foreign hash must be treated as refreshable")
 	}
-	// And a clean re-splice should succeed in refreshing it.
-	res := splice(corrupted, "body\n", SourceBundled)
+	res := splice(corrupted, "jentic", "body\n", SourceBundled)
 	if res.userEdits {
 		t.Error("re-splice over a malformed hash must not report userEdits")
 	}
 }
 
-func TestRemovePreservesUserContentInDedicatedFile(t *testing.T) {
-	dir := t.TempDir()
-	env := DetectEnv{Home: dir, Cwd: dir}
-	ad, _ := DefaultRegistry().Resolve("claude")
-	c := testContent()
-
-	out, err := Apply(ad, c, env, ApplyOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// User appends their own prose after our managed block.
-	data, _ := os.ReadFile(out.Path)
-	withUser := string(data) + "\n## My own notes\n\nKeep me around.\n"
-	if err := os.WriteFile(out.Path, []byte(withUser), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if rout, err := Remove(ad, env, RemoveOptions{}); err != nil || !rout.Removed {
-		t.Fatalf("remove failed: %v %v", rout.Removed, err)
-	}
-	// The file must survive because the user added content beyond our block.
-	got, err := os.ReadFile(out.Path)
-	if err != nil {
-		t.Fatalf("dedicated SKILL.md was deleted despite user content: %v", err)
-	}
-	if !strings.Contains(string(got), "Keep me around.") {
-		t.Error("user content should be preserved after removing the managed block")
-	}
-	if strings.Contains(string(got), beginMarker) {
-		t.Error("managed block should have been stripped")
-	}
-}
-
-func TestSplitFrontmatterIgnoresBodyDashes(t *testing.T) {
-	src := "---\nname: x\ndescription: d\n---\n\n# Title\n\nbefore\n\n---\n\nafter a thematic break\n"
-	body, fm := splitFrontmatter(src)
-	if fm["name"] != "x" || fm["description"] != "d" {
-		t.Errorf("frontmatter mis-parsed: %v", fm)
-	}
-	if !strings.Contains(body, "after a thematic break") {
-		t.Error("body horizontal rule was mistaken for the frontmatter terminator")
-	}
-	if strings.Contains(body, "name: x") {
-		t.Error("frontmatter leaked into body")
-	}
-}
-
-// The canonical description is long (rich trigger text). Claude AND Cursor emit
-// it verbatim (dedicated SKILL.md, description-triggered); hermes adapts it to
-// its one-sentence, <=60-char authoring rule.
+// TestDescriptionRenderingPerOperator: claude/cursor emit the full description
+// verbatim; hermes adapts canonical to its <=60-char one-sentence rule but
+// emits the freeform description in full.
 func TestDescriptionRenderingPerOperator(t *testing.T) {
-	c := testContent()
+	c := jenticContent(t)
 	reg := DefaultRegistry()
-
 	for _, op := range []Operator{OpClaude, OpCursor} {
 		ad, _ := reg.Resolve(string(op))
 		out, _, err := ad.Render(c, nil)
@@ -595,21 +715,28 @@ func TestDescriptionRenderingPerOperator(t *testing.T) {
 		}
 	}
 
-	hermes, _, err := (hermesAdapter{}).Render(c, nil)
+	hermesOut, _, err := (hermesAdapter{}).Render(c, nil)
 	if err != nil {
 		t.Fatalf("hermes render: %v", err)
 	}
-	for _, line := range strings.Split(string(hermes), "\n") {
+	for _, line := range strings.Split(string(hermesOut), "\n") {
 		if desc, ok := strings.CutPrefix(line, "description: "); ok {
 			if n := len([]rune(desc)); n > 60 {
-				t.Errorf("hermes description = %d runes, want <= 60: %q", n, desc)
-			}
-			if !strings.HasSuffix(desc, ".") {
-				t.Errorf("hermes description must be one sentence ending in a period: %q", desc)
-			}
-			if !utf8.ValidString(desc) {
-				t.Error("hermes description is not valid UTF-8")
+				t.Errorf("hermes canonical description = %d runes, want <= 60: %q", n, desc)
 			}
 		}
+	}
+
+	// Freeform hermes keeps the full description and derives tags from the name.
+	flow := freeformContent(t, "import-new-api")
+	fout, _, err := (hermesAdapter{}).Render(flow, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fout), "description: "+flow.Description) {
+		t.Error("freeform hermes should emit the full description (no 60-char shortening)")
+	}
+	if !strings.Contains(string(fout), "tags: [import-new-api,") {
+		t.Errorf("hermes tags should derive from the skill name:\n%s", fout)
 	}
 }

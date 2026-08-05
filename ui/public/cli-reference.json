@@ -1205,17 +1205,17 @@
           "name": "skill",
           "path": "jentic skill",
           "use": "skill",
-          "short": "Generate the Jentic CLI-usage skill into your agent's native layout",
-          "long": "skill writes a \"how to use Jentic via the CLI\" skill into each supported\nagent runtime's native layout — a dedicated SKILL.md for claude-code,\ncursor, and hermes, or a spliced block in AGENTS.md for codex and generic —\nso the agent knows the platform loop (register -\u003e request access -\u003e\nsearch/inspect/execute) without you hand-writing anything.\n\nWrites are idempotent: generated content lives in a clearly-marked managed\nblock, so re-running never clobbers your own edits around it.",
+          "short": "Generate the Jentic skill set into your agent's native layout",
+          "long": "skill writes the Jentic skill set into each supported agent runtime's\nnative layout — a clean, spec-conformant SKILL.md per skill for\nclaude-code, cursor, and hermes, or a named pointer block in AGENTS.md\nfor codex and generic — so the agent discovers how to use Jentic and the\nspec-flywheel skills without you hand-writing anything.\n\nThe shipped set is jentic (how to use the CLI), contribute-spec-fix, and\nimport-new-api; pass --skill to install a subset.\n\nWrites are idempotent: owned SKILL.md files carry provenance in a sidecar\nand AGENTS.md content lives in named managed blocks, so re-running never\nclobbers your own edits around them.",
           "group_title": "Find and run operations",
           "subcommands": [
             {
               "name": "init",
               "path": "jentic skill init",
               "use": "init",
-              "short": "Generate the Jentic skill for one or more operators",
-              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic\nCLI-usage skill into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run).\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
-              "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --all --yes\n  jentic skill init --operator generic --dry-run",
+              "short": "Generate the Jentic skill set for one or more operators",
+              "long": "init detects which agent runtimes you have, lets you pick the targets\nand placement (or pass --operator/--scope), and writes the Jentic skill\nset into each one's native layout.\n\nPassing --operator or --all skips every prompt, including the placement\none: each operator uses its default scope unless --scope is given\n(preview with --dry-run). --skill limits the set (default: all shipped\nskills); there is no interactive skill picker.\n\nNon-interactively (--yes, pipes, agent sessions) it defaults to the\ndetected operators, echoing each resolved path before writing.",
+              "example": "  jentic skill init\n  jentic skill init --operator claude,cursor\n  jentic skill init --skill jentic --all --yes\n  jentic skill init --operator generic --dry-run",
               "flags": [
                 {
                   "name": "all",
@@ -1238,7 +1238,7 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "overwrite a managed block you have manually edited"
+                  "usage": "overwrite content you have manually edited"
                 },
                 {
                   "name": "operator",
@@ -1252,6 +1252,12 @@
                   "usage": "placement scope: user or project (default: per-operator)"
                 },
                 {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to install (repeatable or comma-separated; default: all shipped)"
+                },
+                {
                   "name": "yes",
                   "type": "bool",
                   "default": "false",
@@ -1263,7 +1269,7 @@
               "name": "list",
               "path": "jentic skill list",
               "use": "list",
-              "short": "Show supported operators: which are detected and where the skill is installed",
+              "short": "Show supported operators and where each skill is installed",
               "flags": [
                 {
                   "name": "json",
@@ -1274,11 +1280,50 @@
               ]
             },
             {
+              "name": "update",
+              "path": "jentic skill update",
+              "use": "update",
+              "short": "Re-render installed skills with the current base URL",
+              "long": "update re-renders every installed (skill, operator, scope) with the\ncurrently resolved base URL and rewrites it when the recorded content\nhash differs. A base-URL change therefore legitimately rewrites the\njentic skill (its body carries the interpolated URL). Manually-edited\ncontent is reported and left alone unless --force.",
+              "example": "  jentic skill update\n  jentic skill update --operator claude\n  jentic skill update --skill jentic --force",
+              "flags": [
+                {
+                  "name": "base-url",
+                  "type": "string",
+                  "usage": "Jentic control-plane base URL"
+                },
+                {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "print what would change without writing"
+                },
+                {
+                  "name": "force",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "overwrite content you have manually edited"
+                },
+                {
+                  "name": "operator",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "operators to update (repeatable or comma-separated; default: all)"
+                },
+                {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to update (repeatable or comma-separated; default: all shipped)"
+                }
+              ]
+            },
+            {
               "name": "remove",
               "path": "jentic skill remove",
               "use": "remove",
-              "short": "Remove the managed Jentic skill from one or more operators",
-              "example": "  jentic skill remove --operator cursor\n  jentic skill remove --operator cursor --dry-run\n  jentic skill remove --all --force",
+              "short": "Remove installed Jentic skills from one or more operators",
+              "example": "  jentic skill remove --operator cursor\n  jentic skill remove --skill import-new-api --operator cursor\n  jentic skill remove --all --force",
               "flags": [
                 {
                   "name": "all",
@@ -1296,7 +1341,7 @@
                   "name": "force",
                   "type": "bool",
                   "default": "false",
-                  "usage": "remove even a managed block you have manually edited"
+                  "usage": "remove even content you have manually edited"
                 },
                 {
                   "name": "operator",
@@ -1308,6 +1353,12 @@
                   "name": "scope",
                   "type": "string",
                   "usage": "placement scope to remove from: user or project (default: every scope where the skill is installed)"
+                },
+                {
+                  "name": "skill",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "skills to remove (repeatable or comma-separated; default: all shipped)"
                 }
               ]
             }

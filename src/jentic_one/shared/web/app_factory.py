@@ -461,12 +461,12 @@ def create_surface_app(
         # silently falls back to the default broker.
         app.state.broker = container.broker
         app.state.broker_factory = lambda _runner: container.broker
-    # Public, schema-hidden agent-discovery documents (onboarding skill +
+    # Public, schema-hidden agent-discovery documents (the skill set +
     # llms.txt). Mounted on every standalone surface so split deployments
     # (gateway proxying to per-surface backends) serve them too. Registered
     # *before* the surface routers and the container extension seam so neither
     # the broker's /{upstream_url:path} catch-all nor an injected extra router
-    # can shadow these four literal paths.
+    # can shadow the discovery paths (the /skills/* routes and llms.txt).
     app.include_router(get_agent_discovery_router())
     for router, _prefix, tags in routers:
         app.include_router(router, tags=list(tags), responses=COMMON_ERROR_RESPONSES)
@@ -551,11 +551,11 @@ def create_combined_app(
         """
         return JSONResponse({"status": "ok", "version": __version__})
 
-    # Public, schema-hidden agent-discovery documents: the onboarding skill
-    # (GET /skills/jentic.md, GET /SKILL.md) and llms.txt (GET /llms.txt,
-    # GET /.well-known/llms.txt) — see #651 / #809. Registered before the
-    # surfaces so no surface route can shadow them (same order as
-    # create_surface_app).
+    # Public, schema-hidden agent-discovery documents: the skill set
+    # (GET /skills/{name}.md, the GET /SKILL.md alias, GET /skills/index.json)
+    # and llms.txt (GET /llms.txt, GET /.well-known/llms.txt) — see #651 / #809.
+    # Registered before the surfaces so no surface route can shadow them (same
+    # order as create_surface_app).
     root.include_router(get_agent_discovery_router())
 
     for surface in apps:
