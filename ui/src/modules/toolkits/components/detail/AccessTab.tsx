@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Button, DetailSection, EmptyRow, ErrorAlert } from '@/shared/ui';
 import { OperationsSummary } from '@/shared/app';
+import { apiIdentityTuple, toolkitCredDisplayName } from '@/shared/lib';
 import { useToolkitBindings, useUnbindCredential } from '@/modules/toolkits/api';
 import { BindCredentialDialog } from '@/modules/toolkits/components/BindCredentialDialog';
 import { CredentialPermissionEditor } from '@/modules/toolkits/components/CredentialPermissionEditor';
@@ -70,6 +71,25 @@ export function AccessTab({
 					<AnimatePresence initial={false}>
 						{bindings.map((cred) => {
 							const displayRules = toDisplayRules(cred.permissions);
+							// Heading = the user's own credential label when set, so a
+							// renamed credential leads with that name (matching the
+							// credentials page). Fall back to the friendly API name, then
+							// the credential id, so the row never renders blank.
+							const heading =
+								cred.label || toolkitCredDisplayName(cred) || cred.credential_id;
+							// Muted technical subtitle: the persisted catalog slug when
+							// recorded, else the raw vendor/name tuple via the shared
+							// helper (a tuple-shaped `api_name` can't render the vendor
+							// twice). `credential_id` is the last-resort fallback for
+							// telling identically labelled rows apart (matching Overview
+							// and the picker) — unless the heading already IS the id, in
+							// which case repeating it is pure noise.
+							const subtitle =
+								apiIdentityTuple({
+									catalogApiId: cred.catalog_api_id,
+									vendor: cred.api_vendor,
+									name: cred.api_name,
+								}) || (heading === cred.credential_id ? '' : cred.credential_id);
 							return (
 								<motion.div
 									key={cred.credential_id}
@@ -81,11 +101,11 @@ export function AccessTab({
 									<div className="flex flex-wrap items-center gap-3 px-4 py-3">
 										<div className="min-w-0 flex-1 basis-40">
 											<span className="text-foreground text-sm font-medium">
-												{cred.label ?? cred.credential_id}
+												{heading}
 											</span>
-											{(cred.api_name || cred.api_vendor) && (
+											{subtitle && (
 												<p className="text-muted-foreground truncate font-mono text-xs">
-													{cred.api_name ?? cred.api_vendor}
+													{subtitle}
 												</p>
 											)}
 										</div>

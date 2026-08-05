@@ -28,6 +28,7 @@ CREDENTIALS_WRITE = "credentials:write"
 APIS_READ = "apis:read"
 APIS_WRITE = "apis:write"
 CATALOG_IMPORT = "catalog:import"
+OVERLAYS_CONFIRM = "overlays:confirm"
 EXECUTIONS_READ = "executions:read"
 AUDIT_READ = "audit:read"
 AGENTS_READ = "agents:read"
@@ -69,6 +70,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 APIS_READ,
                 APIS_WRITE,
                 CATALOG_IMPORT,
+                OVERLAYS_CONFIRM,
                 EXECUTIONS_READ,
                 AUDIT_READ,
                 AGENTS_WRITE,
@@ -146,6 +148,14 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     CATALOG_IMPORT: Permission(
         name=CATALOG_IMPORT,
         description="Import an API from the public catalog into the local registry",
+        implies=frozenset({APIS_READ}),
+    ),
+    OVERLAYS_CONFIRM: Permission(
+        name=OVERLAYS_CONFIRM,
+        description=(
+            "Confirm a pending overlay, rewriting the API's served spec "
+            "(operator action; not granted to agents by default)"
+        ),
         implies=frozenset({APIS_READ}),
     ),
     EXECUTIONS_READ: Permission(

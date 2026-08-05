@@ -15,8 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from jentic_one.registry.repos.revision_repo import RegisteredSpec
+from jentic_one.registry.services.catalog import manifest_builder as mb
 from jentic_one.registry.services.catalog.fetch import ConditionalFetch
-from jentic_one.registry.services.catalog.service import CatalogService
+from jentic_one.registry.services.catalog.service import CatalogService, _is_upstream_tracked
 from jentic_one.registry.services.errors import CatalogUnavailableError
 from jentic_one.shared.models.events import EventType
 
@@ -31,6 +32,7 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     ctx.config.catalog.update_sweep_deadline_seconds = 300
     ctx.config.catalog.update_sweep_max_concurrency = 4
     ctx.config.ingest = MagicMock()
+    ctx.update_sweep_lock = asyncio.Lock()
     session = AsyncMock()
     for db in (ctx.registry_db, ctx.admin_db):
         db.transaction.return_value.__aenter__ = AsyncMock(return_value=session)
@@ -40,7 +42,12 @@ def _make_ctx(*, interval: int = 86400) -> MagicMock:
     return ctx
 
 
-def _spec(digest: str | None = "local-digest") -> RegisteredSpec:
+def _spec(
+    digest: str | None = "local-digest",
+    *,
+    origin: str | None = "catalog",
+    overlay_base_digest: str | None = None,
+) -> RegisteredSpec:
     return RegisteredSpec(
         api_id=_API_ID,
         source_url="https://raw.githubusercontent.com/x/y/main/openapi.json",
@@ -48,16 +55,30 @@ def _spec(digest: str | None = "local-digest") -> RegisteredSpec:
         vendor="acme",
         name="widgets",
         version="1.0.0",
+        origin=origin,
+        overlay_base_digest=overlay_base_digest,
     )
 
 
 def _check(
-    *, last_checked_at: datetime | None, etag: str | None, notified: str | None
+    *,
+    last_checked_at: datetime | None,
+    etag: str | None,
+    notified: str | None,
+    notified_class: str | None = EventType.CATALOG_UPDATE_AVAILABLE,
 ) -> MagicMock:
     row = MagicMock()
     row.last_checked_at = last_checked_at
     row.last_seen_etag = etag
     row.last_notified_digest = notified
+    # Default to the plain-update class so a "already notified this digest" row dedupes
+    # against a plain update (the common case). Tests exercising the overlay-conflict
+    # class pass notified_class explicitly.
+    row.last_notified_event_class = notified_class if notified is not None else None
+    # C1 snooze fields default to "not snoozed" — a bare MagicMock attr is a truthy mock,
+    # which would make _is_snoozed spuriously suppress emits in unrelated tests.
+    row.snoozed_digest = None
+    row.snoozed_until = None
     return row
 
 
@@ -163,7 +184,7 @@ async def test_probe_change_emits_event_once() -> None:
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
-        assert emit_kwargs["requires_action"] is False
+        assert emit_kwargs["requires_action"] is True
         assert emit_kwargs["data"]["upstream_digest"] == "upstream-new"
         upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
         assert upsert_kwargs["notified_digest"] == "upstream-new"
@@ -216,6 +237,229 @@ async def test_probe_upstream_matches_registered_is_noop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_overlay_conflict_emits_conflict_class() -> None:
+    """Overlay-origin served revision + upstream ≠ overlay base → conflict class.
+
+    The served spec was produced by materializing an overlay over a base whose digest
+    we recorded (``overlay_base_digest``). When upstream now differs from that base,
+    adopting it would supersede the overlay, so the sweep classifies the change as
+    ``CATALOG_UPDATE_CONFLICTS_OVERLAY`` (an operator decision), not a routine update.
+    """
+    svc = CatalogService(_make_ctx())
+    overlay = MagicMock()
+    overlay.id = "ovr_live"
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(
+            f"{_SWEEP}.OverlayRepository.get_live_confirmed_for_api",
+            new_callable=AsyncMock,
+            return_value=overlay,
+        ),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        # Overlaid served digest is "overlaid"; the base it was built over is "base-old".
+        spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
+        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        emit.assert_awaited_once()
+        emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
+        assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        assert emit_kwargs["data"]["event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        assert emit_kwargs["data"]["overlay_base_digest"] == "base-old"
+        # The conflict event deep-links to the live overlay so a UI/CLI can keep/rollback.
+        assert emit_kwargs["data"]["overlay_id"] == "ovr_live"
+        # L1 (#920): the conflict carries a structured "why" — the three digests that pin
+        # the collision (base the overlay was built on, served, diverged upstream).
+        conflict = emit_kwargs["data"]["conflict"]
+        assert conflict == {
+            "base_digest": "base-old",
+            "served_digest": "overlaid",
+            "upstream_digest": "upstream-new",
+        }
+        upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
+        assert upsert_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+
+
+@pytest.mark.asyncio
+async def test_probe_suppresses_emit_when_snoozed() -> None:
+    """C1: an active snooze on the observed upstream digest suppresses the emit.
+
+    The sweep still runs the upsert (so dedupe stays consistent + the outdated-set
+    exclusion applies) but skips creating a new inbox/rail item.
+    """
+    svc = CatalogService(_make_ctx())
+    snoozed_check = _check(
+        last_checked_at=None,
+        etag=None,
+        notified=None,
+    )
+    snoozed_check.snoozed_digest = "upstream-new"
+    snoozed_check.snoozed_until = None
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            return_value=snoozed_check,
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        # Still recorded the observation, but did NOT emit.
+        upsert.assert_awaited()
+        emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_probe_records_notify_metric() -> None:
+    """L6: a real notify increments the Flow-3 emit counter."""
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.record_update_notified") as metric,
+    ):
+        await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
+        metric.assert_called_once_with(EventType.CATALOG_UPDATE_AVAILABLE)
+
+
+@pytest.mark.asyncio
+async def test_probe_overlay_upstream_matches_base_is_plain_noop() -> None:
+    """Overlay-origin, but upstream still equals the overlay's base → no conflict.
+
+    If upstream matches the base the overlay was built on, the operator's fix is still
+    valid against the current upstream — there's nothing to reconcile. (Here upstream
+    also equals the served digest, so it's a full no-op; the point is that base-equality
+    never yields the conflict class.)
+    """
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v1"', content=b"{}", digest="base-old"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
+        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        # Upstream == base != served("overlaid"); classified plain-update, and it emits
+        # once (a genuine change vs the served spec) — never the conflict class.
+        emit.assert_awaited_once()
+        emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
+        assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_probe_overlay_unknown_base_falls_back_to_plain() -> None:
+    """A pre-A2 overlay revision (NULL base digest) can't prove a conflict → plain class.
+
+    We can't assert the upstream collides with the overlay's base when we never recorded
+    that base, so the safe fallback is the non-alarming plain-update class. The column
+    self-heals on the next re-materialize.
+    """
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get", new_callable=AsyncMock, return_value=None
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest=None)
+        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        emit.assert_awaited_once()
+        emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
+        assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_probe_reclassified_digest_re_emits_once() -> None:
+    """Same digest, different class → the widened dedupe key re-fires exactly once.
+
+    A digest previously notified as a plain update can later re-classify (e.g. the served
+    revision becomes an overlay whose base the upstream now collides with). Deduping on
+    the digest alone would wrongly swallow the conflict; deduping on
+    ``(digest, event_class)`` lets the new class fire once.
+    """
+    svc = CatalogService(_make_ctx())
+    with (
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.get",
+            new_callable=AsyncMock,
+            # Already notified this exact digest, but under the plain-update class.
+            return_value=_check(
+                last_checked_at=None,
+                etag=None,
+                notified="upstream-new",
+                notified_class=EventType.CATALOG_UPDATE_AVAILABLE,
+            ),
+        ),
+        patch(
+            f"{_SWEEP}.fetch_bytes_conditional",
+            new_callable=AsyncMock,
+            return_value=ConditionalFetch(
+                not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
+            ),
+        ),
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(
+            f"{_SWEEP}.OverlayRepository.get_live_confirmed_for_api",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+    ):
+        # Now overlay-origin with a base the upstream digest differs from → conflict class.
+        spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
+        await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
+        emit.assert_awaited_once()
+        emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
+        assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
+        assert upsert_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+
+
+@pytest.mark.asyncio
 async def test_sweep_isolates_per_api_failures() -> None:
     """A probe that raises for one API does not abort the rest of the sweep."""
     svc = CatalogService(_make_ctx())
@@ -235,6 +479,7 @@ async def test_sweep_isolates_per_api_failures() -> None:
 
 def test_catalog_update_event_in_all_frozenset() -> None:
     assert EventType.CATALOG_UPDATE_AVAILABLE in EventType.ALL
+    assert EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY in EventType.ALL
 
 
 @pytest.mark.asyncio
@@ -251,6 +496,24 @@ async def test_sweep_no_candidates_is_noop() -> None:
     ):
         await svc._run_update_notify_sweep()
         fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_when_lock_already_held() -> None:
+    """A sweep in flight (lock held) makes a concurrent trigger skip, not double-run.
+
+    Guards the in-process double-emit fix: the scanner and the read-path trigger share
+    ``Context.update_sweep_lock``; the second one to start must bail before touching the DB.
+    """
+    ctx = _make_ctx()
+    svc = CatalogService(ctx)
+    await ctx.update_sweep_lock.acquire()  # simulate an in-flight sweep
+    try:
+        with patch(f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify") as specs:
+            await svc._run_update_notify_sweep()
+            specs.assert_not_called()
+    finally:
+        ctx.update_sweep_lock.release()
 
 
 @pytest.mark.asyncio
@@ -383,6 +646,7 @@ async def test_sweep_bounds_concurrency() -> None:
             vendor="acme",
             name="widgets",
             version="1.0.0",
+            origin="catalog",
         )
         for i in range(6)
     ]
@@ -407,3 +671,139 @@ async def test_sweep_bounds_concurrency() -> None:
         await svc._run_update_notify_sweep()
 
     assert peak <= 2
+
+
+# ── origin-scoped candidate selection (Phase 4, OQ-3) ────────────────────────
+
+
+def test_is_upstream_tracked_catalog_origin_always() -> None:
+    spec = _spec(origin="catalog")
+    assert _is_upstream_tracked(spec, set()) is True
+
+
+def test_is_upstream_tracked_overlay_only_when_source_in_manifest() -> None:
+    spec = _spec(origin="overlay")
+    assert _is_upstream_tracked(spec, set()) is False
+    assert _is_upstream_tracked(spec, {spec.source_url}) is True
+
+
+def test_is_upstream_tracked_manual_only_when_source_in_manifest() -> None:
+    spec = _spec(origin=None)
+    assert _is_upstream_tracked(spec, set()) is False
+    assert _is_upstream_tracked(spec, {spec.source_url}) is True
+
+
+def test_is_upstream_tracked_other_origin_skipped() -> None:
+    spec = _spec(origin="imported")
+    assert _is_upstream_tracked(spec, {spec.source_url}) is False
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_manual_spec_not_in_manifest() -> None:
+    """A manual import whose source_url is not a catalog entry is never probed."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    manual = _spec(origin=None)
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[manual],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+            return_value=set(),  # not in the manifest → skipped
+        ),
+        patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
+    ):
+        await svc._run_update_notify_sweep()
+    probe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sweep_probes_overlay_spec_in_manifest() -> None:
+    """An overlay-origin revision whose source_url is a catalog entry is probed."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    overlay = _spec(origin="overlay")
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[overlay],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+            return_value={overlay.source_url},
+        ),
+        patch.object(svc, "_probe_one", new_callable=AsyncMock) as probe,
+    ):
+        await svc._run_update_notify_sweep()
+    probe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_manifest_query_for_pure_catalog() -> None:
+    """No manifest coverage query when every candidate is catalog-origin (common case)."""
+    ctx = _make_ctx(interval=86400)
+    svc = CatalogService(ctx)
+    with (
+        patch(
+            f"{_SWEEP}.ApiRevisionRepository.registered_specs_for_notify",
+            new_callable=AsyncMock,
+            return_value=[_spec(origin="catalog")],
+        ),
+        patch(
+            f"{_SWEEP}.CatalogRepository.manifest_spec_urls",
+            new_callable=AsyncMock,
+        ) as spec_urls,
+        patch.object(svc, "_probe_one", new_callable=AsyncMock),
+    ):
+        await svc._run_update_notify_sweep()
+    spec_urls.assert_not_called()
+
+
+# ── catalog entry view: update_available derivation (Phase 4) ────────────────
+
+
+def _entry(
+    spec_url: str = "https://raw.githubusercontent.com/x/y/main/openapi.json",
+) -> mb.ManifestEntry:
+    return mb.ManifestEntry.from_dict(
+        {"api_id": "acme.com", "vendor": "acme.com", "path": "apis/acme", "spec_url": spec_url}
+    )
+
+
+def test_to_view_update_available_only_when_registered_and_outdated() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    # Registered + outdated → True.
+    v = CatalogService._to_view(entry, {url}, {url})
+    assert v.registered is True
+    assert v.update_available is True
+
+
+def test_to_view_not_outdated_when_not_registered() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    # In the outdated set but NOT registered locally → never update_available.
+    v = CatalogService._to_view(entry, set(), {url})
+    assert v.registered is False
+    assert v.update_available is False
+
+
+def test_to_view_registered_not_outdated() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    v = CatalogService._to_view(entry, {url}, set())
+    assert v.registered is True
+    assert v.update_available is False
+
+
+def test_to_view_defaults_when_outdated_set_omitted() -> None:
+    entry = _entry()
+    url = entry.spec_url or ""
+    v = CatalogService._to_view(entry, {url})
+    assert v.update_available is False

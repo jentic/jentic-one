@@ -121,6 +121,9 @@ _OPERATOR_SCOPES: frozenset[str] = frozenset(
         "service-accounts:write",
         "audit:read",
         "events:write",
+        # Confirming an overlay rewrites the served spec — a human operator action,
+        # never an agent default (excluded from GRANTABLE_SCOPES/DEFAULT_AGENT_SCOPES).
+        "overlays:confirm",
     }
 )
 

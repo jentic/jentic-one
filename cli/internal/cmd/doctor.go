@@ -198,12 +198,41 @@ func (d *doctor) checkServer() {
 	d.checkDeploy(section)
 }
 
+// doctorDockerProbe is the seam doctor's deploy check runs through so tests can
+// simulate a stopped daemon without a real Docker. It returns a short reason
+// (empty when healthy) and whether the daemon answered. It is a fast,
+// single-round-trip probe (distinct from install's ~30s polling probe): doctor
+// is read-only and must not block for the full cold-start window when the daemon
+// is simply down. The ctx lets doctor's overall run be canceled (Ctrl-C).
+var doctorDockerProbe = func(ctx context.Context) (string, bool) {
+	return install.DockerDaemonResponsiveQuick(ctx, 2*time.Second)
+}
+
 func (d *doctor) checkDeploy(section string) {
 	composePath := d.app.Paths.ComposePath()
 	if proc.FileExists(composePath) {
+		// A compose install needs a live daemon. Probe it directly so a stopped
+		// daemon is reported explicitly rather than inferred from a cryptic
+		// `docker compose ps` error (#783). Keep it a warning, not a fail: doctor
+		// is documented as safe to wire into CI ("warnings keep a zero exit"),
+		// and the sibling `control`/`compose ps` checks also warn on a
+		// not-running dependency — a down daemon shouldn't flip the exit code.
+		if detail, healthy := doctorDockerProbe(d.ctx); !healthy {
+			// A missing binary points at install docs; a present-but-down
+			// daemon points at starting it (#954).
+			hint := install.DockerDaemonRecoveryHint() + ", then `jenticctl start`"
+			name := "docker daemon"
+			if install.DockerNotInstalled(detail) {
+				hint = install.DockerNotInstalledHint()
+				name = "docker"
+			}
+			d.add(section, name, statusWarn, detail, hint)
+			return
+		}
 		out, err := install.ComposePs(composePath)
 		if err != nil {
-			d.add(section, "deploy", statusWarn, "docker compose ps failed: "+err.Error(), "is the Docker daemon running?")
+			d.add(section, "deploy", statusWarn, "docker compose ps failed: "+err.Error(),
+				install.DockerDaemonRecoveryHint())
 			return
 		}
 		d.add(section, "deploy", statusPass, "docker compose ("+composeSummary(out)+")", "")

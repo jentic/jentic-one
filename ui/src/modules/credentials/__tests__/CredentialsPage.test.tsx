@@ -219,7 +219,10 @@ describe('CredentialsPage', () => {
 		await screen.findByText('No credentials stored');
 		await user.click(screen.getByRole('button', { name: /add your first credential/i }));
 		await user.type(screen.getByLabelText('Search APIs'), 'acme');
-		await user.click(await screen.findByText('acme.com'));
+		// Catalog rows title from the `api_id` slug exactly like Discover
+		// (#910): a bare-domain entry reads `acme.com` verbatim (it also
+		// appears as the mono subtitle, so pick the first match).
+		await user.click((await screen.findAllByText('acme.com'))[0]);
 
 		// The summary chip now signals the upcoming :import via an inline
 		// subtitle (replacing the old standalone badge) — the wording matches

@@ -18,7 +18,7 @@ import {
 	EmptyRow,
 	ErrorAlert,
 } from '@/shared/ui';
-import { ruleSummary } from '@/shared/lib';
+import { apiIdentityTuple, ruleSummary, toolkitCredDisplayName } from '@/shared/lib';
 import {
 	useLinkAgentToToolkit,
 	useToolkit,
@@ -235,10 +235,16 @@ export function OverviewTab({
 									</div>
 									<div className="min-w-0 flex-1 basis-40">
 										<span className="text-foreground block truncate text-sm font-medium">
-											{cred.label ?? cred.credential_id}
+											{cred.label ||
+												toolkitCredDisplayName(cred) ||
+												cred.credential_id}
 										</span>
 										<p className="text-muted-foreground truncate font-mono text-xs">
-											{cred.api_name ?? cred.api_vendor ?? cred.credential_id}
+											{apiIdentityTuple({
+												catalogApiId: cred.catalog_api_id,
+												vendor: cred.api_vendor,
+												name: cred.api_name,
+											}) || cred.credential_id}
 										</p>
 										{/* The grant's gist in the platform's rule voice —
 										    "Blocks DELETE; Allows GET on 3 operations". */}

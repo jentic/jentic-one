@@ -1,6 +1,6 @@
 // Package skillgen renders one canonical "how to use Jentic via the CLI" skill
 // into each supported agent runtime's ("operator") native skill/instruction
-// layout. It is the engine behind `jentic skill init/list/update/remove`: the
+// layout. It is the engine behind `jentic skill init/list/remove`: the
 // canonical content (bundled now, hosted via #277 later) is shared, and a small
 // per-operator Adapter owns where the file lives and how it is formatted.
 //

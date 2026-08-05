@@ -62,7 +62,7 @@ export type StreamSeverity = 'critical' | 'error' | 'warning' | 'info';
  * the backend adds later so the rail never crashes on an unknown type.
  */
 export type StreamKind =
-	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'other';
+	'import' | 'execution' | 'access_request' | 'credential' | 'agent' | 'catalog' | 'other';
 
 /** Tokens lifted from `EventResponse` (`trace_id` + the free-form `data` map). */
 export type StreamTokens = {
@@ -74,6 +74,21 @@ export type StreamTokens = {
 	execution_id?: string;
 	access_request_id?: string;
 	agent_id?: string;
+	// Catalog/overlay events carry the affected API's identity triple (so the
+	// row can deep-link to its Workspace detail page) plus the overlay id for
+	// overlay-lifecycle events and conflict metadata.
+	api_id?: string;
+	vendor?: string;
+	name?: string;
+	version?: string;
+	overlay_id?: string;
+};
+
+/** Conflict digests from a `catalog.update_conflicts_overlay` event's `data.conflict`. */
+export type ConflictDigests = {
+	base_digest?: string;
+	served_digest?: string;
+	upstream_digest?: string;
 };
 
 /** Deep-links carried by `EventResponse._links` (HAL-style). */
@@ -102,6 +117,8 @@ export type StreamEvent = {
 	requiresAction: boolean;
 	acknowledged: boolean;
 	acknowledgedAt?: number;
+	/** Conflict digests for a `catalog.update_conflicts_overlay` event (L5 "why"). */
+	conflict?: ConflictDigests;
 	// Stable key for grouping. Format: "<kind>:<type>:<trace|''>".
 	groupKey: string;
 };
@@ -124,12 +141,21 @@ const KNOWN_KINDS = new Set<StreamKind>([
 	'access_request',
 	'credential',
 	'agent',
+	'catalog',
 ]);
 
-/** Namespace before the first dot → `StreamKind` (`other` for anything else). */
+/**
+ * Namespace before the first dot → `StreamKind` (`other` for anything else).
+ *
+ * `catalog.*` and `overlay.*` events both belong to the catalog/overlay update
+ * loop (an upstream spec change, an overlay conflict, an overlay deprecation),
+ * so they collapse into a single `catalog` kind — one filter chip, one label,
+ * one deep-link target (the affected API's Workspace detail page).
+ */
 export function kindForType(type: string): StreamKind {
-	const ns = type.split('.', 1)[0] as StreamKind;
-	return KNOWN_KINDS.has(ns) ? ns : 'other';
+	const ns = type.split('.', 1)[0];
+	if (ns === 'overlay') return 'catalog';
+	return KNOWN_KINDS.has(ns as StreamKind) ? (ns as StreamKind) : 'other';
 }
 
 /**
@@ -143,6 +169,7 @@ export const STREAM_KIND_LABEL: Record<StreamKind, string> = {
 	credential: 'Credential',
 	access_request: 'Access request',
 	agent: 'Agent',
+	catalog: 'Catalog',
 	other: 'Platform',
 };
 
@@ -206,6 +233,25 @@ function buildGroupKey(t: Pick<StreamEvent, 'kind' | 'type' | 'tokens'>): string
 /** Test-only re-export of the internal group-key builder. */
 export const buildGroupKeyForTest = buildGroupKey;
 
+/**
+ * Short human hint explaining WHY an upstream update conflicts with a confirmed
+ * overlay (L5 "why"): the overlay was built on a base spec that upstream has
+ * since moved off. Returns null for any event without conflict digests, so the
+ * row only shows it for `catalog.update_conflicts_overlay`. Digests are shown as
+ * 12-char prefixes to stay compact within the rail row.
+ */
+export function conflictHint(ev: StreamEvent): string | null {
+	const c = ev.conflict;
+	if (!c) return null;
+	const base = c.base_digest ? c.base_digest.slice(0, 12) : null;
+	const upstream = c.upstream_digest ? c.upstream_digest.slice(0, 12) : null;
+	if (!base && !upstream) return 'Upstream moved off the base your overlay was built on';
+	const suffix = [base && `base ${base}`, upstream && `upstream ${upstream}`]
+		.filter(Boolean)
+		.join(' → ');
+	return `Upstream moved off the base your overlay was built on (${suffix})`;
+}
+
 /** Adapt a wire `EventResponse` into the rail's UI `StreamEvent`. */
 export function adaptEvent(e: EventResponse): StreamEvent {
 	const data = (e.data ?? {}) as Record<string, unknown>;
@@ -236,9 +282,34 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		// that did could carry a NON-agent id (e.g. the deciding user), which
 		// would deep-link "View agent" to /agents/<user_id>.
 		agent_id: stringField(data, 'agent_id') ?? actorAgentId,
+		// Catalog/overlay events carry the affected API's identity so the row can
+		// deep-link into Workspace: `api_id` (catalog slug) + the (vendor, name,
+		// version) triple, plus the overlay id for overlay-lifecycle events.
+		api_id: stringField(data, 'api_id'),
+		vendor: stringField(data, 'vendor'),
+		name: stringField(data, 'name'),
+		version: stringField(data, 'version'),
+		overlay_id: stringField(data, 'overlay_id'),
 	};
 	const kind = kindForType(e.type);
 	const parsedTs = e.created_at ? Date.parse(e.created_at) : NaN;
+	// A `catalog.update_conflicts_overlay` event carries `data.conflict` with the
+	// three digests explaining WHY the upstream update collides with the overlay.
+	const rawConflict = data.conflict;
+	const conflict: ConflictDigests | undefined =
+		rawConflict && typeof rawConflict === 'object'
+			? {
+					base_digest: stringField(rawConflict as Record<string, unknown>, 'base_digest'),
+					served_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'served_digest',
+					),
+					upstream_digest: stringField(
+						rawConflict as Record<string, unknown>,
+						'upstream_digest',
+					),
+				}
+			: undefined;
 	const ev: StreamEvent = {
 		id: e.event_id,
 		// Fall back to "now" only when the wire timestamp is missing/unparseable,
@@ -259,6 +330,7 @@ export function adaptEvent(e: EventResponse): StreamEvent {
 		requiresAction: e.requires_action,
 		acknowledged: e.acknowledged,
 		acknowledgedAt: e.acknowledged_at ? Date.parse(e.acknowledged_at) || undefined : undefined,
+		conflict,
 		groupKey: '',
 	};
 	ev.groupKey = buildGroupKey(ev);
@@ -850,6 +922,7 @@ export type InlineActionKind =
 	| 'deny'
 	| 'view_request'
 	| 'view_agent'
+	| 'view_api'
 	| 'view_execution'
 	| 'view_job'
 	| 'view_trace';
@@ -906,6 +979,16 @@ const NAV = {
 			: null,
 	agent: (ev: StreamEvent) =>
 		ev.tokens.agent_id ? `/agents/${encodeURIComponent(ev.tokens.agent_id)}` : null,
+	// Catalog/overlay events deep-link to the affected API's Workspace detail
+	// page. The route mirrors `ROUTE_PATHS.workspaceApi(encodeApiId(...))`:
+	// `/workspace/:vendor/:name/:version`, each segment percent-encoded (this is
+	// shared-layer code, so the path shape is inlined rather than imported from a
+	// module's encoder). Router-relative — the rail prepends the `/app` basename.
+	workspaceApi: (ev: StreamEvent) => {
+		const { vendor, name, version } = ev.tokens;
+		if (!vendor || !name || !version) return null;
+		return `/workspace/${[vendor, name, version].map(encodeURIComponent).join('/')}`;
+	},
 };
 
 export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
@@ -929,6 +1012,16 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 			// agent's page (where approve/deny lives) instead of a bare Acknowledge.
 			actions.push({ kind: 'view_agent', label: 'Review', href: NAV.agent });
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
+		} else if (
+			(ev.type === 'catalog.update_available' ||
+				ev.type === 'catalog.update_conflicts_overlay') &&
+			NAV.workspaceApi(ev)
+		) {
+			// An upstream spec change (or a change that conflicts with a confirmed
+			// overlay) — deep-link the operator to the API's Workspace detail page
+			// (where Re-import / overlay resolution lives) alongside Acknowledge.
+			actions.push({ kind: 'view_api', label: 'Review', href: NAV.workspaceApi });
+			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		} else {
 			actions.push({ kind: 'acknowledge', label: 'Acknowledge', acknowledges: true });
 		}
@@ -941,6 +1034,12 @@ export function inlineActionsFor(ev: StreamEvent): InlineActionSpec[] {
 	} else if (ev.kind === 'agent' && ev.tokens.agent_id) {
 		if (!actions.some((a) => a.kind === 'view_agent')) {
 			actions.push({ kind: 'view_agent', label: 'View agent', href: NAV.agent });
+		}
+	} else if (ev.kind === 'catalog' && NAV.workspaceApi(ev)) {
+		// Catalog/overlay rows (e.g. `overlay.deprecated`) deep-link to the API
+		// detail page. Skip if a "Review" action already links there.
+		if (!actions.some((a) => a.kind === 'view_api')) {
+			actions.push({ kind: 'view_api', label: 'View API', href: NAV.workspaceApi });
 		}
 	} else if (ev.tokens.trace_id) {
 		actions.push({ kind: 'view_trace', label: 'View trace', href: NAV.trace });
@@ -1009,6 +1108,8 @@ export function primaryDestinationFor(ev: StreamEvent): string | null {
 			return ev.tokens.agent_id ? `/agents/${ev.tokens.agent_id}` : NAV.trace(ev);
 		case 'agent':
 			return NAV.agent(ev) ?? NAV.trace(ev);
+		case 'catalog':
+			return NAV.workspaceApi(ev) ?? NAV.trace(ev);
 		default:
 			return NAV.trace(ev);
 	}

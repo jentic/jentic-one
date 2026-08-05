@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.26.0](https://github.com/jentic/jentic-one/compare/v0.25.0...v0.26.0) (2026-08-04)
+
+
+### Features
+
+* **cli:** guard docker-backed commands against a stopped daemon ([#942](https://github.com/jentic/jentic-one/issues/942)) ([7ddbb09](https://github.com/jentic/jentic-one/commit/7ddbb09cb260147ce7b846ae0c557083a9950b00))
+* **flow3:** close the overlay-update reconciliation loop ([#937](https://github.com/jentic/jentic-one/issues/937)) ([d24dcd7](https://github.com/jentic/jentic-one/commit/d24dcd79674991016b3459e73f470f4d3aee5784))
+* **flow3:** jitter the catalog update-sweep interval to de-phase replicas ([#917](https://github.com/jentic/jentic-one/issues/917)) ([6c5b755](https://github.com/jentic/jentic-one/commit/6c5b755f46bc162888934553162b318ed46e3805))
+* **flow3:** overlay-loop legibility, hygiene & lifecycle follow-ups ([#955](https://github.com/jentic/jentic-one/issues/955)) ([8b33d88](https://github.com/jentic/jentic-one/commit/8b33d88d2b7f0e6ef254599f0b5f0a9268490bb5))
+* **flow3:** standalone catalog-update scanner + update-available surfaces ([#912](https://github.com/jentic/jentic-one/issues/912)) ([c152bb6](https://github.com/jentic/jentic-one/commit/c152bb660258f1374f27b040a60671b5a2f9617e))
+* **overlays:** persist superseded_revision_id at materialize time (A5a) ([#918](https://github.com/jentic/jentic-one/issues/918)) ([95b8c14](https://github.com/jentic/jentic-one/commit/95b8c14a8d9da907d38007e6fb0828a4514771a9))
+* **overlays:** purpose-scoped overlays:confirm gate ([#916](https://github.com/jentic/jentic-one/issues/916)) ([cc7b218](https://github.com/jentic/jentic-one/commit/cc7b2184e931fa1d99c8332734f7891d00a26b08))
+* **overlays:** re-materialize a confirmed overlay on edit (D1, [#927](https://github.com/jentic/jentic-one/issues/927)) ([#956](https://github.com/jentic/jentic-one/issues/956)) ([2e11149](https://github.com/jentic/jentic-one/commit/2e11149677d3aa2e685a4f2affb04883a4e1b6a3))
+* persist catalog identity (api_id) and title API surfaces from it ([#852](https://github.com/jentic/jentic-one/issues/852)) ([73cb558](https://github.com/jentic/jentic-one/commit/73cb558a171c0727412390794b1f6e75f821c3be))
+* **seams:** add register_pipeline_stage — ingest pipeline extension seam ([#957](https://github.com/jentic/jentic-one/issues/957)) ([d1472c9](https://github.com/jentic/jentic-one/commit/d1472c95dc996b5db2d94969fe717ee1cd314055))
+
+
+### Bug Fixes
+
+* **cli:** distinguish "docker not installed" from a stopped daemon ([#961](https://github.com/jentic/jentic-one/issues/961)) ([2d2da92](https://github.com/jentic/jentic-one/commit/2d2da92124fec93c2938896346deef599a893092)), closes [#954](https://github.com/jentic/jentic-one/issues/954)
+* **cli:** gate the stack update on its own recorded ref ([#944](https://github.com/jentic/jentic-one/issues/944)) ([6de0631](https://github.com/jentic/jentic-one/commit/6de0631c17fd6d0a11fc382e8cc461772b57fff6))
+* **cli:** honor --ref when building the stack ([#950](https://github.com/jentic/jentic-one/issues/950)) ([abbe0a8](https://github.com/jentic/jentic-one/commit/abbe0a85139539a8679c531d499a2c01d565892a))
+* **cli:** let Ctrl-C cancel the Docker-daemon probe's cold-start wait ([#960](https://github.com/jentic/jentic-one/issues/960)) ([a239f78](https://github.com/jentic/jentic-one/commit/a239f78208c3a5f68e414c3bb3f1b3d32ef42ea3)), closes [#953](https://github.com/jentic/jentic-one/issues/953)
+* **cli:** stop `start` coming up on an unmigrated database ([#952](https://github.com/jentic/jentic-one/issues/952)) ([0526a10](https://github.com/jentic/jentic-one/commit/0526a105aec8f2aaa289a368cd8882f2a71ecd98))
+* **monitoring:** include the current partial minute in usage aggregates ([#915](https://github.com/jentic/jentic-one/issues/915)) ([e414d1c](https://github.com/jentic/jentic-one/commit/e414d1ca3bbabe7da2e8f80e7612fc0c7359bef5))
+* **web:** revalidate the SPA shell and cache hashed assets immutably ([#946](https://github.com/jentic/jentic-one/issues/946)) ([8fdbc2f](https://github.com/jentic/jentic-one/commit/8fdbc2fcd8bac95b928d7a00720e9ec5b41bad6f))
+
+## [0.25.0](https://github.com/jentic/jentic-one/compare/v0.24.0...v0.25.0) (2026-07-31)
+
+
+### Features
+
+* act on access-request satisfaction hints across reviewer and fulfilment surfaces ([#902](https://github.com/jentic/jentic-one/issues/902)) ([c86f4d1](https://github.com/jentic/jentic-one/commit/c86f4d1c8c95ee9452f2a0f19c1525a6f2521aca))
+* **catalog:** notify when a registered API's upstream spec changes (Flow 3 MVP) ([#893](https://github.com/jentic/jentic-one/issues/893)) ([a042885](https://github.com/jentic/jentic-one/commit/a04288504925708c58064f257c9ecc3c7b175008))
+* **overlay:** materialize confirmed overlays onto the served spec ([#904](https://github.com/jentic/jentic-one/issues/904)) ([2964069](https://github.com/jentic/jentic-one/commit/2964069e31826b538b3a12b716da72da524c6d63))
+* **ui:** rail day separators, proactive failure surfacing, and monitor event drill-in ([#873](https://github.com/jentic/jentic-one/issues/873)) ([db65dd8](https://github.com/jentic/jentic-one/commit/db65dd8a22301dc1ad9a91ec6df03a9274d2d8e6))
+
+
+### Bug Fixes
+
+* **broker:** derive a valid trace_id at the execute edge instead of raw headers ([#905](https://github.com/jentic/jentic-one/issues/905)) ([eff4d7c](https://github.com/jentic/jentic-one/commit/eff4d7cc5d969f8a53acd94588bb41bc46ffba9a))
+* **catalog:** rank whole-word api_id matches above substring matches ([#872](https://github.com/jentic/jentic-one/issues/872)) ([46a919a](https://github.com/jentic/jentic-one/commit/46a919a9fda4b2a10a4959d8a032518f5cdd9ef5))
+* **install.sh:** default to the latest release tag, not main ([#909](https://github.com/jentic/jentic-one/issues/909)) ([741854f](https://github.com/jentic/jentic-one/commit/741854f57477b910284b8ee05d011803cddfbf53)), closes [#908](https://github.com/jentic/jentic-one/issues/908)
+* **ui:** reset catalog scroll to top on new search or filter ([#850](https://github.com/jentic/jentic-one/issues/850)) ([7303a1c](https://github.com/jentic/jentic-one/commit/7303a1c0cf83f6150caad3aff721c62334156824))
+
+
+### Refactors
+
+* **ui:** share the detail-console grammar across toolkit, agent, and SA consoles ([718da62](https://github.com/jentic/jentic-one/commit/718da62d0c3cc6dddbf3d756aa371b8b33fb5058))
+
+
+### Documentation
+
+* **skill:** drop obsolete import-workflow injection guards ([#889](https://github.com/jentic/jentic-one/issues/889)) ([2ea0591](https://github.com/jentic/jentic-one/commit/2ea0591d0138efc5890da6de1e562e9388080f3a))
+
 ## [0.24.0](https://github.com/jentic/jentic-one/compare/v0.23.0...v0.24.0) (2026-07-31)
 
 

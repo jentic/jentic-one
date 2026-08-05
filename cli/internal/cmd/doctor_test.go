@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/install"
 )
 
 // offlineOpts points the server probe at a closed port so doctor never depends
@@ -107,6 +109,93 @@ func TestDotFor(t *testing.T) {
 	}
 	if dotFor(statusFail) != dotFail() {
 		t.Error("statusFail should map to dotFail")
+	}
+}
+
+// With a compose install and a stopped daemon, the deploy check records an
+// explicit, actionable "docker daemon" WARNING (not a fail) rather than
+// inferring it from a cryptic `docker compose ps` error (#783). Keeping it a
+// warning is what lets doctor stay a zero-exit, CI-safe diagnostic. We assert on
+// the specific check rather than doctor's aggregate exit, since other checks'
+// severity varies by environment (e.g. CI vs a dev box).
+func TestDoctorReportsDockerDaemonDown(t *testing.T) {
+	orig := doctorDockerProbe
+	t.Cleanup(func() { doctorDockerProbe = orig })
+	doctorDockerProbe = func(context.Context) (string, bool) { return "Cannot connect to the Docker daemon", false }
+
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkDeploy("Server")
+
+	var daemon *check
+	for i := range d.checks {
+		if d.checks[i].name == "docker daemon" {
+			daemon = &d.checks[i]
+			break
+		}
+	}
+	if daemon == nil {
+		t.Fatalf("deploy check did not record a `docker daemon` row: %+v", d.checks)
+	}
+	if daemon.status != statusWarn {
+		t.Errorf("down daemon should be statusWarn (CI-safe, zero exit), got %v", daemon.status)
+	}
+	if !strings.Contains(daemon.detail, "Cannot connect to the Docker daemon") {
+		t.Errorf("daemon detail = %q, want the probe's reason", daemon.detail)
+	}
+	for _, want := range []string{"docker desktop start", "colima start"} {
+		if !strings.Contains(daemon.hint, want) {
+			t.Errorf("daemon hint missing %q: %q", want, daemon.hint)
+		}
+	}
+	// The check must return early, never falling through to real `docker compose ps`.
+	for i := range d.checks {
+		if d.checks[i].name == "deploy" {
+			t.Errorf("deploy check should return early on a down daemon, not record a `deploy` row: %+v", d.checks[i])
+		}
+	}
+}
+
+// When the `docker` binary is missing (not merely a stopped daemon), doctor's
+// deploy check reports it under a `docker` row pointing at install docs rather
+// than the "start your Docker daemon" hint (#954).
+func TestDoctorReportsDockerNotInstalled(t *testing.T) {
+	orig := doctorDockerProbe
+	t.Cleanup(func() { doctorDockerProbe = orig })
+	// Mirror what the real probe returns when the binary is absent.
+	notInstalled := install.DockerNotInstalledDetail()
+	doctorDockerProbe = func(context.Context) (string, bool) { return notInstalled, false }
+
+	app := testApp(t)
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkDeploy("Server")
+
+	var row *check
+	for i := range d.checks {
+		if d.checks[i].name == "docker" {
+			row = &d.checks[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatalf("deploy check did not record a `docker` row for a missing binary: %+v", d.checks)
+	}
+	if row.status != statusWarn {
+		t.Errorf("missing docker should be statusWarn (CI-safe), got %v", row.status)
+	}
+	if !strings.Contains(row.hint, "get-docker") {
+		t.Errorf("missing-docker hint should point at install docs, got %q", row.hint)
+	}
+	if strings.Contains(row.hint, "start your Docker daemon") {
+		t.Errorf("missing-docker hint should not tell the user to start a daemon: %q", row.hint)
 	}
 }
 

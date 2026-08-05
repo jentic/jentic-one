@@ -24,7 +24,7 @@ func newCatalogCmd(app *App) *cobra.Command {
 		Long: "catalog explores the Jentic public API catalog and imports specs into\n" +
 			"this deployment's local registry. Run bare on a terminal to open an\n" +
 			"interactive browser (search, preview operations, import in place); the\n" +
-			"subcommands (list/search/show/import/refresh) are script-friendly.\n" +
+			"subcommands (list/search/show/import/outdated/refresh) are script-friendly.\n" +
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -38,6 +38,7 @@ func newCatalogCmd(app *App) *cobra.Command {
 	cmd.AddCommand(newCatalogSearchCmd(app, ident))
 	cmd.AddCommand(newCatalogShowCmd(app, ident))
 	cmd.AddCommand(newCatalogImportCmd(app, ident))
+	cmd.AddCommand(newCatalogOutdatedCmd(app, ident))
 	cmd.AddCommand(newCatalogRefreshCmd(app, ident))
 	return cmd
 }
@@ -109,6 +110,28 @@ func newCatalogImportCmd(app *App, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
+func newCatalogOutdatedCmd(app *App, ident *identityOptions) *cobra.Command {
+	o := &catalogListOptions{}
+	cmd := &cobra.Command{
+		Use:   "outdated",
+		Short: "List registered entries with an upstream update available",
+		Long: "outdated lists locally-registered catalog entries whose upstream spec has\n" +
+			"a notified update the local revision hasn't adopted yet. Review the change,\n" +
+			"then re-import to adopt it. By default, entries an operator has snoozed/muted\n" +
+			"are hidden; pass --include-snoozed to list them too.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			o.outdated = true
+			return app.catalogList(cmd.Context(), ident, o, "")
+		},
+	}
+	cmd.Flags().IntVar(&o.limit, "limit", 50, "page size (1-200)")
+	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
+	cmd.Flags().BoolVar(&o.includeSnoozed, "include-snoozed", false,
+		"also list entries whose update notification has been snoozed/muted")
+	return cmd
+}
+
 func newCatalogRefreshCmd(app *App, ident *identityOptions) *cobra.Command {
 	return &cobra.Command{
 		Use:   "refresh",
@@ -123,11 +146,13 @@ func newCatalogRefreshCmd(app *App, ident *identityOptions) *cobra.Command {
 // ── option structs ───────────────────────────────────────────────────────────
 
 type catalogListOptions struct {
-	registered   bool
-	unregistered bool
-	limit        int
-	all          bool
-	json         bool
+	registered     bool
+	unregistered   bool
+	outdated       bool
+	limit          int
+	all            bool
+	json           bool
+	includeSnoozed bool
 }
 
 func (o *catalogListOptions) bind(cmd *cobra.Command) {
@@ -184,10 +209,12 @@ func (a *App) catalogList(ctx context.Context, ident *identityOptions, o *catalo
 		limit = 50
 	}
 	params := catalogclient.ListParams{
-		Q:            query,
-		Registered:   o.registered,
-		Unregistered: o.unregistered,
-		Limit:        limit,
+		Q:              query,
+		Registered:     o.registered,
+		Unregistered:   o.unregistered,
+		Outdated:       o.outdated,
+		IncludeSnoozed: o.includeSnoozed,
+		Limit:          limit,
 	}
 
 	var entries []catalogclient.Entry
@@ -212,6 +239,7 @@ func (a *App) catalogList(ctx context.Context, ident *identityOptions, o *catalo
 			"data":                 entries,
 			"catalog_total":        first.CatalogTotal,
 			"registered_count":     first.RegisteredCount,
+			"outdated_count":       first.OutdatedCount,
 			"manifest_age_seconds": first.ManifestAgeSeconds,
 		})
 	}
@@ -233,7 +261,8 @@ func (a *App) printCatalogList(entries []catalogclient.Entry, meta *catalogclien
 }
 
 // catalogRow renders one entry: a filled ring (registered) or hollow ring, the
-// accent api_id, and a dim vendor when it differs.
+// accent api_id, a dim vendor when it differs, and an "UPDATE AVAILABLE" marker
+// when the entry's upstream spec has changed since import.
 func catalogRow(e catalogclient.Entry) string {
 	glyph := theme.Dim.Render(theme.SelectOff)
 	if e.Registered {
@@ -243,6 +272,9 @@ func catalogRow(e catalogclient.Entry) string {
 	if e.Vendor != "" && e.Vendor != e.APIID {
 		row += "  " + theme.Dim.Render(e.Vendor)
 	}
+	if e.UpdateAvailable {
+		row += "  " + theme.Warn.Render("UPDATE AVAILABLE")
+	}
 	return row
 }
 
@@ -251,7 +283,11 @@ func catalogStatusLine(m *catalogclient.ListResult) string {
 	if m.ManifestAgeSeconds != nil {
 		age = "cache " + humanizeAge(*m.ManifestAgeSeconds)
 	}
-	return fmt.Sprintf("%d entries · %d imported · %s", m.CatalogTotal, m.RegisteredCount, age)
+	line := fmt.Sprintf("%d entries · %d imported · %s", m.CatalogTotal, m.RegisteredCount, age)
+	if m.OutdatedCount > 0 {
+		line += fmt.Sprintf(" · %d update(s) available", m.OutdatedCount)
+	}
+	return line
 }
 
 // ── show ─────────────────────────────────────────────────────────────────────

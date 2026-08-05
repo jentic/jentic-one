@@ -1035,30 +1035,8 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
-        "org:admin": [
-          "agents:read",
-          "agents:write",
-          "apis:read",
-          "apis:write",
-          "audit:read",
-          "capabilities:execute",
-          "capabilities:read",
-          "catalog:import",
-          "config:read",
-          "config:write",
-          "credentials:read",
-          "credentials:write",
-          "events:read",
-          "events:write",
-          "executions:read",
-          "jobs:read",
-          "jobs:write",
-          "service-accounts:read",
-          "service-accounts:write",
-          "toolkits:read",
-          "toolkits:write",
-          "users:read",
-          "users:write"
+        "overlays:confirm": [
+          "apis:read"
         ]
       },
       "method": "POST",
@@ -1066,9 +1044,35 @@
       "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm",
       "public": false,
       "required_scopes": [
-        "org:admin"
+        "overlays:confirm"
       ],
       "summary": "Confirm Overlay",
+      "surface": "apis",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "overlays:confirm": [
+          "apis:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rollbackOverlay",
+      "path": "/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:rollback",
+      "public": false,
+      "required_scopes": [
+        "overlays:confirm"
+      ],
+      "summary": "Rollback Overlay",
       "surface": "apis",
       "typical_caller": "operator"
     },
@@ -1492,6 +1496,58 @@
       "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "snoozeCatalogEntry",
+      "path": "/catalog/{api_id}:snooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Snooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
+        "events:write": [
+          "events:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "unsnoozeCatalogEntry",
+      "path": "/catalog/{api_id}:unsnooze",
+      "public": false,
+      "required_scopes": [
+        "events:write"
+      ],
+      "summary": "Unsnooze Catalog Entry",
+      "surface": "catalog",
+      "typical_caller": "operator"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Operator-facing (typically a human operator / admin)",
+      "implied_scopes": {
         "org:admin": [
           "agents:read",
           "agents:write",
@@ -1510,6 +1566,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2103,6 +2160,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -2151,6 +2209,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -3696,6 +3755,7 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3721,6 +3781,7 @@
               "executions:read",
               "jobs:read",
               "jobs:write",
+              "overlays:confirm",
               "service-accounts:read",
               "service-accounts:write",
               "toolkits:read",
@@ -3843,6 +3904,26 @@
             ],
             "is_superuser": false,
             "name": "catalog:import"
+          }
+        ]
+      },
+      {
+        "blurb": "Confirming spec overlays — rewrites the API's served revision.",
+        "label": "Overlays",
+        "name": "overlays",
+        "scopes": [
+          {
+            "action": "confirm",
+            "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+            "family": "overlays",
+            "implies": [
+              "apis:read"
+            ],
+            "implies_transitive": [
+              "apis:read"
+            ],
+            "is_superuser": false,
+            "name": "overlays:confirm"
           }
         ]
       },
@@ -4366,6 +4447,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4391,6 +4473,7 @@
           "executions:read",
           "jobs:read",
           "jobs:write",
+          "overlays:confirm",
           "service-accounts:read",
           "service-accounts:write",
           "toolkits:read",
@@ -4400,6 +4483,19 @@
         ],
         "is_superuser": true,
         "name": "org:admin"
+      },
+      {
+        "action": "confirm",
+        "description": "Confirm a pending overlay, rewriting the API's served spec (operator action; not granted to agents by default)",
+        "family": "overlays",
+        "implies": [
+          "apis:read"
+        ],
+        "implies_transitive": [
+          "apis:read"
+        ],
+        "is_superuser": false,
+        "name": "overlays:confirm"
       },
       {
         "action": "read",
@@ -4530,7 +4626,7 @@
         "name": "users:write"
       }
     ],
-    "total": 30
+    "total": 31
   },
-  "total": 153
+  "total": 156
 }

@@ -570,6 +570,25 @@ async def test_validate_scope_grant_apis_write_passes() -> None:
     await applicator.validate(item, identity=_make_identity(), control_session=session)
 
 
+async def test_validate_scope_grant_overlays_confirm_rejected() -> None:
+    """``overlays:confirm`` is an operator scope and must NOT be self-service grantable.
+
+    Confirming an overlay rewrites an API's served spec, so an agent must never obtain
+    the scope through a ``scope:grant`` access request. The shared ``GRANTABLE_SCOPES``
+    guard (used by both the file-time and decide-time checks) is the safety anchor for the
+    purpose-scoped downgrade from ``org:admin``; assert it here so a future addition to the
+    allow-list can't silently open the escalation path.
+    """
+    assert "overlays:confirm" not in GRANTABLE_SCOPES
+    ctx = _make_ctx()
+    session = _make_session()
+    item = _make_item(resource_type="scope", action="grant", resource_id="overlays:confirm")
+    applicator = EffectApplicator(ctx)
+
+    with pytest.raises(UnsupportedScopeGrantError):
+        await applicator.validate(item, identity=_make_identity(), control_session=session)
+
+
 @patch(f"{_MODULE}.CredentialRepository")
 @patch(f"{_MODULE}.EffectsRepository")
 async def test_validate_credential_bind_visible_passes(

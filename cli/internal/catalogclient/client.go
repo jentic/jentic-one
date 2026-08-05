@@ -48,12 +48,13 @@ type EntryLinks struct {
 
 // Entry is a single browsable catalog entry.
 type Entry struct {
-	APIID      string     `json:"api_id"`
-	Vendor     string     `json:"vendor"`
-	Path       string     `json:"path"`
-	SpecURL    string     `json:"spec_url"`
-	Registered bool       `json:"registered"`
-	Links      EntryLinks `json:"_links"`
+	APIID           string     `json:"api_id"`
+	Vendor          string     `json:"vendor"`
+	Path            string     `json:"path"`
+	SpecURL         string     `json:"spec_url"`
+	Registered      bool       `json:"registered"`
+	UpdateAvailable bool       `json:"update_available"`
+	Links           EntryLinks `json:"_links"`
 }
 
 // ListResult is a page of catalog entries plus whole-manifest status counters.
@@ -61,6 +62,7 @@ type ListResult struct {
 	Data               []Entry `json:"data"`
 	CatalogTotal       int     `json:"catalog_total"`
 	RegisteredCount    int     `json:"registered_count"`
+	OutdatedCount      int     `json:"outdated_count"`
 	ManifestAgeSeconds *int    `json:"manifest_age_seconds"`
 	HasMore            bool    `json:"has_more"`
 	NextCursor         string  `json:"next_cursor"`
@@ -132,11 +134,13 @@ type ImportResult struct {
 
 // ListParams holds the query options for List.
 type ListParams struct {
-	Q            string
-	Registered   bool
-	Unregistered bool
-	Cursor       string
-	Limit        int
+	Q              string
+	Registered     bool
+	Unregistered   bool
+	Outdated       bool
+	IncludeSnoozed bool
+	Cursor         string
+	Limit          int
 }
 
 // List returns a keyset page of catalog entries.
@@ -150,6 +154,12 @@ func (c *Client) List(ctx context.Context, token string, p ListParams) (*ListRes
 	}
 	if p.Unregistered {
 		q.Set("unregistered_only", "true")
+	}
+	if p.Outdated {
+		q.Set("outdated_only", "true")
+	}
+	if p.IncludeSnoozed {
+		q.Set("include_snoozed", "true")
 	}
 	if p.Cursor != "" {
 		q.Set("cursor", p.Cursor)

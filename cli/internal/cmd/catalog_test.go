@@ -12,6 +12,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/authclient"
 	"github.com/jentic/jentic-one/cli/internal/catalogclient"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -29,6 +30,67 @@ func seedRegistered(t *testing.T, app *App, name, baseURL string) {
 	}
 	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_abc", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatalf("save tokens: %v", err)
+	}
+}
+
+// TestAgentSessionRunsAsCheckedOutAgent proves the in-process run-as: when the
+// operator's active profile is an agent-owned one (checked out via `profile
+// use`), agentSession resolves THAT profile's token from the agent store — not
+// the operator's own ~/.jentic — so profile-scoped commands act as the agent.
+// The agent-owned profile lives only in the agent home (translation removes any
+// operator copy), which is the realistic post-checkout state.
+func TestAgentSessionRunsAsCheckedOutAgent(t *testing.T) {
+	app := testApp(t)
+
+	// An unrelated operator-owned profile carries a DIFFERENT token; if routing
+	// ignored the checkout we'd risk falling back to an operator store.
+	op, err := profile.Open(app.Paths, "operator-only")
+	if err != nil {
+		t.Fatalf("open operator profile: %v", err)
+	}
+	if err := op.SaveMeta(&profile.Meta{AgentID: "agnt_op", BaseURL: "http://op:9000", KID: "k"}); err != nil {
+		t.Fatalf("save operator meta: %v", err)
+	}
+	if err := op.SaveTokens(&profile.Tokens{AccessToken: "tok_operator", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("save operator tokens: %v", err)
+	}
+
+	// The agent-owned profile in the shared account's home.
+	agentRoot := t.TempDir()
+	agentPaths := config.Paths{Root: agentRoot}
+	ap, err := profile.Open(agentPaths, "botprofile")
+	if err != nil {
+		t.Fatalf("open agent profile: %v", err)
+	}
+	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000", KID: "k"}); err != nil {
+		t.Fatalf("save agent meta: %v", err)
+	}
+	if err := ap.SaveTokens(&profile.Tokens{AccessToken: "tok_agent", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("save agent tokens: %v", err)
+	}
+
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{User: "bot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+	// Check out the agent-owned profile as the operator default.
+	if err := config.SetDefaultProfile(app.Paths, "botprofile"); err != nil {
+		t.Fatalf("check out agent profile: %v", err)
+	}
+
+	baseURL, token, err := app.agentSession(context.Background(), &identityOptions{})
+	if err != nil {
+		t.Fatalf("agentSession: %v", err)
+	}
+	if token != "tok_agent" {
+		t.Errorf("run-as token = %q, want tok_agent (the agent store's)", token)
+	}
+	if baseURL != "http://bot:9000" {
+		t.Errorf("run-as base_url = %q, want the agent profile's http://bot:9000", baseURL)
 	}
 }
 
@@ -55,6 +117,67 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output missing %q\n---\n%s", want, got)
 		}
+	}
+}
+
+func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{
+			"data":[
+				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"update_available":true,"_links":{}}],
+			"catalog_total":2,"registered_count":1,"outdated_count":1,"manifest_age_seconds":120,
+			"has_more":false,"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	ident := &identityOptions{baseURL: srv.URL}
+	if err := app.catalogList(context.Background(), ident, &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
+		t.Fatalf("catalogList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "outdated_only=true") {
+		t.Errorf("server saw query %q, want outdated_only=true", gotQuery)
+	}
+	// The snooze filter is opt-in: without --include-snoozed the param must be
+	// absent, so snoozed entries stay hidden by default (the user-facing contract).
+	if strings.Contains(gotQuery, "include_snoozed") {
+		t.Errorf("server saw query %q, include_snoozed must be absent by default", gotQuery)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"stripe.com", "UPDATE AVAILABLE", "1 update(s) available"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("outdated output missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{
+			"data":[],"catalog_total":0,"registered_count":0,"outdated_count":0,
+			"manifest_age_seconds":0,"has_more":false,"next_cursor":""}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	ident := &identityOptions{baseURL: srv.URL}
+	opts := &catalogListOptions{limit: 50, outdated: true, includeSnoozed: true}
+	if err := app.catalogList(context.Background(), ident, opts, ""); err != nil {
+		t.Fatalf("catalogList: %v", err)
+	}
+	if !strings.Contains(gotQuery, "include_snoozed=true") {
+		t.Errorf("server saw query %q, want include_snoozed=true", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "outdated_only=true") {
+		t.Errorf("server saw query %q, want outdated_only=true", gotQuery)
 	}
 }
 

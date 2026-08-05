@@ -191,6 +191,72 @@ func TestValidTokenMintsWhenRefreshFails(t *testing.T) {
 	}
 }
 
+// mintAndMeServer returns a test server that mints a token on /oauth/token and
+// answers /me with the given identity body (nil = 500, so /me is "unreachable").
+func mintAndMeServer(t *testing.T, meBody map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/me" {
+			if meBody == nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(meBody)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(authclient.TokenPair{AccessToken: "minted", RefreshToken: "rt", ExpiresIn: 3600})
+	}))
+}
+
+// TestMintFreshRejectsIdentityMismatch proves a token whose /me resolves to a
+// DIFFERENT agent id is discarded (ErrIdentityMismatch) and never persisted.
+func TestMintFreshRejectsIdentityMismatch(t *testing.T) {
+	srv := mintAndMeServer(t, map[string]any{"sub": "agnt_someone_else"})
+	defer srv.Close()
+
+	sess := openSession(t, srv.URL) // AgentID = agnt_test
+	_, err := sess.MintFresh(context.Background())
+	if !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("expected ErrIdentityMismatch, got %v", err)
+	}
+	// The mismatched token must NOT have been saved.
+	if tok, _ := sess.Profile.LoadTokens(); tok != nil && tok.AccessToken != "" {
+		t.Errorf("mismatched token was persisted: %q", tok.AccessToken)
+	}
+}
+
+// TestMintFreshAcceptsMatchingIdentity proves a token whose /me resolves to our
+// own agent id is persisted normally.
+func TestMintFreshAcceptsMatchingIdentity(t *testing.T) {
+	srv := mintAndMeServer(t, map[string]any{"sub": "agnt_test"})
+	defer srv.Close()
+
+	sess := openSession(t, srv.URL)
+	tok, err := sess.MintFresh(context.Background())
+	if err != nil {
+		t.Fatalf("MintFresh: %v", err)
+	}
+	if tok.AccessToken != "minted" {
+		t.Fatalf("token = %q, want minted", tok.AccessToken)
+	}
+}
+
+// TestMintFreshAllowsWhenMeUnreachable proves the identity check is best-effort:
+// a failing /me does not block minting (the token is still persisted).
+func TestMintFreshAllowsWhenMeUnreachable(t *testing.T) {
+	srv := mintAndMeServer(t, nil) // /me returns 500
+	defer srv.Close()
+
+	sess := openSession(t, srv.URL)
+	tok, err := sess.MintFresh(context.Background())
+	if err != nil {
+		t.Fatalf("MintFresh: %v", err)
+	}
+	if tok.AccessToken != "minted" {
+		t.Fatalf("token = %q, want minted", tok.AccessToken)
+	}
+}
+
 func TestMintFreshPersistsAndReportsPending(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

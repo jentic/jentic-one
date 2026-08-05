@@ -138,6 +138,11 @@ class CredentialService:
                 api_vendor=api_scope.vendor,
                 api_name=api_scope.name,
                 api_version=api_scope.version,
+                # Verbatim, deliberately outside the canonicalisation above:
+                # the slug is display-only provenance (`domain[/sub-api]`) and
+                # slugifying it would destroy the separable structure it exists
+                # to preserve.
+                catalog_api_id=payload.catalog_api_id,
                 provider=payload.provider,
                 created_by=identity.sub,
                 server_variables=payload.server_variables,
@@ -277,6 +282,7 @@ class CredentialService:
                     name=credential.api_name or "",
                     version=credential.api_version or "",
                 ),
+                catalog_api_id=credential.catalog_api_id,
                 provider=credential.provider,
                 active=credential.active,
                 created_at=credential.created_at,
@@ -660,6 +666,7 @@ class CredentialService:
                 name=credential.api_name or "",
                 version=credential.api_version or "",
             ),
+            catalog_api_id=credential.catalog_api_id,
             provider=credential.provider,
             provider_account_ref=credential.provider_account_ref,
             active=credential.active,

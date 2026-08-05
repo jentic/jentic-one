@@ -8,7 +8,7 @@ from typing import ClassVar
 from jentic_one.registry.ingest.exc import DuplicateRevisionError
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
-from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository
+from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, OverlayRepository
 from jentic_one.shared.models import ORIGIN_OVERLAY, ApiRevisionSourceType
 
 
@@ -26,6 +26,7 @@ class ResolveApiStage(BasePipelineStage):
             name=ctx.specification.api_identifier.name,
             version=ctx.specification.api_identifier.version,
             created_by=ctx.created_by,
+            catalog_api_id=ctx.specification.catalog_api_id,
         )
         ctx.produce("api_id", api.id, uuid.UUID)
 
@@ -35,6 +36,10 @@ class CreateRevisionStage(BasePipelineStage):
 
     name: ClassVar[str] = "CreateRevisionStage"
     _requires: ClassVar[dict[str, type]] = {"api_id": uuid.UUID}
+    # Only ``revision_id`` is a *mandatory* output. This stage also conditionally
+    # produces ``superseded_revision_id`` (overlay materialize that replaced a current
+    # revision) — deliberately NOT declared here, since ``_produces`` keys are asserted
+    # present for every run; the ingestor reads that one via the non-raising ctx.get().
     _produces: ClassVar[dict[str, type]] = {"revision_id": uuid.UUID}
 
     async def _run(self, ctx: PipelineContext) -> None:
@@ -62,11 +67,69 @@ class CreateRevisionStage(BasePipelineStage):
                 # origin-scoped archive would leave those active and the new imported
                 # revision would then violate ix_api_revisions_one_active (one active
                 # revision per api). Archive every active revision (published+imported).
+                #
+                # Capture the revision being superseded (the API's current revision
+                # *before* the archive) so the overlay can record it for a later
+                # deterministic rollback (A5b). None if the API had no current revision
+                # (a first-ever materialize) — the overlay then has no rollback target.
+                #
+                # Re-materialize on edit (D1): when the current revision is the output of
+                # *this same overlay* (an edit re-materializing over its unchanged clean
+                # base), do NOT re-capture a superseded id: that would move the overlay's
+                # rollback target from the original clean base onto its own previous output,
+                # so a later rollback would restore an orphaned overlay revision instead of
+                # the clean upstream base. Producing nothing makes the worker pass None, and
+                # set_confirmed_revision preserves the existing clean-base pointer (never
+                # clobbers with None). But a *stacked* confirm — a different overlay B being
+                # materialized over overlay A's live output — must still capture A's revision
+                # as B's superseded target (B is a new overlay with a NULL pointer), so we
+                # only skip when the current revision belongs to the very overlay this job
+                # materializes. The previous overlay revision is still archived below either
+                # way (retained in the chain).
+                # Capture race (backend review S2, tracked): this reads api.current_revision_id
+                # at *worker* time. The service guards live.current_revision_id ==
+                # confirmed_revision_id before enqueue, but if an authorized catalog re-import
+                # (A4b) lands between enqueue and this (async) ingest, current is no longer this
+                # overlay's revision → _is_self_rematerialize won't match → we'd capture the new
+                # current as the superseded target, moving the rollback target off the clean
+                # base. This window is inherent to the existing async-materialize design (confirm
+                # has the same shape) and is not newly introduced by D1; the conservative
+                # fail-closed direction (capture rather than skip) means the worst case is a
+                # rollback target that points at a still-valid revision, never a stripped one.
+                # See spec-flywheel-tracker.md (Flow-3 deferred: worker re-assert of the
+                # pre-enqueue confirmed revision before deciding capture).
+                api = await ApiRepository.get_by_id(ctx.session, api_id)
+                if (
+                    api is not None
+                    and api.current_revision_id is not None
+                    and not await self._is_self_rematerialize(
+                        ctx, api_id, api.current_revision_id, spec.overlay_id
+                    )
+                ):
+                    ctx.produce("superseded_revision_id", api.current_revision_id, uuid.UUID)
                 await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
             else:
-                await ApiRevisionRepository.archive_active_imported(
-                    ctx.session, api_id, spec.origin
-                )
+                if spec.supersede_active:
+                    # A4b: an authorized catalog re-import that replaces a *live confirmed
+                    # overlay*. The overlay's current revision is overlay-origin, so the
+                    # origin-scoped archive below would leave it active and the new catalog
+                    # revision would violate ix_api_revisions_one_active. Archive every
+                    # active revision instead (the overlay is auto-deprecated by the
+                    # handler in the same transaction; see ImportHandler).
+                    #
+                    # Trust boundary: ``supersede_active`` is a *server-set* flag. It is
+                    # only ever stamped by ``CatalogService.import_entry`` after an
+                    # enqueue-time ``overlays:confirm`` scope check; no client-facing
+                    # ingest schema (``ApiSourceUrl``/``ApiSourceInline``) exposes it, and
+                    # Pydantic's ``extra="ignore"`` drops any injected key. This stage
+                    # therefore trusts the flag by construction. If a future route ever
+                    # forwards a raw ``sources`` payload, that route MUST re-assert the
+                    # scope before enqueue — the privilege boundary lives at enqueue time.
+                    await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
+                else:
+                    await ApiRevisionRepository.archive_active_imported(
+                        ctx.session, api_id, spec.origin
+                    )
             revision = await ApiRevisionRepository.create_imported(
                 ctx.session,
                 api_id=api_id,
@@ -76,6 +139,7 @@ class CreateRevisionStage(BasePipelineStage):
                 source_url=spec.source_url,
                 source_filename=spec.source_filename,
                 submitted_by=spec.submitted_by,
+                overlay_base_digest=spec.overlay_base_digest,
                 created_by=ctx.created_by,
             )
         else:
@@ -90,6 +154,39 @@ class CreateRevisionStage(BasePipelineStage):
                 created_by=ctx.created_by,
             )
         ctx.produce("revision_id", revision.id, uuid.UUID)
+
+    @staticmethod
+    async def _is_self_rematerialize(
+        ctx: PipelineContext,
+        api_id: uuid.UUID,
+        current_revision_id: uuid.UUID,
+        overlay_id: str | None,
+    ) -> bool:
+        """True when this overlay ingest re-materializes the overlay that owns the current revision.
+
+        A re-materialize-on-edit (D1) supersedes the overlay's *own* previous output, so the
+        overlay must keep its original clean-base ``superseded_revision_id`` (don't re-capture).
+        A stacked confirm of a *different* overlay over a live overlay's output must instead
+        capture the current revision as the new overlay's rollback target — so we only treat it
+        as a self-re-materialize when the overlay backing the current revision is exactly the
+        one this job carries. Cheap: a single indexed lookup, and only when both ids are known.
+
+        Defense-in-depth (security review S2/N2): ``overlay_id`` is a server-set field on the
+        job payload (no client ingest schema exposes it; see ``supersede_active`` trust note
+        above), and this method is only reached from the ``origin == ORIGIN_OVERLAY`` branch —
+        i.e. a server-initiated overlay materialize. We additionally require the well-formed
+        ``ovr_`` prefix so a malformed/spoofed value fails *closed* (returns False → the
+        current revision is captured as the superseded target, the conservative outcome that
+        preserves a rollback target) rather than silently skipping capture. A wrong skip is the
+        only dangerous direction here (it would strip a rollback target), so an unrecognized
+        id must never skip.
+        """
+        if overlay_id is None or not overlay_id.startswith("ovr_"):
+            return False
+        owner = await OverlayRepository.get_live_confirmed_for_revision(
+            ctx.session, api_id, current_revision_id
+        )
+        return owner is not None and owner.id == overlay_id
 
 
 CreateDraftRevisionStage = CreateRevisionStage

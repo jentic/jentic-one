@@ -87,3 +87,17 @@ export { eventSeverityIcon } from '@/shared/lib/eventSeverity';
 // the rail's in-memory copy when the shell's stream is mounted, and no-op in
 // tests/embedded surfaces where it isn't).
 export { idFromLink, useAgentStreamOptional } from '@/shared/lib/agentStream';
+
+// API-identity display helpers — one humanising rule applied everywhere a
+// machine identity (`api_id` / `api_vendor` / `api_name`) needs to render as a
+// friendly primary line. Originally lived in `modules/discover/api/adapters.ts`
+// (`titleFromApiId`); moved here so Discover, the credential picker, and the
+// toolkit surfaces all share the same rule.
+export {
+	humanizeDomainSlug,
+	humanizeName,
+	titleFromApiId,
+	toolkitCredDisplayName,
+	apiRefDisplayName,
+	apiIdentityTuple,
+} from '@/shared/lib/api-display';

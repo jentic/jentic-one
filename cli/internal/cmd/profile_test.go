@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -41,6 +42,170 @@ func TestProfileListMarksActive(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("list output missing %q\n---\n%s", want, got)
 		}
+	}
+}
+
+func TestProfileListDiscoversAgentOwnedProfiles(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+
+	// An agent registered as its own Unix user writes its identity into its own
+	// home (<ConfigDir>/profiles), not the operator's ~/.jentic. Simulate that by
+	// pointing a configured agent at a separate config root and seeding a profile
+	// there.
+	agentRoot := t.TempDir()
+	agentPaths := config.Paths{Root: agentRoot}
+	ap, err := profile.Open(agentPaths, "botprofile")
+	if err != nil {
+		t.Fatalf("open agent profile: %v", err)
+	}
+	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000"}); err != nil {
+		t.Fatalf("save agent meta: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{User: "mybot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	if err := app.profileList(); err != nil {
+		t.Fatalf("profileList: %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"botprofile", "agnt_bot", "(agent)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list output missing agent-owned profile marker %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestRenderAccessTreeCollapsesNestedAndMarksSubtree(t *testing.T) {
+	out := renderAccessTree([]localagent.SessionDir{
+		{Path: "/opt/data", Kind: localagent.AccessReadWrite},
+		{Path: "/opt/data/inner", Kind: localagent.AccessReadWrite}, // nested → folded away
+		{Path: "/Users/Shared/bot", Kind: localagent.AccessReadWrite},
+	})
+	if !strings.Contains(out, "/opt/data/*") {
+		t.Errorf("expected whole-subtree marker on /opt/data:\n%s", out)
+	}
+	if strings.Contains(out, "/opt/data/inner") {
+		t.Errorf("nested grant should be folded into its parent:\n%s", out)
+	}
+	if !strings.Contains(out, "/Users/Shared/bot/*") {
+		t.Errorf("expected the agent home in the tree:\n%s", out)
+	}
+}
+
+// A read-only exec route renders after the read/write grants under a
+// "(read-only)" tag, and is NOT folded into a read/write entry even if nested.
+func TestRenderAccessTreeSeparatesReadOnlyRoutes(t *testing.T) {
+	out := renderAccessTree([]localagent.SessionDir{
+		{Path: "/Users/Shared/bot", Kind: localagent.AccessReadWrite},
+		{Path: "/usr/bin", Kind: localagent.AccessReadOnly},
+	})
+	if !strings.Contains(out, "/usr/bin/*") || !strings.Contains(out, "read-only") {
+		t.Errorf("expected read-only exec route with tag:\n%s", out)
+	}
+	// Ordering: the read/write grant comes before the read-only route.
+	if rw, ro := strings.Index(out, "/Users/Shared/bot"), strings.Index(out, "/usr/bin"); rw < 0 || ro < 0 || ro < rw {
+		t.Errorf("read/write grant must render before read-only route (rw@%d ro@%d)\n%s", rw, ro, out)
+	}
+}
+
+func TestRenderAccessTreeEmpty(t *testing.T) {
+	if out := renderAccessTree(nil); !strings.Contains(out, "no directories") {
+		t.Errorf("expected empty marker, got:\n%s", out)
+	}
+}
+
+func TestProfileViewShowsAccessTree(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "bot", "agnt_1")
+
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{
+		User:           "bot-agent",
+		AccountCreated: true,
+		Enabled:        true,
+		HomeDir:        "/Users/Shared/bot-agent",
+		GrantedDirs:    []string{"/opt/data", "/Users/alice/projects/api"},
+	})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	if err := app.profileView("bot"); err != nil {
+		t.Fatalf("profileView: %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{
+		"Filesystem access",
+		"/Users/Shared/bot-agent/*",
+		"/opt/data/*",
+		"/Users/alice/projects/api/*",
+		// The read-only executable routes the sandbox mounts are shown too, so the
+		// operator sees the full set the agent can reach. /usr/bin exists on every
+		// dev box and is a sanctioned exec route.
+		"/usr/bin/*",
+		"read-only",
+		// The access tree always tells the operator how to take access back. Grants
+		// are account-scoped (one set for every agent binary), so the hint is generic
+		// over which `<agent>` binary is named.
+		"jentic run <agent> --revoke",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("profile view missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+// A bare `jentic profile view` (no name) resolves the currently active profile,
+// so an agent can see its own access map without knowing its profile name.
+func TestProfileViewNoNameShowsActive(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "bot", "agnt_1")
+	if err := config.SetDefaultProfile(app.Paths, "bot"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{
+		User:           "bot-agent",
+		AccountCreated: true,
+		Enabled:        true,
+		HomeDir:        "/Users/Shared/bot-agent",
+		GrantedDirs:    []string{"/opt/data"},
+	})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	// No argument: must not error, and must show the active profile's access map.
+	if err := app.profileView(""); err != nil {
+		t.Fatalf("profileView(\"\"): %v", err)
+	}
+	got := app.Out.(*bytes.Buffer).String()
+	for _, want := range []string{"Filesystem access", "/opt/data/*", "jentic run <agent> --revoke"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("bare profile view missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestProfileViewMissingErrors(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+	err := app.profileView("ghost")
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected does-not-exist error, got %v", err)
 	}
 }
 
@@ -83,6 +248,52 @@ func TestProfileUseMissingErrors(t *testing.T) {
 	}
 }
 
+// Switching to an agent-owned profile checks it out for run-as: the operator's
+// own default_profile is set to that name, so subsequent profile-scoped commands
+// resolve it from the agent store and run in-process as the agent.
+func TestProfileSwitchAgentOwnedChecksOut(t *testing.T) {
+	app := testApp(t)
+	seedProfile(t, app, "default", "")
+
+	agentRoot := t.TempDir()
+	ap, err := profile.Open(config.Paths{Root: agentRoot}, "botprofile")
+	if err != nil {
+		t.Fatalf("open agent profile: %v", err)
+	}
+	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000"}); err != nil {
+		t.Fatalf("save agent meta: %v", err)
+	}
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load cfg: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{User: "mybot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save cfg: %v", err)
+	}
+
+	if err := app.profileSwitch(nil, "botprofile"); err != nil {
+		t.Fatalf("switch to agent-owned profile: %v", err)
+	}
+	reloaded, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("reload cfg: %v", err)
+	}
+	if reloaded.DefaultProfile != "botprofile" {
+		t.Errorf("agent-owned profile should become the operator default, got %q", reloaded.DefaultProfile)
+	}
+
+	// The active profile now resolves to the agent store, so a session opens
+	// against the agent home rather than the operator's ~/.jentic.
+	paths, err := app.sessionPaths("botprofile")
+	if err != nil {
+		t.Fatalf("sessionPaths: %v", err)
+	}
+	if paths.Root != agentRoot {
+		t.Errorf("sessionPaths for a checked-out agent profile = %q, want agent home %q", paths.Root, agentRoot)
+	}
+}
+
 // In the test runner stdin is not a TTY, so a bare switch with profiles present
 // must error rather than block on an interactive picker.
 func TestProfileSwitchNoNameNonTTYErrors(t *testing.T) {
@@ -107,10 +318,10 @@ func TestLoadProfileItem(t *testing.T) {
 	seedProfile(t, app, "fresh", "")
 	seedProfile(t, app, "reg", "agnt_42")
 
-	if it := app.loadProfileItem("fresh"); it.registered {
+	if it := app.loadProfileItem(profileRef{name: "fresh", paths: app.Paths}); it.registered {
 		t.Errorf("unregistered profile marked registered: %+v", it)
 	}
-	it := app.loadProfileItem("reg")
+	it := app.loadProfileItem(profileRef{name: "reg", paths: app.Paths})
 	if !it.registered || it.agentID != "agnt_42" || it.baseURL != "http://example:9000" {
 		t.Errorf("registered profile not loaded: %+v", it)
 	}
@@ -148,7 +359,7 @@ func TestLoadProfileItemAPIKey(t *testing.T) {
 	if err := p.SaveAPIKey("jak_abcdefgh1234"); err != nil {
 		t.Fatalf("save key: %v", err)
 	}
-	it := app.loadProfileItem("keyed")
+	it := app.loadProfileItem(profileRef{name: "keyed", paths: app.Paths})
 	if !it.registered || !it.apiKey || it.keyLabel != "jak_…1234" {
 		t.Errorf("api-key item not loaded: %+v", it)
 	}

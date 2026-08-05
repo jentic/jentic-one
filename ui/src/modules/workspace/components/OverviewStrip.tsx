@@ -8,8 +8,12 @@
  * live in other modules, so the stats here are the API-owned facts: operations,
  * revisions, security schemes, and live-revision state.
  */
-import { Activity, GitBranch, ShieldCheck, Zap } from 'lucide-react';
-import type { WorkspaceApi } from '@/modules/workspace/api';
+import { useState } from 'react';
+import { Activity, BellOff, GitBranch, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
+import { Badge, Button } from '@/shared/ui';
+import { useReimportFromCatalog, useSnoozeCatalogUpdate } from '@/modules/workspace/api';
+import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
+import type { ApiKey, WorkspaceApi } from '@/modules/workspace/api';
 
 function relativeTime(iso: string): string | null {
 	const ts = Date.parse(iso);
@@ -51,12 +55,73 @@ function MetaItem({
 export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 	const hasLive = api.currentRevisionId !== null;
 	const importedAgo = relativeTime(api.createdAt);
+	const key: ApiKey = api.api;
+	const { reimport, isReimporting } = useReimportFromCatalog(key);
+	const { snooze, isSnoozing } = useSnoozeCatalogUpdate(key);
+	const [confirmOpen, setConfirmOpen] = useState(false);
+
+	// Re-import adopts the upstream spec. For a catalog-origin API it's a plain
+	// re-import. For an overlay-origin API it's now ENABLED but destructive — it
+	// deprecates the API's confirmed overlay(s) — so it routes through a confirm
+	// dialog first (the "close the overlay-update loop" flow). When `origin` is
+	// absent (older backend), we treat it as catalog and re-import directly.
+	const isOverlayOrigin = api.origin === 'overlay';
+	// The catalog entry is addressed by its `api_id`. For umbrella specs that id is
+	// `domain/sub` (e.g. `nytimes.com/article_search`), which the API's vendor alone
+	// can't resolve — so prefer the real `catalogApiId` surfaced by the backend and
+	// fall back to the vendor only for older backends that don't emit it.
+	const catalogApiId = api.catalogApiId ?? api.api.vendor;
+
+	const handleReimportClick = () => {
+		if (isOverlayOrigin) {
+			setConfirmOpen(true);
+		} else {
+			reimport(catalogApiId);
+		}
+	};
 
 	return (
 		<section
 			className="border-border/60 bg-muted/20 rounded-xl border"
 			data-testid="workspace-overview-strip"
 		>
+			{api.updateAvailable ? (
+				<div
+					className="border-border/30 flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+					data-testid="workspace-update-available"
+				>
+					<div className="flex items-center gap-2">
+						<Badge variant="warning" dot>
+							Update available
+						</Badge>
+						<span className="text-muted-foreground text-xs">
+							The upstream spec has changed since this API was imported.
+						</span>
+					</div>
+					<div className="flex shrink-0 items-center gap-2">
+						<Button
+							variant="ghost"
+							size="sm"
+							loading={isSnoozing}
+							onClick={() => snooze(catalogApiId)}
+							data-testid="workspace-snooze"
+						>
+							<BellOff size={14} aria-hidden="true" />
+							Mute
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							loading={isReimporting}
+							onClick={handleReimportClick}
+							data-testid="workspace-reimport"
+						>
+							<RefreshCw size={14} aria-hidden="true" />
+							Re-import
+						</Button>
+					</div>
+				</div>
+			) : null}
 			{api.api.host ? (
 				<div className="border-border/30 border-b px-4 py-3">
 					<p className="text-muted-foreground mb-1.5 text-[11px] font-medium tracking-wide uppercase">
@@ -100,6 +165,20 @@ export function OverviewStrip({ api }: { api: WorkspaceApi }) {
 					<p className="text-muted-foreground text-sm">{api.description}</p>
 				</div>
 			) : null}
+
+			<ConfirmDialog
+				open={confirmOpen}
+				title="Re-import & deprecate overlays?"
+				body="Re-importing will deprecate the confirmed overlay(s) on this API and adopt the upstream spec. This can't be undone automatically. Proceed?"
+				confirmLabel="Re-import & deprecate overlays"
+				confirmTestId="workspace-reimport-confirm"
+				pending={isReimporting}
+				onClose={() => setConfirmOpen(false)}
+				onConfirm={() => {
+					setConfirmOpen(false);
+					reimport(catalogApiId);
+				}}
+			/>
 		</section>
 	);
 }

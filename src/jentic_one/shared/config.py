@@ -758,11 +758,15 @@ class CatalogConfig(BaseModel):
     # Lazy refresh-on-read: a manifest older than this is refreshed on the next
     # list()/get(). Zero disables auto-refresh (manual :refresh only).
     manifest_max_age_seconds: int = 86400
-    # Update-notify (Flow 3): after a manifest refresh, conditionally re-fetch the
-    # spec URLs of registered APIs (If-None-Match) and emit a
-    # ``catalog.update_available`` event when the upstream spec changed. A given
-    # API is re-probed at most once per this interval. Zero disables the sweep
-    # entirely (kill switch for air-gapped installs — no event spam, no egress).
+    # Update-notify (Flow 3): the standalone ``CatalogUpdateScanner`` (started in
+    # app_factory when both the registry + admin DBs are present) runs one sweep per
+    # this interval, conditionally re-fetching the spec URLs of upstream-tracked APIs
+    # (If-None-Match) and emitting a ``catalog.update_available`` event when the
+    # upstream spec changed. The manual ``POST /catalog:refresh`` also triggers a
+    # sweep. A given API is re-probed at most once per this interval (a persistent
+    # per-API gate, so scanner + manual refresh don't double-probe). Zero disables the
+    # sweep + scanner entirely (kill switch for air-gapped installs — no event spam,
+    # no egress). Standalone-registry deployments (no admin DB) get no scanner.
     update_check_interval_seconds: int = 86400
     # Aggregate guardrails for one update-notify sweep. The sweep is offloaded off
     # the triggering read (fire-and-forget), but it still probes N registered specs
@@ -771,6 +775,13 @@ class CatalogConfig(BaseModel):
     # registry DB pool so the sweep never starves live request traffic.
     update_sweep_deadline_seconds: int = 300
     update_sweep_max_concurrency: int = 4
+    # Full-jitter fraction added to the per-cycle sweep interval, to de-phase the
+    # scanner across replicas (thundering-herd mitigation). Each time a sweep runs,
+    # the next one is due after ``interval * (1 + uniform(0, jitter_ratio))``, so N
+    # replicas that start in lock-step drift apart instead of all re-probing the
+    # upstream at the same interval boundary. Bounded (default 15%, capped at 100%)
+    # so the cadence stays ~daily; 0 disables jitter (deterministic, e.g. for tests).
+    update_sweep_jitter_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
 
 
 class ServerConfig(BaseModel):

@@ -12,8 +12,12 @@ export {
 	useApiRevisions,
 	useApiSpec,
 	useRevisionActions,
+	useOverlays,
+	useOverlayActions,
+	useSnoozeCatalogUpdate,
 	useDeleteApi,
 	useImportSpec,
+	useReimportFromCatalog,
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
 export type { UseImportSpec } from '@/modules/workspace/api/hooks';
@@ -33,6 +37,8 @@ export type {
 	ApiOperation,
 	ApiRevision,
 	RevisionState,
+	Overlay,
+	OverlayStatus,
 	CursorPage,
 	ImportJob,
 	JobStatus,

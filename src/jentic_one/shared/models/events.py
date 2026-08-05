@@ -31,11 +31,28 @@ class EventType:
     JOB_FAILED_PERMANENTLY = "job.failed_permanently"
     UNAUTHORIZED_ACCESS_ATTEMPT = "security.unauthorized_access_attempt"
     # A registered catalog/imported API's upstream spec changed (detected by the
-    # update-notify sweep). Emitted with requires_action=False (informational
-    # until Flow-3 ships a resolve path — one-click re-import / dismiss — in a
-    # later phase) and deduped on the observed spec digest so it fires once per
-    # real change, not every sweep.
+    # update-notify sweep). Emitted with requires_action=True — the operator resolves
+    # it by re-importing the upstream spec (one-click in the UI / `jentic catalog
+    # outdated` in the CLI), which the ImportHandler settles via
+    # settle_actionable_events. Deduped on the observed spec digest so it fires once
+    # per real change, not every sweep.
     CATALOG_UPDATE_AVAILABLE = "catalog.update_available"
+    # A registered API's upstream spec changed AND that change collides with a
+    # confirmed overlay's *base* (the overlay was materialized over an older base;
+    # the upstream now differs from that base). Distinct from CATALOG_UPDATE_AVAILABLE
+    # because the resolution differs: adopting the upstream would *supersede* the
+    # operator's overlay, so this is an operator decision (re-import → auto-deprecate,
+    # gated) rather than a routine "update available" nudge. Emitted by the Flow-3
+    # sweep once per (digest, class) pair.
+    CATALOG_UPDATE_CONFLICTS_OVERLAY = "catalog.update_conflicts_overlay"
+
+    # An overlay's lifecycle changed in a way a human should see beyond the audit log
+    # (L2/L3): today emitted when an authorized catalog re-import auto-deprecates a
+    # live confirmed overlay (A4b). Carries the deprecating actor + reason so the
+    # overlay author is attributed/notified and the UI can surface "deprecated by
+    # re-import on <date>" rather than a silent status flip behind the audit log.
+    # requires_action=False — it is a notification, not an inbox item.
+    OVERLAY_DEPRECATED = "overlay.deprecated"
 
     # --- Product-telemetry event types (issue #446) ----------------------
     # These flow through emit_event (the single entry point) like any other
@@ -91,6 +108,8 @@ class EventType:
             JOB_FAILED_PERMANENTLY,
             UNAUTHORIZED_ACCESS_ATTEMPT,
             CATALOG_UPDATE_AVAILABLE,
+            CATALOG_UPDATE_CONFLICTS_OVERLAY,
+            OVERLAY_DEPRECATED,
             INSTANCE_INITIALIZED,
             INSTANCE_BOOTED,
             CREDENTIAL_STORED,

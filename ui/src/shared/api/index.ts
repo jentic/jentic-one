@@ -243,3 +243,10 @@ export {
 	consumeSessionExpiredNotice,
 } from '@/shared/api/token-store';
 export type { ClearTokenReason } from '@/shared/api/token-store';
+
+// Overlays (feat/overlay-base-digest-dedupe, #937). The overlay lifecycle
+// service backing the workspace OverlaysSection + the "close the overlay-update
+// loop" flow (list/get/confirm/rollback/deprecate). List/get responses are
+// typed `any` on the generated client; the workspace module re-types them in
+// its own `api/types.ts` + `adapters.ts`. Append-only, like the rest.
+export { OverlaysService } from '@/shared/api/generated/services/OverlaysService';

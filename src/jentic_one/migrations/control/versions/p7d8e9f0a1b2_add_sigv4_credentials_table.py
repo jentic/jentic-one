@@ -1,7 +1,7 @@
 """add sigv4_credentials table
 
-Revision ID: o6c7d8e9f0a1
-Revises: n5b6c7d8e9f0
+Revision ID: p7d8e9f0a1b2
+Revises: o6c7d8e9f0a1
 Create Date: 2026-07-30
 
 """
@@ -11,8 +11,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "o6c7d8e9f0a1"
-down_revision: str | None = "n5b6c7d8e9f0"
+revision: str = "p7d8e9f0a1b2"
+down_revision: str | None = "o6c7d8e9f0a1"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

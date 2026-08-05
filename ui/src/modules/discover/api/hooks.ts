@@ -71,6 +71,8 @@ export interface UseDiscoverCatalogResult {
 	catalogTotal: number;
 	/** How many of the whole manifest are imported locally. */
 	registeredCount: number;
+	/** How many imported entries have an upstream update available. */
+	outdatedCount: number;
 	/** Manifest freshness from the first page; null = never fetched. */
 	manifestAgeSeconds: number | null;
 	isPending: boolean;
@@ -124,6 +126,7 @@ export function useDiscoverCatalog(params: {
 		entities,
 		catalogTotal: first?.catalogTotal ?? 0,
 		registeredCount: first?.registeredCount ?? 0,
+		outdatedCount: first?.outdatedCount ?? 0,
 		manifestAgeSeconds: first?.manifestAgeSeconds ?? null,
 		isPending: query.isPending,
 		isFetching: query.isFetching,

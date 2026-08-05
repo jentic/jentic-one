@@ -27,6 +27,9 @@ class CredentialCreate(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    # Catalog identity slug of the target API when the client knows it —
+    # display-only, stored verbatim (never part of resolution identity).
+    catalog_api_id: str | None = None
     provider: str = "static"
     server_variables: dict[str, str] | None = None
 
@@ -199,6 +202,7 @@ class CredentialFullView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     active: bool
     created_at: datetime
@@ -213,6 +217,7 @@ class CredentialRedactedView(BaseModel):
     type: CredentialType
     name: str
     api: APIReference
+    catalog_api_id: str | None = None
     provider: str
     provider_account_ref: str | None = None
     active: bool

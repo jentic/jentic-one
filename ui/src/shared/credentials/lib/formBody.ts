@@ -24,6 +24,7 @@ function apiRef(state: CredentialFormState): APIReferenceRequest {
 		vendor: state.apiVendor.trim(),
 		name: state.apiName.trim() || undefined,
 		version: state.apiVersion.trim() || undefined,
+		catalog_api_id: state.catalogApiId.trim() || undefined,
 	};
 }
 
@@ -314,6 +315,7 @@ export function seedFormFromSelectedApi(
 		apiVendor: api.vendor,
 		apiName: api.name,
 		apiVersion: api.version,
+		catalogApiId: api.apiId ?? '',
 		name: nameDirty ? state.name : api.label,
 	};
 }

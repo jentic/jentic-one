@@ -18,7 +18,9 @@ import {
 import { toast } from '@/shared/ui';
 import {
 	archiveRevision,
+	confirmOverlay,
 	deleteApi,
+	deprecateOverlay,
 	getApi,
 	getApiSpec,
 	getRevisionSpec,
@@ -26,8 +28,12 @@ import {
 	importSources,
 	listApis,
 	listOperations,
+	listOverlays,
 	listRevisions,
 	promoteRevision,
+	reimportCatalogEntry,
+	rollbackOverlay,
+	snoozeCatalogEntry,
 } from '@/modules/workspace/api/client';
 import type { ApiKey } from '@/modules/workspace/api/apiId';
 import { formatApiKey } from '@/modules/workspace/api/apiId';
@@ -37,6 +43,7 @@ import type {
 	CursorPage,
 	ImportSource,
 	JobStatus,
+	Overlay,
 	WorkspaceApi,
 } from '@/modules/workspace/api/types';
 import { sharedQueryKeys } from '@/shared/api';
@@ -51,6 +58,7 @@ export const workspaceKeys = {
 	api: (key: ApiKey) => [...workspaceKeys.all, 'api', formatApiKey(key)] as const,
 	operations: (key: ApiKey) => [...workspaceKeys.all, 'operations', formatApiKey(key)] as const,
 	revisions: (key: ApiKey) => [...workspaceKeys.all, 'revisions', formatApiKey(key)] as const,
+	overlays: (key: ApiKey) => [...workspaceKeys.all, 'overlays', formatApiKey(key)] as const,
 	spec: (key: ApiKey) => [...workspaceKeys.all, 'spec', formatApiKey(key)] as const,
 	revisionSpec: (key: ApiKey, revisionId: string) =>
 		[...workspaceKeys.all, 'spec', formatApiKey(key), revisionId] as const,
@@ -275,6 +283,148 @@ export function useRevisionActions(key: ApiKey) {
 	};
 }
 
+/** Overlays for an API (`GET /apis/{…}/overlays`). */
+export function useOverlays(key: ApiKey | null): UseQueryResult<CursorPage<Overlay>> {
+	return useQuery({
+		// A stable inert key while disabled — never the root `workspaceKeys.all`
+		// prefix, so a broad `invalidateQueries({ queryKey: workspaceKeys.all })`
+		// can't accidentally target this parked query.
+		queryKey: key
+			? workspaceKeys.overlays(key)
+			: [...workspaceKeys.all, 'overlays', 'disabled'],
+		queryFn: () => listOverlays({ key: key as ApiKey }),
+		enabled: key != null,
+	});
+}
+
+/**
+ * Confirm / rollback / deprecate an overlay, invalidating the API's overlay +
+ * revision/op/spec caches (a confirm/rollback rewrites the served spec, so the
+ * live revision, operations, and spec all change). Modeled on
+ * `useRevisionActions`: exposes per-overlay pending state so a row spins only
+ * the button it triggered.
+ */
+export function useOverlayActions(key: ApiKey) {
+	const queryClient = useQueryClient();
+
+	const invalidate = useCallback(() => {
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.overlays(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.operations(key) });
+		queryClient.invalidateQueries({ queryKey: workspaceKeys.spec(key) });
+	}, [queryClient, key]);
+
+	const confirm = useMutation({
+		mutationFn: (overlayId: string) => confirmOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay confirmed' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Confirm failed',
+				description:
+					error instanceof Error ? error.message : 'Could not confirm the overlay.',
+			});
+		},
+	});
+
+	const rollback = useMutation({
+		mutationFn: (overlayId: string) => rollbackOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay rolled back' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Rollback failed',
+				description:
+					error instanceof Error ? error.message : 'Could not roll back the overlay.',
+			});
+		},
+	});
+
+	const deprecate = useMutation({
+		mutationFn: (overlayId: string) => deprecateOverlay(key, overlayId),
+		onSuccess: () => {
+			toast({ variant: 'success', title: 'Overlay deprecated' });
+			invalidate();
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Deprecate failed',
+				description:
+					error instanceof Error ? error.message : 'Could not deprecate the overlay.',
+			});
+		},
+	});
+
+	const pendingOverlayId =
+		(confirm.isPending && (confirm.variables as string)) ||
+		(rollback.isPending && (rollback.variables as string)) ||
+		(deprecate.isPending && (deprecate.variables as string)) ||
+		null;
+
+	return {
+		confirm: (overlayId: string) => confirm.mutate(overlayId),
+		rollback: (overlayId: string) => rollback.mutate(overlayId),
+		deprecate: (overlayId: string) => deprecate.mutate(overlayId),
+		pendingOverlayId,
+		/** Which action is in flight, so a row spins only the button it triggered. */
+		pendingAction: (confirm.isPending
+			? 'confirm'
+			: rollback.isPending
+				? 'rollback'
+				: deprecate.isPending
+					? 'deprecate'
+					: null) as 'confirm' | 'rollback' | 'deprecate' | null,
+	};
+}
+
+/**
+ * Snooze ("Mute") catalog-update notifications for an API (C2, #926).
+ *
+ * The "Update available" surface offers a Mute affordance that suppresses
+ * further update notifications until a NEWER upstream version appears
+ * (mute-until-newer → no `snoozed_until`). Keyed by the API's catalog `api_id`
+ * (the same id the re-import uses). On success we toast and invalidate the
+ * API's detail cache so the banner re-reads (the backend clears
+ * `update_available` while snoozed).
+ */
+export function useSnoozeCatalogUpdate(key: ApiKey) {
+	const queryClient = useQueryClient();
+
+	const mutation = useMutation({
+		mutationFn: (apiId: string) => snoozeCatalogEntry(apiId),
+		onSuccess: () => {
+			toast({
+				variant: 'success',
+				title: 'Updates muted',
+				description: "You won't be notified again until a newer version is published.",
+			});
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+			queryClient.invalidateQueries({ queryKey: workspaceKeys.apis() });
+		},
+		onError: (error: unknown) => {
+			toast({
+				variant: 'error',
+				title: 'Mute failed',
+				description:
+					error instanceof Error ? error.message : 'Could not mute update notifications.',
+			});
+		},
+	});
+
+	return {
+		snooze: (apiId: string) => mutation.mutate(apiId),
+		isSnoozing: mutation.isPending,
+	};
+}
+
 /**
  * Hard-delete an API (and every revision under it). Cascades server-side to
  * operations and release pointers — irreversible. UI must gate this behind
@@ -363,4 +513,89 @@ export function useImportSpec(): UseImportSpec {
 	);
 
 	return { importSpec, isImporting };
+}
+
+/**
+ * Re-import a catalog-backed API to adopt an upstream spec update (Flow-3).
+ *
+ * The API detail surface shows a "Re-import" affordance when the API reports
+ * `update_available`. Clicking it re-runs the catalog import for the API's
+ * catalog `api_id` (`POST /catalog/{id}:import`) — the same async job Discover
+ * enqueues. Import is async: the 202 only means *queued*, and the new revision
+ * (which clears `update_available` server-side) doesn't exist yet. Invalidating
+ * on the 202 therefore re-reads the *stale* API and the "Update available" badge
+ * lingers until some unrelated later refetch. So — like `useImportSpec` — we
+ * poll the job to a terminal state and only then invalidate the API's detail +
+ * revision caches, so the cleared `update_available` and new revision are what
+ * re-reads. We toast the queued job immediately and again on completion.
+ */
+export function useReimportFromCatalog(key: ApiKey) {
+	const queryClient = useQueryClient();
+	const [isReimporting, setIsReimporting] = useState(false);
+	const activeRef = useRef(true);
+
+	// Flip the guard on unmount so an in-flight poll loop stops touching state
+	// (and breaks out at the next interval) instead of warning post-unmount.
+	useEffect(() => {
+		activeRef.current = true;
+		return () => {
+			activeRef.current = false;
+		};
+	}, []);
+
+	const reimport = useCallback(
+		async (apiId: string): Promise<void> => {
+			setIsReimporting(true);
+			try {
+				const job = await reimportCatalogEntry(apiId);
+				toast({
+					variant: 'success',
+					title: 'Re-import started',
+					description: `Pulling the latest spec from the public catalog (job ${job.jobId}). This can take a moment.`,
+				});
+
+				const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+				let status: JobStatus = { jobId: job.jobId, status: job.status, error: null };
+				while (!TERMINAL_STATUSES.has(status.status) && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+					if (!activeRef.current) break;
+					status = await getJob(job.jobId);
+				}
+
+				// Only invalidate once the job has actually landed the new revision;
+				// otherwise the API re-reads stale and the "Update available" badge
+				// stays lit (the bug this poll fixes). A timeout without a terminal
+				// state still invalidates as a best effort — the next fetch is at
+				// worst as stale as before.
+				if (status.status === 'succeeded') {
+					toast({
+						variant: 'success',
+						title: 'Re-import complete',
+						description: `Adopted the latest catalog spec (job ${status.jobId}).`,
+					});
+				}
+				queryClient.invalidateQueries({ queryKey: workspaceKeys.api(key) });
+				queryClient.invalidateQueries({ queryKey: workspaceKeys.revisions(key) });
+			} catch (error: unknown) {
+				toast({
+					variant: 'error',
+					title: 'Re-import failed',
+					description:
+						error instanceof Error
+							? error.message
+							: 'Could not re-import from the catalog.',
+				});
+			} finally {
+				if (activeRef.current) setIsReimporting(false);
+			}
+		},
+		[queryClient, key],
+	);
+
+	return {
+		reimport: (apiId: string) => {
+			void reimport(apiId);
+		},
+		isReimporting,
+	};
 }

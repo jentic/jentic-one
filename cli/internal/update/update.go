@@ -1,4 +1,4 @@
-// Package update backs `jentic update`: it inspects what is installed (via the
+// Package update backs `jenticctl update`: it inspects what is installed (via the
 // manifest and build-time metadata) and compares its version against the latest
 // release tag to report whether a newer build is available, then fetches and
 // swaps in the rebuilt binaries.

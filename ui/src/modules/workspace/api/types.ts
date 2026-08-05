@@ -39,6 +39,9 @@ export interface CursorPage<T> {
  */
 export interface WorkspaceApi {
 	api: ApiRef;
+	/** Catalog identity slug (`domain[/sub-api]`) recorded at import, when any —
+	 * the preferred friendly-title source. */
+	catalogApiId: string | null;
 	displayName: string | null;
 	description: string | null;
 	iconUrl: string | null;
@@ -48,6 +51,20 @@ export interface WorkspaceApi {
 	securitySchemes: string[];
 	source?: string;
 	registered?: boolean;
+	/**
+	 * Provenance of the current revision (Flow-3): `catalog` (imported from the
+	 * public catalog), `overlay` (materialized from a confirmed overlay), or null
+	 * (manual import). Optional — only present once the Flow-3 backend fields land;
+	 * gates the one-click Re-import (safe only for `catalog` origin).
+	 */
+	origin?: string | null;
+	/** Upstream spec URL backing the current revision, when known (catalog linkage). */
+	sourceUrl?: string | null;
+	/**
+	 * Whether the upstream spec at `sourceUrl` has a notified update this API
+	 * hasn't adopted yet (Flow-3). Re-importing clears it.
+	 */
+	updateAvailable?: boolean;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -83,6 +100,38 @@ export interface ApiRevision {
 	/** Action links from `_links`; null when the action isn't offered. */
 	promoteHref: string | null;
 	archiveHref: string | null;
+}
+
+/** Lifecycle status of an overlay (wire `StrEnum` serialized as a string). */
+export type OverlayStatus = 'pending' | 'confirmed' | 'deprecated' | (string & {});
+
+/**
+ * A single overlay on an API (from `GET /apis/{…}/overlays` and
+ * `GET /apis/{…}/overlays/{id}`).
+ *
+ * The overlay list/get responses are typed `any` in the generated client, so
+ * the repository casts the raw JSON into this shape via `toOverlay` (mirroring
+ * how `toWorkspaceApi` re-types the `any` `/apis` payload).
+ */
+export interface Overlay {
+	id: string;
+	status: OverlayStatus;
+	createdBy: string | null;
+	createdAt: string;
+	confirmedAt: string | null;
+	deprecatedAt: string | null;
+	targetRevisionId: string | null;
+	confirmedRevisionId: string | null;
+	/**
+	 * Action links from `_links`; null when the action isn't valid for the
+	 * overlay's current status. Backend advertises these state-validity links
+	 * (mirroring revisions' promote/archive), so a surface renders an action only
+	 * when the backend offers it. The `overlays:confirm` permission gate on
+	 * confirm/rollback is still enforced server-side (403).
+	 */
+	confirmHref: string | null;
+	rollbackHref: string | null;
+	deprecateHref: string | null;
 }
 
 /** Result of enqueuing an import (`POST /apis` → 202). */

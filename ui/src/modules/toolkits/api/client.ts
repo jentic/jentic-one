@@ -259,6 +259,8 @@ export async function listBindableCredentials(): Promise<BindableCredential[]> {
 			name: c.name,
 			type: c.type,
 			vendor: c.api?.vendor ?? null,
+			apiName: c.api?.name ?? null,
+			catalogApiId: c.catalog_api_id ?? null,
 			provider: c.provider ?? null,
 		}));
 	} catch (error) {
@@ -436,7 +438,10 @@ export async function getToolkitUsage(
 	opts: { sinceDays?: number } = {},
 ): Promise<UsageResponse | null> {
 	const days = opts.sinceDays ?? 7;
-	const until = Math.floor(Date.now() / 60_000) * 60;
+	// Ceiled to the NEXT minute: the aggregate's strict `< until` must include
+	// the current partial minute (#913) — flooring made fresh executions
+	// invisible here while the Activity feed already listed them.
+	const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 	const since = until - days * 86_400;
 	try {
 		return await MonitoringService.getUsageStats({
@@ -499,7 +504,8 @@ export async function getUsageByToolkit(
 	opts: { sinceDays?: number } = {},
 ): Promise<Record<string, ToolkitUsageSummary> | null> {
 	const days = opts.sinceDays ?? 7;
-	const until = Math.floor(Date.now() / 60_000) * 60;
+	// Next-minute ceil — see getToolkitUsage (#913).
+	const until = (Math.floor(Date.now() / 60_000) + 1) * 60;
 	try {
 		const res = await MonitoringService.getUsageStats({
 			since: until - days * 86_400,

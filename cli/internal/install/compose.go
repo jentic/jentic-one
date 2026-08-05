@@ -505,6 +505,101 @@ func RunComposeMigrations(w io.Writer, composePath string) error {
 	return run(w, "docker", migrateArgs(composePath)...)
 }
 
+// SchemaState is the migration state of the stack's databases.
+type SchemaState int
+
+const (
+	// SchemaUnknown means the state could not be determined — the check could
+	// not run at all (no docker, an app image predating `--check`, an
+	// unreachable database). Callers must treat it as "carry on": refusing to
+	// start because a *diagnostic* failed would be a worse regression than the
+	// bug the check exists to catch.
+	SchemaUnknown SchemaState = iota
+	// SchemaCurrent means every database is at head.
+	SchemaCurrent
+	// SchemaUninitialized means at least one database has no schema at all
+	// (no Alembic version table). A wiped or brand-new volume. There is no data
+	// to protect, so creating the schema is safe and needs no confirmation.
+	SchemaUninitialized
+	// SchemaPending means at least one database has a schema but is behind
+	// head. It holds data that forward-only migrations will rewrite, so this is
+	// the operator's call to make with a backup in hand — never automatic.
+	SchemaPending
+)
+
+// ComposeSchemaState reports whether the stack's databases are migrated, without
+// modifying them. It runs `migrations.run --check` in a one-shot app container.
+//
+// It deliberately returns no error. Any failure to *obtain* an answer collapses
+// to SchemaUnknown, because a caller cannot act on a non-answer: blocking a
+// start because a diagnostic broke would be worse than the problem being
+// diagnosed. Only a verdict the runner actually printed is authoritative.
+//
+// w receives progress and, when no verdict could be read, the check's own output.
+// The probe pulls/starts a database container, so it is not instant; without a
+// line explaining the pause `start` looks hung. And silently swallowing the
+// output would make the one case that needs explaining — "why did it not
+// notice?" — undiagnosable.
+func ComposeSchemaState(w io.Writer, composePath string) SchemaState {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return SchemaUnknown
+	}
+	fmt.Fprintln(w, mutedStyle.Render("Checking database schema ..."))
+	//nolint:gosec // composePath is CLI-managed under JENTIC_HOME.
+	out, _ := exec.Command("docker", migrateCheckArgs(composePath)...).CombinedOutput()
+
+	// The exit status is intentionally ignored: `--check` exits non-zero *by
+	// design* when migrations are needed, so the printed verdict — not the exit
+	// code — is what carries the answer. No verdict (an old image without
+	// `--check`, no daemon, an unreachable database) means undeterminable.
+	state, ok := parseSchemaVerdict(string(out))
+	if !ok {
+		fmt.Fprintln(w, mutedStyle.Render("  could not determine schema state; continuing"))
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+			fmt.Fprintln(w, mutedStyle.Render(indentLines(trimmed, "  ")))
+		}
+	}
+	return state
+}
+
+// indentLines prefixes every line of s, so borrowed subprocess output stays
+// visually subordinate to the CLI's own messages.
+func indentLines(s, prefix string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// parseSchemaVerdict extracts the OVERALL line that `migrations.run --check`
+// prints last. Reported as a verdict only when explicitly found, so garbled or
+// truncated output degrades to "unknown" rather than to a wrong answer.
+func parseSchemaVerdict(out string) (SchemaState, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) != 2 || fields[0] != "OVERALL" {
+			continue
+		}
+		switch fields[1] {
+		case "current":
+			return SchemaCurrent, true
+		case "uninitialized":
+			return SchemaUninitialized, true
+		case "pending":
+			return SchemaPending, true
+		}
+	}
+	return SchemaUnknown, false
+}
+
+// migrateCheckArgs builds the read-only schema probe. It reuses migrateArgs so
+// the check always runs the same entrypoint, in the same one-shot container, as
+// the migration it gates.
+func migrateCheckArgs(composePath string) []string {
+	return append(migrateArgs(composePath), "--check")
+}
+
 // migrateArgs builds the `docker compose run` invocation that applies
 // migrations via a one-shot app container. -T disables pseudo-TTY allocation:
 // the run is non-interactive and CLI-driven, so without it `docker compose run`

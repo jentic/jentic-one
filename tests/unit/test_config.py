@@ -15,6 +15,7 @@ from jentic_one.shared.config import (
     AdminAuthConfig,
     AdminInviteConfig,
     AppConfig,
+    CatalogConfig,
     ConfigError,
     CredentialsConfig,
     EgressConfig,
@@ -185,6 +186,28 @@ def test_non_positive_session_lifetimes_rejected(field: str):
         pytest.raises(ValidationError, match=field),
     ):
         AdminAuthConfig.model_validate({field: 0})
+
+
+def test_catalog_jitter_ratio_default():
+    """The sweep jitter ratio defaults to a bounded 15%."""
+    assert CatalogConfig().update_sweep_jitter_ratio == 0.15
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.01, 10.0])
+def test_catalog_jitter_ratio_out_of_bounds_rejected(bad: float):
+    """The ratio is bounded [0, 1]: a value outside that fails fast at load.
+
+    Without the Field(ge=0, le=1) bound a value like 10.0 would silently make the
+    "cadence stays ~daily" contract false (up to 11x the interval), so reject it.
+    """
+    with pytest.raises(ValidationError, match="update_sweep_jitter_ratio"):
+        CatalogConfig.model_validate({"update_sweep_jitter_ratio": bad})
+
+
+def test_catalog_jitter_ratio_bounds_accepted():
+    """The inclusive bounds 0.0 (disable) and 1.0 (max) are both valid."""
+    assert CatalogConfig(update_sweep_jitter_ratio=0.0).update_sweep_jitter_ratio == 0.0
+    assert CatalogConfig(update_sweep_jitter_ratio=1.0).update_sweep_jitter_ratio == 1.0
 
 
 def test_default_invite_pepper_rejected_in_production():

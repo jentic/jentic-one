@@ -456,6 +456,12 @@ export function useUpdateAgent() {
 			qc.invalidateQueries({ queryKey: agentsKeys.detail(agent.id) });
 			qc.invalidateQueries({ queryKey: agentsKeys.lists() });
 			qc.invalidateQueries({ queryKey: sharedQueryKeys.dashboardRoot });
+			// A rename changes what every `ActorLabel` renders — monitor rows,
+			// toolkit audit, access requests, and the "Registered by / Approved
+			// by" grid on this very page all resolve names through the actor
+			// directory (5-min staleTime, no focus refetch). Invalidate it so the
+			// new name shows up immediately instead of after the staleTime.
+			qc.invalidateQueries({ queryKey: sharedQueryKeys.actorDirectoryRoot });
 			toast({
 				title: 'Agent updated',
 				description: `${agent.name} saved.`,
@@ -702,7 +708,11 @@ export function useActorUsageDetail(actorId: string | null) {
 		queryKey: ['agents-usage', 'detail', actorId],
 		queryFn: () => fetchActorUsageDetail(actorId as string),
 		enabled: actorId != null,
-		staleTime: 60 * 1000,
+		// Matches useActorExecutions below: the KPI/volume chart and the
+		// recent-executions feed render side by side and must go stale
+		// together, or the feed refreshes ahead of the chart and the two
+		// disagree for up to 30s (#913).
+		staleTime: 30 * 1000,
 		retry: false,
 	});
 }

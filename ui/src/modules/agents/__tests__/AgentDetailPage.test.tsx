@@ -219,6 +219,36 @@ describe('AgentDetailPage', () => {
 		expect(within(strip).getByText('Bound toolkits')).toBeInTheDocument();
 	});
 
+	it('requests the usage window with a next-minute-ceiled until bound (#913)', async () => {
+		// The aggregate filters `started_at < until` strictly, so the request
+		// must carry an explicit `until` PAST "now" — a floored (or absent →
+		// server-floored) bound excludes the current partial minute, making
+		// fresh executions visible in the Activity feed but missing from the
+		// volume chart / 7-day KPI until the minute rolls over.
+		let captured: URLSearchParams | null = null;
+		worker.use(
+			http.get('/monitoring/usage', ({ request }) => {
+				const url = new URL(request.url);
+				if (url.searchParams.get('agent_id') !== 'agnt_active_1') return undefined;
+				captured = url.searchParams;
+				return undefined; // fall through to the module's fixture handler
+			}),
+		);
+		const beforeSec = Math.floor(Date.now() / 1000);
+		renderDetail('agnt_active_1');
+		await screen.findByRole('group', { name: 'Key metrics' });
+
+		await waitFor(() => expect(captured).not.toBeNull());
+		const params: URLSearchParams = captured!;
+		const since = Number(params.get('since'));
+		const until = Number(params.get('until'));
+		expect(until % 60).toBe(0);
+		expect(until).toBeGreaterThan(beforeSec);
+		// Exact 7-day width: the backend derives its bucket tier from
+		// `until - since`, so the window must not stretch past the tier edge.
+		expect(until - since).toBe(7 * 86_400);
+	});
+
 	it('hides the KPI strip when monitoring is admin-gated (403)', async () => {
 		worker.use(
 			createErrorHandler('get', '/monitoring/usage', { status: 403 }),

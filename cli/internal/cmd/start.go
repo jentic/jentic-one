@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,8 +27,8 @@ func newStartCmd(app *App) *cobra.Command {
 			"It requires a completed `jenticctl install` (a generated config and a built\n" +
 			"venv); if either is missing it tells you to run `jenticctl install` first.",
 		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return app.startE(opts)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.startE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.config, "config", "",
@@ -34,12 +36,12 @@ func newStartCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) startE(opts *startOptions) error {
+func (a *App) startE(ctx context.Context, opts *startOptions) error {
 	// A generated compose file marks a Docker install: drive the stack with
 	// docker compose instead of the local background process.
 	composePath := a.Paths.ComposePath()
 	if proc.FileExists(composePath) {
-		return a.startDocker(composePath)
+		return a.startDocker(ctx, composePath)
 	}
 
 	pidPath := a.Paths.AppPIDPath()
@@ -123,13 +125,68 @@ func brokerPortFromManifest(a *App) string {
 }
 
 // startDocker brings the generated docker-compose stack up in detached mode.
-func (a *App) startDocker(composePath string) error {
+func (a *App) startDocker(ctx context.Context, composePath string) error {
+	// The compose file proves a Docker install, but not that the daemon is up:
+	// with the daemon down (e.g. Docker Desktop closed after a reboot) `docker
+	// compose up` fails with a raw "Cannot connect to the Docker daemon" error.
+	// Probe first so we surface actionable recovery guidance (#783,
+	// jentic-api-scorecard#224). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung. This must come
+	// before the schema check below, which also needs a live daemon.
+	announceDaemonCheck(a.Out)
+	if err := requireDockerDaemon(ctx, "jenticctl start"); err != nil {
+		return err
+	}
+	if err := a.ensureDockerSchema(composePath); err != nil {
+		return err
+	}
+
 	fmt.Fprintln(a.Out, theme.Infof("Starting Docker stack ..."))
-	if err := install.ComposeUp(a.Out, composePath); err != nil {
+	if err := composeUp(a.Out, composePath); err != nil {
 		return fmt.Errorf("docker compose up: %w", err)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack started."))
 	fmt.Fprintln(a.Out, theme.Dimf("  logs: docker compose -f %s logs -f", composePath))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  stop: jenticctl stop"))
+	return nil
+}
+
+// ensureDockerSchema stops `start` from bringing the stack up on a database that
+// has no schema.
+//
+// `start` only ever ran `compose up`; migrations belong to `install` and
+// `update`. So after a `stop --volumes` (or any wiped volume), `start` reported
+// "Stack started." over an empty, unmigrated database — the app comes up, the
+// login fails or the UI is inexplicably blank, and nothing in the output points
+// at the schema. That is the failure this guards (#951).
+//
+// The two non-current states get deliberately different treatment:
+//
+//   - uninitialized: no schema, therefore no data to lose. Creating it is safe,
+//     so we do it automatically — exactly what `install` would have done.
+//   - pending: a schema WITH data that forward-only migrations would rewrite.
+//     That is the operator's decision to make with a backup in hand, so we
+//     refuse and name the command, rather than silently migrating on a `start`.
+//
+// An undeterminable state never blocks the start: refusing because a diagnostic
+// failed would be a worse regression than the bug being fixed.
+func (a *App) ensureDockerSchema(composePath string) error {
+	switch install.ComposeSchemaState(a.Out, composePath) {
+	case install.SchemaUnknown, install.SchemaCurrent:
+		return nil
+
+	case install.SchemaPending:
+		return errors.New("database schema is behind this build — start aborted.\n" +
+			"  Back up your data, then apply migrations:\n" +
+			"    jenticctl update --stack-only\n" +
+			"  (starting now would run the app against a schema it does not match)")
+
+	case install.SchemaUninitialized:
+		fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))
+		if err := install.RunComposeMigrations(a.Out, composePath); err != nil {
+			return fmt.Errorf("could not initialize the database schema: %w", err)
+		}
+		fmt.Fprintln(a.Out, theme.Successf("Schema created."))
+	}
 	return nil
 }

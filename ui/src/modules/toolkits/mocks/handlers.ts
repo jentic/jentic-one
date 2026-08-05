@@ -301,7 +301,12 @@ export const toolkitsHandlers = [
 		if (!toolkit) return new HttpResponse(null, { status: 404 });
 		const body = (await request.json()) as Partial<MockToolkit>;
 		if (body.name != null) toolkit.name = body.name;
-		if (body.description !== undefined) toolkit.description = body.description ?? null;
+		// Mirror the real backend: a `null` description is IGNORED (leaves the
+		// current value untouched, so a clear sent as `null` silently reverts),
+		// while an empty string is HONOURED and clears the field. Only a
+		// non-`null` value (including `''`) is applied.
+		if (body.description !== undefined && body.description !== null)
+			toolkit.description = body.description;
 		if (body.active != null) toolkit.active = body.active;
 		toolkit.updated_at = now();
 		return HttpResponse.json(toolkit);

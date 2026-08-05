@@ -25,6 +25,10 @@ export type CatalogEntryResponse = {
      */
     spec_url: (string | null);
     /**
+     * Whether this (registered) entry has an upstream spec update the local revision hasn't adopted yet. Always false for unregistered entries.
+     */
+    update_available?: boolean;
+    /**
      * Registrable-domain vendor derived from `api_id` (e.g. `stripe.com`).
      */
     vendor: (string | null);

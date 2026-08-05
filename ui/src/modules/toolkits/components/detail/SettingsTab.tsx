@@ -8,7 +8,7 @@ import {
 	useToolkitKeys,
 	useUpdateToolkit,
 } from '@/modules/toolkits/api';
-import type { Toolkit } from '@/modules/toolkits/api/types';
+import type { Toolkit, ToolkitUpdate } from '@/modules/toolkits/api/types';
 
 interface SettingsTabProps {
 	toolkit: Toolkit;
@@ -77,10 +77,18 @@ export function SettingsTab({ toolkit, onDeleted }: SettingsTabProps) {
 				saving={updateToolkit.isPending}
 				error={updateToolkit.isError ? updateToolkit.error.message : null}
 				onSave={async (draft) => {
-					await updateToolkit.mutateAsync({
-						name: draft.name,
-						description: draft.description || null,
-					});
+					// Dirty-field-only PATCH: send a field only when it changed.
+					// A cleared description wires as an empty STRING (not `null`) —
+					// the toolkit backend ignores a `null` description (the clear
+					// would silently revert) but honours `''`, so clearing must
+					// persist. (The agent console differs: its backend honours
+					// explicit `null`.)
+					const patch: ToolkitUpdate = {};
+					if (draft.name !== toolkit.name) patch.name = draft.name;
+					if (draft.description !== (toolkit.description ?? '')) {
+						patch.description = draft.description;
+					}
+					await updateToolkit.mutateAsync(patch);
 					toast({ title: 'Toolkit updated', variant: 'success' });
 				}}
 			/>

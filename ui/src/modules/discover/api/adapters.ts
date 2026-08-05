@@ -7,39 +7,11 @@
  * `DiscoveryEntity`.
  */
 import type { CatalogEntryResponse } from '@/shared/api';
+import { titleFromApiId } from '@/shared/lib';
 import type { DiscoveryEntity } from '@/modules/discover/api/types';
 
-/**
- * Title-case a slug-ish segment for display: `article_search` → `Article Search`,
- * `top-stories` → `Top Stories`, `v2` → `V2`.
- */
-function humanizeSegment(segment: string): string {
-	return segment
-		.split(/[_\-.]+/)
-		.filter(Boolean)
-		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-		.join(' ');
-}
-
-/**
- * Derive a distinct, human-readable title from an `api_id`.
- *
- * An umbrella vendor exposes several sub-APIs that all share one `vendor`
- * (e.g. `nytimes.com/article_search`, `nytimes.com/books` both vendor
- * `nytimes.com`). Titling cards by `vendor` makes those rows indistinguishable,
- * so the title is built from the part of the `api_id` that actually varies:
- *
- *   `nytimes.com/article_search` → `Article Search`  (sub-API segment)
- *   `stripe.com`                 → `stripe.com`       (no sub-API; use as-is)
- */
-export function titleFromApiId(apiId: string): string {
-	const slash = apiId.indexOf('/');
-	if (slash === -1) {
-		return apiId;
-	}
-	const sub = apiId.slice(slash + 1);
-	return sub ? humanizeSegment(sub) : apiId;
-}
+// Re-export so this module's tests + any consumers keep the pre-move import path.
+export { titleFromApiId };
 
 /**
  * Raw `GET /catalog` manifest entry → `DiscoveryEntity`.
@@ -62,6 +34,7 @@ export function catalogEntryToEntity(entry: CatalogEntryResponse): DiscoveryEnti
 		// the title (i.e. an umbrella sub-API), to avoid `stripe.com / stripe.com`.
 		subtitle: vendor && vendor !== summary ? vendor : undefined,
 		registered: entry.registered,
+		updateAvailable: entry.update_available ?? false,
 		vendor: vendor ?? entry.api_id,
 		githubUrl: entry._links.github ?? undefined,
 		raw: entry,

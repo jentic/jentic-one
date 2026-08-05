@@ -17,7 +17,9 @@
 #
 # Configuration (environment variables, all optional):
 #   JENTIC_REPO         owner/name of the source repo   (default: jentic/jentic-one)
-#   JENTIC_REF          branch, tag, or commit to build  (default: main)
+#   JENTIC_REF          branch, tag, or commit to build  (default: latest release
+#                       tag, e.g. v0.24.0; falls back to main if none is found.
+#                       Set explicitly to build main or a dev branch.)
 #   JENTIC_INSTALL_DIR  where to install the binaries     (default: ~/.jentic/bin)
 #   JENTIC_GO_VERSION   Go to download if none suitable   (default: 1.26.2)
 #   GITHUB_TOKEN        token for cloning a private fork  (default: unset/anonymous)
@@ -112,7 +114,10 @@ set -euo pipefail
 
 # --- configuration ----------------------------------------------------------
 JENTIC_REPO="${JENTIC_REPO:-jentic/jentic-one}"
-JENTIC_REF="${JENTIC_REF:-main}"
+# Empty by default: fetch_source() resolves the latest release tag when unset.
+# An explicit value (a branch like `main`, a tag, or a commit) is honored
+# verbatim — that's the override for building main or a dev/local branch.
+JENTIC_REF="${JENTIC_REF:-}"
 JENTIC_INSTALL_DIR="${JENTIC_INSTALL_DIR:-$HOME/.jentic/bin}"
 JENTIC_GO_VERSION="${JENTIC_GO_VERSION:-1.26.2}"
 GITHUB_TOKEN="${GITHUB_TOKEN:-}"
@@ -366,6 +371,55 @@ ensure_go() {
 }
 
 # --- source fetch -----------------------------------------------------------
+# highest_release_tag reads `git ls-remote --tags` output on stdin and prints
+# the highest canonical release tag (vMAJOR.MINOR.PATCH, with its `v`). It
+# mirrors the Go `highestReleaseTag` (cli/internal/update/version.go): it keeps
+# only clean three-part `v` tags and deliberately ignores `cli/v*` noise tags,
+# pre-releases (`v1.0.0-rc1`), and the peeled `^{}` lines ls-remote also prints.
+# Returns non-zero (and prints nothing) when no release tag is present. Sorting
+# is done field-by-field with a plain `sort` so it works on stock macOS bash 3.2
+# / BSD tools (no `sort -V`).
+highest_release_tag() {
+  # Lines look like "<sha>\trefs/tags/<name>". Extract the tag name, keep only
+  # canonical vX.Y.Z (anchored, so `cli/v*` and `-rc` suffixes are dropped),
+  # strip the leading `v`, numeric-sort by each component, take the largest,
+  # then re-add the `v`.
+  local top
+  top="$(
+    sed -n 's|^.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' \
+      | sed 's/^v//' \
+      | sort -t. -k1,1n -k2,2n -k3,3n \
+      | tail -n 1
+  )"
+  [ -n "$top" ] || return 1
+  printf 'v%s\n' "$top"
+}
+
+# resolve_default_ref sets JENTIC_REF to the latest release tag when the caller
+# left it unset. On any failure (no release tags — e.g. a fork — or a network
+# error) it warns loudly and falls back to main so a build still happens. An
+# explicit JENTIC_REF is honored verbatim and this is a no-op. git auth args are
+# passed through so private repos resolve. Must run after the git auth setup in
+# fetch_source.
+resolve_default_ref() {
+  local clone_url="$1"; shift
+  local -a git_base_auth=("$@")   # git_base + git_auth, already assembled
+
+  [ -n "$JENTIC_REF" ] && return 0
+
+  local ls_out tag
+  if ls_out="$(git "${git_base_auth[@]}" ls-remote --tags "$clone_url" 'v*' 2>/dev/null)" \
+      && tag="$(printf '%s\n' "$ls_out" | highest_release_tag)"; then
+    JENTIC_REF="$tag"
+    ok "Latest release: ${C_BOLD}${JENTIC_REF}${C_RESET}"
+    return 0
+  fi
+
+  JENTIC_REF="main"
+  warn "Could not resolve a release tag in ${JENTIC_REPO} — building from ${C_BOLD}main${C_RESET}."
+  warn "  Pin a specific build with ${C_BOLD}JENTIC_REF=<tag|branch|commit>${C_RESET}."
+}
+
 fetch_source() {
   step "Fetching source"
   WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install.XXXXXX")"
@@ -390,6 +444,9 @@ fetch_source() {
     basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
     git_auth=(-c "http.extraheader=Authorization: Basic ${basic}")
   fi
+
+  # Default the build ref to the latest release tag (unless the user pinned one).
+  resolve_default_ref "$clone_url" "${git_base[@]}" ${git_auth[@]+"${git_auth[@]}"}
 
   if ! spin "Cloning ${JENTIC_REPO}@${JENTIC_REF}" \
         git "${git_base[@]}" ${git_auth[@]+"${git_auth[@]}"} clone \
@@ -596,18 +653,37 @@ print_path_hint() {
 # which repo/ref/commit to track. We write the CLI fields here; `jenticctl install`
 # fills in the stack fields (mode, db). binary_path records the primary
 # (jenticctl) binary; the sibling jentic binary is co-located in the same dir.
-# Preserve any previously recorded mode/db so a CLI-only re-install doesn't wipe
-# the stack metadata.
+# Preserve any previously recorded stack-owned fields (mode/db/broker_port and
+# stack_ref) so a CLI-only re-install doesn't wipe the stack metadata.
 write_manifest() {
-  local home_dir manifest now prev_mode prev_db
+  local home_dir manifest now prev_mode prev_db prev_broker_port prev_stack_ref
   home_dir="${JENTIC_HOME:-$HOME/.jentic}"
   manifest="$home_dir/install.json"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   prev_mode=""
   prev_db=""
+  prev_broker_port=""
+  prev_stack_ref=""
   if [ -f "$manifest" ]; then
-    prev_mode="$(sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
-    prev_db="$(sed -n 's/.*"db"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n1)"
+    prev_mode="$(manifest_field "$manifest" mode)"
+    prev_db="$(manifest_field "$manifest" db)"
+    prev_broker_port="$(manifest_field "$manifest" broker_port)"
+    # stack_ref records what the *stack* was last built from. This script only
+    # ever builds the CLI binaries, so carrying it over is what stops a CLI
+    # update from advertising the stack as current (jentic-one#943). Losing it
+    # would silently re-wedge users on a stale stack.
+    prev_stack_ref="$(manifest_field "$manifest" stack_ref)"
+    # Backfill for manifests written before stack_ref existed. Such a manifest
+    # records the stack's build only in `ref`, which we are about to overwrite
+    # with the newly installed CLI ref. Without this, the old value is lost and
+    # ResolvedStackRef() falls back to the *new* `ref`, so a stale stack reports
+    # itself current — re-creating #943 on the very first CLI-only re-install,
+    # which is exactly when it bites. `mode` is written by `jenticctl install`,
+    # so its presence is what distinguishes "a stack was installed at this ref"
+    # from a CLI-only install that never built one.
+    if [ -z "$prev_stack_ref" ] && [ -n "$prev_mode" ]; then
+      prev_stack_ref="$(manifest_field "$manifest" ref)"
+    fi
   fi
 
   mkdir -p "$home_dir"
@@ -615,16 +691,24 @@ write_manifest() {
     printf '{\n'
     printf '  "repo": "%s",\n' "$JENTIC_REPO"
     printf '  "ref": "%s",\n' "$JENTIC_REF"
+    if [ -n "$prev_stack_ref" ]; then printf '  "stack_ref": "%s",\n' "$prev_stack_ref"; fi
     printf '  "commit": "%s",\n' "${BUILT_COMMIT:-none}"
     printf '  "cli_version": "%s",\n' "$JENTIC_REF"
     printf '  "binary_path": "%s",\n' "$INSTALLED_PATH"
     if [ -n "$prev_mode" ]; then printf '  "mode": "%s",\n' "$prev_mode"; fi
     if [ -n "$prev_db" ]; then printf '  "db": "%s",\n' "$prev_db"; fi
+    if [ -n "$prev_broker_port" ]; then printf '  "broker_port": "%s",\n' "$prev_broker_port"; fi
     printf '  "installed_at": "%s"\n' "$now"
     printf '}\n'
   } > "$manifest"
   chmod 0600 "$manifest" 2>/dev/null || true
   ok "Recorded manifest ${C_DIM}->${C_RESET} ${manifest}"
+}
+
+# manifest_field extracts a top-level string value from the install manifest by
+# key. Kept to sed so the installer stays dependency-free (no jq).
+manifest_field() {
+  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -n1
 }
 
 # --- verify -----------------------------------------------------------------

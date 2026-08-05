@@ -2,7 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class CatalogSnoozeRequest(BaseModel):
+    """Body for ``POST /catalog/{api_id}:snooze`` (C1, #925).
+
+    ``snoozed_until`` is optional: omit or send ``null`` to mute-until-newer (the primary
+    per-API affordance — the badge re-lights only when a *newer* upstream digest lands);
+    provide an ISO-8601 timestamp for a time-boxed snooze that lapses at that instant.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    snoozed_until: datetime | None = Field(
+        default=None,
+        description=(
+            "Optional expiry for the snooze (ISO-8601). Null = mute until a newer upstream "
+            "digest is observed."
+        ),
+    )
 
 
 class CatalogEntryLinksResponse(BaseModel):
@@ -74,6 +95,13 @@ class CatalogEntryResponse(BaseModel):
             "non-archived revision in `GET /apis`."
         )
     )
+    update_available: bool = Field(
+        default=False,
+        description=(
+            "Whether this (registered) entry has an upstream spec update the local "
+            "revision hasn't adopted yet. Always false for unregistered entries."
+        ),
+    )
     links: CatalogEntryLinksResponse = Field(serialization_alias="_links")
 
 
@@ -101,6 +129,12 @@ class CatalogListResponse(BaseModel):
     )
     registered_count: int = Field(
         description="Count of whole-manifest entries already imported locally."
+    )
+    outdated_count: int = Field(
+        default=0,
+        description=(
+            "Count of whole-manifest registered entries with an upstream update available."
+        ),
     )
     manifest_age_seconds: int | None = Field(
         default=None,

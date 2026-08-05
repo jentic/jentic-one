@@ -19,28 +19,34 @@ func TestListSendsParamsAndDecodes(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"data":[{"api_id":"stripe.com","vendor":"stripe.com","spec_url":"https://u","registered":true,
+			"data":[{"api_id":"stripe.com","vendor":"stripe.com","spec_url":"https://u","registered":true,"update_available":true,
 				"_links":{"self":"/catalog/stripe.com","operations":"o","import":"i","github":"g"}}],
-			"catalog_total":5,"registered_count":1,"manifest_age_seconds":60,
+			"catalog_total":5,"registered_count":1,"outdated_count":2,"manifest_age_seconds":60,
 			"has_more":true,"next_cursor":"c1"}`))
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL)
-	res, err := c.List(context.Background(), "tok", ListParams{Q: "pay", Registered: true, Limit: 25})
+	res, err := c.List(context.Background(), "tok", ListParams{Q: "pay", Registered: true, Outdated: true, IncludeSnoozed: true, Limit: 25})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	if gotAuth != "Bearer tok" {
 		t.Errorf("auth header = %q", gotAuth)
 	}
-	for _, want := range []string{"q=pay", "registered_only=true", "limit=25"} {
+	for _, want := range []string{"q=pay", "registered_only=true", "outdated_only=true", "include_snoozed=true", "limit=25"} {
 		if !contains(gotQuery, want) {
 			t.Errorf("query %q missing %q", gotQuery, want)
 		}
 	}
 	if len(res.Data) != 1 || res.Data[0].APIID != "stripe.com" || !res.Data[0].Registered {
 		t.Errorf("bad data: %+v", res.Data)
+	}
+	if !res.Data[0].UpdateAvailable {
+		t.Errorf("update_available not decoded: %+v", res.Data[0])
+	}
+	if res.OutdatedCount != 2 {
+		t.Errorf("outdated_count = %d, want 2", res.OutdatedCount)
 	}
 	if res.Data[0].Links.Github != "g" {
 		t.Errorf("links not decoded: %+v", res.Data[0].Links)

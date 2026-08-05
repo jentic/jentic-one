@@ -11,6 +11,10 @@ export type ToolkitCredentialBindingResponse = {
     api_name?: (string | null);
     api_vendor?: (string | null);
     bound_at: string;
+    /**
+     * Catalog identity slug of the bound credential's target API (`domain[/sub-api]`), when recorded. Display-only.
+     */
+    catalog_api_id?: (string | null);
     credential_id: string;
     credential_type?: (string | null);
     label?: (string | null);

@@ -3,6 +3,7 @@ import { motion, type Variants } from 'framer-motion';
 import { ChevronRight, Loader2, PencilLine, Search, SearchX, Sparkles } from 'lucide-react';
 import { AgentBadge, Badge, EmptyState, ErrorAlert, Input, LoadingState } from '@/shared/ui';
 import { useDebouncedValue } from '@/shared/hooks';
+import { apiRefDisplayName } from '@/shared/lib';
 import {
 	useApis,
 	useCatalog,
@@ -43,12 +44,22 @@ const ROW_VARIANTS: Variants = {
 
 function localToSelected(row: ApiResponse): SelectedApi {
 	const ref = row.api;
-	const label = row.display_name ?? `${ref.vendor}/${ref.name}`;
+	// Friendly primary line: explicit display_name, else the persisted catalog
+	// slug (`nytimes.com/article_search` → `Article Search`), else the legacy
+	// vendor/name humanisation — the exact case #631 flags on the credentials
+	// page's "Add credential" picker.
+	const label = apiRefDisplayName({
+		displayName: row.display_name,
+		catalogApiId: row.catalog_api_id,
+		vendor: ref.vendor,
+		name: ref.name,
+	});
 	return {
 		source: 'local',
 		vendor: ref.vendor,
 		name: ref.name,
 		version: ref.version,
+		apiId: row.catalog_api_id ?? undefined,
 		securitySchemeTypes: row.security_schemes ?? [],
 		label,
 	};
@@ -58,11 +69,33 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 	// Catalog `api_id` is a flat slug (e.g. "stripe.com"). We split path-like
 	// entries into vendor/name; otherwise we fall back to using the slug as
 	// both. Version isn't on the catalog entry, so we default to "1.0.0".
+	//
+	// Row label: the friendly title, via the same shared helper the workspace
+	// rows use — so the same API can't read `github.com` in the catalog
+	// section and `Github.Com` in the "in your workspace" section of this one
+	// picker. The label is derived from the SAME `vendor`/`name` the row
+	// stores as its identity, so the displayed title and the vendor/name tuple
+	// (and thus the credential's default saved name) can never drift.
+	//
+	// `vendor`/`name` resolve from the server-supplied `entry.vendor` first (the
+	// canonical, dedup-stable field), then off the `api_id` slug
+	// (`domain[/sub-api]`) and the `path` segments as fallbacks. A bare vendor
+	// like `github` renders through the shared humanise helper (`github` →
+	// `Github`); a sub-API segment promotes to `Article Search`. The
+	// create-credential dialog's Name field pre-fills from this label.
+	// `vendor` prefers the server-supplied `entry.vendor` (canonical, and what
+	// the workspace rows dedup against — an entry `{api_id:'github.com',
+	// vendor:'github'}` must resolve to `github`, not `github.com`, so it dedups
+	// against a workspace `github/main` row and doesn't drift the persisted
+	// vendor). It falls back to the `api_id` slug parts, then the `path`
+	// segments, and finally the raw slug. `name` promotes a sub-API segment when
+	// present, else `main`.
 	const slug = entry.api_id;
-	const parts = (entry.path ?? slug).split('/').filter(Boolean);
-	const vendor = entry.vendor ?? parts[0] ?? slug;
-	const name = parts[1] ?? 'main';
-	const version = parts[2] ?? '1.0.0';
+	const slugParts = slug.split('/').filter(Boolean);
+	const pathParts = (entry.path ?? slug).split('/').filter(Boolean);
+	const vendor = entry.vendor ?? slugParts[0] ?? pathParts[0] ?? slug;
+	const name = slugParts[1] ?? pathParts[1] ?? 'main';
+	const version = pathParts[2] ?? '1.0.0';
 	return {
 		source: 'catalog',
 		vendor,
@@ -71,7 +104,7 @@ function catalogToSelected(entry: CatalogEntryResponse): SelectedApi {
 		apiId: slug,
 		specUrl: entry.spec_url ?? undefined,
 		registered: entry.registered,
-		label: slug,
+		label: apiRefDisplayName({ catalogApiId: slug, vendor, name }),
 	};
 }
 
@@ -92,7 +125,25 @@ export function ApiPicker({ onSelect, onManualEntry }: ApiPickerProps) {
 		const rows = apisQuery.data?.data ?? [];
 		if (!q) return rows;
 		return rows.filter((r) => {
-			const hay = [r.display_name, r.description, r.api?.vendor, r.api?.name, r.api?.host]
+			// Include the friendly display name (what the row actually shows) in
+			// the searchable text, so typing what's on screen — e.g. `Posthog.Com`
+			// for a `posthog-com` vendor with no explicit `display_name` — returns
+			// the row instead of only matching the raw machine identity.
+			const friendly = apiRefDisplayName({
+				displayName: r.display_name,
+				catalogApiId: r.catalog_api_id,
+				vendor: r.api?.vendor,
+				name: r.api?.name,
+			});
+			const hay = [
+				r.display_name,
+				friendly,
+				r.catalog_api_id,
+				r.description,
+				r.api?.vendor,
+				r.api?.name,
+				r.api?.host,
+			]
 				.filter(Boolean)
 				.join(' ')
 				.toLowerCase();
@@ -303,7 +354,11 @@ function CatalogRow({
 					{selected.label}
 				</span>
 				<p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
-					{selected.vendor}
+					{/* The full machine identity (`nytimes.com/books`), not just the
+					    vendor: two entries whose sub-segments humanise identically must
+					    stay distinguishable, and the user can verify exactly which
+					    api_id a pick will import. */}
+					{selected.apiId}
 				</p>
 			</div>
 			{entry.registered && (

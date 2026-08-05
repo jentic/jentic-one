@@ -115,6 +115,41 @@ func TestAPIKeyRoundTripAndPerms(t *testing.T) {
 	}
 }
 
+func TestDelete(t *testing.T) {
+	paths := config.Paths{Root: t.TempDir()}
+	p, err := Open(paths, "gone")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := p.SaveMeta(&Meta{AgentID: "agnt_1"}); err != nil {
+		t.Fatalf("SaveMeta: %v", err)
+	}
+	if err := p.SaveTokens(&Tokens{AccessToken: "at_1"}); err != nil {
+		t.Fatalf("SaveTokens: %v", err)
+	}
+
+	if err := p.Delete(); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(p.Dir()); !os.IsNotExist(err) {
+		t.Fatalf("profile dir still present after Delete: %v", err)
+	}
+	// It no longer appears in List.
+	names, err := List(paths)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, n := range names {
+		if n == "gone" {
+			t.Fatalf("deleted profile still listed: %v", names)
+		}
+	}
+	// Deleting again (already gone) is not an error.
+	if err := p.Delete(); err != nil {
+		t.Fatalf("Delete (idempotent): %v", err)
+	}
+}
+
 func TestLoadAPIKeyAbsent(t *testing.T) {
 	paths := config.Paths{Root: t.TempDir()}
 	p, err := Open(paths, "nokey")

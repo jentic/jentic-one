@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -161,20 +165,65 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		return a.bootstrapDryRun(profileName, baseURL, targets, env, opts)
 	}
 
+	// After the operator is chosen, offer to isolate it behind a dedicated Unix
+	// user (the true credential boundary). This is asked BEFORE any registration
+	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
+	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
+	// it through this same bootstrap flow.
+	// setup carries the agent-user decision so the identity write below can be
+	// TARGETED correctly: a self-user agent's platform identity belongs in the
+	// agent's own config dir (single source of truth), not the operator's.
+	var setup agentSetup
+	if !opts.skipSkill {
+		// Interactivity for the sudo gate matches the skill picker's own rule
+		// (!yes && a real TTY), not opts.interactive — the wizard deliberately
+		// leaves opts.interactive false (it owns the profile prompts) while the
+		// user is very much at a terminal.
+		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+		s, err := a.setupAgentUser(ctx, operatorNames(targetAdapters(targets)), agentInteractive)
+		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(a.Out, theme.Dim.Render("Agent-user setup cancelled."))
+			} else {
+				// Isolation is best-effort: a failure here must not block the
+				// identity/skill provisioning the operator came for.
+				fmt.Fprintln(a.Out, theme.Warnf("agent-user setup skipped: %v", err))
+			}
+		}
+		setup = s
+	}
+
+	// Registration is deliberately AFTER the agent-user decision: only now do we
+	// know WHERE to write the identity. Reload config so an account just created by
+	// setupAgentUser is seen; resolveIdentityTarget then sends the identity to the
+	// shared agent home (chowned + checked out) whenever an account exists — whether
+	// created in this run or an earlier one — and to the operator's ~/.jentic
+	// otherwise. An identity already registered operator-side is translated over
+	// first, so enabling isolation carries an existing registration across.
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	target := a.resolveIdentityTarget(cfg)
+	if _, err := a.translateOperatorProfile(target, profileName); err != nil {
+		return err
+	}
+
 	// Step 1+2: register (DCR) and wait for human approval, reusing the exact
 	// register plumbing so behaviour stays identical.
-	tokens, err := a.bootstrapIdentity(ctx, profileName, baseURL, opts)
+	tokens, err := a.bootstrapIdentity(ctx, target.paths, profileName, baseURL, opts)
 	if err != nil {
 		return err
 	}
 
-	// Step 3: make this the active profile so bare `jentic` commands use it.
-	if !opts.noActive {
-		if err := config.SetDefaultProfile(a.Paths, profileName); err != nil {
-			return fmt.Errorf("set default profile: %w", err)
-		}
-		fmt.Fprintln(a.Out, theme.Successf("Active profile set to %q", profileName))
+	// Step 3: check out the profile. For an agent-owned target this always sets the
+	// agent home's default (what `jentic run` injects) and never the operator's own
+	// default; for an operator-owned target it sets the operator default unless
+	// --no-activate. Then hand the agent its config dir.
+	if err := a.checkOutProfile(target, profileName, !opts.noActive); err != nil {
+		return err
 	}
+	a.handOffToAgent(target)
 
 	// Step 4: write the skill into the operator's native layout, reusing the
 	// shared skill-writing body. A user-edited managed block is reported but
@@ -189,7 +238,64 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	a.bootstrapSummary(profileName, tokens)
+
+	// If we created a dedicated agent account, offer to start a session in the
+	// agent's home right now — the operator has just seen the profile summary and
+	// the natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
+	// declining leaves the printed command for later. Only when interactive and a
+	// real account exists.
+	agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+	if setup.created && setup.agentUser != "" && agentInteractive {
+		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
+	}
 	return nil
+}
+
+// offerAgentSession asks whether to start a session in the freshly-isolated
+// agent's home and, on yes, launches it (equivalent to `cd <home>; jentic run
+// <agent>`). The launch runs the agent under its own user in a login shell, so
+// the operator lands straight in the isolated session. Declining is a no-op — the
+// copy-paste command was already printed by the agent-user setup step.
+func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
+	homeDir := setup.homeDir
+	launch := fmt.Sprintf("cd %s; jentic run %s", homeDir, setup.agentID)
+
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("Start a session in the agent's home now? This runs:"))
+	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(launch))
+
+	start := true
+	if err := install.RunConfirm(huh.NewConfirm().
+		Title("Start a session in the agent's home now?").
+		Description("Launches the agent as its own user, in " + homeDir + ".").
+		Affirmative("Yes, start it").
+		Negative("Not now").
+		Value(&start)); err != nil {
+		return err
+	}
+	if !start {
+		fmt.Fprintln(a.Out, theme.Dim.Render("Not started. Run the command above whenever you're ready."))
+		return nil
+	}
+
+	// Launch in the agent's own home (dir "" → login shell starts in $HOME). No
+	// working-dir grant is involved here, but launchAgent still loads the recorded
+	// grants to build the confinement profile, so pass the current account. The
+	// checked-out profile (agent-home default) is injected as JENTIC_PROFILE.
+	desc, _ := localagent.Lookup(setup.agentID)
+	binary := desc.Binary
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	acct, _ := cfg.AgentAccount()
+	sessionProfile, err := a.resolveSessionProfile("", acct)
+	if err != nil {
+		return err
+	}
+	return a.launchAgent(ctx, acct, setup.agentUser, binary, "", sessionProfile, nil)
 }
 
 // bootstrapIdentity registers the agent if needed and resolves a token pair. It
@@ -197,8 +303,8 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 // skip the approval banner and wait loop entirely. Only when the first mint is
 // pending do we print the approval link and poll until approval (or timeout /
 // Ctrl-C).
-func (a *App) bootstrapIdentity(ctx context.Context, profileName, baseURL string, opts *bootstrapOptions) (*tokensView, error) {
-	sess, err := agentauth.Open(a.Paths, profileName, baseURL)
+func (a *App) bootstrapIdentity(ctx context.Context, paths config.Paths, profileName, baseURL string, opts *bootstrapOptions) (*tokensView, error) {
+	sess, err := agentauth.Open(paths, profileName, baseURL)
 	if err != nil {
 		return nil, err
 	}

@@ -20,6 +20,9 @@ export interface CredentialFormState {
 	apiVendor: string;
 	apiName: string;
 	apiVersion: string;
+	/** Catalog identity slug of the picked API (`domain[/sub-api]`), stored on
+	 * the credential at create time (#910). Empty for manual entry. */
+	catalogApiId: string;
 	// bearer_token
 	token: string;
 	// api_key
@@ -63,6 +66,7 @@ export const EMPTY_FORM: CredentialFormState = {
 	apiVendor: '',
 	apiName: '',
 	apiVersion: '',
+	catalogApiId: '',
 	token: '',
 	key: '',
 	fieldName: '',

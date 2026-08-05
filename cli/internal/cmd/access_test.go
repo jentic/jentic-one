@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/internal/accessclient"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
@@ -311,6 +312,28 @@ func TestAccessWhoamiRendersToolkitName(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "tk_named") || !strings.Contains(rendered, "tk_bare") {
 		t.Errorf("expected both toolkit ids in output, got:\n%s", rendered)
+	}
+}
+
+// printMe points the agent at `jentic profile view` for the filesystem side of
+// "what can I do?", both when it has toolkit bindings and when it has none (the
+// no-bindings branch must not short-circuit before the hint).
+func TestPrintMePointsAtProfileView(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		me   *accessclient.Me
+	}{
+		{"with bindings", &accessclient.Me{ID: "agnt_1", Status: "active", ToolkitBindings: []accessclient.ToolkitBinding{{ToolkitID: "tk_1"}}}},
+		{"no bindings", &accessclient.Me{ID: "agnt_1", Status: "active"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := testApp(t)
+			app.printMe(tc.me)
+			got := app.Out.(*bytes.Buffer).String()
+			if !strings.Contains(got, "jentic profile view") {
+				t.Errorf("expected a pointer to `jentic profile view`, got:\n%s", got)
+			}
+		})
 	}
 }
 

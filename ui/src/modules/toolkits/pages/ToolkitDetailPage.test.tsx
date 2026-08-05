@@ -244,6 +244,57 @@ describe('ToolkitDetailPage', () => {
 		await waitFor(() => expect(patched).toMatchObject({ name: 'GitHub Ops' }));
 	});
 
+	it('clears a toolkit description by sending an empty string, not null, so the clear persists', async () => {
+		// The toolkit backend IGNORES a `null` description (the clear would
+		// silently revert) but HONOURS an empty string — so clearing the field
+		// from the Settings tab Identity form must PATCH `description: ''`. Drive
+		// against a local fixture whose GET reflects the mutated state and whose
+		// PATCH mirrors the real backend (ignore null, honour ''), so this test
+		// FAILS with the old `description || null` and PASSES with `''`.
+		let description: string | null = 'Issues, PRs, and repo automation.';
+		let patchBody: { name?: string | null; description?: string | null } | null = null;
+		const row = () => ({
+			toolkit_id: 'tk_demo_github',
+			name: 'GitHub Tools',
+			description,
+			active: true,
+			key_count: 2,
+			credential_count: 1,
+			permissions: [],
+			created_at: '2026-05-01T10:00:00Z',
+			updated_at: '2026-05-03T10:00:00Z',
+		});
+		worker.use(
+			http.get('/toolkits/:toolkitId', () => HttpResponse.json(row())),
+			http.patch('/toolkits/:toolkitId', async ({ request }) => {
+				patchBody = (await request.json()) as typeof patchBody;
+				// Mirror the real backend: honour an empty string, ignore null.
+				if (patchBody && 'description' in patchBody && patchBody.description != null) {
+					description = patchBody.description;
+				}
+				return HttpResponse.json(row());
+			}),
+		);
+
+		const user = userEvent.setup();
+		renderWithProviders(<ToolkitDetailPage />, { route: ROUTE, path: PATH });
+		await screen.findByRole('heading', { name: 'GitHub Tools' });
+
+		await user.click(screen.getByRole('tab', { name: 'Settings' }));
+		const descInput = await screen.findByLabelText('Description');
+		expect(descInput).toHaveValue('Issues, PRs, and repo automation.');
+		await user.clear(descInput);
+		const save = screen.getByRole('button', { name: /save changes/i });
+		await waitFor(() => expect(save).toBeEnabled());
+		await user.click(save);
+
+		// The PATCH carries an empty STRING (backend-honoured), never `null`.
+		await waitFor(() => expect(patchBody).not.toBeNull());
+		expect(patchBody).toMatchObject({ description: '' });
+		// The cleared value sticks on the refetched entity (does not revert).
+		expect(description).toBe('');
+	});
+
 	it('has no critical accessibility violations', async () => {
 		const { container } = renderWithProviders(<ToolkitDetailPage />, {
 			route: ROUTE,

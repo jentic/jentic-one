@@ -94,6 +94,10 @@ class ApiResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     api: ApiReferenceResponse
+    # Catalog identity slug this API was imported from (`domain[/sub-api]`,
+    # e.g. `nytimes.com/article_search`) — the separable form the UI derives
+    # friendly titles from. Null for manual/inline imports.
+    catalog_api_id: str | None
     display_name: str | None
     description: str | None
     icon_url: str | None
@@ -101,6 +105,25 @@ class ApiResponse(BaseModel):
     revision_count: int
     operation_count: int
     security_schemes: list[str]
+    origin: str | None = Field(
+        default=None,
+        description=(
+            "Provenance of the current revision: `catalog` (imported from the public "
+            "catalog), `overlay` (materialized from a confirmed overlay), or null (manual "
+            "import)."
+        ),
+    )
+    source_url: str | None = Field(
+        default=None,
+        description="Upstream spec URL backing the current revision, when known (catalog linkage).",
+    )
+    update_available: bool = Field(
+        default=False,
+        description=(
+            "Whether the upstream spec at `source_url` has a notified update this API "
+            "hasn't adopted yet (Flow-3). Re-importing clears it."
+        ),
+    )
     created_at: datetime
     updated_at: datetime
     links: ApiLinksResponse = Field(serialization_alias="_links")
