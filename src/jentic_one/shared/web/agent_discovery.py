@@ -86,7 +86,7 @@ def shipped_skill_names() -> tuple[str, ...]:
         if not name.endswith(".md"):
             continue
         stem = name[: -len(".md")]
-        if SKILL_NAME_RE.match(stem):
+        if SKILL_NAME_RE.fullmatch(stem):
             names.append(stem)
     return tuple(sorted(names))
 
@@ -278,7 +278,7 @@ def get_agent_discovery_router() -> APIRouter:
         # the grammar rejects malformed names and the allowlist rejects unknown
         # ones. The default ``str`` path converter never matches a slash, so
         # traversal like ``/skills/a/b.md`` simply does not route here.
-        if not SKILL_NAME_RE.match(name) or name not in shipped_skill_names():
+        if not SKILL_NAME_RE.fullmatch(name) or name not in shipped_skill_names():
             raise HTTPException(status_code=404)
         return PlainTextResponse(load_skill_markdown(name), media_type=MARKDOWN_MEDIA_TYPE)
 

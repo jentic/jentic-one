@@ -95,9 +95,16 @@ def test_unknown_skill_name_is_404(client: TestClient) -> None:
     ],
 )
 def test_skill_traversal_attempts_do_not_serve(client: TestClient, path: str) -> None:
-    """Traversal-shaped requests never serve a file body (404 or non-match)."""
+    """Traversal-shaped requests never serve a file body, and never 5xx.
+
+    The layered guard (regex + allowlist) must reject before any resource read,
+    so a traversal-shaped or grammar-valid-but-unshipped name is a clean 404 —
+    never a 500 from a failed file read. ``raise_server_exceptions=False`` on the
+    client means a 500 would otherwise slip past a bare ``!= 200`` check.
+    """
     resp = client.get(path)
     assert resp.status_code != 200
+    assert resp.status_code < 500
     assert "# Using Jentic from the CLI" not in resp.text
 
 
@@ -235,10 +242,16 @@ def test_llms_txt_quickstart_matches_backend_contract(client: TestClient) -> Non
     Regression guard for review findings: the poll loop must key on the real
     ``active`` status (there is no ``approved``), and the token call must be
     described as JSON (the endpoint 422s a form-encoded body).
+
+    The ``approved`` check is scoped to the Quickstart section (the steps an
+    agent follows), not the whole document — later sections like ``## Skills``
+    render skill descriptions that may legitimately mention approval workflows.
     """
     body = client.get(LLMS_TXT_PATH).text
-    assert "`active`" in body
-    assert "approved" not in body  # the status value is `active`, never `approved`
+    quickstart = body.split("## Quickstart", 1)[-1].split("\n## ", 1)[0]
+    assert "`active`" in quickstart
+    # The registration status value is `active`, never `approved`.
+    assert "approved" not in quickstart
     assert "JSON body" in body
     assert "unique `jti`" in body
     # The assertion-TTL bound is rendered from config, not hardcoded prose.

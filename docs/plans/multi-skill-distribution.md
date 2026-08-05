@@ -282,8 +282,9 @@ being forced into the `jentic`-shaped schema.
   `cli/internal/skillgen/content/<name>.md` and
   `src/jentic_one/shared/web/content/<name>.md` from each `skills/<name>/SKILL.md`
   (excluding `init-design`). Single human edit point.
-- **`tests/arch/test_skill_drift.py`**: iterate the shipped name set (globbed, shared
-  source of truth); for each assert `cli/.../content/<name>.md` ==
+- **`tests/arch/test_skill_drift.py`**: iterate the served name set (`SERVED_SKILLS`,
+  the explicit allowlist tuple in `tools.skills_sync` — the shared source of truth);
+  for each assert `cli/.../content/<name>.md` ==
   `src/.../content/<name>.md` (byte-identical) **and** both mirror
   `skills/<name>/SKILL.md`. Run the frontmatter validator (name regex, description
   1–1024, no BaseURL placeholder). Fails on any single-sided add/edit.

@@ -102,27 +102,14 @@ func sidecarPath(skillMD string) string {
 	return filepath.Join(filepath.Dir(skillMD), sidecarName)
 }
 
-// bodyHash is the provenance hash of an owned-file skill's rendered body,
-// recorded in the sidecar and recomputed from disk for edit detection.
-func bodyHash(body string) string {
-	sum := sha256.Sum256([]byte(strings.TrimRight(normalizeNewlines(body), "\n")))
+// dedicatedFileHash fingerprints the *entire* rendered owned-file SKILL.md
+// (frontmatter + body), normalized. Edit detection compares this over the
+// on-disk file against the sidecar's recorded hash, so a hand-edit to EITHER
+// the frontmatter (e.g. a tuned description/argument-hint) or the body is
+// caught — not just body edits. It hashes exactly what renderDedicated writes.
+func dedicatedFileHash(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.TrimRight(normalizeNewlines(string(data)), "\n")))
 	return hex.EncodeToString(sum[:])
-}
-
-// dedicatedBody returns the body of an owned-file SKILL.md beneath its leading
-// YAML frontmatter, so the body can be hashed for edit detection. When there is
-// no leading frontmatter the whole content is treated as body.
-func dedicatedBody(data []byte) string {
-	s := normalizeNewlines(string(data))
-	if !strings.HasPrefix(s, "---\n") {
-		return s
-	}
-	rest := s[len("---\n"):]
-	_, end := closingFence(rest)
-	if end < 0 {
-		return s
-	}
-	return strings.TrimLeft(rest[end:], "\n")
 }
 
 // renderDedicated builds a clean owned-file SKILL.md: YAML frontmatter followed

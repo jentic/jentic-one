@@ -592,6 +592,43 @@ func TestOwnedFileEditGuardViaSidecar(t *testing.T) {
 	}
 }
 
+// TestOwnedFileEditGuardCoversFrontmatter proves a hand-edit to ONLY the
+// frontmatter (not the body) is detected and refused without --force. The
+// sidecar hash fingerprints the whole rendered file, so tuned frontmatter is
+// not silently overwritten on the next Apply/update.
+func TestOwnedFileEditGuardCoversFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	env := DetectEnv{Home: dir, Cwd: dir}
+	ad, _ := DefaultRegistry().Resolve("claude")
+	c := jenticContent(t)
+
+	if _, err := Apply(ad, c, env, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	target := ad.Target(ScopeUser, c.Name, env)
+	data, _ := os.ReadFile(target)
+	// Edit only the frontmatter description, leaving the body untouched.
+	edited := strings.Replace(string(data), "description: ", "description: MY EDIT — ", 1)
+	if edited == string(data) {
+		t.Fatal("test setup: frontmatter edit did not change the file")
+	}
+	if err := os.WriteFile(target, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Apply(ad, c, env, ApplyOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.UserEdits {
+		t.Fatal("a frontmatter-only edit must be flagged via the sidecar")
+	}
+	cur, _ := os.ReadFile(target)
+	if !strings.Contains(string(cur), "MY EDIT") {
+		t.Error("frontmatter edit should be preserved without --force")
+	}
+}
+
 // TestOwnedFileLegacyMigration proves a pre-split marker-wrapped dir SKILL.md is
 // recognized as ours and rewritten clean (not flagged user-edited).
 func TestOwnedFileLegacyMigration(t *testing.T) {

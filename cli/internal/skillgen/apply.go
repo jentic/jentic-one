@@ -107,7 +107,7 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 	if err := writeTarget(target, newBytes); err != nil {
 		return out, err
 	}
-	if err := writeSidecar(target, c); err != nil {
+	if err := writeSidecar(target, c, newBytes); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -121,7 +121,7 @@ func applyOwnedFile(a Adapter, c Canonical, target string, norm []byte, out Outc
 func ownedFileUserEdited(target string, norm []byte, name string) bool {
 	sc, ok := readSidecar(target)
 	if ok {
-		return bodyHash(dedicatedBody(norm)) != sc.BodyHash
+		return dedicatedFileHash(norm) != sc.BodyHash
 	}
 	// No sidecar. A legacy marker-wrapped block is our own pre-migration file,
 	// safe to rewrite; verify the block body still matches its recorded hash so
@@ -135,11 +135,13 @@ func ownedFileUserEdited(target string, norm []byte, name string) bool {
 	return true
 }
 
-// writeSidecar records the provenance of an owned-file skill next to it.
-func writeSidecar(skillMD string, c Canonical) error {
+// writeSidecar records the provenance of an owned-file skill next to it. The
+// recorded hash fingerprints the full rendered file (frontmatter + body) so
+// edit detection catches hand-edits to either part.
+func writeSidecar(skillMD string, c Canonical, rendered []byte) error {
 	sc := sidecar{
 		Name:     c.Name,
-		BodyHash: bodyHash(skillBody(c)),
+		BodyHash: dedicatedFileHash(rendered),
 		Source:   string(c.source()),
 		BaseURL:  c.BaseURL,
 	}
@@ -351,6 +353,13 @@ func pruneEmptyDirs(dir string) {
 		base := filepath.Base(dir)
 		if base == "skills" || base == ".claude" || base == ".cursor" || base == ".hermes" {
 			return // reached a boundary we don't own.
+		}
+		// Never follow or remove a symlink: ReadDir would traverse into its
+		// target (which could look empty), and os.Remove would delete the link
+		// itself. We only prune real dirs the generator created, so a symlink
+		// planted in our tree stops the walk rather than being touched.
+		if fi, err := os.Lstat(dir); err != nil || fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+			return
 		}
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) > 0 {

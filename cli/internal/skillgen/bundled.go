@@ -106,8 +106,8 @@ func validateBaseURL(baseURL string) error {
 	if baseURL == "" {
 		return nil
 	}
-	if strings.ContainsAny(baseURL, "\r\n\x00") {
-		return fmt.Errorf("invalid base URL %q: contains a newline or control character", baseURL)
+	if i := strings.IndexFunc(baseURL, func(r rune) bool { return r < 0x20 || r == 0x7f }); i >= 0 {
+		return fmt.Errorf("invalid base URL %q: contains a control character", baseURL)
 	}
 	if strings.Contains(baseURL, "<!--") || strings.Contains(baseURL, "-->") ||
 		strings.Contains(baseURL, "MANAGED SKILL") {

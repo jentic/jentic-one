@@ -148,7 +148,9 @@ Apply the overlay in place with this format-preserving applier. It keeps 2-space
 trailing-newline convention, and — importantly — the **original position** of any key that a
 `remove`+`update` pair re-creates (e.g. `servers`), so the diff stays scoped to the changed block.
 It supports the JSONPath subset these overlays use (`$`, `$.servers`, `$.info`, `$.paths['/x'].get`,
-etc.). This script is tested; use it as-is.
+etc.). It is deliberately small and covers the common fixes; step 5's idempotency check is the
+gate that proves it applied your overlay correctly, so always run it rather than trusting the
+applier blindly.
 
 ```
 python3 - "$SPEC" "$OVL" <<'PY'
@@ -336,6 +338,8 @@ plane (default `http://127.0.0.1:8000`).
 
 ```
 BASE=http://127.0.0.1:8000
+# Run this block with bash (it uses `read ... < <(...)` process substitution, which
+# POSIX `sh`/`dash` does not support).
 # Submit uses an apis:write token; confirm uses an overlays:confirm token (may be the
 # same token if your profile has both; an org:admin token also satisfies confirm).
 # Adjust to however your active token is exposed.

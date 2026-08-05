@@ -62,7 +62,7 @@ func probeInstall(a Adapter, target string, norm []byte, name string) (installed
 		// this skill is installed. Edit state comes from the sidecar; a legacy
 		// in-file block is our own pre-migration write.
 		if sc, ok := readSidecar(target); ok {
-			return true, bodyHash(dedicatedBody(norm)) != sc.BodyHash
+			return true, dedicatedFileHash(norm) != sc.BodyHash
 		}
 		if blk := findMigratableLegacyBlock(norm, name); blk.found {
 			return true, blockUserEdited(norm, blk)
