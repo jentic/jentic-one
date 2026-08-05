@@ -5,7 +5,7 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? Run `jentic register` to create an agent, then browse the catalog\nwith `jentic apis`. To install and operate jentic-one locally, use the\n`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic bootstrap`\nto create one (isolated account + registration + skills). If you're an agent\nwithout a profile yet, run `jentic register`. Then browse the catalog with\n`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\nCLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
       "commands": [
         {
           "name": "bootstrap",
@@ -147,6 +147,13 @@
               "aliases": [
                 "ls"
               ]
+            },
+            {
+              "name": "view",
+              "path": "jentic profile view",
+              "use": "view [name]",
+              "short": "Show a profile's details and the directories its agent can access",
+              "long": "Show a profile's details plus the map of every directory its agent can\nreach. With no name it non-interactively shows the currently active profile —\nso an agent can run `jentic profile view` to see exactly what it can access."
             },
             {
               "name": "use",
@@ -1207,7 +1214,7 @@
           "use": "skill",
           "short": "Generate the Jentic CLI-usage skill into your agent's native layout",
           "long": "skill writes a \"how to use Jentic via the CLI\" skill into each supported\nagent runtime's native layout — a dedicated SKILL.md for claude-code,\ncursor, and hermes, or a spliced block in AGENTS.md for codex and generic —\nso the agent knows the platform loop (register -\u003e request access -\u003e\nsearch/inspect/execute) without you hand-writing anything.\n\nWrites are idempotent: generated content lives in a clearly-marked managed\nblock, so re-running never clobbers your own edits around it.",
-          "group_title": "Find and run operations",
+          "group_title": "Local agent client",
           "subcommands": [
             {
               "name": "init",
@@ -1310,6 +1317,102 @@
                   "usage": "placement scope to remove from: user or project (default: every scope where the skill is installed)"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "path": "jentic run",
+          "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",
+          "short": "Launch a coding agent as its own isolated Unix user",
+          "long": "run launches a coding agent (claude, ...) under a dedicated, unprivileged\nOS account distinct from the operator's login user, so a compromised or\nprompt-injected agent cannot read the operator's keys, browser session, or\nthe jentic-one credential store. It provisions the agent's binary for that\naccount if missing, resolves filesystem access to the working directory\n(granting a scoped ACL only when the operator confirms), and starts the\nsession in a login shell so no operator environment leaks.\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis in\ndocs/security/local-agent/local-agent-isolation.md for the full rationale.",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "agent-user",
+              "type": "string",
+              "usage": "override the derived \u003coperator\u003e-local-agent account"
+            },
+            {
+              "name": "allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "grant the agent access to the working directory without prompting"
+            },
+            {
+              "name": "grant",
+              "type": "string",
+              "usage": "grant the agent access to the given directory, then exit (without launching)"
+            },
+            {
+              "name": "home",
+              "type": "bool",
+              "default": "false",
+              "usage": "open the session in the agent's own home, skipping the current directory"
+            },
+            {
+              "name": "list-grants",
+              "type": "bool",
+              "default": "false",
+              "usage": "list the directories the agent has been granted, then exit"
+            },
+            {
+              "name": "no-allow-dir",
+              "type": "bool",
+              "default": "false",
+              "usage": "never grant directory access; open in the agent's home instead"
+            },
+            {
+              "name": "no-seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "never copy the operator's agent config into the agent's home"
+            },
+            {
+              "name": "profile",
+              "type": "string",
+              "usage": "launch with this agent profile checked out for the session (overrides the checked-out default)"
+            },
+            {
+              "name": "revoke",
+              "type": "string",
+              "usage": "revoke the agent's access to the given directory, then exit"
+            },
+            {
+              "name": "seed-config",
+              "type": "bool",
+              "default": "false",
+              "usage": "copy the operator's agent config into the agent's home without prompting"
+            },
+            {
+              "name": "yes",
+              "shorthand": "y",
+              "type": "bool",
+              "default": "false",
+              "usage": "assume the safe default for every prompt (never grants a flagged-dangerous dir)"
+            }
+          ]
+        },
+        {
+          "name": "reset",
+          "path": "jentic reset",
+          "use": "reset [profile]",
+          "short": "Tear down the agent account, or remove a single profile",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`.\nThere is ONE dedicated agent Unix account shared by every profile, so reset\nworks at two granularities.\n\n`jentic reset` with no argument is a full clean slate: it tears down the\nagent account — the dedicated Unix user, the named-user ACLs stamped across\nyour home (both the leaf read/write grants and the execute-only ancestor\ntraverse grants), the passwordless-launch sudoers drop-in, and every agent\nprofile in the account's home — and then also wipes your OWN jentic CLI\nconfig: every profile (keys, tokens, registration) under ~/.jentic/profiles\nand the default profile. The account's home is PRESERVED by default (re-owned\nto you); deleting it takes a separate, explicit confirmation.\n\n`jentic reset \u003cprofile\u003e` removes just that one profile. If it is an\nagent-owned profile and the LAST one in the account, reset offers to also\ntear down the whole account (grants, sudoers, Unix user, home) — otherwise\nthe account and its grants are left in place.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "example": "  jentic reset                              # full clean slate: the account + your own config\n  jentic reset work                         # just the 'work' profile\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "delete-home",
+              "type": "bool",
+              "default": "false",
+              "usage": "also delete the agent's home directory (non-interactive opt-in; pairs with --force)"
+            },
+            {
+              "name": "force",
+              "type": "bool",
+              "default": "false",
+              "usage": "skip the typed-name confirmation (the only non-interactive escape hatch; use with care)"
             }
           ]
         },

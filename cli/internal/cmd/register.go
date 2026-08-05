@@ -111,12 +111,26 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 		opts.profile, opts.baseURL, opts.name = profileName, baseURL, name
 	}
 
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
 	profileName, baseURL, err := a.resolveIdentity(opts.profile, opts.baseURL)
 	if err != nil {
 		return err
 	}
 
-	sess, err := agentauth.Open(a.Paths, profileName, baseURL)
+	// When a shared agent account exists, a new identity is provisioned into the
+	// agent's own home (chowned + checked out) rather than the operator's ~/.jentic.
+	// An identity that already exists operator-side is translated over first, so
+	// enabling isolation carries an existing registration across instead of minting
+	// a fresh agent_id that would need re-approval.
+	target := a.resolveIdentityTarget(cfg)
+	if _, err := a.translateOperatorProfile(target, profileName); err != nil {
+		return err
+	}
+
+	sess, err := agentauth.Open(target.paths, profileName, baseURL)
 	if err != nil {
 		return err
 	}
@@ -134,9 +148,20 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 		return err
 	}
 
+	// Check out the profile (agent-home default when agent-owned; register never
+	// touches the operator's own default) and hand the agent its config.
+	if err := a.checkOutProfile(target, profileName, false); err != nil {
+		return err
+	}
+	a.handOffToAgent(target)
+
 	fmt.Fprintln(a.Out, theme.Successf("Tokens saved to %s", sess.Profile.Dir()))
+	// Preview only the short-lived access token as a "it worked" confirmation. The
+	// refresh token is the long-lived credential — never echo it (not even a
+	// truncated preview), since it lands in terminal scrollback, tmux buffers, and
+	// CI logs. It is safe on disk in the profile (0600); that is the only place it
+	// needs to be.
 	fmt.Fprintln(a.Out, theme.Field("access", shorten(tokens.AccessToken)))
-	fmt.Fprintln(a.Out, theme.Field("refresh", shorten(tokens.RefreshToken)))
 	if !tokens.AccessExpiresAt.IsZero() {
 		fmt.Fprintln(a.Out, theme.Field("expires", tokens.AccessExpiresAt.Format(time.RFC3339)))
 	}
