@@ -32,9 +32,7 @@ SYSTEM_VERSION_PATH = "/system/version"
 class VersionResponse(BaseModel):
     """The running app version and the latest release known to this backend."""
 
-    current: str = Field(
-        description="The version of jentic-one currently running on this backend."
-    )
+    current: str = Field(description="The version of jentic-one currently running on this backend.")
     latest: str | None = Field(
         default=None,
         description=(

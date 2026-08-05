@@ -837,7 +837,7 @@ class TelemetryConfig(BaseModel):
 
 
 class ReleaseCheckConfig(BaseModel):
-    """"Update available" check for the running jentic-one build itself.
+    """ "Update available" check for the running jentic-one build itself.
 
     Powers ``GET /system/version``: the backend asks GitHub for the newest
     published release of ``repo`` and compares it against the running build so the

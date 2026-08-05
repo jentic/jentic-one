@@ -158,7 +158,7 @@ func installedCLIVersion(paths config.Paths) string {
 // handle — the nudge degrades to a fresh probe.
 func loadUpdateCheck(paths config.Paths) (updateCheckCache, error) {
 	var c updateCheckCache
-	data, err := os.ReadFile(paths.UpdateCheckPath()) //nolint:gosec // path derived from the CLI's own JENTIC_HOME, not user input.
+	data, err := os.ReadFile(paths.UpdateCheckPath())
 	if err != nil {
 		return c, err
 	}
