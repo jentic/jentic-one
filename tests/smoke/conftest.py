@@ -289,7 +289,13 @@ def _skip_if_unreachable(request: pytest.FixtureRequest, base_url: str) -> None:
     test_helm_modes which handle their own reachability checks).
     """
     module_name = request.module.__name__
-    exempt_modules = ("tests.smoke.test_env", "tests.smoke.test_helm_modes")
+    exempt_modules = (
+        "tests.smoke.test_env",
+        "tests.smoke.test_helm_modes",
+        # Real-AWS SigV4 tests: the signer-level tests need only AWS env vars
+        # (no deployed stack); the broker E2E test does its own reachability skip.
+        "tests.smoke.test_sigv4_real_aws",
+    )
     if module_name in exempt_modules:
         return
     if not _app_is_reachable(base_url):
