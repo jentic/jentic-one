@@ -54,11 +54,11 @@ func TestSkillInitGenericWritesManagedBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AGENTS.md not written: %v", err)
 	}
-	if !strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL") {
-		t.Error("managed block sentinel missing")
+	if !strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL: jentic") {
+		t.Error("named managed block sentinel missing")
 	}
-	if !strings.Contains(string(data), "jentic register") {
-		t.Error("skill body missing expected command")
+	if !strings.Contains(string(data), "See the full skill: GET") {
+		t.Error("AGENTS.md should carry a pointer link to the full skill")
 	}
 }
 
@@ -237,8 +237,14 @@ func TestSkillListJSONReportsInstalledAfterInit(t *testing.T) {
 		if op.Installed != want {
 			t.Errorf("%s installed = %v, want %v", op.Operator, op.Installed, want)
 		}
-		if want && op.InstalledPath != filepath.Join(home, ".claude", "skills", "jentic", "SKILL.md") {
-			t.Errorf("claude installed_path = %q", op.InstalledPath)
+		// init installs the full skill set, so installed_path points at one of
+		// the claude skill dirs (whichever sorts first) — assert the shape, not
+		// a specific skill.
+		if want {
+			prefix := filepath.Join(home, ".claude", "skills") + string(filepath.Separator)
+			if !strings.HasPrefix(op.InstalledPath, prefix) || !strings.HasSuffix(op.InstalledPath, "SKILL.md") {
+				t.Errorf("claude installed_path = %q, want a %s<skill>/SKILL.md path", op.InstalledPath, prefix)
+			}
 		}
 	}
 	if !sawClaude {
@@ -325,7 +331,7 @@ func TestSkillListPrettyShowsEveryInstall(t *testing.T) {
 	}
 	reg := skillgen.DefaultRegistry()
 	ad, _ := reg.Resolve("claude")
-	content, err := skillgen.Bundled("http://example.test")
+	content, err := skillgen.Bundled("jentic", "http://example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,5 +412,231 @@ func TestSkillRemoveNoOperatorErrors(t *testing.T) {
 	cmd.SetArgs([]string{"remove"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error when remove has no operators")
+	}
+}
+
+// TestSkillInitInstallsFullSet proves init writes every shipped skill into an
+// owned-file operator (one SKILL.md per skill).
+func TestSkillInitInstallsFullSet(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	stubDetect(t, app, home, cwd)
+	app.Out, app.Err = out, out
+	cmd := newSkillCmd(app)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"init", "--operator", "claude", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range skillgen.BundledNames() {
+		p := filepath.Join(home, ".claude", "skills", name, "SKILL.md")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("skill %s not installed at %s: %v", name, p, err)
+		}
+	}
+}
+
+// TestSkillInitSkillFilter proves --skill limits the set.
+func TestSkillInitSkillFilter(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	stubDetect(t, app, home, cwd)
+	app.Out, app.Err = out, out
+	cmd := newSkillCmd(app)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"init", "--operator", "claude", "--skill", "jentic", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "jentic", "SKILL.md")); err != nil {
+		t.Errorf("jentic should be installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "import-new-api", "SKILL.md")); !os.IsNotExist(err) {
+		t.Error("import-new-api must NOT be installed when --skill jentic is given")
+	}
+}
+
+// TestSkillInitUnknownSkillErrors proves --skill is validated against the set.
+func TestSkillInitUnknownSkillErrors(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+	app := testApp(t)
+	app.Out = new(bytes.Buffer)
+	cmd := newSkillCmd(app)
+	cmd.SetOut(app.Out)
+	cmd.SetErr(app.Out)
+	cmd.SetArgs([]string{"init", "--operator", "claude", "--skill", "bogus-skill", "--yes"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for unknown skill")
+	}
+	if !strings.Contains(err.Error(), "bogus-skill") {
+		t.Errorf("error should name the unknown skill: %v", err)
+	}
+}
+
+// TestSkillUpdateRewritesOnBaseURLChange proves `skill update` re-renders
+// installed skills with a new base URL and rewrites when the hash differs.
+func TestSkillUpdateRewritesOnBaseURLChange(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	run := func(args ...string) string {
+		out := new(bytes.Buffer)
+		app := testApp(t)
+		stubDetect(t, app, home, cwd)
+		app.Out, app.Err = out, out
+		cmd := newSkillCmd(app)
+		cmd.SetOut(out)
+		cmd.SetErr(out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("skill %v: %v", args, err)
+		}
+		return out.String()
+	}
+
+	run("init", "--operator", "claude", "--skill", "jentic", "--base-url", "http://one.test", "--yes")
+	skill := filepath.Join(home, ".claude", "skills", "jentic", "SKILL.md")
+	before, _ := os.ReadFile(skill)
+	if !strings.Contains(string(before), "http://one.test") {
+		t.Fatalf("initial base URL not rendered:\n%s", before)
+	}
+
+	out := run("update", "--operator", "claude", "--skill", "jentic", "--base-url", "http://two.test")
+	if !strings.Contains(out, "updated") {
+		t.Errorf("update should report a rewrite:\n%s", out)
+	}
+	after, _ := os.ReadFile(skill)
+	if !strings.Contains(string(after), "http://two.test") {
+		t.Errorf("update did not re-render with the new base URL:\n%s", after)
+	}
+
+	// A second update with the same URL is a no-op.
+	out = run("update", "--operator", "claude", "--skill", "jentic", "--base-url", "http://two.test")
+	if strings.Contains(out, "updated") {
+		t.Errorf("idempotent update should not report a rewrite:\n%s", out)
+	}
+}
+
+// TestSkillListJSONPerSkillRows proves the list JSON now carries a per-skill
+// dimension on each install row.
+func TestSkillListJSONPerSkillRows(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	run := func(args ...string) string {
+		out := new(bytes.Buffer)
+		app := testApp(t)
+		stubDetect(t, app, home, cwd)
+		app.Out, app.Err = out, out
+		cmd := newSkillCmd(app)
+		cmd.SetOut(out)
+		cmd.SetErr(out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("skill %v: %v", args, err)
+		}
+		return out.String()
+	}
+
+	run("init", "--operator", "claude", "--skill", "jentic", "--yes")
+	out := run("list", "--json")
+
+	var payload struct {
+		Operators []struct {
+			Operator string `json:"operator"`
+			Installs []struct {
+				Skill     string `json:"skill"`
+				Installed bool   `json:"installed"`
+			} `json:"installs"`
+		} `json:"operators"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("list --json invalid: %v\n%s", err, out)
+	}
+	var jenticInstalled, sawOtherSkill bool
+	for _, op := range payload.Operators {
+		if op.Operator != "claude" {
+			continue
+		}
+		for _, in := range op.Installs {
+			if in.Skill == "" {
+				t.Error("install row missing per-skill name")
+			}
+			if in.Skill == "jentic" && in.Installed {
+				jenticInstalled = true
+			}
+			if in.Skill != "jentic" {
+				sawOtherSkill = true
+				if in.Installed {
+					t.Errorf("%s should not be installed", in.Skill)
+				}
+			}
+		}
+	}
+	if !jenticInstalled {
+		t.Error("claude/jentic should report installed")
+	}
+	if !sawOtherSkill {
+		t.Error("list should enumerate every shipped skill per operator")
+	}
+}
+
+// TestSkillRemoveOneSkillKeepsSiblingInAgents proves per-skill remove on a
+// shared AGENTS.md leaves the sibling block intact.
+func TestSkillRemoveOneSkillKeepsSiblingInAgents(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(cwd)
+
+	run := func(args ...string) string {
+		out := new(bytes.Buffer)
+		app := testApp(t)
+		stubDetect(t, app, home, cwd)
+		app.Out, app.Err = out, out
+		cmd := newSkillCmd(app)
+		cmd.SetOut(out)
+		cmd.SetErr(out)
+		cmd.SetArgs(args)
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("skill %v: %v", args, err)
+		}
+		return out.String()
+	}
+
+	run("init", "--operator", "generic", "--yes")
+	agents := filepath.Join(cwd, "AGENTS.md")
+	data, _ := os.ReadFile(agents)
+	if !strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL: jentic") ||
+		!strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL: import-new-api") {
+		t.Fatalf("expected all skill blocks in AGENTS.md:\n%s", data)
+	}
+
+	run("remove", "--operator", "generic", "--skill", "import-new-api")
+	data, _ = os.ReadFile(agents)
+	if strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL: import-new-api") {
+		t.Error("removed skill block should be gone")
+	}
+	if !strings.Contains(string(data), "BEGIN JENTIC MANAGED SKILL: jentic") {
+		t.Error("sibling jentic block must survive")
 	}
 }

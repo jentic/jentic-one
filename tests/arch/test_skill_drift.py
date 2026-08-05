@@ -1,44 +1,72 @@
-"""Drift guard: the served onboarding skill equals the CLI-embedded copy.
+"""Drift guard: the served skill *set* stays in lockstep across its three copies.
 
-The canonical "how to use Jentic" skill exists in two places that must never
-diverge:
+Every *served* skill has a single human-authored source at
+``skills/<name>/SKILL.md`` and two generated mirrors that must never diverge
+from it (or from each other):
 
-- ``cli/internal/skillgen/content/jentic.md`` — embedded in the Go CLI binary
-  (``go:embed``) and written into agent runtimes by ``jentic skill init`` /
-  ``jentic bootstrap``.
-- ``src/jentic_one/shared/web/content/jentic.md`` — packaged with the backend
-  and served at ``GET /skills/jentic.md`` (#651), referenced from
+- ``cli/internal/skillgen/content/<name>.md`` — embedded in the Go CLI binary
+  (``go:embed content/*.md``) and written into agent runtimes by
+  ``jentic skill init`` / ``jentic bootstrap``.
+- ``src/jentic_one/shared/web/content/<name>.md`` — packaged with the backend
+  and served raw at ``GET /skills/<name>.md`` (#651), referenced from
   ``GET /llms.txt`` (#809).
 
 ``go:embed`` cannot reach outside the Go module tree and the wheel cannot ship
-files outside ``src/jentic_one``, so a single physical file is not possible;
-this test is the seam that keeps the two copies byte-identical. If it fails,
-copy the edited file over the stale one — the CLI copy is edited first by
-convention (skill content changes are CLI-reviewed), but either direction is
-fine as long as they end up equal.
+files outside ``src/jentic_one``, so a single physical file is impossible; the
+generator ``tools/skills_sync.py`` keeps the copies identical from the one
+source, and this test is the seam that fails CI if they drift. If it fails, run
+``make skills`` to regenerate the mirrors from ``skills/<name>/SKILL.md``.
+
+The served set (and its validation) is owned by ``tools.skills_sync`` so the
+CLI embed loader, the backend allowlist, and this test share one definition and
+cannot diverge.
 """
 
 from __future__ import annotations
 
 import pytest
-
-from .conftest import SRC_ROOT
-
-REPO_ROOT = SRC_ROOT.parent.parent
-CLI_SKILL = REPO_ROOT / "cli" / "internal" / "skillgen" / "content" / "jentic.md"
-SERVED_SKILL = SRC_ROOT / "shared" / "web" / "content" / "jentic.md"
+from tools.skills_sync import (
+    CLI_CONTENT,
+    SERVED_SKILLS,
+    WEB_CONTENT,
+    SkillError,
+    _source_path,
+    _validate,
+    sync,
+)
 
 
 @pytest.mark.arch
-def test_served_skill_matches_cli_embedded_skill() -> None:
-    """The backend-served skill must be byte-identical to the CLI embed."""
-    assert CLI_SKILL.is_file(), f"missing CLI skill content: {CLI_SKILL}"
-    assert SERVED_SKILL.is_file(), f"missing served skill content: {SERVED_SKILL}"
-    if CLI_SKILL.read_bytes() != SERVED_SKILL.read_bytes():
-        pytest.fail(
-            "The onboarding skill has drifted between the CLI embed and the "
-            "backend-served copy.\n"
-            f"  CLI embed:  {CLI_SKILL}\n"
-            f"  served:     {SERVED_SKILL}\n"
-            "Fix: copy the edited file over the stale one so both are identical."
-        )
+def test_served_skill_set_is_mirrored_and_valid() -> None:
+    """Each served skill is present, valid, and byte-identical across both copies.
+
+    Delegates to the generator's own ``--check`` so the test and the tool can
+    never disagree about what "in sync" means.
+    """
+    assert sync(check=True) == 0, (
+        "The served skill set has drifted or a source is invalid.\n"
+        "Run `make skills` to regenerate the mirrors from skills/<name>/SKILL.md."
+    )
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("name", SERVED_SKILLS)
+def test_each_served_skill_source_exists_and_validates(name: str) -> None:
+    """Every served skill has a source SKILL.md that satisfies the frontmatter spec."""
+    src = _source_path(name)
+    assert src.is_file(), f"missing served skill source: {src}"
+    try:
+        _validate(name, src.read_text(encoding="utf-8"))
+    except SkillError as exc:  # pragma: no cover - failure path is the assertion
+        pytest.fail(str(exc))
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("name", SERVED_SKILLS)
+def test_each_served_skill_is_byte_identical_across_copies(name: str) -> None:
+    """The CLI-embedded and backend-served copies match the source byte-for-byte."""
+    source = _source_path(name).read_bytes()
+    cli_copy = CLI_CONTENT / f"{name}.md"
+    web_copy = WEB_CONTENT / f"{name}.md"
+    assert cli_copy.read_bytes() == source, f"{cli_copy} drifted from source (run `make skills`)"
+    assert web_copy.read_bytes() == source, f"{web_copy} drifted from source (run `make skills`)"

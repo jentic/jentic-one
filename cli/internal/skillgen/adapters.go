@@ -1,15 +1,17 @@
 package skillgen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
 )
 
-// renderBody builds the shared markdown body (heading → sections → steps) that
-// every adapter wraps in its own frontmatter and managed block. The leading
-// `# Title` is included so single-file targets (AGENTS.md) read naturally; dir
-// targets (SKILL.md) keep it too, which is harmless under their frontmatter.
+// renderBody builds the shared markdown body (heading → sections → steps) for a
+// structured canonical skill. The leading `# Title` is included so single-file
+// targets read naturally; dir targets (SKILL.md) keep it too, which is
+// harmless under their frontmatter.
 func renderBody(c Canonical) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", titleFor(c))
@@ -36,9 +38,24 @@ func renderBody(c Canonical) string {
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-// titleFor is the human heading for the skill body.
+// skillBody returns the model-facing markdown body for a skill: the verbatim
+// authored body for a freeform runbook (emitted exactly as written — it already
+// begins with its own `# Title`), or the structured render for a canonical
+// skill.
+func skillBody(c Canonical) string {
+	if c.isFreeform() {
+		return strings.TrimRight(c.Body, "\n") + "\n"
+	}
+	return renderBody(c)
+}
+
+// titleFor is the human heading for a skill. The nice onboarding title is
+// reserved for the canonical jentic skill; every other skill (canonical or
+// freeform) uses its own name. Called both for the canonical body heading and
+// for the AGENTS.md pointer block's `## <title>` line, so it must handle
+// freeform skills too (they get their name).
 func titleFor(c Canonical) string {
-	if c.Name == "jentic" {
+	if c.Kind == KindCanonical && c.Name == "jentic" {
 		return "Using Jentic from the CLI"
 	}
 	return c.Name
@@ -63,29 +80,54 @@ func (c Canonical) source() Source {
 	return c.Origin
 }
 
-// renderSingleFile is the common Render path for single-file targets
-// (AGENTS.md, CLAUDE.md): splice the managed body into existing content.
-func renderSingleFile(c Canonical, existing []byte) ([]byte, bool, error) {
-	res := splice(existing, renderBody(c), c.source())
-	return res.out, res.changed, nil
+// --- sidecar provenance (owned-file operators) -----------------------------
+
+// sidecarName is the provenance file written next to an owned-file SKILL.md.
+// The SKILL.md itself stays a clean spec file (frontmatter + verbatim body, no
+// managed markers), so provenance lives here instead of inside the served
+// bytes.
+const sidecarName = ".jentic-skill.json"
+
+// sidecar records what Jentic wrote for an owned-file skill so a re-run can
+// tell our content from a user edit without polluting the SKILL.md body.
+type sidecar struct {
+	Name     string `json:"name"`
+	BodyHash string `json:"body_sha256"`
+	Source   string `json:"source"`
+	BaseURL  string `json:"base_url,omitempty"`
 }
 
-// renderDedicated is the Render path for targets whose whole file is ours
-// (claude/hermes SKILL.md): a frontmatter prelude followed by the managed
-// block. The body lives in the block so manual-edit detection still works; the
-// frontmatter is always (re)written. "changed" reports whether the resulting
+// sidecarPath is the sidecar file for a given SKILL.md target.
+func sidecarPath(skillMD string) string {
+	return filepath.Join(filepath.Dir(skillMD), sidecarName)
+}
+
+// dedicatedFileHash fingerprints the *entire* rendered owned-file SKILL.md
+// (frontmatter + body), normalized. Edit detection compares this over the
+// on-disk file against the sidecar's recorded hash, so a hand-edit to EITHER
+// the frontmatter (e.g. a tuned description/argument-hint) or the body is
+// caught — not just body edits. It hashes exactly what renderDedicated writes.
+func dedicatedFileHash(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.TrimRight(normalizeNewlines(string(data)), "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// renderDedicated builds a clean owned-file SKILL.md: YAML frontmatter followed
+// by the verbatim skill body, with NO managed-block markers inside it. These
+// runtimes load the whole file as the skill, so foreign HTML-comment markers
+// would be off-spec noise in the model-facing body. Provenance is written
+// separately to a sidecar (see Apply). "changed" reports whether the resulting
 // file differs from what is already on disk.
 func renderDedicated(frontmatter string, c Canonical, existing []byte) ([]byte, bool, error) {
-	block := managedBlock(renderBody(c), c.source())
-	want := strings.TrimRight(frontmatter, "\n") + "\n\n" + block + "\n"
-	changed := string(existing) != want
+	want := strings.TrimRight(frontmatter, "\n") + "\n\n" + strings.TrimRight(skillBody(c), "\n") + "\n"
+	changed := normalizeNewlines(string(existing)) != want
 	return []byte(want), changed, nil
 }
 
 // --- dir-skill adapter (claude / cursor) ------------------------------------
 
 // dirSkillAdapter targets runtimes whose native skill layout is a dedicated
-// directory `<base>/<dir>/skills/jentic/SKILL.md` holding a SKILL.md with
+// directory `<base>/<dir>/skills/<name>/SKILL.md` holding a SKILL.md with
 // `name` + `description` YAML frontmatter, where the model decides whether to
 // launch the skill from that description (progressive disclosure). Claude Code
 // (`.claude`) and Cursor (`.cursor`) share this exact shape — Cursor even reads
@@ -113,12 +155,12 @@ func (a dirSkillAdapter) Aliases() []string  { return a.aliases }
 // codex/generic → project); TestDefaultScopePolicy tripwires any change.
 func (dirSkillAdapter) DefaultScope() Scope { return ScopeUser }
 
-func (a dirSkillAdapter) Target(scope Scope, env DetectEnv) string {
+func (a dirSkillAdapter) Target(scope Scope, name string, env DetectEnv) string {
 	base := env.Home
 	if scope == ScopeProject {
 		base = env.Cwd
 	}
-	return filepath.Join(base, a.dir, "skills", "jentic", "SKILL.md")
+	return filepath.Join(base, a.dir, "skills", name, "SKILL.md")
 }
 
 func (a dirSkillAdapter) Render(c Canonical, existing []byte) ([]byte, bool, error) {
@@ -134,33 +176,43 @@ func (a dirSkillAdapter) Detect(env DetectEnv) bool {
 	return a.detect(env)
 }
 
-// dirSkillFrontmatter is the minimal `name` + `description` frontmatter both
-// Claude Code and Cursor require on a SKILL.md; the full (rich) description is
-// emitted verbatim so the model has the strongest possible trigger signal.
+// dirSkillFrontmatter is the `name` + `description` frontmatter both Claude
+// Code and Cursor require on a SKILL.md; the full (rich) description is emitted
+// verbatim so the model has the strongest possible trigger signal. An optional
+// `metadata.argument-hint` (a Cursor slash-command field) is passed through,
+// kept spec-nested under `metadata:`.
 func dirSkillFrontmatter(c Canonical) string {
-	return fmt.Sprintf("---\nname: %s\ndescription: %s\n---\n", c.Name, c.Description)
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "name: %s\n", c.Name)
+	fmt.Fprintf(&b, "description: %s\n", c.Description)
+	if c.ArgumentHint != "" {
+		b.WriteString("metadata:\n")
+		fmt.Fprintf(&b, "  argument-hint: %q\n", c.ArgumentHint)
+	}
+	b.WriteString("---\n")
+	return b.String()
 }
 
 // --- hermes adapter ---------------------------------------------------------
 
 // hermesAdapter targets NousResearch/hermes-agent: a SKILL.md under
-// ~/.hermes/skills/<category>/<skill-name>/ with hermes frontmatter and section
-// order. It auto-registers as a /slash command on install.
+// ~/.hermes/skills/<category>/<skill-name>/ with hermes frontmatter. It
+// auto-registers as a /slash command on install.
 type hermesAdapter struct{}
 
 func (hermesAdapter) Operator() Operator  { return OpHermes }
 func (hermesAdapter) Aliases() []string   { return []string{"hermes", "hermes-agent"} }
 func (hermesAdapter) DefaultScope() Scope { return ScopeUser }
 
-func (hermesAdapter) Target(scope Scope, env DetectEnv) string {
+func (hermesAdapter) Target(scope Scope, name string, env DetectEnv) string {
 	base := env.Home
 	if scope == ScopeProject {
 		base = env.Cwd
 	}
-	// <category>/<skill-name>: "api/jentic". The directory name is the install
-	// slug and the matched skill name, so category and skill must differ (a
-	// "jentic/jentic" would make them identical).
-	return filepath.Join(base, ".hermes", "skills", "api", "jentic", "SKILL.md")
+	// <category>/<skill-name>: "api/<name>". The directory name is the install
+	// slug and the matched skill name, so category and skill must differ.
+	return filepath.Join(base, ".hermes", "skills", "api", name, "SKILL.md")
 }
 
 func (hermesAdapter) Render(c Canonical, existing []byte) ([]byte, bool, error) {
@@ -173,14 +225,25 @@ func (hermesAdapter) Detect(env DetectEnv) bool {
 	return env.exists(filepath.Join(env.Home, ".hermes")) || env.has("hermes")
 }
 
+// hermesFrontmatter derives tags/category from the skill name (not a hardcoded
+// jentic) and emits the real, full description. The lossy 60-char shortening is
+// reserved for the canonical jentic skill (whose description is rich trigger
+// prose written to that authoring rule); freeform runbooks emit their real
+// description so nothing is dropped.
 func hermesFrontmatter(c Canonical) string {
-	desc := hermesDescription(c.Description)
+	desc := c.Description
+	if c.Kind == KindCanonical {
+		desc = hermesDescription(c.Description)
+	}
 	var b strings.Builder
 	b.WriteString("---\n")
 	fmt.Fprintf(&b, "name: %s\n", c.Name)
 	fmt.Fprintf(&b, "description: %s\n", desc)
 	fmt.Fprintf(&b, "version: %s\n", c.Version)
-	b.WriteString("metadata:\n  hermes:\n    category: api\n    tags: [jentic, api, broker, cli]\n")
+	fmt.Fprintf(&b, "metadata:\n  hermes:\n    category: api\n    tags: [%s, api, broker, cli]\n", c.Name)
+	if c.ArgumentHint != "" {
+		fmt.Fprintf(&b, "  argument-hint: %q\n", c.ArgumentHint)
+	}
 	b.WriteString("---\n")
 	return b.String()
 }
@@ -207,10 +270,12 @@ func hermesDescription(full string) string {
 // --- agents adapter (codex / generic) ---------------------------------------
 
 // agentsAdapter targets the cross-tool AGENTS.md standard, used for the codex
-// and generic operators. It splices the managed block into an existing
-// AGENTS.md (or creates one), preserving surrounding user content. Unlike the
-// dir-skill runtimes, AGENTS.md is always-in-context (no description-based
-// selection), so the block is present whenever the file is loaded.
+// and generic operators. It splices a named managed block into an existing
+// AGENTS.md (or creates one), preserving surrounding user content and any
+// sibling skills' blocks. Unlike the dir-skill runtimes, AGENTS.md is
+// always-in-context (no description-based selection) with no progressive
+// disclosure, so the block is a *pointer* — name + description + a
+// fetch-on-demand link — not the full (potentially several-hundred-line) body.
 type agentsAdapter struct {
 	op      Operator
 	aliases []string
@@ -223,12 +288,10 @@ func (a agentsAdapter) Aliases() []string  { return a.aliases }
 // DefaultScope is project: AGENTS.md is the cross-tool *repo* instruction
 // file, and codex only auto-loads a user-global copy from ~/.codex. Ratified
 // in #552 alongside the dir-skill user default; TestDefaultScopePolicy
-// tripwires any change. Interactive runs confirm placement via the scope
-// prompt; defaulted non-interactive runs echo the resolved target before
-// writing (explicit --operator/--all runs already chose; --dry-run previews).
+// tripwires any change.
 func (a agentsAdapter) DefaultScope() Scope { return ScopeProject }
 
-func (a agentsAdapter) Target(scope Scope, env DetectEnv) string {
+func (a agentsAdapter) Target(scope Scope, _ string, env DetectEnv) string {
 	base := env.Cwd
 	if scope == ScopeUser {
 		// Codex reads ~/.codex/AGENTS.md; generic falls back to ~/AGENTS.md.
@@ -241,7 +304,8 @@ func (a agentsAdapter) Target(scope Scope, env DetectEnv) string {
 }
 
 func (a agentsAdapter) Render(c Canonical, existing []byte) ([]byte, bool, error) {
-	return renderSingleFile(c, existing)
+	res := splice(existing, c.Name, agentsPointerBody(c), c.source())
+	return res.out, res.changed, nil
 }
 
 func (a agentsAdapter) OwnsWholeFile() bool { return false }
@@ -251,6 +315,25 @@ func (a agentsAdapter) Detect(env DetectEnv) bool {
 		return false
 	}
 	return a.detect(env)
+}
+
+// agentsPointerBody is the pointer block spliced into AGENTS.md: the skill
+// name, its description, and a fetch-on-demand link to the full body. AGENTS.md
+// is always-in-context and the flow skills are long, so splicing full bodies
+// would add hundreds of lines of permanent prompt to every run; the pointer is
+// the honest analogue of progressive disclosure for a format that lacks it
+// (decision 2 in the plan). Pointer-for-all keeps the behavior uniform and the
+// context bounded.
+func agentsPointerBody(c Canonical) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## %s\n\n", titleFor(c))
+	fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(c.Description))
+	if c.BaseURL != "" {
+		fmt.Fprintf(&b, "See the full skill: GET %s/skills/%s.md\n", strings.TrimRight(c.BaseURL, "/"), c.Name)
+	} else {
+		fmt.Fprintf(&b, "See the full skill: GET /skills/%s.md\n", c.Name)
+	}
+	return b.String()
 }
 
 // DefaultRegistry returns the registry of supported adapters in the order the

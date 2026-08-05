@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
 // bootstrapServer is a fake control plane: /register always succeeds, and
@@ -106,8 +107,14 @@ func TestBootstrapEndToEnd(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("expected skill at %s: %v", skillPath, readErr)
 	}
-	if !strings.Contains(string(body), "BEGIN JENTIC MANAGED SKILL") {
-		t.Errorf("skill file missing managed block:\n%s", body)
+	if !strings.Contains(string(body), "BEGIN JENTIC MANAGED SKILL: jentic") {
+		t.Errorf("skill file missing named managed block:\n%s", body)
+	}
+	// Bootstrap installs the full shipped set by default.
+	for _, name := range skillgen.BundledNames() {
+		if !strings.Contains(string(body), "BEGIN JENTIC MANAGED SKILL: "+name) {
+			t.Errorf("bootstrap should install the full set; missing %s block:\n%s", name, body)
+		}
 	}
 
 	got := out.String()
