@@ -1,0 +1,7 @@
+# Generated skill mirrors. The single human-authored source is
+# skills/<name>/SKILL.md; these two trees are byte-identical copies produced by
+# `make skills` (tools/skills_sync.py) and pinned by tests/arch/test_skill_drift.py.
+# Do not hand-edit — edit the source and regenerate. `linguist-generated`
+# collapses them in GitHub diffs and keeps them out of language stats.
+cli/internal/skillgen/content/*.md linguist-generated=true
+src/jentic_one/shared/web/content/*.md linguist-generated=true
