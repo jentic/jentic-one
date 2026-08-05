@@ -226,7 +226,7 @@ _Total endpoints: **158**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (59)
+## Any authenticated actor (60)
 
 
 ### `access-requests`
@@ -329,6 +329,12 @@ _Total endpoints: **158**._
 |---|---|---|---|---|
 | GET | `/service-accounts/{service_account_id}` | _any authenticated_ | any | Get Service Account |
 
+### `system`
+
+| Method | Path | Scope(s) | Typical caller | Summary |
+|---|---|---|---|---|
+| GET | `/system/version` | _any authenticated_ | any | Running and latest-known app version |
+
 ### `toolkits`
 
 | Method | Path | Scope(s) | Typical caller | Summary |
@@ -358,7 +364,7 @@ _Total endpoints: **158**._
 | GET | `/users/me` | _any authenticated_ | any | Get current user |
 | POST | `/users/me:change-password` | _any authenticated_ | any | Change own password |
 
-## Public (unauthenticated) (19)
+## Public (unauthenticated) (18)
 
 
 ### `.well-known`
@@ -441,12 +447,6 @@ _Total endpoints: **158**._
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
 | GET | `/registry/health` | _public — no auth_ | — | Registry health |
-
-### `system`
-
-| Method | Path | Scope(s) | Typical caller | Summary |
-|---|---|---|---|---|
-| GET | `/system/version` | _public — no auth_ | — | Running and latest-known app version |
 
 ### `users:create-admin`
 

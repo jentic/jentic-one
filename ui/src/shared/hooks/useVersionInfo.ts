@@ -10,11 +10,11 @@ export const versionInfoKey = ['system', 'version'] as const;
  * The running app version and the latest release known to this backend.
  *
  * Powers the shell's "update available" banner and the current-version line in
- * the user menu. Polls on a modest interval so the banner appears without a
- * reload once the CLI reports a newer release. Failures resolve to a safe
- * "current unknown, no update" so a transient/missing endpoint (e.g. an older
- * backend that lacks `/system/version`, which fails fast as a non-retried 404)
- * never paints a misleading banner.
+ * the user menu. Both render only inside the authenticated shell, so the request
+ * always carries the session. Polls on a modest interval so the banner appears
+ * without a reload once the CLI reports a newer release. Failures resolve to a
+ * safe "current unknown, no update" so a transient error or an older backend that
+ * lacks `/system/version` (a non-retried 404) never paints a misleading banner.
  */
 export function useVersionInfo(): VersionResponse {
 	const { data } = useQuery({

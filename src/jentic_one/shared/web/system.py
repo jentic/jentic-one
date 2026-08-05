@@ -1,10 +1,14 @@
-"""Public ``GET /system/version`` — running vs. latest-known app release.
+"""``GET /system/version`` — running vs. latest-known app release.
 
 Lets the UI show the running version everywhere and an "update available"
-banner when a newer release has been reported. Unauthenticated and cheap: it
-reads the running version from the package metadata and the last-known-latest
-release from the admin DB (populated best-effort by ``jenticctl update``). The
-backend never fetches releases itself, so there is no outbound egress here.
+banner when a newer release has been reported. Requires an authenticated
+session (any valid caller) — both consumers (the update banner and the user
+menu's version line) render only inside the signed-in app shell, and gating it
+keeps the exact running build off unauthenticated fingerprinting (OWASP ASVS
+14.3.3). No special permission is needed. It reads the running version from the
+package metadata and the last-known-latest release from the admin DB (populated
+best-effort by ``jenticctl update``). The backend never fetches releases
+itself, so there is no outbound egress here.
 
 On surfaces without an admin database (e.g. a standalone registry or auth
 surface) ``latest`` degrades to ``null`` and ``update_available`` to ``false``
@@ -19,9 +23,10 @@ from pydantic import BaseModel, Field
 
 from jentic_one import __version__
 from jentic_one.admin.services.latest_release_service import LatestReleaseService
+from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.context import Context
 from jentic_one.shared.version_compare import is_update_available
-from jentic_one.shared.web.deps import get_ctx
+from jentic_one.shared.web.deps import get_ctx, get_current_identity
 
 SYSTEM_VERSION_PATH = "/system/version"
 
@@ -53,21 +58,22 @@ class VersionResponse(BaseModel):
 async def _latest_known(ctx: Context) -> str | None:
     """Read the last-known-latest release from the admin DB, or None if unavailable.
 
-    Best-effort: this is a public, unauthenticated probe, so a surface without an
-    admin database (standalone registry/auth) or a transient DB error degrades to
-    ``None`` (UI simply shows the current version, no banner) rather than 500ing.
+    Best-effort: a surface without an admin database (standalone registry/auth) or
+    a transient DB error degrades to ``None`` (UI simply shows the current version,
+    no banner) rather than 500ing.
     """
     if not ctx.is_db_allowed("admin"):
         return None
     try:
         return await LatestReleaseService(ctx).read_latest()
-    except Exception:  # noqa: BLE001 - public probe must never fail on a DB hiccup
+    except Exception:
+        # The version probe must never fail on a DB hiccup — degrade to "unknown".
         _log.warning("system.version.latest_read_failed", exc_info=True)
         return None
 
 
 def get_system_router() -> APIRouter:
-    """Router exposing the public version endpoint (``GET /system/version``)."""
+    """Router exposing the version endpoint (``GET /system/version``)."""
     router = APIRouter()
 
     @router.get(
@@ -76,12 +82,17 @@ def get_system_router() -> APIRouter:
         summary="Running and latest-known app version",
         response_model=VersionResponse,
     )
-    async def version(ctx: Context = Depends(get_ctx)) -> VersionResponse:
+    async def version(
+        ctx: Context = Depends(get_ctx),
+        _identity: Identity = get_current_identity(),
+    ) -> VersionResponse:
         """Return the running version and the latest release known to this backend.
 
-        Unauthenticated and dependency-free (only the app context) so the SPA can
-        read it before/without a session to show the current version and, when a
-        newer release has been reported, an update banner.
+        Requires an authenticated session (any valid caller; no special
+        permission). The SPA reads it from inside the signed-in shell to show the
+        current version and, when a newer release has been reported, an update
+        banner. Gating it keeps the exact running build off unauthenticated
+        fingerprinting while costing nothing (every consumer is already signed in).
         """
         latest = await _latest_known(ctx)
         return VersionResponse(

@@ -478,8 +478,10 @@ def create_surface_app(
         # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
         # 400/422 (same posture as /health).
         app.include_router(get_instance_router())
-        # Public running/latest version so the SPA can show the current version
-        # and an update banner. Reads the admin DB when present, else degrades.
+        # Running/latest version so the signed-in SPA can show the current
+        # version and an update banner. Authenticated (any valid session; not
+        # published unauthenticated). Reads the admin DB when present, else
+        # degrades to latest=null.
         app.include_router(get_system_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
@@ -584,8 +586,9 @@ def create_combined_app(
     # 400/422 (same posture as /health).
     root.include_router(get_instance_router())
 
-    # Public running/latest version so the SPA can show the current version and
-    # an update banner. Reads the admin DB when present, else degrades to null.
+    # Running/latest version so the signed-in SPA can show the current version
+    # and an update banner. Authenticated (any valid session). Reads the admin DB
+    # when present, else degrades to null.
     root.include_router(get_system_router())
 
     # Extension point: injected routers/installers mount after all built-in

@@ -1,7 +1,9 @@
-"""Web tests for the system router: report + read the latest release.
+"""Web tests for the admin system router: report the latest release.
 
-Exercises the scope-gated write (`POST /admin/system/latest-release`) and its
-effect on the public read (`GET /system/version`) against a real admin DB.
+Exercises the scope-gated write (`POST /admin/system/latest-release`) and
+verifies persistence directly against the admin DB. (The public read,
+`GET /system/version`, lives on the control/combined surface and is covered by
+`tests/unit/shared/test_system_version.py`.)
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
-from jentic_one import __version__
 from jentic_one.admin.core.schema.latest_releases import LatestRelease
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
@@ -57,7 +58,7 @@ def test_report_latest_release_unauthenticated(unauthed_client: TestClient) -> N
     assert resp.status_code == 401
 
 
-def test_report_latest_release_normalizes_and_persists(
+async def test_report_latest_release_normalizes_and_persists(
     unauthed_client: TestClient, web_context: Context
 ) -> None:
     """instance:write can report; the stored value drops the leading v."""
@@ -70,12 +71,10 @@ def test_report_latest_release_normalizes_and_persists(
     assert resp.status_code == 200
     assert resp.json()["version"] == "9.9.9"
 
-    # Public read now reflects the reported release and flags an update (9.9.9 is
-    # far ahead of the running __version__).
-    read = unauthed_client.get("/system/version").json()
-    assert read["current"] == __version__
-    assert read["latest"] == "9.9.9"
-    assert read["update_available"] is True
+    # The normalized release is what lands in the singleton row.
+    async with web_context.admin_db.session() as session:
+        stored = await session.scalar(select(LatestRelease.version))
+    assert stored == "9.9.9"
 
 
 async def test_report_latest_release_upserts_single_row(
@@ -90,9 +89,10 @@ async def test_report_latest_release_upserts_single_row(
     unauthed_client.post(
         "/admin/system/latest-release", json={"version": "2.0.0"}, headers=headers
     )
-    assert unauthed_client.get("/system/version").json()["latest"] == "2.0.0"
     async with web_context.admin_db.session() as session:
+        stored = await session.scalar(select(LatestRelease.version))
         row_count = await session.scalar(select(func.count()).select_from(LatestRelease))
+    assert stored == "2.0.0"
     assert row_count == 1
 
 

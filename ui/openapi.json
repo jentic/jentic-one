@@ -27674,7 +27674,7 @@
     },
     "/system/version": {
       "get": {
-        "description": "Return the running version and the latest release known to this backend.\n\nUnauthenticated and dependency-free (only the app context) so the SPA can\nread it before/without a session to show the current version and, when a\nnewer release has been reported, an update banner.",
+        "description": "Return the running version and the latest release known to this backend.\n\nRequires an authenticated session (any valid caller; no special\npermission). The SPA reads it from inside the signed-in shell to show the\ncurrent version and, when a newer release has been reported, an update\nbanner. Gating it keeps the exact running build off unauthenticated\nfingerprinting while costing nothing (every consumer is already signed in).",
         "operationId": "getVersion",
         "responses": {
           "200": {
@@ -27688,7 +27688,11 @@
             "description": "Successful Response"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "summary": "Running and latest-known app version",
         "tags": [
           "System"

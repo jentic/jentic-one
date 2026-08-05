@@ -752,8 +752,6 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "getHealth",
         # Backend-identity probe: unauthenticated, self-describing, no secrets.
         "getInstance",
-        # Running/latest version probe: unauthenticated, no secrets.
-        "getVersion",
         "health",
         "controlHealth",
         "adminHealth",

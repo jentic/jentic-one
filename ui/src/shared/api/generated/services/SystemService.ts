@@ -160,9 +160,11 @@ export class SystemService {
      * Running and latest-known app version
      * Return the running version and the latest release known to this backend.
      *
-     * Unauthenticated and dependency-free (only the app context) so the SPA can
-     * read it before/without a session to show the current version and, when a
-     * newer release has been reported, an update banner.
+     * Requires an authenticated session (any valid caller; no special
+     * permission). The SPA reads it from inside the signed-in shell to show the
+     * current version and, when a newer release has been reported, an update
+     * banner. Gating it keeps the exact running build off unauthenticated
+     * fingerprinting while costing nothing (every consumer is already signed in).
      * @returns VersionResponse Successful Response
      * @throws ApiError
      */
