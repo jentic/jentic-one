@@ -30,7 +30,7 @@ def _stub_fetch(monkeypatch: pytest.MonkeyPatch, doc_or_exc: Any) -> list[str]:
         urls.append(url)
         if isinstance(doc_or_exc, Exception):
             raise doc_or_exc
-        return doc_or_exc
+        return dict(doc_or_exc)
 
     monkeypatch.setattr("jentic_one.shared.release_check.fetch_json", _fake)
     return urls

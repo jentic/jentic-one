@@ -30,6 +30,11 @@ from jentic_one.registry.services.catalog.fetch import CatalogFetchError, fetch_
 from jentic_one.shared.config import AppConfig
 from jentic_one.shared.version_compare import normalize_release
 
+# ``CatalogFetchError`` is re-exported so callers/tests can reference the one
+# failure type this module raises through without reaching into the catalog
+# package (which pulls in a heavier import chain and risks a circular import).
+__all__ = ["CatalogFetchError", "ReleaseChecker"]
+
 _log = structlog.get_logger(__name__)
 
 # GitHub's "latest published, non-prerelease, non-draft release" endpoint. It
