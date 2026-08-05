@@ -51,6 +51,7 @@ _FAMILY_LABELS: dict[str, str] = {
     "events": "Events",
     "executions": "Executions",
     "audit": "Audit",
+    "instance": "Instance",
     "owner": "Owner-scoped reads",
 }
 
@@ -70,6 +71,7 @@ _FAMILY_BLURBS: dict[str, str] = {
     "events": "Platform events.",
     "executions": "Execution (broker call) records.",
     "audit": "The audit log.",
+    "instance": "System/instance metadata, such as the latest available release.",
     "owner": (
         "Read access an agent has to the resources owned by the human who "
         "created it. Granted to agents by default; never grants write."
@@ -92,6 +94,7 @@ _FAMILY_ORDER: tuple[str, ...] = (
     "events",
     "executions",
     "audit",
+    "instance",
     "owner",
 )
 

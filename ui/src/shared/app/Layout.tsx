@@ -1,6 +1,7 @@
 import { useLocation, Outlet } from 'react-router';
 import { BottomNavbar } from '@/shared/app/BottomNavbar';
 import { TopNavbar } from '@/shared/app/TopNavbar';
+import { UpdateBanner } from '@/shared/app/UpdateBanner';
 import { AgentRail } from '@/shared/app/rail/AgentRail';
 import { ToastHost } from '@/shared/app/rail/ToastHost';
 import { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
@@ -39,6 +40,7 @@ export function Layout() {
 
 				<div className="flex min-h-dvh">
 					<main className="min-w-0 flex-1 pt-12 pb-20 md:pb-12">
+						<UpdateBanner />
 						<ErrorBoundary resetKey={location.pathname}>
 							<Outlet />
 						</ErrorBoundary>

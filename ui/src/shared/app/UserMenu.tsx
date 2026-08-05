@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/Button';
 import { MenuPanel, MenuSeparator, menuItemClass, useDismissable } from '@/shared/ui/Menu';
 import { cn } from '@/shared/lib/utils';
 import { useAuth } from '@/shared/auth/AuthContext';
+import { useVersionInfo } from '@/shared/hooks';
 import { ROUTES } from '@/shared/app/routes';
 
 /** Avatar initial: first name, then email, then a neutral fallback. */
@@ -25,6 +26,7 @@ function displayName(
 
 export function UserMenu() {
 	const { user, logout } = useAuth();
+	const { current } = useVersionInfo();
 	const [open, setOpen] = useState(false);
 	const close = useCallback(() => setOpen(false), []);
 	const menuRef = useDismissable<HTMLDivElement>(open, close);
@@ -53,6 +55,11 @@ export function UserMenu() {
 						{user?.email && (
 							<div className="text-muted-foreground/70 mt-0.5 truncate text-xs">
 								{user.email}
+							</div>
+						)}
+						{current && (
+							<div className="text-muted-foreground/60 mt-1 truncate text-[11px]">
+								jentic-one v{current}
 							</div>
 						)}
 					</div>

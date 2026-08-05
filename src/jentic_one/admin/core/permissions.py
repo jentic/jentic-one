@@ -37,6 +37,7 @@ SERVICE_ACCOUNTS_READ = "service-accounts:read"
 SERVICE_ACCOUNTS_WRITE = "service-accounts:write"
 CONFIG_READ = "config:read"
 CONFIG_WRITE = "config:write"
+INSTANCE_WRITE = "instance:write"
 ORG_ADMIN = "org:admin"
 
 
@@ -79,6 +80,7 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 SERVICE_ACCOUNTS_READ,
                 CONFIG_WRITE,
                 CONFIG_READ,
+                INSTANCE_WRITE,
             }
         ),
     ),
@@ -192,6 +194,13 @@ ALL_PERMISSIONS: dict[str, Permission] = {
     CONFIG_READ: Permission(
         name=CONFIG_READ,
         description="Read runtime platform configuration",
+    ),
+    INSTANCE_WRITE: Permission(
+        name=INSTANCE_WRITE,
+        description=(
+            "Record system/instance metadata (e.g. the latest available release "
+            "reported by the CLI); operator action, never an agent default"
+        ),
     ),
     OWNER_RESOURCES_READ: Permission(
         name=OWNER_RESOURCES_READ,

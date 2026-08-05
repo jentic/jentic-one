@@ -79,6 +79,9 @@ export { EmptyState } from '@/shared/ui/EmptyState';
 
 export { ErrorAlert } from '@/shared/ui/ErrorAlert';
 
+export { Banner } from '@/shared/ui/Banner';
+export type { BannerProps } from '@/shared/ui/Banner';
+
 export { ErrorBoundary } from '@/shared/ui/ErrorBoundary';
 
 export { DataTable } from '@/shared/ui/DataTable';

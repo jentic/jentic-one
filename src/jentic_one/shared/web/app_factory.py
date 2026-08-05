@@ -46,6 +46,7 @@ from jentic_one.shared.web.openapi_meta import (
 from jentic_one.shared.web.openapi_responses import COMMON_ERROR_RESPONSES
 from jentic_one.shared.web.reference_router import get_reference_router
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
+from jentic_one.shared.web.system import get_system_router
 
 _logger = structlog.get_logger(__name__)
 
@@ -477,6 +478,9 @@ def create_surface_app(
         # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
         # 400/422 (same posture as /health).
         app.include_router(get_instance_router())
+        # Public running/latest version so the SPA can show the current version
+        # and an update banner. Reads the admin DB when present, else degrades.
+        app.include_router(get_system_router())
     for extra_router, extra_prefix, extra_tags in container.extra_routers:
         app.include_router(
             extra_router,
@@ -579,6 +583,10 @@ def create_combined_app(
     # No COMMON_ERROR_RESPONSES: a parameterless public GET can't produce
     # 400/422 (same posture as /health).
     root.include_router(get_instance_router())
+
+    # Public running/latest version so the SPA can show the current version and
+    # an update banner. Reads the admin DB when present, else degrades to null.
+    root.include_router(get_system_router())
 
     # Extension point: injected routers/installers mount after all built-in
     # surfaces (append-only; never shadows a built-in route). No-op by default.

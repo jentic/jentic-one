@@ -1,6 +1,7 @@
 // Package adminclient is a thin HTTP client for the Jentic admin config surface:
-// runtime, DB-backed credential provider configuration. It wraps the shared
-// httpx transport and exposes the three /admin/config/providers endpoints.
+// runtime, DB-backed credential provider configuration plus system metadata. It
+// wraps the shared httpx transport and exposes the /admin/config/providers
+// endpoints and the /admin/system/latest-release reporter.
 package adminclient
 
 import (
@@ -71,4 +72,19 @@ func (c *Client) ListProviders(ctx context.Context, token string) ([]ProviderCon
 		return nil, err
 	}
 	return out.Data, nil
+}
+
+// latestReleaseRequest is the POST body for reporting the latest release tag.
+type latestReleaseRequest struct {
+	Version string `json:"version"`
+}
+
+// ReportLatestRelease records the latest available release version with the
+// backend (POST /admin/system/latest-release), so the UI can show an
+// "update available" banner. version may carry a leading "v" (the server
+// normalizes it). Requires the instance:write scope (org:admin implies it).
+// The endpoint echoes the stored version, but we don't need it, so out is nil.
+func (c *Client) ReportLatestRelease(ctx context.Context, token, version string) error {
+	body := latestReleaseRequest{Version: version}
+	return c.http.Do(ctx, http.MethodPost, "/admin/system/latest-release", token, body, nil)
 }

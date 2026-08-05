@@ -96,6 +96,8 @@ export { jentic_one__control__web__schemas__toolkits__PermissionRuleSchema } fro
 export type { JobLinksResponse } from './models/JobLinksResponse';
 export type { JobListResponse } from './models/JobListResponse';
 export type { JobResponse } from './models/JobResponse';
+export type { LatestReleaseResponse } from './models/LatestReleaseResponse';
+export type { LatestReleaseSetRequest } from './models/LatestReleaseSetRequest';
 export type { LoginRequest } from './models/LoginRequest';
 export type { LoginResponse } from './models/LoginResponse';
 export type { MeAgent } from './models/MeAgent';
@@ -190,6 +192,7 @@ export type { UserCreateRequest } from './models/UserCreateRequest';
 export type { UserListResponse } from './models/UserListResponse';
 export type { UserResponse } from './models/UserResponse';
 export type { UserUpdateRequest } from './models/UserUpdateRequest';
+export type { VersionResponse } from './models/VersionResponse';
 
 export { AccessRequestsService } from './services/AccessRequestsService';
 export { ActorsService } from './services/ActorsService';

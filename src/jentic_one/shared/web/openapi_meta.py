@@ -752,6 +752,8 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         "getHealth",
         # Backend-identity probe: unauthenticated, self-describing, no secrets.
         "getInstance",
+        # Running/latest version probe: unauthenticated, no secrets.
+        "getVersion",
         "health",
         "controlHealth",
         "adminHealth",
@@ -806,6 +808,8 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/health$"), "System"),
     (re.compile(r"^/[^/]+/health$"), "System"),
     (re.compile(r"^/instance$"), "System"),
+    (re.compile(r"^/system/version$"), "System"),
+    (re.compile(r"^/admin/system/"), "System"),
     (re.compile(r"^/admin/config"), "Configuration"),
     (re.compile(r"^/credentials"), "Credentials"),
     (re.compile(r"^/toolkits/[^/]+/keys"), "Toolkit Keys"),

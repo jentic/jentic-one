@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { HealthResponse } from '../models/HealthResponse';
 import type { InstanceIdentityResponse } from '../models/InstanceIdentityResponse';
+import type { LatestReleaseResponse } from '../models/LatestReleaseResponse';
+import type { LatestReleaseSetRequest } from '../models/LatestReleaseSetRequest';
+import type { VersionResponse } from '../models/VersionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -20,6 +23,36 @@ export class SystemService {
             url: '/admin/health',
             errors: {
                 400: `Bad Request`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Report the latest available release
+     * Record the latest available app release (operator/CLI action).
+     *
+     * The value is normalized to a bare ``X.Y.Z`` and upserted into the singleton
+     * ``latest_releases`` row; the public ``GET /system/version`` reads it to decide
+     * whether to advertise an update.
+     * @returns LatestReleaseResponse Successful Response
+     * @throws ApiError
+     */
+    public static setLatestRelease({
+        requestBody,
+    }: {
+        requestBody: LatestReleaseSetRequest,
+    }): CancelablePromise<LatestReleaseResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/system/latest-release',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
                 422: `Unprocessable Entity`,
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
@@ -121,6 +154,22 @@ export class SystemService {
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
+        });
+    }
+    /**
+     * Running and latest-known app version
+     * Return the running version and the latest release known to this backend.
+     *
+     * Unauthenticated and dependency-free (only the app context) so the SPA can
+     * read it before/without a session to show the current version and, when a
+     * newer release has been reported, an update banner.
+     * @returns VersionResponse Successful Response
+     * @throws ApiError
+     */
+    public static getVersion(): CancelablePromise<VersionResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/system/version',
         });
     }
 }

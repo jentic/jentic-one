@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jentic/jentic-one/cli/internal/adminclient"
+	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/proc"
@@ -18,6 +20,11 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/update"
 	"github.com/spf13/cobra"
 )
+
+// reportLatestRelease is the seam for best-effort reporting of the latest
+// release to the backend during `update`. Overridable in tests. version may
+// carry a leading "v" (the server normalizes it).
+var reportLatestRelease = defaultReportLatestRelease
 
 type updateOptions struct {
 	ref       string
@@ -53,6 +60,43 @@ func newUpdateCmd(app *App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
 	return cmd
+}
+
+// defaultReportLatestRelease is the production seam impl: it resolves the active
+// profile's cached token (never minting) and POSTs the latest release version to
+// the backend. Every failure path is a silent no-op so `update` is never blocked
+// or slowed by reporting — the banner simply lights up on a later successful run.
+func defaultReportLatestRelease(ctx context.Context, a *App, baseURLFlag, version string) error {
+	profileName, base, err := a.resolveIdentity("", baseURLFlag)
+	if err != nil {
+		return err
+	}
+	sess, err := agentauth.Open(a.Paths, profileName, base)
+	if err != nil {
+		return err
+	}
+
+	// Resolve a bearer credential WITHOUT minting/refreshing (mirrors status'
+	// cached-token-only degrade), so reporting never triggers a surprise network
+	// mint or slows `update`.
+	var token string
+	if sess.Meta.IsAPIKey() {
+		if sess.APIKey == "" {
+			return agentauth.ErrNoAPIKey
+		}
+		token = sess.APIKey
+	} else {
+		tokens, tokErr := sess.Profile.LoadTokens()
+		if tokErr != nil {
+			return tokErr
+		}
+		if tokens == nil || tokens.Expired(0) {
+			return errors.New("no valid cached token")
+		}
+		token = tokens.AccessToken
+	}
+
+	return adminclient.New(sess.Meta.BaseURL).ReportLatestRelease(ctx, token, version)
 }
 
 func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
@@ -105,6 +149,12 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 	if latestKnown {
 		fmt.Fprintln(a.Out, theme.Field("latest", latest))
 		a.printVerdict(cliVersion, latest)
+		// Best-effort: tell the backend the latest release we just discovered so
+		// the UI can show an "update available" banner. Never fails or slows
+		// `update` — only reports with an already-valid cached token (no mint),
+		// and swallows every error (no session, no token, 403, offline). Reports
+		// the resolved latest release tag only, never a pinned --ref.
+		_ = reportLatestRelease(ctx, a, opts.baseURL, latest)
 	} else {
 		fmt.Fprintln(a.Out, theme.Field("latest", "unknown"))
 		fmt.Fprintln(a.Out, theme.Warnf("  %v", latestErr))

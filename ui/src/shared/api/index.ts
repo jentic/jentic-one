@@ -250,3 +250,9 @@ export type { ClearTokenReason } from '@/shared/api/token-store';
 // typed `any` on the generated client; the workspace module re-types them in
 // its own `api/types.ts` + `adapters.ts`. Append-only, like the rest.
 export { OverlaysService } from '@/shared/api/generated/services/OverlaysService';
+
+// System version (feat/app-release-update-banner). The running vs. latest-known
+// app release, read by the shell's update banner + UserMenu version line via
+// `useVersionInfo`. `SystemService` is already exported above; only the response
+// model is added here. Append-only.
+export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';

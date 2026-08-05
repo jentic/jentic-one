@@ -2556,6 +2556,28 @@ components:
       - _links
       title: JobResponse
       type: object
+    LatestReleaseResponse:
+      description: The stored latest-release version (normalized, no leading 'v').
+      properties:
+        version:
+          title: Version
+          type: string
+      required:
+      - version
+      title: LatestReleaseResponse
+      type: object
+    LatestReleaseSetRequest:
+      description: Body for reporting the latest available release.
+      properties:
+        version:
+          description: The latest release version, e.g. 'v0.26.0' or '0.26.0'.
+          minLength: 1
+          title: Version
+          type: string
+      required:
+      - version
+      title: LatestReleaseSetRequest
+      type: object
     LoginRequest:
       description: Credentials for login.
       properties:
@@ -5291,6 +5313,28 @@ components:
           title: Last Name
       title: UserUpdateRequest
       type: object
+    VersionResponse:
+      description: The running app version and the latest release known to this backend.
+      properties:
+        current:
+          description: The version of jentic-one currently running on this backend.
+          title: Current
+          type: string
+        latest:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: The latest release version reported to this backend (by `jenticctl update`), without a leading 'v'. Null when nothing has been reported yet or this surface has no admin database.
+          title: Latest
+        update_available:
+          description: True when `latest` is a newer release than `current`. Matches the verdict `jenticctl update` would print.
+          title: Update Available
+          type: boolean
+      required:
+      - current
+      - update_available
+      title: VersionResponse
+      type: object
     jentic_one__auth__web__schemas__agents__DenyRequest:
       description: Request body for denying an agent.
       properties:
@@ -6503,6 +6547,75 @@ paths:
           description: Service Unavailable
       security: []
       summary: Health
+      tags:
+      - System
+  /admin/system/latest-release:
+    post:
+      description: |-
+        Record the latest available app release (operator/CLI action).
+
+        The value is normalized to a bare ``X.Y.Z`` and upserted into the singleton
+        ``latest_releases`` row; the public ``GET /system/version`` reads it to decide
+        whether to advertise an update.
+      operationId: setLatestRelease
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LatestReleaseSetRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LatestReleaseResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Report the latest available release
       tags:
       - System
   /agents:
@@ -14485,6 +14598,26 @@ paths:
       summary: Generate Service Account Api Key
       tags:
       - Service Accounts
+  /system/version:
+    get:
+      description: |-
+        Return the running version and the latest release known to this backend.
+
+        Unauthenticated and dependency-free (only the app context) so the SPA can
+        read it before/without a session to show the current version and, when a
+        newer release has been reported, an update banner.
+      operationId: getVersion
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+          description: Successful Response
+      security: []
+      summary: Running and latest-known app version
+      tags:
+      - System
   /toolkits:
     get:
       description: List toolkits with cursor-based pagination.

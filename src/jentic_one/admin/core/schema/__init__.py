@@ -16,6 +16,7 @@ from jentic_one.admin.core.schema.instance_identity import InstanceIdentity
 from jentic_one.admin.core.schema.invite_tokens import InviteToken
 from jentic_one.admin.core.schema.job_results import JobResult
 from jentic_one.admin.core.schema.jobs import Job
+from jentic_one.admin.core.schema.latest_releases import LatestRelease
 from jentic_one.admin.core.schema.provider_configs import ProviderConfigRecord
 from jentic_one.admin.core.schema.refresh_tokens import RefreshToken
 from jentic_one.admin.core.schema.service_accounts import ServiceAccount
@@ -41,6 +42,7 @@ __all__ = [
     "InviteToken",
     "Job",
     "JobResult",
+    "LatestRelease",
     "ProviderConfigRecord",
     "RefreshToken",
     "ServiceAccount",
