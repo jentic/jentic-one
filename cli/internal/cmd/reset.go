@@ -201,6 +201,16 @@ func (a *App) resetProfile(ctx context.Context, cfg *config.FileConfig, opts *re
 		}
 	}
 
+	// --delete-home only takes effect when this reset actually tears the account
+	// down — i.e. it's the last agent profile AND teardown is confirmed (never on
+	// a lone --force, which removes just the profile). Warn rather than silently
+	// ignore the flag, so the operator isn't left believing the home was purged.
+	if opts.deleteHome && (!lastAgentProfile || opts.force) {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"--delete-home has no effect here: it only applies when a reset tears the whole "+
+				"agent account down. Run `jentic reset` (no argument) to remove the account and its home."))
+	}
+
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  jentic reset will PERMANENTLY remove profile '"+name+"'"+
 		ownerTag(ref)+" (key, tokens, registration). This cannot be undone."))
@@ -508,6 +518,8 @@ func (a *App) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))
 	if !deleteHome && plan.homeDir != "" {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  The agent's home was kept and re-owned to you: "+plan.homeDir))
+		fmt.Fprintln(a.Out, theme.Dim.Render("  Any seeded agent/provider config (e.g. ~/.claude, ~/.aws, ~/.codex) was cleared from it; "+
+			"re-run with --delete-home to remove the whole home."))
 	}
 	return nil
 }
@@ -658,6 +670,24 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		})
 	}
 
+	// (1d) When the home is KEPT (re-owned to the operator), clear the agent/
+	// provider config dirs from it. These are where seeding copies the operator's
+	// credentials (~/.claude.json's key, ~/.aws, ~/.codex/auth.json), so a live
+	// secret the operator handed the agent must not survive the teardown in the
+	// now-operator-owned home. We clear the whole set for every known operator, not
+	// just the one used — the account is being torn down, so a clean home is the
+	// intent, and provenance (seeded vs agent-created) isn't tracked. When the home
+	// is being deleted the rm below covers all of this, so this only runs on keep.
+	if plan.homeDir != "" && !deleteHome {
+		if scrub := localagent.ScrubSeededConfigCmd(localagent.SeededConfigDirs(plan.homeDir)); scrub != nil {
+			steps = append(steps, localagent.AccountStep{
+				What:       "remove seeded agent/provider config from the kept home",
+				Cmd:        scrub,
+				BestEffort: true,
+			})
+		}
+	}
+
 	// (2) Settle the home: delete only on explicit acceptance, else re-own it to
 	// the operator so it survives the account deletion and stays readable.
 	if plan.homeDir != "" {
@@ -747,8 +777,9 @@ func (a *App) printResetPlan(plan resetPlan) {
 		fmt.Fprintln(a.Out)
 		fmt.Fprintln(a.Out, theme.Warn.Render("  Agent home:"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("    - "+plan.homeDir))
-		fmt.Fprintln(a.Out, theme.Dim.Render("      Default: KEPT on disk and re-owned to you ("+plan.operator+")."))
-		fmt.Fprintln(a.Out, theme.Dim.Render("      You'll be asked separately whether to delete it."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("      Default: KEPT on disk and re-owned to you ("+plan.operator+"),"))
+		fmt.Fprintln(a.Out, theme.Dim.Render("      with any seeded agent/provider config (~/.claude, ~/.aws, ~/.codex, …) cleared from it."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("      You'll be asked separately whether to delete the home entirely."))
 	}
 
 	fmt.Fprintln(a.Out)

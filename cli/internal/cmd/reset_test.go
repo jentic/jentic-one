@@ -157,17 +157,28 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	}
 
 	// Best-effort steps: the home step (a macOS home has SIP/TCC-protected files
-	// nobody can chown/remove) and both ACL revokes (their macOS `chmod -a` exits
+	// nobody can chown/remove), both ACL revokes (their macOS `chmod -a` exits
 	// non-zero on entries that don't carry the exact ACE — subtree entries for the
-	// recursive leaf revoke, a drifted/re-shaped ancestor for the traverse revoke).
-	// None must abort the teardown; nothing else is best-effort.
+	// recursive leaf revoke, a drifted/re-shaped ancestor for the traverse revoke),
+	// and the seeded-config scrub (a seeded dir may be absent). None must abort the
+	// teardown; nothing else is best-effort.
 	for _, s := range steps {
 		wantBestEffort := strings.Contains(s.What, "the agent's home") ||
 			strings.Contains(s.What, "read/write grant on") ||
-			strings.Contains(s.What, "traverse grant on")
+			strings.Contains(s.What, "traverse grant on") ||
+			strings.Contains(s.What, "seeded agent/provider config")
 		if s.BestEffort != wantBestEffort {
 			t.Errorf("step %q BestEffort=%v, want %v", s.What, s.BestEffort, wantBestEffort)
 		}
+	}
+
+	// The seeded-config scrub runs on the keep path, after the identity removal and
+	// before the home is settled (re-owned), so a live seeded key is purged from
+	// the kept tree.
+	idxScrub := indexOfContains(whats, "seeded agent/provider config")
+	if idxScrub < 0 || idxScrub <= idxIdentity || idxScrub >= idxHome {
+		t.Errorf("seeded-config scrub must run after identity and before home settle: scrub=%d identity=%d home=%d (%v)",
+			idxScrub, idxIdentity, idxHome, whats)
 	}
 
 	// Delete: the home step deletes instead of re-owning.
@@ -188,6 +199,10 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	// ~/.jentic, so no separate identity-removal step is emitted.
 	if strings.Contains(delJoined, "remove the agent's jentic identity") {
 		t.Errorf("delete-home run must not emit a separate identity step (the home rm covers it), got:\n%s", delJoined)
+	}
+	// Likewise the seeded-config scrub is only for a KEPT home; the delete rm covers it.
+	if strings.Contains(delJoined, "seeded agent/provider config") {
+		t.Errorf("delete-home run must not emit a seeded-config scrub (the home rm covers it), got:\n%s", delJoined)
 	}
 }
 

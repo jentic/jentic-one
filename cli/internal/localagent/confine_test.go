@@ -66,6 +66,26 @@ func TestSandboxProfileMarksExecRoutesReadOnly(t *testing.T) {
 	}
 }
 
+// TestSandboxProfileMarksAgentLocalBinReadOnly is the regression guard for the
+// downgraded Chain-1 residual: the agent's OWN ~/.local/bin (where its launched
+// binary lives, inside its read/write home) must be write-denied, and that deny
+// must come AFTER the home re-allow so it wins by last-match. Otherwise a
+// compromised agent could overwrite its own `claude`/`codex`/… and re-detonate.
+func TestSandboxProfileMarksAgentLocalBinReadOnly(t *testing.T) {
+	agentHome := "/Users/Shared/alice-local-agent"
+	p := SandboxProfile(agentHome, nil)
+	localBinDeny := `(deny file-write* (subpath "` + agentHome + `/.local/bin"))`
+	if !strings.Contains(p, localBinDeny) {
+		t.Errorf("agent's own ~/.local/bin must be write-denied\n%s", p)
+	}
+	homeAllowAt := strings.Index(p, `(allow file* (subpath "`+agentHome+`"))`)
+	binDenyAt := strings.Index(p, localBinDeny)
+	if homeAllowAt < 0 || binDenyAt < 0 || binDenyAt < homeAllowAt {
+		t.Errorf("~/.local/bin write-deny must come after the home re-allow (allow@%d deny@%d)",
+			homeAllowAt, binDenyAt)
+	}
+}
+
 func TestSandboxProfileIgnoresGrantsOutsideHome(t *testing.T) {
 	p := SandboxProfile("/Users/Shared/agent", []string{"/opt/data", "/srv/things"})
 	// Grants outside every denied home root are already covered by (allow
@@ -156,6 +176,37 @@ func TestSessionAccessClassifiesAndFeedsSandbox(t *testing.T) {
 		if !strings.Contains(p, `(allow file* (subpath "`+w+`"))`) {
 			t.Errorf("sandbox profile does not re-open read/write dir %q\n%s", w, p)
 		}
+	}
+}
+
+// TestSessionAccessGrantOfOwnBinDirIsReadOnlyNotDuplicated guards the pathological
+// case where the operator grants the agent write access to its OWN ~/.local/bin.
+// The launched-binary route is non-negotiably read-only, so that grant must NOT
+// also surface as a read/write entry — otherwise the same path shows up in both
+// the RW and RO sets (misleading `profile view`, and a RW re-open the RO deny then
+// silently overrides). It must appear exactly once, read-only.
+func TestSessionAccessGrantOfOwnBinDirIsReadOnlyNotDuplicated(t *testing.T) {
+	home := "/Users/Shared/bob-local-agent"
+	binDir := AgentLocalBinDir(home)
+	dirs := SessionAccess(home, []string{binDir})
+
+	var rwHits, roHits int
+	for _, d := range dirs {
+		if d.Path != binDir {
+			continue
+		}
+		switch d.Kind {
+		case AccessReadWrite:
+			rwHits++
+		case AccessReadOnly:
+			roHits++
+		}
+	}
+	if rwHits != 0 {
+		t.Errorf("agent's own ~/.local/bin must not be re-opened read/write even when granted (rw hits=%d)", rwHits)
+	}
+	if roHits != 1 {
+		t.Errorf("agent's own ~/.local/bin must appear exactly once as read-only (ro hits=%d)", roHits)
 	}
 }
 

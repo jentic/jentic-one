@@ -279,11 +279,35 @@ func SessionAccess(agentHome string, grantedDirs []string) []SessionDir {
 	if agentHome != "" {
 		dirs = append(dirs, SessionDir{Path: filepath.Clean(agentHome), Kind: AccessReadWrite})
 	}
-	for _, g := range grantedDirs {
-		dirs = append(dirs, SessionDir{Path: filepath.Clean(g), Kind: AccessReadWrite})
+	// The agent's OWN ~/.local/bin is always read-only (see below). If the operator
+	// also granted exactly that path, drop the redundant read/write entry: the RO
+	// deny would override it anyway, and listing it as both read/write AND read-only
+	// (in `profile view` and in the SBPL/bwrap args) is misleading. A grant of a
+	// PARENT (e.g. ~/.local) is kept — only the bin leaf itself becomes read-only.
+	var roBin string
+	if agentHome != "" {
+		roBin = filepath.Clean(AgentLocalBinDir(agentHome))
 	}
-	for _, d := range execRouteDirs(agentHome) {
+	for _, g := range grantedDirs {
+		clean := filepath.Clean(g)
+		if roBin != "" && clean == roBin {
+			continue
+		}
+		dirs = append(dirs, SessionDir{Path: clean, Kind: AccessReadWrite})
+	}
+	for _, d := range execRouteDirs() {
 		dirs = append(dirs, SessionDir{Path: d, Kind: AccessReadOnly})
+	}
+	// The agent's OWN ~/.local/bin is where the launched binary lives (CopyBinaryCmd
+	// / the install route land it there, and EnsureLocalBinOnPathCmd prepends it to
+	// the login PATH — so it is the route `jentic run` actually execs from). It sits
+	// INSIDE the read/write agent home, so without this it would be agent-writable:
+	// a compromised agent could overwrite its own launched binary and re-detonate on
+	// the next (still-confined) launch. Marking it read-only closes that self-rewrite
+	// — and because the RO routes are emitted LAST (SBPL last-match / Linux --ro-bind
+	// after --bind), this write-deny wins over the home's read/write re-open.
+	if roBin != "" {
+		dirs = append(dirs, SessionDir{Path: roBin, Kind: AccessReadOnly})
 	}
 	return dirs
 }
@@ -468,25 +492,20 @@ func deniedRootOf(p string) string {
 // run the tools it needs but never overwrite any executable on its PATH.
 var systemBinDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"}
 
-// execRouteDirs returns the executable directories on the agent's PATH that the
-// sandbox marks read-only: the agent's OWN ~/.local/bin (where `jentic run`
-// copies/installs the agent binary), the sanctioned shared tool dirs, and the
+// execRouteDirs returns the SHARED executable directories on the agent's PATH
+// that the sandbox marks read-only: the sanctioned shared tool dirs plus the
 // system bin dirs, de-duplicated and filtered to those that exist. Making these
 // write-denied is a non-negotiable boundary — it stops a compromised agent from
 // rewriting the binaries `jentic run` executes to shed its own sandbox next run.
-// The home-local dir matters most: it sits inside the agent's writable home, so
-// without an explicit last-emitted deny the home re-allow would leave the very
-// binary the launcher execs agent-writable.
-func execRouteDirs(agentHome string) []string {
-	var candidates []string
-	if agentHome != "" {
-		candidates = append(candidates, filepath.Join(agentHome, ".local", "bin"))
-	}
-	candidates = append(candidates, candidateSharedBinDirs...)
-	candidates = append(candidates, systemBinDirs...)
+// The agent's OWN ~/.local/bin — the route that matters most, since it sits
+// inside the writable agent home — is handled by SessionAccess directly: it is
+// included UNCONDITIONALLY (a not-yet-provisioned dir must still be denied so a
+// mid-session mkdir can't open a self-rewrite route), so it doesn't belong in
+// this existence-filtered set.
+func execRouteDirs() []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, d := range candidates {
+	for _, d := range append(append([]string{}, candidateSharedBinDirs...), systemBinDirs...) {
 		d = filepath.Clean(d)
 		if seen[d] {
 			continue
@@ -569,6 +588,12 @@ func bwrapArgs(agentHome string, grantedDirs, cmdArgv []string) []string {
 		}
 	}
 	for _, d := range roExecDirs(agentHome, grantedDirs) {
+		// bwrap --ro-bind fails if the source doesn't exist; the agent-home
+		// ~/.local/bin may not be provisioned yet on an early launch, so skip a
+		// missing route rather than abort the whole confined session.
+		if info, err := os.Stat(d); err != nil || !info.IsDir() {
+			continue
+		}
 		args = append(args, "--ro-bind", d, d)
 	}
 	// The command to run inside the namespace ends the argv; `--` is bwrap's own
@@ -589,19 +614,17 @@ var usernsClonePath = "/proc/sys/kernel/unprivileged_userns_clone"
 
 // unprivilegedUserNSEnabled reports whether the kernel permits unprivileged user
 // namespaces, which bubblewrap needs to build its mount namespace without root.
-// The sysctl is Debian/Ubuntu-specific, so a clean NOT-EXIST is the normal state
-// on mainline/RHEL kernels — there unprivileged userns is generally on, and
-// absence is treated as enabled. Any OTHER read failure (a masked or
-// permission-denied /proc) means we could not actually probe the kernel, and is
-// treated as DISABLED: the whole confinement model errors closed, so the prereq
-// gate must not report "available" on a machine it couldn't verify.
+// The sysctl is Debian/Ubuntu-specific; when the knob is genuinely ABSENT
+// (mainline kernels, RHEL) unprivileged userns is generally on, so a
+// not-exist error is treated as enabled. Any OTHER read error — the knob exists
+// but is unreadable (a masked /proc, an LSM/AppArmor denial, a hardened
+// container) — is treated as DISABLED: the whole confinement contract is
+// error-closed, so an inconclusive probe must fail closed rather than let
+// ConfinementAvailable claim a boundary it can't confirm.
 func unprivilegedUserNSEnabled() bool {
 	data, err := os.ReadFile(usernsClonePath)
-	if errors.Is(err, os.ErrNotExist) {
-		return true // knob absent → not gated here
-	}
 	if err != nil {
-		return false // unreadable → fail closed, like the rest of confinement
+		return errors.Is(err, os.ErrNotExist) // absent → enabled; unreadable → fail closed
 	}
 	return strings.TrimSpace(string(data)) != "0"
 }

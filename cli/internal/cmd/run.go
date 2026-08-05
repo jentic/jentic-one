@@ -68,13 +68,17 @@ func newRunCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run <agent> [path] [-- <agent-args>...]",
 		Short: "Launch a coding agent as its own isolated Unix user",
-		Long: "run launches a coding agent (claude, ...) under a dedicated, unprivileged\n" +
-			"OS account distinct from the operator's login user, so a compromised or\n" +
-			"prompt-injected agent cannot read the operator's keys, browser session, or\n" +
-			"the jentic-one credential store. It provisions the agent's binary for that\n" +
-			"account if missing, resolves filesystem access to the working directory\n" +
-			"(granting a scoped ACL only when the operator confirms), and starts the\n" +
-			"session in a login shell so no operator environment leaks.\n\n" +
+		Long: "run launches a coding agent under a dedicated, unprivileged OS account\n" +
+			"distinct from the operator's login user, so a compromised or prompt-injected\n" +
+			"agent cannot read the operator's keys, browser session, or the jentic-one\n" +
+			"credential store. It provisions the agent's binary for that account if\n" +
+			"missing, resolves filesystem access to the working directory (granting a\n" +
+			"scoped ACL only when the operator confirms), and starts the session as\n" +
+			"the agent's own Unix user in a fresh login shell, so the operator's\n" +
+			"environment and secrets are not inherited by the agent.\n\n" +
+			"Runnable agents: " + strings.Join(localagent.Known(), ", ") + ".\n" +
+			"(\"generic\" is a skill-only operator — it has no binary and cannot be run;\n" +
+			"use `jentic skill` to write its onboarding docs instead.)\n\n" +
 			"Arguments for the agent binary are forwarded verbatim, in either form:\n" +
 			"  jentic run claude -- --model opus -p \"hi\"   (agent, then -- <agent-args>)\n" +
 			"  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\n" +
@@ -163,6 +167,11 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	agentID := posArgs[0]
 	desc, ok := localagent.Lookup(agentID)
 	if !ok {
+		if localagent.IsSkillOnly(agentID) {
+			return fmt.Errorf("%q is a skill-only operator: `jentic run` launches coding agents, "+
+				"but %q has no runnable binary (use `jentic skill` to write its onboarding docs). "+
+				"Runnable agents: %s", agentID, agentID, strings.Join(localagent.Known(), ", "))
+		}
 		return fmt.Errorf("unknown agent %q; known agents: %s", agentID, strings.Join(localagent.Known(), ", "))
 	}
 
@@ -821,7 +830,7 @@ var errCancelled = errors.New("cancelled")
 func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir, sessionProfile string, agentArgs []string) error {
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		var b strings.Builder
-		b.WriteString("fully locked-down agent sessions aren't available on this machine:\n")
+		b.WriteString("confined agent sessions aren't available on this machine:\n")
 		for _, p := range missing {
 			fmt.Fprintf(&b, "  • %s\n", p.Reason)
 			if p.Hint != "" {
