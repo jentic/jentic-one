@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.27.0](https://github.com/jentic/jentic-one/compare/v0.26.0...v0.27.0) (2026-08-05)
+
+
+### Features
+
+* **cli:** make jentic run launch Codex, Cursor, and Hermes as isolated agents ([#935](https://github.com/jentic/jentic-one/issues/935)) ([d05f6c7](https://github.com/jentic/jentic-one/commit/d05f6c71c61ecbd8f929867cf9c60bb426e1d061))
+* **cli:** run local coding agents as a dedicated unix user ([#853](https://github.com/jentic/jentic-one/issues/853)) ([8052479](https://github.com/jentic/jentic-one/commit/805247989b02d264fd69b100376dbae2c3ba0602))
+* **credentials:** add AWS SigV4 credential type ([#776](https://github.com/jentic/jentic-one/issues/776)) ([#888](https://github.com/jentic/jentic-one/issues/888)) ([a11025a](https://github.com/jentic/jentic-one/commit/a11025a5981196a8125ed2b9b1d082c8c9498609))
+* **skills:** distribute a served skill set to agents ([#966](https://github.com/jentic/jentic-one/issues/966)) ([49345b7](https://github.com/jentic/jentic-one/commit/49345b7aa81b62821e9f8510e377c710584b9799))
+
 ## [0.26.0](https://github.com/jentic/jentic-one/compare/v0.25.0...v0.26.0) (2026-08-04)
 
 
