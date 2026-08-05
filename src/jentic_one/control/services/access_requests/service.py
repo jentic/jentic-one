@@ -58,6 +58,7 @@ from jentic_one.control.services.access_requests.schemas.access_requests import 
 )
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit_best_effort
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.config import effective_access_requests_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event, emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.models import (
@@ -396,7 +397,8 @@ class AccessRequestService:
                     filer_owner_id=filer_owner_id,
                 )
 
-                approve_url = f"{config.canonical_base_url}/access-requests/{request.id}"
+                base_url = effective_access_requests_base_url(self._ctx.config)
+                approve_url = f"{base_url}/access-requests/{request.id}"
                 request.approve_url = approve_url
                 await session.flush()
 

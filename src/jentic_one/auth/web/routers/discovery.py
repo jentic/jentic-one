@@ -39,7 +39,7 @@ async def oauth_authorization_server(
     request: Request, ctx: Context = Depends(get_ctx)
 ) -> dict[str, Any]:
     """Return RFC 8414 authorization-server metadata (endpoints, grant types, algorithms)."""
-    issuer = deployment_base_url(ctx.config.auth, request)
+    issuer = deployment_base_url(ctx.config, request)
     return {
         "issuer": issuer,
         "authorization_endpoint": f"{issuer}/authorize",

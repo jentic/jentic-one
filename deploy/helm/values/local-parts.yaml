@@ -41,16 +41,20 @@ admin:
   extraEnv:
     # The admin pod also hosts the auth surface (see admin.Dockerfile). Same
     # contract as combined mode: the JWT-Bearer assertion audience is built
-    # from canonical_base_url and MUST match the URL clients actually use —
+    # from the public base URL and MUST match the URL clients actually use —
     # the gateway on kind host port 8000 — or every token exchange fails
     # 400 invalid_grant. See the longer note in local-combined.yaml.
-    JENTIC__AUTH__CANONICAL_BASE_URL: http://localhost:8000
+    JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
 
 control:
   enabled: true
   service:
     type: NodePort
     nodePort: 30083
+  extraEnv:
+    # The control surface builds access-request approval links and the OAuth
+    # callback base from the public base URL; front it with the gateway origin.
+    JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
   # Credential-at-rest encryption keyset (+ the platform OAuth2 provider) —
   # same contract as combined mode (see local-combined.yaml): `entries` is a
   # list, which the flat JENTIC__* env-var convention cannot express, and
@@ -69,6 +73,11 @@ control:
         providers:
           direct_oauth2:
             kind: direct_oauth2
+            # Explicit override: the browser reaches the callback via the
+            # gateway NodePort (30080), which differs from the in-cluster
+            # public_base_url (localhost:8000). The startup
+            # public_url_origin_mismatch check excludes provider redirect_uri
+            # overrides, so this split origin fires no warning.
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 global:

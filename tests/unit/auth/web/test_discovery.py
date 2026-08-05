@@ -21,6 +21,9 @@ def _make_client() -> collections.abc.Callable[[str], TestClient]:
 
         mock_ctx = MagicMock()
         mock_ctx.config.auth = AuthConfig(canonical_base_url=canonical_base_url)
+        # effective_auth_base_url also reads server.public_base_url; keep it
+        # empty so the canonical/request-fallback behaviour under test holds.
+        mock_ctx.config.server.public_base_url = ""
         app.state.ctx = mock_ctx
         return TestClient(app)
 

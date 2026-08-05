@@ -104,6 +104,42 @@ def test_list_providers_callback_url_none_for_non_oauth2() -> None:
     assert static.callback_url is None
 
 
+def test_list_providers_uses_derived_callback_when_unconfigured() -> None:
+    # Issue #818: no explicit redirect_uri → discovery reflects the request-
+    # derived default the connect flow would actually use.
+    credentials_cfg = CredentialsConfig(
+        providers={"direct_oauth2": DirectOAuth2ProviderConfig()},
+    )
+    ctx = _make_context(credentials_cfg)
+    svc = CredentialService(ctx)
+    derived = "http://127.0.0.1:8020/credentials/oauth/callback"
+    entries = svc.list_providers(default_callback_url=derived)
+
+    by_id = {e.id: e for e in entries}
+    assert by_id["direct_oauth2"].callback_url == derived
+
+
+def test_list_providers_configured_redirect_uri_wins_over_derived() -> None:
+    credentials_cfg = CredentialsConfig(
+        providers={
+            "direct_oauth2": DirectOAuth2ProviderConfig(
+                redirect_uri="https://explicit.example.com/credentials/oauth/callback",
+            ),
+        }
+    )
+    ctx = _make_context(credentials_cfg)
+    svc = CredentialService(ctx)
+    entries = svc.list_providers(
+        default_callback_url="http://127.0.0.1:8020/credentials/oauth/callback"
+    )
+
+    by_id = {e.id: e for e in entries}
+    assert (
+        by_id["direct_oauth2"].callback_url
+        == "https://explicit.example.com/credentials/oauth/callback"
+    )
+
+
 def test_list_providers_label_formatting() -> None:
     credentials_cfg = CredentialsConfig(
         providers={

@@ -46,6 +46,14 @@ server:
   host: 127.0.0.1
   port: 8000
   reload: true
+  # The deployment's single public origin. Every absolute URL the app builds
+  # for external consumption — the OAuth connect redirect_uri, the OIDC
+  # issuer / JWT-Bearer audience, access-request approval links, async-job
+  # links — falls back to this. Left unset, request-scoped consumers derive
+  # from the incoming request's origin, so local dev on any port just works.
+  # Set it explicitly behind a reverse proxy / public hostname the app can't
+  # infer from the request.
+  public_base_url: "http://127.0.0.1:8000"
 
 # Credential-at-rest encryption keyset. Required for credential WRITES — the
 # control surface envelope-encrypts secrets with AES-256-GCM, and
@@ -60,12 +68,13 @@ credentials:
       - id: v1
         material: "vF7VWq2NJLr+uGDBFy9boIXfSJJIzqnTSF7iDDMKR5U="  # pragma: allowlist secret
   # Register the platform-managed OAuth2 provider so the authorization-code
-  # connect flow can run locally. The redirect_uri must match the control
-  # surface's published callback route.
+  # connect flow can run locally. The callback redirect_uri is derived from
+  # server.public_base_url (or the request origin when that's unset), so it no
+  # longer needs pinning here — set redirect_uri only to override that (e.g. a
+  # reverse proxy whose public origin differs from public_base_url).
   providers:
     direct_oauth2:
       kind: direct_oauth2
-      redirect_uri: "http://127.0.0.1:8000/credentials/oauth/callback"
       # Extra query params appended to the authorize URL. Defaults force
       # the IdP consent screen (so re-connect doesn't silently no-op) and
       # ask Google to issue a refresh_token. Override per deployment if a
@@ -75,11 +84,12 @@ credentials:
         prompt: consent
         access_type: offline
 
-# Pin the OAuth issuer / endpoint URIs and the expected JWT-Bearer assertion
-# audience for local runs. Without this, canonical_base_url defaults to "" and
-# the assertion audience collapses to "/oauth/token".
-auth:
-  canonical_base_url: "http://127.0.0.1:8000"
+# The OAuth issuer / endpoint URIs and the JWT-Bearer assertion audience are
+# built from server.public_base_url above. auth.canonical_base_url is an
+# optional per-surface override (advanced: a reverse proxy fronting the auth
+# surface on a different origin) and wins over public_base_url when set. Left
+# out here so the single public_base_url knob drives everything.
+auth: {}
 
 # No collector runs locally by default — point both signals at /dev/null
 # so the terminal isn't spammed with retry warnings. Override these (or

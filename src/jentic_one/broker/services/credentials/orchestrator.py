@@ -258,7 +258,11 @@ class CredentialService:
         intent_id = f"intent_{uuid.uuid4().hex}"
         params: dict[str, object] = {"intent_id": intent_id, "vendor": api.vendor}
 
-        base = self._ctx.config.broker.account_linking_base_url
+        base = (
+            self._ctx.config.broker.account_linking_base_url
+            or self._ctx.config.server.public_base_url
+            or None
+        )
         instruction = (
             f"No credential is connected for '{api.vendor}'; "
             "ask the user to connect the account before retrying."

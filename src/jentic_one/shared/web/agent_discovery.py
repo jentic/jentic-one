@@ -130,7 +130,7 @@ def get_agent_discovery_router() -> APIRouter:
     @router.get(LLMS_TXT_PATH, include_in_schema=False)
     @router.get(LLMS_TXT_WELL_KNOWN_PATH, include_in_schema=False)
     async def llms_txt(request: Request, ctx: Context = Depends(get_ctx)) -> PlainTextResponse:
-        base = deployment_base_url(ctx.config.auth, request)
+        base = deployment_base_url(ctx.config, request)
         body = render_llms_txt(base, ctx.config.auth.assertion_max_ttl_seconds)
         return PlainTextResponse(body, media_type=MARKDOWN_MEDIA_TYPE)
 

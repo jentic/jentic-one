@@ -25,6 +25,10 @@ server:
   host: 127.0.0.1
   port: 8000
   reload: true
+  # Single public origin; the OAuth callback redirect_uri, OIDC issuer,
+  # JWT-Bearer audience, and links all derive from it. Unset it to fall back to
+  # the request origin (any-port local dev). See config/local.yaml for detail.
+  public_base_url: "http://127.0.0.1:8000"
 
 search:
   enabled: true
@@ -42,11 +46,11 @@ credentials:
       - id: v1
         material: "Z9BctysLqeHhzbFLfSU4djsvAX7N5EVVos5G0QN7C5Q="  # pragma: allowlist secret
   # Register the platform-managed OAuth2 provider so the authorization-code
-  # connect flow can run locally.
+  # connect flow can run locally. The callback redirect_uri derives from
+  # server.public_base_url (or the request origin), so no pinning needed.
   providers:
     direct_oauth2:
       kind: direct_oauth2
-      redirect_uri: "http://127.0.0.1:8000/credentials/oauth/callback"
 
 observability:
   metrics:

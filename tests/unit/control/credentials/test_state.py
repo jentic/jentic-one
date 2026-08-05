@@ -91,3 +91,27 @@ def test_state_preserves_none_actor_id() -> None:
     token = encode_state(SECRET, state, ttl_seconds=600)
     decoded = decode_state(SECRET, token)
     assert decoded.actor_id is None
+
+
+def test_state_roundtrips_redirect_uri() -> None:
+    state = ConnectState(
+        credential_id="cred_123",
+        provider="direct_oauth2",
+        actor_id="user_1",
+        issued_at=datetime.now(UTC),
+        nonce=generate_nonce(),
+        redirect_uri="http://127.0.0.1:8020/credentials/oauth/callback",
+    )
+    token = encode_state(SECRET, state, ttl_seconds=600)
+    decoded = decode_state(SECRET, token)
+    assert decoded.redirect_uri == "http://127.0.0.1:8020/credentials/oauth/callback"
+
+
+def test_state_without_redirect_uri_decodes_to_none() -> None:
+    # A state minted before the ``ruri`` claim existed (rolling upgrade) still
+    # decodes; the missing claim maps to None so complete_connect can fall back
+    # to the configured redirect_uri.
+    state = _make_state()
+    token = encode_state(SECRET, state, ttl_seconds=600)
+    decoded = decode_state(SECRET, token)
+    assert decoded.redirect_uri is None

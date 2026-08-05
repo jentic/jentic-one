@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from jentic_one.control.services.credentials.connect_service import (
@@ -26,6 +26,7 @@ from jentic_one.control.services.credentials.schemas.credentials import (
 )
 from jentic_one.control.services.credentials.schemas.provision import APIReference
 from jentic_one.control.services.credentials.service import CredentialService
+from jentic_one.control.services.credentials.state import OAUTH_CALLBACK_PATH
 from jentic_one.control.web.deps import (
     get_connect_service,
     get_credential_service,
@@ -43,14 +44,26 @@ from jentic_one.control.web.schemas.credentials import (
     ProviderDiscoveryResponse,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.context import Context
 from jentic_one.shared.models.credentials import CredentialType
-from jentic_one.shared.web import get_current_identity
+from jentic_one.shared.web import get_ctx, get_current_identity
 from jentic_one.shared.web.openapi_responses import conflict, not_found, with_responses
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 
 router = APIRouter()
 
 _logger = structlog.get_logger(__name__)
+
+
+def _derive_callback_base(request: Request, ctx: Context) -> str:
+    """The public origin for OAuth callbacks: server.public_base_url or request.
+
+    The provider layer applies its own explicit ``redirect_uri`` override on top;
+    the router only supplies the deployment default so a zero-config install on
+    any port produces a reachable callback. Kept here (not in the provider)
+    because only the web layer sees the incoming request's origin.
+    """
+    return ctx.config.server.public_base_url or str(request.base_url).rstrip("/")
 
 
 def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedResponse:
@@ -82,13 +95,16 @@ def _to_redacted_response(view: CredentialRedactedView) -> CredentialRedactedRes
 # delegated agent here leaks nothing — it just keeps the credential reads uniform.
 @router.get("/credentials/providers", summary="List credential providers")
 async def list_providers(
+    request: Request,
     identity: Identity = get_current_identity(
         required_permissions=["credentials:read", "owner:credentials:read"]
     ),
     svc: CredentialService = Depends(get_credential_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ProviderDiscoveryResponse:
     """Return discovery metadata for all configured credential providers."""
-    entries = svc.list_providers()
+    default_callback_url = f"{_derive_callback_base(request, ctx)}{OAUTH_CALLBACK_PATH}"
+    entries = svc.list_providers(default_callback_url=default_callback_url)
     return ProviderDiscoveryResponse(
         providers=[
             ProviderDiscoveryEntryResponse(
@@ -210,7 +226,7 @@ def _oauth_callback_error() -> RedirectResponse:
     return RedirectResponse(f"{_CONNECT_RETURN_PATH}?status=error", status_code=303)
 
 
-@router.get("/credentials/oauth/callback", summary="OAuth connect callback")
+@router.get(OAUTH_CALLBACK_PATH, summary="OAuth connect callback")
 async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
@@ -340,17 +356,21 @@ async def delete_credential(
 async def connect_credential(
     credential_id: str,
     body: ConnectRequestBody,
+    request: Request,
     identity: Identity = get_current_identity(required_permissions=["credentials:write"]),
     svc: ConnectService = Depends(get_connect_service),
+    ctx: Context = Depends(get_ctx),
 ) -> ConnectChallengeResponse:
     """Initiate the OAuth connect flow for a credential."""
     connect_req = ConnectRequest(scopes=body.scopes, extra=body.extra)
+    redirect_uri = f"{_derive_callback_base(request, ctx)}{OAUTH_CALLBACK_PATH}"
     try:
         challenge = await svc.begin(
             credential_id,
             connect_req,
             actor_id=identity.sub,
             actor_type=identity.actor_type,
+            redirect_uri=redirect_uri,
         )
     except CredentialNotFoundError:
         return JSONResponse(status_code=404, content={"detail": "Credential not found"})  # type: ignore[return-value]

@@ -27,6 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from jentic_one.shared.config import effective_auth_base_url
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -104,7 +105,7 @@ def _sanitized_url_parts(canonical_base_url: str) -> tuple[str, str]:
 
 def resolve_instance_identity(ctx: Context) -> InstanceIdentityResponse:
     """Build the backend-identity payload from the live application ``Context``."""
-    canonical_base_url = ctx.config.auth.canonical_base_url or ""
+    canonical_base_url = effective_auth_base_url(ctx.config)
     canonical_base_url, host = (
         _sanitized_url_parts(canonical_base_url) if canonical_base_url else ("", "")
     )

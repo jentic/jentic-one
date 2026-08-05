@@ -49,6 +49,7 @@ class ConnectService:
         *,
         actor_id: str | None = None,
         actor_type: ActorType | None = None,
+        redirect_uri: str | None = None,
     ) -> ConnectChallenge:
         """Load credential, resolve provider, initiate connect flow."""
         async with self._ctx.control_db.session() as session:
@@ -73,6 +74,7 @@ class ConnectService:
                 "actor_id": actor_id or "",
                 "actor_type": str(actor_type) if actor_type else "",
             },
+            redirect_uri=redirect_uri,
         )
 
         return await provider.begin_connect(self._ctx, api=api, request=enriched_request)

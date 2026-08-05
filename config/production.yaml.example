@@ -46,6 +46,13 @@ server:
   host: 0.0.0.0
   port: 8000
   reload: false
+  # THE public origin of this deployment (scheme + host [+ port] as clients
+  # reach it, e.g. behind your load balancer / ingress). This one knob drives
+  # every externally-visible URL: OAuth connect redirect_uri, OIDC issuer &
+  # JWT-Bearer audience, DCR registration_client_uri, access-request approval
+  # links, async-job _links.self, and the 424 provisioning_url. Set this
+  # instead of pinning each of those separately.
+  public_base_url: "https://jentic.example.com"
   # Locality label reported by the public GET /instance identity probe:
   # "local" (default) for a self-hosted install on your own machine/network,
   # "remote" for a hosted install run elsewhere.
@@ -57,10 +64,15 @@ apps:
   - control
   - auth
 
-# Public base URL of the app, so issued OAuth/OIDC token iss/aud and connect
-# redirect URIs are correct.
-auth:
-  canonical_base_url: "https://jentic.example.com"
+# Advanced per-field overrides (rarely needed). Each defaults to
+# server.public_base_url above and only needs setting when a reverse proxy
+# fronts a specific surface on a *different* public origin. When set, the
+# specific knob wins over public_base_url:
+#   auth.canonical_base_url                       # OIDC issuer / JWT audience / DCR
+#   control.access_requests.canonical_base_url    # approval deep links
+#   broker.jobs_api_base_url                       # async-job self links
+#   broker.account_linking_base_url                # 424 provisioning_url
+#   credentials.providers.<id>.redirect_uri        # OAuth callback override
 
 # Credential-at-rest encryption keyset (AES-256-GCM). Required for credential
 # WRITES. The keyset is a LIST, so it can't come from a single JENTIC__… env

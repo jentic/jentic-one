@@ -13,7 +13,12 @@ app:
     # in-cluster NodePort 30080, unreachable from the test runner) makes every
     # token exchange fail 400 invalid_grant. Without it, aud collapses to
     # "/oauth/token" and emits malformed issuer/registration URIs.
-    JENTIC__AUTH__CANONICAL_BASE_URL: http://localhost:8000
+    #
+    # This sets server.public_base_url, the single knob every derived URL falls
+    # back to. The OAuth *callback* is a genuine exception here (the browser
+    # reaches it on the NodePort, not localhost:8000), so it keeps an explicit
+    # per-provider redirect_uri override below.
+    JENTIC__SERVER__PUBLIC_BASE_URL: http://localhost:8000
     # Allow the registry ingest worker (bundled in the combined app) to fetch
     # specs from in-cluster ClusterIPs (kind service CIDR is in 10/8).
     JENTIC__INGEST__EGRESS__ALLOWED_INTERNAL_DOMAINS: .svc.cluster.local
@@ -43,6 +48,13 @@ app:
         providers:
           direct_oauth2:
             kind: direct_oauth2
+            # Explicit override: the OAuth popup runs in the operator's browser,
+            # which reaches the callback on the NodePort (30080), not the
+            # in-cluster public_base_url (localhost:8000). This is the one URL
+            # that legitimately differs from public_base_url here — and the
+            # startup public_url_origin_mismatch check excludes provider
+            # redirect_uri overrides for exactly this reason, so no warning
+            # fires.
             redirect_uri: "http://127.0.0.1:30080/credentials/oauth/callback"
 
 broker:
