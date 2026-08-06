@@ -57,6 +57,24 @@ info:
 paths: {}
 """
 
+# Non-finite float scalars (issue #984): json.dumps emits float('nan')/
+# float('inf') as the non-standard NaN/Infinity tokens (it does not raise),
+# which JSON parsers and Postgres JSONB reject — dead-lettering the import at
+# the JSONB write. Finite floats must keep parsing as numbers.
+_SPEC_YAML_NONFINITE_FLOATS = """\
+openapi: "3.1.0"
+info:
+  title: Floaty API
+  version: "1.0.0"
+  x-vendor: acme
+  x-nan: .nan
+  x-inf: .inf
+  x-neg-inf: -.INF
+  x-finite: 1.5
+  x-exponent: 2.5e+3
+paths: {}
+"""
+
 
 @pytest.mark.asyncio
 async def test_inline_json_produces_valid_specification() -> None:
@@ -118,6 +136,55 @@ async def test_yaml_binary_and_set_tags_stay_json_serializable() -> None:
     assert info["x-blob"] == "aGVsbG8="  # verbatim base64 text, not bytes
     assert info["x-flags"] == ["alpha", "beta"]  # key list, not a set
     json.dumps(result.content)
+
+
+@pytest.mark.asyncio
+async def test_yaml_nonfinite_floats_stay_json_serializable_strings() -> None:
+    """Non-finite float scalars parse as verbatim strings; finite floats as numbers.
+
+    Regression for #984 — see the _SPEC_YAML_NONFINITE_FLOATS comment for the
+    failure mode this pins.
+    """
+    result = await load_specification(
+        _make_inline(_SPEC_YAML_NONFINITE_FLOATS, filename="spec.yaml")
+    )
+
+    assert result.content is not None
+    info = result.content["info"]
+    # Verbatim scalar text — case preserved, no normalization to "Infinity".
+    assert info["x-nan"] == ".nan"
+    assert info["x-inf"] == ".inf"
+    assert info["x-neg-inf"] == "-.INF"
+    # Finite floats are untouched — still numbers, not strings. (The exponent
+    # form needs the sign — PyYAML's YAML 1.1 resolver treats signless "2.5e3"
+    # as a plain string, with or without this fix.)
+    assert info["x-finite"] == 1.5
+    assert info["x-exponent"] == 2500.0
+    # Strict-JSON serializable: allow_nan=False raises if a non-finite leaked.
+    json.dumps(result.content, allow_nan=False)
+
+
+@pytest.mark.asyncio
+async def test_json_nonfinite_tokens_stay_json_serializable_strings() -> None:
+    """The JSON path has the same gap: json.loads accepts NaN/Infinity tokens.
+
+    Python's json.loads is laxer than RFC 8259 and produces non-finite floats
+    for them by default — same dead-letter failure as the YAML case (#984).
+    """
+    spec = (
+        '{"openapi":"3.1.0","info":{"title":"Floaty JSON","version":"1.0.0",'
+        '"x-vendor":"acme","x-nan":NaN,"x-inf":Infinity,"x-neg-inf":-Infinity,'
+        '"x-finite":1.5},"paths":{}}'
+    )
+    result = await load_specification(_make_inline(spec, filename="spec.json"))
+
+    assert result.content is not None
+    info = result.content["info"]
+    assert info["x-nan"] == "NaN"
+    assert info["x-inf"] == "Infinity"
+    assert info["x-neg-inf"] == "-Infinity"
+    assert info["x-finite"] == 1.5
+    json.dumps(result.content, allow_nan=False)
 
 
 @pytest.mark.asyncio

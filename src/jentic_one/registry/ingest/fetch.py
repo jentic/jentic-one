@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from typing import Annotated, Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -88,8 +89,12 @@ class _JsonSafeLoader(yaml.SafeLoader):
     so the two tags that produce non-JSON scalars — ``!!timestamp`` and
     ``!!binary`` — construct the scalar's verbatim text (lossless, and identical
     to what the same spec yields when served as JSON), and ``!!set`` constructs
-    a list of its keys. The remaining exotic tags (``!!omap``/``!!pairs``) yield
-    lists of tuples, which JSON-serialize as arrays already.
+    a list of its keys. Non-finite ``!!float`` scalars (``.nan``/``.inf``) also
+    fall back to verbatim text (issue #984): ``json.dumps`` emits them as the
+    non-standard ``NaN``/``Infinity`` tokens, which JSON parsers and Postgres
+    JSONB reject — while finite floats keep parsing as numbers. The remaining
+    exotic tags (``!!omap``/``!!pairs``) yield lists of tuples, which
+    JSON-serialize as arrays already.
     """
 
 
@@ -101,11 +106,20 @@ def _construct_set_as_list(loader: _JsonSafeLoader, node: yaml.MappingNode) -> l
     return list(loader.construct_mapping(node))
 
 
-# !!timestamp is the only tag here with an implicit resolver (bare scalars);
-# !!binary and !!set require an explicit tag but dead-letter identically.
+def _construct_json_safe_float(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> float | str:
+    value = yaml.SafeLoader.construct_yaml_float(loader, node)
+    if math.isfinite(value):
+        return value
+    return loader.construct_scalar(node)
+
+
+# !!timestamp and !!float are the tags here with implicit resolvers (bare
+# scalars); !!binary and !!set require an explicit tag but dead-letter
+# identically.
 _JsonSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_scalar_as_str)
 _JsonSafeLoader.add_constructor("tag:yaml.org,2002:binary", _construct_scalar_as_str)
 _JsonSafeLoader.add_constructor("tag:yaml.org,2002:set", _construct_set_as_list)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:float", _construct_json_safe_float)
 
 
 def _load_yaml(raw: str) -> Any:
@@ -115,6 +129,17 @@ def _load_yaml(raw: str) -> Any:
     ``yaml.safe_load`` — hence the B506 suppression.
     """
     return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+
+
+def _load_json(raw: str) -> Any:
+    """``json.loads`` with non-finite float tokens kept as their literal text.
+
+    Python's ``json.loads`` accepts the non-standard ``NaN``/``Infinity``/
+    ``-Infinity`` tokens by default and produces non-finite floats — the same
+    JSONB-rejected values the YAML loader guards against (issue #984). Keep
+    the token text verbatim, mirroring ``_JsonSafeLoader``.
+    """
+    return json.loads(raw, parse_constant=str)
 
 
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
@@ -138,7 +163,7 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
     parsed: Any = None
     if json_first:
         try:
-            parsed = json.loads(raw)
+            parsed = _load_json(raw)
         except (json.JSONDecodeError, ValueError):
             try:
                 parsed = _load_yaml(raw)
@@ -149,7 +174,7 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
             parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
-                parsed = json.loads(raw)
+                parsed = _load_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
 
