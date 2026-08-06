@@ -131,6 +131,17 @@ def _load_yaml(raw: str) -> Any:
     return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
 
 
+def _load_json(raw: str) -> Any:
+    """``json.loads`` with non-finite float tokens kept as their literal text.
+
+    Python's ``json.loads`` accepts the non-standard ``NaN``/``Infinity``/
+    ``-Infinity`` tokens by default and produces non-finite floats — the same
+    JSONB-rejected values the YAML loader guards against (issue #984). Keep
+    the token text verbatim, mirroring ``_JsonSafeLoader``.
+    """
+    return json.loads(raw, parse_constant=str)
+
+
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
     """Parse raw spec content as JSON or YAML, returning a dict.
 
@@ -152,7 +163,7 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
     parsed: Any = None
     if json_first:
         try:
-            parsed = json.loads(raw)
+            parsed = _load_json(raw)
         except (json.JSONDecodeError, ValueError):
             try:
                 parsed = _load_yaml(raw)
@@ -163,7 +174,7 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
             parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
-                parsed = json.loads(raw)
+                parsed = _load_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
 

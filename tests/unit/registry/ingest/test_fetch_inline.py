@@ -165,6 +165,29 @@ async def test_yaml_nonfinite_floats_stay_json_serializable_strings() -> None:
 
 
 @pytest.mark.asyncio
+async def test_json_nonfinite_tokens_stay_json_serializable_strings() -> None:
+    """The JSON path has the same gap: json.loads accepts NaN/Infinity tokens.
+
+    Python's json.loads is laxer than RFC 8259 and produces non-finite floats
+    for them by default — same dead-letter failure as the YAML case (#984).
+    """
+    spec = (
+        '{"openapi":"3.1.0","info":{"title":"Floaty JSON","version":"1.0.0",'
+        '"x-vendor":"acme","x-nan":NaN,"x-inf":Infinity,"x-neg-inf":-Infinity,'
+        '"x-finite":1.5},"paths":{}}'
+    )
+    result = await load_specification(_make_inline(spec, filename="spec.json"))
+
+    assert result.content is not None
+    info = result.content["info"]
+    assert info["x-nan"] == "NaN"
+    assert info["x-inf"] == "Infinity"
+    assert info["x-neg-inf"] == "-Infinity"
+    assert info["x-finite"] == 1.5
+    json.dumps(result.content, allow_nan=False)
+
+
+@pytest.mark.asyncio
 async def test_catalog_api_id_carried_verbatim() -> None:
     """The catalog slug survives loading untouched (#910) — unlike the same
     value passed as api_name, which identity resolution slugifies. The
