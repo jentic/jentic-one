@@ -396,16 +396,18 @@ fi
 # the piped re-exec loops back to the origin that served the script instead of
 # hard-depending on raw.githubusercontent.com (jentic-one#962). Prove it with a
 # stubbed curl that records its argv and fails: the recorded URL must be the
-# override, and the error message must name it.
+# override, and the error message must name it. Each invocation clears the
+# JENTIC_* env that could leak in from a developer shell and skew the run.
 if [ -x /bin/sh ]; then
   bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-bin.XXXXXX")"
   make_min_path "$bindir"
   curl_log="$(mktemp "${TMPDIR:-/tmp}/jentic-test-curl.XXXXXX")"
-  printf '#!/bin/sh\necho "$@" >> %s\nexit 22\n' "$curl_log" > "$bindir/curl"
+  printf '#!/bin/sh\nprintf '"'"'%%s\\n'"'"' "$*" >> "%s"\nexit 22\n' "$curl_log" > "$bindir/curl"
   chmod +x "$bindir/curl"
 
   set +e
-  out="$(PATH="$bindir" JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
     GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
   set -e
   recorded="$(cat "$curl_log" 2>/dev/null || true)"
@@ -417,18 +419,66 @@ if [ -x /bin/sh ]; then
     "$recorded" "secret-token"
   assert_contains "re-exec override: failure message names the override URL" \
     "$out" "https://jentic.example/install.sh"
+  assert_not_contains "re-exec override: error message does not mention GitHub raw" \
+    "$out" "raw.githubusercontent.com"
 
   # Default (no override): the canonical raw URL is fetched, and the token IS
   # attached for GitHub (private-fork support unchanged).
   : > "$curl_log"
   set +e
-  out="$(PATH="$bindir" GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
   set -e
   recorded="$(cat "$curl_log" 2>/dev/null || true)"
   assert_contains "re-exec default: canonical raw URL fetched" \
     "$recorded" "https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh"
   assert_contains "re-exec default: GITHUB_TOKEN attached for GitHub origin" \
     "$recorded" "secret-token"
+
+  # Empty override: ':-' falls back to the canonical URL (guards a future
+  # '${VAR-…}' typo that would silently fetch an empty URL).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec empty override: falls back to canonical raw URL" \
+    "$(cat "$curl_log")" "https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh"
+
+  # Precedence: JENTIC_INSTALL_SELF wins over SOURCE_URL (no network fetch).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SELF="$INSTALL_SH" JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_eq "re-exec: SELF wins over SOURCE_URL (curl never called)" "" "$(cat "$curl_log")"
+  assert_contains "re-exec: SELF wins over SOURCE_URL (reaches prereq check)" \
+    "$out" "required command not found: git"
+
+  # Override on github.com itself: the token IS attached (private-fork proxy).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    GITHUB_TOKEN="secret-token" \
+    JENTIC_INSTALL_SOURCE_URL="https://github.com/jentic/fork/raw/main/tools/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec override on github.com: token IS attached" \
+    "$(cat "$curl_log")" "secret-token"
+
+  # Non-https override: refused fail-closed before any fetch (http:// would
+  # hand code execution to an on-path attacker; leading '-' would be parsed
+  # as a curl option).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SELF= JENTIC_INSTALL_REEXEC= JENTIC_REPO= JENTIC_REF= \
+    JENTIC_INSTALL_SOURCE_URL="http://jentic.example/install.sh" \
+    /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  assert_contains "re-exec non-https override: refused with a clear error" \
+    "$out" "must be an https:// URL"
+  assert_eq "re-exec non-https override: curl never called" "" "$(cat "$curl_log")"
 
   rm -rf "$bindir" "$curl_log"
 fi

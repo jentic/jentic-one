@@ -26,13 +26,16 @@
 #   JENTIC_NO_INSTALL   set to 1 to stop after installing the binaries, skipping
 #                       the automatic hand-off into `jenticctl install`
 #   JENTIC_INSTALL_SOURCE_URL
-#                       URL the piped re-exec re-fetches this script from
-#                       (default: the canonical raw.githubusercontent.com URL
-#                       for JENTIC_REPO/JENTIC_REF). First-party install
-#                       endpoints that serve this script (e.g. a website proxy)
-#                       should set — or rewrite at serve time — this variable so
-#                       the re-exec loops back to the origin that served the
-#                       script instead of hard-depending on GitHub raw.
+#                       https:// URL the piped re-exec re-fetches this script
+#                       from (default: the canonical raw.githubusercontent.com
+#                       URL for JENTIC_REPO/JENTIC_REF; non-https values are
+#                       refused). First-party install endpoints that serve this
+#                       script (e.g. a website proxy) should set it — by
+#                       prepending an `export …` line or replacing the
+#                       assignment with a statically configured value; never
+#                       interpolate request-derived data — so the re-exec loops
+#                       back to the origin that served the script instead of
+#                       hard-depending on GitHub raw.
 #
 # This script is invoked via `curl ... | sh`, so it re-execs itself under a
 # full (non-POSIX) bash (below) to get predictable behavior across shells.
@@ -99,9 +102,26 @@ if _need_bash_reexec; then
       exit 1
     fi
     # JENTIC_INSTALL_SOURCE_URL: single greppable seam for the re-exec source.
-    # A first-party proxy can rewrite this line (or export the variable) so the
-    # executed bytes come from the same origin that served the script.
+    # First-party install endpoints should set this so the executed bytes come
+    # from the origin that served the script. Two safe ways, in order of
+    # preference: (1) prepend a whole generated `export JENTIC_INSTALL_SOURCE_URL=…`
+    # line to the served body, or (2) replace this exact assignment line with a
+    # STATICALLY CONFIGURED value. Never interpolate request-derived data
+    # (Host/X-Forwarded-* headers) into the served shell source — that is a
+    # shell-injection vector — and keep the value to https:// plus
+    # [A-Za-z0-9._/-] only.
     _reexec_url="${JENTIC_INSTALL_SOURCE_URL:-https://raw.githubusercontent.com/${_reexec_repo}/${_reexec_ref}/tools/install.sh}"
+    # Fail closed on anything but https: the default is https-by-construction,
+    # and a plaintext/exotic-scheme override would hand code execution to an
+    # on-path attacker (curl accepts http/ftp/file with -fsSL). This also
+    # rejects values starting with "-" that curl would parse as options.
+    case "$_reexec_url" in
+      https://*) ;;
+      *)
+        rm -f "$_reexec_tmp"
+        echo "error: JENTIC_INSTALL_SOURCE_URL must be an https:// URL" >&2
+        exit 1 ;;
+    esac
     # Only attach the GitHub token when fetching from GitHub itself — never
     # leak it to a third-party/first-party override origin.
     _reexec_auth=""
