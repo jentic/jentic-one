@@ -10,21 +10,21 @@ func TestResolveMode_Ladder(t *testing.T) {
 	t.Setenv("JENTIC_MODE", "")
 	os.Unsetenv("JENTIC_MODE")
 
-	if got := resolveMode("agent", "human"); got != "agent" {
+	if got := ResolveMode("agent", "human"); got != "agent" {
 		t.Errorf("--mode override lost: %q", got)
 	}
 
 	t.Setenv("JENTIC_MODE", "service-account")
-	if got := resolveMode("", "human"); got != "service-account" {
+	if got := ResolveMode("", "human"); got != "service-account" {
 		t.Errorf("JENTIC_MODE not honored: %q", got)
 	}
 
 	t.Setenv("JENTIC_MODE", "")
 	os.Unsetenv("JENTIC_MODE")
-	if got := resolveMode("", "agent"); got != "agent" {
+	if got := ResolveMode("", "agent"); got != "agent" {
 		t.Errorf("persisted mode not honored: %q", got)
 	}
-	if got := resolveMode("", ""); got != ModeHuman {
+	if got := ResolveMode("", ""); got != ModeHuman {
 		t.Errorf("default should be human, got %q", got)
 	}
 }

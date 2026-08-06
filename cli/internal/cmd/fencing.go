@@ -59,7 +59,15 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// flagValue returns "" until they exist, so the env/config ladder drives it.
 		state, err := clictx.ResolveActiveState(flagValue(cmd, "context"), flagValue(cmd, "mode"))
 		if err != nil {
-			state = &clictx.ActiveState{Mode: clictx.ModeHuman, ThemeName: "no-color"}
+			// Degrade to a default state, but RE-APPLY THE MODE LADDER on the way
+			// down: --mode/$JENTIC_MODE must still take effect with no config, so an
+			// agent on an un-provisioned machine is still fenced. Hardcoding human
+			// here would silently disable fencing (fail-OPEN) — the opposite of what
+			// a safety guard must do. Theme degrades to no-color regardless.
+			state = &clictx.ActiveState{
+				Mode:      clictx.ResolveMode(flagValue(cmd, "mode"), ""),
+				ThemeName: "no-color",
+			}
 		}
 
 		// 2. Resolve theme. STAGE 0 — mode gate: agent/service-account force

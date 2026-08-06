@@ -64,16 +64,21 @@ func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, err
 
 	return &ActiveState{
 		ResolvedState: rs,
-		Mode:          resolveMode(modeOverride, rs.PersistedMode),
+		Mode:          ResolveMode(modeOverride, rs.PersistedMode),
 		ThemeName:     rs.PersistedTheme,
 	}, nil
 }
 
-// resolveMode implements the mode ladder (impl/1.2 §resolveMode, impl/3.2 §2):
+// ResolveMode implements the mode ladder (impl/1.2 §resolveMode, impl/3.2 §2):
 // --mode > $JENTIC_MODE > persisted-context-mode > human. There is deliberately
 // NO TTY rung — mode is an explicit choice, and an unknown value is validated
 // (fail-closed to agent) at UX construction in the root interceptor, not here.
-func resolveMode(flagOverride, persisted string) string {
+//
+// Exported so the root interceptor can re-apply the same ladder on its
+// state-resolution FALLBACK path: when there is no config at all, mode must still
+// honor --mode/$JENTIC_MODE. Fencing is a safety control — it must never silently
+// degrade to unfenced human just because config resolution failed.
+func ResolveMode(flagOverride, persisted string) string {
 	if flagOverride != "" {
 		return flagOverride
 	}
