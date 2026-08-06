@@ -76,8 +76,54 @@ class UrlSource(BaseModel):
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 
 
+class _JsonSafeLoader(yaml.SafeLoader):
+    """SafeLoader whose output contains only JSON-serializable values.
+
+    Real-world YAML specs are full of unquoted ISO dates (``version: 2022-01-16``,
+    changelog entries, example values). The stock ``SafeLoader`` resolves those
+    to ``datetime.date``/``datetime.datetime``, which the ingest pipeline's later
+    JSON serialization (JSONB spec storage, operation extraction) rejects —
+    dead-lettering the import (issue #979). Spec documents must stay
+    JSON-serializable (the contract stated on ``IngestSpecification.content``),
+    so the two tags that produce non-JSON scalars — ``!!timestamp`` and
+    ``!!binary`` — construct the scalar's verbatim text (lossless, and identical
+    to what the same spec yields when served as JSON), and ``!!set`` constructs
+    a list of its keys. The remaining exotic tags (``!!omap``/``!!pairs``) yield
+    lists of tuples, which JSON-serialize as arrays already.
+    """
+
+
+def _construct_scalar_as_str(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> str:
+    return loader.construct_scalar(node)
+
+
+def _construct_set_as_list(loader: _JsonSafeLoader, node: yaml.MappingNode) -> list[Any]:
+    return list(loader.construct_mapping(node))
+
+
+# !!timestamp is the only tag here with an implicit resolver (bare scalars);
+# !!binary and !!set require an explicit tag but dead-letter identically.
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:binary", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:set", _construct_set_as_list)
+
+
+def _load_yaml(raw: str) -> Any:
+    """``yaml.safe_load`` constrained to JSON-serializable output (see _JsonSafeLoader).
+
+    The loader is a ``SafeLoader`` subclass, so this is exactly as safe as
+    ``yaml.safe_load`` — hence the B506 suppression.
+    """
+    return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+
+
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
-    """Parse raw spec content as JSON or YAML, returning a dict."""
+    """Parse raw spec content as JSON or YAML, returning a dict.
+
+    This is the single boundary where raw spec text becomes a document, and it
+    guarantees the result is JSON-serializable regardless of source format —
+    downstream stages (JSONB writes, ``json.dumps``) rely on that invariant.
+    """
     if not raw or not raw.strip():
         raise IngestStageError("spec content is empty")
 
@@ -95,12 +141,12 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
             parsed = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             try:
-                parsed = yaml.safe_load(raw)
+                parsed = _load_yaml(raw)
             except yaml.YAMLError as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
     else:
         try:
-            parsed = yaml.safe_load(raw)
+            parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
                 parsed = json.loads(raw)
