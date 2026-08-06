@@ -637,6 +637,16 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+      # CLI-V2 Phase 1 (themes/cli-v2/impl/2.1): the typed OpenAPI clients and
+      # their spec companions under client/generated/ are generated from the two
+      # committed specs (openapi/{control,broker}). This regenerates them and
+      # fails on any diff, so `client/generated == codegen(committed specs)` — a
+      # spec change that lands without a regen is caught here rather than as a
+      # runtime surprise. Mirrors the openapi-client-drift job's posture for the
+      # UI client.
+      - name: Generated CLI client up to date
+        run: make check-cli-gen
+
       # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
       # boundary tests and the V1 characterization (golden) contract. Both are
       # already covered by `go test -race ./...` above, but naming them as an
