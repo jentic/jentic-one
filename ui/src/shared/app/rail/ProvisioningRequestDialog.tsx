@@ -926,6 +926,19 @@ export function ProvisioningRequestDialog({
 				if (c.toolkitBind) {
 					amendments.push({ item_id: c.toolkitBind.id, resource_id: cs.toolkitId });
 				}
+				// Audit honesty (#897): stamp the fulfilled ids onto the inert
+				// placeholders too. Approving them is a recorded no-op either
+				// way, but without the id the record can't say WHICH toolkit
+				// fulfilled the "create" intent — which matters most when the
+				// operator adopted an EXISTING toolkit instead of creating one
+				// (the agent's --wait then reads a full approval naming the
+				// reused toolkit, not a phantom "created" with no object).
+				if (c.create) {
+					amendments.push({ item_id: c.create.id, resource_id: cs.toolkitId });
+				}
+				if (c.provision && bindCredentialId) {
+					amendments.push({ item_id: c.provision.id, resource_id: bindCredentialId });
+				}
 			}
 			if (amendments.length > 0) {
 				await amendAccessRequest(request.id, amendments);

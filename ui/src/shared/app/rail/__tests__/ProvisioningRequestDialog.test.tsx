@@ -461,7 +461,8 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
 		// One amend carrying BOTH chains' bind items, each keyed to its own
-		// toolkit — never cross-wired.
+		// toolkit — never cross-wired. The inert placeholders are stamped with
+		// the ids that fulfilled them (audit honesty, #897).
 		const amendments = (
 			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
 		).items;
@@ -470,6 +471,10 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		expect(byItem.get('a4')?.resource_id).toBe('tk_chain_1');
 		expect(byItem.get('b3')?.to_id).toBe('tk_chain_2');
 		expect(byItem.get('b4')?.resource_id).toBe('tk_chain_2');
+		expect(byItem.get('a1')?.resource_id).toBe('tk_chain_1');
+		expect(byItem.get('b1')?.resource_id).toBe('tk_chain_2');
+		expect(byItem.get('a2')?.resource_id).toMatch(/^cred_noauth_/);
+		expect(byItem.get('b2')?.resource_id).toMatch(/^cred_noauth_/);
 
 		// One decide approving every pending item, the scope grant included.
 		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
@@ -501,9 +506,10 @@ describe('ProvisioningRequestDialog — multi-chain composite', () => {
 		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
-		// Only chain 1 was amended…
+		// Only chain 1 was amended (its placeholders included — never the
+		// skipped chain's)…
 		const amendments = (amendBody as { items: { item_id: string }[] }).items;
-		expect(amendments.map((a) => a.item_id).sort()).toEqual(['a3', 'a4']);
+		expect(amendments.map((a) => a.item_id).sort()).toEqual(['a1', 'a2', 'a3', 'a4']);
 		// …and the decide denies exactly chain 2's four items.
 		const decisions = (decideBody as { items: { item_id: string; decision: string }[] }).items;
 		const denied = decisions.filter((d) => d.decision === 'denied').map((d) => d.item_id);
@@ -738,13 +744,17 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 		await user.click(screen.getByRole('button', { name: /Approve & grant access/ }));
 		expect(await screen.findByText('Access granted')).toBeInTheDocument();
 
-		// The binds were amended to the ADOPTED id; nothing was created.
+		// The binds were amended to the ADOPTED id; nothing was created. The
+		// toolkit:create placeholder is stamped with the REUSED toolkit id so
+		// the approved record reads "fulfilled by tk_existing", not a phantom
+		// create (#897 audit honesty).
 		const amendments = (
 			amendBody as { items: { item_id: string; to_id?: string; resource_id?: string }[] }
 		).items;
 		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
 		expect(byItem.get('i3')?.to_id).toBe('tk_existing');
 		expect(byItem.get('i4')?.resource_id).toBe('tk_existing');
+		expect(byItem.get('i1')?.resource_id).toBe('tk_existing');
 		expect(createCalls).toBe(0);
 	});
 
@@ -824,6 +834,8 @@ describe('ProvisioningRequestDialog — adopt existing objects (#826)', () => {
 			.items;
 		const byItem = new Map(amendments.map((a) => [a.item_id, a]));
 		expect(byItem.get('i3')?.resource_id).toBe('cred_exist');
+		// The credential:provision placeholder records the reused credential.
+		expect(byItem.get('i2')?.resource_id).toBe('cred_exist');
 	});
 
 	it('slugifies the raw filed vendor and hides inactive artifacts in the pickers', async () => {

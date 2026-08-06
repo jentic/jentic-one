@@ -281,6 +281,12 @@ def no_toolkit_binding_directive(
       because a toolkit only serves an API once a credential for it is bound
       (issue #683). So point the caller at credential provisioning first — the
       step that actually creates a serving toolkit — before the binding request.
+      The instruction also says the operator may fulfil the plan **into an
+      existing toolkit** (#897): toolkits serving *other* APIs may well exist,
+      and without the hint the flow reads as "recreate everything from scratch".
+      Deliberately text-only — the broker never enumerates other toolkits here
+      (that would leak instance inventory to an unbound agent, and this
+      stateless edge has no scoped view of what a future approver could reuse).
 
     Both variants name the exact next step so an autonomous agent can hand it to
     its operator verbatim instead of reading docs.
@@ -308,7 +314,8 @@ def no_toolkit_binding_directive(
     # first (which creates the serving toolkit), then the agent is bound. A bare
     # `toolkit:bind` request now can never be approved — so steer the agent to
     # file the whole path as one provisioning plan (`--provision`), which a human
-    # fulfils and approves in the dashboard (they enter the secret + grant).
+    # fulfils and approves in the dashboard (they enter the secret + grant, into
+    # a new toolkit or one they already have — the wizard offers both, #897).
     parameters["suggested_command"] = (
         f'jentic access request --provision {api} --reason "<why you need this>" --wait'
     )
@@ -317,8 +324,9 @@ def no_toolkit_binding_directive(
         f'File a provisioning plan with `jentic access request --provision {api} --reason "<why>" '
         "--wait` — propose the auth type (`--auth`) and permission rules (`--rules-json`) you read "
         "from the API spec, and pass a `--reason` the approver sees; then ask your operator to "
-        "fulfil it in the dashboard (they enter the credential secret and approve). Only a human "
-        "can grant this. Once approved, retry this call."
+        "fulfil it in the dashboard (they enter the credential secret and approve; the wizard "
+        "lets them add it to one of their existing toolkits instead of creating a new one). "
+        "Only a human can grant this. Once approved, retry this call."
     )
     return AgentDirective(
         strategy="prompt_human",

@@ -163,6 +163,25 @@ async def test_zero_candidates_no_toolkit_serves_recommends_credential_first() -
     assert "provision" in instruction.lower()
 
 
+async def test_no_toolkit_serves_instruction_mentions_existing_toolkit_reuse() -> None:
+    # #897: the provisioning plan does not force a NEW toolkit — the wizard can
+    # fulfil it into a toolkit the operator already has. The agent-relayed
+    # instruction must say so, or an operator with existing toolkits reads the
+    # flow as "recreate everything" and denies (the reporter's dead-end). The
+    # hint lives in the TEXT only: `parameters` stays machine-stable so CLI and
+    # skill parsing of `suggested_command`/`toolkit_serves_api` never breaks.
+    deriver = _StubDeriver([], toolkit_serves_api=False)
+    with pytest.raises(ActionDeniedError) as exc:
+        await _select(deriver, header_toolkit=None)
+    directive = exc.value.directive
+    assert directive is not None
+    assert "existing toolkit" in directive.human_readable_instruction.lower()
+    assert directive.parameters["suggested_command"] == (
+        'jentic access request --provision acme/widgets --reason "<why you need this>" --wait'
+    )
+    assert set(directive.parameters) == {"api", "toolkit_serves_api", "suggested_command"}
+
+
 async def test_zero_candidates_bound_with_identity_mismatch_points_at_credential() -> None:
     # #747/#748: the agent is bound, but no toolkit serves the API because the
     # bound credential's identity does not cover it. The denial must be a
