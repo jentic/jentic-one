@@ -1,6 +1,7 @@
 """Tests for inline spec loading via load_specification."""
 
 import hashlib
+import json
 from typing import Any
 
 import pytest
@@ -23,6 +24,20 @@ info:
   title: Pet Store
   version: "1.0.0"
   x-vendor: acme
+"""
+
+# Real-world specs are full of unquoted ISO date scalars (issue #979): stock
+# yaml.safe_load turns these into datetime.date/datetime.datetime, which the
+# ingest pipeline's JSON serialization then rejects.
+_SPEC_YAML_BARE_DATES = """\
+openapi: "3.1.0"
+info:
+  title: Dated API
+  version: 2022-01-16
+  x-vendor: acme
+  x-released: 2015-02-22
+  x-audited: 2001-12-14t21:59:43.10-05:00
+paths: {}
 """
 
 
@@ -51,6 +66,27 @@ async def test_inline_yaml_produces_valid_specification() -> None:
     assert result.api_identifier.version == "1.0.0"
     assert result.sha == hashlib.sha256(_SPEC_YAML.encode()).hexdigest()
     assert result.source_type == "inline"
+
+
+@pytest.mark.asyncio
+async def test_yaml_bare_date_scalars_stay_json_serializable_strings() -> None:
+    """Bare YAML dates must parse as their literal strings, not datetime objects.
+
+    Regression for #979: yaml.safe_load resolves unquoted ISO dates to
+    datetime.date/datetime, which every downstream json.dumps / JSONB write
+    then rejects — dead-lettering the whole import.
+    """
+    result = await load_specification(_make_inline(_SPEC_YAML_BARE_DATES, filename="spec.yaml"))
+
+    assert result.content is not None
+    info = result.content["info"]
+    # Verbatim scalar text — not date/datetime, and not a reformatted ISO string.
+    assert info["version"] == "2022-01-16"
+    assert info["x-released"] == "2015-02-22"
+    assert info["x-audited"] == "2001-12-14t21:59:43.10-05:00"
+    json.dumps(result.content)  # the property the pipeline actually needs
+    # The date-typed version also drives API identity; it must slug cleanly.
+    assert result.api_identifier.version == "2022-01-16"
 
 
 @pytest.mark.asyncio

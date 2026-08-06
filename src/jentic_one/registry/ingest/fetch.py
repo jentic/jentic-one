@@ -76,6 +76,35 @@ class UrlSource(BaseModel):
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 
 
+class _JsonSafeLoader(yaml.SafeLoader):
+    """SafeLoader that keeps bare date/timestamp scalars as literal strings.
+
+    Real-world YAML specs are full of unquoted ISO dates (``version: 2022-01-16``,
+    changelog entries, example values). The stock ``SafeLoader`` resolves those to
+    ``datetime.date``/``datetime.datetime``, which every downstream ``json.dumps``
+    / JSONB column write then rejects (issue #979). A spec document must stay
+    JSON-serializable, so construct the ``!!timestamp`` tag as the scalar's
+    verbatim text — lossless, and identical to what the same spec yields when
+    served as JSON.
+    """
+
+
+def _construct_timestamp_as_str(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> str:
+    return str(loader.construct_scalar(node))
+
+
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_timestamp_as_str)
+
+
+def _load_yaml(raw: str) -> Any:
+    """``yaml.safe_load`` with date scalars kept as strings (see _JsonSafeLoader).
+
+    The loader is a ``SafeLoader`` subclass, so this is exactly as safe as
+    ``yaml.safe_load`` — hence the B506 suppression.
+    """
+    return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+
+
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
     """Parse raw spec content as JSON or YAML, returning a dict."""
     if not raw or not raw.strip():
@@ -95,12 +124,12 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
             parsed = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
             try:
-                parsed = yaml.safe_load(raw)
+                parsed = _load_yaml(raw)
             except yaml.YAMLError as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
     else:
         try:
-            parsed = yaml.safe_load(raw)
+            parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
                 parsed = json.loads(raw)
