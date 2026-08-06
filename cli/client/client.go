@@ -39,6 +39,12 @@ type Config struct {
 	IdentityName    string
 	EnvironmentName string
 
+	// SessionID, when set, is attached as X-Jentic-Session-Id on every request so
+	// the backend can group a run's executions under a client-chosen session (the
+	// server-side correlation pivot is trace_id; this is an additional grouping —
+	// impl/5.0 §1). Populated for the CLI from JENTIC_SESSION_ID via ResolvedState.
+	SessionID string
+
 	// InjectedBearerToken, when set, bypasses the on-disk key/token exchange and is
 	// attached verbatim (file-less / bring-your-own-token mode).
 	InjectedBearerToken string
@@ -64,25 +70,49 @@ func (c Config) credentials() auth.Credentials {
 	}
 }
 
+// sessionEditor attaches the X-Jentic-Session-Id header. It is appended after the
+// auth editor and only when Config.SessionID is non-empty (impl/5.0 §1). Kept as
+// the raw editor signature so it converts to each generated package's
+// RequestEditorFn at construction alongside the auth editor.
+func sessionEditor(sessionID string) RequestEditor {
+	return func(_ context.Context, req *http.Request) error {
+		req.Header.Set("X-Jentic-Session-Id", sessionID)
+		return nil
+	}
+}
+
+// editorChain is the ordered request-editor list every plane shares: auth first
+// (so a later editor can observe the Authorization header), then the optional
+// session/telemetry editor, then any caller-supplied Editors.
+func (c Config) editorChain() []RequestEditor {
+	eds := make([]RequestEditor, 0, 2+len(c.Editors))
+	eds = append(eds, auth.RequestEditor(c.credentials()))
+	if c.SessionID != "" {
+		eds = append(eds, sessionEditor(c.SessionID))
+	}
+	eds = append(eds, c.Editors...)
+	return eds
+}
+
 // controlOptions / brokerOptions assemble each plane's option slice. They are
 // nearly identical but the generated ClientOption types are distinct per package,
 // so Go generics can't unify them without an adapter; two tiny builders are
 // clearer than a reflective bridge.
 func controlOptions(c Config) []control.ClientOption {
-	opts := make([]control.ClientOption, 0, 2+len(c.Editors))
+	eds := c.editorChain()
+	opts := make([]control.ClientOption, 0, 1+len(eds))
 	opts = append(opts, control.WithHTTPClient(c.httpClient()))
-	opts = append(opts, control.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
-	for _, e := range c.Editors {
+	for _, e := range eds {
 		opts = append(opts, control.WithRequestEditorFn(control.RequestEditorFn(e)))
 	}
 	return opts
 }
 
 func brokerOptions(c Config) []broker.ClientOption {
-	opts := make([]broker.ClientOption, 0, 2+len(c.Editors))
+	eds := c.editorChain()
+	opts := make([]broker.ClientOption, 0, 1+len(eds))
 	opts = append(opts, broker.WithHTTPClient(c.httpClient()))
-	opts = append(opts, broker.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
-	for _, e := range c.Editors {
+	for _, e := range eds {
 		opts = append(opts, broker.WithRequestEditorFn(broker.RequestEditorFn(e)))
 	}
 	return opts

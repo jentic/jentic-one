@@ -24,6 +24,7 @@ func configFromState(state *ActiveState) client.Config {
 		IdentityName:        state.IdentityName,
 		EnvironmentName:     state.EnvironmentName,
 		InjectedBearerToken: state.InjectedBearerToken,
+		SessionID:           state.SessionID,
 	}
 }
 

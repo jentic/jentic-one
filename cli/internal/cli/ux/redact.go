@@ -7,6 +7,7 @@ package ux
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"regexp"
 	"strings"
@@ -229,6 +230,27 @@ func redactString(s string) string { return string(redactSensitive([]byte(s))) }
 func safeMarshal(data any) []byte       { return marshalRedacted(data, false) }
 func safeMarshalIndent(data any) []byte { return marshalRedacted(data, true) }
 
+// MarshalForFile is the exported, redacted, indented marshal for commands that
+// write an envelope to a file (e.g. `history export -o out.json`) instead of
+// through the Audience. It runs the SAME three-layer redaction funnel and
+// schema-version stamping as stdout output, so a secret can never leak just
+// because the destination is a file. Indented for human readability; still valid
+// machine JSON.
+func MarshalForFile(data any) []byte { return marshalRedacted(data, true) }
+
+// WriteJSONLine writes ONE compact, redacted JSON document followed by a newline
+// to w. It is the streaming primitive for tail-style commands (e.g.
+// `events watch`) that emit an unbounded NDJSON sequence rather than a single
+// terminal envelope — Render is for one final document, this is for a stream. It
+// runs the same redaction funnel as every other output path, so a streamed event
+// cannot leak a secret. Errors from the underlying writer are returned so the
+// caller can stop the tail (e.g. on a closed pipe).
+func WriteJSONLine(w io.Writer, v any) error {
+	line := append(safeMarshal(v), '\n')
+	_, err := w.Write(line)
+	return err
+}
+
 // currentSchemaVersion pins the machine-contract envelope shape (13 §2/§6).
 const currentSchemaVersion = "1"
 
@@ -242,6 +264,11 @@ func marshalRedacted(data any, indent bool) []byte {
 		}
 		data = v
 	case Page:
+		if v.SchemaVersion == "" {
+			v.SchemaVersion = currentSchemaVersion
+		}
+		data = v
+	case Export:
 		if v.SchemaVersion == "" {
 			v.SchemaVersion = currentSchemaVersion
 		}
