@@ -110,6 +110,28 @@ func TestLatestReleaseForNudgeNoCacheNoNetwork(t *testing.T) {
 	}
 }
 
+// TestLatestReleaseForNudgeThrottlesRecentFailure is the regression test for the
+// air-gapped case: a recent (within-interval) cache with an empty tag — i.e. a
+// prior probe that resolved nothing — must be trusted verbatim so we neither
+// re-probe (paying the timeout on every command) nor nudge.
+func TestLatestReleaseForNudgeThrottlesRecentFailure(t *testing.T) {
+	app := testApp(t)
+	if err := saveUpdateCheck(app.Paths, updateCheckCache{
+		CheckedAt: time.Now(),
+		LatestTag: "",
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	stubNudgeTag(t, func(context.Context, string, string) (string, error) {
+		t.Fatalf("probed within the throttle window; want cache trusted")
+		return "", nil
+	})
+
+	if tag, ok := app.latestReleaseForNudge(context.Background(), config.DefaultRepo); ok || tag != "" {
+		t.Errorf("recent empty cache = (%q, %v), want silent (\"\", false)", tag, ok)
+	}
+}
+
 // TestUpdateNudgeAllowedRespectsOptOut confirms the conventional env opt-outs
 // suppress the nudge regardless of the command.
 func TestUpdateNudgeAllowedRespectsOptOut(t *testing.T) {

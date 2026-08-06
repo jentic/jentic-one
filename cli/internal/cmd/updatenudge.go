@@ -110,8 +110,12 @@ func updateNudgeAllowed(cmd *cobra.Command) bool {
 // on every command.
 func (a *App) latestReleaseForNudge(ctx context.Context, repo string) (string, bool) {
 	cache, _ := loadUpdateCheck(a.Paths)
-	if cache.LatestTag != "" && time.Since(cache.CheckedAt) < updateNudgeInterval {
-		return cache.LatestTag, true
+	if time.Since(cache.CheckedAt) < updateNudgeInterval {
+		// Within the throttle window we trust the cache verbatim — even a
+		// recorded failure (empty tag). This is what keeps an air-gapped box
+		// from re-probing (and eating the timeout) on every command; ok is
+		// false when the last attempt resolved no tag.
+		return cache.LatestTag, cache.LatestTag != ""
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, updateNudgeTimeout)
