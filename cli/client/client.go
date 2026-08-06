@@ -11,6 +11,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -206,6 +207,30 @@ func splitKV(kv string) (key, value string, ok bool) {
 		return "", "", false
 	}
 	return strings.TrimSpace(kv[:i]), strings.TrimSpace(kv[i+1:]), true
+}
+
+// ProbeServerVersion asks the control plane for its running app version
+// (GET /system/version). It backs the backend version-negotiation path
+// (impl/5.0 §6a, plan.md Phase 5 item 9): when the CLI's embedded spec advertises
+// a route an OLDER self-hosted server doesn't serve yet, a bare 404 is
+// indistinguishable from a typo, so the passthrough probes the version once to
+// enrich the error. Returns the running version string; a probe failure returns
+// "" and an error (the caller degrades to a plain 404 rather than fabricating a
+// verdict).
+func ProbeServerVersion(ctx context.Context, raw *control.Client) (string, error) {
+	resp, err := RawControlRequest(ctx, raw, http.MethodGet, "/system/version", nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("version probe returned status %d", resp.StatusCode)
+	}
+	var vr control.VersionResponse
+	if derr := json.NewDecoder(resp.Body).Decode(&vr); derr != nil {
+		return "", derr
+	}
+	return vr.Current, nil
 }
 
 // NewBroker builds the strictly-typed broker-plane (execution) client. It reuses

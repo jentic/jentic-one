@@ -53,6 +53,29 @@ func TestAPIPassthrough_GETMatchesSpecAndEmitsBody(t *testing.T) {
 	}
 }
 
+func TestAPIPassthrough_404NegotiatesBackendVersion(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/system/version":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"current":"0.20.0","update_available":false}`))
+		default:
+			// A real spec route, but this (old) server doesn't serve it.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	seedActiveContextTo(t, srv.URL)
+
+	// /credentials is in the embedded spec; a 404 should trigger the version probe
+	// and surface the route-unsupported-upstream hint (exit non-zero).
+	_, err := runJenticCapture(t, "api", "GET", "/credentials")
+	if err == nil {
+		t.Fatal("expected an enriched error on a 404 for a spec route")
+	}
+}
+
 func TestAPIPassthrough_RejectsUnknownPath(t *testing.T) {
 	withXDG(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

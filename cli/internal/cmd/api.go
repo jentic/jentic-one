@@ -126,6 +126,18 @@ func runAPICall(cmd *cobra.Command, app *App, opts *apiOptions, method, path str
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// Backend version negotiation (impl/5.0 §6a): a 404 on a route the EMBEDDED
+	// spec advertises can mean "this connected server predates the route", not a
+	// typo. Probe the server version once (lazy, only on the 404) and enrich the
+	// error so the agent learns to upgrade the backend or use --live, rather than
+	// treating a real route as nonexistent. Skipped for --raw (no allowlist) and
+	// --live (the route came from the server's own spec, so a 404 is a plain 404).
+	if resp.StatusCode == http.StatusNotFound && !opts.raw && !opts.live {
+		if coded := negotiate404(cmd.Context(), raw, method, path); coded != nil {
+			return reportCoded(aud, coded)
+		}
+	}
+
 	return emitAPIResponse(app.Out, resp, opts.failOnError)
 }
 
@@ -225,6 +237,31 @@ func specSource(live bool) string {
 		return "live"
 	}
 	return "embedded"
+}
+
+// negotiate404 enriches a 404 on a route the embedded spec DOES advertise (the
+// path already passed the allowlist). It probes the connected server's version
+// once: on a successful probe, the route exists in the CLI's spec but the server
+// returned 404, so the most likely cause is a server that predates the route —
+// surfaced as RESOLVE_FAILED with details.route_unsupported_upstream=true and the
+// server version, keeping 13 §3a's closed enum untouched while adding actionable
+// detail. If the probe itself fails, we return nil so the caller emits the plain
+// 404 body rather than guessing.
+func negotiate404(ctx context.Context, raw *control.Client, method, path string) *ux.CodedError {
+	version, err := client.ProbeServerVersion(ctx, raw)
+	if err != nil || version == "" {
+		//nolint:nilerr // deliberate: a failed version probe means we can't tell whether the route is unsupported upstream, so we degrade to the plain 404 body rather than fabricating a verdict.
+		return nil
+	}
+	return &ux.CodedError{
+		Code:       ux.CodeResolveFailed,
+		Msg:        fmt.Sprintf("%s %s is in this CLI's spec but the connected server (v%s) returned 404 — the backend likely predates this route", method, path, version),
+		Actionable: "Upgrade the backend, or use --live to see and call what this server actually serves.",
+		Details: map[string]any{
+			"route_unsupported_upstream": true,
+			"server_version":             version,
+		},
+	}
 }
 
 // requireLoopbackRaw gates --raw to loopback control-plane hosts.

@@ -281,6 +281,11 @@ func marshalRedacted(data any, indent bool) []byte {
 			v.SchemaVersion = currentSchemaVersion
 		}
 		data = v
+	case Plan:
+		if v.SchemaVersion == "" {
+			v.SchemaVersion = currentSchemaVersion
+		}
+		data = v
 	}
 
 	// THREE-LAYER FAIL-CLOSED REDACTION (order matters):

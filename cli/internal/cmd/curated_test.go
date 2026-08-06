@@ -62,6 +62,25 @@ func TestBuildImportSource_URLvsFile(t *testing.T) {
 	}
 }
 
+func TestApisImport_DryRunDoesNotCallServer(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("dry-run must not reach the server")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	seedActiveContextTo(t, srv.URL)
+
+	dir := t.TempDir()
+	p := dir + "/spec.yaml"
+	if err := os.WriteFile(p, []byte("openapi: 3.0.0"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "apis", "import", p, "--dry-run"); err != nil {
+		t.Fatalf("apis import --dry-run: %v", err)
+	}
+}
+
 func TestAbsolutizeApproveURL(t *testing.T) {
 	// Relative path is joined onto the base URL.
 	r := &accessclient.Request{ApproveURL: "/approve/arq_1"}

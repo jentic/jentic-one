@@ -1669,6 +1669,18 @@
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Validate and print the request that WOULD be sent, without sending it"
+                },
+                {
+                  "name": "export-plan",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Emit a machine-readable execution plan (implies --dry-run)"
+                },
+                {
                   "name": "mode",
                   "type": "string",
                   "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"

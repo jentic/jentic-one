@@ -42,6 +42,9 @@ func newApisImportCmd(_ *App) *cobra.Command {
 			}
 
 			body := control.ApiImportRequest{Sources: []control.ApiImportRequest_Sources_Item{source}}
+			if maybeEmitPlan(cmd, "importApis", body) {
+				return nil
+			}
 			resp, err := client.ImportApisWithResponse(cmd.Context(), body)
 			if err != nil {
 				return reportCoded(aud, asCoded(err))
@@ -64,6 +67,7 @@ func newApisImportCmd(_ *App) *cobra.Command {
 	cmd.Flags().StringVar(&vendor, "vendor", "", "Override the vendor for the imported API")
 	cmd.Flags().StringVar(&name, "name", "", "Override the API name")
 	cmd.Flags().StringVar(&version, "version", "", "Override the API version")
+	planFlags(cmd)
 	return cmd
 }
 
