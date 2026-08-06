@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.28.1](https://github.com/jentic/jentic-one/compare/v0.28.0...v0.28.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **install.sh:** make the piped re-exec source URL overridable ([#972](https://github.com/jentic/jentic-one/issues/972)) ([e124104](https://github.com/jentic/jentic-one/commit/e124104bee75825e511a29411b7361ecd52d6e69))
+* **skills:** sync [#911](https://github.com/jentic/jentic-one/issues/911) reuse guidance into the jentic skill source ([#977](https://github.com/jentic/jentic-one/issues/977)) ([0c153b8](https://github.com/jentic/jentic-one/commit/0c153b8f4b1825ea8644b75a530ca7d4df3db20a))
+
 ## [0.28.0](https://github.com/jentic/jentic-one/compare/v0.27.0...v0.28.0) (2026-08-06)
 
 
