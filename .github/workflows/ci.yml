@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `main` for the normal trunk CI; `cli-v2-*` so the CLI-V2 stacked-PR chain
+    # (each phase's PR is based on the previous phase's branch, not main) still
+    # gets full CI — GitHub reads the pull_request trigger filter from the PR's
+    # BASE branch, so a PR based on cli-v2-phase-0 only triggers this workflow if
+    # cli-v2-phase-0's own ci.yml lists that base pattern.
+    branches: [main, 'cli-v2-*']
   pull_request:
-    branches: [main]
+    branches: [main, 'cli-v2-*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
