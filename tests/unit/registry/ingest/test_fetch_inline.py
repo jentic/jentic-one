@@ -234,6 +234,23 @@ async def test_malformed_tagged_scalars_raise_ingest_stage_error(scalar: str) ->
         await load_specification(_make_inline(spec, filename="spec.yaml"))
 
 
+@pytest.mark.parametrize(
+    # Deep nesting exhausts the recursion limit inside both parsers —
+    # RecursionError is neither a YAMLError nor a ValueError, so without the
+    # _load_yaml/_load_json normalization it leaked raw through both parse
+    # orders (found by the #989 review).
+    "content, filename",
+    [
+        ('{"a":' * 10_000 + "1" + "}" * 10_000, "spec.json"),  # JSON-first order
+        ("[" * 10_000, "spec.yaml"),  # YAML-first order
+    ],
+)
+@pytest.mark.asyncio
+async def test_deeply_nested_content_raises_ingest_stage_error(content: str, filename: str) -> None:
+    with pytest.raises(IngestStageError, match="failed to parse"):
+        await load_specification(_make_inline(content, filename=filename))
+
+
 @pytest.mark.asyncio
 async def test_unparseable_content_raises_ingest_stage_error() -> None:
     with pytest.raises(IngestStageError, match="failed to parse"):

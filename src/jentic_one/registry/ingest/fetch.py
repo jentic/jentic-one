@@ -142,7 +142,7 @@ def _load_yaml(raw: str) -> Any:
     except yaml.YAMLError:
         raise
     except Exception as exc:
-        raise yaml.YAMLError(f"invalid tagged scalar: {exc}") from exc
+        raise yaml.YAMLError(f"YAML document construction failed: {exc}") from exc
 
 
 def _load_json(raw: str) -> Any:
@@ -152,8 +152,18 @@ def _load_json(raw: str) -> Any:
     ``-Infinity`` tokens by default and produces non-finite floats — the same
     JSONB-rejected values the YAML loader guards against (issue #984). Keep
     the token text verbatim, mirroring ``_JsonSafeLoader``.
+
+    Escapes that aren't ``ValueError`` (e.g. ``RecursionError`` on a deeply
+    nested document) are normalized to it, symmetric with ``_load_yaml``, so
+    both ``parse_spec_content`` call sites produce a clean parse error
+    (``json.JSONDecodeError`` is a ``ValueError`` subclass).
     """
-    return json.loads(raw, parse_constant=str)
+    try:
+        return json.loads(raw, parse_constant=str)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"JSON document construction failed: {exc}") from exc
 
 
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
