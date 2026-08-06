@@ -39,8 +39,9 @@ class IngestSpecification(BaseModel):
     metadata: dict[str, Any] | None = None
     #: The parsed spec document. Guaranteed JSON-serializable regardless of the
     #: source format — the YAML parse boundary (``parse_spec_content``) keeps
-    #: date/binary scalars as strings (issue #979). Stage authors may
-    #: ``json.dumps`` this or write it to a JSONB column without an encoder.
+    #: date/binary scalars and non-finite floats as strings (issues #979, #984).
+    #: Stage authors may ``json.dumps`` this or write it to a JSONB column
+    #: without an encoder.
     content: dict[str, Any] | None = None
     source_id: str | None = None
     source_type: ApiRevisionSourceType | None = None
