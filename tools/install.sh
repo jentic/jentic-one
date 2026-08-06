@@ -29,13 +29,15 @@
 #                       https:// URL the piped re-exec re-fetches this script
 #                       from (default: the canonical raw.githubusercontent.com
 #                       URL for JENTIC_REPO/JENTIC_REF; non-https values are
-#                       refused). First-party install endpoints that serve this
-#                       script (e.g. a website proxy) should set it — by
-#                       prepending an `export …` line or replacing the
-#                       assignment with a statically configured value; never
-#                       interpolate request-derived data — so the re-exec loops
-#                       back to the origin that served the script instead of
-#                       hard-depending on GitHub raw.
+#                       refused, and empty is treated as unset — a failed
+#                       template substitution falls back to GitHub rather than
+#                       fetching an empty URL). First-party install endpoints
+#                       that serve this script (e.g. a website proxy) should
+#                       set it — by prepending an `export …` line or replacing
+#                       the assignment with a statically configured value;
+#                       never interpolate request-derived data — so the
+#                       re-exec loops back to the origin that served the
+#                       script instead of hard-depending on GitHub raw.
 #
 # This script is invoked via `curl ... | sh`, so it re-execs itself under a
 # full (non-POSIX) bash (below) to get predictable behavior across shells.
@@ -130,7 +132,7 @@ if _need_bash_reexec; then
         https://raw.githubusercontent.com/*|https://github.com/*) _reexec_auth="Authorization: Bearer ${GITHUB_TOKEN}" ;;
       esac
     fi
-    if ! curl -fsSL ${_reexec_auth:+-H "$_reexec_auth"} "$_reexec_url" -o "$_reexec_tmp"; then
+    if ! curl -fsSL ${_reexec_auth:+-H "$_reexec_auth"} -o "$_reexec_tmp" -- "$_reexec_url"; then
       rm -f "$_reexec_tmp"
       echo "error: failed to fetch the installer from ${_reexec_url} to re-exec under bash" >&2
       echo "       (for a private fork set GITHUB_TOKEN, or run the script from a checkout)" >&2
