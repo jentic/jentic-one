@@ -250,3 +250,30 @@ func NewBroker(c Config) (*broker.ClientWithResponses, error) {
 	}
 	return cli, nil
 }
+
+// BrokerTransport returns the *http.Client the broker plane uses — the caller's
+// transport decorated with the SDK response policy (429 Retry-After and bounded
+// 5xx/transport backoff for idempotent calls — 13 §5). It is the seam `jentic
+// execute` re-plumbs onto (plan.md Phase 5 item 1): execute composes the broker
+// catch-all URL itself ({scheme}://{host}/{upstreamURL}) to preserve its exact
+// METHOD:url|operation_id|METHOD:/path contract and agent_directive/exit-2
+// denial handling, but sends through THIS transport rather than a bare
+// http.Client, so it inherits the same retry/backoff every generated broker call
+// gets.
+//
+// The 401 re-exchange arm is deliberately DISABLED here (reExchange=false):
+// execute forwards its OWN agent bearer and treats a broker 401 as a recoverable
+// denial whose agent_directive body must reach the caller intact — a re-exchange
+// attempt would both be meaningless (no disk-backed identity to refresh) and
+// drain that body. 429/5xx idempotent backoff still applies.
+func BrokerTransport(c Config) *http.Client {
+	hc := c.HTTPClient
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	wrapped := *hc
+	wrapped.Transport = newRetryTransport(hc.Transport, auth.Credentials{})
+	// Force CanReExchange=false without a real credential: execute owns its auth.
+	wrapped.Transport.(*retryTransport).reExchange = false
+	return &wrapped
+}
