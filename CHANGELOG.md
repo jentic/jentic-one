@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.0](https://github.com/jentic/jentic-one/compare/v0.27.0...v0.28.0) (2026-08-06)
+
+
+### Features
+
+* **access-requests:** surface existing-toolkit reuse on the provision path ([#897](https://github.com/jentic/jentic-one/issues/897)) ([#911](https://github.com/jentic/jentic-one/issues/911)) ([6136c24](https://github.com/jentic/jentic-one/commit/6136c24df53eef0dab5e2c3a2ea11517e08126ea))
+* **app:** in-app update banner for new releases ([#964](https://github.com/jentic/jentic-one/issues/964)) ([322a7ef](https://github.com/jentic/jentic-one/commit/322a7ef63e8b7127f7178ac20302f52e6366fd02))
+
+
+### Documentation
+
+* **.github:** align the PR template with the shared description convention ([#968](https://github.com/jentic/jentic-one/issues/968)) ([f94bc3e](https://github.com/jentic/jentic-one/commit/f94bc3e73562fe9b815ec79a0cf9e32fb35b3731))
+* **plans:** move implementation plans to the jentic-one-plans repo ([#967](https://github.com/jentic/jentic-one/issues/967)) ([7095f73](https://github.com/jentic/jentic-one/commit/7095f7315e026605409ec49266827d3b85056849))
+
 ## [0.27.0](https://github.com/jentic/jentic-one/compare/v0.26.0...v0.27.0) (2026-08-05)
 
 
