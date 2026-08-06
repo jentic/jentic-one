@@ -8288,6 +8288,39 @@
         "title": "UserUpdateRequest",
         "type": "object"
       },
+      "VersionResponse": {
+        "description": "The running app version and the latest release known to this backend.",
+        "properties": {
+          "current": {
+            "description": "The version of jentic-one currently running on this backend.",
+            "title": "Current",
+            "type": "string"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest published release of jentic-one, without a leading 'v'. Null when the backend can't determine it (update check disabled, air-gapped, a remote backend, or GitHub was unreachable).",
+            "title": "Latest"
+          },
+          "update_available": {
+            "description": "True when `latest` is a newer release than `current`. Matches the verdict `jenticctl update` would print.",
+            "title": "Update Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current",
+          "update_available"
+        ],
+        "title": "VersionResponse",
+        "type": "object"
+      },
       "jentic_one__auth__web__schemas__agents__DenyRequest": {
         "description": "Request body for denying an agent.",
         "properties": {
@@ -27461,6 +27494,33 @@
         "summary": "Generate Service Account Api Key",
         "tags": [
           "Service Accounts"
+        ]
+      }
+    },
+    "/system/version": {
+      "get": {
+        "description": "Return the running version and the latest available release.\n\nRequires an authenticated session (any valid caller; no special\npermission). The SPA reads it from inside the signed-in shell to show the\ncurrent version and, when a newer release is available, an update banner.\nThe latest release is resolved best-effort (cached); on any failure it is\n``null`` and no banner shows.",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Running and latest-available app version",
+        "tags": [
+          "System"
         ]
       }
     },

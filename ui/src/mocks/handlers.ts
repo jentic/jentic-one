@@ -132,6 +132,12 @@ export const handlers = [
 			next_cursor: null,
 		}),
 	),
+	// Running/latest app version (GET /system/version) — cross-cutting shell
+	// endpoint powering the update banner + UserMenu version line. Default: no
+	// newer release (banner hidden); tests override via worker.use(...).
+	http.get('/system/version', () =>
+		HttpResponse.json({ current: '0.26.0', latest: null, update_available: false }),
+	),
 	// Feature modules append their handlers here, e.g.:
 	//   import { discoverHandlers } from '@/modules/discover/mocks/handlers';
 	//   ...discoverHandlers,

@@ -2851,6 +2851,26 @@
       "auth_note": null,
       "authenticated": true,
       "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "getVersion",
+      "path": "/system/version",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Running and latest-available app version",
+      "surface": "system",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
       "implied_scopes": {
         "owner:toolkits:read": [],
         "toolkits:read": []
@@ -4628,5 +4648,5 @@
     ],
     "total": 31
   },
-  "total": 156
+  "total": 157
 }

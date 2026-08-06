@@ -190,6 +190,7 @@ export type { UserCreateRequest } from './models/UserCreateRequest';
 export type { UserListResponse } from './models/UserListResponse';
 export type { UserResponse } from './models/UserResponse';
 export type { UserUpdateRequest } from './models/UserUpdateRequest';
+export type { VersionResponse } from './models/VersionResponse';
 
 export { AccessRequestsService } from './services/AccessRequestsService';
 export { ActorsService } from './services/ActorsService';

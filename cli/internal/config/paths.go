@@ -73,6 +73,11 @@ const (
 	// `jenticctl install`.
 	appPidName = "app.pid"
 
+	// updateCheckName caches the last CLI update-notify probe (timestamp +
+	// latest release tag) so ordinary commands nudge about a new release at most
+	// once per day without a network call on every invocation.
+	updateCheckName = "update-check.json"
+
 	// brokerPidName holds the PID of the broker service started in the
 	// background by `jenticctl install`/`jenticctl start` on the local path.
 	brokerPidName = "broker.pid"
@@ -162,6 +167,12 @@ func (p Paths) ManifestPath() string { return filepath.Join(p.Root, ManifestName
 
 // AppPIDPath returns the background app PID file path (~/.jentic/app.pid).
 func (p Paths) AppPIDPath() string { return filepath.Join(p.Root, appPidName) }
+
+// UpdateCheckPath returns the CLI update-notify cache path
+// (~/.jentic/update-check.json), holding the last probe time + latest release
+// tag so ordinary commands can nudge about a new release without re-probing
+// GitHub on every run.
+func (p Paths) UpdateCheckPath() string { return filepath.Join(p.Root, updateCheckName) }
 
 // BrokerPIDPath returns the background broker PID file path
 // (~/.jentic/broker.pid). The broker runs as its own process on the local path.

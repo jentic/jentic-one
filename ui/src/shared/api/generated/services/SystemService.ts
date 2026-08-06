@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { HealthResponse } from '../models/HealthResponse';
 import type { InstanceIdentityResponse } from '../models/InstanceIdentityResponse';
+import type { VersionResponse } from '../models/VersionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -121,6 +122,24 @@ export class SystemService {
                 500: `Internal Server Error`,
                 503: `Service Unavailable`,
             },
+        });
+    }
+    /**
+     * Running and latest-available app version
+     * Return the running version and the latest available release.
+     *
+     * Requires an authenticated session (any valid caller; no special
+     * permission). The SPA reads it from inside the signed-in shell to show the
+     * current version and, when a newer release is available, an update banner.
+     * The latest release is resolved best-effort (cached); on any failure it is
+     * ``null`` and no banner shows.
+     * @returns VersionResponse Successful Response
+     * @throws ApiError
+     */
+    public static getVersion(): CancelablePromise<VersionResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/system/version',
         });
     }
 }

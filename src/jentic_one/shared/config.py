@@ -836,6 +836,33 @@ class TelemetryConfig(BaseModel):
         return value
 
 
+class ReleaseCheckConfig(BaseModel):
+    """ "Update available" check for the running jentic-one build itself.
+
+    Powers ``GET /system/version``: the backend asks GitHub for the newest
+    published release of ``repo`` and compares it against the running build so the
+    web console can surface an "update available" banner (and the user menu can
+    always show the current version). This is about *jentic-one's own* release —
+    distinct from ``CatalogConfig``, which tracks the public *API catalog*.
+
+    Runs only on a ``local`` backend (a self-hosted install the operator can
+    actually update); the hosted platform (``server.backend == "remote"``) skips
+    it. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,
+    no background job), so at most one GitHub request happens per TTL regardless
+    of how many clients poll. Every failure degrades to "latest unknown" (no
+    banner) rather than erroring — the version probe must never break the app.
+    """
+
+    enabled: bool = True
+    # ``owner/name`` slug of the GitHub repo whose releases represent this build.
+    # The check hits ``https://api.github.com/repos/{repo}/releases/latest``.
+    repo: str = "jentic/jentic-one"
+    # In-process cache lifetime for the resolved latest release. Zero is a kill
+    # switch (disables the check outright — air-gapped installs, no egress),
+    # mirroring the catalog scanner's ``interval <= 0`` convention.
+    cache_ttl_seconds: int = 21600  # 6h
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -862,6 +889,7 @@ class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
