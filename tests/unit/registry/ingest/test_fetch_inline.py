@@ -211,6 +211,29 @@ async def test_invalid_content_raises_ingest_stage_error() -> None:
         await load_specification(_make_inline("<<<not valid>>>"))
 
 
+@pytest.mark.parametrize(
+    "scalar",
+    [
+        "!!float abc",  # ValueError from float()
+        "!!float ''",  # IndexError from value[0]
+        "!!int abc",  # ValueError from int()
+        "!!bool abc",  # KeyError from the bool lookup table
+    ],
+)
+@pytest.mark.asyncio
+async def test_malformed_tagged_scalars_raise_ingest_stage_error(scalar: str) -> None:
+    """Malformed explicitly-tagged scalars must fail as a clean parse error.
+
+    Regression for #988: PyYAML's stock constructors leak raw builtin
+    exceptions (ValueError/IndexError/KeyError) for these instead of a
+    YAMLError, which used to dead-letter the import with an internal
+    traceback rather than an operator-facing message.
+    """
+    spec = f'openapi: "3.1.0"\ninfo:\n  title: Bad API\n  version: "1.0.0"\n  x-bad: {scalar}\n'
+    with pytest.raises(IngestStageError, match="failed to parse"):
+        await load_specification(_make_inline(spec, filename="spec.yaml"))
+
+
 @pytest.mark.asyncio
 async def test_unparseable_content_raises_ingest_stage_error() -> None:
     with pytest.raises(IngestStageError, match="failed to parse"):

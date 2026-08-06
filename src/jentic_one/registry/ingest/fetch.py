@@ -127,8 +127,22 @@ def _load_yaml(raw: str) -> Any:
 
     The loader is a ``SafeLoader`` subclass, so this is exactly as safe as
     ``yaml.safe_load`` — hence the B506 suppression.
+
+    PyYAML's stock scalar constructors leak raw builtin exceptions on
+    malformed explicitly-tagged scalars instead of raising ``YAMLError``
+    (issue #988): ``!!float abc`` -> ``ValueError``, ``!!int ''`` ->
+    ``IndexError``, ``!!bool abc`` -> ``KeyError`` — and the escape set is
+    PyYAML-version-dependent. Normalize every constructor escape to
+    ``yaml.YAMLError`` so ``parse_spec_content``'s handlers wrap it into a
+    clean ``IngestStageError`` instead of dead-lettering with an internal
+    traceback.
     """
-    return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+    try:
+        return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+    except yaml.YAMLError:
+        raise
+    except Exception as exc:
+        raise yaml.YAMLError(f"invalid tagged scalar: {exc}") from exc
 
 
 def _load_json(raw: str) -> Any:
