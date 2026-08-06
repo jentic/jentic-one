@@ -222,6 +222,14 @@ func redactSensitive(data []byte) []byte {
 // the byte backstop over a string. Used by every ReportError path (review M6).
 func redactString(s string) string { return string(redactSensitive([]byte(s))) }
 
+// RedactBytes is the exported byte-level backstop for command code that emits a
+// raw upstream/API body (e.g. the `jentic api` passthrough, `execute --raw`)
+// rather than a marshaled envelope. It applies the SAME free-form-string scrub as
+// every other output path so a secret in an API response can't leak to a machine
+// parser. It does NOT reshape or re-marshal the payload — the body stays the
+// API's own JSON.
+func RedactBytes(data []byte) []byte { return redactSensitive(data) }
+
 // safeMarshal / safeMarshalIndent are the single funnel every Render path uses.
 // They redact by struct tag (typed reflection), by field name (key heuristics),
 // AND by pattern (byte backstop). safeMarshal emits compact JSON (agent output);

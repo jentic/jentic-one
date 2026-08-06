@@ -2262,6 +2262,298 @@
           ]
         },
         {
+          "name": "history",
+          "path": "jentic history",
+          "use": "history",
+          "short": "Query and export execution history",
+          "long": "history reads the control plane's execution records. `export` walks a\ntrace's executions (cursor-paginated) and emits a versioned JSON document an\nagent can template a workflow from.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "export",
+              "path": "jentic history export",
+              "use": "export",
+              "short": "Export the execution history of a trace",
+              "long": "export walks every execution for --trace (following cursor pagination to\ncompletion) and renders a versioned export document. Failed executions\n(HTTP \u003e= 400) are excluded unless --include-failures is set. Use --limit/\n--cursor to fetch a single page instead of the full walk.",
+              "flags": [
+                {
+                  "name": "api",
+                  "type": "string",
+                  "usage": "Filter by API id"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "cursor",
+                  "type": "string",
+                  "usage": "Fetch the page at this opaque cursor instead of the full walk"
+                },
+                {
+                  "name": "from",
+                  "type": "string",
+                  "usage": "Only executions at/after this RFC3339 time"
+                },
+                {
+                  "name": "include-failures",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "Include failed executions (HTTP \u003e= 400)"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "0",
+                  "usage": "Fetch a single page of at most N records instead of the full walk"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "output",
+                  "shorthand": "o",
+                  "type": "string",
+                  "usage": "Write the export to this file instead of stdout"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "to",
+                  "type": "string",
+                  "usage": "Only executions at/before this RFC3339 time"
+                },
+                {
+                  "name": "trace",
+                  "type": "string",
+                  "usage": "Trace ID to export (required)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "events",
+          "path": "jentic events",
+          "use": "events",
+          "short": "Observe control-plane events",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "watch",
+              "path": "jentic events watch",
+              "use": "watch",
+              "short": "Tail the control-plane event stream as NDJSON",
+              "long": "watch connects to the control plane's Server-Sent Events stream and emits\none JSON event per line (NDJSON) until interrupted. Use --last-event-id to\nresume after a previously seen event (the stream also advertises the id of\neach event so a wrapper can persist it). Ctrl-C stops cleanly.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "last-event-id",
+                  "type": "string",
+                  "usage": "Resume after this event id"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "trace",
+                  "type": "string",
+                  "usage": "Only events for this trace id"
+                },
+                {
+                  "name": "type",
+                  "type": "stringArray",
+                  "default": "[]",
+                  "usage": "Only events of these types (repeatable)"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "api",
+          "path": "jentic api",
+          "use": "api \u003cMETHOD\u003e \u003cPATH\u003e",
+          "short": "Authenticated passthrough to the control plane",
+          "long": "api sends an arbitrary request to the control plane, reusing the same\nauth, session, and transport as every other command. The PATH must match a\nroute in the CLI's embedded OpenAPI spec (use --live to allow routes the\nconnected server serves that this binary predates). Discover routes with\n`jentic api ops` and their contract with `jentic api describe`.\n\nRequest body (mirrors `jentic execute`): -d/--data inline JSON, -d - for\nstdin, --data-file \u003cpath\u003e, or auto-stdin when a body is piped/redirected.\n\nBy default any transport-successful response (2xx or 4xx/5xx) exits 0 and\nthe body is emitted as-is; --fail-on-error maps non-2xx to exit 1.",
+          "example": "  jentic api GET /credentials\n  jentic api POST /toolkits -d '{\"name\":\"clarity\"}'\n  jentic api POST /apis \u003c api.json\n  jentic api GET \"/apis?limit=10\"",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "data",
+              "shorthand": "d",
+              "type": "string",
+              "usage": "request body JSON (use - for stdin)"
+            },
+            {
+              "name": "data-file",
+              "type": "string",
+              "usage": "read request body from this file"
+            },
+            {
+              "name": "fail-on-error",
+              "type": "bool",
+              "default": "false",
+              "usage": "exit 1 on a non-2xx response"
+            },
+            {
+              "name": "header",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "extra header as key=value (repeatable)"
+            },
+            {
+              "name": "live",
+              "type": "bool",
+              "default": "false",
+              "usage": "fetch the server's /openapi.json instead of the embedded spec"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "query",
+              "type": "stringArray",
+              "default": "[]",
+              "usage": "query parameter as key=value (repeatable)"
+            },
+            {
+              "name": "raw",
+              "type": "bool",
+              "default": "false",
+              "usage": "skip the spec path allowlist (loopback hosts only, for dev)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "ops",
+              "path": "jentic api ops",
+              "use": "ops",
+              "short": "List control-plane operations (METHOD, path, id, summary)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "filter",
+                  "type": "string",
+                  "usage": "only operations whose path/id/summary contains this substring"
+                },
+                {
+                  "name": "live",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "list the server's live operations instead of the embedded set"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
+              "name": "describe",
+              "path": "jentic api describe",
+              "use": "describe \u003cMETHOD\u003e \u003cPATH\u003e",
+              "short": "Describe an operation's params and request/response schema",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "live",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "describe against the server's live spec instead of the embedded one"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "skill",
           "path": "jentic skill",
           "use": "skill",

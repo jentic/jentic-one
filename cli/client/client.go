@@ -13,7 +13,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	broker "github.com/jentic/jentic-one/cli/client/generated/broker"
@@ -145,6 +147,65 @@ func NewControl(c Config) (*control.ClientWithResponses, error) {
 		return nil, fmt.Errorf("building control client: %w", err)
 	}
 	return cli, nil
+}
+
+// NewControlRaw builds a raw control-plane client (server + Doer + editor chain)
+// for the `jentic api` passthrough, which issues arbitrary METHOD/PATH requests
+// the generated per-operation methods do not cover. It shares the SAME transport
+// (retry/backoff), auth editor (incl. requireSecureHost), and session editor as
+// the typed client — the passthrough is a thin wrapper over this, never a second
+// hand-rolled transport (impl/5.0 §6a).
+func NewControlRaw(c Config) (*control.Client, error) {
+	if c.ControlBaseURL == "" {
+		return nil, errors.New("control base URL is required")
+	}
+	cli, err := control.NewClient(c.ControlBaseURL, controlOptions(c)...)
+	if err != nil {
+		return nil, fmt.Errorf("building control client: %w", err)
+	}
+	return cli, nil
+}
+
+// RawControlRequest issues an arbitrary request through raw's transport and editor
+// chain and returns the response. path is a spec-relative path (e.g.
+// "/credentials"), joined to the client's Server. extraHeaders (key=value) are
+// applied after the editor chain so a caller can override defaults. It applies
+// every configured RequestEditor (auth, session) exactly as the typed methods do,
+// so the passthrough inherits auth/redaction/session for free. The caller owns the
+// response body (close it).
+func RawControlRequest(ctx context.Context, raw *control.Client, method, path string, body io.Reader, extraHeaders ...string) (*http.Response, error) {
+	// oapi-codegen's NewClient normalizes Server with a trailing slash; join
+	// without doubling it (path is always spec-absolute, starting with '/').
+	target := strings.TrimRight(raw.Server, "/") + path
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, ed := range raw.RequestEditors {
+		if err := ed(ctx, req); err != nil {
+			return nil, err
+		}
+	}
+	for _, kv := range extraHeaders {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid header %q; expected key=value", kv)
+		}
+		req.Header.Set(k, v)
+	}
+	return raw.Client.Do(req)
+}
+
+// splitKV splits "key=value" (value may contain further '=').
+func splitKV(kv string) (key, value string, ok bool) {
+	i := strings.IndexByte(kv, '=')
+	if i < 1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(kv[:i]), strings.TrimSpace(kv[i+1:]), true
 }
 
 // NewBroker builds the strictly-typed broker-plane (execution) client. It reuses
