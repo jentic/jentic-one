@@ -25,3 +25,24 @@ func API() core.TreeBuilder { return cmd.APITreeBuilder() }
 // Ctl returns the built-in `jenticctl` (installer / lifecycle) command-tree
 // builder.
 func Ctl() core.TreeBuilder { return cmd.CtlTreeBuilder() }
+
+// MustBeFenced is THE canonical fence set: the command paths that MUST carry the
+// `fenced` annotation so an autonomous agent cannot run them (impl/3.2 §2a). Every
+// other doc (plan Phase 3 item 5, 07 §2, impl/1.3 §3, rules/01 §4, rules/03 §4)
+// defers to this list; if a doc and this list disagree, this list wins. The rule:
+// a command is fenced iff it (a) mutates host-level management state (contexts,
+// environments, identities, local-agent lifecycle), or (b) reveals/switches to
+// contexts other than the active one.
+//
+// Phase 2 ships the enforcing machinery against the commands that EXIST today —
+// the local-agent lifecycle (`run` mutates ACLs via --grant/--revoke and is
+// operator-only; `reset` wipes an account's config tree). The context/env/identity
+// entries land as those commands are built (plan Phase 3 item 5), extending this
+// list. Deliberate carve-outs, NOT fenced: `identity register` (DCR of the agent's
+// own identity — required by the agent workflow) and `migrate`.
+//
+// Paths are space-separated ("context use" -> ["context","use"]) for root.Find.
+var MustBeFenced = []string{
+	"run",
+	"reset",
+}

@@ -30,14 +30,12 @@ func newBaseRoot(app *App, binary string) *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// Print the jentic wordmark before every command (TTY only; see banner),
-		// then nudge if a newer release is available (stderr, throttled; see
-		// maybeNudgeUpdate).
-		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
-			app.banner(cmd)
-			app.maybeNudgeUpdate(cmd)
-		},
 	}
+
+	// Audience-aware interceptor (impl/3.2 §2): resolves mode/theme, constructs the
+	// Audience, enforces fencing, and injects both into the context. It also carries
+	// the shipped banner + update-nudge side effects (previously PersistentPreRun).
+	installInterceptor(app, root)
 
 	root.SetHelpFunc(app.helpFunc)
 	root.SetVersionTemplate(
@@ -47,6 +45,11 @@ func newBaseRoot(app *App, binary string) *cobra.Command {
 	// Preserve the AddCommand order below in help output (cobra sorts
 	// alphabetically by default) so the list follows the onboarding flow.
 	cobra.EnableCommandSorting = false
+
+	// Parent PersistentPreRunE hooks (audience injection, fencing) must run even
+	// when a subcommand defines its own hook; without this Cobra runs only the
+	// nearest one and silently disables fencing for that subtree (impl/3.2 §2).
+	cobra.EnableTraverseRunHooks = true
 
 	return root
 }
@@ -117,8 +120,8 @@ func newAPIRootCmd(app *App) *cobra.Command {
 		&cobra.Group{ID: "admin", Title: "Administration"},
 	)
 
-	addGrouped(root, "identity", newBootstrapCmd(app))
-	addGrouped(root, "identity", newRegisterCmd(app))
+	addGrouped(root, "identity", bootstrapSafe(newBootstrapCmd(app)))
+	addGrouped(root, "identity", bootstrapSafe(newRegisterCmd(app)))
 	addGrouped(root, "identity", newProfileCmd(app))
 	addGrouped(root, "identity", newLogoutCmd(app))
 	addGrouped(root, "apis", newCatalogCmd(app))
@@ -132,8 +135,8 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.
 	addGrouped(root, "client", newSkillCmd(app))
-	addGrouped(root, "client", newRunCmd(app))
-	addGrouped(root, "client", newResetCmd(app))
+	addGrouped(root, "client", fenced(newRunCmd(app)))
+	addGrouped(root, "client", fenced(newResetCmd(app)))
 	addGrouped(root, "admin", newAdminCmd(app))
 
 	return root

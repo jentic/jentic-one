@@ -56,6 +56,16 @@ type Page struct {
 // HasNext reports whether another page is available.
 func (p Page) HasNext() bool { return p.NextToken != "" }
 
+// NewPage builds a Page envelope from a typed item slice and the opaque
+// next-page cursor (empty on the last page). It is the bridge from the SDK's
+// client/paginate walk helper (whose Page[T].Next is the cursor) to the machine
+// contract's rendered envelope: a command walks pages with paginate.All/ForEach,
+// then hands the collected items here for Render. Kept generic so callers pass
+// their concrete []T without an interface conversion at the call site.
+func NewPage[T any](items []T, nextToken string) Page {
+	return Page{Items: items, NextToken: nextToken}
+}
+
 // NextHint is the human-mode footer telling the user how to fetch the next page.
 // Cursor APIs use `--cursor <token>` (never `--page N`), so the hint is explicit
 // about the token to pass.
