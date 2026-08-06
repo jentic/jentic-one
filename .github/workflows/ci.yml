@@ -627,6 +627,16 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+      # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
+      # boundary tests and the V1 characterization (golden) contract. Both are
+      # already covered by `go test -race ./...` above, but naming them as an
+      # explicit step surfaces guardrail failures distinctly in the CI log
+      # (mirrors the backend job's `make test-arch`).
+      - name: Architecture & golden guardrails
+        run: |
+          make test-arch
+          make test-golden
+
       # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
       # CLI") is generated from the cobra command tree by `make cli-reference`.
       # Nothing else pins it, so a command/flag change without a regen would
