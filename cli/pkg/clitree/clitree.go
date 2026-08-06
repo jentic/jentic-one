@@ -36,13 +36,22 @@ func Ctl() core.TreeBuilder { return cmd.CtlTreeBuilder() }
 //
 // Phase 2 ships the enforcing machinery against the commands that EXIST today —
 // the local-agent lifecycle (`run` mutates ACLs via --grant/--revoke and is
-// operator-only; `reset` wipes an account's config tree). The context/env/identity
-// entries land as those commands are built (plan Phase 3 item 5), extending this
-// list. Deliberate carve-outs, NOT fenced: `identity register` (DCR of the agent's
-// own identity — required by the agent workflow) and `migrate`.
+// operator-only; `reset` wipes an account's config tree). Phase 3 adds the
+// context/env/identity management surface. Deliberate carve-outs, NOT fenced:
+// the read-only verbs (`context view`/`list`, `env list`, `identity list`),
+// `identity register` (DCR of the agent's own identity — required by the agent
+// workflow), `migrate` (BC-1 directs agents to run it), and `theme` (a local
+// color preference, not a management/context switch).
 //
 // Paths are space-separated ("context use" -> ["context","use"]) for root.Find.
 var MustBeFenced = []string{
 	"run",
 	"reset",
+	"context create",
+	"context use",
+	"context delete",
+	"env add",
+	"env delete",
+	"identity add",
+	"identity delete",
 }

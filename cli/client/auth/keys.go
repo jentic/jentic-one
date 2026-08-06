@@ -72,6 +72,24 @@ func keysDir() (string, error) {
 	return dir, nil
 }
 
+// KeyPathForImport returns the on-disk path where ref's key file lives, creating
+// the keys dir (0700). It exists so the migration path (jentic migrate) can copy
+// a validated legacy PKCS#8 PEM key verbatim into the XDG layout — preserving the
+// exact key bytes rather than generating a new keypair, which would break the
+// already-registered client_id. The returned path is the same one
+// GetOrGenerateKey reads/writes, so the copied key is picked up transparently.
+func KeyPathForImport(ref IdentityRef) (string, error) {
+	dir, err := keysDir()
+	if err != nil {
+		return "", err
+	}
+	stem, err := ref.Stem() // path-traversal guard
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, stem+".key"), nil
+}
+
 // GetOrGenerateKey resolves the env-scoped Ed25519 private key for ref, generating
 // and persisting (PKCS#8 PEM, 0600) a fresh one on first use. This is the only
 // retained lazy side effect (impl/4.1 §2): it is local-only and never contacts the
