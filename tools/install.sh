@@ -25,6 +25,14 @@
 #   GITHUB_TOKEN        token for cloning a private fork  (default: unset/anonymous)
 #   JENTIC_NO_INSTALL   set to 1 to stop after installing the binaries, skipping
 #                       the automatic hand-off into `jenticctl install`
+#   JENTIC_INSTALL_SOURCE_URL
+#                       URL the piped re-exec re-fetches this script from
+#                       (default: the canonical raw.githubusercontent.com URL
+#                       for JENTIC_REPO/JENTIC_REF). First-party install
+#                       endpoints that serve this script (e.g. a website proxy)
+#                       should set — or rewrite at serve time — this variable so
+#                       the re-exec loops back to the origin that served the
+#                       script instead of hard-depending on GitHub raw.
 #
 # This script is invoked via `curl ... | sh`, so it re-execs itself under a
 # full (non-POSIX) bash (below) to get predictable behavior across shells.
@@ -70,6 +78,9 @@ if _need_bash_reexec; then
   # a full copy under bash and run that:
   #   * JENTIC_INSTALL_SELF=/path  -> use that local file (used by tests, and to
   #     re-run a local copy without a network round-trip);
+  #   * JENTIC_INSTALL_SOURCE_URL -> re-fetch from that URL (set by first-party
+  #     install endpoints so the re-exec loops back to the origin that served
+  #     the script — see the configuration comment above);
   #   * otherwise re-fetch tools/install.sh from the canonical raw URL for the
   #     configured repo/ref (the same source curl fetched it from), honouring
   #     GITHUB_TOKEN for private forks (mirrors `jenticctl update`).
@@ -87,11 +98,17 @@ if _need_bash_reexec; then
       echo "error: curl is required to bootstrap the installer under bash" >&2
       exit 1
     fi
-    _reexec_url="https://raw.githubusercontent.com/${_reexec_repo}/${_reexec_ref}/tools/install.sh"
+    # JENTIC_INSTALL_SOURCE_URL: single greppable seam for the re-exec source.
+    # A first-party proxy can rewrite this line (or export the variable) so the
+    # executed bytes come from the same origin that served the script.
+    _reexec_url="${JENTIC_INSTALL_SOURCE_URL:-https://raw.githubusercontent.com/${_reexec_repo}/${_reexec_ref}/tools/install.sh}"
+    # Only attach the GitHub token when fetching from GitHub itself — never
+    # leak it to a third-party/first-party override origin.
+    _reexec_auth=""
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-      _reexec_auth="Authorization: Bearer ${GITHUB_TOKEN}"
-    else
-      _reexec_auth=""
+      case "$_reexec_url" in
+        https://raw.githubusercontent.com/*|https://github.com/*) _reexec_auth="Authorization: Bearer ${GITHUB_TOKEN}" ;;
+      esac
     fi
     if ! curl -fsSL ${_reexec_auth:+-H "$_reexec_auth"} "$_reexec_url" -o "$_reexec_tmp"; then
       rm -f "$_reexec_tmp"

@@ -391,6 +391,48 @@ if [ -x /bin/sh ]; then
   assert_not_contains "piped re-exec without curl: no bash syntax error" "$out" "syntax error"
 fi
 
+# --- re-fetch source override: JENTIC_INSTALL_SOURCE_URL is honoured ---------
+# First-party install endpoints set (or serve-time-rewrite) this variable so
+# the piped re-exec loops back to the origin that served the script instead of
+# hard-depending on raw.githubusercontent.com (jentic-one#962). Prove it with a
+# stubbed curl that records its argv and fails: the recorded URL must be the
+# override, and the error message must name it.
+if [ -x /bin/sh ]; then
+  bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-bin.XXXXXX")"
+  make_min_path "$bindir"
+  curl_log="$(mktemp "${TMPDIR:-/tmp}/jentic-test-curl.XXXXXX")"
+  printf '#!/bin/sh\necho "$@" >> %s\nexit 22\n' "$curl_log" > "$bindir/curl"
+  chmod +x "$bindir/curl"
+
+  set +e
+  out="$(PATH="$bindir" JENTIC_INSTALL_SOURCE_URL="https://jentic.example/install.sh" \
+    GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  recorded="$(cat "$curl_log" 2>/dev/null || true)"
+  assert_contains "re-exec override: stub curl fetched the override URL" \
+    "$recorded" "https://jentic.example/install.sh"
+  assert_not_contains "re-exec override: raw.githubusercontent.com not contacted" \
+    "$recorded" "raw.githubusercontent.com"
+  assert_not_contains "re-exec override: GITHUB_TOKEN not sent to non-GitHub origin" \
+    "$recorded" "secret-token"
+  assert_contains "re-exec override: failure message names the override URL" \
+    "$out" "https://jentic.example/install.sh"
+
+  # Default (no override): the canonical raw URL is fetched, and the token IS
+  # attached for GitHub (private-fork support unchanged).
+  : > "$curl_log"
+  set +e
+  out="$(PATH="$bindir" GITHUB_TOKEN="secret-token" /bin/sh < "$INSTALL_SH" 2>&1)"
+  set -e
+  recorded="$(cat "$curl_log" 2>/dev/null || true)"
+  assert_contains "re-exec default: canonical raw URL fetched" \
+    "$recorded" "https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh"
+  assert_contains "re-exec default: GITHUB_TOKEN attached for GitHub origin" \
+    "$recorded" "secret-token"
+
+  rm -rf "$bindir" "$curl_log"
+fi
+
 # ---------------------------------------------------------------------------
 if [ "$FAIL" -ne 0 ]; then
   printf '\nFAILED\n' >&2
