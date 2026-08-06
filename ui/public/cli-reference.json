@@ -1650,6 +1650,55 @@
                   "usage": "request YAML instead of JSON"
                 }
               ]
+            },
+            {
+              "name": "import",
+              "path": "jentic apis import",
+              "use": "import \u003cfile|url\u003e",
+              "short": "Import an OpenAPI document into the catalog",
+              "long": "import submits an OpenAPI spec to the catalog. The argument is either a\nlocal file path (read and sent inline) or an http(s) URL (sent as a\nfetchable source). Import is asynchronous; the command prints the job id.",
+              "flags": [
+                {
+                  "name": "base-url",
+                  "type": "string",
+                  "usage": "Jentic control-plane base URL"
+                },
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "name",
+                  "type": "string",
+                  "usage": "Override the API name"
+                },
+                {
+                  "name": "profile",
+                  "type": "string",
+                  "usage": "profile name (default: config default_profile)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "usage": "Override the vendor for the imported API"
+                },
+                {
+                  "name": "version",
+                  "type": "string",
+                  "usage": "Override the API version"
+                }
+              ]
             }
           ]
         },
@@ -1701,6 +1750,97 @@
               "name": "theme",
               "type": "string",
               "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "credentials",
+          "path": "jentic credentials",
+          "use": "credentials",
+          "short": "List and inspect credentials (secrets are server-masked)",
+          "aliases": [
+            "creds"
+          ],
+          "group_title": "APIs",
+          "flags": [
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "list",
+              "path": "jentic credentials list",
+              "use": "list",
+              "short": "List credentials",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "cursor",
+                  "type": "string",
+                  "usage": "Fetch the page at this opaque cursor"
+                },
+                {
+                  "name": "limit",
+                  "type": "int",
+                  "default": "0",
+                  "usage": "Fetch a single page of at most N credentials"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "vendor",
+                  "type": "string",
+                  "usage": "Filter by vendor"
+                }
+              ]
+            },
+            {
+              "name": "show",
+              "path": "jentic credentials show",
+              "use": "show \u003ccredential_id\u003e",
+              "short": "Show a credential (secret-masked)",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
             }
           ]
         },

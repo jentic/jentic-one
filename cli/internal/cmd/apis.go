@@ -45,6 +45,7 @@ func newApisCmd(app *App) *cobra.Command {
 	cmd.AddCommand(newApisArchiveCmd(app, ident))
 	cmd.AddCommand(newApisRmCmd(app, ident))
 	cmd.AddCommand(newApisSpecCmd(app, ident))
+	cmd.AddCommand(newApisImportCmd(app))
 	return cmd
 }
 

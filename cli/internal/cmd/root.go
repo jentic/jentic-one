@@ -146,6 +146,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	addGrouped(root, "apis", newCatalogCmd(app))
 	addGrouped(root, "apis", newApisCmd(app))
 	addGrouped(root, "apis", newEndpointsCmd(app))
+	addGrouped(root, "apis", newCredentialsCmd(app))
 	addGrouped(root, "agent", newSearchCmd(app))
 	addGrouped(root, "agent", newInspectCmd(app))
 	addGrouped(root, "agent", newExecuteCmd(app))
