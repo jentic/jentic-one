@@ -19,6 +19,13 @@ var configWriterAllowlist = map[string]bool{
 	"client/config/writer.go": true,
 	"client/auth/tokens.go":   true,
 	"client/auth/keys.go":     true,
+	"client/auth/apikey.go":   true, // API-key credential (0600 secret under XDG state; sibling of tokens.go)
+
+	// Phase 3 migration writer: copies validated legacy key material into the XDG
+	// layout and drops the MIGRATED marker. It writes SECRET/STATE material (0600
+	// key files) and a marker, not config.yaml — the config.yaml mutation itself
+	// still goes through config.MutateConfig (the flock-guarded path).
+	"internal/cmd/migrate.go": true,
 
 	// Shipped writers (grandfathered; each is an atomic temp-file+rename or a
 	// 0600 secret/state write, not an ad-hoc config clobber).

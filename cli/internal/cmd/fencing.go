@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -53,11 +55,15 @@ func installInterceptor(app *App, root *cobra.Command) {
 
 		// 1. Resolve active state (SDK + legacy adapter). On failure, degrade to a
 		// default state rather than aborting — Phase 2 must not regress V1 for users
-		// with no XDG config, and config-creating commands are bootstrap-safe. Mode
-		// and theme come from JENTIC_MODE/JENTIC_THEME/config in Phase 2 (the --mode/
-		// --context/--theme root flags land with the context model in Phase 3);
-		// flagValue returns "" until they exist, so the env/config ladder drives it.
-		state, err := clictx.ResolveActiveState(flagValue(cmd, "context"), flagValue(cmd, "mode"))
+		// with no XDG config, and config-creating commands are bootstrap-safe. The
+		// --context/--mode/--theme root flags land in Phase 3; the env fallbacks
+		// ($JENTIC_CONTEXT here, $JENTIC_MODE inside resolveMode) keep working when
+		// the flags are unset.
+		contextOverride := flagValue(cmd, "context")
+		if contextOverride == "" {
+			contextOverride = os.Getenv("JENTIC_CONTEXT") // reserved: 14 BC-9
+		}
+		state, err := clictx.ResolveActiveState(contextOverride, flagValue(cmd, "mode"))
 		if err != nil {
 			// Degrade to a default state, but RE-APPLY THE MODE LADDER on the way
 			// down: --mode/$JENTIC_MODE must still take effect with no config, so an

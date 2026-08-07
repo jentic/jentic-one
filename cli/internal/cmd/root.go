@@ -120,10 +120,29 @@ func newAPIRootCmd(app *App) *cobra.Command {
 		&cobra.Group{ID: "admin", Title: "Administration"},
 	)
 
+	// Global selection/UX flags (BC-3/BC-5/BC-9). The interceptor
+	// (installInterceptor) reads these via flagValue to drive the mode/theme/
+	// context resolution ladder; they are persistent so they apply to every
+	// subcommand. --context selects which context to resolve; --mode overrides the
+	// interaction mode (closed enum, fail-closed to agent); --theme overrides the
+	// human-mode palette.
+	root.PersistentFlags().String("context", "", "Context to act on (overrides the active context; $JENTIC_CONTEXT)")
+	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
+	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
+
 	addGrouped(root, "identity", bootstrapSafe(newBootstrapCmd(app)))
 	addGrouped(root, "identity", bootstrapSafe(newRegisterCmd(app)))
 	addGrouped(root, "identity", newProfileCmd(app))
 	addGrouped(root, "identity", newLogoutCmd(app))
+	// V2 context model (Phase 3): the Environment × Identity × Context surface
+	// that supersedes flat profiles, plus the one-shot migrator. These COEXIST
+	// with the V1 profile commands above during the deprecation window — V1 stays
+	// the active path until the activation release (14 rollout item 0); nothing
+	// here flips breaking behavior on merge.
+	addGrouped(root, "identity", newContextCmd(app))
+	addGrouped(root, "identity", newEnvCmd(app))
+	addGrouped(root, "identity", newIdentityCmd(app))
+	addGrouped(root, "identity", bootstrapSafe(newMigrateCmd(app))) // NOT fenced (BC-1); bootstrap-safe (runs with no XDG config)
 	addGrouped(root, "apis", newCatalogCmd(app))
 	addGrouped(root, "apis", newApisCmd(app))
 	addGrouped(root, "apis", newEndpointsCmd(app))
@@ -138,6 +157,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	addGrouped(root, "client", fenced(newRunCmd(app)))
 	addGrouped(root, "client", fenced(newResetCmd(app)))
 	addGrouped(root, "admin", newAdminCmd(app))
+	addGrouped(root, "admin", newThemeCmd(app))
 
 	return root
 }
