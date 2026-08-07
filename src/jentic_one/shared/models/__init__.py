@@ -31,6 +31,7 @@ from jentic_one.shared.models.registry import (
     ORIGIN_OVERLAY,
     ApiRevisionSourceType,
     ApiRevisionState,
+    OverlayDeprecationReason,
     OverlayStatus,
     RevisionOrigin,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "JobKind",
     "JobStatus",
     "Origin",
+    "OverlayDeprecationReason",
     "OverlayStatus",
     "RevisionOrigin",
     "StoredCredentialType",

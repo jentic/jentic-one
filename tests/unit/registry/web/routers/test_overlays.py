@@ -57,7 +57,11 @@ def client() -> TestClient:
 
 
 def _make_view(
-    *, status: str = "pending", confirmed_revision_id: uuid.UUID | None = None
+    *,
+    status: str = "pending",
+    confirmed_revision_id: uuid.UUID | None = None,
+    superseded_revision_id: uuid.UUID | None = None,
+    deprecated_reason: str | None = None,
 ) -> OverlayView:
     return OverlayView(
         id=_OVERLAY_ID,
@@ -69,12 +73,15 @@ def _make_view(
         document={"overlay": "1.0"},
         target_revision_id=None,
         confirmed_revision_id=confirmed_revision_id,
+        superseded_revision_id=superseded_revision_id,
         contributed_by="agent",
+        created_by="usr_submitter",
         confirmed_by_execution_id=None,
         created_at=datetime(2024, 6, 1, tzinfo=UTC),
         updated_at=None,
         confirmed_at=None,
         deprecated_at=None,
+        deprecated_reason=deprecated_reason,
     )
 
 
@@ -128,6 +135,42 @@ def test_get_overlay_surfaces_confirmed_revision_id(client: TestClient) -> None:
     assert resp.json()["confirmed_revision_id"] == str(rev_id)
 
 
+def test_get_overlay_surfaces_author_and_superseded_revision(client: TestClient) -> None:
+    """The submitting principal + rollback target are on the wire (UI legibility)."""
+    superseded = uuid.uuid4()
+    view = _make_view(
+        status="confirmed",
+        confirmed_revision_id=uuid.uuid4(),
+        superseded_revision_id=superseded,
+    )
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["created_by"] == "usr_submitter"
+    assert body["contributed_by"] == "agent"
+    assert body["superseded_revision_id"] == str(superseded)
+
+
+def test_get_overlay_surfaces_deprecated_reason(client: TestClient) -> None:
+    """The deprecation cause is on the wire so clients can label the event durably."""
+    view = _make_view(status="deprecated", deprecated_reason="rollback")
+    with patch(
+        "jentic_one.registry.web.routers.overlays.OverlayService.get",
+        new_callable=AsyncMock,
+        return_value=view,
+    ):
+        resp = client.get(f"/apis/acme/pets/v1/overlays/{_OVERLAY_ID}")
+
+    assert resp.status_code == 200
+    assert resp.json()["deprecated_reason"] == "rollback"
+
+
 def test_list_overlays_200(client: TestClient) -> None:
     page = OverlayPage(
         data=[
@@ -138,12 +181,15 @@ def test_list_overlays_200(client: TestClient) -> None:
                 document={"x": 1},
                 target_revision_id=None,
                 confirmed_revision_id=None,
+                superseded_revision_id=None,
                 contributed_by=None,
+                created_by="usr_submitter",
                 confirmed_by_execution_id=None,
                 created_at=datetime(2024, 6, 1, tzinfo=UTC),
                 updated_at=None,
                 confirmed_at=None,
                 deprecated_at=None,
+                deprecated_reason=None,
             )
         ],
         has_more=False,
@@ -161,6 +207,7 @@ def test_list_overlays_200(client: TestClient) -> None:
     assert len(body["data"]) == 1
     assert body["has_more"] is False
     assert "_links" in body["data"][0]
+    assert body["data"][0]["created_by"] == "usr_submitter"
 
 
 def test_get_overlay_200(client: TestClient) -> None:

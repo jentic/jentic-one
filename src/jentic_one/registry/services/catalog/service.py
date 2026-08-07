@@ -723,7 +723,7 @@ class CatalogService:
 
     # ── import ───────────────────────────────────────────────────────────────
 
-    def _to_import_source(self, entry: CatalogEntryView) -> dict[str, str]:
+    def _to_import_source(self, entry: CatalogEntryView, identity: Identity) -> dict[str, str]:
         """Build a plain url IngestSource payload — never a catalog-shaped one.
 
         The catalog already knows the vendor and api_name from the manifest folder
@@ -734,6 +734,9 @@ class CatalogService:
         name". Threading the catalog vendor and api_name makes identity (and
         re-import dedup) deterministic from the catalog id rather than dependent on
         the upstream spec's info.
+
+        ``submitted_by`` attributes the resulting revision to the principal who
+        triggered the (re-)import — same policy as ``POST /apis``.
         """
         if not entry.spec_url:
             raise CatalogUnavailableError(f"catalog entry '{entry.api_id}' has no spec url")
@@ -742,6 +745,8 @@ class CatalogService:
             "url": entry.spec_url,
             "origin": ORIGIN_CATALOG,
         }
+        if identity.sub:
+            source["submitted_by"] = identity.sub
         if entry.vendor:
             source["vendor"] = entry.vendor
         if entry.api_id:
@@ -836,7 +841,7 @@ class CatalogService:
         """
         entry = await self.get(api_id)
         supersede_overlay_id = await self._authorize_overlay_supersede(entry, identity)
-        source = self._to_import_source(entry)
+        source = self._to_import_source(entry, identity)
         if supersede_overlay_id is not None:
             source["supersede_active"] = "true"
         payload: dict[str, Any] = {"sources": [source]}
@@ -954,7 +959,7 @@ class CatalogService:
         entry = await self.get(api_id)
         if entry.registered:
             return None
-        source = self._to_import_source(entry)
+        source = self._to_import_source(entry, identity)
         async with self._ctx.admin_db.transaction() as session:
             return await enqueue_job(
                 session,

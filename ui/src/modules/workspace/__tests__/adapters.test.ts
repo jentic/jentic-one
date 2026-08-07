@@ -4,6 +4,7 @@ import {
 	toApiOperation,
 	toApiRevision,
 	toCursorPage,
+	toOverlay,
 } from '@/modules/workspace/api/adapters';
 
 describe('workspace adapters', () => {
@@ -129,6 +130,69 @@ describe('workspace adapters', () => {
 		expect(rev.sourceUrl).toBe('https://x/openapi.json');
 		expect(rev.promoteHref).toBe('/apis/a/b/1/revisions/rev_draft:promote');
 		expect(rev.archiveHref).toBe('/apis/a/b/1/revisions/rev_draft:archive');
+	});
+
+	it('maps revision origin + submitter (falling back to the source block)', () => {
+		const rev = toApiRevision({
+			revision_id: 'rev_ovl',
+			api: { vendor: 'a', name: 'b', version: '1', host: null },
+			source: { type: 'inline', submitted_by: 'usr_from_source' },
+			spec_digest: 'abc',
+			operation_count: 5,
+			state: 'archived',
+			origin: 'overlay',
+			is_current: false,
+			promoted_at: null,
+			archived_at: '2026-01-02T00:00:00Z',
+			created_at: '2026-01-01T00:00:00Z',
+			_links: {},
+		});
+		expect(rev.origin).toBe('overlay');
+		expect(rev.submittedBy).toBe('usr_from_source');
+
+		const top = toApiRevision({
+			revision_id: 'rev_x',
+			source: { type: 'url', url: 'https://x', submitted_by: 'usr_nested' },
+			submitted_by: 'usr_top',
+			state: 'published',
+			is_current: true,
+			created_at: '',
+			_links: {},
+		});
+		expect(top.submittedBy).toBe('usr_top');
+		// Origin is null (not undefined) for a plain import.
+		expect(top.origin).toBeNull();
+	});
+
+	it('maps an overlay row incl. author, attribution, document, and superseded revision', () => {
+		const overlay = toOverlay({
+			id: 'ovr_6a75aa8e6edd9723f71840e8',
+			status: 'deprecated',
+			document: { overlay: '1.0.0', actions: [{ target: '$.servers', remove: true }] },
+			target_revision_id: null,
+			confirmed_revision_id: 'rev_confirmed',
+			superseded_revision_id: 'rev_superseded',
+			contributed_by: 'contribute-spec-fix skill',
+			created_by: 'usr_submitter',
+			created_at: '2026-08-07T09:51:10Z',
+			confirmed_at: '2026-08-07T09:52:00Z',
+			deprecated_at: '2026-08-07T09:54:00Z',
+			deprecated_reason: 'rollback',
+			_links: { self: '/x', api: '/y', confirm: null, rollback: null, deprecate: null },
+		});
+		expect(overlay.id).toBe('ovr_6a75aa8e6edd9723f71840e8');
+		expect(overlay.createdBy).toBe('usr_submitter');
+		expect(overlay.contributedBy).toBe('contribute-spec-fix skill');
+		expect(overlay.supersededRevisionId).toBe('rev_superseded');
+		expect(overlay.deprecatedReason).toBe('rollback');
+		expect(overlay.document).toMatchObject({ overlay: '1.0.0' });
+		// Absent fields degrade to null, not undefined/crash.
+		const bare = toOverlay({ id: 'ovr_x', status: 'pending', created_at: '' });
+		expect(bare.createdBy).toBeNull();
+		expect(bare.contributedBy).toBeNull();
+		expect(bare.supersededRevisionId).toBeNull();
+		expect(bare.deprecatedReason).toBeNull();
+		expect(bare.document).toBeNull();
 	});
 
 	it('defaults gracefully on garbage input', () => {

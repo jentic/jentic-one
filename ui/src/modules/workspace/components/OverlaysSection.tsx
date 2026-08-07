@@ -4,10 +4,22 @@
  * jentic-one lets an operator layer an overlay on top of an imported API's
  * spec: a `pending` overlay is a submitted-but-not-yet-applied change, a
  * `confirmed` overlay has been materialized onto the served spec, and a
- * `deprecated` overlay has been superseded (either manually or automatically by
- * a re-import adopting a fresh upstream spec — the "close the overlay-update
- * loop" flow). This section lists overlays newest-first, badges their status,
- * and — for a deprecated overlay — explains WHEN/WHY it was retired.
+ * `deprecated` overlay has been retired (manually, by a re-import adopting
+ * a fresh upstream spec, or by a rollback). This section lists overlays
+ * newest-first and makes each one legible:
+ *
+ * - a human-readable summary of what the overlay DOES, derived from its
+ *   document's actions (preferring the author's per-action descriptions),
+ *   capped at a few lines so a many-action overlay can't drown the list;
+ * - the real submitting principal (`created_by`, resolved via ActorLabel) plus
+ *   any free-text attribution (`contributed_by`);
+ * - a derived lifecycle state (pending / active / superseded / confirmed /
+ *   rolled back / deprecated) distinct from origin — the wire `status` alone
+ *   can't tell a rollback from a re-import deprecation, and a "deprecated"
+ *   overlay whose revision still serves is called out explicitly;
+ * - a unique short id (`ovr_…1840e8` — KSUIDs share their LEADING chars, so
+ *   the tail is shown) with a copy-full-id affordance;
+ * - a link to the revision the overlay produced (jumps to the Revisions row).
  *
  * Modeled on `RevisionsSection`: same Card scaffold, loading/error/empty
  * handling, and per-row status badge conventions.
@@ -19,51 +31,61 @@ import {
 	CardBody,
 	Badge,
 	Button,
-	Skeleton,
+	SkeletonRows,
 	EmptyState,
 	ErrorAlert,
+	CopyButton,
+	ActorLabel,
+	toast,
 } from '@/shared/ui';
-import { Layers } from 'lucide-react';
+import { GitBranch, Layers } from 'lucide-react';
 import { useState } from 'react';
 import type { BadgeVariant } from '@/shared/ui';
-import { useOverlays, useOverlayActions } from '@/modules/workspace/api';
-import type { ApiKey, Overlay, OverlayStatus } from '@/modules/workspace/api';
+import {
+	useOverlays,
+	useOverlayActions,
+	overlayLifecycle,
+	overlayLifecycleNote,
+	OVERLAY_LIFECYCLE_LABEL,
+	shortOverlayId,
+	shortRevisionId,
+	summarizeOverlayActions,
+} from '@/modules/workspace/api';
+import type { ApiKey, Overlay, OverlayLifecycle } from '@/modules/workspace/api';
 import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
+import { jumpToRevision } from '@/modules/workspace/components/jumpToRow';
 
-/** Badge colour per known overlay status; unknown wire values fall back to `default`. */
-const STATUS_VARIANT: Partial<Record<OverlayStatus, BadgeVariant>> = {
+/**
+ * Badge colour per derived lifecycle state. The two easiest-to-confuse states
+ * get distinct variants: `superseded` (was applied, no longer serving) stays
+ * neutral while `deprecated` (retired) reads as terminal.
+ */
+const LIFECYCLE_VARIANT: Record<OverlayLifecycle, BadgeVariant> = {
 	pending: 'pending',
-	confirmed: 'success',
-	deprecated: 'warning',
+	active: 'success',
+	superseded: 'default',
+	confirmed: 'default',
+	'rolled-back': 'warning',
+	'deprecated-serving': 'warning',
+	deprecated: 'danger',
 };
 
-function statusVariant(status: OverlayStatus): BadgeVariant {
-	return STATUS_VARIANT[status] ?? 'default';
-}
-
-/** Absolute local datetime for the deprecation note (e.g. "28 Jul 2026, 13:02"). */
-function formatDateTime(iso: string): string {
-	const ts = Date.parse(iso);
-	if (Number.isNaN(ts)) return iso;
-	return new Date(ts).toLocaleString(undefined, {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-	});
-}
+/** Max summary lines rendered per row before collapsing to "+N more actions". */
+const MAX_SUMMARY_LINES = 3;
 
 type OverlayAction = 'confirm' | 'rollback' | 'deprecate' | null;
 
 function OverlayRow({
 	overlay,
+	currentRevisionId,
 	onConfirm,
 	onDeprecate,
 	onRollback,
 	pendingAction,
 }: {
 	overlay: Overlay;
+	/** The API's current revision — needed to derive the lifecycle state. */
+	currentRevisionId: string | null;
 	onConfirm: (id: string) => void;
 	onDeprecate: (id: string) => void;
 	/** Rollback is destructive (rewrites the served spec) — routed through a confirm dialog. */
@@ -71,48 +93,119 @@ function OverlayRow({
 	/** Which action (if any) is in flight for *this* row — spins only that button. */
 	pendingAction: OverlayAction;
 }) {
+	const lifecycle = overlayLifecycle(overlay, currentRevisionId);
+	const summary = summarizeOverlayActions(overlay.document);
+	const shownSummary = summary.slice(0, MAX_SUMMARY_LINES);
+	const hiddenActions = summary.length - shownSummary.length;
+	const note = overlayLifecycleNote(overlay, lifecycle);
+	const shortId = shortOverlayId(overlay.id);
+
 	return (
 		<li
-			className="border-border/60 flex flex-wrap items-center gap-3 border-b py-3 last:border-b-0"
+			className="border-border/60 flex flex-col gap-2 border-b py-3 last:border-b-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
 			data-testid="overlay-row"
+			data-overlay-id={overlay.id}
+			// Cross-link jump target: receives focus from the Revisions section's
+			// "overlay …" origin links so keyboard/SR users land here perceivably.
+			tabIndex={-1}
 		>
-			<div className="min-w-0 flex-1">
-				<div className="flex items-center gap-2">
+			<div className="min-w-0 sm:flex-1">
+				<div className="flex flex-wrap items-center gap-2">
 					<Badge
-						variant={statusVariant(overlay.status)}
+						variant={LIFECYCLE_VARIANT[lifecycle]}
 						data-testid={`overlay-status-${overlay.status}`}
+						data-lifecycle={lifecycle}
 					>
-						{overlay.status}
+						{OVERLAY_LIFECYCLE_LABEL[lifecycle]}
 					</Badge>
-					<span className="text-muted-foreground truncate font-mono text-xs">
-						{overlay.id.slice(0, 8)}
+					<span
+						className="text-muted-foreground truncate font-mono text-xs"
+						title={overlay.id}
+						data-testid="overlay-id"
+					>
+						{shortId}
+						<span className="sr-only"> (full id {overlay.id})</span>
 					</span>
+					<CopyButton
+						value={overlay.id}
+						size="icon"
+						variant="ghost"
+						ariaLabel={`Copy full id of overlay ${shortId}`}
+						toastMessage="Overlay id copied"
+					/>
+					{overlay.confirmedRevisionId ? (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								if (!jumpToRevision(overlay.confirmedRevisionId as string)) {
+									toast({
+										variant: 'default',
+										title: 'Revision not shown in the list above',
+									});
+								}
+							}}
+							aria-label={`Jump to revision ${shortRevisionId(overlay.confirmedRevisionId)}, which this overlay produced`}
+							title="Jump to the revision this overlay produced"
+							data-testid="overlay-produced-revision"
+						>
+							<GitBranch size={12} aria-hidden="true" />
+							revision {shortRevisionId(overlay.confirmedRevisionId)}
+						</Button>
+					) : null}
 				</div>
-				<p className="text-muted-foreground mt-1 text-xs">
-					{overlay.createdBy ? `by ${overlay.createdBy}` : 'unknown author'}
-					{overlay.status === 'deprecated' && overlay.deprecatedAt
-						? ` · Deprecated by re-import on ${formatDateTime(overlay.deprecatedAt)}`
-						: ''}
+				{shownSummary.length > 0 ? (
+					<ul className="mt-1 space-y-0.5" data-testid="overlay-summary">
+						{shownSummary.map((line, i) => (
+							<li key={i} className="text-foreground/90 text-xs">
+								{line}
+							</li>
+						))}
+						{hiddenActions > 0 ? (
+							<li
+								className="text-muted-foreground text-xs"
+								data-testid="overlay-summary-more"
+							>
+								+{hiddenActions} more action{hiddenActions === 1 ? '' : 's'}
+							</li>
+						) : null}
+					</ul>
+				) : null}
+				<p className="text-muted-foreground mt-1 text-xs" data-testid="overlay-meta">
+					{overlay.createdBy ? (
+						<>
+							by <ActorLabel actorId={overlay.createdBy} />
+						</>
+					) : (
+						'unknown author'
+					)}
+					{overlay.contributedBy ? ` · via ${overlay.contributedBy}` : ''}
+					{` · ${note}`}
 				</p>
 			</div>
-			<div className="flex shrink-0 gap-2">
+			<div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
 				{overlay.confirmHref ? (
 					<Button
 						variant="secondary"
 						size="sm"
 						onClick={() => onConfirm(overlay.id)}
 						loading={pendingAction === 'confirm'}
+						aria-label={`Confirm overlay ${shortId}`}
 						data-testid="overlay-confirm"
 					>
 						Confirm
 					</Button>
 				) : null}
-				{overlay.rollbackHref ? (
+				{/* The backend advertises `rollback` for any materialized overlay, but
+				    the service 409s unless the overlay's revision is CURRENT — gate on
+				    the derived lifecycle so we never render a guaranteed-to-fail button. */}
+				{overlay.rollbackHref && lifecycle === 'active' ? (
 					<Button
 						variant="ghost"
 						size="sm"
 						onClick={() => onRollback(overlay)}
 						loading={pendingAction === 'rollback'}
+						aria-label={`Roll back overlay ${shortId}`}
 						data-testid="overlay-rollback"
 					>
 						Roll back
@@ -124,6 +217,7 @@ function OverlayRow({
 						size="sm"
 						onClick={() => onDeprecate(overlay.id)}
 						loading={pendingAction === 'deprecate'}
+						aria-label={`Deprecate overlay ${shortId}`}
 						data-testid="overlay-deprecate"
 					>
 						Deprecate
@@ -134,7 +228,14 @@ function OverlayRow({
 	);
 }
 
-export function OverlaysSection({ apiKey }: { apiKey: ApiKey }) {
+export function OverlaysSection({
+	apiKey,
+	currentRevisionId = null,
+}: {
+	apiKey: ApiKey;
+	/** The API's current revision id — drives the derived lifecycle badges. */
+	currentRevisionId?: string | null;
+}) {
 	const query = useOverlays(apiKey);
 	const { confirm, rollback, deprecate, pendingOverlayId, pendingAction } =
 		useOverlayActions(apiKey);
@@ -142,20 +243,20 @@ export function OverlaysSection({ apiKey }: { apiKey: ApiKey }) {
 	// superseded), so it is gated behind an explicit confirm step.
 	const [rollbackTarget, setRollbackTarget] = useState<Overlay | null>(null);
 
-	const overlays = query.data?.items ?? [];
+	const overlays = query.items;
 
 	return (
 		<Card data-testid="overlays-section">
 			<CardHeader>
 				<CardTitle>Overlays</CardTitle>
+				<p className="text-muted-foreground mt-0.5 text-xs">
+					Proposed fixes layered on top of a spec — the spec itself is never edited in
+					place. Confirming an overlay applies it and produces a new revision above.
+				</p>
 			</CardHeader>
 			<CardBody>
 				{query.isLoading ? (
-					<div className="space-y-2" aria-busy="true">
-						{Array.from({ length: 3 }).map((_, i) => (
-							<Skeleton key={i} className="h-12 w-full" />
-						))}
-					</div>
+					<SkeletonRows rows={3} />
 				) : query.isError ? (
 					<ErrorAlert
 						message={
@@ -166,7 +267,7 @@ export function OverlaysSection({ apiKey }: { apiKey: ApiKey }) {
 					<EmptyState
 						icon={<Layers size={28} aria-hidden="true" />}
 						title="No overlays"
-						description="No overlays for this API."
+						description="Overlays are reviewed spec fixes submitted by agents or operators; they'll appear here once submitted."
 					/>
 				) : (
 					<ul className="divide-border/60">
@@ -174,6 +275,7 @@ export function OverlaysSection({ apiKey }: { apiKey: ApiKey }) {
 							<OverlayRow
 								key={overlay.id}
 								overlay={overlay}
+								currentRevisionId={currentRevisionId}
 								onConfirm={confirm}
 								onDeprecate={deprecate}
 								onRollback={setRollbackTarget}
@@ -191,9 +293,11 @@ export function OverlaysSection({ apiKey }: { apiKey: ApiKey }) {
 				body={
 					<>
 						Rolling back overlay{' '}
-						<span className="font-mono">{rollbackTarget?.id.slice(0, 8)}</span> restores
-						the revision it superseded and rewrites the served spec. This can't be
-						undone automatically.
+						<span className="font-mono">
+							{rollbackTarget ? shortOverlayId(rollbackTarget.id) : ''}
+						</span>{' '}
+						restores the revision it superseded and rewrites the served spec. This can't
+						be undone automatically.
 					</>
 				}
 				confirmLabel="Roll back"
