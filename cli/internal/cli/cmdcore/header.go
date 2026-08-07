@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// brandHeader renders the gradient wordmark with a right-aligned version panel
+// BrandHeader renders the gradient wordmark with a right-aligned version panel
 // (CLI version + probed server version). The panel is only drawn for an
 // interactive terminal — we need its width and want to avoid a network probe
 // when output is piped — otherwise it falls back to the plain logo. baseURLFlag

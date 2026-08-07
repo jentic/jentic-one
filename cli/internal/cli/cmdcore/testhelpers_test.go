@@ -6,7 +6,6 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/profile"
-	"github.com/spf13/cobra"
 )
 
 // testApp builds a throwaway App with a temp-dir Paths and buffered streams,
@@ -33,13 +32,4 @@ func seedProfile(t *testing.T, app *App, name, agentID string) {
 			t.Fatalf("save meta %q: %v", name, err)
 		}
 	}
-}
-
-func hasCommand(root *cobra.Command, name string) bool {
-	for _, c := range root.Commands() {
-		if c.Name() == name {
-			return true
-		}
-	}
-	return false
 }

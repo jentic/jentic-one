@@ -58,8 +58,14 @@ func ValueOr(v, fallback string) string {
 	return v
 }
 
-// Status dots: filled for present/healthy, hollow for absent/offline.
-func DotOK() string   { return theme.Success.Render("●") }
+// DotOK is the status glyph for a present/healthy item (filled).
+func DotOK() string { return theme.Success.Render("●") }
+
+// DotWarn is the status glyph for a degraded/warning item (filled, amber).
 func DotWarn() string { return theme.Warn.Render("●") }
+
+// DotDown is the status glyph for an absent/offline item (hollow).
 func DotDown() string { return theme.Dim.Render("○") }
+
+// DotFail is the status glyph for a failed item.
 func DotFail() string { return theme.Error.Render("✗") }

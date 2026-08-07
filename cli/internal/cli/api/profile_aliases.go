@@ -1,4 +1,4 @@
-// Package cmd — V1 → V2 deprecation alias layer (BC-2/BC-3, impl/1.3 §7).
+// Package api — V1 → V2 deprecation alias layer (BC-2/BC-3, impl/1.3 §7).
 //
 // This file is the SINGLE removable block that translates the deprecated V1
 // selection surface onto the V2 context model:

@@ -1,3 +1,10 @@
+// Package ctlcmd is the jenticctl command tree — the operator/lifecycle CLI
+// (install, wizard, setup, doctor, status, start/stop, logs, update, uninstall).
+// Its commands are methods on a tree-local app that embeds *cmdcore.App; unlike
+// the api (jentic) tree it legitimately links the operator packages
+// (internal/install, internal/proc, internal/update). Named ctlcmd rather than
+// ctl to avoid clashing with internal/cli/ctl (the config-driven installer
+// machinery). See impl/1.1 §1a.
 package ctlcmd
 
 import (
@@ -36,8 +43,11 @@ type exitCodeError = cmdcore.ExitCodeError
 
 // Build-time version metadata, mirrored from cmdcore so the many relocated ctl
 // call sites keep referencing version/commit/date verbatim. cmdcore is the ONE
-// package the -ldflags stamp targets.
+// package the -ldflags stamp targets. version/commit are read by status/update;
+// date is kept for symmetry (and future use) and sunk so it isn't flagged.
 var version, commit, date = cmdcore.VersionMeta()
+
+var _ = date
 
 // wantsInteractive mirrors cmdcore.WantsInteractive so relocated ctl code keeps
 // calling it lower-cased.

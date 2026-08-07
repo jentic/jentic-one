@@ -10,8 +10,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -71,6 +71,8 @@ func (a *App) BootstrapForWizard(ctx context.Context, baseURL string, timeout ti
 	})
 }
 
+// NewBootstrapCmd builds the `bootstrap` command that runs first-time agent
+// setup (register + skill install) in one step. Shared by both trees via cmdcore.
 func NewBootstrapCmd(app *App) *cobra.Command {
 	opts := &bootstrapOptions{}
 

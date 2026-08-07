@@ -10,8 +10,8 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -50,6 +50,8 @@ type skillOptions struct {
 	json      bool
 }
 
+// NewSkillCmd builds the `skill` command group (install/update/remove the
+// agent-facing skill files). Shared by both trees via cmdcore.
 func NewSkillCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skill",
@@ -709,7 +711,7 @@ func (a *App) SkillUpdateDefault(cmd *cobra.Command) error {
 	return a.SkillUpdate(cmd, &skillOptions{})
 }
 
-// skillUpdate re-renders every installed (skill, operator, scope) with the
+// SkillUpdate re-renders every installed (skill, operator, scope) with the
 // currently resolved base URL and rewrites it when the recorded content hash
 // differs. It only touches installs that already exist — it never creates a new
 // one — so it is a refresh, not an install (#407).

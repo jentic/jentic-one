@@ -6,7 +6,6 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/spf13/cobra"
 )
 
 // testApp builds a ctl-tree receiver backed by a throwaway cmdcore.App with a
@@ -18,13 +17,4 @@ func testApp(t *testing.T) *app {
 		Out:   new(bytes.Buffer),
 		Err:   new(bytes.Buffer),
 	}}
-}
-
-func hasCommand(root *cobra.Command, name string) bool {
-	for _, c := range root.Commands() {
-		if c.Name() == name {
-			return true
-		}
-	}
-	return false
 }

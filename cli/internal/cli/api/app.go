@@ -44,13 +44,15 @@ var (
 // lower-cased with the same (writer, value) signature.
 func writeJSON(w io.Writer, v any) error { return cmdcore.WriteJSON(w, v) }
 
-// Build-time version metadata, mirrored from cmdcore so the few relocated api
-// call sites (api.go's server-version 404 enrichment) keep referencing version
-// verbatim. cmdcore is the ONE package the -ldflags stamp targets. commit/date
-// are mirrored for symmetry with the other trees even if api doesn't read them.
+// Build-time version metadata, mirrored from cmdcore for symmetry with the ctl
+// tree. cmdcore is the ONE package the -ldflags stamp targets; the api tree
+// reads the connected SERVER's version (api.go's 404 enrichment probes it live)
+// rather than its own build stamp, so these are unread here — sunk below so the
+// mirror stays a single obvious source of truth without tripping the unused check.
 var version, commit, date = cmdcore.VersionMeta()
 
 var (
+	_ = version
 	_ = commit
 	_ = date
 )

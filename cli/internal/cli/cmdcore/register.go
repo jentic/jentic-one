@@ -13,8 +13,8 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/authclient"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -30,6 +30,8 @@ type registerOptions struct {
 	interactive bool
 }
 
+// NewRegisterCmd builds the `register` command that provisions an agent
+// identity with the control plane. Shared by both trees via cmdcore.
 func NewRegisterCmd(app *App) *cobra.Command {
 	opts := &registerOptions{}
 
@@ -81,7 +83,7 @@ var registerFieldFlags = []string{"profile", "base-url", "name"}
 var bootstrapFieldFlags = append(append([]string{}, registerFieldFlags...),
 	"operator", "all", "scope", "skip-skill", "no-activate")
 
-// wantsInteractive also requires a real terminal (so pipes/CI stay non-interactive).
+// WantsInteractive also requires a real terminal (so pipes/CI stay non-interactive).
 func WantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 	return flagsAllowPrompt(cmd, yes, fieldFlags...) && term.IsTerminal(os.Stdin.Fd())
 }

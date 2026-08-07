@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -63,6 +63,8 @@ type runOptions struct {
 	noSeedConfig bool
 }
 
+// NewRunCmd builds the `run` command that launches a coding agent inside the
+// per-session sandbox. Shared by both trees via cmdcore.
 func NewRunCmd(app *App) *cobra.Command {
 	opts := &runOptions{}
 	cmd := &cobra.Command{
