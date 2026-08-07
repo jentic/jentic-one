@@ -50,6 +50,24 @@ apps: [registry, admin]
 	}
 }
 
+func TestLoadAnswersAppliesPGExpose(t *testing.T) {
+	path := writeAnswers(t, "pg_expose_host_port: true\npg_port: \"15432\"\n")
+	a, err := LoadAnswers(path)
+	if err != nil {
+		t.Fatalf("LoadAnswers: %v", err)
+	}
+	d := NewDraft()
+	a.Apply(d)
+
+	if !d.PGExposeHostPort || d.PGPort != "15432" {
+		t.Errorf("pg expose answers not applied: expose=%v port=%s", d.PGExposeHostPort, d.PGPort)
+	}
+	// And the default without the answer stays off (#992).
+	if NewDraft().PGExposeHostPort {
+		t.Error("PGExposeHostPort must default to off")
+	}
+}
+
 // A typoed key silently keeping a default would defeat the point of an
 // unattended install, so unknown keys are an error.
 func TestLoadAnswersRejectsUnknownKeys(t *testing.T) {

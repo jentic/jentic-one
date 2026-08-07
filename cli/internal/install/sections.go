@@ -196,15 +196,35 @@ var databaseSection = Section{
 					).
 					Value(&d.DBBackend),
 			),
+			// Shared Postgres identity. The password is prompted only on the
+			// local path below: the Docker path's managed container is
+			// machine-managed end to end and gets a generated random password
+			// (secrets.go), so there is nothing for the operator to type.
 			huh.NewGroup(
-				Input().Title("Postgres host").Value(&d.PGHost).Validate(notEmpty("host")),
-				Input().Title("Postgres port").Value(&d.PGPort).Validate(validatePort),
 				Input().Title("Database name").Value(&d.PGName).Validate(notEmpty("name")),
 				Input().Title("Superuser / owner role").
 					Description("Used as the base credential; per-surface schemas are isolated by schema_name.").
 					Value(&d.PGUser).Validate(notEmpty("user")),
-				Input().Title("Password").EchoMode(huh.EchoModePassword).Value(&d.PGPassword),
 			).WithHideFunc(func() bool { return !d.IsPostgres() }),
+			// Local path: the user's own Postgres — where it is and how to
+			// authenticate are theirs to answer.
+			huh.NewGroup(
+				Input().Title("Postgres host").Value(&d.PGHost).Validate(notEmpty("host")),
+				Input().Title("Postgres port").Value(&d.PGPort).Validate(validatePort),
+				Input().Title("Password").EchoMode(huh.EchoModePassword).Value(&d.PGPassword),
+			).WithHideFunc(func() bool { return !d.IsPostgres() || d.IsDocker() }),
+			// Docker path: the managed container is reachable over the compose
+			// network; publishing 5432 on the host is opt-in (#992 — it was
+			// exposed by default, guarded only by a guessable password).
+			huh.NewGroup(
+				huh.NewConfirm().
+					Title("Expose Postgres on the host?").
+					Description("Off: reachable only from the compose network (the app and broker need nothing more). On: publishes the port below on your bind host for external tools.").
+					Value(&d.PGExposeHostPort),
+			).WithHideFunc(func() bool { return !d.IsPostgres() || !d.IsDocker() }),
+			huh.NewGroup(
+				Input().Title("Published Postgres port").Value(&d.PGPort).Validate(validatePort),
+			).WithHideFunc(func() bool { return !d.IsPostgres() || !d.IsDocker() || !d.PGExposeHostPort }),
 			huh.NewGroup(
 				Input().
 					Title("SQLite data directory").
@@ -215,12 +235,23 @@ var databaseSection = Section{
 	},
 	Summary: func(d *Draft) []string {
 		if d.IsPostgres() {
-			return []string{
-				theme.Field("backend", "postgres"),
-				theme.Field("host", d.PGHost+":"+d.PGPort),
+			lines := []string{theme.Field("backend", "postgres")}
+			if d.IsDocker() {
+				expose := "no (compose network only)"
+				if d.PGExposeHostPort {
+					expose = "yes (host port " + d.PGPort + ")"
+				}
+				lines = append(lines,
+					theme.Field("host", "managed container"),
+					theme.Field("exposed", expose),
+				)
+			} else {
+				lines = append(lines, theme.Field("host", d.PGHost+":"+d.PGPort))
+			}
+			return append(lines,
 				theme.Field("name", d.PGName),
 				theme.Field("user", d.PGUser),
-			}
+			)
 		}
 		return []string{
 			theme.Field("backend", "sqlite"),

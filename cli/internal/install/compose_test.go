@@ -120,6 +120,9 @@ func TestRenderComposeBindHost(t *testing.T) {
 			d := NewDraft()
 			d.RuntimePath = RuntimeDocker
 			d.DBBackend = BackendPostgres
+			d.PGPassword = "test-pw"
+			// Opt in so the db publish is present to assert the prefix on.
+			d.PGExposeHostPort = true
 			d.ServerHost = tc.serverHost
 			cfg := composeConfigFor("/home/u/.jentic")
 
@@ -161,6 +164,7 @@ func TestWriteComposeArtifactsModes(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
 	cfg := composeConfigFor(dir)
 	// Simulate a prior install having created the logs dir 0700 (the pre-#992
 	// mode): WriteComposeArtifacts must heal it, not just create-if-missing.
@@ -193,6 +197,8 @@ func TestRenderComposePostgres(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+	d.PGExposeHostPort = true
 	d.PGPort = "55432"
 	cfg := composeConfigFor("/home/u/.jentic")
 
@@ -225,6 +231,46 @@ func TestRenderComposePostgres(t *testing.T) {
 	}
 }
 
+// The managed Postgres is reachable over the compose network; publishing 5432
+// on the host is opt-in (#992: it was published by default, guarded only by a
+// guessable password).
+func TestRenderComposePostgresNoHostPublishByDefault(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+
+	data, err := RenderCompose(d, composeConfigFor("/home/u/.jentic"))
+	if err != nil {
+		t.Fatalf("RenderCompose: %v", err)
+	}
+	assertValidComposeYAML(t, data)
+	out := string(data)
+
+	if strings.Contains(out, ":5432\"") {
+		t.Errorf("db port published without opt-in:\n%s", out)
+	}
+	// The db service block (up to the next service) must carry no ports key.
+	dbBlock := out[strings.Index(out, "  db:"):strings.Index(out, "  app:")]
+	if strings.Contains(dbBlock, "ports:") {
+		t.Errorf("db service has a ports block without opt-in:\n%s", dbBlock)
+	}
+}
+
+// A blank password must fail loudly at render time, not come up passwordless:
+// FillSecrets generates a random credential (the guessable "postgres" default
+// was #992's exposure multiplier) and skipping it is a caller bug.
+func TestRenderComposePostgresRequiresPassword(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+
+	if _, err := RenderCompose(d, composeConfigFor("/home/u/.jentic")); err == nil ||
+		!strings.Contains(err.Error(), "postgres password is empty") {
+		t.Errorf("expected empty-password error, got %v", err)
+	}
+}
+
 func TestWriteComposeArtifactsSQLite(t *testing.T) {
 	dir := t.TempDir()
 	d := NewDraft()
@@ -251,6 +297,7 @@ func TestWriteComposeArtifactsRemovesLegacyInitSQL(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
 	cfg := composeConfigFor(dir)
 	stale := cfg.legacyInitSchemasPath()
 	if err := os.WriteFile(stale, []byte("CREATE SCHEMA IF NOT EXISTS registry;"), 0o600); err != nil {

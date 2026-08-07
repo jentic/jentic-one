@@ -29,6 +29,9 @@ func TestWizardAnswersAreContracts(t *testing.T) {
 	d.PGName = "customdb"
 	d.PGUser = "customuser"
 	d.PGPassword = "custompass"
+	// Host publish of 5432 is opt-in (#992); enable it so the published-port
+	// answer has a surface to be asserted on.
+	d.PGExposeHostPort = true
 	d.Apps = []string{"registry", "control"}
 	d.ServerHost = "10.9.8.7"
 	d.ServerPort = "18000"
@@ -73,7 +76,7 @@ func TestWizardAnswersAreContracts(t *testing.T) {
 		{"ServerPort", "config", "port: 18000"},
 		{"BrokerPort", "compose", `JENTIC__SERVER__PORT: "18100"`},
 		// Database section.
-		{"PGPort (published)", "compose", `"10.9.8.7:15432:5432"`},
+		{"PGExposeHostPort/PGPort (published)", "compose", `"10.9.8.7:15432:5432"`},
 		{"PGHost (docker transform)", "config", "host: " + composeServiceDB},
 		{"PGName", "compose", "POSTGRES_DB: customdb"},
 		{"PGName", "config", "name: customdb"},

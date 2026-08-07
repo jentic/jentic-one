@@ -731,6 +731,21 @@ jobs:
             fi
           done
 
+      - name: "Postgres not published, password not guessable (#992 item 2)"
+        # The managed db is reachable over the compose network only; a host
+        # publish is opt-in. And the initdb password must be the generated
+        # random one, never the old "postgres" default.
+        run: |
+          if $COMPOSE ps | grep -q ':5432'; then
+            echo "::error::db port published on the host without opt-in"
+            $COMPOSE ps
+            exit 1
+          fi
+          if grep -qE 'POSTGRES_PASSWORD: *(postgres)? *$' ~/.jentic/docker-compose.yaml; then
+            echo "::error::managed postgres password is default/empty"
+            exit 1
+          fi
+
       - name: Generated artifacts readable by container uids (#992 item 1)
         # Assert through the container (uid 999), not via host stat — the
         # host user can read anything it owns.

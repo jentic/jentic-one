@@ -51,6 +51,13 @@ type Draft struct {
 	PGUser     string
 	PGPassword string
 
+	// PGExposeHostPort publishes the managed Postgres container's 5432 on the
+	// host (Docker path only). Off by default: the app and broker reach the
+	// database over the compose network, so a host publish is purely a
+	// debugging/tooling convenience — and it was one of #992's exposure
+	// surfaces. When enabled, PGPort is the published host port.
+	PGExposeHostPort bool
+
 	// SQLiteDir is the directory holding per-surface *.db files (BackendSQLite).
 	SQLiteDir string
 
@@ -156,13 +163,18 @@ type Draft struct {
 // defaults (mirroring config/local.yaml).
 func NewDraft() *Draft {
 	return &Draft{
-		RuntimePath:     RuntimeDocker,
-		DBBackend:       BackendPostgres,
-		PGHost:          "localhost",
-		PGPort:          "5432",
-		PGName:          "jentic",
-		PGUser:          "postgres",
-		PGPassword:      "postgres",
+		RuntimePath: RuntimeDocker,
+		DBBackend:   BackendPostgres,
+		PGHost:      "localhost",
+		PGPort:      "5432",
+		PGName:      "jentic",
+		PGUser:      "postgres",
+		// Deliberately empty: the Docker path's managed Postgres gets a
+		// generated random password from FillSecrets (#992 — the old
+		// "postgres" default was a guessable credential on a database that
+		// could end up internet-reachable). The local path prompts, since the
+		// user's own Postgres has whatever password it has.
+		PGPassword:      "",
 		SQLiteDir:       ".data",
 		Apps:            []string{"registry", "admin", "control", "auth"},
 		ServerHost:      "127.0.0.1",

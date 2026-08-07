@@ -49,12 +49,15 @@ services:
 	}
 }
 
-// The compose files this CLI generates (post-#992) must never trip the check.
+// The compose files this CLI generates (post-#992) must never trip the check,
+// including with the opt-in Postgres host publish enabled.
 func TestUnqualifiedPublishesCleanOnGeneratedCompose(t *testing.T) {
 	for _, backend := range []string{BackendPostgres, BackendSQLite} {
 		d := NewDraft()
 		d.RuntimePath = RuntimeDocker
 		d.DBBackend = backend
+		d.PGPassword = "test-pw"
+		d.PGExposeHostPort = true
 		data, err := RenderCompose(d, composeConfigFor("/home/u/.jentic"))
 		if err != nil {
 			t.Fatalf("RenderCompose(%s): %v", backend, err)
