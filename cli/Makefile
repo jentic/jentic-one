@@ -23,7 +23,7 @@ OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@
 # the repo moved to omissis/go-jsonschema but kept the old import path (impl/6.0 §2).
 GO_JSONSCHEMA := go run github.com/atombender/go-jsonschema@v0.23.0
 
-.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen generate-config check-ctl-gen
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden test-sdk-consumer golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen generate-config check-ctl-gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -48,6 +48,9 @@ test-arch: ## Run architectural guardrail tests (SDK boundary, fencing, prints, 
 
 test-golden: ## Run V1 characterization (golden) tests — the frozen shipped-CLI contract
 	go test ./tests/golden/...
+
+test-sdk-consumer: ## Prove client/ is consumable by an out-of-tree module with no cobra/charmbracelet/internal deps
+	go test ./tests/sdkconsumer/...
 
 golden-update: ## Regenerate the V1 golden files (only when a change is authorized by a BC number)
 	go test ./tests/golden/... -update
