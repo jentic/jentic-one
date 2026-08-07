@@ -7,6 +7,7 @@ import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { webhooksHandlers } from '@/modules/webhooks/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -163,6 +164,9 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	// Webhooks (PROTOTYPE): the module has no backend surface yet, so these
+	// mocks are the only source for `/webhooks…` in mocked dev.
+	...webhooksHandlers,
 	// Extensibility seam: `handlers` is exported (not module-private) so a
 	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
 	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —
