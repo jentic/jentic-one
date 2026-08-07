@@ -1,12 +1,11 @@
-// Package client is the top-level, UX-free entrypoint for the Jentic SDK. It maps
-// a Config into the auth layer's Credentials, assembles the request-editor chain
-// (auth bearer + any caller-supplied editors), and constructs the generated,
-// strictly-typed control- and broker-plane clients.
+// This file holds the top-level SDK constructors. The package-level
+// documentation (surface, boundary, stability policy) lives in doc.go.
 //
 // Everything here and below (client/auth, client/config, client/generated,
 // client/paginate) is import-safe for third-party consumers: it must NOT import
-// internal/*, Cobra, or any UX/theme package. Arch test 1A enforces this the
-// moment this package exists.
+// internal/*, pkg/*, Cobra, or any UX/theme package. Arch test Test1A_SDKBoundary
+// enforces this.
+
 package client
 
 import (

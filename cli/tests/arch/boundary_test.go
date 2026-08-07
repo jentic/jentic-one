@@ -16,23 +16,31 @@ import (
 // *command-tree composition* layer (impl/7.0 §3): they compose the Cobra tree
 // for downstream binaries and therefore legitimately import cobra and the
 // internal command implementations. Only client/... is the framework-free API
-// surface this boundary protects. client/ lands in Phase 1; until then the test
-// is dormant (logged, not vacuously green).
+// surface this boundary protects.
 var sdkRoots = []string{"client"}
 
 // forbiddenSDKImports are import prefixes an SDK package may not pull in,
 // because doing so would break headless third-party importers or leak the CLI's
-// private surface into the public API.
+// private surface into the public API (impl/7.0 §7.1). The internal/ ban already
+// covers internal/cli/ux and internal/theme transitively; the explicit ux/theme
+// entries below are belt-and-suspenders so a future non-internal home for either
+// still trips the gate ("Mode and Theme never leak into the SDK", §2).
 var forbiddenSDKImports = []struct {
 	prefix, why string
 }{
 	{modulePath + "/internal", "SDK must not import CLI-private internal/ packages"},
+	{modulePath + "/internal/cli/ux", "SDK must not import the UX audience/mode layer"},
+	{modulePath + "/internal/theme", "SDK must not import the CLI theme layer"},
+	{modulePath + "/pkg", "SDK (client/) is the lowest layer: pkg/ depends on client/, never the reverse (impl/7.0 §2)"},
 	{"github.com/spf13/cobra", "SDK must not depend on the Cobra CLI framework"},
 	{"github.com/charmbracelet", "SDK must not depend on UI libraries (bubbletea/lipgloss/huh)"},
 }
 
-// Test1A_SDKBoundary asserts client/... and the public composition packages
-// import nothing from internal/..., cobra, or charmbracelet.
+// Test1A_SDKBoundary asserts client/... imports nothing from internal/...,
+// cobra, charmbracelet, or the ux/theme UX layers — the public-SDK contract of
+// impl/7.0 §7. It fails (never silently passes) if no SDK packages are found, so
+// a rename that moves client/ out from under sdkRoots can't turn the gate
+// vacuous.
 func Test1A_SDKBoundary(t *testing.T) {
 	pkgs := loadCLI(t)
 
@@ -52,7 +60,50 @@ func Test1A_SDKBoundary(t *testing.T) {
 	}
 
 	if seen == 0 {
-		t.Logf("dormant: no SDK packages present yet (%v) — activates when Phase 1 lands", sdkRoots)
+		t.Fatalf("SDK boundary check found no packages under %v — the public client/ surface "+
+			"is missing or was moved; this gate must not pass vacuously (impl/7.0 §7)", sdkRoots)
+	}
+}
+
+// pkgRoots are the public command-tree *composition* packages (impl/7.0 §3):
+// downstream binaries (e.g. the enterprise CLI) embed and extend the Cobra
+// tree through them. Unlike client/, they MAY import cobra and internal command
+// implementations; the one hard rule is the layering direction below.
+var pkgRoots = []string{"pkg"}
+
+// Test7_CompositionLayerLayering enforces the impl/7.0 §2 dependency arrow for
+// the public composition tree: `pkg/ depends on client/, never the reverse`.
+// The client↛pkg half is covered by the SDK boundary gate (pkg is a forbidden
+// SDK import); this test guards the other properties — that the composition
+// packages actually exist (so the public surface can't be silently deleted) and
+// that they don't smuggle in the UX/theme layer the SDK forbids either. Cobra
+// and internal/ imports ARE allowed here by design.
+func Test7_CompositionLayerLayering(t *testing.T) {
+	pkgs := loadCLI(t)
+
+	forbidden := []struct{ prefix, why string }{
+		{modulePath + "/internal/cli/ux", "the public composition layer must not surface the UX audience/mode layer"},
+		{modulePath + "/internal/theme", "the public composition layer must not surface the CLI theme layer"},
+	}
+
+	var seen int
+	for _, p := range pkgs {
+		if !underPrefixes(p.PkgPath, pkgRoots...) {
+			continue
+		}
+		seen++
+		for imp := range p.Imports {
+			for _, f := range forbidden {
+				if imp == f.prefix || strings.HasPrefix(imp, f.prefix+"/") {
+					t.Errorf("composition layer: %s imports %q — %s", rel(p.PkgPath), imp, f.why)
+				}
+			}
+		}
+	}
+
+	if seen == 0 {
+		t.Fatalf("no packages found under %v — the public pkg/ composition surface is missing "+
+			"or was moved; this gate must not pass vacuously (impl/7.0 §3)", pkgRoots)
 	}
 }
 
