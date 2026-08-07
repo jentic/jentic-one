@@ -227,6 +227,10 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 		<Card data-testid="revisions-section">
 			<CardHeader>
 				<CardTitle>Revisions</CardTitle>
+				<p className="text-muted-foreground mt-0.5 text-xs">
+					Every version of this API&apos;s spec, newest first. Imports, uploads, and
+					applied overlays each create one; exactly one can be live (serving traffic).
+				</p>
 			</CardHeader>
 			<CardBody>
 				{query.isLoading ? (

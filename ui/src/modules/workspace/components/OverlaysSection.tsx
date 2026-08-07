@@ -249,6 +249,10 @@ export function OverlaysSection({
 		<Card data-testid="overlays-section">
 			<CardHeader>
 				<CardTitle>Overlays</CardTitle>
+				<p className="text-muted-foreground mt-0.5 text-xs">
+					Proposed fixes layered on top of a spec — the spec itself is never edited in
+					place. Confirming an overlay applies it and produces a new revision above.
+				</p>
 			</CardHeader>
 			<CardBody>
 				{query.isLoading ? (
