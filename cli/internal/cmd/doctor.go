@@ -19,6 +19,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 // checkStatus is the outcome of a single doctor probe.
@@ -107,6 +108,7 @@ func (a *App) doctorE(ctx context.Context, opts *doctorOptions) error {
 	manifest, manifestFound, _ := config.LoadManifest(a.Paths)
 	d.checkInstall(manifest, manifestFound)
 	d.checkTooling(manifest, manifestFound)
+	d.checkConfigValidity()
 	d.checkServer()
 	d.checkAgent()
 	d.checkLocalAgent(cfg)
@@ -325,6 +327,50 @@ func (d *doctor) checkLocalAgent(cfg *config.FileConfig) {
 	} else {
 		d.add(section, "account", statusPass, fmt.Sprintf("%s (uid %s)", acct.User, agentUser.Uid), "")
 	}
+}
+
+// checkConfigValidity validates the persisted install config (jentic-one.yaml)
+// against the shape jentic-one needs to boot (impl/6.4 "Configuration Validity",
+// wired to the Phase 6 config-schema work). It is a light structural check, not a
+// full schema validation: the authoritative validator is the backend's Pydantic
+// model at boot, and doctor must stay read-only and dependency-light. It reports:
+//   - databases.control must name either a Postgres host or a SQLite path — the
+//     single most common "install half-written" failure the impl guide calls out;
+//   - the file must parse as YAML at all.
+//
+// It is skipped (no row) when no install config exists yet — that gap is already
+// reported by the Install/Server checks, and a fresh machine shouldn't fail here.
+func (d *doctor) checkConfigValidity() {
+	const section = "Configuration"
+	path := d.app.Paths.InstallConfigPath()
+	raw, err := os.ReadFile(path) //nolint:gosec // path is the CLI-managed install config under JENTIC_HOME, not user input
+	if err != nil {
+		return // not installed yet; other checks cover that
+	}
+	var doc struct {
+		Databases struct {
+			Control struct {
+				Host string `yaml:"host"`
+				Path string `yaml:"path"`
+			} `yaml:"control"`
+		} `yaml:"databases"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		d.add(section, "config file", statusFail, fmt.Sprintf("%s is not valid YAML: %v", path, err),
+			"re-run `jenticctl install` to regenerate it, or fix the syntax by hand")
+		return
+	}
+	if doc.Databases.Control.Host == "" && doc.Databases.Control.Path == "" {
+		d.add(section, "databases.control", statusFail,
+			"neither a Postgres host nor a SQLite path is set",
+			"re-run `jenticctl install` (or set databases.control.host / databases.control.path)")
+		return
+	}
+	backend := "sqlite (" + doc.Databases.Control.Path + ")"
+	if doc.Databases.Control.Host != "" {
+		backend = "postgres (" + doc.Databases.Control.Host + ")"
+	}
+	d.add(section, "databases.control", statusPass, backend, "")
 }
 
 // render prints the grouped report and returns a non-nil error when any check
