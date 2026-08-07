@@ -102,8 +102,9 @@ var sensitiveKeySuffixes = []string{
 // agents depend on. `next_token` is a pagination cursor (ends in `_token`);
 // `has_api_key`/`has_credentials` are booleans reporting presence, not the secret
 // itself. These win over the exact/suffix matches below (impl/3.1 §1 names them as
-// the false positives the scoped design must protect; mirrored in the arch sweep
-// allowlist, tests/arch/spec_test.go).
+// the false positives the scoped design must protect). The arch sweep
+// (tests/arch, Test1H) calls the exported IsSensitiveKey rather than mirroring
+// this list, so it can never disagree with the runtime redactor (F8-35).
 var sensitiveKeyAllowlist = map[string]bool{
 	"next_token":      true,
 	"has_api_key":     true,
@@ -129,6 +130,13 @@ func isSensitiveKey(key string) bool {
 	}
 	return false
 }
+
+// IsSensitiveKey is the exported form of the redactor's secret-shaped-key
+// predicate. It exists so the architecture sweep (tests/arch, Test1H) asserts
+// against the ACTUAL runtime heuristic — allowlist included — rather than a
+// hand-maintained copy that can silently drift (F8-35). It is the single source
+// of truth for "does this property name look like a secret".
+func IsSensitiveKey(key string) bool { return isSensitiveKey(key) }
 
 // camelToSnake lowercases a key, inserting `_` at word boundaries. ACRONYM-AWARE:
 // a run of capitals is one word, so "APIKey" -> "api_key" and "HTTPSProxy" ->

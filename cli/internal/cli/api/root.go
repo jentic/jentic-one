@@ -1,0 +1,106 @@
+package api
+
+import (
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/pkg/core"
+)
+
+// newAPIRootCmd assembles the jentic command tree: the API-spec surface
+// (register, profile, logout, catalog, apis) for discovering, inspecting,
+// and executing against the Jentic API catalog.
+func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
+	app := &app{App: core}
+	root := cmdcore.NewBaseRoot(app.App, "jentic")
+	root.Short = "jentic: discover, inspect, and run against the Jentic API catalog"
+	root.Annotations = map[string]string{"tagline": "discover, inspect, and run against the Jentic API catalog"}
+	root.Long = "jentic is the command-line companion for working with the Jentic API\n" +
+		"catalog. Register and switch agent identities, browse and import APIs from\n" +
+		"the public catalog into your local registry, inspect operations, and execute\n" +
+		"against them.\n\n" +
+		"New here? If you're a person setting up a local agent, run `jentic bootstrap`\n" +
+		"to create one (isolated account + registration + skills). If you're an agent\n" +
+		"without a profile yet, run `jentic register`. Then browse the catalog with\n" +
+		"`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\n" +
+		"CLI (e.g. `jenticctl install`). Use `jentic <command> --help` for details."
+
+	root.AddGroup(
+		&cobra.Group{ID: "identity", Title: "Identity & access"},
+		&cobra.Group{ID: "apis", Title: "APIs"},
+		&cobra.Group{ID: "agent", Title: "Find and run operations"},
+		&cobra.Group{ID: "client", Title: "Local agent client"},
+		&cobra.Group{ID: "admin", Title: "Administration"},
+	)
+
+	// Global selection/UX flags (BC-3/BC-5/BC-9). The interceptor
+	// (installInterceptor) reads these via flagValue to drive the mode/theme/
+	// context resolution ladder; they are persistent so they apply to every
+	// subcommand. --context selects which context to resolve; --mode overrides the
+	// interaction mode (closed enum, fail-closed to agent); --theme overrides the
+	// human-mode palette.
+	root.PersistentFlags().String("context", "", "Context to act on (overrides the active context; $JENTIC_CONTEXT)")
+	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
+	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
+
+	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewBootstrapCmd(app.App)))
+	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
+	cmdcore.AddGrouped(root, "identity", newProfileCmd(app))
+	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
+	// V2 context model (Phase 3): the Environment × Identity × Context surface
+	// that supersedes flat profiles, plus the one-shot migrator. These COEXIST
+	// with the V1 profile commands above during the deprecation window — V1 stays
+	// the active path until the activation release (14 rollout item 0); nothing
+	// here flips breaking behavior on merge.
+	cmdcore.AddGrouped(root, "identity", newContextCmd(app))
+	cmdcore.AddGrouped(root, "identity", newEnvCmd(app))
+	cmdcore.AddGrouped(root, "identity", newIdentityCmd(app))
+	cmdcore.AddGrouped(root, "identity", bootstrapSafe(newMigrateCmd(app))) // NOT fenced (BC-1); bootstrap-safe (runs with no XDG config)
+	cmdcore.AddGrouped(root, "apis", newCatalogCmd(app))
+	cmdcore.AddGrouped(root, "apis", newApisCmd(app))
+	cmdcore.AddGrouped(root, "apis", newEndpointsCmd(app))
+	cmdcore.AddGrouped(root, "apis", newCredentialsCmd(app))
+	cmdcore.AddGrouped(root, "agent", newSearchCmd(app))
+	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
+	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))
+	cmdcore.AddGrouped(root, "agent", newAccessCmd(app))
+	// Execution history + live events over the V2 SDK (Phase 5 items 3-4).
+	cmdcore.AddGrouped(root, "agent", newHistoryCmd(app))
+	cmdcore.AddGrouped(root, "agent", newEventsCmd(app))
+	// gh-api-style authenticated passthrough to the control plane, with
+	// self-description (Phase 5 item 7a). Not fenced (server-scope-gated).
+	cmdcore.AddGrouped(root, "agent", newAPICmd(app))
+	// The agent-client commands manage and drive the local coding agent
+	// (generate its skills, launch it under isolation, tear its account down),
+	// distinct from the catalog find/run operations above.
+	cmdcore.AddGrouped(root, "client", cmdcore.NewSkillCmd(app.App))
+	cmdcore.AddGrouped(root, "client", fenced(cmdcore.NewRunCmd(app.App)))
+	cmdcore.AddGrouped(root, "client", fenced(newResetCmd(app)))
+	// Agent-side read-only self-check (F8-4, impl/5.1 §3c). Not fenced: it never
+	// mutates host state and is exactly the diagnostic an agent needs where
+	// jenticctl is absent.
+	cmdcore.AddGrouped(root, "client", newDoctorCmd(app))
+	cmdcore.AddGrouped(root, "admin", newAdminCmd(app))
+	cmdcore.AddGrouped(root, "admin", newThemeCmd(app))
+
+	return root
+}
+
+// ExecuteAPI runs the jentic (API-spec) command tree and exits with an
+// appropriate status code.
+func ExecuteAPI() {
+	os.Exit(cmdcore.RunRoot(newAPIRootCmd))
+}
+
+// TreeBuilder exposes the built-in `jentic` (API) command tree as a
+// core.TreeBuilder so a downstream module can compose it via
+// core.NewRootCmd(deps, api.TreeBuilder()). cli/pkg/clitree re-exports it so
+// other modules can import it (internal/ is not importable cross-module).
+func TreeBuilder() core.TreeBuilder { return cmdcore.TreeBuilder(newAPIRootCmd) }
+
+// NewDocsRoot builds the assembled `jentic` root with a throwaway App for
+// documentation generation. No filesystem or network access happens at
+// construction time — commands only act when run — so a zero App is safe.
+func NewDocsRoot() *cobra.Command { return newAPIRootCmd(&cmdcore.App{}) }

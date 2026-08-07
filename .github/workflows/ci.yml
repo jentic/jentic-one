@@ -666,6 +666,16 @@ jobs:
           make test-arch
           make test-golden
 
+      # External-consumer contract (themes/cli-v2/impl/1.1 §1, impl/7.0 §1): a
+      # throwaway out-of-tree module `go get`s the SDK, imports client/..., and
+      # must build with a dependency graph free of cobra/charmbracelet/internal.
+      # This is the concrete "usable from outside easily" guarantee — stronger
+      # than the arch import-scan because it exercises the real build graph an
+      # external user resolves, so an internal/ or UI-dep leak into client/ fails
+      # here at dependency-resolution time.
+      - name: Public SDK external-consumer contract
+        run: make test-sdk-consumer
+
       # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
       # CLI") is generated from the cobra command tree by `make cli-reference`.
       # Nothing else pins it, so a command/flag change without a regen would

@@ -135,11 +135,11 @@ func Test1F_StdoutStderrBoundary(t *testing.T) {
 	// V2 refactor moves these, the allowlist shrinks; new code in the V2 command
 	// packages gets no exemption.
 	legacyStdoutAllowlist := map[string]bool{
-		"internal/cmd/output.go":  true, // jsonOrPretty TTY probe + shipped render seam
-		"internal/cmd/header.go":  true, // term.IsTerminal(os.Stdout.Fd()) — TTY detection
-		"internal/cmd/run.go":     true, // child-process c.Stdout = os.Stdout (must be real fd)
-		"internal/cmd/root.go":    true, // AppContainer{Out: os.Stdout} — the bootstrap capture point
-		"internal/cmd/install.go": true, // banner writer handed to an install helper
+		"internal/cli/cmdcore/output.go": true, // jsonOrPretty TTY probe + shipped render seam
+		"internal/cli/cmdcore/header.go": true, // term.IsTerminal(os.Stdout.Fd()) — TTY detection
+		"internal/cli/cmdcore/run.go":    true, // child-process c.Stdout = os.Stdout (must be real fd)
+		"internal/cli/cmdcore/root.go":   true, // AppContainer{Out: os.Stdout} — the bootstrap capture point
+		"internal/cli/ctlcmd/install.go": true, // banner writer handed to an install helper
 	}
 	osStdoutAllowed := func(pkgPath, file string) bool {
 		if underPrefixes(pkgPath, "internal/cli/ux") {

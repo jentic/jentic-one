@@ -1,0 +1,192 @@
+package ctlcmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/proc"
+	"github.com/jentic/jentic-one/cli/internal/theme"
+	"github.com/spf13/cobra"
+)
+
+type startOptions struct {
+	config string
+}
+
+func newStartCmd(app *app) *cobra.Command {
+	opts := &startOptions{}
+	cmd := &cobra.Command{
+		Use:   "start",
+		Short: "Start the configured jentic-one app",
+		Long: "start launches the locally-installed jentic-one app in the background.\n" +
+			"It requires a completed `jenticctl install` (a generated config and a built\n" +
+			"venv); if either is missing it tells you to run `jenticctl install` first.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.startE(cmd.Context(), opts)
+		},
+	}
+	cmd.Flags().StringVar(&opts.config, "config", "",
+		"path to the generated config (default: ~/.jentic/jentic-one.yaml)")
+	return cmd
+}
+
+func (a *app) startE(ctx context.Context, opts *startOptions) error {
+	// A generated compose file marks a Docker install: drive the stack with
+	// docker compose instead of the local background process.
+	composePath := a.Paths.ComposePath()
+	if proc.FileExists(composePath) {
+		return a.startDocker(ctx, composePath)
+	}
+
+	pidPath := a.Paths.AppPIDPath()
+
+	// Already running? Don't start a second instance.
+	if pid, alive, _ := proc.LivePID(pidPath); alive {
+		fmt.Fprintln(a.Out, theme.Infof("App is already running (pid %d). Use `jenticctl stop` first.", pid))
+		return nil
+	}
+
+	configPath := opts.config
+	if configPath == "" {
+		configPath = a.Paths.InstallConfigPath()
+	}
+	if !proc.FileExists(configPath) {
+		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
+	}
+
+	venvDir := a.Paths.VenvPath()
+	py := install.VenvPython(venvDir)
+	if !proc.FileExists(py) {
+		return fmt.Errorf("no local environment at %s — run `jenticctl install` first", venvDir)
+	}
+
+	logsDir, err := a.Paths.Ensure(a.Paths.LogsDir())
+	if err != nil {
+		return err
+	}
+	logPath := filepath.Join(logsDir, "app.log")
+
+	fmt.Fprintln(a.Out, theme.Infof("Starting app ..."))
+	pid, err := install.StartApp(py, configPath, logPath, pidPath)
+	if err != nil {
+		_ = os.Remove(pidPath)
+		return err
+	}
+
+	fmt.Fprintln(a.Out, theme.Successf("App started (pid %d)", pid))
+
+	if err := a.startBroker(py, configPath, logsDir); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(a.Out, theme.Dim.Render("  logs: jenticctl logs -f"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  stop: jenticctl stop"))
+	return nil
+}
+
+// startBroker launches the broker as its own background process on the port
+// recorded in the install manifest (default 8100). The broker cannot be
+// bundled with the combined app, so it always runs separately on the local
+// path. A missing broker PID file is fine; an already-running broker is left
+// alone.
+func (a *app) startBroker(py, configPath, logsDir string) error {
+	pidPath := a.Paths.BrokerPIDPath()
+	if pid, alive, _ := proc.LivePID(pidPath); alive {
+		fmt.Fprintln(a.Out, theme.Infof("Broker is already running (pid %d).", pid))
+		return nil
+	}
+
+	port := brokerPortFromManifest(a)
+	logPath := filepath.Join(logsDir, "broker.log")
+
+	fmt.Fprintln(a.Out, theme.Infof("Starting broker (port %s) ...", port))
+	pid, err := install.StartBroker(py, configPath, logPath, pidPath, port)
+	if err != nil {
+		_ = os.Remove(pidPath)
+		return err
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Broker started (pid %d)", pid))
+	return nil
+}
+
+// brokerPortFromManifest returns the broker port recorded at install time,
+// falling back to the default when the manifest is missing or unset.
+func brokerPortFromManifest(a *app) string {
+	if m, _, err := config.LoadManifest(a.Paths); err == nil && m.BrokerPort != "" {
+		return m.BrokerPort
+	}
+	return install.DefaultBrokerPort
+}
+
+// startDocker brings the generated docker-compose stack up in detached mode.
+func (a *app) startDocker(ctx context.Context, composePath string) error {
+	// The compose file proves a Docker install, but not that the daemon is up:
+	// with the daemon down (e.g. Docker Desktop closed after a reboot) `docker
+	// compose up` fails with a raw "Cannot connect to the Docker daemon" error.
+	// Probe first so we surface actionable recovery guidance (#783,
+	// jentic-api-scorecard#224). The probe can wait out a cold-starting daemon
+	// (~30s), so announce it — otherwise the command looks hung. This must come
+	// before the schema check below, which also needs a live daemon.
+	announceDaemonCheck(a.Out)
+	if err := requireDockerDaemon(ctx, "jenticctl start"); err != nil {
+		return err
+	}
+	if err := a.ensureDockerSchema(composePath); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(a.Out, theme.Infof("Starting Docker stack ..."))
+	if err := composeUp(a.Out, composePath); err != nil {
+		return fmt.Errorf("docker compose up: %w", err)
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Stack started."))
+	fmt.Fprintln(a.Out, theme.Dimf("  logs: docker compose -f %s logs -f", composePath))
+	fmt.Fprintln(a.Out, theme.Dim.Render("  stop: jenticctl stop"))
+	return nil
+}
+
+// ensureDockerSchema stops `start` from bringing the stack up on a database that
+// has no schema.
+//
+// `start` only ever ran `compose up`; migrations belong to `install` and
+// `update`. So after a `stop --volumes` (or any wiped volume), `start` reported
+// "Stack started." over an empty, unmigrated database — the app comes up, the
+// login fails or the UI is inexplicably blank, and nothing in the output points
+// at the schema. That is the failure this guards (#951).
+//
+// The two non-current states get deliberately different treatment:
+//
+//   - uninitialized: no schema, therefore no data to lose. Creating it is safe,
+//     so we do it automatically — exactly what `install` would have done.
+//   - pending: a schema WITH data that forward-only migrations would rewrite.
+//     That is the operator's decision to make with a backup in hand, so we
+//     refuse and name the command, rather than silently migrating on a `start`.
+//
+// An undeterminable state never blocks the start: refusing because a diagnostic
+// failed would be a worse regression than the bug being fixed.
+func (a *app) ensureDockerSchema(composePath string) error {
+	switch install.ComposeSchemaState(a.Out, composePath) {
+	case install.SchemaUnknown, install.SchemaCurrent:
+		return nil
+
+	case install.SchemaPending:
+		return errors.New("database schema is behind this build — start aborted.\n" +
+			"  Back up your data, then apply migrations:\n" +
+			"    jenticctl update --stack-only\n" +
+			"  (starting now would run the app against a schema it does not match)")
+
+	case install.SchemaUninitialized:
+		fmt.Fprintln(a.Out, theme.Warn.Render("Database has no schema (new or wiped volume) — creating it before start"))
+		if err := install.RunComposeMigrations(a.Out, composePath); err != nil {
+			return fmt.Errorf("could not initialize the database schema: %w", err)
+		}
+		fmt.Fprintln(a.Out, theme.Successf("Schema created."))
+	}
+	return nil
+}

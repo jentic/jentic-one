@@ -25,9 +25,9 @@ import (
 type CommandFactory func(deps *AppContainer) *cobra.Command
 
 // TreeBuilder builds the fully-configured root command for a binary from the
-// injected container. internal/cmd supplies this so `core` never imports
+// injected container. internal/cli/* supplies this so `core` never imports
 // `internal/*` — which keeps the dependency edge one-directional
-// (internal/cmd → pkg/core) and avoids an import cycle.
+// (internal/cli/* → pkg/core) and avoids an import cycle.
 type TreeBuilder func(deps *AppContainer) *cobra.Command
 
 // AppContainer is the injected dependency set for the CLI command tree. The
@@ -49,7 +49,7 @@ type AppContainer struct {
 }
 
 // NewRootCmd builds a root command tree using the injected container. `build`
-// assembles the built-in command set (supplied by internal/cmd); any
+// assembles the built-in command set (supplied by internal/cli/*); any
 // ExtraCommands are appended last so they never shadow built-in commands. The
 // container's streams are wired onto the root so both cobra's own output and
 // core.Run's error output honor the injected Out/Err/In.
@@ -72,7 +72,7 @@ func NewRootCmd(deps *AppContainer, build TreeBuilder) *cobra.Command {
 
 // ExitCoder is an error that carries a process exit code. A wrapped child
 // command's non-zero exit is surfaced as one of these so Run can mirror it
-// verbatim (rather than reporting it as a generic CLI error). internal/cmd's
+// verbatim (rather than reporting it as a generic CLI error). internal/cli/cmdcore's
 // exit-code error implements this; downstream errors may too.
 type ExitCoder interface {
 	error

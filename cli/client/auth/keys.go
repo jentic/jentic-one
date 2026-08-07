@@ -143,6 +143,42 @@ func GetOrGenerateKey(ref IdentityRef) (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
+// PurgeMaterial removes ALL on-disk secret material for ref — the Ed25519 key
+// (<config>/keys/<stem>.key), the cached tokens (<state>/<stem>_tokens.json), and
+// the API-key credential (<state>/<stem>.apikey). It is called by `identity
+// delete` / `context delete --identity` so deleting an identity does not leave
+// its private key and tokens orphaned on disk after the config entry is gone
+// (impl/1.3 §4a "delete removes its key/token files"; F8-34).
+//
+// A missing file is not an error (nothing to remove). It aggregates removal
+// errors so a permission problem on one file still attempts the others, and
+// reports the first failure. It never touches config.yaml — the caller owns the
+// config-map deletion via MutateConfig.
+func PurgeMaterial(ref IdentityRef) error {
+	// Compute paths WITHOUT creating the dirs: reuse the path builders but tolerate
+	// their MkdirAll (harmless — the dir already exists if any material does). If
+	// the stem itself is invalid, surface that (a corrupt config entry).
+	if _, err := ref.Stem(); err != nil {
+		return err
+	}
+	keyPath, kerr := KeyPathForImport(ref)
+	tokPath, terr := getTokenPath(ref)
+	akPath, aerr := apiKeyPath(ref)
+	for _, e := range []error{kerr, terr, aerr} {
+		if e != nil {
+			return e
+		}
+	}
+
+	var firstErr error
+	for _, path := range []string{keyPath, tokPath, akPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) && firstErr == nil {
+			firstErr = fmt.Errorf("removing identity material %s: %w", path, err)
+		}
+	}
+	return firstErr
+}
+
 // JWK is a single JSON Web Key for an Ed25519 public key (OKP).
 type JWK struct {
 	Kty string `json:"kty"`

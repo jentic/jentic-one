@@ -296,7 +296,7 @@ func DaemonError(check CheckResult) error {
 // The probe (dockerDaemonHealth) polls for up to ~30s to tolerate a
 // cold-starting daemon, so callers should announce the check before invoking
 // this — otherwise the command appears to hang. See the callers in
-// internal/cmd/start.go and stop.go. The ctx (the command's context) lets an
+// internal/cli/ctlcmd/start.go and stop.go. The ctx (the command's context) lets an
 // operator cancel that wait with Ctrl-C (#953).
 func RequireDockerDaemon(ctx context.Context, command string) error {
 	detail, healthy := dockerDaemonHealth(ctx)

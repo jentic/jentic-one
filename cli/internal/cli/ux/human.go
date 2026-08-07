@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -39,11 +39,11 @@ func (h *HumanUX) Ask(question, flagName string, required bool) (string, error) 
 	}
 
 	var response string
-	// Route through install.Input so the prompt inherits the shared brand theme and
+	// Route through prompt.Input so the prompt inherits the shared brand theme and
 	// the TERM=dumb-safe keymap/quit handling (the form-guard test enforces this;
 	// it's also the jentic-one#841 fix promptable() guards against).
-	err := install.NewForm(huh.NewGroup(
-		install.Input().
+	err := prompt.NewForm(huh.NewGroup(
+		prompt.Input().
 			Title(question).
 			Description("Equivalent to passing --" + flagName).
 			Value(&response),
@@ -72,9 +72,9 @@ func (h *HumanUX) AskConfirm(warning string) (bool, error) {
 		}
 	}
 	var confirm bool
-	// install.RunConfirm applies the shared theme + quit keymap and the fixed
+	// prompt.RunConfirm applies the shared theme + quit keymap and the fixed
 	// confirm handling (no swallowed first-Enter).
-	err := install.RunConfirm(huh.NewConfirm().Title(warning).Value(&confirm))
+	err := prompt.RunConfirm(huh.NewConfirm().Title(warning).Value(&confirm))
 	return confirm, err
 }
 

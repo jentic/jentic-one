@@ -17,7 +17,7 @@ func nakedPrintAllowed(pkgPath, file string) bool {
 		return true // the render layer is where printing happens
 	case base == "main.go":
 		return true
-	case underPrefixes(pkgPath, "internal/cmd") && base == "output.go":
+	case underPrefixes(pkgPath, "internal/cli/cmdcore") && base == "output.go":
 		return true // shipped jsonOrPretty/render seam, pre-UX-package
 	}
 	return false
@@ -26,19 +26,21 @@ func nakedPrintAllowed(pkgPath, file string) bool {
 // Test1B_NakedPrint fails on direct fmt.Print*/println/os.Stdout writes and
 // log.Fatal* in command packages, which would corrupt strict agent JSON.
 //
-// Phase-0 reality: the shipped internal/cmd tree predates the ux.Render seam and
-// still prints directly in many files. Failing on all of it now would block the
-// guardrail from landing before the refactor it is meant to protect. So this
-// test enforces the rule strictly on the *new* V2 command packages
-// (internal/cli/api, internal/cli/context) and, for the legacy internal/cmd
-// tree, asserts a ratchet: the count of naked prints must not exceed a recorded
-// baseline, so the migration can only reduce it. Each re-plumbed command drops
-// the baseline; when it hits zero, internal/cmd graduates to strict.
+// Phase-8 reality (impl/0.0 §1B, F8-37): the shipped command tree (formerly the
+// flat internal/cmd package) was decomposed into internal/cli/{cmdcore,api,ctlcmd}
+// and already routes all output through App.Out/App.Err. The recorded baseline is
+// 0, so these packages are now STRICT roots: any naked print fails outright (the
+// intended §1B behavior), not merely a growth ratchet against a non-zero legacy
+// count. The legacy ratchet is retained only as an inert backstop (empty root set)
+// documenting that no grandfathered violations remain.
 func Test1B_NakedPrint(t *testing.T) {
 	pkgs := loadCLI(t)
 
-	strictRoots := []string{"internal/cli/api", "internal/cli/context"}
-	legacyRoots := []string{"internal/cmd"}
+	// The V2 command tree is strict — it ships clean (baseline 0) and must stay so.
+	strictRoots := []string{"internal/cli/cmdcore", "internal/cli/api", "internal/cli/ctlcmd"}
+	// No grandfathered packages remain; kept empty so the ratchet arm is inert but
+	// present (a future legacy import could be added here with a non-zero baseline).
+	legacyRoots := []string{}
 
 	countIn := func(roots []string) map[string]int {
 		perFile := map[string]int{}
@@ -75,21 +77,63 @@ func Test1B_NakedPrint(t *testing.T) {
 		t.Errorf("naked print in V2 command file %s (%d occurrences) — route through ux.Render", file, n)
 	}
 	if seenStrict == 0 {
-		t.Logf("dormant: no V2 command packages yet (%v) — strict rule activates as commands migrate", strictRoots)
+		t.Fatalf("no files scanned under the V2 command roots %v — the strict naked-print gate "+
+			"must not pass vacuously (did the package layout change?)", strictRoots)
 	}
 
-	// Legacy root: ratchet. Never let the count grow past the baseline.
+	// Legacy root: ratchet. Never let the count grow past the baseline. With no
+	// legacy roots configured this arm is inert (total stays 0 == baseline).
 	legacy := countIn(legacyRoots)
 	total := 0
 	for _, n := range legacy {
 		total += n
 	}
 	if total > legacyBaseline {
-		t.Errorf("legacy naked-print ratchet regressed: internal/cmd has %d naked prints, baseline is %d.\n"+
+		t.Errorf("legacy naked-print ratchet regressed: %d naked prints, baseline is %d.\n"+
 			"New command code must use ux.Render. If you legitimately reduced this, lower legacyBaseline in ratchet_baseline.go to %d.",
 			total, legacyBaseline, total)
 	}
-	if total < legacyBaseline {
-		t.Logf("legacy naked-print count dropped to %d (baseline %d) — lower legacyBaseline to lock in the win", total, legacyBaseline)
+}
+
+// slogSetDefaultAllowed is the single file permitted to call slog.SetDefault:
+// the interceptor's diagnostics bootstrap (impl/3.2 §2d — "Nothing else in the
+// process may call slog.SetDefault"). Concentrating it there guarantees every
+// log line carries the mode-appropriate, redacted handler; a stray SetDefault
+// elsewhere (e.g. an init() with a plain handler) would silently re-open the
+// stdout/redaction contract.
+func slogSetDefaultAllowed(pkgPath, file string) bool {
+	return underPrefixes(pkgPath, "internal/cli/cmdcore") && baseName(file) == "slogsetup.go"
+}
+
+// Test1B2_SingleSlogSetDefault enforces the §2d invariant that exactly one
+// site installs the default slog handler. It scans the whole CLI module (not
+// just command packages) because the danger is any package's init/constructor
+// reaching for slog.SetDefault with an un-redacted, non-mode-aware handler.
+func Test1B2_SingleSlogSetDefault(t *testing.T) {
+	pkgs := loadCLI(t)
+
+	offenders := map[string]int{}
+	sawAllowed := false
+	forEachFile(pkgs, func(string) bool { return true }, func(p *packages.Package, file *ast.File, path string) {
+		hits := selectorPrefixCalls(p.TypesInfo, p.Fset, file, "slog", func(s string) bool {
+			return s == "SetDefault"
+		})
+		if len(hits) == 0 {
+			return
+		}
+		if slogSetDefaultAllowed(p.PkgPath, path) {
+			sawAllowed = true
+			return
+		}
+		offenders[rel(p.PkgPath)+"/"+baseName(path)] += len(hits)
+	})
+
+	for file, n := range offenders {
+		t.Errorf("slog.SetDefault called outside the interceptor bootstrap in %s (%d call(s)) — "+
+			"only internal/cli/cmdcore/slogsetup.go may install the default handler (impl/3.2 §2d)", file, n)
+	}
+	if !sawAllowed {
+		t.Fatal("no slog.SetDefault call found in internal/cli/cmdcore/slogsetup.go — the diagnostics " +
+			"bootstrap (impl/3.2 §2d) regressed or moved; this guard must not pass vacuously")
 	}
 }

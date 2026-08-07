@@ -9,7 +9,7 @@
 // breaking-change number (14_breaking_changes.md) that authorizes it.
 //
 // Drive model: each case builds the real `jentic` command tree via
-// cmd.APITreeBuilder() and runs it through pkg/core.Run — the exact path the
+// api.TreeBuilder() and runs it through pkg/core.Run — the exact path the
 // shipped binary uses — with stdout/stderr captured to buffers and a temp
 // ~/.jentic. Output is recorded under testdata/golden/v1/<case>.txt; regenerate
 // with `go test ./tests/golden -update`.
@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/cmd"
+	"github.com/jentic/jentic-one/cli/internal/cli/api"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/pkg/core"
@@ -58,7 +58,7 @@ func runAPI(t *testing.T, home string, env map[string]string, args ...string) re
 		Out: &out,
 		Err: &errBuf,
 	}
-	root := core.NewRootCmd(deps, cmd.APITreeBuilder())
+	root := core.NewRootCmd(deps, api.TreeBuilder())
 	root.SetArgs(args)
 	code := core.Run(root)
 	return result{stdout: out.String(), stderr: errBuf.String(), exitCode: code}

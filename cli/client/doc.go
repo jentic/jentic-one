@@ -8,6 +8,29 @@
 // Import as github.com/jentic/jentic-one/cli/client/... — the same module as the
 // CLI, no separate go.mod (impl/7.0 §2).
 //
+// # Getting started (external consumers)
+//
+// Add the module and import the SDK; you do NOT need the jentic binary:
+//
+//	go get github.com/jentic/jentic-one/cli@cli/vX.Y.Z   // pin to a released cli/ tag
+//
+//	import (
+//		client "github.com/jentic/jentic-one/cli/client"
+//		"github.com/jentic/jentic-one/cli/client/paginate"
+//	)
+//
+//	c, err := client.NewControl(client.Config{
+//		ControlBaseURL:      "https://api.jentic.example",
+//		InjectedBearerToken: os.Getenv("JENTIC_BEARER_TOKEN"), // bring-your-own token
+//	})
+//
+// Pin to a cli/vX.Y.Z release tag (that tag, not a bare vX.Y.Z, is what Go module
+// resolution uses for a module rooted under cli/ — see impl/8.0 §1). Although the
+// SDK ships in the same module as the CLI, importing only client/... resolves a
+// build graph with NONE of the CLI's cobra/charmbracelet/bubbletea dependencies —
+// Go compiles only what client/... transitively imports. The out-of-tree
+// consumer contract test (cli/tests/sdkconsumer) enforces this on every CI run.
+//
 // # Public surface
 //
 //   - client                              — top-level constructors + Config: NewControl, NewControlRaw, NewBroker, RawControlRequest, ProbeServerVersion, BrokerTransport.
@@ -63,9 +86,14 @@
 //
 // # Tradeoffs
 //
-// Same-module distribution means importing client transitively pulls the repo's
-// full dependency graph (Cobra etc. are in go.mod even if you only use client).
-// This is an accepted decision; the package boundary here makes splitting client/
-// into its own module a mechanical move later if the dependency weight matters.
-// The SDK gives typed clients and auth only — it makes no UX guarantees.
+// Same-module distribution means the CLI's dependencies appear in the repo's
+// go.mod. In practice this costs external SDK consumers nothing at build time:
+// because client/... imports neither Cobra nor charmbracelet (enforced by
+// Test1A_SDKBoundary and the out-of-tree cli/tests/sdkconsumer contract), Go's
+// build graph prunes them — an importer of client/... pulls only the SDK's own
+// lean deps (go-jose, oapi-codegen runtime, uuid, flock, yaml, x/sys). The one
+// real friction is the /cli/ path segment in imports; splitting client/ into its
+// own module (to drop it and give the SDK independent SemVer) stays a mechanical
+// move later if desired. The SDK gives typed clients and auth only — it makes no
+// UX guarantees.
 package client
