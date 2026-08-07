@@ -41,6 +41,7 @@ var configWriterAllowlist = map[string]bool{
 	"internal/cmd/updatenudge.go": true, // update-check timestamp (0600)
 	"internal/cmd/install.go":     true, // install writes env/compose out
 	"internal/cmd/apis.go":        true, // apis export to user-chosen -o path
+	"internal/cmd/history.go":     true, // history export to user-chosen -o path (redacted JSON, not config)
 	"internal/cmd/update.go":      true, // fetched installer script
 	"internal/cmd/uninstall.go":   true, // backup/restore moves
 }

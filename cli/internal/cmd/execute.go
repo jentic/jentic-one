@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -229,8 +230,16 @@ func (a *App) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
 
-	// Send phase.
-	httpClient := &http.Client{Timeout: 60 * time.Second}
+	// Send phase. Route through the SDK broker transport (client.BrokerTransport)
+	// rather than a bare http.Client so execute inherits the same response policy
+	// (401 re-exchange, 429 Retry-After, bounded 5xx/transport backoff — 13 §5)
+	// every generated broker call gets, while still composing the broker
+	// catch-all URL itself to preserve its exact contract and exit-2 denial
+	// handling (plan.md Phase 5 item 1). The 60s ceiling is carried on the base
+	// client the policy decorates.
+	httpClient := sdkclient.BrokerTransport(sdkclient.Config{
+		HTTPClient: &http.Client{Timeout: 60 * time.Second},
+	})
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		if jsonOrPretty(cmd, opts.json) {

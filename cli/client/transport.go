@@ -41,15 +41,21 @@ var (
 type retryTransport struct {
 	base  http.RoundTripper
 	creds auth.Credentials
+	// reExchange enables the 401→token-refresh arm. True for the SDK's typed
+	// clients (disk-backed identity to refresh); set false by BrokerTransport,
+	// where the caller (jentic execute) owns its bearer and a 401 is a denial to
+	// surface intact, not refresh.
+	reExchange bool
 }
 
 // newRetryTransport wraps base with the response policy for creds. A nil base
-// uses http.DefaultTransport.
+// uses http.DefaultTransport. The 401 re-exchange arm is enabled by default;
+// BrokerTransport flips reExchange off for the caller-owned-auth case.
 func newRetryTransport(base http.RoundTripper, creds auth.Credentials) *retryTransport {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return &retryTransport{base: base, creds: creds}
+	return &retryTransport{base: base, creds: creds, reExchange: true}
 }
 
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -86,7 +92,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// 401: one re-exchange + retry, only for re-exchangeable creds and a
 		// rewindable body. Discard the body before retrying to free the conn.
 		case resp.StatusCode == http.StatusUnauthorized &&
-			!triedReauth && canRewind && auth.CanReExchange(t.creds):
+			t.reExchange && !triedReauth && canRewind && auth.CanReExchange(t.creds):
 			triedReauth = true
 			drain(resp)
 			// Force a fresh token: the on-disk one looked valid to us but the

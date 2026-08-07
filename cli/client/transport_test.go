@@ -253,3 +253,60 @@ func TestRetry_401NotRetriedForFixedCreds(t *testing.T) {
 		t.Errorf("fixed-cred 401 retried: calls = %d, want 1", got)
 	}
 }
+
+// TestBrokerTransport_401SurfacesBodyWithoutReExchange guards the jentic execute
+// re-plumb (plan.md Phase 5 item 1): BrokerTransport disables the 401 arm even
+// though empty creds would otherwise look re-exchangeable, so a broker 401 (a
+// recoverable denial) reaches execute with its agent_directive body intact and
+// exactly one attempt — never drained by a doomed re-exchange.
+func TestBrokerTransport_401SurfacesBodyWithoutReExchange(t *testing.T) {
+	shrinkRetryKnobs(t)
+	fake := &fakeRT{respond: func(_ int, _ *http.Request) (*http.Response, error) {
+		r := resp(http.StatusUnauthorized, nil)
+		r.Body = io.NopCloser(strings.NewReader(`{"agent_directive":{}}`))
+		return r, nil
+	}}
+	hc := BrokerTransport(Config{HTTPClient: &http.Client{Transport: fake}})
+
+	r, err := hc.Do(newReq(t, http.MethodGet, "https://x.test/thing", ""))
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", r.StatusCode)
+	}
+	if got := int(fake.calls); got != 1 {
+		t.Errorf("broker 401 retried: calls = %d, want 1", got)
+	}
+	body, _ := io.ReadAll(r.Body)
+	if !strings.Contains(string(body), "agent_directive") {
+		t.Errorf("directive body drained by transport; got %q", body)
+	}
+}
+
+// TestBrokerTransport_5xxIdempotentStillRetries confirms the re-plumb keeps the
+// idempotent 5xx backoff arm — execute's GETs benefit from bounded retries even
+// with the 401 arm off.
+func TestBrokerTransport_5xxIdempotentStillRetries(t *testing.T) {
+	shrinkRetryKnobs(t)
+	fake := &fakeRT{respond: func(attempt int, _ *http.Request) (*http.Response, error) {
+		if attempt < 2 {
+			return resp(http.StatusServiceUnavailable, nil), nil
+		}
+		return resp(http.StatusOK, nil), nil
+	}}
+	hc := BrokerTransport(Config{HTTPClient: &http.Client{Transport: fake}})
+
+	r, err := hc.Do(newReq(t, http.MethodGet, "https://x.test/thing", ""))
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 after retries", r.StatusCode)
+	}
+	if got := int(fake.calls); got != 3 {
+		t.Errorf("calls = %d, want 3 (two 503s then 200)", got)
+	}
+}

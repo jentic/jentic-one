@@ -146,10 +146,17 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	addGrouped(root, "apis", newCatalogCmd(app))
 	addGrouped(root, "apis", newApisCmd(app))
 	addGrouped(root, "apis", newEndpointsCmd(app))
+	addGrouped(root, "apis", newCredentialsCmd(app))
 	addGrouped(root, "agent", newSearchCmd(app))
 	addGrouped(root, "agent", newInspectCmd(app))
 	addGrouped(root, "agent", newExecuteCmd(app))
 	addGrouped(root, "agent", newAccessCmd(app))
+	// Execution history + live events over the V2 SDK (Phase 5 items 3-4).
+	addGrouped(root, "agent", newHistoryCmd(app))
+	addGrouped(root, "agent", newEventsCmd(app))
+	// gh-api-style authenticated passthrough to the control plane, with
+	// self-description (Phase 5 item 7a). Not fenced (server-scope-gated).
+	addGrouped(root, "agent", newAPICmd(app))
 	// The agent-client commands manage and drive the local coding agent
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.

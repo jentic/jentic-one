@@ -24,6 +24,7 @@ func configFromState(state *ActiveState) client.Config {
 		IdentityName:        state.IdentityName,
 		EnvironmentName:     state.EnvironmentName,
 		InjectedBearerToken: state.InjectedBearerToken,
+		SessionID:           state.SessionID,
 	}
 }
 
@@ -47,4 +48,16 @@ func GetBrokerClient(ctx context.Context) (*broker.ClientWithResponses, error) {
 		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
 	}
 	return client.NewBroker(configFromState(state))
+}
+
+// GetControlRawClient returns the raw control client for the `jentic api`
+// passthrough (arbitrary METHOD/PATH). It shares the identical transport + editor
+// chain as GetControlClient, so the passthrough inherits auth, session, retry, and
+// the transport guard from the SDK rather than re-implementing them.
+func GetControlRawClient(ctx context.Context) (*control.Client, error) {
+	state := FromContext(ctx)
+	if state == nil {
+		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
+	}
+	return client.NewControlRaw(configFromState(state))
 }

@@ -11,9 +11,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	broker "github.com/jentic/jentic-one/cli/client/generated/broker"
@@ -38,6 +41,12 @@ type Config struct {
 
 	IdentityName    string
 	EnvironmentName string
+
+	// SessionID, when set, is attached as X-Jentic-Session-Id on every request so
+	// the backend can group a run's executions under a client-chosen session (the
+	// server-side correlation pivot is trace_id; this is an additional grouping —
+	// impl/5.0 §1). Populated for the CLI from JENTIC_SESSION_ID via ResolvedState.
+	SessionID string
 
 	// InjectedBearerToken, when set, bypasses the on-disk key/token exchange and is
 	// attached verbatim (file-less / bring-your-own-token mode).
@@ -64,25 +73,49 @@ func (c Config) credentials() auth.Credentials {
 	}
 }
 
+// sessionEditor attaches the X-Jentic-Session-Id header. It is appended after the
+// auth editor and only when Config.SessionID is non-empty (impl/5.0 §1). Kept as
+// the raw editor signature so it converts to each generated package's
+// RequestEditorFn at construction alongside the auth editor.
+func sessionEditor(sessionID string) RequestEditor {
+	return func(_ context.Context, req *http.Request) error {
+		req.Header.Set("X-Jentic-Session-Id", sessionID)
+		return nil
+	}
+}
+
+// editorChain is the ordered request-editor list every plane shares: auth first
+// (so a later editor can observe the Authorization header), then the optional
+// session/telemetry editor, then any caller-supplied Editors.
+func (c Config) editorChain() []RequestEditor {
+	eds := make([]RequestEditor, 0, 2+len(c.Editors))
+	eds = append(eds, auth.RequestEditor(c.credentials()))
+	if c.SessionID != "" {
+		eds = append(eds, sessionEditor(c.SessionID))
+	}
+	eds = append(eds, c.Editors...)
+	return eds
+}
+
 // controlOptions / brokerOptions assemble each plane's option slice. They are
 // nearly identical but the generated ClientOption types are distinct per package,
 // so Go generics can't unify them without an adapter; two tiny builders are
 // clearer than a reflective bridge.
 func controlOptions(c Config) []control.ClientOption {
-	opts := make([]control.ClientOption, 0, 2+len(c.Editors))
+	eds := c.editorChain()
+	opts := make([]control.ClientOption, 0, 1+len(eds))
 	opts = append(opts, control.WithHTTPClient(c.httpClient()))
-	opts = append(opts, control.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
-	for _, e := range c.Editors {
+	for _, e := range eds {
 		opts = append(opts, control.WithRequestEditorFn(control.RequestEditorFn(e)))
 	}
 	return opts
 }
 
 func brokerOptions(c Config) []broker.ClientOption {
-	opts := make([]broker.ClientOption, 0, 2+len(c.Editors))
+	eds := c.editorChain()
+	opts := make([]broker.ClientOption, 0, 1+len(eds))
 	opts = append(opts, broker.WithHTTPClient(c.httpClient()))
-	opts = append(opts, broker.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
-	for _, e := range c.Editors {
+	for _, e := range eds {
 		opts = append(opts, broker.WithRequestEditorFn(broker.RequestEditorFn(e)))
 	}
 	return opts
@@ -117,6 +150,89 @@ func NewControl(c Config) (*control.ClientWithResponses, error) {
 	return cli, nil
 }
 
+// NewControlRaw builds a raw control-plane client (server + Doer + editor chain)
+// for the `jentic api` passthrough, which issues arbitrary METHOD/PATH requests
+// the generated per-operation methods do not cover. It shares the SAME transport
+// (retry/backoff), auth editor (incl. requireSecureHost), and session editor as
+// the typed client — the passthrough is a thin wrapper over this, never a second
+// hand-rolled transport (impl/5.0 §6a).
+func NewControlRaw(c Config) (*control.Client, error) {
+	if c.ControlBaseURL == "" {
+		return nil, errors.New("control base URL is required")
+	}
+	cli, err := control.NewClient(c.ControlBaseURL, controlOptions(c)...)
+	if err != nil {
+		return nil, fmt.Errorf("building control client: %w", err)
+	}
+	return cli, nil
+}
+
+// RawControlRequest issues an arbitrary request through raw's transport and editor
+// chain and returns the response. path is a spec-relative path (e.g.
+// "/credentials"), joined to the client's Server. extraHeaders (key=value) are
+// applied after the editor chain so a caller can override defaults. It applies
+// every configured RequestEditor (auth, session) exactly as the typed methods do,
+// so the passthrough inherits auth/redaction/session for free. The caller owns the
+// response body (close it).
+func RawControlRequest(ctx context.Context, raw *control.Client, method, path string, body io.Reader, extraHeaders ...string) (*http.Response, error) {
+	// oapi-codegen's NewClient normalizes Server with a trailing slash; join
+	// without doubling it (path is always spec-absolute, starting with '/').
+	target := strings.TrimRight(raw.Server, "/") + path
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, ed := range raw.RequestEditors {
+		if err := ed(ctx, req); err != nil {
+			return nil, err
+		}
+	}
+	for _, kv := range extraHeaders {
+		k, v, ok := splitKV(kv)
+		if !ok {
+			return nil, fmt.Errorf("invalid header %q; expected key=value", kv)
+		}
+		req.Header.Set(k, v)
+	}
+	return raw.Client.Do(req)
+}
+
+// splitKV splits "key=value" (value may contain further '=').
+func splitKV(kv string) (key, value string, ok bool) {
+	i := strings.IndexByte(kv, '=')
+	if i < 1 {
+		return "", "", false
+	}
+	return strings.TrimSpace(kv[:i]), strings.TrimSpace(kv[i+1:]), true
+}
+
+// ProbeServerVersion asks the control plane for its running app version
+// (GET /system/version). It backs the backend version-negotiation path
+// (impl/5.0 §6a, plan.md Phase 5 item 9): when the CLI's embedded spec advertises
+// a route an OLDER self-hosted server doesn't serve yet, a bare 404 is
+// indistinguishable from a typo, so the passthrough probes the version once to
+// enrich the error. Returns the running version string; a probe failure returns
+// "" and an error (the caller degrades to a plain 404 rather than fabricating a
+// verdict).
+func ProbeServerVersion(ctx context.Context, raw *control.Client) (string, error) {
+	resp, err := RawControlRequest(ctx, raw, http.MethodGet, "/system/version", nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("version probe returned status %d", resp.StatusCode)
+	}
+	var vr control.VersionResponse
+	if derr := json.NewDecoder(resp.Body).Decode(&vr); derr != nil {
+		return "", derr
+	}
+	return vr.Current, nil
+}
+
 // NewBroker builds the strictly-typed broker-plane (execution) client. It reuses
 // the control-plane identity's bearer, since the broker validates the same token.
 func NewBroker(c Config) (*broker.ClientWithResponses, error) {
@@ -133,4 +249,31 @@ func NewBroker(c Config) (*broker.ClientWithResponses, error) {
 		return nil, fmt.Errorf("building broker client: %w", err)
 	}
 	return cli, nil
+}
+
+// BrokerTransport returns the *http.Client the broker plane uses — the caller's
+// transport decorated with the SDK response policy (429 Retry-After and bounded
+// 5xx/transport backoff for idempotent calls — 13 §5). It is the seam `jentic
+// execute` re-plumbs onto (plan.md Phase 5 item 1): execute composes the broker
+// catch-all URL itself ({scheme}://{host}/{upstreamURL}) to preserve its exact
+// METHOD:url|operation_id|METHOD:/path contract and agent_directive/exit-2
+// denial handling, but sends through THIS transport rather than a bare
+// http.Client, so it inherits the same retry/backoff every generated broker call
+// gets.
+//
+// The 401 re-exchange arm is deliberately DISABLED here (reExchange=false):
+// execute forwards its OWN agent bearer and treats a broker 401 as a recoverable
+// denial whose agent_directive body must reach the caller intact — a re-exchange
+// attempt would both be meaningless (no disk-backed identity to refresh) and
+// drain that body. 429/5xx idempotent backoff still applies.
+func BrokerTransport(c Config) *http.Client {
+	hc := c.HTTPClient
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	wrapped := *hc
+	wrapped.Transport = newRetryTransport(hc.Transport, auth.Credentials{})
+	// Force CanReExchange=false without a real credential: execute owns its auth.
+	wrapped.Transport.(*retryTransport).reExchange = false
+	return &wrapped
 }

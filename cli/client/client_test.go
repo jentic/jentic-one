@@ -97,3 +97,42 @@ func TestEditorChain_TransportGuard(t *testing.T) {
 		t.Error("bearer was attached to an insecure request (F3 violation)")
 	}
 }
+
+// TestSessionEditor_AttachedWhenSet: X-Jentic-Session-Id rides along when
+// Config.SessionID is set, and is absent otherwise.
+func TestSessionEditor_AttachedWhenSet(t *testing.T) {
+	var captured *http.Request
+	cli, err := NewControl(Config{
+		ControlBaseURL:      "https://control.example",
+		InjectedBearerToken: "tok",
+		SessionID:           "sess-123",
+		HTTPClient:          recordingClient(&captured),
+	})
+	if err != nil {
+		t.Fatalf("NewControl: %v", err)
+	}
+	if _, err := cli.HealthWithResponse(context.Background()); err != nil {
+		t.Fatalf("HealthWithResponse: %v", err)
+	}
+	if got := captured.Header.Get("X-Jentic-Session-Id"); got != "sess-123" {
+		t.Errorf("X-Jentic-Session-Id = %q, want sess-123", got)
+	}
+}
+
+func TestSessionEditor_AbsentWhenUnset(t *testing.T) {
+	var captured *http.Request
+	cli, err := NewControl(Config{
+		ControlBaseURL:      "https://control.example",
+		InjectedBearerToken: "tok",
+		HTTPClient:          recordingClient(&captured),
+	})
+	if err != nil {
+		t.Fatalf("NewControl: %v", err)
+	}
+	if _, err := cli.HealthWithResponse(context.Background()); err != nil {
+		t.Fatalf("HealthWithResponse: %v", err)
+	}
+	if got := captured.Header.Get("X-Jentic-Session-Id"); got != "" {
+		t.Errorf("X-Jentic-Session-Id = %q, want empty", got)
+	}
+}

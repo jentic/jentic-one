@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -623,10 +624,12 @@ func (a *App) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
+		absolutizeApproveURL(baseURL, req)
 		if err := writeJSON(a.Out, req); err != nil {
 			return err
 		}
 	} else {
+		absolutizeApproveURL(baseURL, req)
 		a.printRequest(req, true)
 	}
 
@@ -744,6 +747,7 @@ func (a *App) accessStatusE(cmd *cobra.Command, ident *identityOptions, id strin
 	if err != nil {
 		return err
 	}
+	absolutizeApproveURL(baseURL, req)
 	if jsonOrPretty(cmd, jsonFlag) {
 		return writeJSON(a.Out, req)
 	}
@@ -916,6 +920,28 @@ func itemSummary(it *accessclient.ItemResponse) string {
 		target = strings.Trim(vendor+"/"+name, "/")
 	}
 	return fmt.Sprintf("%s:%s %s", it.ResourceType, it.Action, target)
+}
+
+// absolutizeApproveURL rewrites a relative approve_url onto the environment's base
+// URL so the value the CLI prints (or emits as JSON) is directly openable, rather
+// than a path fragment the operator has to guess a host for (impl/5.0 §6b,
+// jentic-one#777). An already-absolute URL and an empty value are left untouched.
+func absolutizeApproveURL(baseURL string, r *accessclient.Request) {
+	if r == nil || r.ApproveURL == "" {
+		return
+	}
+	if u, err := url.Parse(r.ApproveURL); err == nil && u.IsAbs() {
+		return
+	}
+	base, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	if err != nil {
+		return
+	}
+	ref, err := url.Parse(r.ApproveURL)
+	if err != nil {
+		return
+	}
+	r.ApproveURL = base.ResolveReference(ref).String()
 }
 
 func statusStyle(status string) string {

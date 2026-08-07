@@ -56,6 +56,21 @@ type Page struct {
 // HasNext reports whether another page is available.
 func (p Page) HasNext() bool { return p.NextToken != "" }
 
+// Export is the versioned envelope for bulk export commands (history export). It
+// wraps a fully-walked, filtered result set (never a single page) plus the pivot
+// it was queried by, so an agent can template a workflow from a run's real
+// executions. SchemaVersion is stamped at render time like the other envelopes.
+type Export struct {
+	SchemaVersion string `json:"schema_version"`
+	// TraceID is the correlation pivot the export was queried by (impl/5.0 §2).
+	TraceID string `json:"trace_id,omitempty"`
+	// Items is the exported records (kept as `any` so the same envelope serves any
+	// export; history passes []control.ExecutionResponse).
+	Items any `json:"items"`
+	// Count is the number of exported records after filtering.
+	Count int `json:"count"`
+}
+
 // NewPage builds a Page envelope from a typed item slice and the opaque
 // next-page cursor (empty on the last page). It is the bridge from the SDK's
 // client/paginate walk helper (whose Page[T].Next is the cursor) to the machine
