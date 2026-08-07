@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -33,16 +36,17 @@ type operationInfo struct {
 }
 
 type executeOptions struct {
-	pathParams   []string
-	queryParams  []string
-	headers      []string
-	data         string
-	dataFile     string
-	raw          bool
-	json         bool
-	brokerScheme string
-	brokerHost   string
-	revision     string
+	pathParams     []string
+	queryParams    []string
+	headers        []string
+	data           string
+	dataFile       string
+	raw            bool
+	json           bool
+	brokerScheme   string
+	brokerHost     string
+	revision       string
+	idempotencyKey string
 }
 
 func newExecuteCmd(app *app) *cobra.Command {
@@ -94,6 +98,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.brokerScheme, "broker-scheme", config.DefaultBrokerScheme, "broker target scheme (http or https)")
 	cmd.Flags().StringVar(&opts.brokerHost, "broker-host", config.DefaultBrokerHost, "broker target host as host[:port] (no scheme; use --broker-scheme)")
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID for inspect")
+	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker (13 §4)")
+	planFlags(cmd)
 	ident.Bind(cmd)
 
 	return cmd
@@ -230,6 +236,41 @@ func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
 
+	// Correlation (P5.2, F8-6). execute builds a bare request outside the SDK
+	// editor chain, so the SDK's session/trace editors never run on this path —
+	// we attach the same headers here so a broker-side trace can be joined back
+	// to this invocation:
+	//   - X-Jentic-Session-Id groups every call of one agent run/batch (the SDK
+	//     Config.SessionID, sourced from the active context / $JENTIC_SESSION_ID).
+	//   - traceparent is a fresh W3C trace context per execute so distributed
+	//     tracing correlates the broker span with this CLI call.
+	// A user-provided --header of the same name wins (already set above), so an
+	// orchestrator threading its own trace is never clobbered.
+	if sid := sessionIDFromContext(cmd); sid != "" && req.Header.Get("X-Jentic-Session-Id") == "" {
+		req.Header.Set("X-Jentic-Session-Id", sid)
+	}
+	if req.Header.Get("traceparent") == "" {
+		if tp, ok := newTraceparent(); ok {
+			req.Header.Set("traceparent", tp)
+		}
+	}
+	// Idempotency (13 §4, F8-13). A caller-supplied key makes a retried POST/PUT
+	// de-duplicated by the broker AND flips the SDK transport's retry-safety for
+	// this request (it treats a key-carrying POST as replayable). Without it a
+	// plain POST is never retried, so transient 5xx/timeouts surface as failures.
+	if opts.idempotencyKey != "" && req.Header.Get("Idempotency-Key") == "" {
+		req.Header.Set("Idempotency-Key", opts.idempotencyKey)
+	}
+
+	// Dry-run / plan (impl/5.0 §5, F8-15). execute is a mutating (side-effecting)
+	// call, so it honors --dry-run/--export-plan: render the fully-resolved
+	// request that WOULD be sent — method, broker-wrapped URL, and the correlation
+	// headers we just attached — and STOP before firing. The operation name
+	// mirrors the effect ("brokerExecute"); the plan-parity test keeps it honest.
+	if maybeEmitPlan(cmd, "brokerExecute", executePlanPayload(req)) {
+		return nil
+	}
+
 	// Send phase. Route through the SDK broker transport (client.BrokerTransport)
 	// rather than a bare http.Client so execute inherits the same response policy
 	// (401 re-exchange, 429 Retry-After, bounded 5xx/transport backoff — 13 §5)
@@ -255,6 +296,52 @@ func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 	defer resp.Body.Close()
 
 	return a.executeOutput(cmd, opts, resp)
+}
+
+// executePlanPayload summarizes the resolved outbound request for --dry-run/
+// --export-plan without consuming its body reader (the body may still be needed
+// if this weren't a dry-run; execute returns immediately after emitting the
+// plan, but keeping this read-only avoids any coupling). Sensitive headers are
+// redacted by the Audience's plan render path (M6), so Authorization is safe to
+// include for completeness.
+func executePlanPayload(req *http.Request) map[string]any {
+	headers := make(map[string]string, len(req.Header))
+	for k := range req.Header {
+		headers[k] = req.Header.Get(k)
+	}
+	return map[string]any{
+		"method":  req.Method,
+		"url":     req.URL.String(),
+		"headers": headers,
+	}
+}
+
+// sessionIDFromContext returns the resolved X-Jentic-Session-Id for this
+// invocation from the ActiveState the root interceptor injected (sourced from
+// the active context or $JENTIC_SESSION_ID). Empty when no session id is set —
+// correlation is best-effort and never blocks a call.
+func sessionIDFromContext(cmd *cobra.Command) string {
+	if st := clictx.FromContext(cmd.Context()); st != nil && st.ResolvedState != nil {
+		return st.SessionID
+	}
+	return ""
+}
+
+// newTraceparent builds a fresh W3C Trace Context `traceparent` header value
+// (version-00): "00-<32 hex trace-id>-<16 hex span-id>-01" with the sampled flag
+// set. execute is the root of its own trace (it does not continue an inbound
+// one), so a new random trace/span id per call is correct. Returns ok=false only
+// if the crypto RNG fails, in which case the header is simply omitted.
+func newTraceparent() (string, bool) {
+	var traceID [16]byte
+	var spanID [8]byte
+	if _, err := rand.Read(traceID[:]); err != nil {
+		return "", false
+	}
+	if _, err := rand.Read(spanID[:]); err != nil {
+		return "", false
+	}
+	return fmt.Sprintf("00-%s-%s-01", hex.EncodeToString(traceID[:]), hex.EncodeToString(spanID[:])), true
 }
 
 // parseMethodPath checks if target is in METHOD:/path format (a broker-relative

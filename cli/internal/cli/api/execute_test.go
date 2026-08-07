@@ -808,3 +808,98 @@ func TestParseMethodPath(t *testing.T) {
 		}
 	}
 }
+
+// TestExecuteSendsCorrelationAndIdempotencyHeaders proves execute attaches the
+// P5.2 correlation headers (F8-6) and the --idempotency-key passthrough (F8-13)
+// on the broker request, since it builds the request outside the SDK editor
+// chain that would otherwise add them.
+func TestExecuteSendsCorrelationAndIdempotencyHeaders(t *testing.T) {
+	t.Setenv("JENTIC_SESSION_ID", "sess-batch-7")
+
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/v1/things"}`))
+			return
+		}
+		got = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "createThing",
+		"--json",
+		"--data", `{"name":"x"}`,
+		"--idempotency-key", "idem-abc-123",
+		"--base-url", srv.URL,
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	if v := got.Get("X-Jentic-Session-Id"); v != "sess-batch-7" {
+		t.Errorf("X-Jentic-Session-Id = %q, want sess-batch-7", v)
+	}
+	if v := got.Get("Idempotency-Key"); v != "idem-abc-123" {
+		t.Errorf("Idempotency-Key = %q, want idem-abc-123", v)
+	}
+	tp := got.Get("traceparent")
+	if !strings.HasPrefix(tp, "00-") || len(tp) != len("00-")+32+1+16+1+2 {
+		t.Errorf("traceparent = %q, want a W3C version-00 value", tp)
+	}
+}
+
+// TestExecuteDryRunDoesNotCallBroker proves --dry-run spreads to execute (F8-15):
+// it emits a plan and stops before firing the broker request.
+func TestExecuteDryRunDoesNotCallBroker(t *testing.T) {
+	var brokerHit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/inspect" {
+			_, _ = w.Write([]byte(`{"method":"POST","url":"https://upstream.example/v1/things"}`))
+			return
+		}
+		brokerHit = true
+		t.Error("dry-run must not reach the broker")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{
+		"execute", "createThing",
+		"--json", "--dry-run",
+		"--data", `{"name":"x"}`,
+		"--base-url", srv.URL,
+		"--broker-scheme", "http",
+		"--broker-host", srv.Listener.Addr().String(),
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute --dry-run: %v", err)
+	}
+	if brokerHit {
+		t.Fatal("broker was called despite --dry-run")
+	}
+}
+
+
