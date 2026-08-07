@@ -78,6 +78,10 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "client", cmdcore.NewSkillCmd(app.App))
 	cmdcore.AddGrouped(root, "client", fenced(cmdcore.NewRunCmd(app.App)))
 	cmdcore.AddGrouped(root, "client", fenced(newResetCmd(app)))
+	// Agent-side read-only self-check (F8-4, impl/5.1 §3c). Not fenced: it never
+	// mutates host state and is exactly the diagnostic an agent needs where
+	// jenticctl is absent.
+	cmdcore.AddGrouped(root, "client", newDoctorCmd(app))
 	cmdcore.AddGrouped(root, "admin", newAdminCmd(app))
 	cmdcore.AddGrouped(root, "admin", newThemeCmd(app))
 
