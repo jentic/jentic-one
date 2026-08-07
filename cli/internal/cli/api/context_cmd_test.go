@@ -121,6 +121,23 @@ func TestIdentityAdd_APIKeyRequiresEnv(t *testing.T) {
 	}
 }
 
+// TestIdentityAdd_BadAPIKeyPrefixDoesNotPersistIdentity guards F8-24: a key that
+// fails the jak_ prefix check must be rejected BEFORE the identity is written, so
+// a bad --api-key never leaves a credential-less identity behind.
+func TestIdentityAdd_BadAPIKeyPrefixDoesNotPersistIdentity(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "identity", "add", "ci", "--env", "prod", "--api-key", "not-a-jak-key"); err == nil {
+		t.Fatal("expected a bad --api-key prefix to error")
+	}
+	cfg, _ := sdkconfig.Load()
+	if _, ok := cfg.Identities["ci"]; ok {
+		t.Error("identity was persisted despite an invalid --api-key (orphan credential-less identity)")
+	}
+}
+
 func TestContextCreate_RequiresExistingEnvAndIdentity(t *testing.T) {
 	withXDG(t)
 	// Neither env nor identity exists yet.

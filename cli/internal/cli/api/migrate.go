@@ -42,10 +42,7 @@ const migratedMarkerName = "MIGRATED"
 // --purge-legacy removes the legacy tree once the downgrade path is no longer
 // needed. Cached refresh tokens are dropped, not migrated (BC-6).
 func newMigrateCmd(app *app) *cobra.Command {
-	var (
-		purgeLegacy bool
-		yes         bool
-	)
+	var purgeLegacy bool
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate legacy ~/.jentic profiles to the XDG context model",
@@ -87,7 +84,9 @@ func newMigrateCmd(app *app) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&purgeLegacy, "purge-legacy", false, "Delete the legacy ~/.jentic profile tree after a successful migration")
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Proceed without interactive confirmation")
+	// --yes is consumed by the root interceptor (Audience assumeYes); bind it so
+	// the lookup finds it, without a dead local (F8-23).
+	cmd.Flags().BoolP("yes", "y", false, "Proceed without interactive confirmation")
 	return cmd
 }
 

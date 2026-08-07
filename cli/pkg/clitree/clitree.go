@@ -37,13 +37,14 @@ func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 // contexts other than the active one.
 //
 // Phase 2 ships the enforcing machinery against the commands that EXIST today —
-// the local-agent lifecycle (`run` mutates ACLs via --grant/--revoke and is
-// operator-only; `reset` wipes an account's config tree). Phase 3 adds the
 // context/env/identity management surface. Deliberate carve-outs, NOT fenced:
-// the read-only verbs (`context view`/`list`, `env list`, `identity list`),
+// the read-only verbs (`context view`, `env list`, `identity list`),
 // `identity register` (DCR of the agent's own identity — required by the agent
 // workflow), `migrate` (BC-1 directs agents to run it), and `theme` (a local
-// color preference, not a management/context switch).
+// color preference, not a management/context switch). NOTE: `context list` IS
+// fenced (impl/3.2 §2a): unlike `context view` (active context only) it
+// enumerates the operator's OTHER identities/contexts on a shared machine, a
+// disclosure an agent should not perform.
 //
 // Paths are space-separated ("context use" -> ["context","use"]) for root.Find.
 var MustBeFenced = []string{
@@ -52,6 +53,7 @@ var MustBeFenced = []string{
 	"context create",
 	"context use",
 	"context delete",
+	"context list",
 	"env add",
 	"env delete",
 	"identity add",

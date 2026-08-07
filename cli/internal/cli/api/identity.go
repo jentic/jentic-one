@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -184,6 +185,17 @@ func newIdentityAddCmd(_ *app) *cobra.Command {
 					Code:       ux.CodeMissingArgument,
 					Msg:        "--api-key requires --env (credentials are scoped per identity+environment)",
 					Actionable: "Pass --env <name> alongside --api-key.",
+				})
+			}
+
+			// Validate the key shape BEFORE we persist the identity (F8-24): a bad
+			// prefix must not leave a credential-less identity in config.yaml. This
+			// mirrors auth.SaveAPIKey's own guard, moved ahead of the write.
+			if apiKey != "" && !strings.HasPrefix(apiKey, auth.APIKeyPrefix) {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        fmt.Sprintf("--api-key must start with %q", auth.APIKeyPrefix),
+					Actionable: "Pass the jak_* credential issued for this identity.",
 				})
 			}
 

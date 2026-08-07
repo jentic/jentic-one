@@ -53,3 +53,26 @@ func TestFencing_AllowsFencedCommandInHumanMode(t *testing.T) {
 		t.Fatalf("human mode should not be fenced, got %v", err)
 	}
 }
+
+// TestFencing_ContextListIsFencedInAgentMode guards F8-2: `context list`
+// enumerates the operator's OTHER identities/contexts on a shared machine, so an
+// agent must be blocked from running it (impl/3.2 §2a). `context view` (active
+// context only) stays a read-only carve-out.
+func TestFencing_ContextListIsFencedInAgentMode(t *testing.T) {
+	t.Setenv("JENTIC_MODE", "agent")
+
+	app := testApp(t)
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"context", "list"})
+
+	err := root.Execute()
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("expected a FENCED_COMMAND CodedError for `context list`, got %v", err)
+	}
+	if coded.Code != ux.CodeFenced {
+		t.Errorf("error code = %q, want %q", coded.Code, ux.CodeFenced)
+	}
+}

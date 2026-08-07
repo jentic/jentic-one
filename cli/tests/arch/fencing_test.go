@@ -73,8 +73,10 @@ func Test1C_SecurityFencing(t *testing.T) {
 // history/events/api) are deliberately reachable. Anything that mutates the data
 // plane is still authorized server-side against the agent's scope.
 var fencingExemptPrefixes = []string{
-	// Read-only management views (active context / a list only).
-	"context view", "context list", "env list", "identity list",
+	// Read-only management views (active context only). NOTE: `context list` is
+	// intentionally NOT here — it is fenced (it enumerates the operator's OTHER
+	// identities/contexts on a shared machine); see clitree.MustBeFenced.
+	"context view", "env list", "identity list",
 	// Agent self-service + migration (BC-1 directs agents to run migrate).
 	"identity register", "migrate",
 	// Local preference, not a context/management switch.

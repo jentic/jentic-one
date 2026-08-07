@@ -77,7 +77,6 @@ type deleteSpec struct {
 // from a deleteSpec. Shared by env delete and identity delete (dedup: the two
 // flows are byte-identical apart from the spec).
 func newResourceDeleteCmd(spec deleteSpec) *cobra.Command {
-	var yes bool
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete " + article(spec.resource) + " " + spec.resource,
@@ -142,7 +141,9 @@ func newResourceDeleteCmd(spec deleteSpec) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
+	// --yes is consumed by the root interceptor (Audience assumeYes); bind it so
+	// the lookup finds it, without a dead local (F8-23).
+	cmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
 	return cmd
 }
 

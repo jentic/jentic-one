@@ -31,8 +31,8 @@ func newContextCmd(app *app) *cobra.Command {
 	}
 	cmd.AddCommand(fenced(newContextCreateCmd(app)))
 	cmd.AddCommand(fenced(newContextUseCmd(app)))
-	cmd.AddCommand(newContextListCmd(app)) // read-only: not fenced
-	cmd.AddCommand(newContextViewCmd(app)) // read-only (active only): not fenced
+	cmd.AddCommand(fenced(newContextListCmd(app))) // fenced: enumerates the operator's OTHER identities/contexts (impl/3.2 §2a)
+	cmd.AddCommand(newContextViewCmd(app))         // read-only (active only): not fenced
 	cmd.AddCommand(fenced(newContextDeleteCmd(app)))
 	return cmd
 }
@@ -219,10 +219,7 @@ func newContextViewCmd(_ *app) *cobra.Command {
 }
 
 func newContextDeleteCmd(_ *app) *cobra.Command {
-	var (
-		yes          bool
-		withIdentity bool
-	)
+	var withIdentity bool
 	cmd := &cobra.Command{
 		Use:   "delete <name>",
 		Short: "Delete a context (the successor of `profile delete`)",
@@ -299,7 +296,10 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Skip the confirmation prompt")
+	// --yes is consumed by the root interceptor (it wires the Audience's
+	// assumeYes); this command only needs the flag to EXIST for that lookup, so
+	// bind it without a dead local (F8-23).
+	cmd.Flags().BoolP("yes", "y", false, "Skip the confirmation prompt")
 	cmd.Flags().BoolVar(&withIdentity, "identity", false, "Also delete the referenced identity if unused elsewhere")
 	return cmd
 }
