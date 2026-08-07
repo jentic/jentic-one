@@ -33,8 +33,10 @@ func newUninstallCmd(app *App) *cobra.Command {
 		Use:   "uninstall",
 		Short: "Remove everything under ~/.jentic (config files are backed up to *-old)",
 		Long: "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\n" +
-			"profiles, CA, etc.). Config files are preserved: each is renamed to a\n" +
-			"'-old' backup so you can restore your settings later. The ~/.jentic\n" +
+			"CA, etc.). Config files are preserved: each is renamed to a\n" +
+			"'-old' backup so you can restore your settings later. Your agent\n" +
+			"identity (~/.jentic/profiles) is ALSO preserved — reinstalling keeps you\n" +
+			"authenticated; run `jentic reset` to remove it. The ~/.jentic\n" +
 			"directory itself is kept.\n\n" +
 			"For a Docker install the database lives in a named volume (SQLite data or\n" +
 			"the managed Postgres data dir), not under ~/.jentic. uninstall tears the\n" +
@@ -65,6 +67,17 @@ func newUninstallCmd(app *App) *cobra.Command {
 var preservedConfigs = map[string]string{
 	config.InstallConfigName: config.BackupName(config.InstallConfigName), // jentic-one.yaml -> jentic-one-old.yaml
 	config.ConfigName:        config.BackupName(config.ConfigName),        // config.yaml -> config-old.yaml
+}
+
+// preservedNames are entries under ~/.jentic that uninstall must NOT delete: the
+// operator's own agent identity (profiles/ — Ed25519 keys, tokens, per-agent
+// meta) is NOT an install artifact, and tearing it down here would silently
+// revoke the operator's ability to re-authenticate after a reinstall. That
+// teardown belongs to `jentic reset` (plan.md Phase 6 lifecycle hardening; CLI-V2
+// impl/5.1). The config backups (config-old.yaml) already carry the local-agent
+// account record. Kept as a set so Phase 2's wipe skips these by name.
+var preservedNames = map[string]bool{
+	"profiles": true, // per-agent identity (agent.key, tokens.json, profile.yaml)
 }
 
 func (a *App) uninstallE(opts *uninstallOptions) error {
@@ -155,10 +168,24 @@ func (a *App) uninstallE(opts *uninstallOptions) error {
 
 	// Phase 2: remove everything else from the snapshot, skipping the freshly
 	// created backups (their filenames may collide with prior backups in the
-	// snapshot) and the original config names (already renamed away).
+	// snapshot), the original config names (already renamed away), and the
+	// preserved identity entries (profiles/ — see preservedNames; `jentic reset`
+	// owns that teardown, not uninstall).
+	preserved := map[string]bool{}
+	for name := range preservedNames {
+		preserved[name] = true
+	}
+	// Resolve the real profiles dir name from Paths so a rename of the constant
+	// can't silently un-preserve it.
+	preserved[filepath.Base(a.Paths.ProfilesDir())] = true
+	skippedIdentity := false
 	for _, e := range entries {
 		name := e.Name()
 		if backups[name] || preservedConfigs[name] != "" {
+			continue
+		}
+		if preserved[name] {
+			skippedIdentity = true
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
@@ -167,6 +194,18 @@ func (a *App) uninstallE(opts *uninstallOptions) error {
 	}
 
 	fmt.Fprintln(a.Out, theme.Successf("Removed jentic-one state under %s (config backed up).", dir))
+	if skippedIdentity {
+		fmt.Fprintln(a.Out, theme.Dimf("Kept your agent identity under %s; run `jentic reset` to remove it.", a.Paths.ProfilesDir()))
+	}
+
+	// Skill blocks live in operator config files OUTSIDE ~/.jentic (e.g.
+	// ~/.cursor, AGENTS.md), so the filesystem teardown above never touches
+	// them — and uninstall must not silently rewrite files it doesn't own.
+	// Point the operator at the exact guard-respecting command instead, so a
+	// gone stack doesn't leave dangling skills without the operator knowing how
+	// to clear them (plan.md Phase 6 skill lifecycle: "at minimum prints the
+	// exact `jentic skill remove --all` command").
+	fmt.Fprintln(a.Out, theme.Dimf("Installed skill blocks live outside %s; remove them with: jentic skill remove --all", dir))
 	return nil
 }
 
