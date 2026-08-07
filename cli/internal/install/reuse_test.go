@@ -103,6 +103,41 @@ func yamlEqual(a, b any) bool {
 	}
 }
 
+func TestReuseSecretsCarriesManagedPGPassword(t *testing.T) {
+	// POSTGRES_PASSWORD only applies at initdb: an existing db volume keeps
+	// its original password forever, so a reinstall must carry it over or the
+	// freshly generated credential (secrets.go) locks the stack out of its
+	// own database.
+	src := NewDraft() // Docker + Postgres by default
+	if err := src.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets: %v", err)
+	}
+	orig := src.PGPassword
+	if orig == "" {
+		t.Fatalf("precondition: FillSecrets should generate a managed pg password")
+	}
+	path := writeRenderedConfig(t, src)
+
+	dst := NewDraft()
+	reused, err := ReuseSecrets(dst, path)
+	if err != nil {
+		t.Fatalf("ReuseSecrets: %v", err)
+	}
+	if !reused {
+		t.Fatalf("expected reused=true")
+	}
+	if dst.PGPassword != orig {
+		t.Errorf("PGPassword = %q, want carried-over %q", dst.PGPassword, orig)
+	}
+	// And FillSecrets must not rotate it afterwards.
+	if err := dst.FillSecrets(); err != nil {
+		t.Fatalf("FillSecrets (dst): %v", err)
+	}
+	if dst.PGPassword != orig {
+		t.Errorf("PGPassword rotated by FillSecrets after reuse")
+	}
+}
+
 func TestReuseSecretsPreservesMultiKeyKeysetVerbatim(t *testing.T) {
 	// A hand-rotated keyset (active_id: v2 + v1/v2 entries) must survive
 	// reinstall. Flattening it back to a single v1 entry would silently
