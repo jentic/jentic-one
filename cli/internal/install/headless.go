@@ -7,11 +7,9 @@
 // Both paths run the same field validators the wizard applies, so a headless
 // install cannot construct a Draft the wizard would have rejected.
 //
-// Ported by behaviour from jentic-one#998 (the #992 install-hardening train) and
-// reconciled to the shipped Draft: the #998-only `pg_expose_host_port` answer is
-// omitted here because this tree's Draft has no such field yet (it lands with
-// that PR's postgres-publish opt-in); add it alongside the Draft field if/when
-// #998 merges.
+// reconciled to the shipped Draft. The #998 `pg_expose_host_port` answer is
+// wired here alongside the Draft's PGExposeHostPort field (the postgres-publish
+// opt-in from the #992 install-hardening train).
 
 package install
 
@@ -43,7 +41,10 @@ type Answers struct {
 	PGName     *string `yaml:"pg_name"`
 	PGUser     *string `yaml:"pg_user"`
 	PGPassword *string `yaml:"pg_password"`
-	SQLiteDir  *string `yaml:"sqlite_dir"`
+	// PGExpose publishes the managed Postgres 5432 on the host (Docker path
+	// only; off by default — see #992).
+	PGExpose  *bool   `yaml:"pg_expose_host_port"`
+	SQLiteDir *string `yaml:"sqlite_dir"`
 
 	// Server.
 	BindHost   *string `yaml:"bind_host"`
@@ -109,6 +110,7 @@ func (a *Answers) Apply(d *Draft) {
 	setS(&d.PGName, a.PGName)
 	setS(&d.PGUser, a.PGUser)
 	setS(&d.PGPassword, a.PGPassword)
+	setB(&d.PGExposeHostPort, a.PGExpose)
 	setS(&d.SQLiteDir, a.SQLiteDir)
 	setS(&d.ServerHost, a.BindHost)
 	setS(&d.ServerPort, a.AppPort)
@@ -149,7 +151,7 @@ func ValidateDraft(d *Draft) error {
 			return fmt.Errorf("apps: unknown surface %q (valid: %s)", app, strings.Join(AllSurfaces, ", "))
 		}
 	}
-	if err := check("bind_host", notEmpty("host")(d.ServerHost)); err != nil {
+	if err := check("bind_host", bindHostValidator(d)(d.ServerHost)); err != nil {
 		return err
 	}
 	if err := check("app_port", validatePort(d.ServerPort)); err != nil {

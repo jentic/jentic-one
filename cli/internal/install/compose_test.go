@@ -99,10 +99,106 @@ func TestRenderComposeSQLite(t *testing.T) {
 	}
 }
 
+// TestRenderComposeBindHost pins the #992 contract: the wizard's bind-host
+// answer prefixes every published port, because Docker publishes unqualified
+// mappings on ALL interfaces (bypassing UFW), silently exposing a
+// loopback-intended install to the network.
+func TestRenderComposeBindHost(t *testing.T) {
+	cases := []struct {
+		name       string
+		serverHost string
+		wantPrefix string
+	}{
+		{"default loopback", "127.0.0.1", "127.0.0.1"},
+		{"localhost normalized", "localhost", "127.0.0.1"},
+		{"empty defaults to loopback", "", "127.0.0.1"},
+		{"explicit all interfaces", "0.0.0.0", "0.0.0.0"},
+		{"specific interface", "10.0.0.5", "10.0.0.5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDraft()
+			d.RuntimePath = RuntimeDocker
+			d.DBBackend = BackendPostgres
+			d.PGPassword = "test-pw"
+			// Opt in so the db publish is present to assert the prefix on.
+			d.PGExposeHostPort = true
+			d.ServerHost = tc.serverHost
+			cfg := composeConfigFor("/home/u/.jentic")
+
+			data, err := RenderCompose(d, cfg)
+			if err != nil {
+				t.Fatalf("RenderCompose: %v", err)
+			}
+			assertValidComposeYAML(t, data)
+			out := string(data)
+
+			for _, want := range []string{
+				"\"" + tc.wantPrefix + ":" + d.ServerPort + ":" + d.ServerPort + "\"",
+				"\"" + tc.wantPrefix + ":" + d.BrokerPort + ":" + d.BrokerPort + "\"",
+				"\"" + tc.wantPrefix + ":" + d.PGPort + ":5432\"",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("compose missing %q:\n%s", want, out)
+				}
+			}
+			// No published port may be left unqualified: an entry starting
+			// with a digit (e.g. "8000:8000") binds 0.0.0.0.
+			for _, line := range strings.Split(out, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, `- "`) && len(trimmed) > 3 &&
+					trimmed[3] >= '0' && trimmed[3] <= '9' &&
+					!strings.HasPrefix(trimmed, `- "`+tc.wantPrefix+":") {
+					t.Errorf("unqualified port publish %q would bind all interfaces", trimmed)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteComposeArtifactsModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	dir := t.TempDir()
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+	cfg := composeConfigFor(dir)
+	// Simulate a prior install having created the logs dir 0700 (the pre-#992
+	// mode): WriteComposeArtifacts must heal it, not just create-if-missing.
+	if err := os.MkdirAll(cfg.LogsHostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteComposeArtifacts(d, cfg); err != nil {
+		t.Fatalf("WriteComposeArtifacts: %v", err)
+	}
+
+	assertMode := func(path string, want os.FileMode) {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", path, got, want)
+		}
+	}
+	// Read by the postgres container's uid (999), not the host user.
+	// Written by the app/broker containers as uid 999.
+	assertMode(cfg.LogsHostDir, 0o777)
+	// Only the docker CLI (host user) reads the compose file; keep it private.
+	assertMode(cfg.ComposePath, 0o600)
+}
+
 func TestRenderComposePostgres(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+	d.PGExposeHostPort = true
 	d.PGPort = "55432"
 	cfg := composeConfigFor("/home/u/.jentic")
 
@@ -118,16 +214,60 @@ func TestRenderComposePostgres(t *testing.T) {
 		"depends_on",
 		"condition: service_healthy",
 		"\"127.0.0.1:55432:5432\"",
-		cfg.InitSchemasPath() + ":/docker-entrypoint-initdb.d/init-schemas.sql:ro",
 		"volumes:\n  db-data:",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose (postgres) missing %q:\n%s", want, out)
 		}
 	}
+	// Schema bootstrap lives in the migration runner now (#992): initdb
+	// scripts run once on an empty volume, so they must not be relied on.
+	if strings.Contains(out, "docker-entrypoint-initdb.d") {
+		t.Errorf("postgres compose should not mount an initdb script:\n%s", out)
+	}
 	// Postgres uses the managed db service, not the SQLite named volume.
 	if strings.Contains(out, composeDataVolume) {
 		t.Errorf("postgres compose should not reference the SQLite volume:\n%s", out)
+	}
+}
+
+// The managed Postgres is reachable over the compose network; publishing 5432
+// on the host is opt-in (#992: it was published by default, guarded only by a
+// guessable password).
+func TestRenderComposePostgresNoHostPublishByDefault(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+
+	data, err := RenderCompose(d, composeConfigFor("/home/u/.jentic"))
+	if err != nil {
+		t.Fatalf("RenderCompose: %v", err)
+	}
+	assertValidComposeYAML(t, data)
+	out := string(data)
+
+	if strings.Contains(out, ":5432\"") {
+		t.Errorf("db port published without opt-in:\n%s", out)
+	}
+	// The db service block (up to the next service) must carry no ports key.
+	dbBlock := out[strings.Index(out, "  db:"):strings.Index(out, "  app:")]
+	if strings.Contains(dbBlock, "ports:") {
+		t.Errorf("db service has a ports block without opt-in:\n%s", dbBlock)
+	}
+}
+
+// A blank password must fail loudly at render time, not come up passwordless:
+// FillSecrets generates a random credential (the guessable "postgres" default
+// was #992's exposure multiplier) and skipping it is a caller bug.
+func TestRenderComposePostgresRequiresPassword(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+
+	if _, err := RenderCompose(d, composeConfigFor("/home/u/.jentic")); err == nil ||
+		!strings.Contains(err.Error(), "postgres password is empty") {
+		t.Errorf("expected empty-password error, got %v", err)
 	}
 }
 
@@ -147,42 +287,28 @@ func TestWriteComposeArtifactsSQLite(t *testing.T) {
 	if _, err := os.Stat(cfg.LogsHostDir); err != nil {
 		t.Errorf("logs dir not created: %v", err)
 	}
-	// SQLite lives in a named volume (no host data dir) and needs no init SQL.
-	if _, err := os.Stat(cfg.InitSchemasPath()); err == nil {
-		t.Errorf("sqlite install should not write init-schemas.sql")
-	}
 }
 
-func TestWriteComposeArtifactsPostgresWritesInitSQL(t *testing.T) {
+// Schema bootstrap moved into the migration runner (#992): no install path
+// writes an init SQL file anymore, and a stale one from an older install is
+// cleaned up so nothing suggests it is still consulted.
+func TestWriteComposeArtifactsRemovesLegacyInitSQL(t *testing.T) {
 	dir := t.TempDir()
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
 	cfg := composeConfigFor(dir)
+	stale := cfg.legacyInitSchemasPath()
+	if err := os.WriteFile(stale, []byte("CREATE SCHEMA IF NOT EXISTS registry;"), 0o600); err != nil {
+		t.Fatalf("write stale init SQL: %v", err)
+	}
 
 	if err := WriteComposeArtifacts(d, cfg); err != nil {
 		t.Fatalf("WriteComposeArtifacts: %v", err)
 	}
-	sql, err := os.ReadFile(cfg.InitSchemasPath())
-	if err != nil {
-		t.Fatalf("init-schemas.sql not written: %v", err)
-	}
-	// The file is bind-mounted into the postgres container and read by initdb
-	// running as the container's own uid (not the host uid that wrote it), so it
-	// MUST be world-readable — a 0600 file makes initdb fail and the db exit(1).
-	if runtime.GOOS != "windows" {
-		fi, err := os.Stat(cfg.InitSchemasPath())
-		if err != nil {
-			t.Fatalf("stat init-schemas.sql: %v", err)
-		}
-		if perm := fi.Mode().Perm(); perm&0o044 == 0 {
-			t.Errorf("init-schemas.sql mode = %#o, want world/group-readable (e.g. 0644)", perm)
-		}
-	}
-	for _, schema := range []string{"registry", "control", "admin"} {
-		if !strings.Contains(string(sql), "CREATE SCHEMA IF NOT EXISTS "+schema) {
-			t.Errorf("init SQL missing schema %q:\n%s", schema, sql)
-		}
+	if _, err := os.Stat(stale); err == nil {
+		t.Errorf("stale init-schemas.sql should have been removed")
 	}
 }
 

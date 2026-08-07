@@ -777,10 +777,12 @@ jobs:
 
       # ---- Linux: full headless Docker install, then live-stack smoke ----
       # This leg is hard-gating: it exercises the real `jenticctl install` deep
-      # Docker path end to end. The generated Postgres bootstrap (init-schemas.sql)
-      # is written world-readable so initdb — running as the container's own uid,
-      # not the host runner uid — can read it (see internal/install/compose.go);
-      # and the published ports are bound to the draft's loopback host, so the
+      # Docker path end to end. It relies on the install-hardening now owned by
+      # this branch (ported from the deleted old-CLI #998): schema bootstrap runs
+      # idempotently inside the Alembic migration runner (no fragile run-once
+      # docker-entrypoint-initdb.d script, so a half-init volume can heal), the
+      # managed Postgres is NOT published to the host by default, and every
+      # published port is bound to the draft host (loopback by default) — so the
       # assertions below hold on a stock runner.
       - name: Headless Docker install (Linux)
         id: linux_install

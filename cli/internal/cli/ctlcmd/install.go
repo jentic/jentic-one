@@ -234,9 +234,28 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	// Config contains freshly generated secrets; restrict permissions.
-	if err := os.WriteFile(out, data, 0o600); err != nil {
+	// Config contains freshly generated secrets; restrict permissions. The
+	// Docker path relaxes to 0644 because the file is bind-mounted into
+	// containers running as the unprivileged uid 999 (#992) — host-side
+	// protection comes from ~/.jentic being 0700. Only relax under the managed
+	// state dir: a user-chosen --out elsewhere has no such protective parent.
+	mode := os.FileMode(0o600)
+	if draft.IsDocker() && strings.HasPrefix(out, a.Paths.Dir()+string(filepath.Separator)) {
+		mode = 0o644
+	}
+	if err := os.WriteFile(out, data, mode); err != nil {
 		return fmt.Errorf("write %s: %w", out, err)
+	}
+	// WriteFile does not chmod an existing file, and a prior install wrote it
+	// 0600 — set the mode explicitly so a reinstall heals old installs too.
+	if err := os.Chmod(out, mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", out, err)
+	}
+	if draft.IsDocker() && mode == 0o600 {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"config written outside %s with mode 0600 — the app container (uid 999) "+
+				"may not be able to read it; chmod 644 %s if the stack fails to start",
+			a.Paths.Dir(), out))
 	}
 
 	// Establish the ~/.jentic/logs convention alongside config and data.
@@ -430,7 +449,10 @@ func (a *app) resolveSetupState(started bool, baseURL string) install.SetupState
 // successful install. It is a no-op unless the stack started, the user did not
 // pass --no-wizard, and we have a real terminal to prompt and drive the wizard.
 func (a *app) offerWizard(cmd *cobra.Command, opts *installOptions, started bool) {
-	if opts.noWizard || !started || !wantsInteractive(cmd, false) {
+	// A headless install (--defaults/--answers) asked for no prompts; don't
+	// end an unattended run with one, even when a TTY happens to be attached.
+	headless := opts.defaults || opts.answersFile != ""
+	if opts.noWizard || headless || !started || !wantsInteractive(cmd, false) {
 		return
 	}
 
@@ -568,12 +590,29 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	}
 	draft.ComposePath = cfg.ComposePath
 
+	// Record whether the data volume exists BEFORE migrations run: the first
+	// `compose run` creates (and for Postgres initdb's) it, so this is the
+	// only moment "fresh install" vs "reinstall over live data" can be told
+	// apart. The answer decides whether a failed first migration may discard
+	// the volume (#992 item 3 — see install/recover.go).
+	dataVolumes := install.DataVolumeNames(draft.IsPostgres())
+	freshVolumes := true
+	for _, v := range dataVolumes {
+		exists, err := install.VolumeExists(v)
+		if err != nil || exists {
+			// "Could not tell" must count as pre-existing: guessing "fresh"
+			// here would let the recovery path destroy a real database.
+			freshVolumes = false
+			break
+		}
+	}
+
 	// Apply migrations via a one-shot app container. For Postgres the app's
 	// depends_on makes compose start (and health-wait) the db automatically.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	if err := install.RunComposeMigrations(a.Out, cfg.ComposePath); err != nil {
-		return fmt.Errorf("migrations failed: %w", err)
+		return a.migrationFailure(cfg.ComposePath, dataVolumes, freshVolumes, err)
 	}
 	draft.MigrationsDone = true
 
@@ -591,6 +630,34 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	draft.AppStarted = true
 	fmt.Fprintln(a.Out, theme.Successf("  Stack started (compose: %s)", cfg.ComposePath))
 	return nil
+}
+
+// migrationFailure turns a failed in-container migration into an actionable
+// error. Historically the first failure left behind a half-initialized data
+// volume that poisoned every retry (#992 item 3 — see install/recover.go).
+// Fresh volumes (created by this very run) are discarded automatically so a
+// re-run starts clean; pre-existing ones may hold real data, so the operator
+// gets the manual reset command and a backup warning instead.
+func (a *app) migrationFailure(composePath string, dataVolumes []string, fresh bool, cause error) error {
+	if !fresh {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"The database volume pre-existed this install and was left untouched.\n"+
+				"If its data matters, back it up before anything else. To discard it and\n"+
+				"reinstall from scratch (DESTROYS the database), run:\n"+
+				"  %s", install.ManualResetCommand(composePath)))
+		return fmt.Errorf("migrations failed: %w", cause)
+	}
+
+	fmt.Fprintln(a.Out, theme.Dimf("Removing the freshly created database volume so the next attempt starts clean..."))
+	if resetErr := install.ResetFreshDataVolumes(a.Out, composePath, dataVolumes); resetErr != nil {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"Could not remove the fresh database volume (%v).\n"+
+				"Before retrying, discard it manually:\n"+
+				"  %s", resetErr, install.ManualResetCommand(composePath)))
+		return fmt.Errorf("migrations failed: %w", cause)
+	}
+	return fmt.Errorf("migrations failed: %w\n"+
+		"The freshly created database volume was removed; fix the cause above and re-run `jenticctl install`", cause)
 }
 
 // startAppBackground launches the freshly installed app (and the broker, on its

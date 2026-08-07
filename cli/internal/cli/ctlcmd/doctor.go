@@ -242,6 +242,7 @@ func (d *doctor) checkDeploy(section string) {
 			return
 		}
 		d.add(section, "deploy", statusPass, "docker compose ("+composeSummary(out)+")", "")
+		d.checkExposure(section, composePath, out)
 		return
 	}
 
@@ -254,6 +255,49 @@ func (d *doctor) checkDeploy(section string) {
 	} else {
 		d.add(section, "deploy", statusWarn, "stale pid file (process not running)", "run `jenticctl start`")
 	}
+}
+
+// checkExposure warns when the Docker install publishes ports more widely
+// than the operator likely intended (#992). Two layers:
+//
+//   - the generated compose file: an unqualified mapping ("8000:8000") is
+//     published by Docker on ALL interfaces — and Docker's own iptables rules
+//     bypass UFW — so a compose file generated before the #992 fix silently
+//     exposes the app, broker, and database regardless of the wizard's
+//     loopback choice. This layer works even when the stack is down.
+//   - the live `docker compose ps` output: running containers may predate a
+//     regenerated compose file, so a "0.0.0.0:" publish is flagged even when
+//     the file itself is clean.
+//
+// Warnings, not failures: doctor is documented as safe for CI wiring, and the
+// operator may genuinely want an all-interfaces publish (0.0.0.0 answered in
+// the wizard also lands here — the hint tells them how to change it if it was
+// not intentional).
+func (d *doctor) checkExposure(section, composePath, psOut string) {
+	data, err := os.ReadFile(composePath) //nolint:gosec // composePath is CLI-managed under JENTIC_HOME.
+	if err != nil {
+		d.add(section, "exposure", statusWarn, "could not read compose file: "+err.Error(), "")
+		return
+	}
+	unqualified, err := install.UnqualifiedPublishes(data)
+	if err != nil {
+		d.add(section, "exposure", statusWarn, err.Error(), "")
+		return
+	}
+	regenHint := "re-run `jenticctl install` to regenerate the compose file with your bind host, then `jenticctl start`"
+	if len(unqualified) > 0 {
+		d.add(section, "exposure", statusWarn,
+			"ports published on all interfaces (Docker bypasses UFW): "+strings.Join(unqualified, ", "),
+			regenHint)
+		return
+	}
+	if strings.Contains(psOut, "0.0.0.0:") || strings.Contains(psOut, "[::]:") {
+		d.add(section, "exposure", statusWarn,
+			"running containers publish on all interfaces (stack predates the current compose file)",
+			"restart the stack: `jenticctl stop && jenticctl start`")
+		return
+	}
+	d.add(section, "exposure", statusPass, "published ports are bound to specific interfaces", "")
 }
 
 // checkAgent reports the profile's registration and token state. Like status,

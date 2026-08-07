@@ -59,6 +59,24 @@ func TestLoadAnswersRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestLoadAnswersAppliesPGExpose(t *testing.T) {
+	path := writeAnswers(t, "pg_expose_host_port: true\npg_port: \"15432\"\n")
+	a, err := LoadAnswers(path)
+	if err != nil {
+		t.Fatalf("LoadAnswers: %v", err)
+	}
+	d := NewDraft()
+	a.Apply(d)
+
+	if !d.PGExposeHostPort || d.PGPort != "15432" {
+		t.Errorf("pg expose answers not applied: expose=%v port=%s", d.PGExposeHostPort, d.PGPort)
+	}
+	// And the default without the answer stays off (#992).
+	if NewDraft().PGExposeHostPort {
+		t.Error("PGExposeHostPort must default to off")
+	}
+}
+
 // ValidateDraft holds a headless draft to exactly the wizard's rules; the
 // error names the answers-file key so an unattended failure is actionable.
 func TestValidateDraft(t *testing.T) {
@@ -81,6 +99,7 @@ func TestValidateDraft(t *testing.T) {
 		{"no apps", func(d *Draft) { d.Apps = nil }, "apps"},
 		{"unknown surface", func(d *Draft) { d.Apps = []string{"broker"} }, "apps"},
 		{"empty bind host", func(d *Draft) { d.ServerHost = "" }, "bind_host"},
+		{"hostname under docker", func(d *Draft) { d.ServerHost = "myhost.internal" }, "bind_host"},
 		{"bad app port", func(d *Draft) { d.ServerPort = "http" }, "app_port"},
 		{"broker port collision", func(d *Draft) { d.BrokerPort = d.ServerPort }, "broker_port"},
 		{"pg port invalid", func(d *Draft) { d.PGPort = "0" }, "pg_port"},
@@ -104,5 +123,16 @@ func TestValidateDraft(t *testing.T) {
 				t.Errorf("error should name the %q key, got: %v", tc.wantKey, err)
 			}
 		})
+	}
+}
+
+// The local (source) path accepts a hostname bind — only Docker publish
+// prefixes require an IP.
+func TestValidateDraftLocalAllowsHostname(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeSource
+	d.ServerHost = "myhost.internal"
+	if err := ValidateDraft(d); err != nil {
+		t.Errorf("local path should accept a hostname bind, got: %v", err)
 	}
 }
