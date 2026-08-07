@@ -73,6 +73,13 @@ func installInterceptor(app *App, root *cobra.Command) {
 			audience = ux.NewAgentUX(assumeYes)
 		}
 
+		// 3.5. Diagnostics bootstrap (impl/3.2 §2d): install the mode-dependent
+		// slog default (text for human, JSON for agent/service-account), always to
+		// stderr and redacted. This is the ONLY slog.SetDefault call in the process,
+		// so every later log line — including the SDK's via the default logger —
+		// carries the mode-appropriate, secret-scrubbed handler.
+		setupSlog(app, state.Mode, boolFlag(cmd, "verbose"))
+
 		// 4. FENCING (guardrail; the enforced boundary is server-side scope + OS
 		// isolation). Block a fenced management command in a fenced mode.
 		if audience.IsFenced() && cmd.Annotations["fenced"] == "true" {

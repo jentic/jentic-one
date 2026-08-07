@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 // vendoredSpecs are the module-relative locations the Phase-1 codegen vendors
@@ -70,69 +72,13 @@ func Test1G_SpecFlagCoverageParity(t *testing.T) {
 	t.Fatal("curated-command registry is present but Test1G_SpecFlagCoverageParity was not upgraded to reflect over it — see impl/0.0 §1G and impl/2.1 §3a/§4")
 }
 
-// sensitiveKeyExact mirrors impl/3.1 §1's exact-key allowlist. Kept in sync with
-// the redaction engine's isSensitiveKey (a divergence would mean the sweep and
-// the runtime redactor disagree on what "secret-shaped" means).
-var sensitiveKeyExact = map[string]bool{
-	"authorization": true,
-	"x-api-key":     true,
-	"jwt":           true,
-	"assertion":     true,
-	"cookie":        true,
-	"set-cookie":    true,
-	"password":      true,
-	"passwd":        true,
-	"secret":        true,
-	"token":         true,
-	"api_key":       true,
-	"apikey":        true,
-	"private_key":   true,
-	"privatekey":    true,
-	"signing_key":   true,
-	"signingkey":    true,
-	"credential":    true,
-	"credentials":   true,
-}
-
-// sensitiveKeySuffixes mirrors impl/3.1 §1's suffix rules.
-var sensitiveKeySuffixes = []string{
-	"_token", "_secret", "_password", "_passwd", "_api_key", "_apikey",
-	"_private_key", "_privatekey", "_signing_key", "_credential", "_credentials",
-}
-
-// isSensitiveKey reports whether a property name is secret-shaped per impl/3.1
-// §1, normalizing camelCase to snake_case first.
-func isSensitiveKey(key string) bool {
-	k := camelToSnake(key)
-	if sensitiveKeyExact[k] {
-		return true
-	}
-	for _, suf := range sensitiveKeySuffixes {
-		if strings.HasSuffix(k, suf) {
-			return true
-		}
-	}
-	return false
-}
-
-// camelToSnake is the acronym-aware normalizer from impl/3.1 §1.
-func camelToSnake(key string) string {
-	rs := []rune(key)
-	var b strings.Builder
-	for i, r := range rs {
-		if r >= 'A' && r <= 'Z' {
-			prevLower := i > 0 && (rs[i-1] >= 'a' && rs[i-1] <= 'z' || rs[i-1] >= '0' && rs[i-1] <= '9')
-			nextLower := i+1 < len(rs) && rs[i+1] >= 'a' && rs[i+1] <= 'z'
-			prevUpper := i > 0 && rs[i-1] >= 'A' && rs[i-1] <= 'Z'
-			if prevLower || (prevUpper && nextLower) {
-				b.WriteByte('_')
-			}
-			r += 'a' - 'A'
-		}
-		b.WriteRune(r)
-	}
-	return strings.ReplaceAll(strings.ToLower(b.String()), "__", "_")
-}
+// isSensitiveKey delegates to the redaction engine's exported predicate
+// (ux.IsSensitiveKey) so the sweep asserts against the SAME "secret-shaped"
+// definition the runtime redactor uses — allowlist included (F8-35). A previous
+// version kept a hand-maintained copy of the exact/suffix tables here, which
+// omitted the runtime allowlist (next_token, has_api_key, …) and so could drift
+// from what actually gets redacted. Sharing one function makes drift impossible.
+func isSensitiveKey(key string) bool { return ux.IsSensitiveKey(key) }
 
 // sensitiveSweepAllowlist is the reviewed false-positive / pending-annotation set
 // for Test1H_SensitiveAnnotationSweep. A property name here is exempt from the
@@ -183,7 +129,8 @@ var sensitiveSweepAllowlist = map[string]bool{
 // by the spec, not by naming luck.
 //
 // Activation: needs the vendored specs (Phase 1) and the shared isSensitiveKey
-// heuristic (mirrored above from impl/3.1 §1). Both exist, so this runs for real.
+// heuristic (delegated to ux.IsSensitiveKey, the runtime redactor's own
+// predicate — F8-35). Both exist, so this runs for real.
 func Test1H_SensitiveAnnotationSweep(t *testing.T) {
 	paths, ok := specsPresent()
 	if !ok {
