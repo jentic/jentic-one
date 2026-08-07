@@ -27,7 +27,7 @@ a company name is given, find its public API docs by searching for `<company> AP
 - No local jentic-public-apis checkout needed — the vendor-existence check runs against GitHub
   via `gh`.
 - For the optional local-first step only: a running Jentic control plane and a registered agent
-  profile (`jentic status` shows the control plane reachable).
+  profile (`jentic access whoami` confirms the control plane is reachable).
 
 ## Steps
 
@@ -94,7 +94,7 @@ Decide the layout parts (used verbatim as the repo path, deterministically):
 
 If a local jentic-one instance is running, import the spec there **before** contributing
 upstream — the user's agent can execute the API immediately instead of waiting on catalog
-review. Skip this step if `jentic status` reports the control plane unreachable.
+review. Skip this step if `jentic access whoami` reports the control plane unreachable.
 
 Local import needs the `apis:write` scope, which is not granted by default — request it once:
 
