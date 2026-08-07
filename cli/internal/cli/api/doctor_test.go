@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/cobra"
 )
 
 // meServer returns an httptest server answering GET /me with a minimal agent
@@ -129,5 +127,4 @@ func TestDoctorCommandConstructs(t *testing.T) {
 	if cmd.Flags().Lookup("json") == nil {
 		t.Error("doctor should expose --json")
 	}
-	var _ *cobra.Command = cmd
 }

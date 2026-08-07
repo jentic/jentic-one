@@ -417,6 +417,25 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   forward proxy, not a path router).
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
+- `jentic doctor` — read-only self-check of THIS agent's setup (config/state
+  dirs, resolvable identity, a usable token, control-plane reachability, clock
+  skew). Run it first when something is off but you're not sure what; it never
+  mints tokens or writes anything. `--json` for a parseable report. (This is the
+  agent-side sibling of `jenticctl doctor`, which needs operator tooling.)
+- `jentic api <METHOD> <path>` — a `gh api`-style authenticated passthrough to
+  the control plane for endpoints without a dedicated command. It self-describes:
+  `jentic api ops` lists available operations and `jentic api describe <METHOD>
+  <path>` prints one operation's parameters, so you can discover a new route and
+  its inputs without leaving the CLI. Pass a JSON body with `-d '<json>'`, `-d @file`,
+  or piped stdin.
+- `jentic history export` — export this identity's execution history (JSON
+  envelope with `schema_version`/`trace_id`), for auditing what you have run.
+- `jentic events watch` — stream live execution/approval events for this
+  identity (long-running; Ctrl-C to stop).
+- `--dry-run` / `--export-plan` — on a mutating command (`execute`,
+  `apis import`), validate and print the request that WOULD be sent (a machine
+  plan with `--export-plan`) **without** sending it. Use it to preview a call —
+  including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
 - Add `--json` to force machine-readable output on a terminal.

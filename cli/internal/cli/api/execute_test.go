@@ -901,5 +901,3 @@ func TestExecuteDryRunDoesNotCallBroker(t *testing.T) {
 		t.Fatal("broker was called despite --dry-run")
 	}
 }
-
-

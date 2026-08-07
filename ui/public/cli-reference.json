@@ -2022,10 +2022,27 @@
               "usage": "read request body from this file"
             },
             {
+              "name": "dry-run",
+              "type": "bool",
+              "default": "false",
+              "usage": "Validate and print the request that WOULD be sent, without sending it"
+            },
+            {
+              "name": "export-plan",
+              "type": "bool",
+              "default": "false",
+              "usage": "Emit a machine-readable execution plan (implies --dry-run)"
+            },
+            {
               "name": "header",
               "type": "stringArray",
               "default": "[]",
               "usage": "extra header as key=value (repeatable)"
+            },
+            {
+              "name": "idempotency-key",
+              "type": "string",
+              "usage": "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker (13 §4)"
             },
             {
               "name": "json",
@@ -3063,6 +3080,47 @@
               "name": "mode",
               "type": "string",
               "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "theme",
+              "type": "string",
+              "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+            }
+          ]
+        },
+        {
+          "name": "doctor",
+          "path": "jentic doctor",
+          "use": "doctor",
+          "short": "Diagnose this agent's local jentic setup (read-only)",
+          "long": "doctor is the agent-side self-check. It verifies the things an agent needs to\nwork — its config/state directories, a resolvable identity, a usable token or\nAPI key, control-plane reachability, and local clock skew — and prints a\npass/warn/fail report. It is read-only (never mints tokens or writes config)\nand, unlike `jenticctl doctor`, needs no operator tooling, so it runs where an\nagent actually lives. It exits non-zero when any check fails (warnings keep a\nzero exit), so it is safe to wire into a health probe.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly).",
+          "group_title": "Local agent client",
+          "flags": [
+            {
+              "name": "base-url",
+              "type": "string",
+              "usage": "Jentic control-plane base URL"
+            },
+            {
+              "name": "context",
+              "type": "string",
+              "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+            },
+            {
+              "name": "json",
+              "type": "bool",
+              "default": "false",
+              "usage": "force JSON output (default when stdout is not a TTY)"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+            },
+            {
+              "name": "profile",
+              "type": "string",
+              "usage": "profile name (default: config default_profile)"
             },
             {
               "name": "theme",

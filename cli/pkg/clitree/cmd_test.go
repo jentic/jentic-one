@@ -63,8 +63,11 @@ func TestAPIRootListsAPICommands(t *testing.T) {
 			t.Errorf("jentic root missing command %q", name)
 		}
 	}
-	// Lifecycle commands must not be registered on the API CLI.
-	for _, name := range []string{"install", "setup", "doctor", "status", "start", "stop", "logs", "update", "uninstall"} {
+	// Lifecycle commands must not be registered on the API CLI. NOTE: `doctor` is
+	// intentionally NOT in this list — F8-4 ships an agent-side, read-only
+	// `jentic doctor` self-check (distinct from the operator `jenticctl doctor`),
+	// per impl/5.1 §3c.
+	for _, name := range []string{"install", "setup", "status", "start", "stop", "logs", "update", "uninstall"} {
 		if hasCommand(root, name) {
 			t.Errorf("jentic root unexpectedly registers %q", name)
 		}
