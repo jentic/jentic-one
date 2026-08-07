@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -171,10 +172,11 @@ def test_import_without_auth(unauthed_client: TestClient) -> None:
     assert resp.status_code == 401
 
 
-async def _get_job_payload(ctx: Context, job_id: str) -> dict:
+async def _get_job_payload(ctx: Context, job_id: str) -> dict[str, Any]:
     async with ctx.admin_db.session() as session:
         row = await session.get(Job, job_id)
         assert row is not None
+        assert row.payload is not None
         return dict(row.payload)
 
 
