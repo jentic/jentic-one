@@ -102,14 +102,14 @@ function OverlayRow({
 
 	return (
 		<li
-			className="border-border/60 flex flex-wrap items-center gap-3 border-b py-3 last:border-b-0"
+			className="border-border/60 flex flex-col gap-2 border-b py-3 last:border-b-0 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3"
 			data-testid="overlay-row"
 			data-overlay-id={overlay.id}
 			// Cross-link jump target: receives focus from the Revisions section's
 			// "overlay …" origin links so keyboard/SR users land here perceivably.
 			tabIndex={-1}
 		>
-			<div className="min-w-0 flex-1">
+			<div className="min-w-0 sm:flex-1">
 				<div className="flex flex-wrap items-center gap-2">
 					<Badge
 						variant={LIFECYCLE_VARIANT[lifecycle]}
@@ -183,7 +183,7 @@ function OverlayRow({
 					{` · ${note}`}
 				</p>
 			</div>
-			<div className="flex shrink-0 gap-2">
+			<div className="flex flex-wrap gap-2 sm:shrink-0">
 				{overlay.confirmHref ? (
 					<Button
 						variant="secondary"
