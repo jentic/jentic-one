@@ -100,3 +100,9 @@ try {
 finally {
   Remove-Item -Recurse -Force $scratch -ErrorAction SilentlyContinue
 }
+
+# Fall-through means every assertion passed (failures call Fail -> exit 1). Exit
+# 0 EXPLICITLY: without this the process inherits $LASTEXITCODE from the last
+# native command run above (e.g. `jenticctl doctor` may exit non-zero on a warn
+# row, which the smoke deliberately tolerates), leaking a false failure.
+exit 0
