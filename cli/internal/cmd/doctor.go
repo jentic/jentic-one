@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -106,6 +109,7 @@ func (a *App) doctorE(ctx context.Context, opts *doctorOptions) error {
 	d.checkTooling(manifest, manifestFound)
 	d.checkServer()
 	d.checkAgent()
+	d.checkLocalAgent(cfg)
 
 	if opts.json {
 		return d.renderJSON()
@@ -281,6 +285,45 @@ func (d *doctor) checkAgent() {
 		} else {
 			d.add(section, "identity", statusWarn, "identity check failed: "+meErr.Error(), "")
 		}
+	}
+}
+
+// checkLocalAgent is the client-side sibling of jenticctl's local-agent probe
+// (5.1 §3c, plan.md Phase 5 item 6). jenticctl is deliberately absent from agent
+// hosts, so `jentic doctor` is the only self-check that can run there. It reports
+// per-session confinement prerequisites (the SAME AgentUserPrereqs probe `jentic
+// run`'s launch gate uses, so the two can never disagree) and, when this operator
+// has provisioned a dedicated agent account, warns if the agent would run under
+// the operator's own uid — the boundary the whole isolation model exists to
+// establish. It is read-only and, like the rest of doctor, keeps warnings at a
+// zero exit so it stays CI-safe.
+func (d *doctor) checkLocalAgent(cfg *config.FileConfig) {
+	const section = "Local agent"
+
+	for _, p := range localagent.AgentUserPrereqs() {
+		if p.OK {
+			d.add(section, p.Name, statusPass, "available", "")
+			continue
+		}
+		d.add(section, p.Name, statusWarn, p.Reason, p.Hint)
+	}
+
+	acct, hasAcct := cfg.AgentAccount()
+	if !hasAcct || !acct.AccountCreated {
+		return
+	}
+	// A provisioned account whose OS user cannot be resolved, or which resolves
+	// to the operator's own uid, means an agent launched here would share the
+	// operator's disk view — the isolation is nominal, not real.
+	if agentUser, err := user.Lookup(acct.User); err != nil {
+		d.add(section, "account", statusWarn, fmt.Sprintf("account %q not found on this host: %v", acct.User, err),
+			"run `jentic bootstrap` on the agent host, or `jentic reset` to clear the stale record")
+	} else if agentUser.Uid == strconv.Itoa(os.Getuid()) {
+		d.add(section, "account uid", statusWarn,
+			fmt.Sprintf("agent account %q shares this operator's uid (%s)", acct.User, agentUser.Uid),
+			"the agent would run unconfined against your files; re-provision a dedicated account with `jentic bootstrap`")
+	} else {
+		d.add(section, "account", statusPass, fmt.Sprintf("%s (uid %s)", acct.User, agentUser.Uid), "")
 	}
 }
 

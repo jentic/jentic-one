@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -214,5 +215,79 @@ func TestCheckStatusString(t *testing.T) {
 		if got := s.String(); got != want {
 			t.Errorf("checkStatus(%d).String() = %q, want %q", s, got, want)
 		}
+	}
+}
+
+// The client-side self-check (5.1 §3c, plan.md Phase 5 item 6) must always render
+// the local-agent confinement prereq breakdown — jenticctl is absent from agent
+// hosts, so doctor is the only place these prereqs surface there.
+func TestDoctorReportsLocalAgentPrereqs(t *testing.T) {
+	app := testApp(t)
+	opts := offlineOpts()
+	opts.json = true
+	_ = app.doctorE(context.Background(), opts)
+
+	var report struct {
+		Checks []struct {
+			Section string `json:"section"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	found := false
+	for _, c := range report.Checks {
+		if c.Section == "Local agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("doctor is missing the \"Local agent\" section:\n%s", app.Out.(*bytes.Buffer).String())
+	}
+}
+
+// A provisioned agent account whose OS user resolves to the operator's own uid is
+// the isolation-defeating case the same-uid warning exists to catch. We seed the
+// account with the CURRENT user (guaranteed same uid) and assert a warning row.
+func TestDoctorWarnsSameUIDAgentAccount(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot resolve current user: %v", err)
+	}
+
+	app := testApp(t)
+	cfg, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.SetAgentAccount(config.AgentAccount{User: me.Username, AccountCreated: true, Enabled: true})
+	if err := cfg.Save(app.Paths); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	opts := offlineOpts()
+	opts.json = true
+	_ = app.doctorE(context.Background(), opts)
+
+	var report struct {
+		Checks []struct {
+			Section string `json:"section"`
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Detail  string `json:"detail"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	warned := false
+	for _, c := range report.Checks {
+		if c.Section == "Local agent" && c.Name == "account uid" {
+			warned = c.Status == "warn"
+		}
+	}
+	if !warned {
+		t.Errorf("expected a same-uid warning for agent account %q:\n%s", me.Username, app.Out.(*bytes.Buffer).String())
 	}
 }
