@@ -249,7 +249,12 @@ async def run_migrations_online() -> None:
             )
             if not exists:
                 await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-                await connection.commit()
+            # The probe SELECT autobegins a transaction on this connection;
+            # always end it (both branches). Left open, Alembic treats the
+            # connection as externally-transacted and migrations that use
+            # ``op.get_context().autocommit_block()`` die on
+            # ``assert self._transaction is not None``.
+            await connection.commit()
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

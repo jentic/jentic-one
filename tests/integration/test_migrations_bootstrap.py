@@ -27,23 +27,28 @@ from jentic_one.shared.db.session import get_database_url
 
 from .conftest import _alembic_config_for, _test_backend
 
-pytestmark = pytest.mark.skipif(
-    _test_backend() != "postgres",
-    reason="schema bootstrap is Postgres-only (SQLite has no schemas)",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        _test_backend() != "postgres",
+        reason="schema bootstrap is Postgres-only (SQLite has no schemas)",
+    ),
+]
 
 
-def _fresh_schema_config(integration_config: AppConfig, schema: str) -> AlembicConfig:
-    """Alembic config for the registry target pointed at a not-yet-existing schema.
+def _fresh_schema_config(
+    integration_config: AppConfig, schema: str, target: str = "registry"
+) -> AlembicConfig:
+    """Alembic config for a migration target pointed at an arbitrary schema.
 
     Connects as the bootstrap superuser: creating a schema needs CREATE on the
     database, which the managed install has (the app connects as the configured
     superuser) but the harness's per-surface users deliberately lack.
     """
-    db_config = integration_config.databases.registry.model_copy(
+    db_config = getattr(integration_config.databases, target).model_copy(
         update={"schema_name": schema, "user": "postgres", "password": SecretStr("postgres")}
     )
-    return _alembic_config_for("registry", db_config)
+    return _alembic_config_for(target, db_config)
 
 
 def _superuser_url(integration_config: AppConfig) -> URL | str:
@@ -109,5 +114,38 @@ def test_upgrade_is_idempotent_over_existing_schema(integration_config: AppConfi
         command.upgrade(cfg, "head")
         after = asyncio.run(_schema_tables(integration_config, schema))
         assert before == after
+    finally:
+        asyncio.run(_drop_schema(integration_config, schema))
+
+
+async def _create_schema(integration_config: AppConfig, schema: str) -> None:
+    engine = create_async_engine(_superuser_url(integration_config))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    finally:
+        await engine.dispose()
+
+
+def test_upgrade_over_preexisting_schema_supports_autocommit_block(
+    integration_config: AppConfig,
+) -> None:
+    """Full upgrade over a PRE-PROVISIONED (empty) schema must succeed.
+
+    Regression: the env's schema-existence probe autobegins a transaction on
+    the connection. When the schema already existed nothing committed it, so
+    Alembic saw an externally-managed transaction and any migration using
+    ``op.get_context().autocommit_block()`` died on ``assert
+    self._transaction is not None``. The control target is used deliberately —
+    it is one of the two targets with such a migration (registry has none,
+    which is how the original tests missed this).
+    """
+    schema = f"bootstrap_992_{uuid.uuid4().hex[:8]}"
+    try:
+        asyncio.run(_create_schema(integration_config, schema))
+        command.upgrade(_fresh_schema_config(integration_config, schema, target="control"), "head")
+        tables = asyncio.run(_schema_tables(integration_config, schema))
+        assert "alembic_version" in tables
+        assert len(tables) > 1, f"no control tables created in {schema}: {tables}"
     finally:
         asyncio.run(_drop_schema(integration_config, schema))
