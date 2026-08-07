@@ -18,7 +18,12 @@ GOLANGCI_VERSION := v2.12.2
 # Verified against both real specs on 2026-08-04 (see impl/2.1 §2 spike note).
 OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
 
-.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen
+# Pinned like OAPI_CODEGEN (go run ...@version, no global install) for the same
+# reproducibility reasons. NB the module path stays github.com/atombender/... —
+# the repo moved to omissis/go-jsonschema but kept the old import path (impl/6.0 §2).
+GO_JSONSCHEMA := go run github.com/atombender/go-jsonschema@v0.23.0
+
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen generate-config check-ctl-gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -86,6 +91,16 @@ generate-api: ## Regenerate the typed OpenAPI clients (+ spec companions) from t
 
 check-cli-gen: generate-api ## CI drift gate: fail if generated code is stale vs. the specs
 	git diff --exit-code -- client/generated/
+
+generate-config: ## Regenerate the backend config struct from the vendored config schema (impl/6.0 §2)
+	@echo "Vendoring the config schema into the module (go:embed cannot cross module roots, impl/6.0 §1)..."
+	cp ../config/config-schema.json internal/cli/ctl/assets/config-schema.json
+	@echo "Generating the backend config struct..."
+	$(GO_JSONSCHEMA) -p generated -o internal/cli/ctl/generated/config.go internal/cli/ctl/assets/config-schema.json
+	@echo "Config code generation complete."
+
+check-ctl-gen: generate-config ## CI drift gate: fail if the generated config struct is stale vs. the schema
+	git diff --exit-code -- internal/cli/ctl/assets/config-schema.json internal/cli/ctl/generated/config.go
 
 check: lint vet test-race ## Lint, vet, and race-test everything (test-race covers tests/arch + tests/golden)
 

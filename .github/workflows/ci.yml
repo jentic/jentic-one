@@ -647,6 +647,15 @@ jobs:
       - name: Generated CLI client up to date
         run: make check-cli-gen
 
+      # CLI-V2 Phase 6 (themes/cli-v2/impl/6.0): jenticctl's installer flags,
+      # wizard, and doctor are generated from the backend config schema
+      # (config/config-schema.json, itself drift-gated in the backend job).
+      # This re-vendors the schema and regenerates the Go struct, failing on any
+      # diff — the cli-side half of the AppConfig → schema → BackendConfig chain,
+      # mirroring check-cli-gen's posture for the OpenAPI clients.
+      - name: Generated installer config up to date
+        run: make check-ctl-gen
+
       # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
       # boundary tests and the V1 characterization (golden) contract. Both are
       # already covered by `go test -race ./...` above, but naming them as an
