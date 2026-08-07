@@ -223,6 +223,7 @@ const STRIPE_OVERLAYS = [
 		updated_at: null,
 		confirmed_at: '2026-01-05T01:00:00Z',
 		deprecated_at: null,
+		deprecated_reason: null,
 		_links: {
 			self: '/apis/stripe/stripe-api/2024-01-01/overlays/ovr_6a75aa8e6edd9723f71840e8',
 			api: '/apis/stripe/stripe-api/2024-01-01',

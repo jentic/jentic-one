@@ -4,17 +4,19 @@
  * jentic-one lets an operator layer an overlay on top of an imported API's
  * spec: a `pending` overlay is a submitted-but-not-yet-applied change, a
  * `confirmed` overlay has been materialized onto the served spec, and a
- * `deprecated` overlay has been superseded (manually, by a re-import adopting
+ * `deprecated` overlay has been retired (manually, by a re-import adopting
  * a fresh upstream spec, or by a rollback). This section lists overlays
  * newest-first and makes each one legible:
  *
  * - a human-readable summary of what the overlay DOES, derived from its
- *   document's actions (preferring the author's per-action descriptions);
+ *   document's actions (preferring the author's per-action descriptions),
+ *   capped at a few lines so a many-action overlay can't drown the list;
  * - the real submitting principal (`created_by`, resolved via ActorLabel) plus
  *   any free-text attribution (`contributed_by`);
- * - a derived lifecycle state (pending / active / confirmed / rolled back /
- *   deprecated) distinct from origin — the wire `status` alone can't tell a
- *   rollback from a re-import deprecation;
+ * - a derived lifecycle state (pending / active / superseded / confirmed /
+ *   rolled back / deprecated) distinct from origin — the wire `status` alone
+ *   can't tell a rollback from a re-import deprecation, and a "deprecated"
+ *   overlay whose revision still serves is called out explicitly;
  * - a unique short id (`ovr_…1840e8` — KSUIDs share their LEADING chars, so
  *   the tail is shown) with a copy-full-id affordance;
  * - a link to the revision the overlay produced (jumps to the Revisions row).
@@ -29,11 +31,12 @@ import {
 	CardBody,
 	Badge,
 	Button,
-	Skeleton,
+	SkeletonRows,
 	EmptyState,
 	ErrorAlert,
 	CopyButton,
 	ActorLabel,
+	toast,
 } from '@/shared/ui';
 import { GitBranch, Layers } from 'lucide-react';
 import { useState } from 'react';
@@ -42,6 +45,7 @@ import {
 	useOverlays,
 	useOverlayActions,
 	overlayLifecycle,
+	overlayLifecycleNote,
 	OVERLAY_LIFECYCLE_LABEL,
 	shortOverlayId,
 	shortRevisionId,
@@ -49,61 +53,25 @@ import {
 } from '@/modules/workspace/api';
 import type { ApiKey, Overlay, OverlayLifecycle } from '@/modules/workspace/api';
 import { ConfirmDialog } from '@/modules/workspace/components/ConfirmDialog';
+import { jumpToRevision } from '@/modules/workspace/components/jumpToRow';
 
-/** Badge colour per derived lifecycle state. */
+/**
+ * Badge colour per derived lifecycle state. The two easiest-to-confuse states
+ * get distinct variants: `superseded` (was applied, no longer serving) stays
+ * neutral while `deprecated` (retired) reads as terminal.
+ */
 const LIFECYCLE_VARIANT: Record<OverlayLifecycle, BadgeVariant> = {
 	pending: 'pending',
 	active: 'success',
+	superseded: 'default',
 	confirmed: 'default',
 	'rolled-back': 'warning',
-	deprecated: 'default',
+	'deprecated-serving': 'warning',
+	deprecated: 'danger',
 };
 
-/** Absolute local datetime for lifecycle notes (e.g. "28 Jul 2026, 13:02"). */
-function formatDateTime(iso: string): string {
-	const ts = Date.parse(iso);
-	if (Number.isNaN(ts)) return iso;
-	return new Date(ts).toLocaleString(undefined, {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-	});
-}
-
-/** Scroll a revision's row into view (rows carry `data-revision-id`). */
-function scrollToRevision(revisionId: string) {
-	document
-		.querySelector(`[data-revision-id="${CSS.escape(revisionId)}"]`)
-		?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-/** The dated note describing where the overlay is in its lifecycle. */
-function lifecycleNote(overlay: Overlay, lifecycle: OverlayLifecycle): string | null {
-	switch (lifecycle) {
-		case 'rolled-back':
-			return overlay.deprecatedAt
-				? `Rolled back ${formatDateTime(overlay.deprecatedAt)}${
-						overlay.supersededRevisionId
-							? ` — revision ${shortRevisionId(overlay.supersededRevisionId)} restored`
-							: ''
-					}`
-				: null;
-		case 'deprecated':
-			// A deprecated overlay that HAD materialized was superseded (typically
-			// by a re-import adopting a fresh upstream spec); one that never
-			// materialized was simply retired.
-			return overlay.deprecatedAt
-				? `${overlay.confirmedAt ? 'Superseded' : 'Deprecated'} ${formatDateTime(overlay.deprecatedAt)}`
-				: null;
-		case 'active':
-		case 'confirmed':
-			return overlay.confirmedAt ? `Confirmed ${formatDateTime(overlay.confirmedAt)}` : null;
-		case 'pending':
-			return `Submitted ${formatDateTime(overlay.createdAt)}`;
-	}
-}
+/** Max summary lines rendered per row before collapsing to "+N more actions". */
+const MAX_SUMMARY_LINES = 3;
 
 type OverlayAction = 'confirm' | 'rollback' | 'deprecate' | null;
 
@@ -127,13 +95,19 @@ function OverlayRow({
 }) {
 	const lifecycle = overlayLifecycle(overlay, currentRevisionId);
 	const summary = summarizeOverlayActions(overlay.document);
-	const note = lifecycleNote(overlay, lifecycle);
+	const shownSummary = summary.slice(0, MAX_SUMMARY_LINES);
+	const hiddenActions = summary.length - shownSummary.length;
+	const note = overlayLifecycleNote(overlay, lifecycle);
+	const shortId = shortOverlayId(overlay.id);
 
 	return (
 		<li
 			className="border-border/60 flex flex-wrap items-center gap-3 border-b py-3 last:border-b-0"
 			data-testid="overlay-row"
 			data-overlay-id={overlay.id}
+			// Cross-link jump target: receives focus from the Revisions section's
+			// "overlay …" origin links so keyboard/SR users land here perceivably.
+			tabIndex={-1}
 		>
 			<div className="min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-2">
@@ -149,20 +123,29 @@ function OverlayRow({
 						title={overlay.id}
 						data-testid="overlay-id"
 					>
-						{shortOverlayId(overlay.id)}
+						{shortId}
+						<span className="sr-only"> (full id {overlay.id})</span>
 					</span>
 					<CopyButton
 						value={overlay.id}
 						size="icon"
 						variant="ghost"
-						ariaLabel="Copy full overlay id"
+						ariaLabel={`Copy full id of overlay ${shortId}`}
 						toastMessage="Overlay id copied"
 					/>
 					{overlay.confirmedRevisionId ? (
 						<Button
 							variant="ghost"
 							size="sm"
-							onClick={() => scrollToRevision(overlay.confirmedRevisionId as string)}
+							onClick={() => {
+								if (!jumpToRevision(overlay.confirmedRevisionId as string)) {
+									toast({
+										variant: 'default',
+										title: 'Revision not shown in the list above',
+									});
+								}
+							}}
+							aria-label={`Jump to revision ${shortRevisionId(overlay.confirmedRevisionId)}, which this overlay produced`}
 							title="Jump to the revision this overlay produced"
 							data-testid="overlay-produced-revision"
 						>
@@ -171,13 +154,21 @@ function OverlayRow({
 						</Button>
 					) : null}
 				</div>
-				{summary.length > 0 ? (
+				{shownSummary.length > 0 ? (
 					<ul className="mt-1 space-y-0.5" data-testid="overlay-summary">
-						{summary.map((line, i) => (
+						{shownSummary.map((line, i) => (
 							<li key={i} className="text-foreground/90 text-xs">
 								{line}
 							</li>
 						))}
+						{hiddenActions > 0 ? (
+							<li
+								className="text-muted-foreground text-xs"
+								data-testid="overlay-summary-more"
+							>
+								+{hiddenActions} more action{hiddenActions === 1 ? '' : 's'}
+							</li>
+						) : null}
 					</ul>
 				) : null}
 				<p className="text-muted-foreground mt-1 text-xs" data-testid="overlay-meta">
@@ -189,7 +180,7 @@ function OverlayRow({
 						'unknown author'
 					)}
 					{overlay.contributedBy ? ` · via ${overlay.contributedBy}` : ''}
-					{note ? ` · ${note}` : ''}
+					{` · ${note}`}
 				</p>
 			</div>
 			<div className="flex shrink-0 gap-2">
@@ -199,17 +190,22 @@ function OverlayRow({
 						size="sm"
 						onClick={() => onConfirm(overlay.id)}
 						loading={pendingAction === 'confirm'}
+						aria-label={`Confirm overlay ${shortId}`}
 						data-testid="overlay-confirm"
 					>
 						Confirm
 					</Button>
 				) : null}
-				{overlay.rollbackHref ? (
+				{/* The backend advertises `rollback` for any materialized overlay, but
+				    the service 409s unless the overlay's revision is CURRENT — gate on
+				    the derived lifecycle so we never render a guaranteed-to-fail button. */}
+				{overlay.rollbackHref && lifecycle === 'active' ? (
 					<Button
 						variant="ghost"
 						size="sm"
 						onClick={() => onRollback(overlay)}
 						loading={pendingAction === 'rollback'}
+						aria-label={`Roll back overlay ${shortId}`}
 						data-testid="overlay-rollback"
 					>
 						Roll back
@@ -221,6 +217,7 @@ function OverlayRow({
 						size="sm"
 						onClick={() => onDeprecate(overlay.id)}
 						loading={pendingAction === 'deprecate'}
+						aria-label={`Deprecate overlay ${shortId}`}
 						data-testid="overlay-deprecate"
 					>
 						Deprecate
@@ -246,7 +243,7 @@ export function OverlaysSection({
 	// superseded), so it is gated behind an explicit confirm step.
 	const [rollbackTarget, setRollbackTarget] = useState<Overlay | null>(null);
 
-	const overlays = query.data?.items ?? [];
+	const overlays = query.items;
 
 	return (
 		<Card data-testid="overlays-section">
@@ -255,11 +252,7 @@ export function OverlaysSection({
 			</CardHeader>
 			<CardBody>
 				{query.isLoading ? (
-					<div className="space-y-2" aria-busy="true">
-						{Array.from({ length: 3 }).map((_, i) => (
-							<Skeleton key={i} className="h-12 w-full" />
-						))}
-					</div>
+					<SkeletonRows rows={3} />
 				) : query.isError ? (
 					<ErrorAlert
 						message={
@@ -270,7 +263,7 @@ export function OverlaysSection({
 					<EmptyState
 						icon={<Layers size={28} aria-hidden="true" />}
 						title="No overlays"
-						description="No overlays for this API."
+						description="Overlays are reviewed spec fixes submitted by agents or operators; they'll appear here once submitted."
 					/>
 				) : (
 					<ul className="divide-border/60">

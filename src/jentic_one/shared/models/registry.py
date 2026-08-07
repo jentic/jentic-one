@@ -28,6 +28,28 @@ class OverlayStatus(StrEnum):
     DEPRECATED = "deprecated"
 
 
+class OverlayDeprecationReason(StrEnum):
+    """Why an overlay transitioned to DEPRECATED — the *cause* behind the terminal state.
+
+    Persisted alongside ``deprecated_at`` at each of the three deprecation sites so
+    clients can label the historical event durably ("rolled back" vs "deprecated" vs
+    "superseded by re-import") instead of re-deriving the verb from the API's *current*
+    revision pointer, which keeps moving after the fact. Stored as a free-form string
+    column (like ``ApiRevision.origin``); NULL on rows deprecated before this field
+    existed — treat NULL as "unknown cause".
+    """
+
+    #: An operator explicitly deprecated the overlay (DELETE endpoint). Says nothing
+    #: about the served spec — a materialized overlay's revision may still be current.
+    MANUAL = "manual"
+    #: An operator rolled the overlay back (A5b): its revision was archived and the
+    #: superseded revision restored to current.
+    ROLLBACK = "rollback"
+    #: An authorized catalog re-import superseded the overlay's materialized revision
+    #: (A4b) and auto-deprecated it.
+    SUPERSEDED_BY_REIMPORT = "superseded_by_reimport"
+
+
 class RevisionOrigin(StrEnum):
     """Provenance of an API revision's spec — where the served bytes came from.
 

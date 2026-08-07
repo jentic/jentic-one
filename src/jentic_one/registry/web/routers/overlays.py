@@ -76,6 +76,7 @@ def _build_overlay_response(view: OverlayView, request: Request) -> OverlayRespo
         updated_at=view.updated_at,
         confirmed_at=view.confirmed_at,
         deprecated_at=view.deprecated_at,
+        deprecated_reason=view.deprecated_reason,
         links=_overlay_links(
             self_link,
             api_path,
@@ -110,6 +111,7 @@ def _build_overlay_list_item(
         updated_at=item.updated_at,
         confirmed_at=item.confirmed_at,
         deprecated_at=item.deprecated_at,
+        deprecated_reason=item.deprecated_reason,
         links=_overlay_links(
             self_link,
             api_path,
@@ -119,7 +121,7 @@ def _build_overlay_list_item(
     )
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=OverlayResponse)
 async def submit_overlay(
     request: Request,
     vendor: str,
@@ -155,7 +157,7 @@ async def submit_overlay(
     return JSONResponse(status_code=201, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("")
+@router.get("", response_model=OverlayListResponse)
 async def list_overlays(
     request: Request,
     vendor: str,
@@ -183,7 +185,7 @@ async def list_overlays(
     return JSONResponse(content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.get("/{overlay_id}")
+@router.get("/{overlay_id}", response_model=OverlayResponse)
 async def get_overlay(
     request: Request,
     vendor: str,
@@ -201,7 +203,7 @@ async def get_overlay(
     return JSONResponse(status_code=200, content=resp.model_dump(mode="json", by_alias=True))
 
 
-@router.patch("/{overlay_id}")
+@router.patch("/{overlay_id}", response_model=OverlayResponse)
 async def update_overlay(
     request: Request,
     vendor: str,
@@ -264,7 +266,7 @@ async def deprecate_overlay(
     return Response(status_code=204)
 
 
-@router.post("/{overlay_id}:confirm")
+@router.post("/{overlay_id}:confirm", response_model=OverlayResponse)
 async def confirm_overlay(
     request: Request,
     vendor: str,

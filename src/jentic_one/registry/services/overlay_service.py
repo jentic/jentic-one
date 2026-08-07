@@ -36,7 +36,12 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.jobs.enqueue import enqueue_job
-from jentic_one.shared.models import ORIGIN_OVERLAY, JobKind, OverlayStatus
+from jentic_one.shared.models import (
+    ORIGIN_OVERLAY,
+    JobKind,
+    OverlayDeprecationReason,
+    OverlayStatus,
+)
 from jentic_one.shared.pagination import decode_cursor_str, encode_cursor
 from jentic_one.shared.url_validation import validate_upstream_url
 
@@ -159,6 +164,9 @@ class OverlayView:
     updated_at: datetime | None
     confirmed_at: datetime | None
     deprecated_at: datetime | None
+    #: Why the overlay was deprecated (``manual`` / ``rollback`` /
+    #: ``superseded_by_reimport``); NULL when not deprecated or for legacy rows.
+    deprecated_reason: str | None
 
 
 class OverlayPageItem(BaseModel):
@@ -178,6 +186,7 @@ class OverlayPageItem(BaseModel):
     updated_at: datetime | None
     confirmed_at: datetime | None
     deprecated_at: datetime | None
+    deprecated_reason: str | None
 
 
 class OverlayPage(BaseModel):
@@ -391,6 +400,7 @@ class OverlayService:
             updated_at=overlay.updated_at,
             confirmed_at=overlay.confirmed_at,
             deprecated_at=overlay.deprecated_at,
+            deprecated_reason=overlay.deprecated_reason,
         )
 
     async def submit(
@@ -489,6 +499,7 @@ class OverlayService:
                 updated_at=row.updated_at,
                 confirmed_at=row.confirmed_at,
                 deprecated_at=row.deprecated_at,
+                deprecated_reason=row.deprecated_reason,
             )
             for row in rows
         ]
@@ -926,7 +937,11 @@ class OverlayService:
 
             now = datetime.now(UTC)
             await OverlayRepository.set_status(
-                session, overlay_id, OverlayStatus.DEPRECATED, deprecated_at=now
+                session,
+                overlay_id,
+                OverlayStatus.DEPRECATED,
+                deprecated_at=now,
+                deprecated_reason=OverlayDeprecationReason.MANUAL,
             )
 
         await record_audit_best_effort(
@@ -1030,6 +1045,7 @@ class OverlayService:
                 overlay_id,
                 OverlayStatus.DEPRECATED,
                 deprecated_at=now,
+                deprecated_reason=OverlayDeprecationReason.ROLLBACK,
                 expected_status=OverlayStatus.CONFIRMED,
             )
             if demoted == 0:

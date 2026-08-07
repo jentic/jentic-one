@@ -1,15 +1,17 @@
 /**
  * SpecViewerDialog — view a workspace API revision's OpenAPI document, as a
- * DIFF by default.
+ * DIFF by default (when the caller supplies a base).
  *
  * The old viewer dumped the whole ~800-line resolved JSON, leaving reviewers
  * to eyeball what changed. Now, when the caller supplies a comparison base
- * (`diffAgainst` — the live revision for a historical row, the previous
- * revision for the live one), the dialog opens in diff mode: a structural
- * before/after list of exactly the changed sections (`$.servers`, …), with a
- * "Full spec" toggle for the raw document. Both documents are fetched lazily
- * behind the open flag (`useApiSpec(key, open)`), so nothing large loads on
- * the detail page itself.
+ * (`diffAgainst` — the previous revision, matching the row summary's "vs
+ * previous" delta), the dialog opens in diff mode: a structural before/after
+ * list of exactly the changed sections (`$.servers`, …), with a "Full spec"
+ * toggle for the raw document. Entry points whose label promises the raw
+ * document (the header's "View spec") pass `defaultMode="full"` instead.
+ * Both documents are fetched lazily behind the open flag
+ * (`useApiSpec(key, open)`), so nothing large loads on the detail page
+ * itself.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
@@ -23,14 +25,9 @@ import {
 	Badge,
 } from '@/shared/ui';
 import { useApiSpec, formatApiKey, diffSpecs } from '@/modules/workspace/api';
-import type { ApiKey, SpecDiffEntry } from '@/modules/workspace/api';
+import type { ApiKey, SpecDiffBase, SpecDiffEntry } from '@/modules/workspace/api';
 
-export interface SpecDiffBase {
-	/** Revision to diff FROM (`null` = the live revision). */
-	revisionId: string | null;
-	/** Short human label for the base, e.g. `live · dc9bcdeb` or `previous · 24bf7e10`. */
-	label: string;
-}
+export type { SpecDiffBase } from '@/modules/workspace/api';
 
 export interface SpecViewerDialogProps {
 	apiKey: ApiKey;
@@ -44,11 +41,17 @@ export interface SpecViewerDialogProps {
 	/** Short label (e.g. revision id / state) shown beside the api key. */
 	revisionLabel?: string;
 	/**
-	 * Comparison base. When present the dialog defaults to a diff of
-	 * `diffAgainst.revisionId` → `revisionId` with a "Full spec" toggle; when
-	 * absent (e.g. an API with a single revision) only the full spec is shown.
+	 * Comparison base. When present the dialog offers a Diff/Full-spec toggle
+	 * (diff of `diffAgainst.revisionId` → `revisionId`); when absent (e.g. the
+	 * API's first revision) only the full spec is shown.
 	 */
 	diffAgainst?: SpecDiffBase | null;
+	/**
+	 * Which view opens first when a diff base exists. `'diff'` (default) for
+	 * Diff-labeled entry points; pass `'full'` when the trigger's label
+	 * promises the raw document (e.g. the header "View spec" button).
+	 */
+	defaultMode?: 'diff' | 'full';
 }
 
 const KIND_VARIANT = { added: 'success', removed: 'danger', changed: 'warning' } as const;
@@ -70,12 +73,26 @@ function DiffEntryBlock({ entry }: { entry: SpecDiffEntry }) {
 			</div>
 			<div className="space-y-1.5">
 				{entry.kind !== 'added' ? (
-					<pre className="bg-danger/8 border-danger/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre">
+					// tabIndex: a scrollable region with no focusable child is not
+					// keyboard-scrollable in Safari/older Chromium. The sr-only label
+					// carries the before/after direction that color + `-`/`+` prefixes
+					// alone don't announce.
+					<pre
+						tabIndex={0}
+						aria-label={`Before, at ${entry.path}`}
+						className="bg-danger/8 border-danger/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+					>
+						<span className="sr-only">Before: </span>
 						{`- ${pretty(entry.before).split('\n').join('\n- ')}`}
 					</pre>
 				) : null}
 				{entry.kind !== 'removed' ? (
-					<pre className="bg-success/8 border-success/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre">
+					<pre
+						tabIndex={0}
+						aria-label={`After, at ${entry.path}`}
+						className="bg-success/8 border-success/20 text-foreground overflow-auto rounded border p-2 font-mono text-xs leading-relaxed whitespace-pre"
+					>
+						<span className="sr-only">After: </span>
 						{`+ ${pretty(entry.after).split('\n').join('\n+ ')}`}
 					</pre>
 				) : null}
@@ -91,14 +108,16 @@ export function SpecViewerDialog({
 	revisionId,
 	revisionLabel,
 	diffAgainst,
+	defaultMode = 'diff',
 }: SpecViewerDialogProps) {
 	const hasDiff = diffAgainst != null;
-	// View mode is a transient flag, not a draft — reset to the default (diff
-	// when a base exists) on every open, per the dialog state-lifecycle rule.
-	const [mode, setMode] = useState<'diff' | 'full'>(hasDiff ? 'diff' : 'full');
+	const initialMode = hasDiff ? defaultMode : 'full';
+	// View mode is a transient flag, not a draft — reset to the default on
+	// every open, per the dialog state-lifecycle rule.
+	const [mode, setMode] = useState<'diff' | 'full'>(initialMode);
 	useEffect(() => {
-		if (open) setMode(hasDiff ? 'diff' : 'full');
-	}, [open, hasDiff]);
+		if (open) setMode(initialMode);
+	}, [open, initialMode]);
 
 	const query = useApiSpec(apiKey, open, revisionId);
 	const baseQuery = useApiSpec(
@@ -132,6 +151,9 @@ export function SpecViewerDialog({
 			? baseQuery.error
 			: null;
 
+	const panelId = mode === 'diff' ? 'spec-view-panel-diff' : 'spec-view-panel-full';
+	const tabId = (value: string) => `spec-view-tab-${value}`;
+
 	return (
 		<Dialog
 			open={open}
@@ -144,11 +166,13 @@ export function SpecViewerDialog({
 						Close
 					</Button>
 					{prettySpec ? (
+						// "full spec" in the labels because in diff mode these still act
+						// on the whole target document, not the entries on screen.
 						<>
-							<CopyButton value={prettySpec} label="Copy" />
+							<CopyButton value={prettySpec} label="Copy full spec" />
 							<Button variant="secondary" size="sm" onClick={download}>
 								<Download size={14} aria-hidden="true" />
-								Download
+								Download full spec
 							</Button>
 						</>
 					) : null}
@@ -159,6 +183,10 @@ export function SpecViewerDialog({
 				<p className="text-muted-foreground font-mono text-xs">{formatApiKey(apiKey)}</p>
 				{hasDiff ? (
 					<SegmentedToggle
+						as="tabs"
+						ariaLabel="Spec view"
+						getTabId={tabId}
+						getControls={(value) => `spec-view-panel-${value}`}
 						options={[
 							{ value: 'diff', label: `Diff vs ${diffAgainst.label}` },
 							{ value: 'full', label: 'Full spec' },
@@ -169,7 +197,8 @@ export function SpecViewerDialog({
 				) : null}
 			</div>
 			{isLoading ? (
-				<div className="space-y-2" aria-busy="true">
+				<div role="status" aria-live="polite" aria-busy="true" className="space-y-2">
+					<span className="sr-only">Loading spec…</span>
 					{Array.from({ length: 8 }).map((_, i) => (
 						<Skeleton key={i} className="h-4 w-full" />
 					))}
@@ -192,11 +221,25 @@ export function SpecViewerDialog({
 				</div>
 			) : mode === 'diff' && diff != null ? (
 				diff.entries.length === 0 ? (
-					<p className="text-muted-foreground text-sm" data-testid="spec-diff-empty">
+					<p
+						id={panelId}
+						role="tabpanel"
+						aria-labelledby={tabId('diff')}
+						className="text-muted-foreground text-sm"
+						data-testid="spec-diff-empty"
+					>
 						No differences vs {diffAgainst?.label}.
 					</p>
 				) : (
-					<div className="max-h-[60vh] overflow-auto" data-testid="spec-diff-content">
+					<div
+						id={panelId}
+						role="tabpanel"
+						aria-labelledby={tabId('diff')}
+						tabIndex={0}
+						aria-label="Spec changes"
+						className="max-h-[60vh] overflow-auto"
+						data-testid="spec-diff-content"
+					>
 						<p className="text-muted-foreground mb-2 text-xs">
 							{diff.entries.length}
 							{diff.truncated ? '+' : ''} changed section
@@ -213,6 +256,11 @@ export function SpecViewerDialog({
 				)
 			) : (
 				<pre
+					id={hasDiff ? panelId : undefined}
+					role={hasDiff ? 'tabpanel' : undefined}
+					aria-labelledby={hasDiff ? tabId('full') : undefined}
+					tabIndex={0}
+					aria-label="Full spec JSON"
 					className="bg-muted/40 border-border/60 text-foreground max-h-[60vh] overflow-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre"
 					data-testid="spec-viewer-content"
 				>

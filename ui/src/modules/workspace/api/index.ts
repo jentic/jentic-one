@@ -21,7 +21,7 @@ export {
 	workspaceKeys,
 } from '@/modules/workspace/api/hooks';
 export type { UseImportSpec } from '@/modules/workspace/api/hooks';
-export type { UseApiOperations } from '@/modules/workspace/api/hooks';
+export type { UseApiOperations, UsePagedList } from '@/modules/workspace/api/hooks';
 
 export { WorkspaceApiError } from '@/modules/workspace/api/client';
 
@@ -31,16 +31,20 @@ export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/sp
 export {
 	shortOverlayId,
 	shortRevisionId,
+	formatDateTime,
 	summarizeOverlayActions,
 	overlayLifecycle,
+	overlayLifecycleNote,
 	OVERLAY_LIFECYCLE_LABEL,
+	revisionStateLabel,
 	revisionOriginLabel,
 	overlayForRevision,
 	revisionChangeSummary,
+	diffBaseFor,
 	describeLastChange,
 	describeServingState,
 } from '@/modules/workspace/api/insights';
-export type { OverlayLifecycle } from '@/modules/workspace/api/insights';
+export type { OverlayLifecycle, SpecDiffBase } from '@/modules/workspace/api/insights';
 
 export { diffSpecs } from '@/modules/workspace/api/specDiff';
 export type { SpecDiffEntry, SpecDiffKind, SpecDiffResult } from '@/modules/workspace/api/specDiff';

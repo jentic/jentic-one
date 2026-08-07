@@ -148,6 +148,7 @@ export function toOverlay(value: unknown): Overlay {
 		createdAt: str(r.created_at),
 		confirmedAt: strOrNull(r.confirmed_at),
 		deprecatedAt: strOrNull(r.deprecated_at),
+		deprecatedReason: strOrNull(r.deprecated_reason),
 		targetRevisionId: strOrNull(r.target_revision_id),
 		confirmedRevisionId: strOrNull(r.confirmed_revision_id),
 		supersededRevisionId: strOrNull(r.superseded_revision_id),

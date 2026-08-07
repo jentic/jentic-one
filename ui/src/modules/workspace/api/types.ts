@@ -82,7 +82,7 @@ export interface ApiOperation {
 }
 
 /** Lifecycle state of a revision (wire `StrEnum` serialized as a string). */
-export type RevisionState = 'draft' | 'published' | 'archived' | (string & {});
+export type RevisionState = 'draft' | 'imported' | 'published' | 'archived' | (string & {});
 
 /**
  * Provenance of a revision (wire `RevisionOrigin`): `overlay` (materialized
@@ -144,6 +144,14 @@ export interface Overlay {
 	createdAt: string;
 	confirmedAt: string | null;
 	deprecatedAt: string | null;
+	/**
+	 * Why the overlay was deprecated — `manual` / `rollback` /
+	 * `superseded_by_reimport` — persisted at the moment of deprecation so the
+	 * historical event keeps its verb (a rollback stays "rolled back") instead
+	 * of being re-derived from the API's moving current-revision pointer. Null
+	 * when not deprecated, or for rows deprecated before the field existed.
+	 */
+	deprecatedReason: string | null;
 	targetRevisionId: string | null;
 	confirmedRevisionId: string | null;
 	/**

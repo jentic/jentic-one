@@ -80,4 +80,18 @@ describe('diffSpecs', () => {
 		expect(entries).toHaveLength(10);
 		expect(truncated).toBe(true);
 	});
+
+	it('handles keys that shadow Object.prototype members', () => {
+		// Schema property names like `constructor`/`toString` are legal in
+		// OpenAPI documents; a prototype-chain `in` check would silently drop
+		// their removal and mis-report their addition as `changed`.
+		const base = JSON.parse('{"schema":{"constructor":{"type":"string"}}}') as unknown;
+		const target = JSON.parse('{"schema":{}}') as unknown;
+		expect(diffSpecs(base, target).entries).toEqual([
+			{ path: '$.schema.constructor', kind: 'removed', before: { type: 'string' } },
+		]);
+		expect(diffSpecs(target, base).entries).toEqual([
+			{ path: '$.schema.constructor', kind: 'added', after: { type: 'string' } },
+		]);
+	});
 });

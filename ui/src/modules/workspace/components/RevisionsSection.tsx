@@ -11,8 +11,8 @@
  * `overlay ovr_…`, cross-linked to the producing overlay below), a one-line
  * "what changed" (operation-count delta vs the previous revision), the
  * submitting principal, and a Diff affordance that opens the spec viewer in
- * diff mode (vs live for historical rows, vs the previous revision for the
- * live one) instead of only a full-spec dump.
+ * diff mode against the SAME previous revision the summary describes (the
+ * API's first revision has no base, so its button reads "View spec" instead).
  */
 import { useState } from 'react';
 import {
@@ -22,23 +22,28 @@ import {
 	CardBody,
 	Badge,
 	Button,
-	Skeleton,
+	SkeletonRows,
 	EmptyState,
 	ErrorAlert,
 	CopyButton,
 	ActorLabel,
+	toast,
 } from '@/shared/ui';
-import { FileDiff, GitBranch, Layers } from 'lucide-react';
+import { FileDiff, FileJson, GitBranch, Layers } from 'lucide-react';
 import type { BadgeVariant } from '@/shared/ui';
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
-import type { SpecDiffBase } from '@/modules/workspace/components/SpecViewerDialog';
+import { jumpToOverlay } from '@/modules/workspace/components/jumpToRow';
 import {
 	useApiRevisions,
 	useOverlays,
 	useRevisionActions,
+	diffBaseFor,
+	formatDateTime,
 	overlayForRevision,
 	revisionOriginLabel,
 	revisionChangeSummary,
+	revisionStateLabel,
+	shortOverlayId,
 	shortRevisionId,
 	summarizeOverlayActions,
 } from '@/modules/workspace/api';
@@ -46,6 +51,7 @@ import type { ApiKey, ApiRevision, Overlay, RevisionState } from '@/modules/work
 
 /** Badge colour per known lifecycle state; unknown wire values fall back to `default`. */
 const STATE_VARIANT: Partial<Record<RevisionState, BadgeVariant>> = {
+	imported: 'success',
 	published: 'success',
 	draft: 'pending',
 	archived: 'default',
@@ -55,32 +61,13 @@ function stateVariant(state: RevisionState): BadgeVariant {
 	return STATE_VARIANT[state] ?? 'default';
 }
 
-/** Compact absolute datetime (e.g. "7 Aug 2026, 10:52"). */
-function formatDateTime(iso: string): string {
-	const ts = Date.parse(iso);
-	if (Number.isNaN(ts)) return iso;
-	return new Date(ts).toLocaleString(undefined, {
-		day: 'numeric',
-		month: 'short',
-		year: 'numeric',
-		hour: '2-digit',
-		minute: '2-digit',
-	});
-}
-
-/** Scroll the producing overlay's row into view (rows carry `data-overlay-id`). */
-function scrollToOverlay(overlayId: string) {
-	document
-		.querySelector(`[data-overlay-id="${CSS.escape(overlayId)}"]`)
-		?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
 type RevisionAction = 'promote' | 'archive' | null;
 
 function RevisionRow({
 	revision,
 	previous,
 	producedBy,
+	hasDiffBase,
 	onPromote,
 	onArchive,
 	onViewSpec,
@@ -91,6 +78,8 @@ function RevisionRow({
 	previous: ApiRevision | null;
 	/** The overlay whose confirm materialized this revision, when known. */
 	producedBy: Overlay | null;
+	/** Whether a diff base exists — the first-ever revision only has a full spec. */
+	hasDiffBase: boolean;
 	onPromote: (id: string) => void;
 	onArchive: (id: string) => void;
 	onViewSpec: (revision: ApiRevision) => void;
@@ -102,35 +91,50 @@ function RevisionRow({
 	const overlayNote = producedBy
 		? (summarizeOverlayActions(producedBy.document)[0] ?? null)
 		: null;
+	const shortId = shortRevisionId(revision.revisionId);
 
 	return (
 		<li
 			className="border-border/60 flex flex-wrap items-center gap-3 border-b py-3 last:border-b-0"
 			data-testid="revision-row"
 			data-revision-id={revision.revisionId}
+			// Cross-link jump target: receives focus from the Overlays section's
+			// "revision …" links so keyboard/SR users land here perceivably.
+			tabIndex={-1}
 		>
 			<div className="min-w-0 flex-1">
 				<div className="flex flex-wrap items-center gap-2">
-					<Badge variant={stateVariant(revision.state)}>{revision.state}</Badge>
+					<Badge variant={stateVariant(revision.state)}>
+						{revisionStateLabel(revision.state)}
+					</Badge>
 					{revision.isCurrent ? <Badge variant="success">Live</Badge> : null}
 					<span
 						className="text-muted-foreground truncate font-mono text-xs"
 						title={revision.revisionId}
 					>
-						{shortRevisionId(revision.revisionId)}
+						{shortId}
+						<span className="sr-only"> (full id {revision.revisionId})</span>
 					</span>
 					<CopyButton
 						value={revision.revisionId}
 						size="icon"
 						variant="ghost"
-						ariaLabel="Copy full revision id"
+						ariaLabel={`Copy full id of revision ${shortId}`}
 						toastMessage="Revision id copied"
 					/>
 					{producedBy ? (
 						<Button
 							variant="ghost"
 							size="sm"
-							onClick={() => scrollToOverlay(producedBy.id)}
+							onClick={() => {
+								if (!jumpToOverlay(producedBy.id)) {
+									toast({
+										variant: 'default',
+										title: 'Overlay not shown in the list below',
+									});
+								}
+							}}
+							aria-label={`Jump to overlay ${shortOverlayId(producedBy.id)}, which produced this revision`}
 							title="Jump to the overlay that produced this revision"
 							data-testid="revision-origin-overlay"
 						>
@@ -163,10 +167,20 @@ function RevisionRow({
 					variant="ghost"
 					size="sm"
 					onClick={() => onViewSpec(revision)}
+					aria-label={`${hasDiffBase ? 'Diff' : 'View spec of'} revision ${shortId}`}
 					data-testid="revision-view-spec"
 				>
-					<FileDiff size={14} aria-hidden="true" />
-					Diff
+					{hasDiffBase ? (
+						<>
+							<FileDiff size={14} aria-hidden="true" />
+							Diff
+						</>
+					) : (
+						<>
+							<FileJson size={14} aria-hidden="true" />
+							View spec
+						</>
+					)}
 				</Button>
 				{revision.promoteHref ? (
 					<Button
@@ -174,6 +188,7 @@ function RevisionRow({
 						size="sm"
 						onClick={() => onPromote(revision.revisionId)}
 						loading={pendingAction === 'promote'}
+						aria-label={`Promote revision ${shortId}`}
 						data-testid="revision-promote"
 					>
 						Promote
@@ -185,6 +200,7 @@ function RevisionRow({
 						size="sm"
 						onClick={() => onArchive(revision.revisionId)}
 						loading={pendingAction === 'archive'}
+						aria-label={`Archive revision ${shortId}`}
 						data-testid="revision-archive"
 					>
 						Archive
@@ -193,31 +209,6 @@ function RevisionRow({
 			</div>
 		</li>
 	);
-}
-
-/**
- * The comparison base for a revision's diff: a historical revision diffs vs
- * LIVE ("what would change if this served"), the live revision diffs vs the
- * revision created just before it ("what the last change did"). Null when
- * there is nothing to compare against (single-revision API).
- */
-function diffBaseFor(revision: ApiRevision, revisions: ApiRevision[]): SpecDiffBase | null {
-	const live = revisions.find((r) => r.isCurrent) ?? null;
-	if (!revision.isCurrent && live) {
-		return {
-			revisionId: live.revisionId,
-			label: `live · ${shortRevisionId(live.revisionId)}`,
-		};
-	}
-	const index = revisions.findIndex((r) => r.revisionId === revision.revisionId);
-	const previous = index >= 0 ? (revisions[index + 1] ?? null) : null;
-	if (previous) {
-		return {
-			revisionId: previous.revisionId,
-			label: `previous · ${shortRevisionId(previous.revisionId)}`,
-		};
-	}
-	return null;
 }
 
 export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
@@ -229,8 +220,8 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 	const { promote, archive, pendingRevisionId, pendingAction } = useRevisionActions(apiKey);
 	const [specRevision, setSpecRevision] = useState<ApiRevision | null>(null);
 
-	const revisions = query.data?.items ?? [];
-	const overlays = overlaysQuery.data?.items ?? [];
+	const revisions = query.items;
+	const overlays = overlaysQuery.items;
 
 	return (
 		<Card data-testid="revisions-section">
@@ -239,11 +230,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 			</CardHeader>
 			<CardBody>
 				{query.isLoading ? (
-					<div className="space-y-2" aria-busy="true">
-						{Array.from({ length: 3 }).map((_, i) => (
-							<Skeleton key={i} className="h-12 w-full" />
-						))}
-					</div>
+					<SkeletonRows rows={3} />
 				) : query.isError ? (
 					<ErrorAlert
 						message={
@@ -254,7 +241,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 					<EmptyState
 						icon={<GitBranch size={28} aria-hidden="true" />}
 						title="No revisions"
-						description="This API has no revisions yet."
+						description="Import a spec to create this API's first revision."
 					/>
 				) : (
 					<ul className="divide-border/60">
@@ -264,6 +251,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 								revision={rev}
 								previous={revisions[index + 1] ?? null}
 								producedBy={overlayForRevision(overlays, rev.revisionId)}
+								hasDiffBase={diffBaseFor(rev, revisions) !== null}
 								onPromote={promote}
 								onArchive={archive}
 								onViewSpec={setSpecRevision}
@@ -283,7 +271,7 @@ export function RevisionsSection({ apiKey }: { apiKey: ApiKey }) {
 				revisionId={specRevision?.revisionId ?? null}
 				revisionLabel={
 					specRevision
-						? `${specRevision.state}${specRevision.isCurrent ? ' · live' : ''} · ${shortRevisionId(specRevision.revisionId)}`
+						? `${revisionStateLabel(specRevision.state)}${specRevision.isCurrent ? ' · live' : ''} · ${shortRevisionId(specRevision.revisionId)}`
 						: undefined
 				}
 				diffAgainst={specRevision ? diffBaseFor(specRevision, revisions) : null}

@@ -81,6 +81,11 @@ class OverlayResponse(BaseModel):
     updated_at: datetime | None
     confirmed_at: datetime | None
     deprecated_at: datetime | None
+    #: Why the overlay was deprecated: ``manual`` (operator deprecate), ``rollback``
+    #: (un-confirm restored the superseded revision), or ``superseded_by_reimport``
+    #: (an authorized catalog re-import replaced it). ``null`` when not deprecated,
+    #: or for rows deprecated before this field existed.
+    deprecated_reason: str | None = None
     links: OverlayLinksResponse = Field(serialization_alias="_links")
 
 

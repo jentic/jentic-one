@@ -3245,6 +3245,152 @@ components:
           title: Execution Id
       title: OverlayConfirmRequest
       type: object
+    OverlayLinksResponse:
+      description: |-
+        Hypermedia links for an overlay resource.
+
+        Links are advertised based on the overlay's *state validity* (mirroring the
+        revisions resource's promote/archive links), so a surface renders an action only
+        when it is applicable to the current status. They are not permission-scoped — the
+        ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
+      properties:
+        api:
+          title: Api
+          type: string
+        confirm:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirm
+        deprecate:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deprecate
+        rollback:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rollback
+        self:
+          title: Self
+          type: string
+      required:
+      - self
+      - api
+      title: OverlayLinksResponse
+      type: object
+    OverlayListResponse:
+      description: Cursor-paginated list of overlays.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/OverlayResponse'
+          title: Data
+          type: array
+        has_more:
+          title: Has More
+          type: boolean
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next Cursor
+      required:
+      - data
+      - has_more
+      title: OverlayListResponse
+      type: object
+    OverlayResponse:
+      description: Full overlay resource response.
+      properties:
+        _links:
+          $ref: '#/components/schemas/OverlayLinksResponse'
+        api_id:
+          title: Api Id
+          type: string
+        confirmed_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Confirmed At
+        confirmed_by_execution_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirmed By Execution Id
+        confirmed_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Confirmed Revision Id
+        contributed_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Contributed By
+        created_at:
+          format: date-time
+          title: Created At
+          type: string
+        created_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created By
+        deprecated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Deprecated At
+        deprecated_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Deprecated Reason
+        document:
+          additionalProperties: true
+          title: Document
+          type: object
+        id:
+          title: Id
+          type: string
+        status:
+          title: Status
+          type: string
+        superseded_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Superseded Revision Id
+        target_revision_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Revision Id
+        updated_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Updated At
+      required:
+      - id
+      - api_id
+      - status
+      - document
+      - target_revision_id
+      - contributed_by
+      - confirmed_by_execution_id
+      - created_at
+      - updated_at
+      - confirmed_at
+      - deprecated_at
+      - _links
+      title: OverlayResponse
+      type: object
     OverlaySubmitRequest:
       additionalProperties: false
       description: Payload for submitting a new overlay.
@@ -8333,7 +8479,8 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/OverlayListResponse'
           description: Successful Response
         '400':
           content:
@@ -8414,7 +8561,8 @@ paths:
         '201':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/OverlayResponse'
           description: Successful Response
         '400':
           content:
@@ -8574,7 +8722,8 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/OverlayResponse'
           description: Successful Response
         '400':
           content:
@@ -8672,7 +8821,8 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/OverlayResponse'
           description: Successful Response
         '400':
           content:
@@ -8771,7 +8921,8 @@ paths:
         '200':
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/OverlayResponse'
           description: Successful Response
         '400':
           content:

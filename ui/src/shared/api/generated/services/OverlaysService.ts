@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OverlayConfirmRequest } from '../models/OverlayConfirmRequest';
+import type { OverlayListResponse } from '../models/OverlayListResponse';
+import type { OverlayResponse } from '../models/OverlayResponse';
 import type { OverlaySubmitRequest } from '../models/OverlaySubmitRequest';
 import type { OverlayUpdateRequest } from '../models/OverlayUpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -12,7 +14,7 @@ export class OverlaysService {
     /**
      * List Overlays
      * List overlays for an API with optional status filter and cursor pagination.
-     * @returns any Successful Response
+     * @returns OverlayListResponse Successful Response
      * @throws ApiError
      */
     public static listOverlays({
@@ -29,7 +31,7 @@ export class OverlaysService {
         cursor?: (string | null),
         limit?: number,
         status?: (string | null),
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OverlayListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/overlays',
@@ -56,7 +58,7 @@ export class OverlaysService {
     /**
      * Submit Overlay
      * Submit a new overlay for an API.
-     * @returns any Successful Response
+     * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
     public static submitOverlay({
@@ -69,7 +71,7 @@ export class OverlaysService {
         name: string,
         version: string,
         requestBody: OverlaySubmitRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/apis/{vendor}/{name}/{version}/overlays',
@@ -129,7 +131,7 @@ export class OverlaysService {
     /**
      * Get Overlay
      * Retrieve a single overlay by ID.
-     * @returns any Successful Response
+     * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
     public static getOverlay({
@@ -142,7 +144,7 @@ export class OverlaysService {
         name: string,
         version: string,
         overlayId: string,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/apis/{vendor}/{name}/{version}/overlays/{overlay_id}',
@@ -175,7 +177,7 @@ export class OverlaysService {
      * (``overlay_rematerialize_forbidden``). The re-materialize is refused with a 409 if the
      * overlay is no longer the live revision, and with ``overlay_rollback_target_missing``
      * if no clean base was recorded to re-apply over.
-     * @returns any Successful Response
+     * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
     public static updateOverlay({
@@ -190,7 +192,7 @@ export class OverlaysService {
         version: string,
         overlayId: string,
         requestBody: OverlayUpdateRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
             method: 'PATCH',
             url: '/apis/{vendor}/{name}/{version}/overlays/{overlay_id}',
@@ -225,7 +227,7 @@ export class OverlaysService {
      * ``org:admin`` still satisfies it (it implies ``overlays:confirm``), and the scope is
      * deliberately excluded from an agent's self-service grantable set so a low-privilege
      * agent cannot escalate into it.
-     * @returns any Successful Response
+     * @returns OverlayResponse Successful Response
      * @throws ApiError
      */
     public static confirmOverlay({
@@ -240,7 +242,7 @@ export class OverlaysService {
         version: string,
         overlayId: string,
         requestBody: OverlayConfirmRequest,
-    }): CancelablePromise<any> {
+    }): CancelablePromise<OverlayResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/apis/{vendor}/{name}/{version}/overlays/{overlay_id}:confirm',

@@ -177,18 +177,21 @@ describe('workspace adapters', () => {
 			created_at: '2026-08-07T09:51:10Z',
 			confirmed_at: '2026-08-07T09:52:00Z',
 			deprecated_at: '2026-08-07T09:54:00Z',
+			deprecated_reason: 'rollback',
 			_links: { self: '/x', api: '/y', confirm: null, rollback: null, deprecate: null },
 		});
 		expect(overlay.id).toBe('ovr_6a75aa8e6edd9723f71840e8');
 		expect(overlay.createdBy).toBe('usr_submitter');
 		expect(overlay.contributedBy).toBe('contribute-spec-fix skill');
 		expect(overlay.supersededRevisionId).toBe('rev_superseded');
+		expect(overlay.deprecatedReason).toBe('rollback');
 		expect(overlay.document).toMatchObject({ overlay: '1.0.0' });
 		// Absent fields degrade to null, not undefined/crash.
 		const bare = toOverlay({ id: 'ovr_x', status: 'pending', created_at: '' });
 		expect(bare.createdBy).toBeNull();
 		expect(bare.contributedBy).toBeNull();
 		expect(bare.supersededRevisionId).toBeNull();
+		expect(bare.deprecatedReason).toBeNull();
 		expect(bare.document).toBeNull();
 	});
 

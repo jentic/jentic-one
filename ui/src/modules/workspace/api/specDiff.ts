@@ -86,14 +86,20 @@ export function diffSpecs(
 		if (deepEqual(before, after)) return true;
 		if (isPlainObject(before) && isPlainObject(after)) {
 			// Removed keys first (in base order), then added/changed in target order.
+			// Own-property checks (never `in`): specs are JSON.parse output where
+			// keys like `constructor`/`toString` legitimately appear as schema
+			// property names, and `in` would resolve them via Object.prototype —
+			// silently dropping removals and mis-reporting additions.
+			const has = (obj: Record<string, unknown>, key: string) =>
+				Object.prototype.hasOwnProperty.call(obj, key);
 			for (const key of Object.keys(before)) {
-				if (!(key in after)) {
+				if (!has(after, key)) {
 					if (!push({ path: childPath(path, key), kind: 'removed', before: before[key] }))
 						return false;
 				}
 			}
 			for (const key of Object.keys(after)) {
-				if (!(key in before)) {
+				if (!has(before, key)) {
 					if (!push({ path: childPath(path, key), kind: 'added', after: after[key] }))
 						return false;
 				} else if (!walk(childPath(path, key), before[key], after[key])) {

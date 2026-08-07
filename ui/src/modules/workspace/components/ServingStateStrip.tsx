@@ -7,30 +7,29 @@
  *
  * Reads the same revision/overlay queries the sections below use (shared
  * TanStack cache — no extra requests) and derives the line with the pure
- * `describeServingState`. Renders nothing while either list is still loading
- * or errored: the sections below own those states.
+ * `describeServingState`, whose "current" comes from the revisions list alone
+ * (single source of truth — no separate `current_revision_id` prop that could
+ * disagree mid-refetch). Renders nothing until BOTH background page walks
+ * finish: a partially-loaded list would present undercounts as fact.
  */
 import { Activity } from 'lucide-react';
 import { useApiRevisions, useOverlays, describeServingState } from '@/modules/workspace/api';
 import type { ApiKey } from '@/modules/workspace/api';
 
-export function ServingStateStrip({
-	apiKey,
-	currentRevisionId,
-}: {
-	apiKey: ApiKey;
-	currentRevisionId: string | null;
-}) {
-	const revisionsQuery = useApiRevisions(apiKey);
-	const overlaysQuery = useOverlays(apiKey);
+export function ServingStateStrip({ apiKey }: { apiKey: ApiKey }) {
+	const revisions = useApiRevisions(apiKey);
+	const overlays = useOverlays(apiKey);
 
-	if (!revisionsQuery.data || !overlaysQuery.data) return null;
+	const ready =
+		!revisions.isLoading &&
+		!revisions.isLoadingAll &&
+		!revisions.isError &&
+		!overlays.isLoading &&
+		!overlays.isLoadingAll &&
+		!overlays.isError;
+	if (!ready) return null;
 
-	const line = describeServingState(
-		revisionsQuery.data.items,
-		overlaysQuery.data.items,
-		currentRevisionId,
-	);
+	const line = describeServingState(revisions.items, overlays.items);
 
 	return (
 		<p

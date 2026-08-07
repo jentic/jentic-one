@@ -4,9 +4,12 @@ import {
 	shortRevisionId,
 	summarizeOverlayActions,
 	overlayLifecycle,
+	overlayLifecycleNote,
+	revisionStateLabel,
 	revisionOriginLabel,
 	overlayForRevision,
 	revisionChangeSummary,
+	diffBaseFor,
 	describeLastChange,
 	describeServingState,
 } from '@/modules/workspace/api/insights';
@@ -22,6 +25,7 @@ function overlay(overrides: Partial<Overlay> = {}): Overlay {
 		createdAt: '2026-08-07T09:51:10Z',
 		confirmedAt: null,
 		deprecatedAt: null,
+		deprecatedReason: null,
 		targetRevisionId: null,
 		confirmedRevisionId: null,
 		supersededRevisionId: null,
@@ -116,6 +120,20 @@ describe('summarizeOverlayActions', () => {
 		]);
 	});
 
+	it('calls out empty-object updates instead of rendering empty parens', () => {
+		expect(summarizeOverlayActions({ actions: [{ target: '$.info', update: {} }] })).toEqual([
+			'Updated info (no fields — empty object)',
+		]);
+	});
+
+	it('flags an action with neither update nor remove instead of hiding it', () => {
+		// The backend rejects such an action at confirm — an empty summary would
+		// present a doomed overlay as a no-op.
+		expect(summarizeOverlayActions({ actions: [{ target: '$.servers' }] })).toEqual([
+			'Unrecognized action on servers (no update or remove)',
+		]);
+	});
+
 	it('returns [] for malformed or absent documents', () => {
 		expect(summarizeOverlayActions(null)).toEqual([]);
 		expect(summarizeOverlayActions('nope')).toEqual([]);
@@ -138,17 +156,33 @@ describe('overlayLifecycle', () => {
 		).toBe('active');
 	});
 
-	it('is confirmed when materialized but not serving (or not yet materialized)', () => {
+	it('is superseded when materialized but a newer revision took over', () => {
 		expect(
 			overlayLifecycle(
 				overlay({ status: 'confirmed', confirmedRevisionId: 'rev_other' }),
 				'rev_live',
 			),
-		).toBe('confirmed');
+		).toBe('superseded');
+	});
+
+	it('is confirmed when not yet materialized', () => {
 		expect(overlayLifecycle(overlay({ status: 'confirmed' }), 'rev_live')).toBe('confirmed');
 	});
 
-	it('is rolled-back when deprecated and the superseded revision serves again', () => {
+	it('is rolled-back via the persisted reason (durable across later transitions)', () => {
+		const rolledBack = overlay({
+			status: 'deprecated',
+			confirmedRevisionId: 'rev_overlay',
+			supersededRevisionId: 'rev_base',
+			deprecatedReason: 'rollback',
+		});
+		expect(overlayLifecycle(rolledBack, 'rev_base')).toBe('rolled-back');
+		// A later confirm/import moved current on — the historical rollback verb
+		// must NOT drift into "deprecated" (the pre-reason derivation did).
+		expect(overlayLifecycle(rolledBack, 'rev_even_newer')).toBe('rolled-back');
+	});
+
+	it('falls back to the rollback signature for legacy rows without a reason', () => {
 		expect(
 			overlayLifecycle(
 				overlay({
@@ -161,18 +195,82 @@ describe('overlayLifecycle', () => {
 		).toBe('rolled-back');
 	});
 
-	it('is deprecated otherwise (e.g. superseded by a re-import)', () => {
+	it('is deprecated-serving when a deprecated overlay still serves', () => {
+		// A manual deprecate does not touch revisions — the overlay's patched
+		// spec is still what the platform serves, and saying "deprecated" alone
+		// would imply the fix is no longer applied.
+		expect(
+			overlayLifecycle(
+				overlay({
+					status: 'deprecated',
+					confirmedRevisionId: 'rev_overlay',
+					deprecatedReason: 'manual',
+				}),
+				'rev_overlay',
+			),
+		).toBe('deprecated-serving');
+	});
+
+	it('is deprecated otherwise (manual retire, or superseded by a re-import)', () => {
 		expect(
 			overlayLifecycle(
 				overlay({
 					status: 'deprecated',
 					confirmedRevisionId: 'rev_overlay',
 					supersededRevisionId: 'rev_base',
+					deprecatedReason: 'superseded_by_reimport',
 				}),
 				'rev_fresh_import',
 			),
 		).toBe('deprecated');
 		expect(overlayLifecycle(overlay({ status: 'deprecated' }), 'rev_live')).toBe('deprecated');
+	});
+});
+
+describe('overlayLifecycleNote', () => {
+	it('names re-import supersession from the persisted reason', () => {
+		const o = overlay({
+			status: 'deprecated',
+			confirmedRevisionId: 'rev_overlay',
+			deprecatedAt: '2026-08-07T10:00:00Z',
+			deprecatedReason: 'superseded_by_reimport',
+		});
+		expect(overlayLifecycleNote(o, 'deprecated')).toMatch(/^Superseded by re-import /);
+	});
+
+	it('explains a deprecated-but-still-serving overlay', () => {
+		const o = overlay({
+			status: 'deprecated',
+			confirmedRevisionId: 'rev_overlay',
+			deprecatedAt: '2026-08-07T10:00:00Z',
+			deprecatedReason: 'manual',
+		});
+		expect(overlayLifecycleNote(o, 'deprecated-serving')).toMatch(/still serving/);
+	});
+
+	it('falls back to the submission date so a row never loses its timestamp', () => {
+		const o = overlay({ status: 'confirmed', confirmedAt: null });
+		expect(overlayLifecycleNote(o, 'active')).toMatch(/^Submitted /);
+	});
+
+	it('notes the restored revision on a rollback', () => {
+		const o = overlay({
+			status: 'deprecated',
+			supersededRevisionId: 'rev_base_1234',
+			deprecatedAt: '2026-08-07T10:00:00Z',
+			deprecatedReason: 'rollback',
+		});
+		expect(overlayLifecycleNote(o, 'rolled-back')).toMatch(/revision rev_base restored/);
+	});
+});
+
+describe('revisionStateLabel', () => {
+	it('capitalizes known wire states and passes unknown ones through', () => {
+		expect(revisionStateLabel('imported')).toBe('Imported');
+		expect(revisionStateLabel('published')).toBe('Published');
+		expect(revisionStateLabel('draft')).toBe('Draft');
+		expect(revisionStateLabel('archived')).toBe('Archived');
+		expect(revisionStateLabel('future-state')).toBe('future-state');
 	});
 });
 
@@ -209,12 +307,6 @@ describe('revisionChangeSummary', () => {
 		expect(revisionChangeSummary(revision({ operationCount: 19 }), null)).toBe('19 operations');
 		expect(
 			revisionChangeSummary(
-				revision({ operationCount: 19 }),
-				revision({ operationCount: 19 }),
-			),
-		).toBe('19 operations (unchanged)');
-		expect(
-			revisionChangeSummary(
 				revision({ operationCount: 21 }),
 				revision({ operationCount: 19 }),
 			),
@@ -222,6 +314,40 @@ describe('revisionChangeSummary', () => {
 		expect(
 			revisionChangeSummary(revision({ operationCount: 1 }), revision({ operationCount: 3 })),
 		).toBe('1 operation (-2 vs previous)');
+	});
+
+	it('says "same count", not "unchanged" — overlays often change non-operation sections', () => {
+		expect(
+			revisionChangeSummary(
+				revision({ operationCount: 19 }),
+				revision({ operationCount: 19 }),
+			),
+		).toBe('19 operations (same count)');
+	});
+});
+
+describe('diffBaseFor', () => {
+	const newest = revision({ revisionId: 'rev_c' });
+	const middle = revision({ revisionId: 'rev_b' });
+	const oldest = revision({ revisionId: 'rev_a' });
+	const list = [newest, middle, oldest];
+
+	it('diffs every row against the revision created just before it', () => {
+		// Matches the row summary's "vs previous" delta — the diff button and the
+		// one-liner must describe the same comparison.
+		expect(diffBaseFor(newest, list)).toEqual({
+			revisionId: 'rev_b',
+			label: 'previous · rev_b',
+		});
+		expect(diffBaseFor(middle, list)).toEqual({
+			revisionId: 'rev_a',
+			label: 'previous · rev_a',
+		});
+	});
+
+	it('returns null for the first-ever revision (nothing to compare)', () => {
+		expect(diffBaseFor(oldest, list)).toBeNull();
+		expect(diffBaseFor(newest, [newest])).toBeNull();
 	});
 });
 
@@ -245,26 +371,58 @@ describe('describeLastChange / describeServingState', () => {
 		createdAt: '2026-08-07T09:51:00Z',
 		confirmedAt: '2026-08-07T09:52:00Z',
 		deprecatedAt: '2026-08-07T09:56:00Z',
+		deprecatedReason: 'rollback',
 	});
 
 	it('describes the most recent lifecycle event', () => {
-		const line = describeLastChange([base, overlayRev], [rolledBack], 'rev_base');
+		const line = describeLastChange([base, overlayRev], [rolledBack]);
 		expect(line).toMatch(/^rolled back /);
 	});
 
-	it('returns null with no events', () => {
-		expect(describeLastChange([], [], null)).toBeNull();
+	it('keeps the historical verb durable — no drift when current moves on', () => {
+		// Same events, but a later import made a different revision current;
+		// the Aug 7 rollback must still read "rolled back".
+		const line = describeLastChange([base, overlayRev], [rolledBack]);
+		expect(line).toMatch(/^rolled back /);
 	});
 
-	it('summarizes the serving state in one line', () => {
+	it('labels re-import supersession from the persisted reason', () => {
+		const superseded = overlay({
+			...rolledBack,
+			deprecatedReason: 'superseded_by_reimport',
+		});
+		expect(describeLastChange([], [superseded])).toMatch(/^superseded by re-import /);
+	});
+
+	it('labels a draft creation as an upload, not an import', () => {
+		const draft = revision({ state: 'draft', createdAt: '2026-08-07T09:40:00Z' });
+		expect(describeLastChange([draft], [])).toMatch(/^uploaded \(draft\) /);
+	});
+
+	it('returns null with no events', () => {
+		expect(describeLastChange([], [])).toBeNull();
+	});
+
+	it('summarizes the serving state in one line, from the revisions list alone', () => {
 		const live = { ...base, isCurrent: true };
-		const line = describeServingState([live, overlayRev], [rolledBack], 'rev_base');
+		const line = describeServingState([live, overlayRev], [rolledBack]);
 		expect(line).toContain('Serving revision rev_base');
 		expect(line).toContain('1 overlay (0 active)');
 		expect(line).toMatch(/last change: rolled back /);
 	});
 
+	it('counts an active overlay against the live revision it derives itself', () => {
+		const live = revision({ revisionId: 'rev_overlay', isCurrent: true, origin: 'overlay' });
+		const active = overlay({
+			status: 'confirmed',
+			confirmedRevisionId: 'rev_overlay',
+		});
+		const line = describeServingState([live, base], [active]);
+		expect(line).toContain('(1 active)');
+		expect(line).toContain('overlay ovr_…1840e8');
+	});
+
 	it('reports a missing live revision', () => {
-		expect(describeServingState([base], [], null)).toContain('No live revision');
+		expect(describeServingState([base], [])).toContain('No live revision');
 	});
 });
