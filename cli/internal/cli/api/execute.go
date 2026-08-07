@@ -320,11 +320,18 @@ func executePlanPayload(req *http.Request) map[string]any {
 // invocation from the ActiveState the root interceptor injected (sourced from
 // the active context or $JENTIC_SESSION_ID). Empty when no session id is set —
 // correlation is best-effort and never blocks a call.
+//
+// It falls back to $JENTIC_SESSION_ID directly when the resolved state does not
+// carry one: that is the exact source the SDK loader (client/config) reads, so
+// the header is present on the execute path whenever the env var is set,
+// independent of whether the CLI's ActiveState round-tripped it.
 func sessionIDFromContext(cmd *cobra.Command) string {
 	if st := clictx.FromContext(cmd.Context()); st != nil && st.ResolvedState != nil {
-		return st.SessionID
+		if st.SessionID != "" {
+			return st.SessionID
+		}
 	}
-	return ""
+	return os.Getenv("JENTIC_SESSION_ID")
 }
 
 // newTraceparent builds a fresh W3C Trace Context `traceparent` header value
