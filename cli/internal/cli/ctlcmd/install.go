@@ -39,6 +39,13 @@ type installOptions struct {
 	// wizard confirms, whose answers join the overlay. Off by default so the mature
 	// wizard flow is untouched; ignored without a TTY.
 	configForm bool
+	// defaults / answersFile drive a HEADLESS install (impl/9.0 §9.2): the wizard
+	// is a TTY-only TUI, so CI / scripted / cross-platform-E2E installs need a
+	// non-interactive path. --defaults takes NewDraft() as-is; --answers overlays
+	// a YAML answers file on top of the defaults. Either one skips RunWizard and
+	// runs install.ValidateDraft (the same field rules the wizard enforces).
+	defaults    bool
+	answersFile string
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -80,6 +87,10 @@ func newInstallCmd(app *app) *cobra.Command {
 		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
 	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
 		"after the wizard, show an extra schema-derived form to review/adjust config sections (interactive only)")
+	cmd.Flags().BoolVar(&opts.defaults, "defaults", false,
+		"non-interactive: skip the wizard and take its defaults (Docker + Postgres, loopback) as-is")
+	cmd.Flags().StringVar(&opts.answersFile, "answers", "",
+		"non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)")
 
 	// Schema-driven --<section>-<field> flags, generated from the backend config
 	// schema (impl/6.0 §3). Additive: unset flags contribute nothing, so a plain
@@ -128,6 +139,24 @@ func (a *app) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// independent of the app's working directory at start time).
 	draft.LogFileDir = a.Paths.LogsDir()
 
+	// Headless path (impl/9.0 §9.2): --defaults/--answers skip the TTY wizard.
+	// --answers overlays a YAML file on top of NewDraft(); both run the same
+	// field validators the wizard enforces so a headless draft can't be one the
+	// wizard would have rejected.
+	if opts.defaults || opts.answersFile != "" {
+		if opts.answersFile != "" {
+			answers, aerr := install.LoadAnswers(opts.answersFile)
+			if aerr != nil {
+				return aerr
+			}
+			answers.Apply(draft)
+		}
+		if verr := install.ValidateDraft(draft); verr != nil {
+			return fmt.Errorf("invalid install answers: %w", verr)
+		}
+		return a.finishInstall(cmd, opts, draft)
+	}
+
 	confirmed, err := install.RunWizard(draft, a.installHeader())
 	if err != nil {
 		return err
@@ -137,6 +166,16 @@ func (a *app) runInstall(cmd *cobra.Command, opts *installOptions) error {
 		return nil
 	}
 
+	return a.finishInstall(cmd, opts, draft)
+}
+
+// finishInstall runs everything after the deployment decision is made — whether
+// that came from the interactive wizard or the headless --defaults/--answers
+// path (impl/9.0 §9.2). It reuses/fills secrets, gates telemetry consent,
+// renders + overlays the config, writes it, then builds/migrates/starts the
+// stack and prints the summary. Splitting it out lets the headless path share
+// the exact same post-decision behaviour as the wizard.
+func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *install.Draft) error {
 	// Carry secrets over from an existing config (or its uninstall backup)
 	// before FillSecrets runs, so a reinstall doesn't silently rotate the
 	// encryption key underneath still-present ciphertexts. FillSecrets is

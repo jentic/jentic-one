@@ -37,6 +37,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
+      e2e-install: ${{ steps.filter.outputs.e2e-install }}
     steps:
       - uses: actions/checkout@v7
 
@@ -88,6 +89,18 @@ jobs:
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
+            e2e-install:
+              # CLI-V2 Phase 9 (impl/9.0 §9.4): the cross-OS install + smoke
+              # matrix. The Linux leg does a real Docker install; macOS/Windows
+              # build + offline-smoke the binaries. Any input that changes the
+              # binaries, the installer, or the smoke contract must re-run it.
+              - 'cli/**'
+              - 'tools/install.sh'
+              - 'deploy/docker/**'
+              - 'docker/**'
+              - 'src/jentic_one/migrations/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
             openapi-client:
               # Inputs that can change the generated UI client. The committed
               # spec (ui/openapi.json) is the codegen input — a spec change from
@@ -715,10 +728,99 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
+  # CLI-V2 Phase 9 (impl/9.0 §9.4): cross-platform install + smoke matrix.
+  #   - ubuntu-24.04:  full headless Docker install + live-stack smoke (deep).
+  #   - macos-latest:  build via install.sh (no chain-install) + offline smoke.
+  #   - windows-latest: build the binaries + offline smoke (install.sh is
+  #                     WSL-only, so native Windows is build + agent-surface).
+  # The offline smoke asserts the binary/agent contract that holds with no
+  # server; the Linux leg additionally proves the real install path.
+  e2e-install:
+    name: E2E install & smoke (${{ matrix.os }})
+    needs: [changes]
+    if: needs.changes.outputs.e2e-install == 'true' || github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      # ---- Build the binaries (all OSes) ----
+      - name: Build binaries
+        working-directory: cli
+        run: make build
+
+      # ---- Windows: build + offline smoke (install.sh is WSL-only) ----
+      - name: Offline smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh -File cli/tests/e2e/smoke.ps1 "${{ github.workspace }}/cli"
+
+      # ---- macOS: exercise install.sh's build/PATH path, then offline smoke ----
+      - name: Build via install.sh (macOS, no chain-install)
+        if: runner.os == 'macOS'
+        env:
+          JENTIC_NO_INSTALL: "1" # build + PATH only; do not chain into `jenticctl install`
+        run: bash tools/install.sh || true # tolerate PATH-rc edits failing on the runner; the smoke uses the built binaries directly
+
+      - name: Offline smoke (macOS)
+        if: runner.os == 'macOS'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+
+      # ---- Linux: full headless Docker install, then live-stack smoke ----
+      - name: Headless Docker install (Linux)
+        if: runner.os == 'Linux'
+        run: ./cli/jenticctl install --defaults --no-wizard
+
+      - name: Stack is healthy (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "app healthy after ${i}s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::app did not become healthy"
+          docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" logs || true
+          exit 1
+
+      - name: Published ports honour the loopback bind (Linux, #992)
+        if: runner.os == 'Linux'
+        run: |
+          # Docker publishes unqualified mappings on 0.0.0.0 AND bypasses UFW, so
+          # assert on the host, not the compose file.
+          for port in 8000 8100; do
+            if ss -tln "sport = :$port" | grep -E "0\.0\.0\.0:$port|\*:$port"; then
+              echo "::error::port $port is listening on all interfaces despite the loopback default"
+              ss -tlnp; exit 1
+            fi
+          done
+
+      - name: Doctor is clean (Linux)
+        if: runner.os == 'Linux'
+        run: ./cli/jenticctl doctor
+
+      - name: Live-stack smoke (Linux)
+        if: runner.os == 'Linux'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+
+      - name: Teardown (Linux)
+        if: always() && runner.os == 'Linux'
+        run: docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" down -v || true
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer, e2e-install]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -735,6 +837,7 @@ jobs:
             ${{ needs.smoke-packaging.result }}
             ${{ needs.cli.result }}
             ${{ needs.installer.result }}
+            ${{ needs.e2e-install.result }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
