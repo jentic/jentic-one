@@ -15,7 +15,13 @@ param(
   [string]$BinDir
 )
 
-$ErrorActionPreference = 'Stop'
+# NB: intentionally NOT 'Stop'. Under 'Stop', PowerShell turns any bytes a NATIVE
+# command writes to stderr into a terminating error — so a binary that prints a
+# perfectly benign warning line to stderr aborts the script before $LASTEXITCODE
+# is even set, masquerading as a "hard check failed". We drive control flow off
+# explicit $LASTEXITCODE checks instead, and fold each command's stderr into its
+# captured output for diagnostics.
+$ErrorActionPreference = 'Continue'
 
 # `go build -o jentic` produces `jentic` on Windows unless the output name ends
 # in .exe; `make build` does not add the suffix, so resolve either form.
@@ -39,7 +45,16 @@ $env:XDG_CACHE_HOME   = Join-Path $scratch 'cache'
 $env:JENTIC_MODE      = 'agent'
 
 function Pass($m) { Write-Host "  ok   $m" }
-function Fail($m) { Write-Error "  FAIL $m"; exit 1 }
+function Fail($m) { Write-Host "  FAIL $m"; exit 1 }
+
+# Run a native command, capturing stdout+stderr as a single string and the exit
+# code, without letting stderr bytes abort the script. Returns a PSCustomObject
+# with .Output (string) and .Code (int).
+function Invoke-Native {
+  param([string]$Exe, [string[]]$CmdArgs)
+  $out = & $Exe @CmdArgs 2>&1 | Out-String
+  return [PSCustomObject]@{ Output = $out; Code = $LASTEXITCODE }
+}
 
 try {
   Write-Host "== jentic CLI smoke (bin: $BinDir) =="
@@ -49,32 +64,34 @@ try {
   Pass "both binaries present"
 
   # 1. --version on both binaries.
-  if ((& $jentic --version)    -notmatch 'jentic') { Fail "jentic --version had no version line" }
-  if ((& $jenticctl --version) -notmatch 'jentic') { Fail "jenticctl --version had no version line" }
+  $v = Invoke-Native $jentic @('--version')
+  if ($v.Output -notmatch 'jentic') { Fail "jentic --version had no version line`n$($v.Output)" }
+  $v = Invoke-Native $jenticctl @('--version')
+  if ($v.Output -notmatch 'jentic') { Fail "jenticctl --version had no version line`n$($v.Output)" }
   Pass "--version on both binaries"
 
-  # 2. jentic doctor --json parses; exits 0 unless a HARD check fails.
-  $doctorErr = Join-Path $scratch 'doctor.err'
-  $doctor = & $jentic doctor --json 2>$doctorErr
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "---- jentic doctor --json (exit $LASTEXITCODE) ----"
-    Write-Host $doctor
-    if (Test-Path $doctorErr) { Write-Host "---- stderr ----"; Get-Content $doctorErr | Write-Host }
+  # 2. jentic doctor --json parses; exits 0 unless a HARD check fails. Identity /
+  #    reachability rows only WARN with no server, so a fresh scratch home is a
+  #    clean (exit 0) report.
+  $d = Invoke-Native $jentic @('doctor', '--json')
+  if ($d.Code -ne 0) {
+    Write-Host "---- jentic doctor --json (exit $($d.Code)) ----"
+    Write-Host $d.Output
     Fail "jentic doctor --json exited non-zero (a hard check failed)"
   }
-  if ($doctor -notmatch '"checks"')    { Fail "jentic doctor JSON had no checks array" }
+  if ($d.Output -notmatch '"checks"') { Fail "jentic doctor JSON had no checks array`n$($d.Output)" }
   Pass "jentic doctor --json parses"
 
   # 3. jentic profile list exits 0 (empty is fine on a fresh scratch home).
-  & $jentic profile list *> $null
-  if ($LASTEXITCODE -ne 0) { Fail "jentic profile list exited non-zero" }
+  $p = Invoke-Native $jentic @('profile', 'list')
+  if ($p.Code -ne 0) { Fail "jentic profile list exited non-zero`n$($p.Output)" }
   Pass "jentic profile list"
 
   # 4. jenticctl doctor --json parses (non-zero only on a fail row; a scratch
   #    home with no install may warn but must produce a well-formed envelope).
-  $ctlDoctor = & $jenticctl doctor --json 2>$null
-  if (($ctlDoctor -notmatch '"checks"') -and ($ctlDoctor -notmatch '"failures"')) {
-    Fail "jenticctl doctor JSON was not well-formed"
+  $c = Invoke-Native $jenticctl @('doctor', '--json')
+  if (($c.Output -notmatch '"checks"') -and ($c.Output -notmatch '"failures"')) {
+    Fail "jenticctl doctor JSON was not well-formed`n$($c.Output)"
   }
   Pass "jenticctl doctor --json parses"
 
