@@ -199,6 +199,82 @@ func TestDoctorReportsDockerNotInstalled(t *testing.T) {
 	}
 }
 
+// exposureRow finds the `exposure` check row recorded by checkExposure.
+func exposureRow(t *testing.T, d *doctor) *check {
+	t.Helper()
+	for i := range d.checks {
+		if d.checks[i].name == "exposure" {
+			return &d.checks[i]
+		}
+	}
+	t.Fatalf("no `exposure` row recorded: %+v", d.checks)
+	return nil
+}
+
+// A compose file generated before the #992 fix publishes ports unqualified,
+// which Docker binds to all interfaces (bypassing UFW). Doctor must warn with
+// the offending mappings and a regeneration hint — this is the only mitigation
+// that reaches installs already in the field.
+func TestDoctorWarnsOnUnqualifiedPublishes(t *testing.T) {
+	app := testApp(t)
+	legacy := "services:\n  db:\n    ports:\n      - \"5432:5432\"\n  app:\n    ports:\n      - \"8000:8000\"\n"
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkExposure("Server", app.Paths.ComposePath(), "")
+
+	row := exposureRow(t, d)
+	if row.status != statusWarn {
+		t.Errorf("unqualified publishes should warn, got %v", row.status)
+	}
+	for _, want := range []string{"db 5432:5432", "app 8000:8000", "UFW"} {
+		if !strings.Contains(row.detail, want) {
+			t.Errorf("exposure detail missing %q: %q", want, row.detail)
+		}
+	}
+	if !strings.Contains(row.hint, "jenticctl install") {
+		t.Errorf("exposure hint should point at regeneration, got %q", row.hint)
+	}
+}
+
+// Even when the compose file is clean, containers started from an older file
+// can still be publishing on 0.0.0.0 — the live ps output is the truth.
+func TestDoctorWarnsOnStaleAllInterfacesContainers(t *testing.T) {
+	app := testApp(t)
+	clean := "services:\n  app:\n    ports:\n      - \"127.0.0.1:8000:8000\"\n"
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte(clean), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkExposure("Server", app.Paths.ComposePath(), "app  Up  0.0.0.0:8000->8000/tcp\n")
+
+	row := exposureRow(t, d)
+	if row.status != statusWarn {
+		t.Errorf("stale all-interfaces containers should warn, got %v", row.status)
+	}
+	if !strings.Contains(row.hint, "jenticctl stop") {
+		t.Errorf("stale-container hint should say to restart the stack, got %q", row.hint)
+	}
+}
+
+func TestDoctorExposurePassesOnCleanInstall(t *testing.T) {
+	app := testApp(t)
+	clean := "services:\n  app:\n    ports:\n      - \"127.0.0.1:8000:8000\"\n"
+	if err := os.WriteFile(app.Paths.ComposePath(), []byte(clean), 0o600); err != nil {
+		t.Fatalf("write compose: %v", err)
+	}
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkExposure("Server", app.Paths.ComposePath(), "app  Up  127.0.0.1:8000->8000/tcp\n")
+
+	if row := exposureRow(t, d); row.status != statusPass {
+		t.Errorf("clean install should pass, got %v (%q)", row.status, row.detail)
+	}
+}
+
 func TestComposeSummary(t *testing.T) {
 	out := "NAME      IMAGE     STATUS\napp       x         Up\ndb        y         Up\n"
 	if got := composeSummary(out); got != "2 services" {
