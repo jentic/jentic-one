@@ -17,7 +17,7 @@ func nakedPrintAllowed(pkgPath, file string) bool {
 		return true // the render layer is where printing happens
 	case base == "main.go":
 		return true
-	case underPrefixes(pkgPath, "internal/cmd") && base == "output.go":
+	case underPrefixes(pkgPath, "internal/cli/cmdcore") && base == "output.go":
 		return true // shipped jsonOrPretty/render seam, pre-UX-package
 	}
 	return false
@@ -26,19 +26,17 @@ func nakedPrintAllowed(pkgPath, file string) bool {
 // Test1B_NakedPrint fails on direct fmt.Print*/println/os.Stdout writes and
 // log.Fatal* in command packages, which would corrupt strict agent JSON.
 //
-// Phase-0 reality: the shipped internal/cmd tree predates the ux.Render seam and
-// still prints directly in many files. Failing on all of it now would block the
-// guardrail from landing before the refactor it is meant to protect. So this
-// test enforces the rule strictly on the *new* V2 command packages
-// (internal/cli/api, internal/cli/context) and, for the legacy internal/cmd
-// tree, asserts a ratchet: the count of naked prints must not exceed a recorded
-// baseline, so the migration can only reduce it. Each re-plumbed command drops
-// the baseline; when it hits zero, internal/cmd graduates to strict.
+// Phase-8 reality: the shipped command tree (formerly the flat internal/cmd
+// package) was decomposed into internal/cli/{cmdcore,api,ctlcmd}. It already
+// routes all output through the App.Out/App.Err writers, so this rule is
+// effectively strict on those packages; the ratchet holds the count at the
+// recorded baseline (0) so the migration can only reduce it. Each re-plumbed
+// command keeps the baseline at zero; growth fails the guardrail.
 func Test1B_NakedPrint(t *testing.T) {
 	pkgs := loadCLI(t)
 
-	strictRoots := []string{"internal/cli/api", "internal/cli/context"}
-	legacyRoots := []string{"internal/cmd"}
+	strictRoots := []string{}
+	legacyRoots := []string{"internal/cli/cmdcore", "internal/cli/api", "internal/cli/ctlcmd"}
 
 	countIn := func(roots []string) map[string]int {
 		perFile := map[string]int{}
@@ -85,7 +83,7 @@ func Test1B_NakedPrint(t *testing.T) {
 		total += n
 	}
 	if total > legacyBaseline {
-		t.Errorf("legacy naked-print ratchet regressed: internal/cmd has %d naked prints, baseline is %d.\n"+
+		t.Errorf("legacy naked-print ratchet regressed: internal/cli command tree has %d naked prints, baseline is %d.\n"+
 			"New command code must use ux.Render. If you legitimately reduced this, lower legacyBaseline in ratchet_baseline.go to %d.",
 			total, legacyBaseline, total)
 	}

@@ -2,15 +2,17 @@
 // core.TreeBuilders so a downstream module (a separate overlay binary) can
 // compose them via core.NewRootCmd without editing the built-in tree.
 //
-// The actual builders live in internal/cmd (they need the internal *App /
-// path resolution). internal/ is not importable across modules, so this
-// exported package is the bridge: it imports internal/cmd (allowed — same
-// module) and re-exports the two builders. The dependency edge stays one-way
-// (clitree → internal/cmd → pkg/core); nothing internal imports clitree.
+// The actual builders live in internal/cli/api and internal/cli/ctlcmd (they
+// need the internal *cmdcore.App / path resolution). internal/ is not
+// importable across modules, so this exported package is the bridge: it imports
+// those packages (allowed — same module) and re-exports the two builders. The
+// dependency edge stays one-way (clitree → internal/cli/{api,ctlcmd} →
+// pkg/core); nothing internal imports clitree.
 package clitree
 
 import (
-	"github.com/jentic/jentic-one/cli/internal/cmd"
+	"github.com/jentic/jentic-one/cli/internal/cli/api"
+	"github.com/jentic/jentic-one/cli/internal/cli/ctlcmd"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
 
@@ -20,11 +22,11 @@ import (
 //	deps := &core.AppContainer{ExtraCommands: myFactories}
 //	root := core.NewRootCmd(deps, clitree.API())
 //	os.Exit(core.Run(root))
-func API() core.TreeBuilder { return cmd.APITreeBuilder() }
+func API() core.TreeBuilder { return api.TreeBuilder() }
 
 // Ctl returns the built-in `jenticctl` (installer / lifecycle) command-tree
 // builder.
-func Ctl() core.TreeBuilder { return cmd.CtlTreeBuilder() }
+func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 
 // MustBeFenced is THE canonical fence set: the command paths that MUST carry the
 // `fenced` annotation so an autonomous agent cannot run them (impl/3.2 §2a). Every
