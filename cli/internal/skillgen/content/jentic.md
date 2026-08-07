@@ -389,70 +389,6 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `jenticctl start` (then `jenticctl status` to confirm), and I'll retry."*
   After the restart, retry the original call and continue the task.
 
-## Advanced: the self-describing `api` loop
-
-Beyond the curated `search`/`inspect`/`execute` flow above, the CLI exposes the
-control plane directly as a `gh api`-style passthrough. Use it when no curated
-command covers what you need, or when you want to drive the API programmatically
-by **discovering** its operations rather than hard-coding paths. The loop is
-**list → describe → call**, and it is fully self-describing — you never guess a
-path or a parameter:
-
-```
-jentic api ops                       # every operation this CLI can call, with METHOD + PATH + id
-jentic api describe GET /credentials # parameters, request/response schema for one operation
-jentic api GET /credentials          # make the call (auth attached for you)
-```
-
-- `api ops` is the **allowlist** — only the operations the CLI's embedded spec
-  advertises are callable, so a typo fails locally (`unknown path`) instead of
-  wasting a round-trip. Add `--live` to list what the *connected server* actually
-  serves (useful against an older backend — see transport recovery below).
-- `api describe <METHOD> <PATH>` prints the operation's parameters and schemas
-  from the same spec `describe`/`ops` share, so what you read is exactly what the
-  call accepts.
-- Pass a body with `-d '<json>'`, `--data-file <path>`, `-d -` (read stdin), or
-  simply pipe/redirect JSON in (`… < body.json`) — the passthrough reads stdin
-  automatically when a body-bearing method has no explicit `-d`.
-- Add `--dry-run` (or `--export-plan`) to a mutating call to see the resolved
-  operation + payload **without** sending it — the plan envelope, redacted.
-- `--fail-on-error` makes a non-2xx response set a non-zero exit; by default the
-  passthrough exits 0 and hands you the body to inspect, `gh api`-style.
-
-### Reading the output (the machine contract)
-
-Every command emits a stable JSON envelope in `agent` mode (and with `--json` on
-a TTY), so you parse structure, not prose:
-
-- **Success** carries the operation's data (a `data`/`items` object, or an
-  `Export`/`Plan` envelope with a `schema_version`).
-- **Failure** is a closed-enum error object: `{"error":{"code":"…",
-  "message":"…","actionable_step":"…","details":{…}}}`. Branch on `code`, not on
-  the message text — the enum is stable, the wording is not. Codes you will meet
-  include `RESOLVE_FAILED`, `FENCED_COMMAND`, `CONFINEMENT_UNAVAILABLE`,
-  `TIMEOUT_PENDING`, and the broker denials surfaced as `agent_directive`s above.
-- **Exit codes** are the fast branch: **0** success, **1** generic error, **2**
-  broker denial / resolve failure, **3** pending timeout, **4** partial approval.
-
-### Transport-error recovery
-
-The SDK already retries transient failures for you before they ever reach your
-code: a **429** honors `Retry-After` (within budget), and **5xx / connection
-errors** get bounded backoff for **idempotent** calls (GET/HEAD, or a POST
-carrying an `Idempotency-Key`). A plain POST is never blind-retried — so if a
-non-idempotent call returns a transport error, re-send it yourself only when you
-know it is safe to repeat.
-
-A **401** is a hard denial, not a transport blip: the CLI re-mints your token
-once automatically, but if it still fails your identity needs attention (ask your
-operator) — don't loop on it.
-
-A **404 on a path `api ops` lists** means the route is in this CLI's spec but the
-**connected server is older** and doesn't serve it yet: the passthrough enriches
-that case as `RESOLVE_FAILED` with `details.route_unsupported_upstream: true` and
-the server version. Recover by upgrading the backend, or run `jentic api ops
---live` to see and call what this server actually serves.
-
 ## Quick Reference
 
 - The authoritative command + flag reference is **generated from the CLI
@@ -479,10 +415,6 @@ the server version. Recover by upgrading the backend, or run `jentic api ops
   `jentic execute <operation_id | METHOD:URL>` — discover, inspect, and call
   operations through the broker (use the full upstream URL; the broker is a
   forward proxy, not a path router).
-- `jentic api ops` → `jentic api describe <METHOD> <PATH>` →
-  `jentic api <METHOD> <PATH> [-d …]` — the self-describing control-plane
-  passthrough when no curated command fits (`--dry-run` to preview, `--live`
-  against an older backend).
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
