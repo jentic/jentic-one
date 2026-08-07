@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from jentic_one.admin.core.schema.jobs import Job
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.catalog_update_check_repo import CatalogUpdateCheckRepository
@@ -168,6 +169,48 @@ def test_import_without_auth(unauthed_client: TestClient) -> None:
         json={"sources": [{"type": "url", "url": "https://example.com/spec.yaml"}]},
     )
     assert resp.status_code == 401
+
+
+async def _get_job_payload(ctx: Context, job_id: str) -> dict:
+    async with ctx.admin_db.session() as session:
+        row = await session.get(Job, job_id)
+        assert row is not None
+        return dict(row.payload)
+
+
+async def test_import_defaults_submitted_by_to_principal(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """A source without `submitted_by` is attributed to the authenticated caller,
+    so the resulting revision's `submitted_by` is not null (import attribution)."""
+    resp = authed_client.post(
+        "/apis",
+        json={"sources": [{"type": "url", "url": "https://api.example.com/openapi.yaml"}]},
+    )
+    assert resp.status_code == 202
+    payload = await _get_job_payload(web_context, resp.json()["job_id"])
+    assert payload["sources"][0]["submitted_by"] == "usr_test_registry"
+
+
+async def test_import_keeps_explicit_submitted_by(
+    authed_client: TestClient, web_context: Context
+) -> None:
+    """A client-supplied `submitted_by` (importing on behalf of someone) wins."""
+    resp = authed_client.post(
+        "/apis",
+        json={
+            "sources": [
+                {
+                    "type": "url",
+                    "url": "https://api.example.com/openapi.yaml",
+                    "submitted_by": "someone-else@example.com",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 202
+    payload = await _get_job_payload(web_context, resp.json()["job_id"])
+    assert payload["sources"][0]["submitted_by"] == "someone-else@example.com"
 
 
 def test_import_inline_source(authed_client: TestClient) -> None:
