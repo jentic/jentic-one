@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -144,9 +145,28 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
-	// Config contains freshly generated secrets; restrict permissions.
-	if err := os.WriteFile(out, data, 0o600); err != nil {
+	// Config contains freshly generated secrets; restrict permissions. The
+	// Docker path relaxes to 0644 because the file is bind-mounted into
+	// containers running as the unprivileged uid 999 (#992) — host-side
+	// protection comes from ~/.jentic being 0700. Only relax under the managed
+	// state dir: a user-chosen --out elsewhere has no such protective parent.
+	mode := os.FileMode(0o600)
+	if draft.IsDocker() && strings.HasPrefix(out, a.Paths.Dir()+string(filepath.Separator)) {
+		mode = 0o644
+	}
+	if err := os.WriteFile(out, data, mode); err != nil {
 		return fmt.Errorf("write %s: %w", out, err)
+	}
+	// WriteFile does not chmod an existing file, and a prior install wrote it
+	// 0600 — set the mode explicitly so a reinstall heals old installs too.
+	if err := os.Chmod(out, mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", out, err)
+	}
+	if draft.IsDocker() && mode == 0o600 {
+		fmt.Fprintln(a.Out, theme.Warnf(
+			"config written outside %s with mode 0600 — the app container (uid 999) "+
+				"may not be able to read it; chmod 644 %s if the stack fails to start",
+			a.Paths.Dir(), out))
 	}
 
 	// Establish the ~/.jentic/logs convention alongside config and data.

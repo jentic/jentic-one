@@ -184,6 +184,27 @@ func (d *Draft) IsPostgres() bool { return d.DBBackend == BackendPostgres }
 // IsDocker reports whether the containerized runtime path was chosen.
 func (d *Draft) IsDocker() bool { return d.RuntimePath == RuntimeDocker }
 
+// PublishHost is the host interface Docker publishes container ports on,
+// derived from the wizard's bind-host answer. It exists because the Docker
+// path has TWO distinct binds that must not be conflated: the in-container
+// process bind (always 0.0.0.0 so the published port is reachable — see
+// render.go toConfig) and the host-side publish address, which must honour
+// the user's choice. An unqualified compose port mapping publishes on all
+// interfaces, so omitting this prefix would silently expose a
+// loopback-intended install to the network (#992).
+//
+// localhost is normalized to 127.0.0.1 (Docker requires an IP for the
+// host prefix); empty defaults to loopback; 0.0.0.0 passes through as the
+// user's explicit choice to publish on all interfaces.
+func (d *Draft) PublishHost() string {
+	switch d.ServerHost {
+	case "", "localhost":
+		return "127.0.0.1"
+	default:
+		return d.ServerHost
+	}
+}
+
 // BaseURL is the canonical control-plane URL derived from the server binding.
 // A 0.0.0.0 bind is reported as 127.0.0.1 since that is the reachable address.
 func (d *Draft) BaseURL() string {

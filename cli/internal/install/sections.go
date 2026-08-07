@@ -3,6 +3,7 @@ package install
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -69,6 +70,27 @@ func notEmpty(field string) func(string) error {
 	return func(s string) error {
 		if s == "" {
 			return fmt.Errorf("%s must not be empty", field)
+		}
+		return nil
+	}
+}
+
+// bindHostValidator validates the server bind-host answer. On the Docker path
+// the answer doubles as the host-IP prefix of the compose port publishes
+// (see Draft.PublishHost), and Docker only accepts an IP there — so a
+// hostname other than localhost is rejected up front rather than failing at
+// `compose up`. The local path keeps accepting hostnames (a process bind may
+// legitimately use one).
+func bindHostValidator(d *Draft) func(string) error {
+	return func(s string) error {
+		if s == "" {
+			return errors.New("host must not be empty")
+		}
+		if !d.IsDocker() || s == "localhost" {
+			return nil
+		}
+		if net.ParseIP(s) == nil {
+			return errors.New("must be an IP address (or localhost) — Docker publishes ports on an IP")
 		}
 		return nil
 	}
@@ -251,11 +273,11 @@ var authSection = Section{
 var serverSection = Section{
 	ID:    "server",
 	Title: "Server",
-	Blurb: "Host and port the app binds to (the broker runs on its own port).",
+	Blurb: "Host and port the app binds to (the broker runs on its own port). Under Docker this host also selects the interface ports are published on.",
 	Groups: func(d *Draft) []*huh.Group {
 		return []*huh.Group{
 			huh.NewGroup(
-				Input().Title("Bind host").Value(&d.ServerHost).Validate(notEmpty("host")),
+				Input().Title("Bind host").Value(&d.ServerHost).Validate(bindHostValidator(d)),
 				Input().Title("App port").Value(&d.ServerPort).Validate(validatePort),
 				Input().
 					Title("Broker port").

@@ -73,7 +73,7 @@ func TestRenderComposeSQLite(t *testing.T) {
 		composeServiceBroker + ":",
 		"JENTIC__APPS: broker",
 		"JENTIC__SERVER__PORT: \"" + DefaultBrokerPort + "\"",
-		"\"" + DefaultBrokerPort + ":" + DefaultBrokerPort + "\"",
+		"\"127.0.0.1:" + DefaultBrokerPort + ":" + DefaultBrokerPort + "\"",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose (sqlite) missing %q:\n%s", want, out)
@@ -99,6 +99,97 @@ func TestRenderComposeSQLite(t *testing.T) {
 	}
 }
 
+// TestRenderComposeBindHost pins the #992 contract: the wizard's bind-host
+// answer prefixes every published port, because Docker publishes unqualified
+// mappings on ALL interfaces (bypassing UFW), silently exposing a
+// loopback-intended install to the network.
+func TestRenderComposeBindHost(t *testing.T) {
+	cases := []struct {
+		name       string
+		serverHost string
+		wantPrefix string
+	}{
+		{"default loopback", "127.0.0.1", "127.0.0.1"},
+		{"localhost normalized", "localhost", "127.0.0.1"},
+		{"empty defaults to loopback", "", "127.0.0.1"},
+		{"explicit all interfaces", "0.0.0.0", "0.0.0.0"},
+		{"specific interface", "10.0.0.5", "10.0.0.5"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDraft()
+			d.RuntimePath = RuntimeDocker
+			d.DBBackend = BackendPostgres
+			d.ServerHost = tc.serverHost
+			cfg := composeConfigFor("/home/u/.jentic")
+
+			data, err := RenderCompose(d, cfg)
+			if err != nil {
+				t.Fatalf("RenderCompose: %v", err)
+			}
+			assertValidComposeYAML(t, data)
+			out := string(data)
+
+			for _, want := range []string{
+				"\"" + tc.wantPrefix + ":" + d.ServerPort + ":" + d.ServerPort + "\"",
+				"\"" + tc.wantPrefix + ":" + d.BrokerPort + ":" + d.BrokerPort + "\"",
+				"\"" + tc.wantPrefix + ":" + d.PGPort + ":5432\"",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("compose missing %q:\n%s", want, out)
+				}
+			}
+			// No published port may be left unqualified: an entry starting
+			// with a digit (e.g. "8000:8000") binds 0.0.0.0.
+			for _, line := range strings.Split(out, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, `- "`) && len(trimmed) > 3 &&
+					trimmed[3] >= '0' && trimmed[3] <= '9' &&
+					!strings.HasPrefix(trimmed, `- "`+tc.wantPrefix+":") {
+					t.Errorf("unqualified port publish %q would bind all interfaces", trimmed)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteComposeArtifactsModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	dir := t.TempDir()
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	cfg := composeConfigFor(dir)
+	// Simulate a prior install having created the logs dir 0700 (the pre-#992
+	// mode): WriteComposeArtifacts must heal it, not just create-if-missing.
+	if err := os.MkdirAll(cfg.LogsHostDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteComposeArtifacts(d, cfg); err != nil {
+		t.Fatalf("WriteComposeArtifacts: %v", err)
+	}
+
+	assertMode := func(path string, want os.FileMode) {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := fi.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", path, got, want)
+		}
+	}
+	// Read by the postgres container's uid (999), not the host user.
+	assertMode(cfg.InitSchemasPath(), 0o644)
+	// Written by the app/broker containers as uid 999.
+	assertMode(cfg.LogsHostDir, 0o777)
+	// Only the docker CLI (host user) reads the compose file; keep it private.
+	assertMode(cfg.ComposePath, 0o600)
+}
+
 func TestRenderComposePostgres(t *testing.T) {
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
@@ -117,7 +208,7 @@ func TestRenderComposePostgres(t *testing.T) {
 		postgresImage,
 		"depends_on",
 		"condition: service_healthy",
-		"\"55432:5432\"",
+		"\"127.0.0.1:55432:5432\"",
 		cfg.InitSchemasPath() + ":/docker-entrypoint-initdb.d/init-schemas.sql:ro",
 		"volumes:\n  db-data:",
 	} {
