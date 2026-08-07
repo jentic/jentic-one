@@ -113,6 +113,26 @@ func TestBindFlags_UnsupportedKindPanicsLoudly(t *testing.T) {
 	binder.BindFlags(&cobra.Command{Use: "x"}, &bad{})
 }
 
+func TestBindFlagsWithOptions_ExcludesAndHides(t *testing.T) {
+	cmd := &cobra.Command{Use: "install"}
+	binder.BindFlagsWithOptions(cmd, &nested{}, binder.BindOptions{
+		Exclude: map[string]bool{"server.host": true},
+		Hidden:  true,
+	})
+	// Excluded leaf must not be registered at all.
+	if cmd.Flags().Lookup("server-host") != nil {
+		t.Error("excluded leaf --server-host must not be registered")
+	}
+	// A non-excluded leaf must be registered but hidden.
+	f := cmd.Flags().Lookup("server-port")
+	if f == nil {
+		t.Fatal("expected --server-port to be registered")
+	}
+	if !f.Hidden {
+		t.Error("--server-port should be hidden when BindOptions.Hidden is set")
+	}
+}
+
 func TestBindFlags_RejectsNonStructPointer(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -154,4 +174,41 @@ func TestBindFlags_ExceedingDepthPanics(t *testing.T) {
 		}
 	}()
 	binder.BindFlags(&cobra.Command{Use: "x"}, &recur{})
+}
+
+func TestChangedOverrides_OnlyIncludesSetFlagsAsNestedMap(t *testing.T) {
+	cmd := &cobra.Command{Use: "install"}
+	cfg := &nested{}
+	binder.BindFlags(cmd, cfg)
+
+	if err := cmd.ParseFlags([]string{
+		"--server-port=8080",
+		"--database-registry-host=db.internal",
+	}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	over, err := binder.ChangedOverrides(cmd, cfg)
+	if err != nil {
+		t.Fatalf("ChangedOverrides: %v", err)
+	}
+
+	server, ok := over["server"].(map[string]any)
+	if !ok || server["port"] != int64(8080) {
+		t.Errorf("server.port override missing/wrong: %v", over["server"])
+	}
+	db, ok := over["database"].(map[string]any)
+	if !ok {
+		t.Fatalf("database override missing: %v", over)
+	}
+	reg, ok := db["registry"].(map[string]any)
+	if !ok || reg["host"] != "db.internal" {
+		t.Errorf("database.registry.host override missing/wrong: %v", db)
+	}
+	// A flag that was NOT set must be entirely absent (not a zero value).
+	if _, present := server["host"]; present {
+		t.Errorf("unset flag leaked into overrides: %v", server)
+	}
+	if _, present := over["logging"]; present {
+		t.Errorf("untouched section leaked into overrides: %v", over)
+	}
 }

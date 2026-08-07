@@ -134,13 +134,30 @@ func collectLeaves(target interface{}) []leaf {
 	return leaves
 }
 
+// BindOptions tune BindFlags for the installer's needs (impl/6.0): Exclude drops
+// leaves entirely (sensitive secret-bearing paths never become flags), and Hidden
+// registers the flags but marks them hidden so they work yet stay out of --help
+// and the public cli-reference noise. Paths are dotted (server.public_base_url).
+type BindOptions struct {
+	Exclude map[string]bool
+	Hidden  bool
+}
+
 // BindFlags registers one Cobra flag per scalar leaf of the nested config struct,
 // named by its dotted path flattened to kebab-case (impl/6.0 §3). It is
 // idempotent-safe only on a fresh command; re-binding the same struct onto a
 // command that already has a colliding flag will panic via pflag, which is the
 // desired loud failure.
 func BindFlags(cmd *cobra.Command, target interface{}) {
+	BindFlagsWithOptions(cmd, target, BindOptions{})
+}
+
+// BindFlagsWithOptions is BindFlags with the installer's Exclude/Hidden controls.
+func BindFlagsWithOptions(cmd *cobra.Command, target interface{}, opts BindOptions) {
 	for _, lf := range collectLeaves(target) {
+		if opts.Exclude[lf.path] {
+			continue
+		}
 		name := flagName(lf.path)
 		usage := "Set " + lf.path
 		switch lf.value.Kind() {
@@ -154,6 +171,11 @@ func BindFlags(cmd *cobra.Command, target interface{}) {
 			cmd.Flags().Uint64(name, 0, usage)
 		case reflect.Float32, reflect.Float64:
 			cmd.Flags().Float64(name, 0, usage)
+		}
+		if opts.Hidden {
+			if f := cmd.Flags().Lookup(name); f != nil {
+				f.Hidden = true
+			}
 		}
 	}
 }
@@ -178,6 +200,8 @@ func HydrateStruct(cmd *cobra.Command, target interface{}) error {
 	return nil
 }
 
+// setLeaf reads the parsed flag value for name and assigns it to the leaf,
+// matching the flag type registered in BindFlags.
 // setLeaf reads the parsed flag value for name and assigns it to the leaf,
 // matching the flag type registered in BindFlags.
 func setLeaf(flags *pflag.FlagSet, name string, dst reflect.Value) error {
@@ -214,4 +238,61 @@ func setLeaf(flags *pflag.FlagSet, name string, dst reflect.Value) error {
 		dst.SetFloat(f)
 	}
 	return nil
+}
+
+// ChangedOverrides returns a nested map of ONLY the flags the operator explicitly
+// set, keyed by the config's dotted path split back into a section tree
+// (databases-registry-host, set, → {"databases":{"registry":{"host":...}}}). This
+// is the flag layer of the installer's precedence ladder: it feeds straight into
+// the settings merge (ctl.ResolveSettings) so unset flags never contribute a
+// zero-value that would clobber a schema default or preset (impl/6.0 §3.5). The
+// target is used only to enumerate the leaves and their kinds; its field values
+// are not read.
+func ChangedOverrides(cmd *cobra.Command, target interface{}) (map[string]any, error) {
+	flags := cmd.Flags()
+	out := map[string]any{}
+	for _, lf := range collectLeaves(target) {
+		name := flagName(lf.path)
+		if !flags.Changed(name) {
+			continue
+		}
+		v, err := flagValue(flags, name, lf.value.Kind())
+		if err != nil {
+			return nil, fmt.Errorf("--%s: %w", name, err)
+		}
+		insertPath(out, strings.Split(lf.path, "."), v)
+	}
+	return out, nil
+}
+
+// flagValue reads the parsed flag as the Go value matching the leaf's kind.
+func flagValue(flags *pflag.FlagSet, name string, kind reflect.Kind) (any, error) {
+	switch kind {
+	case reflect.String:
+		return flags.GetString(name)
+	case reflect.Bool:
+		return flags.GetBool(name)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return flags.GetInt64(name)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return flags.GetUint64(name)
+	case reflect.Float32, reflect.Float64:
+		return flags.GetFloat64(name)
+	default:
+		return nil, fmt.Errorf("unsupported flag kind %s", kind)
+	}
+}
+
+// insertPath sets nested[path...] = value, creating intermediate maps as needed.
+func insertPath(nested map[string]any, path []string, value any) {
+	for i := range len(path) - 1 {
+		key := path[i]
+		child, ok := nested[key].(map[string]any)
+		if !ok {
+			child = map[string]any{}
+			nested[key] = child
+		}
+		nested = child
+	}
+	nested[path[len(path)-1]] = value
 }

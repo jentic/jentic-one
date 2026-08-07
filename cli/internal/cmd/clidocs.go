@@ -149,9 +149,15 @@ func flagDocs(cmd *cobra.Command) []FlagDoc {
 	}
 
 	cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Hidden {
+			return // hidden flags are intentionally kept out of the public reference
+		}
 		collect(f.Name, f.Shorthand, f.Value.Type(), f.DefValue, f.Usage)
 	})
 	cmd.InheritedFlags().VisitAll(func(f *pflag.Flag) {
+		if f.Hidden {
+			return
+		}
 		collect(f.Name, f.Shorthand, f.Value.Type(), f.DefValue, f.Usage)
 	})
 
