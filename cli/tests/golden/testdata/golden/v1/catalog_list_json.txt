@@ -1,0 +1,11 @@
+exit: 0
+--- stdout ---
+{
+  "catalog_total": 0,
+  "data": null,
+  "manifest_age_seconds": null,
+  "outdated_count": 0,
+  "registered_count": 0
+}
+--- stderr ---
+

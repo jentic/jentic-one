@@ -2,9 +2,19 @@ name: CI
 
 on:
   push:
+    # Trunk CI only. Do NOT add `cli-v2-*` here: the stacked-PR chain gets full CI
+    # via the pull_request trigger below, and adding the feature branches to `push`
+    # too would fire a SECOND, redundant run per commit (and, because most jobs are
+    # gated `|| github.event_name == 'push'`, that push run also skips the path
+    # filters and runs the entire matrix).
     branches: [main]
   pull_request:
-    branches: [main]
+    # `main` for normal PRs; `cli-v2-*` so the CLI-V2 stacked-PR chain (each phase's
+    # PR is based on the previous phase's branch, not main) still gets full CI.
+    # GitHub reads this pull_request filter from the PR's BASE branch, so a PR based
+    # on cli-v2-phase-0 only triggers this workflow if cli-v2-phase-0's own ci.yml
+    # lists that base pattern here.
+    branches: [main, 'cli-v2-*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -626,6 +636,16 @@ jobs:
 
       - name: Test (race)
         run: go test -race ./...
+
+      # Phase 0 CLI-V2 guardrails (themes/cli-v2/impl/0.0): architectural
+      # boundary tests and the V1 characterization (golden) contract. Both are
+      # already covered by `go test -race ./...` above, but naming them as an
+      # explicit step surfaces guardrail failures distinctly in the CI log
+      # (mirrors the backend job's `make test-arch`).
+      - name: Architecture & golden guardrails
+        run: |
+          make test-arch
+          make test-golden
 
       # ui/public/cli-reference.json (rendered by the docs SPA as "Reference →
       # CLI") is generated from the cobra command tree by `make cli-reference`.

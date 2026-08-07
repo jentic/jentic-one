@@ -13,7 +13,7 @@ GOBIN := $(shell go env GOPATH)/bin
 GOLANGCI := $(GOBIN)/golangci-lint
 GOLANGCI_VERSION := v2.12.2
 
-.PHONY: help build build-ctl build-api test test-race cov fmt vet lint lint-fix tools tidy check clean
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -32,6 +32,15 @@ test: ## Run tests
 
 test-race: ## Run tests with the race detector
 	go test -race ./...
+
+test-arch: ## Run architectural guardrail tests (SDK boundary, fencing, prints, mutator lock, stdout/stderr, spec parity)
+	go test ./tests/arch/...
+
+test-golden: ## Run V1 characterization (golden) tests — the frozen shipped-CLI contract
+	go test ./tests/golden/...
+
+golden-update: ## Regenerate the V1 golden files (only when a change is authorized by a BC number)
+	go test ./tests/golden/... -update
 
 cov: ## Run tests with a coverage report
 	go test -coverprofile=coverage.out ./...
@@ -57,7 +66,7 @@ tidy: ## Verify go.mod/go.sum are tidy
 	go mod tidy
 	git diff --exit-code go.mod go.sum
 
-check: lint vet test-race ## Lint, vet, and race-test everything
+check: lint vet test-race ## Lint, vet, and race-test everything (test-race covers tests/arch + tests/golden)
 
 clean: ## Remove build and coverage artifacts
 	rm -f $(BINARY_CTL) $(BINARY_API) coverage.out
