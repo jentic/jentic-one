@@ -54,8 +54,14 @@ try {
   Pass "--version on both binaries"
 
   # 2. jentic doctor --json parses; exits 0 unless a HARD check fails.
-  $doctor = & $jentic doctor --json 2>$null
-  if ($LASTEXITCODE -ne 0)             { Fail "jentic doctor --json exited non-zero (a hard check failed)" }
+  $doctorErr = Join-Path $scratch 'doctor.err'
+  $doctor = & $jentic doctor --json 2>$doctorErr
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "---- jentic doctor --json (exit $LASTEXITCODE) ----"
+    Write-Host $doctor
+    if (Test-Path $doctorErr) { Write-Host "---- stderr ----"; Get-Content $doctorErr | Write-Host }
+    Fail "jentic doctor --json exited non-zero (a hard check failed)"
+  }
   if ($doctor -notmatch '"checks"')    { Fail "jentic doctor JSON had no checks array" }
   Pass "jentic doctor --json parses"
 
