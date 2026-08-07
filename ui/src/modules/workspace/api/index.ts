@@ -28,6 +28,23 @@ export { WorkspaceApiError } from '@/modules/workspace/api/client';
 export { parseSpecOperations, opDetailKey } from '@/modules/workspace/api/specOperations';
 export type { ParsedSpec, SpecOperationDetail } from '@/modules/workspace/api/specOperations';
 
+export {
+	shortOverlayId,
+	shortRevisionId,
+	summarizeOverlayActions,
+	overlayLifecycle,
+	OVERLAY_LIFECYCLE_LABEL,
+	revisionOriginLabel,
+	overlayForRevision,
+	revisionChangeSummary,
+	describeLastChange,
+	describeServingState,
+} from '@/modules/workspace/api/insights';
+export type { OverlayLifecycle } from '@/modules/workspace/api/insights';
+
+export { diffSpecs } from '@/modules/workspace/api/specDiff';
+export type { SpecDiffEntry, SpecDiffKind, SpecDiffResult } from '@/modules/workspace/api/specDiff';
+
 export { encodeApiId, formatApiKey } from '@/modules/workspace/api/apiId';
 export type { ApiKey } from '@/modules/workspace/api/apiId';
 
@@ -37,6 +54,7 @@ export type {
 	ApiOperation,
 	ApiRevision,
 	RevisionState,
+	RevisionOrigin,
 	Overlay,
 	OverlayStatus,
 	CursorPage,

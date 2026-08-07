@@ -145,7 +145,15 @@ class OverlayView:
     #: successful confirm. NULL until materialization completes (and for pending
     #: overlays). Distinct from ``target_revision_id`` (the base the overlay targets).
     confirmed_revision_id: uuid.UUID | None
+    #: The revision this overlay superseded when it materialized (the rollback target).
+    #: Surfaced so the UI can tell a rolled-back overlay (superseded revision is serving
+    #: again) from a merely deprecated one.
+    superseded_revision_id: uuid.UUID | None
     contributed_by: str | None
+    #: The authenticated principal that submitted the overlay (``identity.sub``,
+    #: persisted via ``AuditableMixin.created_by``). Distinct from the free-text
+    #: ``contributed_by`` attribution a client may send in the submit body.
+    created_by: str | None
     confirmed_by_execution_id: str | None
     created_at: datetime
     updated_at: datetime | None
@@ -162,7 +170,9 @@ class OverlayPageItem(BaseModel):
     document: dict[str, Any]
     target_revision_id: uuid.UUID | None
     confirmed_revision_id: uuid.UUID | None
+    superseded_revision_id: uuid.UUID | None
     contributed_by: str | None
+    created_by: str | None
     confirmed_by_execution_id: str | None
     created_at: datetime
     updated_at: datetime | None
@@ -373,7 +383,9 @@ class OverlayService:
             document=overlay.document,
             target_revision_id=overlay.target_revision_id,
             confirmed_revision_id=overlay.confirmed_revision_id,
+            superseded_revision_id=overlay.superseded_revision_id,
             contributed_by=overlay.contributed_by,
+            created_by=overlay.created_by,
             confirmed_by_execution_id=overlay.confirmed_by_execution_id,
             created_at=overlay.created_at,
             updated_at=overlay.updated_at,
@@ -415,23 +427,7 @@ class OverlayService:
             target_parent_id=str(api.id),
             origin=identity.origin.value,
         )
-        return OverlayView(
-            id=overlay.id,
-            api_id=overlay.api_id,
-            vendor=vendor,
-            name=name,
-            version=version,
-            status=overlay.status,
-            document=overlay.document,
-            target_revision_id=overlay.target_revision_id,
-            confirmed_revision_id=overlay.confirmed_revision_id,
-            contributed_by=overlay.contributed_by,
-            confirmed_by_execution_id=overlay.confirmed_by_execution_id,
-            created_at=overlay.created_at,
-            updated_at=overlay.updated_at,
-            confirmed_at=overlay.confirmed_at,
-            deprecated_at=overlay.deprecated_at,
-        )
+        return self._view(vendor, name, version, overlay)
 
     async def get(self, vendor: str, name: str, version: str, overlay_id: str) -> OverlayView:
         if not overlay_id.startswith("ovr_"):
@@ -445,23 +441,7 @@ class OverlayService:
         if overlay is None:
             raise OverlayNotFoundError(overlay_id, vendor, name, version)
 
-        return OverlayView(
-            id=overlay.id,
-            api_id=overlay.api_id,
-            vendor=vendor,
-            name=name,
-            version=version,
-            status=overlay.status,
-            document=overlay.document,
-            target_revision_id=overlay.target_revision_id,
-            confirmed_revision_id=overlay.confirmed_revision_id,
-            contributed_by=overlay.contributed_by,
-            confirmed_by_execution_id=overlay.confirmed_by_execution_id,
-            created_at=overlay.created_at,
-            updated_at=overlay.updated_at,
-            confirmed_at=overlay.confirmed_at,
-            deprecated_at=overlay.deprecated_at,
-        )
+        return self._view(vendor, name, version, overlay)
 
     async def list_page(
         self,
@@ -501,7 +481,9 @@ class OverlayService:
                 document=row.document,
                 target_revision_id=row.target_revision_id,
                 confirmed_revision_id=row.confirmed_revision_id,
+                superseded_revision_id=row.superseded_revision_id,
                 contributed_by=row.contributed_by,
+                created_by=row.created_by,
                 confirmed_by_execution_id=row.confirmed_by_execution_id,
                 created_at=row.created_at,
                 updated_at=row.updated_at,

@@ -149,6 +149,7 @@ function revision(
 	state: string,
 	isCurrent: boolean,
 	opCount: number,
+	origin: string | null = null,
 ) {
 	const self = `/apis/${apiKey}/revisions/${revisionId}`;
 	return {
@@ -163,8 +164,9 @@ function revision(
 		},
 		spec_digest: `digest_${revisionId}`,
 		operation_count: opCount,
-		submitted_by: null,
+		submitted_by: 'usr_admin_1',
 		state,
+		origin,
 		is_current: isCurrent,
 		promoted_at: isCurrent ? '2026-01-02T00:00:00Z' : null,
 		archived_at: state === 'archived' ? '2026-01-02T00:00:00Z' : null,
@@ -187,6 +189,53 @@ const REVISIONS: Record<string, ReturnType<typeof revision>[]> = {
 		revision('adyen/pos-terminal-management-api/1', 'rev_adyen_draft', 'draft', false, 5),
 	],
 	'bigco/big-api/1': [revision('bigco/big-api/1', 'rev_big_live', 'published', true, 60)],
+};
+
+/**
+ * Overlays fixture (Stripe only): one confirmed-and-serving overlay, mirroring
+ * the real wire shape incl. `created_by` (the authenticated principal),
+ * `contributed_by` (free-text attribution), the raw `document`, and the
+ * state-validity `_links`.
+ */
+const STRIPE_OVERLAYS = [
+	{
+		id: 'ovr_6a75aa8e6edd9723f71840e8',
+		api_id: 'api_stripe',
+		status: 'confirmed',
+		document: {
+			overlay: '1.0.0',
+			info: { title: 'Overlay for Stripe', version: '1.0.0' },
+			actions: [
+				{
+					description: 'Replace the US-only servers block with a regional template.',
+					target: '$.servers',
+					remove: true,
+				},
+			],
+		},
+		target_revision_id: null,
+		confirmed_revision_id: 'rev_stripe_live',
+		superseded_revision_id: 'rev_stripe_prev',
+		contributed_by: 'contribute-spec-fix skill',
+		created_by: 'usr_admin_1',
+		confirmed_by_execution_id: null,
+		created_at: '2026-01-05T00:00:00Z',
+		updated_at: null,
+		confirmed_at: '2026-01-05T01:00:00Z',
+		deprecated_at: null,
+		_links: {
+			self: '/apis/stripe/stripe-api/2024-01-01/overlays/ovr_6a75aa8e6edd9723f71840e8',
+			api: '/apis/stripe/stripe-api/2024-01-01',
+			confirm: null,
+			rollback:
+				'/apis/stripe/stripe-api/2024-01-01/overlays/ovr_6a75aa8e6edd9723f71840e8:rollback',
+			deprecate: '/apis/stripe/stripe-api/2024-01-01/overlays/ovr_6a75aa8e6edd9723f71840e8',
+		},
+	},
+];
+
+const OVERLAYS: Record<string, typeof STRIPE_OVERLAYS> = {
+	'stripe/stripe-api/2024-01-01': STRIPE_OVERLAYS,
 };
 
 function cursorPage<T>(items: T[]) {
@@ -370,6 +419,10 @@ export const workspaceHandlers = [
 
 	http.get(`/apis/:vendor/:name/:version/revisions`, ({ params }) => {
 		return HttpResponse.json(cursorPage(REVISIONS[keyOf(params)] ?? []));
+	}),
+
+	http.get(`/apis/:vendor/:name/:version/overlays`, ({ params }) => {
+		return HttpResponse.json(cursorPage(OVERLAYS[keyOf(params)] ?? []));
 	}),
 
 	http.post(`/apis/:vendor/:name/:version/revisions/:revisionId`, ({ request }) => {

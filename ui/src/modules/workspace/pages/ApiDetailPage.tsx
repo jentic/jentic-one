@@ -30,8 +30,16 @@ import { OverviewStrip } from '@/modules/workspace/components/OverviewStrip';
 import { OperationsSection } from '@/modules/workspace/components/OperationsSection';
 import { RevisionsSection } from '@/modules/workspace/components/RevisionsSection';
 import { OverlaysSection } from '@/modules/workspace/components/OverlaysSection';
+import { ServingStateStrip } from '@/modules/workspace/components/ServingStateStrip';
 import { SpecViewerDialog } from '@/modules/workspace/components/SpecViewerDialog';
-import { formatApiKey, useDeleteApi, useWorkspaceApi } from '@/modules/workspace/api';
+import type { SpecDiffBase } from '@/modules/workspace/components/SpecViewerDialog';
+import {
+	formatApiKey,
+	shortRevisionId,
+	useApiRevisions,
+	useDeleteApi,
+	useWorkspaceApi,
+} from '@/modules/workspace/api';
 import type { ApiKey } from '@/modules/workspace/api';
 import { apiRefDisplayName } from '@/shared/lib';
 import { ROUTES } from '@/shared/app/routes';
@@ -59,6 +67,9 @@ export default function ApiDetailPage() {
 	const params = useParams<{ vendor: string; name: string; version: string }>();
 	const apiKey = keyFromParams(params);
 	const query = useWorkspaceApi(apiKey);
+	// Shared cache with RevisionsSection — used to pick the header spec
+	// viewer's diff base (the revision created just before the live one).
+	const revisionsQuery = useApiRevisions(apiKey);
 	const navigate = useNavigate();
 	const deleteApi = useDeleteApi();
 	const [specOpen, setSpecOpen] = useState(false);
@@ -74,6 +85,20 @@ export default function ApiDetailPage() {
 	}
 
 	const api = query.data;
+
+	// The header "View spec" shows the LIVE document; its diff base is the
+	// revision created just before the live one ("what the last change did").
+	// Null (full-spec only) for a single-revision API or while the list loads.
+	const revisions = revisionsQuery.data?.items ?? [];
+	const liveIndex = revisions.findIndex((r) => r.isCurrent);
+	const previousRevision = liveIndex >= 0 ? (revisions[liveIndex + 1] ?? null) : null;
+	const liveDiffBase: SpecDiffBase | null = previousRevision
+		? {
+				revisionId: previousRevision.revisionId,
+				label: `previous · ${shortRevisionId(previousRevision.revisionId)}`,
+			}
+		: null;
+
 	// Route the title through the shared friendly-name rule so a draft-only API
 	// (no user-set display_name) reads as its humanised sub-API/vendor name
 	// instead of the raw `vendor/name` tuple, matching the workspace tile.
@@ -162,12 +187,19 @@ export default function ApiDetailPage() {
 				<>
 					<OverviewStrip api={api} />
 					<OperationsSection apiKey={apiKey} totalCount={api.operationCount} />
+					<ServingStateStrip apiKey={apiKey} currentRevisionId={api.currentRevisionId} />
 					<RevisionsSection apiKey={apiKey} />
-					<OverlaysSection apiKey={apiKey} />
+					<OverlaysSection apiKey={apiKey} currentRevisionId={api.currentRevisionId} />
 				</>
 			)}
 
-			<SpecViewerDialog apiKey={apiKey} open={specOpen} onClose={() => setSpecOpen(false)} />
+			<SpecViewerDialog
+				apiKey={apiKey}
+				open={specOpen}
+				onClose={() => setSpecOpen(false)}
+				revisionLabel="live"
+				diffAgainst={liveDiffBase}
+			/>
 
 			<CascadeDeleteDialog
 				open={deleteOpen}

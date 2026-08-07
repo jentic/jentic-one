@@ -66,7 +66,11 @@ def _build_overlay_response(view: OverlayView, request: Request) -> OverlayRespo
         confirmed_revision_id=(
             str(view.confirmed_revision_id) if view.confirmed_revision_id else None
         ),
+        superseded_revision_id=(
+            str(view.superseded_revision_id) if view.superseded_revision_id else None
+        ),
         contributed_by=view.contributed_by,
+        created_by=view.created_by,
         confirmed_by_execution_id=view.confirmed_by_execution_id,
         created_at=view.created_at,
         updated_at=view.updated_at,
@@ -96,7 +100,11 @@ def _build_overlay_list_item(
         confirmed_revision_id=(
             str(item.confirmed_revision_id) if item.confirmed_revision_id else None
         ),
+        superseded_revision_id=(
+            str(item.superseded_revision_id) if item.superseded_revision_id else None
+        ),
         contributed_by=item.contributed_by,
+        created_by=item.created_by,
         confirmed_by_execution_id=item.confirmed_by_execution_id,
         created_at=item.created_at,
         updated_at=item.updated_at,

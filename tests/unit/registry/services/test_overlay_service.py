@@ -99,6 +99,7 @@ def _make_overlay(
     overlay.confirmed_revision_id = confirmed_revision_id
     overlay.superseded_revision_id = None
     overlay.contributed_by = "agent"
+    overlay.created_by = "usr_submitter"
     overlay.confirmed_by_execution_id = None
     overlay.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     overlay.updated_at = None

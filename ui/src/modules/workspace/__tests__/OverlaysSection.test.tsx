@@ -13,12 +13,15 @@ function rawOverlay(overrides: Record<string, unknown> = {}) {
 	const base = {
 		id: 'ovl_abcdef123456',
 		status: 'pending',
-		created_by: 'alice@acme.dev',
+		created_by: 'usr_author_1',
+		contributed_by: null,
+		document: null,
 		created_at: '2026-01-01T00:00:00Z',
 		confirmed_at: null,
 		deprecated_at: null,
 		target_revision_id: 'rev_1',
 		confirmed_revision_id: null,
+		superseded_revision_id: null,
 		...overrides,
 	};
 	// Mirror the backend's state-validity `_links` (see OverlayLinksResponse) so the
@@ -76,18 +79,113 @@ describe('OverlaysSection', () => {
 		expect(screen.getByTestId('overlay-status-confirmed')).toBeInTheDocument();
 	});
 
-	it('shows the "Deprecated by re-import" note for a deprecated overlay', async () => {
+	it('shows a dated "Superseded" note for a deprecated overlay', async () => {
 		mockOverlays([
 			rawOverlay({
 				id: 'ovl_deprecated',
 				status: 'deprecated',
+				confirmed_at: '2026-03-01T00:00:00Z',
 				deprecated_at: '2026-03-15T09:30:00Z',
 			}),
 		]);
 		renderWithProviders(<OverlaysSection apiKey={KEY} />);
 
 		expect(await screen.findByTestId('overlay-status-deprecated')).toBeInTheDocument();
-		expect(screen.getByText(/Deprecated by re-import on/)).toBeInTheDocument();
+		expect(screen.getByText(/Superseded/)).toBeInTheDocument();
+	});
+
+	it('badges a rollback as "rolled back" when the superseded revision serves again', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_rolledback',
+				status: 'deprecated',
+				confirmed_revision_id: 'rev_overlay',
+				superseded_revision_id: 'rev_base',
+				confirmed_at: '2026-03-01T00:00:00Z',
+				deprecated_at: '2026-03-15T09:30:00Z',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_base" />);
+
+		const badge = await screen.findByTestId('overlay-status-deprecated');
+		expect(badge).toHaveAttribute('data-lifecycle', 'rolled-back');
+		expect(badge).toHaveTextContent('rolled back');
+		expect(screen.getByText(/Rolled back/)).toBeInTheDocument();
+	});
+
+	it('badges a serving overlay as "active" (distinct from confirmed)', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_serving',
+				status: 'confirmed',
+				confirmed_revision_id: 'rev_live',
+				confirmed_at: '2026-02-01T00:00:00Z',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_live" />);
+
+		const badge = await screen.findByTestId('overlay-status-confirmed');
+		expect(badge).toHaveAttribute('data-lifecycle', 'active');
+	});
+
+	it('renders unique short ids for KSUIDs sharing a time prefix, with copyable full ids', async () => {
+		// These two collided as "ovr_6a75" under the old slice(0, 8) rendering.
+		mockOverlays([
+			rawOverlay({ id: 'ovr_6a75aa8e6edd9723f71840e8' }),
+			rawOverlay({ id: 'ovr_6a75aaf71c1c073e38ab429c' }),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		await waitFor(() => expect(screen.getAllByTestId('overlay-row')).toHaveLength(2));
+		const ids = screen.getAllByTestId('overlay-id').map((el) => el.textContent);
+		expect(ids).toEqual(['ovr_…1840e8', 'ovr_…ab429c']);
+		expect(new Set(ids).size).toBe(2);
+		// The full id stays reachable: on hover (title) and via the copy button.
+		expect(screen.getByTitle('ovr_6a75aa8e6edd9723f71840e8')).toBeInTheDocument();
+		expect(screen.getAllByLabelText('Copy full overlay id')).toHaveLength(2);
+	});
+
+	it('summarizes the overlay document actions and shows the attribution', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_described',
+				contributed_by: 'contribute-spec-fix skill',
+				document: {
+					overlay: '1.0.0',
+					actions: [
+						{
+							description: 'Remove the US-only servers block.',
+							target: '$.servers',
+							remove: true,
+						},
+						{ target: '$.info', update: { title: 'New title' } },
+					],
+				},
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		const summary = await screen.findByTestId('overlay-summary');
+		expect(summary).toHaveTextContent('Remove the US-only servers block.');
+		expect(summary).toHaveTextContent('Updated info (title)');
+		expect(screen.getByTestId('overlay-meta')).toHaveTextContent(
+			/via contribute-spec-fix skill/,
+		);
+	});
+
+	it('links a materialized overlay to the revision it produced', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_confirmed',
+				status: 'confirmed',
+				confirmed_at: '2026-02-01T00:00:00Z',
+				confirmed_revision_id: 'dc9bcdeb-f652-45eb-b7cb-d56e76a5d8aa',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		const link = await screen.findByTestId('overlay-produced-revision');
+		expect(link).toHaveTextContent('revision dc9bcdeb');
 	});
 
 	it('surfaces an error when the list request fails', async () => {
