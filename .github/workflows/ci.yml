@@ -628,6 +628,15 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # CLI-V2 Phase 9 (impl/9.0 §9.1 W2): the CLI must build for every OS we ship
+      # binaries for. macOS + Linux already cross-compile; Windows regressed once
+      # on a Unix-only syscall (config.lockConfig), so gate it here — a future
+      # unguarded syscall can never silently break the Windows/macOS binary again.
+      - name: Cross-compile (windows/amd64, darwin/arm64)
+        run: |
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin  GOARCH=arm64 go build ./...
+
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
