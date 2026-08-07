@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.29.0](https://github.com/jentic/jentic-one/compare/v0.28.1...v0.29.0) (2026-08-07)
+
+
+### Features
+
+* **workspace:** make API revisions & overlays legible in the workspace UI ([#1002](https://github.com/jentic/jentic-one/issues/1002)) ([5b011f0](https://github.com/jentic/jentic-one/commit/5b011f09d22c62239551005aca7877c44818de4f))
+
+
+### Bug Fixes
+
+* **ingest:** keep bare YAML dates as strings so specs stay JSON-serializable ([#983](https://github.com/jentic/jentic-one/issues/983)) ([42a8f38](https://github.com/jentic/jentic-one/commit/42a8f384ca2c761e2758efd80af7f63ee072f31d))
+* **ingest:** keep non-finite YAML/JSON floats as strings so specs stay JSON-serializable ([#987](https://github.com/jentic/jentic-one/issues/987)) ([5bd79cd](https://github.com/jentic/jentic-one/commit/5bd79cd3d13c8eae03719ee4cc6014c452ffcbe6))
+* **ingest:** wrap parser escapes so malformed spec content fails cleanly ([#989](https://github.com/jentic/jentic-one/issues/989)) ([bc48601](https://github.com/jentic/jentic-one/commit/bc486011cbb60993a835d4b693678d28a0fd9f44))
+
 ## [0.28.1](https://github.com/jentic/jentic-one/compare/v0.28.0...v0.28.1) (2026-08-06)
 
 
