@@ -24,6 +24,8 @@ type installOptions struct {
 	noStart      bool
 	noWizard     bool
 	freshSecrets bool
+	defaults     bool
+	answers      string
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -58,8 +60,40 @@ func newInstallCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.freshSecrets, "fresh-secrets", false,
 		"rotate every generated secret instead of reusing an existing config's "+
 			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
+	cmd.Flags().BoolVar(&opts.defaults, "defaults", false,
+		"non-interactive: skip the wizard and install with its default answers "+
+			"(Docker + managed Postgres, loopback binds)")
+	cmd.Flags().StringVar(&opts.answers, "answers", "",
+		"non-interactive: skip the wizard and take answers from a YAML file "+
+			"(unlisted fields keep the wizard defaults; implies --defaults for the rest)")
 
 	return cmd
+}
+
+// resolveDraft fills the draft either interactively (the wizard TUI) or, for
+// --defaults/--answers, headlessly (#992: unattended installs — CI, scripted
+// server provisioning — previously had no path at all because the wizard is
+// TTY-only). The headless path applies the answers overlay and then runs the
+// wizard's own field validators so it cannot construct a draft the interactive
+// path would have rejected. Returns confirmed=false only when the interactive
+// wizard was cancelled.
+func (a *App) resolveDraft(draft *install.Draft, opts *installOptions) (bool, error) {
+	if !opts.defaults && opts.answers == "" {
+		return install.RunWizard(draft, a.installHeader())
+	}
+	if opts.answers != "" {
+		answers, err := install.LoadAnswers(opts.answers)
+		if err != nil {
+			return false, err
+		}
+		answers.Apply(draft)
+	}
+	if err := install.ValidateDraft(draft); err != nil {
+		return false, fmt.Errorf("invalid install answers: %w", err)
+	}
+	fmt.Fprintln(a.Out, theme.Dimf("Non-interactive install: %s runtime, %s database, binding %s.",
+		draft.RuntimePath, draft.DBBackend, draft.ServerHost))
+	return true, nil
 }
 
 // installHeader builds the version metadata shown in the wizard's top-right
@@ -89,7 +123,7 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// independent of the app's working directory at start time).
 	draft.LogFileDir = a.Paths.LogsDir()
 
-	confirmed, err := install.RunWizard(draft, a.installHeader())
+	confirmed, err := a.resolveDraft(draft, opts)
 	if err != nil {
 		return err
 	}
@@ -116,8 +150,10 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// Telemetry consent gate: asked once, after the user has confirmed their
 	// configuration, before the config is rendered so the decision lands in the
 	// generated jentic-one.yaml (the file the app actually reads). Persisted so
-	// re-installs skip it. Non-interactive (CI / no TTY) first run defaults OFF.
-	proceed, enabled, err := a.ensureTelemetryConsent(term.IsTerminal(os.Stdin.Fd()))
+	// re-installs skip it. Non-interactive (CI / no TTY / --defaults /
+	// --answers) first run defaults OFF.
+	headless := opts.defaults || opts.answers != ""
+	proceed, enabled, err := a.ensureTelemetryConsent(!headless && term.IsTerminal(os.Stdin.Fd()))
 	if err != nil {
 		return err
 	}
@@ -259,7 +295,10 @@ func (a *App) resolveSetupState(started bool, baseURL string) install.SetupState
 // successful install. It is a no-op unless the stack started, the user did not
 // pass --no-wizard, and we have a real terminal to prompt and drive the wizard.
 func (a *App) offerWizard(cmd *cobra.Command, opts *installOptions, started bool) {
-	if opts.noWizard || !started || !wantsInteractive(cmd, false) {
+	// A headless install (--defaults/--answers) asked for no prompts; don't
+	// end an unattended run with one, even when a TTY happens to be attached.
+	headless := opts.defaults || opts.answers != ""
+	if opts.noWizard || headless || !started || !wantsInteractive(cmd, false) {
 		return
 	}
 

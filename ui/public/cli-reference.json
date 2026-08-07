@@ -1610,6 +1610,17 @@
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
+              "name": "answers",
+              "type": "string",
+              "usage": "non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)"
+            },
+            {
+              "name": "defaults",
+              "type": "bool",
+              "default": "false",
+              "usage": "non-interactive: skip the wizard and install with its default answers (Docker + managed Postgres, loopback binds)"
+            },
+            {
               "name": "fresh-secrets",
               "type": "bool",
               "default": "false",
