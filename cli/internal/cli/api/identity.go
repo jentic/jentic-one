@@ -288,7 +288,27 @@ func newIdentityDeleteCmd(_ *app) *cobra.Command {
 		remove: func(cfg *config.Config, name string) {
 			delete(cfg.Identities, name)
 		},
+		materialRefs: identityMaterialRefs,
 	})
+}
+
+// identityMaterialRefs returns the on-disk secret refs (<identity, env> pairs)
+// whose key/token/apikey files become orphaned when the identity `name` is
+// deleted. An identity holds one keypair+token+apikey per environment it was
+// registered in (Identity.Environments), so we purge each; if it was never
+// registered in any environment we still attempt the bare-env-less stem is not a
+// thing — there is no material without an environment, so an empty map yields no
+// purge. (F8-34)
+func identityMaterialRefs(cfg *config.Config, name string) []auth.IdentityRef {
+	ident, ok := cfg.Identities[name]
+	if !ok {
+		return nil
+	}
+	refs := make([]auth.IdentityRef, 0, len(ident.Environments))
+	for env := range ident.Environments {
+		refs = append(refs, auth.IdentityRef{Identity: name, Environment: env})
+	}
+	return refs
 }
 
 // contextsReferencingIdentity returns the names of contexts that bind ident.

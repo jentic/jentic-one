@@ -3,9 +3,11 @@ package api
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -63,6 +65,12 @@ type deleteSpec struct {
 	references func(cfg *sdkconfig.Config, name string) []string
 	// remove deletes name from the appropriate map.
 	remove func(cfg *sdkconfig.Config, name string)
+	// materialRefs, if non-nil, returns the on-disk secret refs (key/token/apikey
+	// stems) that become orphaned once name is removed, so the delete flow can
+	// purge them (F8-34). For an identity that is every <identity, env> pair it
+	// was registered in; for an environment there is no per-name secret material,
+	// so env delete leaves this nil.
+	materialRefs func(cfg *sdkconfig.Config, name string) []auth.IdentityRef
 }
 
 // newResourceDeleteCmd builds a `delete <name>` command for a top-level resource
@@ -104,12 +112,32 @@ func newResourceDeleteCmd(spec deleteSpec) *cobra.Command {
 				return nil
 			}
 
+			// Capture the orphan-able secret refs BEFORE the config entry is
+			// removed (afterwards the environments map is gone). Best-effort: a
+			// stem that no longer validates is simply skipped.
+			var toPurge []auth.IdentityRef
+			if spec.materialRefs != nil {
+				toPurge = spec.materialRefs(cfg, name)
+			}
+
 			if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
 				spec.remove(cfg, name)
 				return nil
 			}); err != nil {
 				return reportCoded(aud, err)
 			}
+
+			// Remove the now-orphaned on-disk key/token/apikey files (F8-34). The
+			// config entry is already gone, so a purge failure must not fail the
+			// whole delete (the resource IS deleted); log it as a warning through
+			// the mode-appropriate slog handler (stderr, redacted).
+			for _, ref := range toPurge {
+				if perr := auth.PurgeMaterial(ref); perr != nil {
+					slog.Warn("could not remove orphaned identity secret files",
+						"identity", ref.Identity, "environment", ref.Environment, "error", perr)
+				}
+			}
+
 			aud.Render(ux.Result{Status: ux.StatusDeleted, Resource: spec.resource, Name: name})
 			return nil
 		},

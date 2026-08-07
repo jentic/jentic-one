@@ -2,9 +2,11 @@ package api
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -259,6 +261,16 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 				return nil
 			}
 
+			// If --identity may GC the referenced identity, capture its orphan-able
+			// secret refs BEFORE the mutate removes it (F8-34). We only purge if the
+			// identity is actually removed below.
+			var purgeIdentity string
+			var toPurge []auth.IdentityRef
+			if withIdentity && target.Identity != "" && !identityStillReferenced(cfg, target.Identity) {
+				purgeIdentity = target.Identity
+				toPurge = identityMaterialRefs(cfg, target.Identity)
+			}
+
 			if err := config.MutateConfig(func(cfg *config.Config) error {
 				delete(cfg.Contexts, name)
 				// --identity: GC the referenced identity iff no other context
@@ -271,6 +283,18 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 			}); err != nil {
 				return reportCoded(aud, err)
 			}
+
+			// Purge the GC'd identity's orphaned secret files (F8-34). Non-fatal:
+			// the context/identity are already removed from config.
+			if purgeIdentity != "" {
+				for _, ref := range toPurge {
+					if perr := auth.PurgeMaterial(ref); perr != nil {
+						slog.Warn("could not remove orphaned identity secret files",
+							"identity", ref.Identity, "environment", ref.Environment, "error", perr)
+					}
+				}
+			}
+
 			aud.Render(ux.Result{Status: ux.StatusDeleted, Resource: "context", Name: name})
 			return nil
 		},
