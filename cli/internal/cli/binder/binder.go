@@ -296,3 +296,24 @@ func insertPath(nested map[string]any, path []string, value any) {
 	}
 	nested[path[len(path)-1]] = value
 }
+
+// NonZeroOverrides returns a nested map of the struct's scalar leaves that hold a
+// NON-ZERO value, skipping any path in exclude. It is the read-back for the
+// interactive config form (impl/6.1): the form binds a fresh struct, the operator
+// fills in only what they want to change, and this collects exactly those leaves
+// as overrides ("" / 0 / false == "leave the wizard's value alone"). exclude
+// carries the sensitive paths so a secret typed into a (non-excluded-by-accident)
+// field can never leak into the overlay.
+func NonZeroOverrides(target interface{}, exclude map[string]bool) map[string]any {
+	out := map[string]any{}
+	for _, lf := range collectLeaves(target) {
+		if exclude[lf.path] {
+			continue
+		}
+		if lf.value.IsZero() {
+			continue
+		}
+		insertPath(out, strings.Split(lf.path, "."), lf.value.Interface())
+	}
+	return out
+}

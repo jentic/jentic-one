@@ -116,3 +116,16 @@ func RunConfirm(c *huh.Confirm) error {
 		WithProgramOptions(tea.WithOutput(os.Stderr)).
 		Run()
 }
+
+// RunForm applies the shared installer theme/keymap and runs an already-built
+// multi-group form (e.g. the schema-derived config screen, impl/6.1) with the
+// same terminal posture as RunConfirm — huh output on stderr so it never
+// contaminates a piped stdout. The form's fields are bound by the caller, so on
+// return the target struct is populated in place.
+func RunForm(f *huh.Form) error {
+	return f.
+		WithTheme(FormTheme()).
+		WithKeyMap(FormKeyMap()).
+		WithProgramOptions(tea.WithOutput(os.Stderr)).
+		Run()
+}

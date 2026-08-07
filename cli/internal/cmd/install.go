@@ -34,6 +34,11 @@ type installOptions struct {
 	// layer on top of the shipped wizard (plan.md Phase 6; §"schema-driven flags").
 	preset     string
 	backendCfg *generated.BackendConfig
+	// configForm opts into the schema-derived interactive config screen (impl/6.1):
+	// an extra, grouped huh form over the config sections, run after the shipped
+	// wizard confirms, whose answers join the overlay. Off by default so the mature
+	// wizard flow is untouched; ignored without a TTY.
+	configForm bool
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -73,6 +78,8 @@ func newInstallCmd(app *App) *cobra.Command {
 			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
 	cmd.Flags().StringVar(&opts.preset, "preset", "",
 		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
+	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
+		"after the wizard, show an extra schema-derived form to review/adjust config sections (interactive only)")
 
 	// Schema-driven --<section>-<field> flags, generated from the backend config
 	// schema (impl/6.0 §3). Additive: unset flags contribute nothing, so a plain
@@ -276,13 +283,22 @@ func (a *App) applySchemaOverlay(cmd *cobra.Command, opts *installOptions, rende
 	if err != nil {
 		return nil, err
 	}
-	if opts.preset == "" && len(overrides) == 0 {
+
+	// Optional schema-derived interactive config screen (impl/6.1), opt-in and
+	// interactive-only so the shipped wizard flow is untouched by default. Its
+	// answers become the highest-precedence override layer.
+	formOverrides, err := a.runConfigForm(cmd, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.preset == "" && len(overrides) == 0 && len(formOverrides) == 0 {
 		return rendered, nil // fast path: nothing schema-driven requested
 	}
 
-	// Compose the intentful layers only (preset < flags), NOT schema defaults —
-	// the wizard's Render() already emits the backend's needed values, and
-	// blanketing every default on top would fight the wizard's own choices.
+	// Compose the intentful layers only (preset < flags < form), NOT schema
+	// defaults — the wizard's Render() already emits the backend's needed values,
+	// and blanketing every default on top would fight the wizard's own choices.
 	settings := ctl.Settings{}
 	if opts.preset != "" {
 		p, err := ctl.PresetSettings(opts.preset)
@@ -294,13 +310,45 @@ func (a *App) applySchemaOverlay(cmd *cobra.Command, opts *installOptions, rende
 	if len(overrides) > 0 {
 		ctl.MergeSettings(settings, overrides)
 	}
+	if len(formOverrides) > 0 {
+		ctl.MergeSettings(settings, formOverrides)
+	}
 
 	merged, err := ctl.OverlaySettings(rendered, settings)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintln(a.Out, theme.Dimf("Applied schema-driven config overlay (preset=%q, %d flag override(s)).", opts.preset, countLeaves(overrides)))
+	fmt.Fprintln(a.Out, theme.Dimf("Applied schema-driven config overlay (preset=%q, %d flag override(s)).", opts.preset, countLeaves(overrides)+countLeaves(formOverrides)))
 	return merged, nil
+}
+
+// runConfigForm shows the schema-derived interactive config screen when
+// --config-form was passed and we have a TTY (impl/6.1). The form binds a fresh
+// BackendConfig; the operator fills in any sections they want to override, and
+// the non-sensitive, non-empty leaves are returned as a nested override map that
+// joins the overlay at the highest precedence. A no-op returning nil when the
+// flag is off or there is no terminal.
+//
+// The form is NOT pre-filled from the resolved defaults: the generated struct's
+// UnmarshalJSON enforces required sections, so hydrating it from a partial
+// settings map is not reliable — instead the operator sees empty inputs and only
+// what they type becomes an override, which is also the least surprising
+// "review/adjust" semantics (blank = leave the wizard's value alone).
+func (a *App) runConfigForm(cmd *cobra.Command, opts *installOptions) (ctl.Settings, error) {
+	if !opts.configForm || !wantsInteractive(cmd, false) {
+		return nil, nil
+	}
+	sensitive, err := ctl.SensitivePaths()
+	if err != nil {
+		return nil, err
+	}
+	formCfg := &generated.BackendConfig{}
+	form := binder.BuildDynamicForm(formCfg, binder.FormOptions{Exclude: sensitive})
+	if err := install.RunForm(form); err != nil {
+		return nil, fmt.Errorf("config form: %w", err)
+	}
+	// Only leaves the operator actually set (non-zero) become overrides.
+	return ctl.Settings(binder.NonZeroOverrides(formCfg, sensitive)), nil
 }
 
 // countLeaves returns the number of scalar leaves in a nested override map, for a

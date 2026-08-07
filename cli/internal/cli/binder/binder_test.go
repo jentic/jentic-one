@@ -212,3 +212,28 @@ func TestChangedOverrides_OnlyIncludesSetFlagsAsNestedMap(t *testing.T) {
 		t.Errorf("untouched section leaked into overrides: %v", over)
 	}
 }
+
+func TestNonZeroOverrides_CollectsSetLeavesAndSkipsExcluded(t *testing.T) {
+	cfg := &nested{}
+	cfg.Server.Port = 8080
+	cfg.Logging = &logSection{Level: "debug"} // Level set, Enabled/Ratio zero
+	cfg.Server.Host = "secret-value"          // will be excluded below
+
+	over := binder.NonZeroOverrides(cfg, map[string]bool{"server.host": true})
+
+	server, ok := over["server"].(map[string]any)
+	if !ok || server["port"] != 8080 {
+		t.Errorf("server.port not collected: %v", over["server"])
+	}
+	if _, present := server["host"]; present {
+		t.Errorf("excluded leaf leaked into overrides: %v", server)
+	}
+	logging, ok := over["logging"].(map[string]any)
+	if !ok || logging["level"] != "debug" {
+		t.Errorf("logging.level not collected: %v", over["logging"])
+	}
+	// Zero-valued leaves must be absent (blank == leave alone).
+	if _, present := logging["enabled"]; present {
+		t.Errorf("zero-valued leaf leaked into overrides: %v", logging)
+	}
+}
