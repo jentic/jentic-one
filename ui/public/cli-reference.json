@@ -3393,10 +3393,21 @@
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
+              "name": "answers",
+              "type": "string",
+              "usage": "non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)"
+            },
+            {
               "name": "config-form",
               "type": "bool",
               "default": "false",
               "usage": "after the wizard, show an extra schema-derived form to review/adjust config sections (interactive only)"
+            },
+            {
+              "name": "defaults",
+              "type": "bool",
+              "default": "false",
+              "usage": "non-interactive: skip the wizard and take its defaults (Docker + Postgres, loopback) as-is"
             },
             {
               "name": "fresh-secrets",

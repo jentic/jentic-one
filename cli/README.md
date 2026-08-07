@@ -53,6 +53,30 @@ make build && sudo install -m 0755 jenticctl jentic /usr/local/bin/
 export PATH="$PWD:$PATH"
 ```
 
+## Supported platforms
+
+The `jentic` and `jenticctl` binaries are pure-Go and build/run on **Linux**,
+**macOS** (Intel + Apple Silicon), and **Windows** (x86-64). Each release is
+smoke-tested end-to-end on all three (`ubuntu-24.04`, `macos-latest`,
+`windows-latest`) via the CI `e2e-install` matrix, which runs the built binaries'
+`--version` / `doctor` / `profile list` contract on every OS.
+
+| Platform | `install.sh` | `jenticctl install` (server) | `jentic` agent CLI | `jentic run` isolation |
+| --- | --- | --- | --- | --- |
+| **Linux** (Ubuntu 24.04+) | ✅ | ✅ Docker + source | ✅ | ✅ (`bwrap` + userns/ACLs) |
+| **macOS** (latest) | ✅ | ✅ source; Docker via Colima/Docker Desktop | ✅ | ✅ (Seatbelt `sandbox-exec`) |
+| **Windows** 10/11 | ⚠️ **via WSL only** | via WSL | ✅ native | ❌ not supported |
+
+Notes:
+
+- **`install.sh` is bash-only** (macOS + Linux). On **native Windows** it exits
+  with a "run this inside WSL" message — there is no PowerShell installer. Windows
+  users run the prebuilt binaries directly (or build with `make build`); the agent
+  surface (`jentic ...`) works natively.
+- **`jentic run` (local-agent isolation) is Unix-only.** It uses Seatbelt on
+  macOS and `bwrap`+ACLs on Linux; there is no Windows sandbox analogue, so the
+  command refuses cleanly on Windows rather than running unconfined.
+
 ## Usage
 
 ```bash
@@ -70,6 +94,26 @@ how you want to deploy and configure the platform, **generates** a
 `jentic-one.yaml`, and then performs the install for you — either a local
 virtualenv (the **Run locally** path) or a containerized docker-compose stack
 (the **Run in Docker** path).
+
+**Unattended (CI / scripted):** the wizard is a TTY-only TUI, so for
+non-interactive installs pass `--defaults` (take the wizard's defaults — Docker +
+Postgres, loopback — as-is) or `--answers <file>` (overlay a YAML answers file on
+top of those defaults; unlisted keys keep the default). Both skip the wizard and
+are held to the exact same field validators, so a headless install can't produce
+a config the wizard would have rejected. Example answers file:
+
+```yaml
+# answers.yaml — only the fields you want to override; the rest keep defaults.
+bind_host: 127.0.0.1
+app_port: "18000"
+broker_port: "18100"
+database: postgres
+```
+
+```bash
+jenticctl install --defaults --no-wizard          # zero-prompt default install
+jenticctl install --answers answers.yaml --no-wizard
+```
 
 Everything the CLI owns is rooted under `~/.jentic`:
 

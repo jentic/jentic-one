@@ -13,6 +13,16 @@ GOBIN := $(shell go env GOPATH)/bin
 GOLANGCI := $(GOBIN)/golangci-lint
 GOLANGCI_VERSION := v2.12.2
 
+# Windows executables must end in .exe or the shell (and PowerShell's call
+# operator) refuses to run them. Derive the suffix from the target GOOS so
+# `make build` produces jentic.exe / jenticctl.exe on Windows and unsuffixed
+# binaries everywhere else.
+ifeq ($(shell go env GOOS),windows)
+BIN_EXT := .exe
+endif
+BINARY_CTL := $(BINARY_CTL)$(BIN_EXT)
+BINARY_API := $(BINARY_API)$(BIN_EXT)
+
 # Pin the generator via `go run ...@version` (never `go install`) so the global
 # toolchain is untouched and the version is reproducible on every machine/CI.
 # Verified against both real specs on 2026-08-04 (see impl/2.1 §2 spike note).
