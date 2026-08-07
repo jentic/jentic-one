@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -162,5 +164,71 @@ func TestReuseInstallSecretsMalformedFileWarnsAndFallsThrough(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "could not read prior config") {
 		t.Errorf("expected warning, got: %q", buf.String())
+	}
+}
+
+// installCmdStubDocker installs a `docker` stub on PATH that logs every
+// invocation and succeeds, so migrationFailure's teardown path can run without
+// a daemon. POSIX-only.
+func installCmdStubDocker(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-stub PATH technique is POSIX-only")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	script := "#!/bin/sh\necho \"$@\" >> '" + log + "'\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write docker stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+func TestMigrationFailureFreshVolumeIsReset(t *testing.T) {
+	// A first migration failing used to leave a half-initialized volume that
+	// poisoned every retry (#992 item 3). When this run created the volume,
+	// it is discarded automatically and the error says to just re-run.
+	log := installCmdStubDocker(t)
+	buf := &bytes.Buffer{}
+	app := &App{Out: buf, Err: &bytes.Buffer{}}
+
+	err := app.migrationFailure("/home/u/.jentic/docker-compose.yaml",
+		[]string{"jentic_db-data"}, true, errors.New("boom"))
+	if err == nil || !strings.Contains(err.Error(), "migrations failed: boom") {
+		t.Fatalf("err = %v, want the original cause preserved", err)
+	}
+	if !strings.Contains(err.Error(), "re-run `jenticctl install`") {
+		t.Errorf("error should say a clean re-run works, got: %v", err)
+	}
+	logged, _ := os.ReadFile(log)
+	if !strings.Contains(string(logged), "down -v") ||
+		!strings.Contains(string(logged), "volume rm jentic_db-data") {
+		t.Errorf("expected teardown + explicit volume rm, docker log:\n%s", logged)
+	}
+}
+
+func TestMigrationFailurePreexistingVolumeIsNeverDestroyed(t *testing.T) {
+	// A volume that predates this install may hold a real database: recovery
+	// must never be automatic — the operator gets the literal command and a
+	// backup warning, and docker is not touched at all.
+	log := installCmdStubDocker(t)
+	buf := &bytes.Buffer{}
+	app := &App{Out: buf, Err: &bytes.Buffer{}}
+
+	err := app.migrationFailure("/home/u/.jentic/docker-compose.yaml",
+		[]string{"jentic_db-data"}, false, errors.New("boom"))
+	if err == nil || !strings.Contains(err.Error(), "migrations failed: boom") {
+		t.Fatalf("err = %v, want the original cause preserved", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "back it up") {
+		t.Errorf("expected a backup warning, got:\n%s", out)
+	}
+	if !strings.Contains(out, install.ManualResetCommand("/home/u/.jentic/docker-compose.yaml")) {
+		t.Errorf("expected the literal manual reset command, got:\n%s", out)
+	}
+	if logged, _ := os.ReadFile(log); len(logged) != 0 {
+		t.Errorf("docker must not be invoked for a pre-existing volume, log:\n%s", logged)
 	}
 }
