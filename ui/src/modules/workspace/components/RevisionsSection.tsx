@@ -162,7 +162,7 @@ function RevisionRow({
 					{` · ${formatDateTime(revision.createdAt)}`}
 				</p>
 			</div>
-			<div className="flex flex-wrap gap-2 sm:shrink-0">
+			<div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
 				<Button
 					variant="ghost"
 					size="sm"

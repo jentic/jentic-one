@@ -183,7 +183,7 @@ function OverlayRow({
 					{` · ${note}`}
 				</p>
 			</div>
-			<div className="flex flex-wrap gap-2 sm:shrink-0">
+			<div className="flex flex-wrap justify-end gap-2 sm:shrink-0">
 				{overlay.confirmHref ? (
 					<Button
 						variant="secondary"
