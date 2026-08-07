@@ -759,10 +759,16 @@ jobs:
         run: make build
 
       # ---- Windows: build + offline smoke (install.sh is WSL-only) ----
+      # `shell: pwsh` already runs this block in PowerShell; invoke the script
+      # with the call operator and re-propagate its exit code. (A nested
+      # `pwsh -File ...` swallows the inner script's failure — an unhandled
+      # error there left $LASTEXITCODE unset and the job passed spuriously.)
       - name: Offline smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: pwsh -File cli/tests/e2e/smoke.ps1 "${{ github.workspace }}/cli"
+        run: |
+          & "${{ github.workspace }}/cli/tests/e2e/smoke.ps1" "${{ github.workspace }}/cli"
+          exit $LASTEXITCODE
 
       # ---- macOS: exercise install.sh's build/PATH path, then offline smoke ----
       - name: Build via install.sh (macOS, no chain-install)
