@@ -27,6 +27,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
+      e2e-install: ${{ steps.filter.outputs.e2e-install }}
     steps:
       - uses: actions/checkout@v7
 
@@ -78,6 +79,18 @@ jobs:
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'
+            e2e-install:
+              # The real Docker install path: CLI (wizard/compose generation),
+              # the images it builds, the migrations it runs, and the compose
+              # topology. #992's bugs were all native-Linux install behaviours
+              # invisible to unit tests (bind-mount uids, unqualified port
+              # publishes, initdb run-once), so any of these inputs must
+              # re-run the end-to-end install.
+              - 'cli/**'
+              - 'deploy/docker/**'
+              - 'src/jentic_one/migrations/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
             openapi-client:
               # Inputs that can change the generated UI client. The committed
               # spec (ui/openapi.json) is the codegen input — a spec change from
@@ -657,10 +670,115 @@ jobs:
       - name: Run installer tests
         run: bash tests/tools/install_test.sh
 
+  e2e-install-linux:
+    name: E2E install (Linux, Docker)
+    needs: [changes]
+    # The real `jenticctl install` path on native Linux Docker — the
+    # environment where all of #992's bugs lived and unit tests can't see:
+    # bind-mounted files read by container uids (no Docker Desktop uid
+    # remapping), compose port publishes hitting real interfaces, and
+    # postgres initdb run-once semantics. Builds the app image from this
+    # checkout, installs headlessly, and asserts host-visible behaviour.
+    if: needs.changes.outputs.e2e-install == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      JENTIC_HOME: /home/runner/.jentic
+      COMPOSE: docker compose -p jentic -f /home/runner/.jentic/docker-compose.yaml
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - name: Build jenticctl
+        run: make -C cli build-ctl
+
+      - name: "Headless install (defaults: Docker + Postgres, loopback)"
+        # --defaults drives the exact artifact-generation and stack-bring-up
+        # path the wizard confirms; the image is built from this checkout
+        # (PlanLocalBuild detects the repo), so the PR's code is what runs.
+        run: ./cli/jenticctl install --defaults --no-wizard
+
+      - name: Stack is healthy
+        run: |
+          $COMPOSE ps
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "app healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::app did not become healthy"; $COMPOSE logs; exit 1
+
+      - name: Published ports honour the loopback bind (#992 item 4)
+        # The wizard default is 127.0.0.1. Docker publishes unqualified
+        # mappings on 0.0.0.0 AND bypasses UFW, so this must be asserted on
+        # the host, not inferred from the compose file.
+        run: |
+          $COMPOSE ps
+          if $COMPOSE ps | grep -E '0\.0\.0\.0:|\[::\]:'; then
+            echo "::error::a port is published on all interfaces despite the loopback default"
+            exit 1
+          fi
+          for port in 8000 8100 5432; do
+            if ss -tln "sport = :$port" | grep -E "0\.0\.0\.0:$port|\*:$port"; then
+              echo "::error::port $port is listening on all interfaces"
+              ss -tlnp
+              exit 1
+            fi
+          done
+
+      - name: Generated artifacts readable by container uids (#992 item 1)
+        # Assert through the container (uid 999), not via host stat — the
+        # host user can read anything it owns.
+        run: $COMPOSE run --rm -T app cat /etc/jentic/jentic-one.yaml > /dev/null
+
+      - name: Schemas migrated and check idempotent (#992 item 3)
+        run: |
+          out=$($COMPOSE run --rm -T app python -m jentic_one.migrations.run --check || true)
+          echo "$out"
+          echo "$out" | grep -q "OVERALL current" \
+            || { echo "::error::schema check did not report OVERALL current"; exit 1; }
+          # Re-running migrations against a migrated stack must be a no-op.
+          $COMPOSE run --rm -T app python -m jentic_one.migrations.run
+
+      - name: Doctor is clean
+        run: ./cli/jenticctl doctor
+
+      - name: Reinstall with an answers file (non-default port propagates)
+        # Proves answers flow end-to-end: the second install reuses the built
+        # image and secrets, so this is cheap. A silently dropped answer —
+        # the root cause of #992 item 4 — fails here against the live stack.
+        run: |
+          $COMPOSE down
+          cat > /tmp/answers.yaml <<'EOF'
+          bind_host: 127.0.0.1
+          app_port: "18000"
+          broker_port: "18100"
+          EOF
+          ./cli/jenticctl install --answers /tmp/answers.yaml --no-wizard
+          $COMPOSE ps
+          $COMPOSE ps | grep -q '127.0.0.1:18000->18000' \
+            || { echo "::error::answers-file app_port not honoured in the published ports"; exit 1; }
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18000/health >/dev/null 2>&1; then
+              echo "app healthy on the answered port after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::app did not become healthy on the answered port"; $COMPOSE logs; exit 1
+
+      - name: Teardown
+        if: always()
+        run: $COMPOSE down -v || true
+
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
+    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer, e2e-install-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -677,6 +795,7 @@ jobs:
             ${{ needs.smoke-packaging.result }}
             ${{ needs.cli.result }}
             ${{ needs.installer.result }}
+            ${{ needs.e2e-install-linux.result }}
         run: |
           for r in $RESULTS; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
