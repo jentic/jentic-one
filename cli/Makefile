@@ -13,7 +13,12 @@ GOBIN := $(shell go env GOPATH)/bin
 GOLANGCI := $(GOBIN)/golangci-lint
 GOLANGCI_VERSION := v2.12.2
 
-.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean
+# Pin the generator via `go run ...@version` (never `go install`) so the global
+# toolchain is untouched and the version is reproducible on every machine/CI.
+# Verified against both real specs on 2026-08-04 (see impl/2.1 §2 spike note).
+OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0
+
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -65,6 +70,22 @@ lint-fix: tools ## Run golangci-lint with autofix
 tidy: ## Verify go.mod/go.sum are tidy
 	go mod tidy
 	git diff --exit-code go.mod go.sum
+
+generate-api: ## Regenerate the typed OpenAPI clients (+ spec companions) from the vendored specs
+	@echo "Vendoring specs into the module (go:embed cannot cross module roots, impl/2.1 §3a)..."
+	cp ../openapi/control/control.openapi.yaml client/generated/control/spec.yaml
+	cp ../openapi/broker/broker.openapi.yaml   client/generated/broker/spec.yaml
+	@echo "Generating Control API client..."
+	$(OAPI_CODEGEN) -config client/generated/control/cfg.yaml client/generated/control/spec.yaml
+	@echo "Generating Broker API client..."
+	$(OAPI_CODEGEN) -config client/generated/broker/cfg.yaml client/generated/broker/spec.yaml
+	@echo "Generating spec companions (RequiredFields, sensitive-field table, op index)..."
+	go run ./tools/specgen control client/generated/control
+	go run ./tools/specgen broker client/generated/broker
+	@echo "API code generation complete."
+
+check-cli-gen: generate-api ## CI drift gate: fail if generated code is stale vs. the specs
+	git diff --exit-code -- client/generated/
 
 check: lint vet test-race ## Lint, vet, and race-test everything (test-race covers tests/arch + tests/golden)
 

@@ -1,0 +1,18 @@
+package: control
+generate:
+  models: true
+  client: true
+  strict-server: false
+# NB: oapi-codegen resolves `output` relative to the WORKING DIRECTORY of the
+# invocation (the cli/ module root in the Makefile), not relative to this config
+# file — hence the full path, or client.go would land at cli/client.go.
+output: client/generated/control/client.go
+output-options:
+  skip-prune: true
+  # REQUIRED for the control plane (verified by spike, 2026-08-04): the spec
+  # defines schemas literally named `HealthResponse` and `LoginResponse`, which
+  # collide with oapi-codegen's own per-operation response wrappers (it generates
+  # `<OperationID>Response` types). Without a suffix the generated file does not
+  # compile ("HealthResponse redeclared in this block"). With it, wrappers become
+  # `<OperationID>HTTPResp` and both planes build cleanly.
+  response-type-suffix: "HTTPResp"
