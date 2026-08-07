@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/google/uuid"
+	"github.com/jentic/jentic-one/cli/internal/cli/binder"
+	"github.com/jentic/jentic-one/cli/internal/cli/ctl"
+	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
@@ -23,6 +27,18 @@ type installOptions struct {
 	noStart      bool
 	noWizard     bool
 	freshSecrets bool
+	// preset selects an embedded config preset (impl/6.0 §3.5); empty means none
+	// (schema defaults + the wizard/flags stand). The schema-driven --section-field
+	// flags are bound onto the command from the generated BackendConfig and, together
+	// with the preset, are overlaid onto the rendered jentic-one.yaml as an ADDITIVE
+	// layer on top of the shipped wizard (plan.md Phase 6; §"schema-driven flags").
+	preset     string
+	backendCfg *generated.BackendConfig
+	// configForm opts into the schema-derived interactive config screen (impl/6.1):
+	// an extra, grouped huh form over the config sections, run after the shipped
+	// wizard confirms, whose answers join the overlay. Off by default so the mature
+	// wizard flow is untouched; ignored without a TTY.
+	configForm bool
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -31,7 +47,7 @@ type installOptions struct {
 const installSetupProbeTimeout = 5 * time.Second
 
 func newInstallCmd(app *App) *cobra.Command {
-	opts := &installOptions{}
+	opts := &installOptions{backendCfg: &generated.BackendConfig{}}
 
 	cmd := &cobra.Command{
 		Use:   "install",
@@ -40,7 +56,10 @@ func newInstallCmd(app *App) *cobra.Command {
 			"Docker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\n" +
 			"then builds the stack (local venv or Docker image), applies migrations, and\n" +
 			"starts the app. Use --skip-build to only generate the config, or --no-start\n" +
-			"to build without launching.",
+			"to build without launching.\n\n" +
+			"Advanced: --preset and the generated --<section>-<field> flags (e.g.\n" +
+			"--server-public-base-url, --logging-file-enabled) overlay schema-driven\n" +
+			"configuration onto the generated jentic-one.yaml, on top of the wizard.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.runInstall(cmd, opts)
 		},
@@ -57,6 +76,27 @@ func newInstallCmd(app *App) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.freshSecrets, "fresh-secrets", false,
 		"rotate every generated secret instead of reusing an existing config's "+
 			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
+	cmd.Flags().StringVar(&opts.preset, "preset", "",
+		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
+	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
+		"after the wizard, show an extra schema-derived form to review/adjust config sections (interactive only)")
+
+	// Schema-driven --<section>-<field> flags, generated from the backend config
+	// schema (impl/6.0 §3). Additive: unset flags contribute nothing, so a plain
+	// `install` is byte-identical to before. Secret-bearing leaves are EXCLUDED —
+	// credentials belong in the wizard's secret-generation/.env flow, never on a
+	// command line (ps/shell-history/--help exposure); the rest are registered
+	// Hidden so they work yet stay out of --help and the public cli-reference noise.
+	sensitive, err := ctl.SensitivePaths()
+	if err != nil {
+		// A corrupt embedded schema is a build-time problem; fail loud at
+		// construction rather than silently binding secret flags.
+		panic(fmt.Sprintf("install: cannot resolve sensitive config paths: %v", err))
+	}
+	binder.BindFlagsWithOptions(cmd, opts.backendCfg, binder.BindOptions{
+		Exclude: sensitive,
+		Hidden:  true,
+	})
 
 	return cmd
 }
@@ -131,6 +171,17 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	stampTelemetryDecision(draft, enabled)
 
 	data, err := draft.Render()
+	if err != nil {
+		return err
+	}
+
+	// Additive schema-driven layer (plan.md Phase 6, impl/6.0 §3–§4): overlay the
+	// resolved preset + explicit --<section>-<field> flags onto the wizard-rendered
+	// config. This is a no-op unless the operator selected a preset or set at least
+	// one schema flag, so a plain `install` stays byte-identical (golden contract).
+	// The overlay preserves unknown keys/comments (yaml.Node merge), so an
+	// enterprise-extended or hand-edited config survives.
+	data, err = a.applySchemaOverlay(cmd, opts, data)
 	if err != nil {
 		return err
 	}
@@ -211,6 +262,107 @@ func (a *App) runInstall(cmd *cobra.Command, opts *installOptions) error {
 	// to the printed next-steps the summary already shows.
 	a.offerWizard(cmd, opts, draft.AppStarted)
 	return nil
+}
+
+// applySchemaOverlay layers the schema-driven config (preset + explicit
+// --<section>-<field> flags) onto the wizard-rendered YAML (impl/6.0 §3–§4). It
+// returns rendered UNCHANGED when neither a preset nor any schema flag was
+// supplied, so the default install path is byte-for-byte what it was before this
+// feature — the golden CLI contract depends on that. When something is supplied,
+// it resolves the defaults<preset<flags ladder and merges only the resulting
+// leaves into the document via a yaml.Node overlay that preserves unknown keys
+// and comments (enterprise extension sections, hand edits).
+//
+// NOTE the overlay deliberately does NOT re-inject schema DEFAULTS: the wizard's
+// Render() already emits the values the backend needs, and blanketing every
+// schema default on top would fight the wizard's own choices. Only the preset and
+// the operator's explicit flags — the layers that express INTENT beyond the
+// wizard — are overlaid.
+func (a *App) applySchemaOverlay(cmd *cobra.Command, opts *installOptions, rendered []byte) ([]byte, error) {
+	overrides, err := binder.ChangedOverrides(cmd, opts.backendCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Optional schema-derived interactive config screen (impl/6.1), opt-in and
+	// interactive-only so the shipped wizard flow is untouched by default. Its
+	// answers become the highest-precedence override layer.
+	formOverrides, err := a.runConfigForm(cmd, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.preset == "" && len(overrides) == 0 && len(formOverrides) == 0 {
+		return rendered, nil // fast path: nothing schema-driven requested
+	}
+
+	// Compose the intentful layers only (preset < flags < form), NOT schema
+	// defaults — the wizard's Render() already emits the backend's needed values,
+	// and blanketing every default on top would fight the wizard's own choices.
+	settings := ctl.Settings{}
+	if opts.preset != "" {
+		p, err := ctl.PresetSettings(opts.preset)
+		if err != nil {
+			return nil, err
+		}
+		settings = p
+	}
+	if len(overrides) > 0 {
+		ctl.MergeSettings(settings, overrides)
+	}
+	if len(formOverrides) > 0 {
+		ctl.MergeSettings(settings, formOverrides)
+	}
+
+	merged, err := ctl.OverlaySettings(rendered, settings)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintln(a.Out, theme.Dimf("Applied schema-driven config overlay (preset=%q, %d flag override(s)).", opts.preset, countLeaves(overrides)+countLeaves(formOverrides)))
+	return merged, nil
+}
+
+// runConfigForm shows the schema-derived interactive config screen when
+// --config-form was passed and we have a TTY (impl/6.1). The form binds a fresh
+// BackendConfig; the operator fills in any sections they want to override, and
+// the non-sensitive, non-empty leaves are returned as a nested override map that
+// joins the overlay at the highest precedence. A no-op returning nil when the
+// flag is off or there is no terminal.
+//
+// The form is NOT pre-filled from the resolved defaults: the generated struct's
+// UnmarshalJSON enforces required sections, so hydrating it from a partial
+// settings map is not reliable — instead the operator sees empty inputs and only
+// what they type becomes an override, which is also the least surprising
+// "review/adjust" semantics (blank = leave the wizard's value alone).
+func (a *App) runConfigForm(cmd *cobra.Command, opts *installOptions) (ctl.Settings, error) {
+	if !opts.configForm || !wantsInteractive(cmd, false) {
+		return nil, nil
+	}
+	sensitive, err := ctl.SensitivePaths()
+	if err != nil {
+		return nil, err
+	}
+	formCfg := &generated.BackendConfig{}
+	form := binder.BuildDynamicForm(formCfg, binder.FormOptions{Exclude: sensitive})
+	if err := install.RunForm(form); err != nil {
+		return nil, fmt.Errorf("config form: %w", err)
+	}
+	// Only leaves the operator actually set (non-zero) become overrides.
+	return ctl.Settings(binder.NonZeroOverrides(formCfg, sensitive)), nil
+}
+
+// countLeaves returns the number of scalar leaves in a nested override map, for a
+// human-friendly overlay summary line.
+func countLeaves(m map[string]any) int {
+	n := 0
+	for _, v := range m {
+		if sub, ok := v.(map[string]any); ok {
+			n += countLeaves(sub)
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // resolveSetupState probes the freshly started stack to learn whether it still

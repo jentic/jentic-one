@@ -196,9 +196,17 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		} else if err := a.updateCLI(ctx, repo, ref, ctlTarget); err != nil {
 			return err
 		}
+		// A new CLI can ship a new skill body (transport-error recovery, envelope
+		// parsing, per-BC guidance — plan.md Phase 6 "skill lifecycle"). Refresh
+		// every INSTALLED skill so old-CLI guidance can't linger, respecting the
+		// user-edit guard (edited blocks are skipped + warned, never clobbered
+		// without --force). Best-effort: the binaries are already swapped, so a
+		// skill-refresh failure must not fail the update — it only leaves skills
+		// a `jentic skill update` away.
+		a.refreshSkillsAfterUpdate()
 	}
 	if doStack {
-		if err := a.updateStack(ctx, manifest.Mode, ref, pinned, daemonChecked); err != nil {
+		if err := a.updateStack(ctx, manifest.Mode, manifest.DB, ref, pinned, daemonChecked); err != nil {
 			return err
 		}
 		// Only now is the stack genuinely at `ref`. Recording it earlier (or
@@ -207,6 +215,21 @@ func (a *App) updateE(ctx context.Context, opts *updateOptions) error {
 		a.recordStackBuild(ref)
 	}
 	return nil
+}
+
+// refreshSkillsAfterUpdate re-renders every installed skill with the new CLI's
+// bundled bodies, delegating to the same engine as `jentic skill update` (all
+// operators, installed scopes only, edit guard on). It reuses that command's
+// runner so there is exactly one skill-refresh implementation. Best-effort by
+// contract: the update already succeeded, so a refresh error is warned, not
+// fatal (see caller). Manually-edited skill blocks are skipped and reported —
+// never overwritten without an explicit `jentic skill update --force`.
+func (a *App) refreshSkillsAfterUpdate() {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Dim.Render("Refreshing installed skills for the new CLI ..."))
+	if err := a.skillUpdate(nil, &skillOptions{}); err != nil {
+		fmt.Fprintln(a.Out, theme.Warnf("could not refresh skills (run `jentic skill update`): %v", err))
+	}
 }
 
 // recordStackBuild persists the ref the stack was just built from, so the next
@@ -427,7 +450,7 @@ func binaryVersion(path string) (string, error) {
 // the stack is built from — the same one the CLI half targets, so the two halves
 // stay in lockstep. daemonChecked is true when updateE already probed the Docker
 // daemon up front (combined run), so the docker path skips a redundant probe.
-func (a *App) updateStack(ctx context.Context, mode, ref string, pinned, daemonChecked bool) error {
+func (a *App) updateStack(ctx context.Context, mode, db, ref string, pinned, daemonChecked bool) error {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("Stack update runs forward-only migrations — back up your data first"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  SQLite: copy ~/.jentic/data/*.db · Postgres: pg_dump your database"))
@@ -435,12 +458,17 @@ func (a *App) updateStack(ctx context.Context, mode, ref string, pinned, daemonC
 	if mode == config.ModeDocker {
 		return a.updateStackDocker(ctx, ref, pinned, daemonChecked)
 	}
-	return a.updateStackLocal(ctx, ref, pinned)
+	return a.updateStackLocal(ctx, db, ref, pinned)
 }
 
 // updateStackLocal pulls the source, reinstalls into the existing venv, applies
-// migrations, and restarts the app if it was running.
-func (a *App) updateStackLocal(ctx context.Context, ref string, pinned bool) error {
+// migrations, and restarts the app if it was running. For the SQLite backend it
+// snapshots the *.db files first and rolls them back if the migration fails, so
+// a broken forward-only migration can't leave the operator with a half-migrated
+// database and no recovery (CLI-V2 Phase 6 lifecycle hardening). Postgres keeps
+// the documented pg_dump warning above — an in-CLI dump of an operator-managed
+// server is out of scope.
+func (a *App) updateStackLocal(ctx context.Context, db, ref string, pinned bool) error {
 	configPath := a.Paths.InstallConfigPath()
 	if !proc.FileExists(configPath) {
 		return fmt.Errorf("not configured: %s not found — run `jenticctl install` first", configPath)
@@ -454,10 +482,37 @@ func (a *App) updateStackLocal(ctx context.Context, ref string, pinned bool) err
 		return fmt.Errorf("rebuild failed: %w", err)
 	}
 
+	// Snapshot the SQLite files before the forward-only migration so a failure
+	// rolls back to the pre-migration state rather than stranding a half-applied
+	// schema. The build above is a pure code swap (no DB writes), so taking the
+	// snapshot here — just before RunMigrations — captures the exact bytes the
+	// migration is about to touch.
+	var backup *update.SQLiteBackup
+	if db == install.BackendSQLite {
+		b, err := update.BackupSQLite(a.Paths.DataDir())
+		if err != nil {
+			return fmt.Errorf("back up database before migration: %w", err)
+		}
+		backup = b
+		if !backup.Empty() {
+			fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback"))
+		}
+	}
+
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	if err := install.RunMigrations(a.Out, plan.VenvPython(), configPath); err != nil {
+		if backup != nil && !backup.Empty() {
+			if rerr := backup.Restore(); rerr != nil {
+				//nolint:errorlint // primary %w is the migration failure; rerr is contextual detail (fmt.Errorf allows one %w).
+				return fmt.Errorf("migrations failed: %w; ALSO failed to roll back the database: %v — restore from a backup", err, rerr)
+			}
+			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-update state"))
+		}
 		return fmt.Errorf("migrations failed: %w", err)
+	}
+	if backup != nil {
+		backup.Discard()
 	}
 
 	a.restartLocalIfRunning(ctx)

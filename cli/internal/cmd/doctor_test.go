@@ -291,3 +291,98 @@ func TestDoctorWarnsSameUIDAgentAccount(t *testing.T) {
 		t.Errorf("expected a same-uid warning for agent account %q:\n%s", me.Username, app.Out.(*bytes.Buffer).String())
 	}
 }
+
+// A well-formed installed config must produce a passing Configuration check
+// naming the DB backend (impl/6.4 "Configuration Validity", Phase 6).
+func TestDoctorConfigValidity_PassesForValidConfig(t *testing.T) {
+	app := testApp(t)
+	cfg := "databases:\n  control:\n    host: localhost\n    port: 5432\n"
+	if err := os.WriteFile(app.Paths.InstallConfigPath(), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write install config: %v", err)
+	}
+	opts := offlineOpts()
+	opts.json = true
+	_ = app.doctorE(context.Background(), opts)
+
+	c := findCheck(t, app, "Configuration", "databases.control")
+	if c.Status != "pass" {
+		t.Errorf("expected a passing Configuration check, got %q (%s)", c.Status, c.Detail)
+	}
+	if !strings.Contains(c.Detail, "postgres") {
+		t.Errorf("expected the DB backend in the detail, got %q", c.Detail)
+	}
+}
+
+// An installed config with no DB backend configured is the "install half-written"
+// case; doctor must fail it (non-zero exit) with a remediation hint.
+func TestDoctorConfigValidity_FailsWhenControlDBUnset(t *testing.T) {
+	app := testApp(t)
+	// databases.control present but neither host nor path set.
+	cfg := "databases:\n  control:\n    port: 5432\n"
+	if err := os.WriteFile(app.Paths.InstallConfigPath(), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write install config: %v", err)
+	}
+	opts := offlineOpts()
+	opts.json = true
+	err := app.doctorE(context.Background(), opts)
+	if err == nil {
+		t.Error("expected a non-zero exit when databases.control has no backend")
+	}
+	c := findCheck(t, app, "Configuration", "databases.control")
+	if c.Status != "fail" {
+		t.Errorf("expected a failing Configuration check, got %q", c.Status)
+	}
+}
+
+// A fresh machine with no installed config must not emit a Configuration row at
+// all (the gap is covered by the Install/Server checks; a fresh box shouldn't
+// fail here).
+func TestDoctorConfigValidity_SkippedWhenNotInstalled(t *testing.T) {
+	app := testApp(t)
+	opts := offlineOpts()
+	opts.json = true
+	_ = app.doctorE(context.Background(), opts)
+
+	var report struct {
+		Checks []struct {
+			Section string `json:"section"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.Section == "Configuration" {
+			t.Errorf("Configuration check should be skipped with no installed config; got a %q row", c.Section)
+		}
+	}
+}
+
+// findCheck decodes the doctor JSON report and returns the check with the given
+// section+name, failing the test if it is absent.
+func findCheck(t *testing.T, app *App, section, name string) struct {
+	Section string `json:"section"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Detail  string `json:"detail"`
+} {
+	t.Helper()
+	var report struct {
+		Checks []struct {
+			Section string `json:"section"`
+			Name    string `json:"name"`
+			Status  string `json:"status"`
+			Detail  string `json:"detail"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(app.Out.(*bytes.Buffer).Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	for _, c := range report.Checks {
+		if c.Section == section && c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("check %q/%q not found in doctor report:\n%s", section, name, app.Out.(*bytes.Buffer).String())
+	return report.Checks[0] // unreachable
+}

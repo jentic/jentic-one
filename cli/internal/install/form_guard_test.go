@@ -17,8 +17,15 @@ import (
 func TestAllFormsUseSharedConstructors(t *testing.T) {
 	root := moduleRoot(t)
 
-	// The only sanctioned home of the raw huh constructors.
-	allowed := filepath.Join(root, "internal", "install", "theme.go")
+	// The sanctioned homes of the raw huh constructors: install/theme.go (the
+	// shared themed helpers) and the binder's dynamic-form generator, whose output
+	// is themed at run time via install.RunForm (impl/6.1 — the one generic
+	// schema-driven form builder; it cannot import install without inverting the
+	// layering, so it builds raw huh fields and the caller applies the theme).
+	allowed := map[string]bool{
+		filepath.Join(root, "internal", "install", "theme.go"):      true,
+		filepath.Join(root, "internal", "cli", "binder", "form.go"): true,
+	}
 	forbidden := []string{"huh.NewForm(", "huh.NewInput("}
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -28,7 +35,7 @@ func TestAllFormsUseSharedConstructors(t *testing.T) {
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		if path == allowed {
+		if allowed[path] {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)

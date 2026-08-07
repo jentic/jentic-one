@@ -87,12 +87,41 @@ func TestUninstallFlagsRegistered(t *testing.T) {
 	}
 }
 
+// Uninstall must PRESERVE the operator's own agent identity (~/.jentic/profiles):
+// those Ed25519 keys/tokens aren't install artifacts, and wiping them would
+// silently revoke the operator after a reinstall. That teardown belongs to
+// `jentic reset` (CLI-V2 Phase 6 lifecycle hardening). Everything else under
+// ~/.jentic is still removed and the configs backed up.
+func TestUninstall_PreservesAgentIdentity(t *testing.T) {
+	app, out := newTestApp(t)
+	dir := app.Paths.Dir()
+
+	keyPath := filepath.Join(app.Paths.ProfilesDir(), "default", "agent.key")
+	writeFile(t, keyPath, "PRIVATE-KEY-MATERIAL")
+	writeFile(t, filepath.Join(dir, "venv", "marker"), "x")
+	writeFile(t, app.Paths.InstallConfigPath(), "mode: local\n")
+
+	if err := app.uninstallE(&uninstallOptions{yes: true}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Errorf("agent identity must be preserved, but agent.key is gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "venv")); !os.IsNotExist(err) {
+		t.Errorf("install artifacts (venv) should still be removed")
+	}
+	if s := out.String(); !strings.Contains(s, "jentic reset") {
+		t.Errorf("uninstall should point at `jentic reset` for identity removal, got:\n%s", s)
+	}
+}
+
 // TestUninstallHelpDescribesNamedVolume verifies the help text no longer claims
 // to remove "data" unconditionally and explains the preserved-by-default volume.
 func TestUninstallHelpDescribesNamedVolume(t *testing.T) {
 	cmd := newUninstallCmd(testApp(t))
 	long := cmd.Long
-	for _, want := range []string{"named volume", "PRESERVES", "--purge", "--keep-data"} {
+	for _, want := range []string{"named volume", "PRESERVES", "--purge", "--keep-data", "agent\nidentity", "jentic reset"} {
 		if !strings.Contains(long, want) {
 			t.Errorf("uninstall Long help missing %q; got:\n%s", want, long)
 		}
