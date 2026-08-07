@@ -17,8 +17,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$jentic    = Join-Path $BinDir 'jentic.exe'
-$jenticctl = Join-Path $BinDir 'jenticctl.exe'
+# `go build -o jentic` produces `jentic` on Windows unless the output name ends
+# in .exe; `make build` does not add the suffix, so resolve either form.
+function Resolve-Bin($dir, $name) {
+  foreach ($candidate in @((Join-Path $dir "$name.exe"), (Join-Path $dir $name))) {
+    if (Test-Path $candidate) { return $candidate }
+  }
+  return (Join-Path $dir "$name.exe") # non-existent; the presence check below reports it
+}
+
+$jentic    = Resolve-Bin $BinDir 'jentic'
+$jenticctl = Resolve-Bin $BinDir 'jenticctl'
 
 # Scratch state, removed on exit — never touch the runner's real profile.
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("jentic-smoke-" + [System.Guid]::NewGuid().ToString('N'))
@@ -35,8 +44,8 @@ function Fail($m) { Write-Error "  FAIL $m"; exit 1 }
 try {
   Write-Host "== jentic CLI smoke (bin: $BinDir) =="
 
-  if (-not (Test-Path $jentic))    { Fail "jentic.exe not found at $jentic" }
-  if (-not (Test-Path $jenticctl)) { Fail "jenticctl.exe not found at $jenticctl" }
+  if (-not (Test-Path $jentic))    { Fail "jentic binary not found at $jentic" }
+  if (-not (Test-Path $jenticctl)) { Fail "jenticctl binary not found at $jenticctl" }
   Pass "both binaries present"
 
   # 1. --version on both binaries.

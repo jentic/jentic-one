@@ -123,6 +123,7 @@ type composeParams struct {
 	ContainerDataDir    string
 	ServerPort          string
 	BrokerPort          string
+	BindHost            string
 	PostgresImage       string
 	PGName              string
 	PGUser              string
@@ -146,7 +147,7 @@ services:
       POSTGRES_USER: {{.PGUser}}
       POSTGRES_PASSWORD: {{.PGPassword}}
     ports:
-      - "{{.PGPublishedPort}}:5432"
+      - "{{.BindHost}}:{{.PGPublishedPort}}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
       - {{.InitSchemasPath}}:/docker-entrypoint-initdb.d/init-schemas.sql:ro
@@ -168,7 +169,7 @@ services:
       HF_HOME: /tmp/hf-cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
-      - "{{.ServerPort}}:{{.ServerPort}}"
+      - "{{.BindHost}}:{{.ServerPort}}:{{.ServerPort}}"
     volumes:
       - {{.ConfigHostPath}}:{{.ContainerConfigPath}}:ro
       - {{.LogsHostDir}}:{{.ContainerLogsDir}}
@@ -194,7 +195,7 @@ services:
       HF_HOME: /tmp/hf-cache
       SENTENCE_TRANSFORMERS_HOME: /tmp/hf-cache
     ports:
-      - "{{.BrokerPort}}:{{.BrokerPort}}"
+      - "{{.BindHost}}:{{.BrokerPort}}:{{.BrokerPort}}"
     volumes:
       - {{.ConfigHostPath}}:{{.ContainerConfigPath}}:ro
       - {{.LogsHostDir}}:{{.ContainerLogsDir}}
@@ -233,6 +234,7 @@ func RenderCompose(d *Draft, cfg ComposeConfig) ([]byte, error) {
 		ContainerDataDir:    containerDataDir,
 		ServerPort:          d.ServerPort,
 		BrokerPort:          d.BrokerPort,
+		BindHost:            d.ServerHost,
 		PostgresImage:       postgresImage,
 		PGName:              d.PGName,
 		PGUser:              d.PGUser,
@@ -262,7 +264,13 @@ func WriteComposeArtifacts(d *Draft, cfg ComposeConfig) error {
 	// Postgres bootstraps schemas via an init script; SQLite lives in a named
 	// volume (no host data dir to create — see composeDataVolume).
 	if d.IsPostgres() {
-		if err := os.WriteFile(cfg.InitSchemasPath(), []byte(initSchemasSQL), 0o600); err != nil {
+		// 0644, NOT 0600: this file is bind-mounted into the postgres container's
+		// /docker-entrypoint-initdb.d and read by initdb running as the container's
+		// own uid (postgres, typically 999 — not the host uid that wrote it). A
+		// 0600 file is unreadable to that uid, so initdb fails and the db container
+		// exits(1). The script is non-secret DDL (CREATE SCHEMA statements), so
+		// world-readable is correct and safe.
+		if err := os.WriteFile(cfg.InitSchemasPath(), []byte(initSchemasSQL), 0o644); err != nil { //nolint:gosec // non-secret DDL; must be readable by the container uid.
 			return fmt.Errorf("write %s: %w", cfg.InitSchemasPath(), err)
 		}
 	}

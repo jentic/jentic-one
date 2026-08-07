@@ -73,7 +73,7 @@ func TestRenderComposeSQLite(t *testing.T) {
 		composeServiceBroker + ":",
 		"JENTIC__APPS: broker",
 		"JENTIC__SERVER__PORT: \"" + DefaultBrokerPort + "\"",
-		"\"" + DefaultBrokerPort + ":" + DefaultBrokerPort + "\"",
+		"\"127.0.0.1:" + DefaultBrokerPort + ":" + DefaultBrokerPort + "\"",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose (sqlite) missing %q:\n%s", want, out)
@@ -117,7 +117,7 @@ func TestRenderComposePostgres(t *testing.T) {
 		postgresImage,
 		"depends_on",
 		"condition: service_healthy",
-		"\"55432:5432\"",
+		"\"127.0.0.1:55432:5432\"",
 		cfg.InitSchemasPath() + ":/docker-entrypoint-initdb.d/init-schemas.sql:ro",
 		"volumes:\n  db-data:",
 	} {
@@ -166,6 +166,18 @@ func TestWriteComposeArtifactsPostgresWritesInitSQL(t *testing.T) {
 	sql, err := os.ReadFile(cfg.InitSchemasPath())
 	if err != nil {
 		t.Fatalf("init-schemas.sql not written: %v", err)
+	}
+	// The file is bind-mounted into the postgres container and read by initdb
+	// running as the container's own uid (not the host uid that wrote it), so it
+	// MUST be world-readable — a 0600 file makes initdb fail and the db exit(1).
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(cfg.InitSchemasPath())
+		if err != nil {
+			t.Fatalf("stat init-schemas.sql: %v", err)
+		}
+		if perm := fi.Mode().Perm(); perm&0o044 == 0 {
+			t.Errorf("init-schemas.sql mode = %#o, want world/group-readable (e.g. 0644)", perm)
+		}
 	}
 	for _, schema := range []string{"registry", "control", "admin"} {
 		if !strings.Contains(string(sql), "CREATE SCHEMA IF NOT EXISTS "+schema) {

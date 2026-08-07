@@ -776,9 +776,23 @@ jobs:
         run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
 
       # ---- Linux: full headless Docker install, then live-stack smoke ----
+      # This leg is hard-gating: it exercises the real `jenticctl install` deep
+      # Docker path end to end. The generated Postgres bootstrap (init-schemas.sql)
+      # is written world-readable so initdb — running as the container's own uid,
+      # not the host runner uid — can read it (see internal/install/compose.go);
+      # and the published ports are bound to the draft's loopback host, so the
+      # assertions below hold on a stock runner.
       - name: Headless Docker install (Linux)
+        id: linux_install
         if: runner.os == 'Linux'
         run: ./cli/jenticctl install --defaults --no-wizard
+
+      - name: DB logs on install failure (Linux)
+        if: runner.os == 'Linux' && failure() && steps.linux_install.outcome == 'failure'
+        run: |
+          echo "::group::db container logs"
+          docker compose -p jentic -f "$HOME/.jentic/docker-compose.yaml" logs db || true
+          echo "::endgroup::"
 
       - name: Stack is healthy (Linux)
         if: runner.os == 'Linux'
@@ -796,8 +810,8 @@ jobs:
       - name: Published ports honour the loopback bind (Linux, #992)
         if: runner.os == 'Linux'
         run: |
-          # Docker publishes unqualified mappings on 0.0.0.0 AND bypasses UFW, so
-          # assert on the host, not the compose file.
+          # The generated compose binds published ports to the draft host
+          # (127.0.0.1 by default), so nothing must be listening on 0.0.0.0/*.
           for port in 8000 8100; do
             if ss -tln "sport = :$port" | grep -E "0\.0\.0\.0:$port|\*:$port"; then
               echo "::error::port $port is listening on all interfaces despite the loopback default"
@@ -810,6 +824,12 @@ jobs:
         run: ./cli/jenticctl doctor
 
       - name: Live-stack smoke (Linux)
+        if: runner.os == 'Linux'
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+
+      # Offline smoke ALWAYS runs on Linux and IS hard-gating — it proves the
+      # binaries + agent surface work regardless of the Docker-stack install.
+      - name: Offline smoke (Linux)
         if: runner.os == 'Linux'
         run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
 
