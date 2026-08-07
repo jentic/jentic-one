@@ -12,7 +12,7 @@ from typing import Any
 
 from alembic import context
 from alembic.runtime.environment import NameFilterParentNames, NameFilterType
-from sqlalchemy import MetaData, pool
+from sqlalchemy import MetaData, pool, text
 from sqlalchemy.engine import URL, Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -214,7 +214,8 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     url = get_url()
-    if is_postgres():
+    postgres = is_postgres()
+    if postgres:
         schema = get_schema()
         connectable = create_async_engine(
             url,
@@ -225,6 +226,30 @@ async def run_migrations_online() -> None:
         connectable = create_async_engine(url, poolclass=pool.NullPool)
 
     async with connectable.connect() as connection:
+        # Alembic does not create schemas, and relying on out-of-band bootstrap
+        # (a docker-entrypoint-initdb.d script) proved fragile: postgres runs
+        # init scripts once, on an empty data dir, so a mid-init failure leaves
+        # a volume that silently never gets its schemas (#992). Creating the
+        # active target's schema idempotently here makes every migrate
+        # self-sufficient and lets a half-initialized volume heal on the next
+        # run.
+        #
+        # Gated on an existence probe rather than relying on IF NOT EXISTS:
+        # postgres checks the CREATE privilege before the IF NOT EXISTS
+        # short-circuit, so an unconditional statement breaks deployments whose
+        # migration user owns the (pre-provisioned) schema but not the
+        # database. Skipped for the read-only status probe (``migrations.run
+        # --check``), which must not mutate — an uninitialized database
+        # reports ``uninitialized`` without the schema existing.
+        if postgres and config.attributes.get("status_probe") is None:
+            schema = get_schema()
+            exists = await connection.scalar(
+                text("SELECT 1 FROM pg_namespace WHERE nspname = :schema"),
+                {"schema": schema},
+            )
+            if not exists:
+                await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+                await connection.commit()
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

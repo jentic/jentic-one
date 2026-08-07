@@ -183,7 +183,6 @@ func TestWriteComposeArtifactsModes(t *testing.T) {
 		}
 	}
 	// Read by the postgres container's uid (999), not the host user.
-	assertMode(cfg.InitSchemasPath(), 0o644)
 	// Written by the app/broker containers as uid 999.
 	assertMode(cfg.LogsHostDir, 0o777)
 	// Only the docker CLI (host user) reads the compose file; keep it private.
@@ -209,12 +208,16 @@ func TestRenderComposePostgres(t *testing.T) {
 		"depends_on",
 		"condition: service_healthy",
 		"\"127.0.0.1:55432:5432\"",
-		cfg.InitSchemasPath() + ":/docker-entrypoint-initdb.d/init-schemas.sql:ro",
 		"volumes:\n  db-data:",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose (postgres) missing %q:\n%s", want, out)
 		}
+	}
+	// Schema bootstrap lives in the migration runner now (#992): initdb
+	// scripts run once on an empty volume, so they must not be relied on.
+	if strings.Contains(out, "docker-entrypoint-initdb.d") {
+		t.Errorf("postgres compose should not mount an initdb script:\n%s", out)
 	}
 	// Postgres uses the managed db service, not the SQLite named volume.
 	if strings.Contains(out, composeDataVolume) {
@@ -238,30 +241,27 @@ func TestWriteComposeArtifactsSQLite(t *testing.T) {
 	if _, err := os.Stat(cfg.LogsHostDir); err != nil {
 		t.Errorf("logs dir not created: %v", err)
 	}
-	// SQLite lives in a named volume (no host data dir) and needs no init SQL.
-	if _, err := os.Stat(cfg.InitSchemasPath()); err == nil {
-		t.Errorf("sqlite install should not write init-schemas.sql")
-	}
 }
 
-func TestWriteComposeArtifactsPostgresWritesInitSQL(t *testing.T) {
+// Schema bootstrap moved into the migration runner (#992): no install path
+// writes an init SQL file anymore, and a stale one from an older install is
+// cleaned up so nothing suggests it is still consulted.
+func TestWriteComposeArtifactsRemovesLegacyInitSQL(t *testing.T) {
 	dir := t.TempDir()
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
 	cfg := composeConfigFor(dir)
+	stale := cfg.legacyInitSchemasPath()
+	if err := os.WriteFile(stale, []byte("CREATE SCHEMA IF NOT EXISTS registry;"), 0o600); err != nil {
+		t.Fatalf("write stale init SQL: %v", err)
+	}
 
 	if err := WriteComposeArtifacts(d, cfg); err != nil {
 		t.Fatalf("WriteComposeArtifacts: %v", err)
 	}
-	sql, err := os.ReadFile(cfg.InitSchemasPath())
-	if err != nil {
-		t.Fatalf("init-schemas.sql not written: %v", err)
-	}
-	for _, schema := range []string{"registry", "control", "admin"} {
-		if !strings.Contains(string(sql), "CREATE SCHEMA IF NOT EXISTS "+schema) {
-			t.Errorf("init SQL missing schema %q:\n%s", schema, sql)
-		}
+	if _, err := os.Stat(stale); err == nil {
+		t.Errorf("stale init-schemas.sql should have been removed")
 	}
 }
 
