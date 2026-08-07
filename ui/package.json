@@ -35,11 +35,11 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "^9.39.4",
-		"@playwright/test": "^1.62.0",
+		"@playwright/test": "^1.62.1",
 		"@tailwindcss/vite": "^4.3.3",
 		"@testing-library/jest-dom": "^7.0.0",
 		"@testing-library/react": "^16.3.2",
-		"@testing-library/user-event": "^14.6.1",
+		"@testing-library/user-event": "^14.6.3",
 		"@types/node": "^26.1.2",
 		"@types/pg": "^8.20.0",
 		"@types/react": "^19.2.17",
