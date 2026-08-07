@@ -739,6 +739,35 @@
               ]
             },
             {
+              "name": "register",
+              "path": "jentic identity register",
+              "use": "register",
+              "short": "Register the active identity's key with the active environment",
+              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the V2 successor to the\nlegacy `jentic register` and operates on the resolved active context.",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "name",
+                  "type": "string",
+                  "usage": "Client name shown to the approving operator (default: identity name)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
               "name": "delete",
               "path": "jentic identity delete",
               "use": "delete \u003cname\u003e",

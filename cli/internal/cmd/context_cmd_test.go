@@ -17,6 +17,10 @@ func withXDG(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	// Isolate the legacy ~/.jentic root too: clictx's legacy-read adapter resolves
+	// it via $JENTIC_HOME, so without this a developer's real ~/.jentic would leak
+	// into command tests (e.g. resolving a stray default identity/base URL).
+	t.Setenv("JENTIC_HOME", filepath.Join(dir, "jentic-home"))
 	t.Setenv("JENTIC_BASE_URL", "")
 	t.Setenv("JENTIC_BEARER_TOKEN", "")
 	t.Setenv("JENTIC_MODE", "human")

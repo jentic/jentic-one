@@ -70,9 +70,7 @@ func (c Config) credentials() auth.Credentials {
 // clearer than a reflective bridge.
 func controlOptions(c Config) []control.ClientOption {
 	opts := make([]control.ClientOption, 0, 2+len(c.Editors))
-	if c.HTTPClient != nil {
-		opts = append(opts, control.WithHTTPClient(c.HTTPClient))
-	}
+	opts = append(opts, control.WithHTTPClient(c.httpClient()))
 	opts = append(opts, control.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
 	for _, e := range c.Editors {
 		opts = append(opts, control.WithRequestEditorFn(control.RequestEditorFn(e)))
@@ -82,14 +80,28 @@ func controlOptions(c Config) []control.ClientOption {
 
 func brokerOptions(c Config) []broker.ClientOption {
 	opts := make([]broker.ClientOption, 0, 2+len(c.Editors))
-	if c.HTTPClient != nil {
-		opts = append(opts, broker.WithHTTPClient(c.HTTPClient))
-	}
+	opts = append(opts, broker.WithHTTPClient(c.httpClient()))
 	opts = append(opts, broker.WithRequestEditorFn(auth.RequestEditor(c.credentials())))
 	for _, e := range c.Editors {
 		opts = append(opts, broker.WithRequestEditorFn(broker.RequestEditorFn(e)))
 	}
 	return opts
+}
+
+// httpClient returns the *http.Client both planes share, with the SDK-level
+// response policy (401 re-exchange, 429 Retry-After, bounded 5xx/transport
+// backoff — 13 §5) wrapped around the caller's transport. A caller-supplied
+// HTTPClient is preserved (timeouts, custom CA pool, test doubles); only its
+// transport is decorated. When no client is supplied we default one but leave its
+// Timeout zero so the generated per-call contexts govern deadlines.
+func (c Config) httpClient() *http.Client {
+	hc := c.HTTPClient
+	if hc == nil {
+		hc = &http.Client{}
+	}
+	wrapped := *hc
+	wrapped.Transport = newRetryTransport(hc.Transport, c.credentials())
+	return &wrapped
 }
 
 // NewControl builds the strictly-typed control-plane client, authenticated for the

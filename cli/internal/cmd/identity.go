@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/ed25519"
 	"fmt"
 	"sort"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -32,7 +34,118 @@ func newIdentityCmd(app *App) *cobra.Command {
 	}
 	cmd.AddCommand(fenced(newIdentityAddCmd(app)))
 	cmd.AddCommand(newIdentityListCmd(app)) // read-only: not fenced
+	cmd.AddCommand(newIdentityRegisterCmd(app))
 	cmd.AddCommand(fenced(newIdentityDeleteCmd(app)))
+	return cmd
+}
+
+// newIdentityRegisterCmd implements `jentic identity register` (Phase 4.1 §2):
+// the active identity registers its environment-scoped Ed25519 public key with the
+// active environment via RFC 7591 Dynamic Client Registration, and the returned
+// client_id + status ("pending" until an operator approves) are persisted per
+// (identity, environment) in config.yaml. A subsequent token exchange (the auth
+// middleware) signs assertions with that exact key, scoped to that environment.
+//
+// This is the deliberate FENCING CARVE-OUT: registration is the one management-
+// shaped step an agent legitimately performs for its OWN provisioned identity
+// during autonomous bootstrap, so it is bootstrap-safe rather than fenced
+// (07_security_and_agent_isolation; impl/1.3 §5). It never switches contexts or
+// mints another identity.
+func newIdentityRegisterCmd(_ *App) *cobra.Command {
+	var name string
+	cmd := bootstrapSafe(&cobra.Command{
+		Use:   "register",
+		Short: "Register the active identity's key with the active environment",
+		Long: "register generates an environment-scoped Ed25519 key (if absent),\n" +
+			"performs RFC 7591 Dynamic Client Registration, and records the returned\n" +
+			"client_id + status. The agent is 'pending' until an operator approves it;\n" +
+			"token exchange then succeeds automatically. This is the V2 successor to the\n" +
+			"legacy `jentic register` and operates on the resolved active context.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			aud := ux.FromContext(cmd.Context())
+			state := clictx.FromContext(cmd.Context())
+			if state == nil || state.ResolvedState == nil || state.IdentityName == "" || state.EnvironmentName == "" {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeResolveFailed,
+					Msg:        "no active identity/environment to register",
+					Actionable: "Create and select a context first (`jentic context create`, `jentic context use`).",
+				})
+			}
+			if state.BaseURL == "" {
+				return reportCoded(aud, &ux.CodedError{
+					Code:       ux.CodeResolveFailed,
+					Msg:        fmt.Sprintf("environment %q has no base_url", state.EnvironmentName),
+					Actionable: "Set it with `jentic env add` / edit the environment.",
+				})
+			}
+
+			ref := auth.IdentityRef{Identity: state.IdentityName, Environment: state.EnvironmentName}
+
+			// Local-only, non-destructive: mint the env-scoped key if this is the
+			// first registration for the pair. Never contacts the server.
+			priv, err := auth.GetOrGenerateKey(ref)
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+			pub, ok := priv.Public().(ed25519.PublicKey)
+			if !ok {
+				return reportCoded(aud, &ux.CodedError{Code: ux.CodeInternalError, Msg: "env-scoped key is not Ed25519"})
+			}
+
+			clientName := name
+			if clientName == "" {
+				clientName = state.IdentityName
+			}
+			reg, err := auth.Register(state.BaseURL, clientName, auth.PublicKeyToJWKS(pub))
+			if err != nil {
+				return reportCoded(aud, err)
+			}
+
+			if err := config.MutateConfig(func(cfg *config.Config) error {
+				ident := cfg.Identities[state.IdentityName]
+				if ident.Environments == nil {
+					ident.Environments = make(map[string]config.EnvRegState)
+				}
+				status := reg.Status
+				if status == "" {
+					status = "pending"
+				}
+				ident.Environments[state.EnvironmentName] = config.EnvRegState{
+					ClientID: reg.ClientID,
+					Status:   status,
+				}
+				cfg.Identities[state.IdentityName] = ident
+				return nil
+			}); err != nil {
+				return reportCoded(aud, err)
+			}
+
+			status := reg.Status
+			if status == "" {
+				status = "pending"
+			}
+			renderStatus := ux.StatusPending
+			msg := "Agent registered. Operator approval required before use."
+			if status == "approved" {
+				renderStatus = ux.StatusRegistered
+				msg = "Agent registered and approved."
+			}
+			aud.Render(ux.Result{
+				Status:   renderStatus,
+				Resource: "identity",
+				Name:     state.IdentityName,
+				ID:       reg.ClientID,
+				Message:  msg,
+				Fields: map[string]any{
+					"environment": state.EnvironmentName,
+					"status":      status,
+				},
+			})
+			return nil
+		},
+	})
+	cmd.Flags().StringVar(&name, "name", "", "Client name shown to the approving operator (default: identity name)")
 	return cmd
 }
 

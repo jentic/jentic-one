@@ -60,6 +60,23 @@ func ReadTokens(ref IdentityRef) (*TokenSet, error) {
 	return &tokens, nil
 }
 
+// InvalidateTokens removes the cached token for ref so the next request forces a
+// fresh RFC 7523 exchange. It is used by the response-side 401 policy (impl/4.2 /
+// 13 §5): a server-rejected token (revoked, rotated signing key, clock drift the
+// backend won't tolerate) looks valid on disk, so we must actively discard it
+// before retrying rather than trust our own expiry math. A missing file is not an
+// error — there is simply nothing to invalidate.
+func InvalidateTokens(ref IdentityRef) error {
+	path, err := getTokenPath(ref)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("invalidating token state %s: %w", path, err)
+	}
+	return nil
+}
+
 // SaveTokens writes the token cache for ref (0600).
 //
 // Concurrency: no lock. Two processes sharing the same identity+environment that
