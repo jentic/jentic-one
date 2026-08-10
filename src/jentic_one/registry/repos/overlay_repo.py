@@ -208,6 +208,7 @@ class OverlayRepository:
         confirmed_at: datetime | None = None,
         confirmed_by_execution_id: str | None = None,
         deprecated_at: datetime | None = None,
+        deprecated_reason: str | None = None,
         expected_status: OverlayStatus | None = None,
     ) -> int:
         """Set an overlay's status, returning the number of rows updated.
@@ -224,6 +225,8 @@ class OverlayRepository:
             values["confirmed_by_execution_id"] = confirmed_by_execution_id
         if deprecated_at is not None:
             values["deprecated_at"] = deprecated_at
+        if deprecated_reason is not None:
+            values["deprecated_reason"] = deprecated_reason
         stmt = update(Overlay).where(Overlay.id == overlay_id)
         if expected_status is not None:
             stmt = stmt.where(Overlay.status == expected_status)

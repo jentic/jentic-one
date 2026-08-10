@@ -119,6 +119,9 @@ export type { OperationSummaryLinksResponse } from './models/OperationSummaryLin
 export type { OperationSummaryListResponse } from './models/OperationSummaryListResponse';
 export type { OperationSummaryResponse } from './models/OperationSummaryResponse';
 export type { OverlayConfirmRequest } from './models/OverlayConfirmRequest';
+export type { OverlayLinksResponse } from './models/OverlayLinksResponse';
+export type { OverlayListResponse } from './models/OverlayListResponse';
+export type { OverlayResponse } from './models/OverlayResponse';
 export type { OverlaySubmitRequest } from './models/OverlaySubmitRequest';
 export type { OverlayUpdateRequest } from './models/OverlayUpdateRequest';
 export type { PermissionListResponse } from './models/PermissionListResponse';

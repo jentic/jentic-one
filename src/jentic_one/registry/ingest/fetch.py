@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from typing import Annotated, Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -76,8 +77,102 @@ class UrlSource(BaseModel):
 IngestSource = Annotated[UrlSource | InlineSource, Field(discriminator="type")]
 
 
+class _JsonSafeLoader(yaml.SafeLoader):
+    """SafeLoader whose output contains only JSON-serializable values.
+
+    Real-world YAML specs are full of unquoted ISO dates (``version: 2022-01-16``,
+    changelog entries, example values). The stock ``SafeLoader`` resolves those
+    to ``datetime.date``/``datetime.datetime``, which the ingest pipeline's later
+    JSON serialization (JSONB spec storage, operation extraction) rejects —
+    dead-lettering the import (issue #979). Spec documents must stay
+    JSON-serializable (the contract stated on ``IngestSpecification.content``),
+    so the two tags that produce non-JSON scalars — ``!!timestamp`` and
+    ``!!binary`` — construct the scalar's verbatim text (lossless, and identical
+    to what the same spec yields when served as JSON), and ``!!set`` constructs
+    a list of its keys. Non-finite ``!!float`` scalars (``.nan``/``.inf``) also
+    fall back to verbatim text (issue #984): ``json.dumps`` emits them as the
+    non-standard ``NaN``/``Infinity`` tokens, which JSON parsers and Postgres
+    JSONB reject — while finite floats keep parsing as numbers. The remaining
+    exotic tags (``!!omap``/``!!pairs``) yield lists of tuples, which
+    JSON-serialize as arrays already.
+    """
+
+
+def _construct_scalar_as_str(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> str:
+    return loader.construct_scalar(node)
+
+
+def _construct_set_as_list(loader: _JsonSafeLoader, node: yaml.MappingNode) -> list[Any]:
+    return list(loader.construct_mapping(node))
+
+
+def _construct_json_safe_float(loader: _JsonSafeLoader, node: yaml.ScalarNode) -> float | str:
+    value = yaml.SafeLoader.construct_yaml_float(loader, node)
+    if math.isfinite(value):
+        return value
+    return loader.construct_scalar(node)
+
+
+# !!timestamp and !!float are the tags here with implicit resolvers (bare
+# scalars); !!binary and !!set require an explicit tag but dead-letter
+# identically.
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:timestamp", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:binary", _construct_scalar_as_str)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:set", _construct_set_as_list)
+_JsonSafeLoader.add_constructor("tag:yaml.org,2002:float", _construct_json_safe_float)
+
+
+def _load_yaml(raw: str) -> Any:
+    """``yaml.safe_load`` constrained to JSON-serializable output (see _JsonSafeLoader).
+
+    The loader is a ``SafeLoader`` subclass, so this is exactly as safe as
+    ``yaml.safe_load`` — hence the B506 suppression.
+
+    PyYAML's stock scalar constructors leak raw builtin exceptions on
+    malformed explicitly-tagged scalars instead of raising ``YAMLError``
+    (issue #988): ``!!float abc`` -> ``ValueError``, ``!!int ''`` ->
+    ``IndexError``, ``!!bool abc`` -> ``KeyError`` — and the escape set is
+    PyYAML-version-dependent. Normalize every constructor escape to
+    ``yaml.YAMLError`` so ``parse_spec_content``'s handlers wrap it into a
+    clean ``IngestStageError`` instead of dead-lettering with an internal
+    traceback.
+    """
+    try:
+        return yaml.load(raw, Loader=_JsonSafeLoader)  # nosec B506
+    except yaml.YAMLError:
+        raise
+    except Exception as exc:
+        raise yaml.YAMLError(f"YAML document construction failed: {exc}") from exc
+
+
+def _load_json(raw: str) -> Any:
+    """``json.loads`` with non-finite float tokens kept as their literal text.
+
+    Python's ``json.loads`` accepts the non-standard ``NaN``/``Infinity``/
+    ``-Infinity`` tokens by default and produces non-finite floats — the same
+    JSONB-rejected values the YAML loader guards against (issue #984). Keep
+    the token text verbatim, mirroring ``_JsonSafeLoader``.
+
+    Escapes that aren't ``ValueError`` (e.g. ``RecursionError`` on a deeply
+    nested document) are normalized to it, symmetric with ``_load_yaml``, so
+    both ``parse_spec_content`` call sites produce a clean parse error
+    (``json.JSONDecodeError`` is a ``ValueError`` subclass).
+    """
+    try:
+        return json.loads(raw, parse_constant=str)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"JSON document construction failed: {exc}") from exc
+
+
 def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, Any]:
-    """Parse raw spec content as JSON or YAML, returning a dict."""
+    """Parse raw spec content as JSON or YAML, returning a dict.
+
+    This is the single boundary where raw spec text becomes a document, and it
+    guarantees the result is JSON-serializable regardless of source format —
+    downstream stages (JSONB writes, ``json.dumps``) rely on that invariant.
+    """
     if not raw or not raw.strip():
         raise IngestStageError("spec content is empty")
 
@@ -92,18 +187,18 @@ def parse_spec_content(raw: str, *, filename: str | None = None) -> dict[str, An
     parsed: Any = None
     if json_first:
         try:
-            parsed = json.loads(raw)
+            parsed = _load_json(raw)
         except (json.JSONDecodeError, ValueError):
             try:
-                parsed = yaml.safe_load(raw)
+                parsed = _load_yaml(raw)
             except yaml.YAMLError as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
     else:
         try:
-            parsed = yaml.safe_load(raw)
+            parsed = _load_yaml(raw)
         except yaml.YAMLError:
             try:
-                parsed = json.loads(raw)
+                parsed = _load_json(raw)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise IngestStageError("failed to parse spec content as JSON or YAML") from exc
 

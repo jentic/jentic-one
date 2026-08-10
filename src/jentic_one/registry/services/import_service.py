@@ -29,7 +29,12 @@ from jentic_one.shared.context import Context
 from jentic_one.shared.db.errors import DatabaseIntegrityError
 from jentic_one.shared.events import emit_event_best_effort, settle_actionable_events
 from jentic_one.shared.jobs.handlers import JobResultPayload
-from jentic_one.shared.models import ORIGIN_OVERLAY, ActorType, OverlayStatus
+from jentic_one.shared.models import (
+    ORIGIN_OVERLAY,
+    ActorType,
+    OverlayDeprecationReason,
+    OverlayStatus,
+)
 from jentic_one.shared.models.events import EventSeverity, EventType
 
 logger = structlog.get_logger(__name__)
@@ -315,6 +320,7 @@ class ImportHandler:
                     overlay_id,
                     OverlayStatus.DEPRECATED,
                     deprecated_at=datetime.now(UTC),
+                    deprecated_reason=OverlayDeprecationReason.SUPERSEDED_BY_REIMPORT,
                     expected_status=OverlayStatus.CONFIRMED,
                 )
             if demoted == 0:
