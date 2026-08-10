@@ -366,6 +366,12 @@ error naming DNS, TLS, timeout, or connection refused is a **transport
 failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
 `operation_id` lookup hits an unreachable control plane — with two causes:
 
+> Exit **2** broadly means "this request cannot succeed **as asked**" — a
+> broker denial, a failed operation resolve, or missing local context (e.g. no
+> active context configured). Don't blind-retry an exit 2: change the ask, fix
+> the config, or request access. Exit **3** (still pending) and the transient
+> transport failures are the retryable ones.
+
 - **Wrong target (DNS or TLS error).** The broker target resolves as
   built-in default (`https://127.0.0.1:8100`) < `~/.jentic/config.yaml`
   (`broker.scheme` / `broker.host`, recorded by `jenticctl install`) <
@@ -428,8 +434,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   <path>` prints one operation's parameters, so you can discover a new route and
   its inputs without leaving the CLI. Pass a JSON body with `-d '<json>'`, `-d @file`,
   or piped stdin.
-- `jentic history export` — export this identity's execution history (JSON
-  envelope with `schema_version`/`trace_id`), for auditing what you have run.
+- `jentic history export --trace <trace_id>` — export the execution history of
+  one trace (JSON envelope with `schema_version`/`trace_id`), for auditing what
+  you have run. `--trace` is required; take the id from an `execute --json`
+  response or from `jentic events watch`.
 - `jentic events watch` — stream live execution/approval events for this
   identity (long-running; Ctrl-C to stop).
 - `--dry-run` / `--export-plan` — on a mutating command (`execute`,
@@ -438,7 +446,14 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
-- Add `--json` to force machine-readable output on a terminal.
+- Add `--json` to force machine-readable output on a terminal (works on
+  `search`, `execute`, `inspect`, `apis`, `access`, `profile list`, `doctor`).
+- **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
+  every request carries it as `X-Jentic-Session-Id`, so operators can group all
+  of your calls in server logs; each `execute` also sends a fresh W3C
+  `traceparent`. When you must retry a mutating call (POST/PUT), pass
+  `--idempotency-key <uuid>` to `execute` — the server can then de-duplicate,
+  and the CLI treats the request as safe for its transport-level retries.
 
 ## Pitfalls
 
