@@ -167,10 +167,10 @@ func ValidateDraft(d *Draft) error {
 		if err := check("pg_port", validatePort(d.PGPort)); err != nil {
 			return err
 		}
-		if err := check("pg_name", notEmpty("name")(d.PGName)); err != nil {
+		if err := check("pg_name", validatePGIdentifier("pg_name", d.PGName)); err != nil {
 			return err
 		}
-		if err := check("pg_user", notEmpty("user")(d.PGUser)); err != nil {
+		if err := check("pg_user", validatePGIdentifier("pg_user", d.PGUser)); err != nil {
 			return err
 		}
 	} else if err := check("sqlite_dir", notEmpty("directory")(d.SQLiteDir)); err != nil {

@@ -49,7 +49,7 @@ func newUpdateCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.check, "check", false, "only report status; don't apply any update")
 	cmd.Flags().BoolVar(&opts.cliOnly, "cli-only", false, "update only the CLI binary")
 	cmd.Flags().BoolVar(&opts.stackOnly, "stack-only", false, "update only the stack (not the CLI binary)")
-	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompt")
 	cmd.Flags().StringVar(&opts.ref, "ref", "", "git ref to update to, pinning a specific tag/branch/commit (default: the latest release tag)")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL (for the server probe)")
 	return cmd

@@ -71,7 +71,11 @@ class DatabaseConfig(BaseModel):
     user: str = "postgres"
     password: SecretStr = SecretStr("")
     pool_max: int = 10
-    schema_name: str = "public"
+    # Interpolated into `CREATE SCHEMA IF NOT EXISTS "{schema_name}"` and
+    # search_path by the migration runner; the identifier pattern is
+    # defense-in-depth so a hostile config value cannot escape the quoted
+    # identifier (SEC-2).
+    schema_name: str = Field(default="public", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     # SQLite: filesystem path to the database file (":memory:" for in-memory).
     path: str | None = None
     # SQLite concurrency knobs (ignored for non-SQLite backends). ``journal_mode``

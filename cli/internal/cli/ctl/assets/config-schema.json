@@ -473,6 +473,7 @@
         },
         "schema_name": {
           "default": "public",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "title": "Schema Name",
           "type": "string"
         },

@@ -5,6 +5,7 @@ package generated
 import "encoding/json"
 import "fmt"
 import "reflect"
+import "regexp"
 
 // Access requests subsystem configuration.
 type AccessRequestsConfig struct {
@@ -758,6 +759,9 @@ func (j *DatabaseConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["schema_name"]; !ok || v == nil {
 		plain.SchemaName = "public"
+	}
+	if matched, _ := regexp.MatchString(`^[A-Za-z_][A-Za-z0-9_]*$`, string(plain.SchemaName)); !matched {
+		return fmt.Errorf("field %s pattern match: must match %s", "SchemaName", `^[A-Za-z_][A-Za-z0-9_]*$`)
 	}
 	if v, ok := raw["user"]; !ok || v == nil {
 		plain.User = "postgres"

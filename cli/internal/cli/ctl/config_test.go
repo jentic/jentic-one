@@ -1,6 +1,7 @@
 package ctl
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -109,4 +110,43 @@ func sensitiveKeys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestSensitiveHeuristicClassified is the GEN-4 classify-or-fail gate: every
+// schema leaf the secret-NAME heuristic matches must either carry a schema
+// marker (writeOnly/format=password) or a reviewed heuristicClassified entry.
+// Without this, a benign new field (`token_ttl_seconds`, `max_tokens`) would
+// silently vanish from the installer flags — no error, no test failure, the
+// field just stays YAML-only.
+func TestSensitiveHeuristicClassified(t *testing.T) {
+	unclassified, err := UnclassifiedSensitiveNames()
+	if err != nil {
+		t.Fatalf("UnclassifiedSensitiveNames: %v", err)
+	}
+	if len(unclassified) > 0 {
+		t.Errorf("secret-shaped config leaves without a schema marker or a reviewed classification:\n  %s\n"+
+			"Fix: mark the field writeOnly/format=password in the backend Pydantic model (SecretStr), "+
+			"OR add it to heuristicClassified in config.go — true if it is a real secret (excluded from flags), "+
+			"false if it is a benign name (keeps its flag).", strings.Join(unclassified, "\n  "))
+	}
+}
+
+// TestHeuristicClassifiedEntriesStillExist guards the other direction: a
+// heuristicClassified entry naming a since-removed (or since-marker-annotated)
+// leaf is stale and must be deleted, so the table shrinks toward empty as the
+// backend annotation pass (GEN-9) lands.
+func TestHeuristicClassifiedEntriesStillExist(t *testing.T) {
+	hits, err := heuristicHitsWithoutMarker()
+	if err != nil {
+		t.Fatalf("heuristicHitsWithoutMarker: %v", err)
+	}
+	hitSet := map[string]bool{}
+	for _, h := range hits {
+		hitSet[h] = true
+	}
+	for path := range heuristicClassified {
+		if !hitSet[path] {
+			t.Errorf("heuristicClassified[%q] is stale — the leaf was removed or gained a schema marker; delete the entry", path)
+		}
+	}
 }

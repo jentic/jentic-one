@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
@@ -113,7 +114,10 @@ func (a *app) doctorE(ctx context.Context, opts *doctorOptions) error {
 	d.checkAgent()
 	d.checkLocalAgent(cfg)
 
-	if opts.json {
+	if opts.json || !cmdcore.StdoutIsTerminal() {
+		// Aligned with the jentic-side JSONOrPretty default (UX-5): machine
+		// output when piped, unless the operator explicitly asked for the
+		// pretty report by running on a terminal without --json.
 		return d.renderJSON()
 	}
 	return d.render()

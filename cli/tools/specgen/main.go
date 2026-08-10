@@ -10,17 +10,25 @@
 //
 //	required.gen.go   RequiredFields() companions   (impl/2.1 §4a)
 //	sensitive.gen.go  SensitiveFields table         (impl/2.1 §4b, from x-sensitive)
-//	ops.gen.go        operation index               (impl/2.1 §4, powers `jentic api ops`)
+//
+// NOTE: an ops.gen.go operation index was originally emitted too, intended to
+// power `jentic api ops`. It was DROPPED (GEN-8): `api ops`/`api describe`/the
+// passthrough allowlist all parse the embedded spec.yaml at runtime via
+// internal/cli/apispec — one data path that also serves `--live` (a server's
+// spec fetched at runtime, which no build-time index could cover). Keeping an
+// unconsumed generated index invited divergence between documented and real
+// data flow.
 //
 // It parses the SAME vendored spec.yaml with libopenapi — the parser the runtime
-// `api describe` will reuse (Phase 5) — so the module has exactly one
-// spec-parsing dependency. All three outputs are keyed by the component-schema
-// name, which oapi-codegen uses verbatim as the generated Go type name (verified:
+// `api describe` reuses — so the module has exactly one spec-parsing
+// dependency. All outputs are keyed by the component-schema name, which
+// oapi-codegen uses verbatim as the generated Go type name (verified:
 // e.g. `CredentialCreateResponse` in the spec becomes `type CredentialCreateResponse`).
 package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -30,6 +38,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -79,8 +88,17 @@ func run(pkg, outDir string) error {
 		return fmt.Errorf("building v3 model for %s: %w", specPath, err)
 	}
 
-	required, sensitive := walkSchemas(model)
-	ops := walkPaths(model)
+	// Fail loud on spec constructs the companions do NOT walk (GEN-7): silently
+	// contributing nothing to ops/sensitive/required is exactly the class of
+	// quiet drift this generator exists to prevent.
+	if err := guardUnsupported(model, specBytes); err != nil {
+		return fmt.Errorf("%s: %w", specPath, err)
+	}
+
+	required, sensitive, err := walkSchemas(model)
+	if err != nil {
+		return fmt.Errorf("%s: %w", specPath, err)
+	}
 
 	// Cross-check component-schema names against the types the oapi-codegen client
 	// actually declared. Most component names map 1:1 to a generated Go type of the
@@ -103,7 +121,53 @@ func run(pkg, outDir string) error {
 	if err := writeGo(filepath.Join(outDir, "sensitive.gen.go"), renderSensitive(pkg, sensitive)); err != nil {
 		return err
 	}
-	return writeGo(filepath.Join(outDir, "ops.gen.go"), renderOps(pkg, ops))
+	// Remove a stale ops.gen.go from an earlier specgen version (GEN-8): the
+	// operation index was dropped in favor of the runtime apispec parse.
+	if err := os.Remove(filepath.Join(outDir, "ops.gen.go")); err != nil && !os.IsNotExist(err) { //nolint:gosec // generator housekeeping under the checked-in client/generated dir.
+		return fmt.Errorf("removing retired ops.gen.go: %w", err)
+	}
+	return nil
+}
+
+// allowedExternalRefPrefix is the ONE external $ref source the specs are known
+// to use: the pinned problem-details schemas. specgen deliberately skips
+// external resolution (hermetic CI), which is safe for these because no emitted
+// companion consumes error-response schemas. Any OTHER external ref would
+// silently contribute nothing (GEN-7), so guardUnsupported fails on it.
+const allowedExternalRefPrefix = "https://raw.githubusercontent.com/jentic/api-problem-details/"
+
+// externalRefPattern matches absolute-URL $refs in the raw spec text. Raw-text
+// scanning (rather than model walking) is deliberate: with external resolution
+// skipped, unresolved refs are exactly what the model may NOT surface.
+var externalRefPattern = regexp.MustCompile(`\$ref:\s*['"]?(https?://[^'"\s]+)`)
+
+// guardUnsupported fails loud on spec constructs specgen does not walk:
+// webhooks, callbacks, and external $refs outside the problem-details
+// allowlist (GEN-7). Each would otherwise contribute nothing to the emitted
+// companions with no diagnostic.
+func guardUnsupported(model *libopenapi.DocumentModel[v3.Document], specBytes []byte) error {
+	if model.Model.Webhooks != nil && model.Model.Webhooks.Len() > 0 {
+		return errors.New("spec declares webhooks, which specgen does not walk — extend walkPaths/walkSchemas (or explicitly exempt them here) before regenerating")
+	}
+	if model.Model.Paths != nil && model.Model.Paths.PathItems != nil {
+		for pair := orderedmap.First(model.Model.Paths.PathItems); pair != nil; pair = pair.Next() {
+			item := pair.Value()
+			if item == nil {
+				continue
+			}
+			for method, operation := range item.GetOperations().FromOldest() {
+				if operation != nil && operation.Callbacks != nil && operation.Callbacks.Len() > 0 {
+					return fmt.Errorf("operation %s %s declares callbacks, which specgen does not walk — extend the generator before regenerating", strings.ToUpper(method), pair.Key())
+				}
+			}
+		}
+	}
+	for _, m := range externalRefPattern.FindAllStringSubmatch(string(specBytes), -1) {
+		if !strings.HasPrefix(m[1], allowedExternalRefPrefix) {
+			return fmt.Errorf("external $ref %q is outside the problem-details allowlist (%s) — specgen skips external resolution, so its schemas would silently contribute nothing; vendor the schema or extend the allowlist consciously", m[1], allowedExternalRefPrefix)
+		}
+	}
+	return nil
 }
 
 // declaredTypes parses the generated oapi-codegen client and returns the set of
@@ -147,12 +211,17 @@ func filterByDeclared(m map[string][]string, declared map[string]bool) map[strin
 //
 // Only NAMED component schemas are emitted, because those are the ones
 // oapi-codegen turns into a Go type with a matching name. Inline request/response
-// schemas have no stable Go type name to attach a method or table entry to.
-func walkSchemas(model *libopenapi.DocumentModel[v3.Document]) (required, sensitive map[string][]string) {
+// schemas have no stable Go type name to attach a method or table entry to —
+// so an `x-sensitive` annotation on a NESTED inline property (an inline object,
+// array items, or additionalProperties sub-schema) cannot be expressed in the
+// table and is a HARD ERROR (GEN-6): the fix is to hoist the nested object into
+// a named component (in Pydantic, a named model), never to let the annotation
+// silently do nothing.
+func walkSchemas(model *libopenapi.DocumentModel[v3.Document]) (required, sensitive map[string][]string, err error) {
 	required = map[string][]string{}
 	sensitive = map[string][]string{}
 	if model.Model.Components == nil || model.Model.Components.Schemas == nil {
-		return required, sensitive
+		return required, sensitive, nil
 	}
 	for pair := orderedmap.First(model.Model.Components.Schemas); pair != nil; pair = pair.Next() {
 		name := pair.Key()
@@ -173,8 +242,13 @@ func walkSchemas(model *libopenapi.DocumentModel[v3.Document]) (required, sensit
 			sort.Strings(props)
 			sensitive[name] = props
 		}
+		if nested := nestedAnnotatedPaths(schema); len(nested) > 0 {
+			return nil, nil, fmt.Errorf(
+				"schema %s carries x-sensitive on nested inline properties (%s) that the SensitiveFields table cannot express — hoist the nested object into a named component schema (Pydantic: a named model)",
+				name, strings.Join(nested, ", "))
+		}
 	}
-	return required, sensitive
+	return required, sensitive, nil
 }
 
 // sensitiveProps returns the property names of schema marked `x-sensitive: true`.
@@ -189,60 +263,82 @@ func sensitiveProps(schema *base.Schema) []string {
 			continue
 		}
 		prop := propProxy.Schema()
-		if prop == nil || prop.Extensions == nil {
+		if prop == nil {
 			continue
 		}
-		node, ok := prop.Extensions.Get("x-sensitive")
-		if !ok || node == nil {
-			continue
-		}
-		if strings.TrimSpace(node.Value) == "true" {
+		if isXSensitive(prop) {
 			out = append(out, pair.Key())
 		}
 	}
 	return out
 }
 
-// op is one entry of the operation index.
-type op struct {
-	Method      string
-	Path        string
-	OperationID string
-	Summary     string
+// isXSensitive reports whether a schema carries `x-sensitive: true`.
+func isXSensitive(s *base.Schema) bool {
+	if s == nil || s.Extensions == nil {
+		return false
+	}
+	node, ok := s.Extensions.Get("x-sensitive")
+	return ok && node != nil && strings.TrimSpace(node.Value) == "true"
 }
 
-// walkPaths returns the operation index: one entry per (method, path) with an
-// operationId, sorted deterministically by path then method.
-func walkPaths(model *libopenapi.DocumentModel[v3.Document]) []op {
-	var ops []op
-	if model.Model.Paths == nil || model.Model.Paths.PathItems == nil {
-		return ops
+// nestedAnnotatedPaths walks BELOW the direct-property level of a named schema
+// — inline object properties, array `items`, `additionalProperties` — and
+// returns the dotted paths of any x-sensitive annotation found there (GEN-6).
+// $ref'ed sub-schemas are skipped: a named component is covered by its own
+// table entry, so recursing into it would double-report.
+func nestedAnnotatedPaths(schema *base.Schema) []string {
+	var out []string
+	collectNested(schema, "", 0, &out)
+	sort.Strings(out)
+	return out
+}
+
+// collectNested recurses through inline sub-schemas. depth counts property
+// levels below the named schema: annotations at depth >= 2 (a property of an
+// inline property, or anything under items/additionalProperties) are invisible
+// to the table and reported.
+func collectNested(schema *base.Schema, prefix string, depth int, out *[]string) {
+	if schema == nil || depth > 16 { // cycle guard; inline schemas cannot recurse but stay bounded
+		return
 	}
-	for pair := orderedmap.First(model.Model.Paths.PathItems); pair != nil; pair = pair.Next() {
-		path := pair.Key()
-		item := pair.Value()
-		if item == nil {
-			continue
-		}
-		for method, operation := range item.GetOperations().FromOldest() {
-			if operation == nil || operation.OperationId == "" {
+	if schema.Properties != nil {
+		for pair := orderedmap.First(schema.Properties); pair != nil; pair = pair.Next() {
+			proxy := pair.Value()
+			if proxy == nil || proxy.IsReference() {
+				continue // named component — covered by its own entry
+			}
+			sub := proxy.Schema()
+			if sub == nil {
 				continue
 			}
-			ops = append(ops, op{
-				Method:      strings.ToUpper(method),
-				Path:        path,
-				OperationID: operation.OperationId,
-				Summary:     operation.Summary,
-			})
+			path := pair.Key()
+			if prefix != "" {
+				path = prefix + "." + pair.Key()
+			}
+			if depth >= 1 && isXSensitive(sub) {
+				*out = append(*out, path)
+			}
+			collectNested(sub, path, depth+1, out)
 		}
 	}
-	sort.Slice(ops, func(i, j int) bool {
-		if ops[i].Path != ops[j].Path {
-			return ops[i].Path < ops[j].Path
+	if schema.Items != nil && schema.Items.IsA() {
+		if proxy := schema.Items.A; proxy != nil && !proxy.IsReference() {
+			if sub := proxy.Schema(); sub != nil {
+				// Item properties belong to a DIFFERENT generated type than the
+				// named schema, so any annotation below here is invisible: bump
+				// depth so even the items' direct properties report.
+				collectNested(sub, prefix+"[]", max(depth, 1), out)
+			}
 		}
-		return ops[i].Method < ops[j].Method
-	})
-	return ops
+	}
+	if schema.AdditionalProperties != nil && schema.AdditionalProperties.IsA() {
+		if proxy := schema.AdditionalProperties.A; proxy != nil && !proxy.IsReference() {
+			if sub := proxy.Schema(); sub != nil {
+				collectNested(sub, prefix+"{}", max(depth, 1), out)
+			}
+		}
+	}
 }
 
 const genHeader = "// Code generated by tools/specgen; DO NOT EDIT.\n"
@@ -271,28 +367,6 @@ func renderSensitive(pkg string, sensitive map[string][]string) []byte {
 	b.WriteString("var SensitiveFields = map[string][]string{\n")
 	for _, name := range sortedKeys(sensitive) {
 		fmt.Fprintf(&b, "\t%q: %s,\n", name, goStringSlice(sensitive[name]))
-	}
-	b.WriteString("}\n")
-	return b.Bytes()
-}
-
-func renderOps(pkg string, ops []op) []byte {
-	var b bytes.Buffer
-	b.WriteString(genHeader)
-	fmt.Fprintf(&b, "\npackage %s\n\n", pkg)
-	b.WriteString("// Op is one entry of the operation index: the HTTP method, templated path,\n")
-	b.WriteString("// operationId, and summary for a single spec operation.\n")
-	b.WriteString("type Op struct {\n")
-	b.WriteString("\tMethod      string\n")
-	b.WriteString("\tPath        string\n")
-	b.WriteString("\tOperationID string\n")
-	b.WriteString("\tSummary     string\n")
-	b.WriteString("}\n\n")
-	b.WriteString("// Ops is the full operation index for this plane, powering `jentic api ops` and the\n")
-	b.WriteString("// passthrough path allowlist (impl/5.0 §6a). Sorted by path then method.\n")
-	b.WriteString("var Ops = []Op{\n")
-	for _, o := range ops {
-		fmt.Fprintf(&b, "\t{Method: %q, Path: %q, OperationID: %q, Summary: %q},\n", o.Method, o.Path, o.OperationID, o.Summary)
 	}
 	b.WriteString("}\n")
 	return b.Bytes()

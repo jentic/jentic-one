@@ -106,7 +106,7 @@ func newSkillInitCmd(app *App) *cobra.Command {
 	cmd.Flags().StringSliceVar(&opts.skills, "skill", nil, "skills to install (repeatable or comma-separated; default: all shipped)")
 	cmd.Flags().StringVar(&opts.scope, "scope", "", "placement scope: user or project (default: per-operator)")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "overwrite content you have manually edited")
-	cmd.Flags().BoolVar(&opts.yes, "yes", false, "non-interactive: no pickers; with no --operator/--all, target the detected operators")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "non-interactive: no pickers; with no --operator/--all, target the detected operators")
 	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "print target paths without writing")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "target every supported operator")
 	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
@@ -156,8 +156,11 @@ func newSkillUpdateCmd(app *App) *cobra.Command {
 func newSkillRemoveCmd(app *App) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
-		Use:   "remove",
-		Short: "Remove installed Jentic skills from one or more operators",
+		Use: "remove",
+		// "delete"/"rm" align the removal verb across the tree (UX-6);
+		// "remove" stays canonical because the skill docs already teach it.
+		Aliases: []string{"delete", "rm"},
+		Short:   "Remove installed Jentic skills from one or more operators",
 		Example: "  jentic skill remove --operator cursor\n" +
 			"  jentic skill remove --skill import-new-api --operator cursor\n" +
 			"  jentic skill remove --all --force",

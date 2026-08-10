@@ -244,6 +244,11 @@ var databaseSection = Section{
 				lines = append(lines,
 					theme.Field("host", "managed container"),
 					theme.Field("exposed", expose),
+					// UX-11: on the Docker path the password is never prompted
+					// (FillSecrets generates it into the compose file), so say
+					// so — otherwise an operator scanning the summary for
+					// "where do I set the DB password" gets no answer.
+					theme.Field("password", "auto-generated at install"),
 				)
 			} else {
 				lines = append(lines, theme.Field("host", d.PGHost+":"+d.PGPort))

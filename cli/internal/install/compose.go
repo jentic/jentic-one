@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -145,9 +147,9 @@ services:
   {{.DBService}}:
     image: {{.PostgresImage}}
     environment:
-      POSTGRES_DB: {{.PGName}}
-      POSTGRES_USER: {{.PGUser}}
-      POSTGRES_PASSWORD: {{.PGPassword}}
+      POSTGRES_DB: {{yamlQuote .PGName}}
+      POSTGRES_USER: {{yamlQuote .PGUser}}
+      POSTGRES_PASSWORD: {{yamlQuote .PGPassword}}
 {{- if .PGExposePort}}
     ports:
       - "{{.BindHost}}:{{.PGPublishedPort}}:5432"
@@ -219,7 +221,36 @@ volumes:
 {{- end}}
 `
 
-var composeTmpl = template.Must(template.New("compose").Parse(composeTemplate))
+var composeTmpl = template.Must(template.New("compose").
+	Funcs(template.FuncMap{"yamlQuote": yamlQuote}).
+	Parse(composeTemplate))
+
+// yamlQuote renders s as a double-quoted YAML scalar. strconv.Quote's escapes
+// (\", \\, \n, \uNNNN…) are all valid YAML double-quoted-style escapes, so an
+// operator-supplied value can never break out of its scalar into the document
+// structure (SEC-4).
+func yamlQuote(s string) string {
+	return strconv.Quote(s)
+}
+
+// pgIdentifierPattern is the conservative charset allowed for the Postgres
+// user/database names an operator can seed via --answers. Both values are
+// interpolated into the compose healthcheck's CMD-SHELL string, where YAML
+// quoting alone would not stop shell metacharacters (SEC-4).
+var pgIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
+
+// validatePGIdentifier rejects Postgres user/db names outside the conservative
+// identifier charset. Used by the headless answers validation and re-checked
+// at render time as defense-in-depth.
+func validatePGIdentifier(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", field)
+	}
+	if !pgIdentifierPattern.MatchString(value) {
+		return fmt.Errorf("%s %q contains characters outside [A-Za-z0-9_.-] — it is embedded in the compose healthcheck shell command", field, value)
+	}
+	return nil
+}
 
 // RenderCompose returns the docker-compose.yaml bytes for the draft, wiring the
 // host paths in cfg into the app (and managed Postgres) containers.
@@ -229,6 +260,17 @@ func RenderCompose(d *Draft, cfg ComposeConfig) ([]byte, error) {
 	// was #992's exposure multiplier. Rendering without one is a caller bug.
 	if d.IsPostgres() && d.PGPassword == "" {
 		return nil, errors.New("render compose: postgres password is empty (call FillSecrets first)")
+	}
+	// Defense-in-depth re-check of the CMD-SHELL-bound values (SEC-4): the
+	// headless answers path validates these too, but render is the last gate
+	// every caller passes through.
+	if d.IsPostgres() {
+		if err := validatePGIdentifier("pg_user", d.PGUser); err != nil {
+			return nil, fmt.Errorf("render compose: %w", err)
+		}
+		if err := validatePGIdentifier("pg_name", d.PGName); err != nil {
+			return nil, fmt.Errorf("render compose: %w", err)
+		}
 	}
 	params := composeParams{
 		Postgres:            d.IsPostgres(),

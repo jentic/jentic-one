@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -42,6 +43,12 @@ func (e *PendingError) Error() string {
 	}
 	return e.Detail
 }
+
+// ErrNotRegistered indicates the identity has no client-id registration in the
+// active environment — the exchange cannot even be attempted. Exposed as a
+// sentinel so CLI layers can map it to the NOT_AUTHENTICATED error code rather
+// than a generic internal error.
+var ErrNotRegistered = errors.New("identity is not registered in this environment")
 
 // requireSecureHost enforces the transport invariant shared by tokenEndpoint (F1)
 // and the request editor (F3): https everywhere, except plain http for loopback.
@@ -96,7 +103,7 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	}
 	clientID, err := clientIDFor(ref)
 	if err != nil {
-		return nil, fmt.Errorf("identity is not registered in this environment; run 'jentic identity register' first: %w", err)
+		return nil, fmt.Errorf("%w; run 'jentic identity register' first: %w", ErrNotRegistered, err)
 	}
 
 	// tokenEndpoint enforces the TLS/loopback invariant (F1) before we ever sign.

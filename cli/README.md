@@ -18,10 +18,11 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | Binary | Area | Commands | What you get |
 | ------ | ---- | -------- | ------------ |
 | `jenticctl` | **Setup & lifecycle** | `install` · `wizard` · `setup` · `doctor` · `status` · `start` · `stop` · `logs` · `update` · `reset-password` · `uninstall` | Stand up jentic-one locally (source venv **or** Docker) through an interactive wizard, then manage the running app: health checks, start/stop, log tailing, updates, password reset, and teardown. |
-| `jentic` | **Identity & access** | `register` · `bootstrap` · `profile` · `logout` | Each profile is an agent. Register it (Ed25519 + Dynamic Client Registration), switch the active profile, and clear cached tokens. |
-| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference. |
-| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `skill` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …). |
-| `jentic` | **Administration** | `admin` | Manage OAuth provider config. |
+| `jentic` | **Identity & access** | `register` · `bootstrap` · `profile` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts and profiles, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. |
+| `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
+| `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
+| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. |
+| `jentic` | **Administration** | `admin` · `theme` | Manage OAuth provider config and the persisted color theme. |
 
 The table mirrors the CLI's own command groups (what `jentic` with no args
 prints). The **complete command + flag reference** is generated from these
@@ -365,3 +366,25 @@ canonical form keeps it bare.
 
 Precedence (lowest to highest): built-in defaults -> `config.yaml` -> explicit
 command-line flags.
+
+## XDG layout (`~/.config/jentic`) — the V2 model
+
+The sections above describe the **legacy** `~/.jentic` layout, which keeps
+working until you migrate. The V2 CLI stores its state per the XDG Base
+Directory spec, and `jentic migrate` copies a legacy profile store into it
+(leaving `~/.jentic` untouched apart from a `MIGRATED` marker):
+
+```
+~/.config/jentic/config.yaml    # environments, identities, contexts, active_context, theme
+~/.local/state/jentic/          # per-identity key material and cached tokens
+~/.cache/jentic/                # disposable caches
+```
+
+`config.yaml` here is a different document from the legacy one: it declares
+**environments** (control/broker URLs), **identities** (agent keypairs), and
+**contexts** binding an environment + identity + mode, plus `active_context`.
+Inspect and edit it with `jentic context/env/identity` rather than by hand;
+`jentic context view` shows the resolved state. The standard `XDG_CONFIG_HOME`
+and `XDG_STATE_HOME` variables relocate the config and state directories (the
+XDG layout is enforced on every OS, including Windows, so paths stay
+predictable); the cache follows the platform's native cache dir.

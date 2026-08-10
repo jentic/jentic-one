@@ -48,9 +48,11 @@ func installInterceptor(app *App, root *cobra.Command) {
 			// The embedded ResolvedState must be non-nil: commands that reach
 			// clictx.GetControlClient on this degraded state would otherwise
 			// nil-deref (panic, runtime exit 2 — colliding with ExitDenied).
+			fallbackMode, fallbackExplicit := clictx.ResolveModeExplicit(flagValue(cmd, "mode"), "")
 			state = &clictx.ActiveState{
 				ResolvedState: &sdkconfig.ResolvedState{},
-				Mode:          clictx.ResolveMode(flagValue(cmd, "mode"), ""),
+				Mode:          fallbackMode,
+				ModeExplicit:  fallbackExplicit,
 				ThemeName:     "no-color",
 			}
 		}

@@ -69,6 +69,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	idempotent := isIdempotent(req)
 	triedReauth := false
+	tried429 := false
 	delay := retryBaseDelay
 
 	for attempt := 0; ; attempt++ {
@@ -105,17 +106,21 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			continue
 
-		// 429: honor Retry-After within budget, then retry once per hint.
+		// 429: honor Retry-After within budget, then retry ONCE; further 429s
+		// surface. The tried429 flag enforces the single-retry contract
+		// (SEC-3): without it, a server returning perpetual 429 + small
+		// Retry-After loops the client indefinitely wherever no context
+		// deadline or client timeout applies.
 		case resp.StatusCode == http.StatusTooManyRequests:
 			wait, ok := retryAfter(resp)
-			if !ok || wait > maxRetryAfter || !canRewind {
+			if tried429 || !ok || wait > maxRetryAfter || !canRewind {
 				return resp, nil // surface the 429 to the caller
 			}
+			tried429 = true
 			drain(resp)
 			if !sleepCtx(req.Context(), wait) {
 				return resp, nil
 			}
-			// A single Retry-After-driven retry; further 429s surface.
 			continue
 
 		// 5xx: bounded backoff for idempotent calls only.

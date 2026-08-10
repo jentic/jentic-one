@@ -39,6 +39,12 @@ type ActiveState struct {
 
 	// Mode is the resolved canonical mode ("human"/"agent"/"service-account").
 	Mode string
+	// ModeExplicit records whether Mode came from an explicit source (--mode,
+	// $JENTIC_MODE, or the persisted context mode) rather than the ladder's
+	// human default. Output rendering uses it (UX-5): an EXPLICIT human mode
+	// pins pretty rendering even when stdout is piped, while default-human
+	// keeps the agent-friendly non-TTY→JSON heuristic.
+	ModeExplicit bool
 	// ThemeName is the resolved config theme name fed to theme.ResolveTheme (the
 	// --theme/JENTIC_THEME overrides are applied by the theme resolver, not here).
 	ThemeName string
@@ -62,9 +68,11 @@ func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, err
 		rs = legacy
 	}
 
+	mode, explicit := ResolveModeExplicit(modeOverride, rs.PersistedMode)
 	return &ActiveState{
 		ResolvedState: rs,
-		Mode:          ResolveMode(modeOverride, rs.PersistedMode),
+		Mode:          mode,
+		ModeExplicit:  explicit,
 		ThemeName:     rs.PersistedTheme,
 	}, nil
 }
@@ -79,16 +87,25 @@ func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, err
 // honor --mode/$JENTIC_MODE. Fencing is a safety control — it must never silently
 // degrade to unfenced human just because config resolution failed.
 func ResolveMode(flagOverride, persisted string) string {
+	mode, _ := ResolveModeExplicit(flagOverride, persisted)
+	return mode
+}
+
+// ResolveModeExplicit is ResolveMode plus whether the result came from an
+// explicit rung (flag/env/persisted) or the ladder's human default. Rendering
+// needs the distinction (UX-5): explicit human pins pretty output in pipes,
+// default human keeps the non-TTY→JSON heuristic.
+func ResolveModeExplicit(flagOverride, persisted string) (mode string, explicit bool) {
 	if flagOverride != "" {
-		return flagOverride
+		return flagOverride, true
 	}
 	if env := os.Getenv("JENTIC_MODE"); env != "" { // reserved: 14 BC-9
-		return env
+		return env, true
 	}
 	if persisted != "" {
-		return persisted
+		return persisted, true
 	}
-	return ModeHuman
+	return ModeHuman, false
 }
 
 // loadLegacyState reads the legacy ~/.jentic profile store and maps it onto the

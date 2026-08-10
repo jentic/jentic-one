@@ -172,7 +172,7 @@ func newApisRmCmd(app *app, ident *identityOptions) *cobra.Command {
 			return app.apisRemove(cmd.Context(), ident, o, args[0], revisionID)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
 }
 

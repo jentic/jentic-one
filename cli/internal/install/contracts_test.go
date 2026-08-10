@@ -78,11 +78,11 @@ func TestWizardAnswersAreContracts(t *testing.T) {
 		// Database section.
 		{"PGExposeHostPort/PGPort (published)", "compose", `"10.9.8.7:15432:5432"`},
 		{"PGHost (docker transform)", "config", "host: " + composeServiceDB},
-		{"PGName", "compose", "POSTGRES_DB: customdb"},
+		{"PGName", "compose", `POSTGRES_DB: "customdb"`}, // yamlQuote'd scalar (SEC-4)
 		{"PGName", "config", "name: customdb"},
-		{"PGUser", "compose", "POSTGRES_USER: customuser"},
+		{"PGUser", "compose", `POSTGRES_USER: "customuser"`},
 		{"PGUser", "config", "user: customuser"},
-		{"PGPassword", "compose", "POSTGRES_PASSWORD: custompass"},
+		{"PGPassword", "compose", `POSTGRES_PASSWORD: "custompass"`},
 		{"PGPassword", "config", "password: custompass"},
 		// Components section.
 		{"Apps", "compose", "JENTIC__APPS: registry,control"},

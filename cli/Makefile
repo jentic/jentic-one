@@ -97,13 +97,19 @@ generate-api: ## Regenerate the typed OpenAPI clients (+ spec companions) from t
 	$(OAPI_CODEGEN) -config client/generated/control/cfg.yaml client/generated/control/spec.yaml
 	@echo "Generating Broker API client..."
 	$(OAPI_CODEGEN) -config client/generated/broker/cfg.yaml client/generated/broker/spec.yaml
-	@echo "Generating spec companions (RequiredFields, sensitive-field table, op index)..."
+	@echo "Generating spec companions (RequiredFields, sensitive-field table)..."
 	go run ./tools/specgen control client/generated/control
 	go run ./tools/specgen broker client/generated/broker
 	@echo "API code generation complete."
 
 check-cli-gen: generate-api ## CI drift gate: fail if generated code is stale vs. the specs
-	git diff --exit-code -- client/generated/
+	@# git status --porcelain (not diff --exit-code): diff misses UNTRACKED files,
+	@# so a newly emitted companion or a delete-then-regen artifact would pass (GEN-5).
+	@if [ -n "$$(git status --porcelain -- client/generated/)" ]; then \
+		git status --porcelain -- client/generated/; \
+		echo "check-cli-gen: client/generated/ is stale or has untracked artifacts — run 'make generate-api' and commit." >&2; \
+		exit 1; \
+	fi
 
 generate-config: ## Regenerate the backend config struct from the vendored config schema (impl/6.0 §2)
 	@echo "Vendoring the config schema into the module (go:embed cannot cross module roots, impl/6.0 §1)..."
@@ -113,7 +119,11 @@ generate-config: ## Regenerate the backend config struct from the vendored confi
 	@echo "Config code generation complete."
 
 check-ctl-gen: generate-config ## CI drift gate: fail if the generated config struct is stale vs. the schema
-	git diff --exit-code -- internal/cli/ctl/assets/config-schema.json internal/cli/ctl/generated/config.go
+	@if [ -n "$$(git status --porcelain -- internal/cli/ctl/assets/config-schema.json internal/cli/ctl/generated/config.go)" ]; then \
+		git status --porcelain -- internal/cli/ctl/assets/config-schema.json internal/cli/ctl/generated/config.go; \
+		echo "check-ctl-gen: generated config bindings are stale or untracked — run 'make generate-config' and commit." >&2; \
+		exit 1; \
+	fi
 
 check: lint vet test-race ## Lint, vet, and race-test everything (test-race covers tests/arch + tests/golden)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from typing import Any
 
 from alembic import context
@@ -79,14 +80,27 @@ def get_schema() -> str:
 
     Honours an explicit ``schema_name`` in the active Alembic section
     (used by tests) before falling back to the application config.
+
+    The returned name is interpolated into a quoted ``CREATE SCHEMA``
+    identifier below, so it is validated against a conservative identifier
+    pattern at this sink (SEC-2, defense-in-depth): ``DatabaseConfig`` already
+    enforces the same pattern, but the Alembic-ini override path bypasses
+    pydantic entirely.
     """
     explicit = config.get_section_option(config.config_ini_section, "schema_name")
     if explicit:
-        return explicit
-    app_config = load_config()
-    db_name = _resolve_db_name()
-    db_config: DatabaseConfig = getattr(app_config.databases, db_name)
-    return db_config.schema_name
+        schema = explicit
+    else:
+        app_config = load_config()
+        db_name = _resolve_db_name()
+        db_config: DatabaseConfig = getattr(app_config.databases, db_name)
+        schema = db_config.schema_name
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+        raise ValueError(
+            f"invalid schema_name {schema!r}: must match [A-Za-z_][A-Za-z0-9_]* "
+            "(it is embedded in a CREATE SCHEMA identifier)"
+        )
+    return schema
 
 
 def get_dialect_name() -> str:

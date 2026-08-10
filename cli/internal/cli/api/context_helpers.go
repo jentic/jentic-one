@@ -32,13 +32,30 @@ func reportCoded(aud ux.Audience, err error) error {
 }
 
 // asCoded coerces any error into a *ux.CodedError, preserving one that is already
-// coded (so the taxonomy exit code and actionable step survive) and wrapping
-// everything else as INTERNAL_ERROR (exit 1) — the fail-toward-generic rule from
-// 13 §6.
+// coded (so the taxonomy exit code and actionable step survive), mapping the
+// SDK's typed auth failures to their taxonomy codes (AGT-7: a token-mint
+// failure inside a data command must surface as NOT_AUTHENTICATED /
+// PENDING_APPROVAL, not INTERNAL_ERROR), and wrapping everything else as
+// INTERNAL_ERROR (exit 1) — the fail-toward-generic rule from 13 §6.
 func asCoded(err error) *ux.CodedError {
 	var coded *ux.CodedError
 	if errors.As(err, &coded) {
 		return coded
+	}
+	if errors.Is(err, auth.ErrNotRegistered) {
+		return &ux.CodedError{
+			Code:       ux.CodeNotAuthenticated,
+			Msg:        err.Error(),
+			Actionable: "jentic identity register",
+		}
+	}
+	var pending *auth.PendingError
+	if errors.As(err, &pending) {
+		return &ux.CodedError{
+			Code:       ux.CodePendingApproval,
+			Msg:        err.Error(),
+			Actionable: "wait for an operator to approve this identity, then retry",
+		}
 	}
 	return &ux.CodedError{Code: ux.CodeInternalError, Msg: err.Error()}
 }

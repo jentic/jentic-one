@@ -26,7 +26,15 @@ func newThemeCmd(_ *app) *cobra.Command {
 		Long: "theme persists the global color theme in ~/.config/jentic/config.yaml.\n" +
 			"Override per-invocation with --theme or $JENTIC_THEME. Agent and\n" +
 			"service-account modes always use no-color regardless of this setting.",
-		Args: cobra.ExactArgs(1),
+		// Custom Args error (UX-10): cobra's stock "accepts 1 arg(s), received
+		// 0" doesn't say what the valid values are, even though the usage line
+		// knows them.
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return fmt.Errorf("expected exactly one theme name: dark, light, or no-color (got %d args)", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())

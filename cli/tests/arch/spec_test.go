@@ -211,11 +211,12 @@ var sensitiveSweepAllowlist = map[string]bool{
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored
-// specs and fails on any secret-shaped property name (per impl/3.1 §1's
-// exact-key/suffix heuristics) that lacks `x-sensitive: true` and is not in the
-// reviewed allowlist (impl/0.0 §1H). This makes someone classify every NEW
-// secret-shaped field before it can ship, so Layer-1 typed redaction is driven
-// by the spec, not by naming luck.
+// specs — recursing into nested inline objects, array `items`, and
+// `additionalProperties` sub-schemas (GEN-6) — and fails on any secret-shaped
+// property name (per impl/3.1 §1's exact-key/suffix heuristics) that lacks
+// `x-sensitive: true` and is not in the reviewed allowlist (impl/0.0 §1H). This
+// makes someone classify every NEW secret-shaped field before it can ship, so
+// Layer-1 typed redaction is driven by the spec, not by naming luck.
 //
 // Activation: needs the vendored specs (Phase 1) and the shared isSensitiveKey
 // heuristic (delegated to ux.IsSensitiveKey, the runtime redactor's own
@@ -236,27 +237,27 @@ func Test1H_SensitiveAnnotationSweep(t *testing.T) {
 		}
 		var doc struct {
 			Components struct {
-				Schemas map[string]struct {
-					Properties map[string]map[string]any `yaml:"properties"`
-				} `yaml:"schemas"`
+				Schemas map[string]map[string]any `yaml:"schemas"`
 			} `yaml:"components"`
 		}
 		if err := yaml.Unmarshal(data, &doc); err != nil {
 			t.Fatalf("parse spec %s: %v", p, err)
 		}
+		specName := filepath.Base(filepath.Dir(p))
 		for schemaName, schema := range doc.Components.Schemas {
-			for prop, propSchema := range schema.Properties {
+			sweepSchema(schema, "", func(propPath string, propSchema map[string]any) {
+				prop := lastPathSegment(propPath)
 				if !isSensitiveKey(prop) {
-					continue
+					return
 				}
 				if xSensitiveTrue(propSchema) {
-					continue // properly annotated — good
+					return // properly annotated — good
 				}
 				if sensitiveSweepAllowlist[prop] {
-					continue // reviewed false positive / pending backend annotation
+					return // reviewed false positive / pending backend annotation
 				}
-				unclassified = append(unclassified, finding{spec: filepath.Base(filepath.Dir(p)), schema: schemaName, prop: prop})
-			}
+				unclassified = append(unclassified, finding{spec: specName, schema: schemaName, prop: propPath})
+			})
 		}
 	}
 
@@ -270,6 +271,49 @@ func Test1H_SensitiveAnnotationSweep(t *testing.T) {
 			"Fix: annotate the field with `x-sensitive: true` in the backend Pydantic model, OR add it to sensitiveSweepAllowlist "+
 			"with a one-line reason if it is a genuine false positive.", strings.Join(msgs, "\n  "))
 	}
+}
+
+// sweepSchema recursively visits every property of a YAML schema node,
+// including nested inline objects, array `items`, and `additionalProperties`
+// sub-schemas (GEN-6). $ref'ed sub-schemas are skipped — the referenced named
+// component is swept as its own schemas entry. visit receives the dotted
+// property path and the property's schema node.
+func sweepSchema(node map[string]any, prefix string, visit func(path string, propSchema map[string]any)) {
+	if node == nil || node["$ref"] != nil {
+		return
+	}
+	if props, ok := node["properties"].(map[string]any); ok {
+		for name, raw := range props {
+			propSchema, isMap := raw.(map[string]any)
+			if !isMap {
+				continue
+			}
+			path := name
+			if prefix != "" {
+				path = prefix + "." + name
+			}
+			if propSchema["$ref"] == nil {
+				visit(path, propSchema)
+			}
+			sweepSchema(propSchema, path, visit)
+		}
+	}
+	if items, ok := node["items"].(map[string]any); ok {
+		sweepSchema(items, prefix+"[]", visit)
+	}
+	if extra, ok := node["additionalProperties"].(map[string]any); ok {
+		sweepSchema(extra, prefix+"{}", visit)
+	}
+}
+
+// lastPathSegment returns the property NAME from a dotted sweep path
+// ("connect.client_secret" -> "client_secret"), stripping the []/{} markers.
+func lastPathSegment(path string) string {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		path = path[i+1:]
+	}
+	path = strings.TrimSuffix(path, "[]")
+	return strings.TrimSuffix(path, "{}")
 }
 
 // xSensitiveTrue reports whether a property schema carries `x-sensitive: true`.

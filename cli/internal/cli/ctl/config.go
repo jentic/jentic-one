@@ -10,6 +10,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -130,14 +131,15 @@ func asSettings(v any) (Settings, bool) {
 }
 
 // SensitivePaths returns the set of dotted config paths (server.public_base_url
-// style) whose leaves carry a secret, derived from the embedded schema: a leaf is
-// sensitive if the schema marks it writeOnly or format=password (Pydantic emits
-// both for SecretStr), or its name matches the secret-name heuristic as a
-// backstop (secret/password/passwd/pepper/token/private_key/client_secret). The
-// installer excludes these from the generated --<section>-<field> flags:
-// credentials belong in the wizard's secret-generation/.env flow, never on a
-// command line where they land in `ps`, shell history, and --help (impl/6.0;
-// same fail-closed posture as the ux redactor).
+// style) whose leaves carry a secret, derived from the embedded schema: a leaf
+// is sensitive if the schema marks it writeOnly or format=password (Pydantic
+// emits both for SecretStr), or the secret-name heuristic matches AND the hit
+// is classified as a real secret (or not yet classified — fail-closed) in
+// heuristicClassified. The installer excludes these from the generated
+// --<section>-<field> flags: credentials belong in the wizard's
+// secret-generation/.env flow, never on a command line where they land in
+// `ps`, shell history, and --help (impl/6.0; same fail-closed posture as the
+// ux redactor).
 func SensitivePaths() (map[string]bool, error) {
 	raw, err := SchemaBytes()
 	if err != nil {
@@ -163,8 +165,92 @@ func (d schemaDoc) collectSensitive(props map[string]schemaNode, prefix string, 
 			d.collectSensitive(resolved.Properties, path, out)
 			continue
 		}
-		if node.WriteOnly || node.Format == "password" || sensitiveName(name) {
+		switch {
+		case node.WriteOnly || node.Format == "password":
+			// Schema markers are authoritative (Pydantic emits both for SecretStr).
 			out[path] = true
+		case sensitiveName(name):
+			// Name heuristic is only a backstop, and it must never SILENTLY
+			// steer (GEN-4): a benign new field like `token_ttl_seconds` would
+			// otherwise vanish from the flags with no error. Every heuristic hit
+			// must be classified in heuristicClassified — secret (exclude) or
+			// false positive (keep the flag). Unclassified hits stay excluded
+			// (fail-closed) and are surfaced by UnclassifiedSensitiveNames,
+			// which a test pins to empty.
+			if classified, ok := heuristicClassified[path]; !ok || classified {
+				out[path] = true
+			}
+		}
+	}
+}
+
+// heuristicClassified is the reviewed classification for schema leaves that
+// match the secret-name heuristic but carry NO writeOnly/format=password
+// marker (the Test1H classify-or-fail posture, applied to config flags —
+// GEN-4). true = genuine secret, keep excluded from flags (FOLLOW-UP: annotate
+// the backend Pydantic model — SecretStr or json_schema_extra writeOnly — and
+// delete the entry); false = reviewed false positive, expose the flag.
+// TestSensitiveHeuristicClassified fails on any unlisted heuristic hit, so a
+// new secret-shaped field can neither ship on the command line NOR silently
+// lose its flag.
+var heuristicClassified = map[string]bool{
+	// Real secret; the backend model predates the marker convention.
+	"broker.jwt_secret": true,
+}
+
+// UnclassifiedSensitiveNames returns the schema leaves the name heuristic
+// matched that have neither a schema marker nor a heuristicClassified entry.
+// Runtime treats them as sensitive (fail-closed); the arch test pins this list
+// to empty so every hit is consciously classified.
+func UnclassifiedSensitiveNames() ([]string, error) {
+	hits, err := heuristicHitsWithoutMarker()
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, path := range hits {
+		if _, ok := heuristicClassified[path]; !ok {
+			out = append(out, path)
+		}
+	}
+	return out, nil
+}
+
+// heuristicHitsWithoutMarker returns every schema leaf the secret-name
+// heuristic matches that carries NO writeOnly/format=password marker — the
+// exact population heuristicClassified exists to classify. Sorted for stable
+// diagnostics.
+func heuristicHitsWithoutMarker() ([]string, error) {
+	raw, err := SchemaBytes()
+	if err != nil {
+		return nil, err
+	}
+	var doc schemaDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse embedded config schema: %w", err)
+	}
+	var out []string
+	doc.collectHeuristicHits(doc.Properties, "", &out)
+	sort.Strings(out)
+	return out, nil
+}
+
+func (d schemaDoc) collectHeuristicHits(props map[string]schemaNode, prefix string, out *[]string) {
+	for name, node := range props {
+		path := name
+		if prefix != "" {
+			path = prefix + "." + name
+		}
+		resolved := d.resolve(node)
+		if len(resolved.Properties) > 0 {
+			d.collectHeuristicHits(resolved.Properties, path, out)
+			continue
+		}
+		if node.WriteOnly || node.Format == "password" {
+			continue // marker-classified — nothing to review
+		}
+		if sensitiveName(name) {
+			*out = append(*out, path)
 		}
 	}
 }

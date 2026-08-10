@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/profile"
@@ -35,7 +36,34 @@ func newProfileCmd(app *app) *cobra.Command {
 	cmd.AddCommand(newProfileViewCmd(app))
 	cmd.AddCommand(newProfileUseCmd(app))
 	cmd.AddCommand(newProfileAddKeyCmd(app))
+	cmd.AddCommand(newProfileDeleteStubCmd())
 	return cmd
+}
+
+// newProfileDeleteStubCmd is a hidden signpost for V1 muscle memory (UX-7):
+// `jentic profile delete` existed in the V1 CLI, but in V2 profiles are a
+// read/switch view and removal happens on the context (or via reset). Without
+// this stub the user gets a bare cobra `unknown command "delete"` with no
+// pointer to the successor.
+func newProfileDeleteStubCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "delete <name>",
+		Aliases: []string{"rm", "remove"},
+		Short:   "Removed — use `jentic context delete` (or `jentic reset`)",
+		Hidden:  true,
+		Args:    cobra.ArbitraryArgs,
+		RunE: func(_ *cobra.Command, args []string) error {
+			target := ""
+			if len(args) > 0 {
+				target = " " + args[0]
+			}
+			return &ux.CodedError{
+				Code:       ux.CodeMissingArgument,
+				Msg:        "`jentic profile delete` was removed in the V2 CLI: profiles are a read/switch view, and removal happens on the context",
+				Actionable: fmt.Sprintf("jentic context delete%s  (or `jentic reset` to wipe local state)", target),
+			}
+		},
+	}
 }
 
 func newProfileViewCmd(app *app) *cobra.Command {

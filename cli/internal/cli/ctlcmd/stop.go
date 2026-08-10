@@ -42,7 +42,7 @@ func newStopCmd(app *app) *cobra.Command {
 		"how long to wait for graceful shutdown before SIGKILL")
 	cmd.Flags().BoolVar(&opts.volumes, "volumes", false,
 		"also remove the Docker stack's data volumes (destroys the database)")
-	cmd.Flags().BoolVar(&opts.yes, "yes", false,
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false,
 		"skip the confirmation prompt for --volumes")
 	return cmd
 }

@@ -54,7 +54,7 @@ func newUninstallCmd(app *app) *cobra.Command {
 			return app.uninstallE(opts)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the confirmation prompts")
+	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the confirmation prompts")
 	cmd.Flags().BoolVar(&opts.purge, "purge", false,
 		"also remove the Docker stack's data volume (destroys the database)")
 	cmd.Flags().BoolVar(&opts.keepData, "keep-data", false,

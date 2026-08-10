@@ -192,6 +192,30 @@ func TestRetry_429OverBudgetSurfaces(t *testing.T) {
 	}
 }
 
+// TestRetry_429PerpetualSurfacesAfterSingleRetry is the SEC-3 regression: a
+// server returning 429 + a small Retry-After on EVERY attempt must get exactly
+// one retry and then surface — not loop until a context deadline (which the
+// generated SDK's default client may not even have).
+func TestRetry_429PerpetualSurfacesAfterSingleRetry(t *testing.T) {
+	shrinkRetryKnobs(t)
+	fake := &fakeRT{respond: func(_ int, _ *http.Request) (*http.Response, error) {
+		return resp(http.StatusTooManyRequests, map[string]string{"Retry-After": "0"}), nil
+	}}
+	rt := newRetryTransport(fake, auth.Credentials{InjectedBearerToken: "at_x"})
+
+	r, err := rt.RoundTrip(newReq(t, http.MethodGet, "https://x.test/thing", ""))
+	if err != nil {
+		t.Fatalf("RoundTrip: %v", err)
+	}
+	defer closeResp(r)
+	if r.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429 surfaced", r.StatusCode)
+	}
+	if got := int(fake.calls); got != 2 {
+		t.Errorf("calls = %d, want exactly 2 (single Retry-After retry)", got)
+	}
+}
+
 // TestRetry_401InvalidatesTokenForExchangeableCreds: a 401 on the disk
 // (JWT-bearer) path invalidates the cached token so the NEXT request re-exchanges.
 // Here the stub base URL is unresolvable, so the inline re-exchange fails and the

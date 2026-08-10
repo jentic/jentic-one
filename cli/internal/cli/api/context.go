@@ -46,9 +46,12 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 		force bool
 	)
 	cmd := &cobra.Command{
-		Use:   "create <name>",
-		Short: "Create a context binding an environment + identity + mode",
-		Args:  cobra.ExactArgs(1),
+		Use: "create <name>",
+		// "add" aligns the verb with `env add`/`identity add` (UX-6); "create"
+		// stays the canonical name.
+		Aliases: []string{"add"},
+		Short:   "Create a context binding an environment + identity + mode",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
@@ -221,9 +224,11 @@ func newContextViewCmd(_ *app) *cobra.Command {
 func newContextDeleteCmd(_ *app) *cobra.Command {
 	var withIdentity bool
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
-		Short: "Delete a context (the successor of `profile delete`)",
-		Long: "delete removes a context. It refuses to delete the ACTIVE context\n" +
+		Use:     "delete <name>",
+		Aliases: []string{"rm"},
+		Short:   "Delete a context",
+		Long: "delete removes a context (the V2 equivalent of removing a V1 profile).\n" +
+			"It refuses to delete the ACTIVE context\n" +
 			"(switch first) to avoid a dangling active_context. With --identity it also\n" +
 			"removes the referenced identity iff no other context uses it.",
 		Args: cobra.ExactArgs(1),
