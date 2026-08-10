@@ -163,13 +163,22 @@ async def import_apis(
     ctx: Context = Depends(get_ctx),
 ) -> JSONResponse:
     """Import OpenAPI/Arazzo content as new API revisions (async)."""
+    # Attribute each resulting revision to the authenticated principal unless the
+    # client supplied an explicit `submitted_by` override (e.g. importing on
+    # behalf of someone else). The job row's `created_by` records the caller
+    # either way; this default carries the same principal through the ingest
+    # pipeline onto ApiRevision.submitted_by, which was previously left null.
+    sources = [s.model_dump(mode="json") for s in body.sources]
+    for source in sources:
+        if source.get("submitted_by") is None:
+            source["submitted_by"] = identity.sub
     async with ctx.admin_db.transaction() as session:
         job_id = await enqueue_job(
             session,
             JobKind.IMPORT,
             created_by=identity.sub,
             actor_type=identity.actor_type,
-            payload={"sources": [s.model_dump(mode="json") for s in body.sources]},
+            payload={"sources": sources},
         )
 
     resp = ApiImportResponse(

@@ -71,5 +71,10 @@ class Overlay(AuditableMixin, RegistryBase):
     confirmed_by_execution_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     deprecated_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    #: Why the overlay was deprecated (``OverlayDeprecationReason`` value: ``manual`` /
+    #: ``rollback`` / ``superseded_by_reimport``). Written at the same moment as
+    #: ``deprecated_at``; NULL for rows deprecated before the column existed. Free-form
+    #: string (no DB enum) for the same forward-compatibility reason as ``status``.
+    deprecated_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     api: Mapped[Api] = relationship(back_populates="overlays")

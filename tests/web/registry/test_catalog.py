@@ -534,10 +534,12 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
         github_url=None,
         registered=False,
     )
-    assert CatalogService(web_context)._to_import_source(view) == {
+    identity = Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    assert CatalogService(web_context)._to_import_source(view, identity) == {
         "type": "url",
         "url": "https://example.test/coincap/openapi.json",
         "origin": "catalog",
+        "submitted_by": "usr_importer",
         "vendor": "coincap.io",
         "api_name": "coincap.io",
         "catalog_api_id": "coincap.io",
@@ -554,7 +556,9 @@ def test_to_import_source_threads_api_name_with_slash(web_context: Context) -> N
         github_url=None,
         registered=False,
     )
-    result = CatalogService(web_context)._to_import_source(view)
+    result = CatalogService(web_context)._to_import_source(
+        view, Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    )
     assert result["api_name"] == "slack.com/api"
     assert result["vendor"] == "slack.com"
     assert result["origin"] == "catalog"
@@ -573,10 +577,13 @@ def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:
         github_url=None,
         registered=False,
     )
-    assert CatalogService(web_context)._to_import_source(view) == {
+    assert CatalogService(web_context)._to_import_source(
+        view, Identity(sub="usr_importer", email="u@test.local", permissions=[])
+    ) == {
         "type": "url",
         "url": "https://example.test/x/openapi.json",
         "origin": "catalog",
+        "submitted_by": "usr_importer",
         "api_name": "x",
         "catalog_api_id": "x",
     }

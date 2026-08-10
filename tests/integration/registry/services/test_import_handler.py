@@ -576,6 +576,9 @@ async def test_overlay_rollback_restores_superseded_revision(
         ).scalar_one()
         assert overlay_row.status == "deprecated"
         assert overlay_row.deprecated_at is not None
+        # The cause is persisted so clients can durably label the event "rolled back"
+        # instead of re-deriving the verb from the (moving) current revision pointer.
+        assert overlay_row.deprecated_reason == "rollback"
 
 
 async def test_overlay_rollback_conflict_when_not_live(
@@ -1082,6 +1085,7 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
         ).scalar_one()
         assert overlay_row.status == "deprecated"
         assert overlay_row.deprecated_at is not None
+        assert overlay_row.deprecated_reason == "superseded_by_reimport"
 
     # --- Simulate a crash between the committed re-ingest and the separate-transaction
     # deprecate: reset the overlay to CONFIRMED (as if the deprecate never committed) and
