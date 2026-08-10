@@ -47,8 +47,11 @@ func binaryCommandPaths(t *testing.T) (paths map[string]bool, flags map[string]m
 // invocationLine matches a shell line (in fenced blocks OR inline `code`) that
 // starts an invocation of one of our binaries. The trailing capture is the rest
 // of the line, from which we peel the command PATH (leading bareword tokens)
-// off the arguments/placeholders/flags.
-var invocationLine = regexp.MustCompile(`(?m)\b(jentic|jenticctl)\b([^\n` + "`" + `]*)`)
+// off the arguments/placeholders/flags. The binary name must be followed by
+// whitespace (or end of line/inline-code span): "jentic/jentic-public-apis"
+// (a GitHub repo slug) is a word-boundary match but NOT an invocation, and
+// must not have the line's flags attributed to the `jentic` binary.
+var invocationLine = regexp.MustCompile(`(?m)\b(jentic|jenticctl)\b(?:[ \t]([^\n` + "`" + `]*))?`)
 
 // commandToken is a plausible subcommand name: lowercase letters/digits/hyphens.
 // A token that isn't one of these (a flag, a <placeholder>, a "quoted string", a
@@ -56,28 +59,64 @@ var invocationLine = regexp.MustCompile(`(?m)\b(jentic|jenticctl)\b([^\n` + "`" 
 // rest are arguments, not part of the command tree.
 var commandToken = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
-// extractCommandPaths pulls the set of "<binary> <sub> <sub>…" command paths a
-// skill body references. For each invocation it consumes leading command tokens
-// until the first argument/flag/placeholder, so "jentic access request
-// --provision <x>" yields "jentic access request".
-func extractCommandPaths(body string) []string {
+// invocation is one documented binary invocation: the resolved command path
+// plus every long-flag name that appears on the same line.
+type invocation struct {
+	path  string
+	flags []string
+}
+
+// longFlagToken matches a long flag at the start of a token and captures its
+// name, tolerating an attached "=value" ("--trace=abc" -> "trace").
+var longFlagToken = regexp.MustCompile(`^--([a-z][a-z0-9-]*)`)
+
+// extractInvocations pulls every documented invocation from a skill body: the
+// command path (leading bareword tokens) and the long flags on the rest of the
+// line. Quoted arguments are elided BEFORE tokenizing so a "--flag" inside a
+// JSON body or quoted string ('{"note": "--not-a-flag"}') is never mistaken
+// for a flag of the command.
+func extractInvocations(body string) []invocation {
 	matches := invocationLine.FindAllStringSubmatch(body, -1)
-	out := make([]string, 0, len(matches))
+	out := make([]invocation, 0, len(matches))
 	for _, m := range matches {
 		bin := m[1]
-		rest := strings.Fields(m[2])
+		rest := strings.Fields(stripQuoted(m[2]))
 		parts := []string{bin}
+		var flags []string
+		pathDone := false
 		for _, tok := range rest {
-			// Stop at the first non-command token (flag, placeholder, quoted
-			// arg, slash/dot-bearing id, etc.).
-			if !commandToken.MatchString(tok) {
-				break
+			if !pathDone && commandToken.MatchString(tok) {
+				parts = append(parts, tok)
+				continue
 			}
-			parts = append(parts, tok)
+			pathDone = true
+			if fm := longFlagToken.FindStringSubmatch(tok); fm != nil {
+				flags = append(flags, fm[1])
+			}
 		}
-		out = append(out, strings.Join(parts, " "))
+		out = append(out, invocation{path: strings.Join(parts, " "), flags: flags})
 	}
 	return out
+}
+
+// stripQuoted removes single- and double-quoted spans from a line so their
+// contents can't be misread as flags or command tokens. Unterminated quotes
+// drop the tail of the line — safer to under-read than to false-positive.
+func stripQuoted(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\'' || c == '"' {
+			end := strings.IndexByte(s[i+1:], c)
+			if end < 0 {
+				break
+			}
+			i += end + 1
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // knownPathPrefix reports whether candidate is a real command path OR a valid
@@ -106,8 +145,13 @@ func knownPathPrefix(candidate string, paths map[string]bool) bool {
 // binary no longer has. Distinct from the skill-DRIFT gate (which only checks
 // the embedded copies are byte-identical to their source) — this validates the
 // source's CONTENT against the real command tree.
+//
+// It also validates FLAGS (review gap: the gate checked command paths but not
+// flags, which let a skill teach `history export` without its required
+// `--trace`): every `--flag` token on an invocation line whose command path
+// resolves exactly must exist on that command (inherited flags included).
 func TestSkillsReferenceOnlyRealCommands(t *testing.T) {
-	paths, _ := binaryCommandPaths(t)
+	paths, flags := binaryCommandPaths(t)
 
 	entries, err := os.ReadDir(skillContentDir)
 	if err != nil {
@@ -123,11 +167,32 @@ func TestSkillsReferenceOnlyRealCommands(t *testing.T) {
 			t.Fatalf("read %s: %v", e.Name(), err)
 		}
 		scanned++
-		for _, cand := range extractCommandPaths(string(body)) {
-			if !knownPathPrefix(cand, paths) {
+		for _, inv := range extractInvocations(string(body)) {
+			if !knownPathPrefix(inv.path, paths) {
 				t.Errorf("skill %s references unknown command %q — it is not in the CLI reference; "+
 					"a renamed/removed command must be updated in skills/<name>/SKILL.md (then `make skills`)",
-					e.Name(), cand)
+					e.Name(), inv.path)
+				continue
+			}
+			// Flags are only checkable when the path resolves to an exact
+			// command (a bare group/prefix mention can't say which subcommand's
+			// flags apply). Exact-path lines are the ones agents copy verbatim,
+			// so they are precisely the surface that must not teach dead flags.
+			known, exact := flags[inv.path]
+			if !exact {
+				continue
+			}
+			for _, fl := range inv.flags {
+				// Cobra registers --help on every command implicitly; the
+				// generated reference omits it, but it is always valid.
+				if fl == "help" {
+					continue
+				}
+				if !known[fl] {
+					t.Errorf("skill %s documents flag --%s on %q, but the command does not define it; "+
+						"update skills/<name>/SKILL.md (then `make skills`)",
+						e.Name(), fl, inv.path)
+				}
 			}
 		}
 	}

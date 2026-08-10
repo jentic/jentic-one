@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
@@ -327,14 +328,45 @@ func WriteComposeArtifacts(d *Draft, cfg ComposeConfig) error {
 	// The log sink inside the containers writes here as uid 999. Mode bits are
 	// the only tool available without root (chown to a foreign uid fails, and
 	// uid 999 belongs to no host group), so the dir is world-writable and the
-	// 0700 ~/.jentic parent is what keeps other host users out.
-	if err := os.MkdirAll(cfg.LogsHostDir, 0o777); err != nil { //nolint:gosec // container uid must write; parent dir is 0700.
+	// 0700 ~/.jentic parent is what keeps other host users out. That parent
+	// invariant is ASSERTED here (SEC-6), not assumed: if a future change
+	// relocates the logs dir outside a private parent, the install fails loud
+	// instead of silently leaving a world-writable directory exposed.
+	if err := assertPrivateParent(cfg.LogsHostDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.LogsHostDir, 0o777); err != nil { //nolint:gosec // container uid must write; parent dir asserted 0700 above.
 		return fmt.Errorf("create logs dir: %w", err)
 	}
 	// MkdirAll applies the umask and is a no-op on an existing dir (a prior
 	// install created it 0700), so set the mode explicitly.
 	if err := os.Chmod(cfg.LogsHostDir, 0o777); err != nil { //nolint:gosec // see above.
 		return fmt.Errorf("chmod logs dir: %w", err)
+	}
+	return nil
+}
+
+// assertPrivateParent enforces the invariant that justifies a world-writable
+// logs dir: its parent (normally ~/.jentic) must be accessible by the owner
+// only (no group/other bits), so other host users can never reach the 0777
+// directory inside. Called at write time (SEC-6) so the guarantee cannot
+// silently evaporate if the logs dir is ever relocated. Skipped on Windows,
+// where Unix permission bits are not meaningful (ACLs govern access and
+// os.Stat reports a synthetic mode).
+func assertPrivateParent(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	parent := filepath.Dir(dir)
+	fi, err := os.Stat(parent)
+	if err != nil {
+		return fmt.Errorf("stat logs parent %s: %w", parent, err)
+	}
+	if perm := fi.Mode().Perm() & 0o077; perm != 0 {
+		return fmt.Errorf(
+			"refusing to create world-writable logs dir %s: parent %s is group/other-accessible (%v, want 0700) — "+
+				"the 0777 mode is only safe under a private parent; chmod 700 %s and retry",
+			dir, parent, fi.Mode().Perm(), parent)
 	}
 	return nil
 }

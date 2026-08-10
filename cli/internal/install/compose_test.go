@@ -31,6 +31,18 @@ func composeConfigFor(dir string) ComposeConfig {
 	}
 }
 
+// privateTempDir returns a temp dir chmodded 0700, matching the ~/.jentic
+// invariant WriteComposeArtifacts asserts before creating the 0777 logs dir
+// (SEC-6). t.TempDir() alone yields 0755 subdirs, which the guard rejects.
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestMigrateArgsDisablesTTY(t *testing.T) {
 	args := migrateArgs("/home/u/.jentic/docker-compose.yaml")
 	got := strings.Join(args, " ")
@@ -156,11 +168,41 @@ func TestRenderComposeBindHost(t *testing.T) {
 	}
 }
 
-func TestWriteComposeArtifactsModes(t *testing.T) {
+// TestWriteComposeArtifactsRefusesExposedParent (SEC-6): the 0777 logs dir is
+// only safe because its parent is owner-only. If the parent is group/other
+// accessible, the install must fail loud rather than silently leave a
+// world-writable directory reachable by other host users.
+func TestWriteComposeArtifactsRefusesExposedParent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes")
 	}
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil { // simulate a non-private parent
+		t.Fatal(err)
+	}
+	d := NewDraft()
+	d.RuntimePath = RuntimeDocker
+	d.DBBackend = BackendPostgres
+	d.PGPassword = "test-pw"
+	cfg := composeConfigFor(dir)
+
+	err := WriteComposeArtifacts(d, cfg)
+	if err == nil {
+		t.Fatal("WriteComposeArtifacts succeeded under a group/other-accessible parent; want refusal")
+	}
+	if !strings.Contains(err.Error(), "world-writable") || !strings.Contains(err.Error(), "chmod 700") {
+		t.Errorf("error should explain the invariant and the fix, got: %v", err)
+	}
+	if _, statErr := os.Stat(cfg.LogsHostDir); !os.IsNotExist(statErr) {
+		t.Errorf("logs dir must not be created when the parent invariant fails, stat err = %v", statErr)
+	}
+}
+
+func TestWriteComposeArtifactsModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file modes")
+	}
+	dir := privateTempDir(t)
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres
@@ -317,7 +359,7 @@ func TestRenderComposePostgresRequiresPassword(t *testing.T) {
 }
 
 func TestWriteComposeArtifactsSQLite(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	d := NewDraft()
 	d.DBBackend = BackendSQLite
 	d.RuntimePath = RuntimeDocker
@@ -338,7 +380,7 @@ func TestWriteComposeArtifactsSQLite(t *testing.T) {
 // writes an init SQL file anymore, and a stale one from an older install is
 // cleaned up so nothing suggests it is still consulted.
 func TestWriteComposeArtifactsRemovesLegacyInitSQL(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	d := NewDraft()
 	d.RuntimePath = RuntimeDocker
 	d.DBBackend = BackendPostgres

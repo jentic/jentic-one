@@ -327,13 +327,17 @@ func executePlanPayload(req *http.Request) map[string]any {
 // carry one: that is the exact source the SDK loader (client/config) reads, so
 // the header is present on the execute path whenever the env var is set,
 // independent of whether the CLI's ActiveState round-tripped it.
+//
+// The value is untrusted env input, so it passes through the SDK's
+// client.SanitizeSessionID (charset + length clamp, SEC-5) — the same
+// normalization the SDK applies on its own session editor.
 func sessionIDFromContext(cmd *cobra.Command) string {
 	if st := clictx.FromContext(cmd.Context()); st != nil && st.ResolvedState != nil {
 		if st.SessionID != "" {
-			return st.SessionID
+			return sdkclient.SanitizeSessionID(st.SessionID)
 		}
 	}
-	return os.Getenv("JENTIC_SESSION_ID")
+	return sdkclient.SanitizeSessionID(os.Getenv("JENTIC_SESSION_ID"))
 }
 
 // newTraceparent builds a fresh W3C Trace Context `traceparent` header value

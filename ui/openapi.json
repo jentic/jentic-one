@@ -1089,7 +1089,8 @@
           "key": {
             "description": "The API key secret. Stored encrypted; never returned after create.",
             "title": "Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "location": {
             "$ref": "#/components/schemas/CredentialLocation",
@@ -1308,7 +1309,8 @@
                 "type": "null"
               }
             ],
-            "title": "Key"
+            "title": "Key",
+            "x-sensitive": true
           },
           "location": {
             "anyOf": [
@@ -2043,7 +2045,8 @@
           },
           "password": {
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "provider": {
             "default": "static",
@@ -2128,7 +2131,8 @@
                 "type": "null"
               }
             ],
-            "title": "Password"
+            "title": "Password",
+            "x-sensitive": true
           },
           "runtime_config": {
             "anyOf": [
@@ -2218,7 +2222,8 @@
           },
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "type": {
             "const": "bearer_token",
@@ -2293,7 +2298,8 @@
                 "type": "null"
               }
             ],
-            "title": "Token"
+            "title": "Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "bearer_token",
@@ -2601,13 +2607,15 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Current Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "new_password": {
             "maxLength": 128,
             "minLength": 12,
             "title": "New Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -2684,7 +2692,8 @@
             "maxLength": 128,
             "minLength": 12,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -2703,7 +2712,8 @@
           "secret": {
             "additionalProperties": true,
             "title": "Secret",
-            "type": "object"
+            "type": "object",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -3799,7 +3809,8 @@
         "properties": {
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "token_type_hint": {
             "anyOf": [
@@ -3887,7 +3898,8 @@
           },
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -4058,7 +4070,8 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -4073,7 +4086,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -4325,7 +4339,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -4663,7 +4678,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "grant_type": {
             "default": "client_credentials",
@@ -4765,7 +4781,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "name": {
             "anyOf": [
@@ -6214,13 +6231,15 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Invite Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "password": {
             "maxLength": 128,
             "minLength": 12,
             "title": "Password",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -6308,7 +6327,8 @@
           },
           "registration_access_token": {
             "title": "Registration Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "registration_client_uri": {
             "title": "Registration Client Uri",
@@ -6372,7 +6392,8 @@
         "properties": {
           "token": {
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "token_type_hint": {
             "anyOf": [
@@ -7019,7 +7040,8 @@
           "secret_access_key": {
             "description": "AWS secret access key. Stored encrypted; never returned after create.",
             "title": "Secret Access Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "server_variables": {
             "anyOf": [
@@ -7045,7 +7067,8 @@
               }
             ],
             "description": "Optional temporary-credential session token (STS). Expires; re-save when it does.",
-            "title": "Session Token"
+            "title": "Session Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "sigv4",
@@ -7147,7 +7170,8 @@
                 "type": "null"
               }
             ],
-            "title": "Secret Access Key"
+            "title": "Secret Access Key",
+            "x-sensitive": true
           },
           "server_variables": {
             "anyOf": [
@@ -7172,7 +7196,8 @@
                 "type": "null"
               }
             ],
-            "title": "Session Token"
+            "title": "Session Token",
+            "x-sensitive": true
           },
           "type": {
             "const": "sigv4",
@@ -7198,7 +7223,8 @@
                 "type": "null"
               }
             ],
-            "title": "Assertion"
+            "title": "Assertion",
+            "x-sensitive": true
           },
           "client_id": {
             "anyOf": [
@@ -7220,7 +7246,8 @@
                 "type": "null"
               }
             ],
-            "title": "Client Secret"
+            "title": "Client Secret",
+            "x-sensitive": true
           },
           "code": {
             "anyOf": [
@@ -7268,7 +7295,8 @@
                 "type": "null"
               }
             ],
-            "title": "Refresh Token"
+            "title": "Refresh Token",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -7282,7 +7310,8 @@
         "properties": {
           "access_token": {
             "title": "Access Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "expires_in": {
             "title": "Expires In",
@@ -7297,7 +7326,8 @@
                 "type": "null"
               }
             ],
-            "title": "Id Token"
+            "title": "Id Token",
+            "x-sensitive": true
           },
           "refresh_token": {
             "anyOf": [
@@ -7308,7 +7338,8 @@
                 "type": "null"
               }
             ],
-            "title": "Refresh Token"
+            "title": "Refresh Token",
+            "x-sensitive": true
           },
           "token_type": {
             "default": "bearer",
@@ -7538,7 +7569,8 @@
         "properties": {
           "api_key": {
             "title": "Api Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "toolkit": {
             "$ref": "#/components/schemas/ToolkitResponse"
@@ -7760,7 +7792,8 @@
         "properties": {
           "api_key": {
             "title": "Api Key",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "key": {
             "$ref": "#/components/schemas/ToolkitKeyResponse"
@@ -8352,7 +8385,8 @@
           },
           "invite_token": {
             "title": "Invite Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           },
           "user": {
             "$ref": "#/components/schemas/UserResponse"

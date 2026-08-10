@@ -119,6 +119,48 @@ func TestSessionEditor_AttachedWhenSet(t *testing.T) {
 	}
 }
 
+// TestSanitizeSessionID: the untrusted session id (usually $JENTIC_SESSION_ID)
+// is clamped to a safe header charset and length before it rides on any request
+// (SEC-5). Hostile bytes are dropped, not fatal — correlation is best-effort.
+func TestSanitizeSessionID(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"uuid untouched", "550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440000"},
+		{"namespaced untouched", "ci:run_42.attempt-1", "ci:run_42.attempt-1"},
+		{"crlf smuggling stripped", "sess\r\nX-Injected: 1", "sessX-Injected:1"},
+		{"spaces and quotes stripped", `a "quoted id"`, "aquotedid"},
+		{"all hostile becomes empty", "\r\n\x00 ", ""},
+		{"overlong truncated", strings.Repeat("a", 300), strings.Repeat("a", 128)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeSessionID(tc.in); got != tc.want {
+				t.Errorf("SanitizeSessionID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSessionEditor_SanitizedOnRequest: a session id with hostile bytes is
+// scrubbed (not sent verbatim, not fatal) on the wire.
+func TestSessionEditor_SanitizedOnRequest(t *testing.T) {
+	var captured *http.Request
+	cli, err := NewControl(Config{
+		ControlBaseURL:      "https://control.example",
+		InjectedBearerToken: "tok",
+		SessionID:           "sess 123\t<script>",
+		HTTPClient:          recordingClient(&captured),
+	})
+	if err != nil {
+		t.Fatalf("NewControl: %v", err)
+	}
+	if _, err := cli.HealthWithResponse(context.Background()); err != nil {
+		t.Fatalf("HealthWithResponse: %v", err)
+	}
+	if got := captured.Header.Get("X-Jentic-Session-Id"); got != "sess123script" {
+		t.Errorf("X-Jentic-Session-Id = %q, want sanitized %q", got, "sess123script")
+	}
+}
+
 func TestSessionEditor_AbsentWhenUnset(t *testing.T) {
 	var captured *http.Request
 	cli, err := NewControl(Config{

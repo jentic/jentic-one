@@ -694,6 +694,7 @@ components:
           description: The API key secret. Stored encrypted; never returned after create.
           title: Key
           type: string
+          x-sensitive: true
         location:
           $ref: '#/components/schemas/CredentialLocation'
           description: Where to inject the key on upstream calls.
@@ -830,6 +831,7 @@ components:
           - type: string
           - type: 'null'
           title: Key
+          x-sensitive: true
         location:
           anyOf:
           - $ref: '#/components/schemas/CredentialLocation'
@@ -1269,6 +1271,7 @@ components:
         password:
           title: Password
           type: string
+          x-sensitive: true
         provider:
           default: static
           title: Provider
@@ -1317,6 +1320,7 @@ components:
           - type: string
           - type: 'null'
           title: Password
+          x-sensitive: true
         runtime_config:
           anyOf:
           - $ref: '#/components/schemas/RuntimeConfig'
@@ -1367,6 +1371,7 @@ components:
         token:
           title: Token
           type: string
+          x-sensitive: true
         type:
           const: bearer_token
           title: Type
@@ -1407,6 +1412,7 @@ components:
           - type: string
           - type: 'null'
           title: Token
+          x-sensitive: true
         type:
           const: bearer_token
           title: Type
@@ -1620,11 +1626,13 @@ components:
           minLength: 1
           title: Current Password
           type: string
+          x-sensitive: true
         new_password:
           maxLength: 128
           minLength: 12
           title: New Password
           type: string
+          x-sensitive: true
       required:
       - current_password
       - new_password
@@ -1684,6 +1692,7 @@ components:
           minLength: 12
           title: Password
           type: string
+          x-sensitive: true
       required:
       - email
       - password
@@ -1698,6 +1707,7 @@ components:
           additionalProperties: true
           title: Secret
           type: object
+          x-sensitive: true
       required:
       - credential
       - secret
@@ -2410,6 +2420,7 @@ components:
         token:
           title: Token
           type: string
+          x-sensitive: true
         token_type_hint:
           anyOf:
           - type: string
@@ -2459,6 +2470,7 @@ components:
         token:
           title: Token
           type: string
+          x-sensitive: true
       required:
       - token
       - expires_at
@@ -2569,6 +2581,7 @@ components:
           minLength: 1
           title: Password
           type: string
+          x-sensitive: true
       required:
       - email
       - password
@@ -2580,6 +2593,7 @@ components:
         access_token:
           title: Access Token
           type: string
+          x-sensitive: true
         expires_in:
           title: Expires In
           type: integer
@@ -2759,6 +2773,7 @@ components:
         access_token:
           title: Access Token
           type: string
+          x-sensitive: true
         expires_in:
           title: Expires In
           type: integer
@@ -2964,6 +2979,7 @@ components:
           - type: string
           - type: 'null'
           title: Client Secret
+          x-sensitive: true
         grant_type:
           default: client_credentials
           title: Grant Type
@@ -3021,6 +3037,7 @@ components:
           - type: string
           - type: 'null'
           title: Client Secret
+          x-sensitive: true
         name:
           anyOf:
           - type: string
@@ -3969,11 +3986,13 @@ components:
           minLength: 1
           title: Invite Token
           type: string
+          x-sensitive: true
         password:
           maxLength: 128
           minLength: 12
           title: Password
           type: string
+          x-sensitive: true
       required:
       - invite_token
       - password
@@ -4030,6 +4049,7 @@ components:
         registration_access_token:
           title: Registration Access Token
           type: string
+          x-sensitive: true
         registration_client_uri:
           title: Registration Client Uri
           type: string
@@ -4078,6 +4098,7 @@ components:
         token:
           title: Token
           type: string
+          x-sensitive: true
         token_type_hint:
           anyOf:
           - type: string
@@ -4477,6 +4498,7 @@ components:
           description: AWS secret access key. Stored encrypted; never returned after create.
           title: Secret Access Key
           type: string
+          x-sensitive: true
         server_variables:
           anyOf:
           - additionalProperties:
@@ -4490,6 +4512,7 @@ components:
           - type: 'null'
           description: Optional temporary-credential session token (STS). Expires; re-save when it does.
           title: Session Token
+          x-sensitive: true
         type:
           const: sigv4
           title: Type
@@ -4545,6 +4568,7 @@ components:
           - type: string
           - type: 'null'
           title: Secret Access Key
+          x-sensitive: true
         server_variables:
           anyOf:
           - additionalProperties:
@@ -4557,6 +4581,7 @@ components:
           - type: string
           - type: 'null'
           title: Session Token
+          x-sensitive: true
         type:
           const: sigv4
           title: Type
@@ -4573,6 +4598,7 @@ components:
           - type: string
           - type: 'null'
           title: Assertion
+          x-sensitive: true
         client_id:
           anyOf:
           - type: string
@@ -4583,6 +4609,7 @@ components:
           - type: string
           - type: 'null'
           title: Client Secret
+          x-sensitive: true
         code:
           anyOf:
           - type: string
@@ -4606,6 +4633,7 @@ components:
           - type: string
           - type: 'null'
           title: Refresh Token
+          x-sensitive: true
       required:
       - grant_type
       title: TokenRequest
@@ -4616,6 +4644,7 @@ components:
         access_token:
           title: Access Token
           type: string
+          x-sensitive: true
         expires_in:
           title: Expires In
           type: integer
@@ -4624,11 +4653,13 @@ components:
           - type: string
           - type: 'null'
           title: Id Token
+          x-sensitive: true
         refresh_token:
           anyOf:
           - type: string
           - type: 'null'
           title: Refresh Token
+          x-sensitive: true
         token_type:
           default: bearer
           title: Token Type
@@ -4788,6 +4819,7 @@ components:
         api_key:
           title: Api Key
           type: string
+          x-sensitive: true
         toolkit:
           $ref: '#/components/schemas/ToolkitResponse'
         warnings:
@@ -4924,6 +4956,7 @@ components:
         api_key:
           title: Api Key
           type: string
+          x-sensitive: true
         key:
           $ref: '#/components/schemas/ToolkitKeyResponse'
       required:
@@ -5321,6 +5354,7 @@ components:
         invite_token:
           title: Invite Token
           type: string
+          x-sensitive: true
         user:
           $ref: '#/components/schemas/UserResponse'
       required:

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -296,6 +298,55 @@ func TestMutateReloadsBeforeApplying(t *testing.T) {
 	acct, _ := got.AgentAccount()
 	if len(acct.GrantedDirs) != 2 {
 		t.Fatalf("expected both grants to survive, got %v", acct.GrantedDirs)
+	}
+}
+
+// TestMutateConcurrentContention exercises the advisory lock under REAL
+// contention (review gap: the lock had no contention test, and the Windows
+// LockFileEx path was never executed beyond smoke). N goroutines — separate
+// lock-file descriptors, exactly like N concurrent jentic processes — each
+// Mutate a distinct granted dir. The lock serialises the read-modify-write
+// cycles, so ALL N grants must survive; any lost update means two writers
+// interleaved inside their critical sections. Runs on every platform, so CI's
+// Windows job exercises lock_windows.go for real.
+func TestMutateConcurrentContention(t *testing.T) {
+	paths := Paths{Root: t.TempDir()}
+	base := &FileConfig{}
+	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
+	if err := base.Save(paths); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	const writers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := Mutate(paths, func(c *FileConfig) error {
+				c.AddGrantedDir(fmt.Sprintf("/opt/a/dir-%02d", i))
+				return nil
+			})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Mutate: %v", err)
+		}
+	}
+
+	got, err := Load(paths)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	acct, _ := got.AgentAccount()
+	if len(acct.GrantedDirs) != writers {
+		t.Fatalf("lost update under contention: %d/%d grants survived: %v",
+			len(acct.GrantedDirs), writers, acct.GrantedDirs)
 	}
 }
 

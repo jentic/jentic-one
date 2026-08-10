@@ -104,6 +104,21 @@ def test_upgrade_creates_missing_schema(integration_config: AppConfig) -> None:
         asyncio.run(_drop_schema(integration_config, schema))
 
 
+def test_upgrade_rejects_hostile_schema_name(integration_config: AppConfig) -> None:
+    """A schema name with SQL metacharacters must die at the sink, pre-DDL (SEC-2).
+
+    ``DatabaseConfig`` rejects such names at config-parse time, but the
+    Alembic-ini override path (``schema_name`` in the section, exactly what
+    ``_fresh_schema_config`` sets) bypasses pydantic — and ``model_copy`` does
+    not re-validate either. The migration env's own identifier check is the
+    last line of defence before the name is interpolated into a quoted
+    ``CREATE SCHEMA`` statement, so it must refuse before any DDL runs.
+    """
+    hostile = 'evil"; DROP SCHEMA public CASCADE; --'
+    with pytest.raises(ValueError, match="invalid schema_name"):
+        command.upgrade(_fresh_schema_config(integration_config, hostile), "head")
+
+
 def test_upgrade_is_idempotent_over_existing_schema(integration_config: AppConfig) -> None:
     """A second upgrade over an already-bootstrapped schema is a clean no-op."""
     schema = f"bootstrap_992_{uuid.uuid4().hex[:8]}"

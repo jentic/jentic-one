@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from jentic_one.shared.models.credentials import CredentialLocation, CredentialType
 from jentic_one.shared.schemas import APIReference as APIReferenceResponse
 from jentic_one.shared.schemas import APIReferenceRequest
+from jentic_one.shared.web.sensitive import SENSITIVE
 
 __all__ = ["APIReferenceRequest", "APIReferenceResponse"]
 
@@ -52,7 +53,7 @@ class BearerTokenCreateRequest(BaseModel):
     provider: str = "static"
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str
+    token: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -87,7 +88,8 @@ class ApiKeyCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     key: str = Field(
-        description="The API key secret. Stored encrypted; never returned after create."
+        description="The API key secret. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     location: CredentialLocation = Field(description="Where to inject the key on upstream calls.")
     field_name: str = Field(description="Header or query-parameter name carrying the key.")
@@ -105,7 +107,7 @@ class BasicAuthCreateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str
-    password: str
+    password: str = Field(json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -127,7 +129,7 @@ class OAuth2CreateRequest(BaseModel):
     token_url: str | None = None
     authorize_url: str | None = None
     client_id: str | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     scopes: list[str] | None = None
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
@@ -167,13 +169,15 @@ class Sigv4CreateRequest(BaseModel):
     server_variables: dict[str, str] | None = None
     access_key_id: str = Field(description="AWS access key id (public identifier).")
     secret_access_key: str = Field(
-        description="AWS secret access key. Stored encrypted; never returned after create."
+        description="AWS secret access key. Stored encrypted; never returned after create.",
+        json_schema_extra=SENSITIVE,
     )
     session_token: str | None = Field(
         default=None,
         description=(
             "Optional temporary-credential session token (STS). Expires; re-save when it does."
         ),
+        json_schema_extra=SENSITIVE,
     )
     aws_region: str = Field(description="Signing region, e.g. 'us-east-1'.")
     aws_service: str = Field(description="Signing service, e.g. 'aoss', 'execute-api', 's3'.")
@@ -203,7 +207,7 @@ class BearerTokenUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    token: str | None = None
+    token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -216,7 +220,7 @@ class ApiKeyUpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    key: str | None = None
+    key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     location: CredentialLocation | None = Field(
         default=None,
         description=(
@@ -246,7 +250,7 @@ class BasicAuthUpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     username: str | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, json_schema_extra=SENSITIVE)
 
     _check_server_variables = field_validator("server_variables")(_validate_server_variables)
 
@@ -259,7 +263,7 @@ class OAuth2UpdateRequest(BaseModel):
     active: bool | None = None
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
-    client_secret: str | None = None
+    client_secret: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     token_url: str | None = None
     scopes: list[str] | None = None
 
@@ -275,8 +279,8 @@ class Sigv4UpdateRequest(BaseModel):
     runtime_config: RuntimeConfig | None = None
     server_variables: dict[str, str] | None = None
     access_key_id: str | None = None
-    secret_access_key: str | None = None
-    session_token: str | None = None
+    secret_access_key: str | None = Field(default=None, json_schema_extra=SENSITIVE)
+    session_token: str | None = Field(default=None, json_schema_extra=SENSITIVE)
     clear_session_token: bool = False
     aws_region: str | None = None
     aws_service: str | None = None
@@ -397,7 +401,7 @@ class CredentialCreateResponse(BaseModel):
     """Create response: redacted + secret shown once."""
 
     credential: CredentialRedactedResponse
-    secret: dict[str, Any]
+    secret: dict[str, Any] = Field(json_schema_extra=SENSITIVE)
 
 
 class CredentialListResponse(BaseModel):

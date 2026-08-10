@@ -169,45 +169,21 @@ func jsonFieldNames(t *testing.T, typ reflect.Type) []string {
 // from what actually gets redacted. Sharing one function makes drift impossible.
 func isSensitiveKey(key string) bool { return ux.IsSensitiveKey(key) }
 
-// sensitiveSweepAllowlist is the reviewed false-positive / pending-annotation set
-// for Test1H_SensitiveAnnotationSweep. A property name here is exempt from the
-// "must carry x-sensitive: true" requirement. Two kinds of entries live here:
+// sensitiveSweepAllowlist is the reviewed false-positive set for
+// Test1H_SensitiveAnnotationSweep. A property name here is exempt from the
+// "must carry x-sensitive: true" requirement because it is secret-shaped but
+// not a secret (a boolean flag, a count, a masked/redacted view).
 //
-//  1. GENUINE false positives — the name is secret-shaped but the field is not a
-//     secret (a boolean flag, a count, a masked/redacted view). These stay
-//     allowlisted permanently.
-//  2. PRE-EXISTING unannotated secrets — real secret-shaped fields already in the
-//     control spec at the time Phase 1 landed. The backend `x-sensitive`
-//     annotation pass (impl/2.1 §4b) is a separate, not-yet-scheduled deliverable;
-//     until it lands these are protected by redaction layers 2 (key heuristics)
-//     and 3 (byte backstop), NOT layer 1. They are allowlisted so the sweep
-//     hard-fails only on NEWLY-introduced secret-shaped fields — a new field can
-//     never ship un-classified. FOLLOW-UP: annotate these in the backend Pydantic
-//     models and delete them from this list, shrinking it toward only (1).
+// The backend `x-sensitive` annotation pass (impl/2.1 §4b, GEN-9) landed: every
+// real secret-carrying field is annotated at its Pydantic source
+// (`Field(json_schema_extra=SENSITIVE)`, see shared/web/sensitive.py), so this
+// list holds ONLY genuine false positives. A new secret-shaped field must be
+// annotated in the backend model — never added here unless it truly carries no
+// secret value.
 var sensitiveSweepAllowlist = map[string]bool{
-	// (1) Genuine false positives: booleans/flags, not secrets.
 	"has_api_key":          true, // presence flag, not the key
 	"must_change_password": true, // policy boolean
 	"clear_session_token":  true, // "clear the token?" boolean directive
-
-	// (2) Pre-existing unannotated secret-shaped fields in the control spec as of
-	// Phase 1. FOLLOW-UP: add `x-sensitive: true` in the backend models and remove
-	// from this list. Covered by redaction layers 2/3 in the meantime.
-	"access_token":              true,
-	"api_key":                   true,
-	"assertion":                 true,
-	"client_secret":             true,
-	"credential":                true,
-	"current_password":          true,
-	"id_token":                  true,
-	"invite_token":              true,
-	"new_password":              true,
-	"password":                  true,
-	"refresh_token":             true,
-	"registration_access_token": true,
-	"secret":                    true,
-	"session_token":             true,
-	"token":                     true,
 }
 
 // Test1H_SensitiveAnnotationSweep walks every schema property in the vendored

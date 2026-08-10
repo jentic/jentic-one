@@ -83,14 +83,42 @@ func sessionEditor(sessionID string) RequestEditor {
 	}
 }
 
+// maxSessionIDLen bounds the sanitized X-Jentic-Session-Id value. Generous for
+// any UUID/ULID/name scheme, small enough to never bloat server log lines.
+const maxSessionIDLen = 128
+
+// SanitizeSessionID normalizes a caller-chosen session id for use as the
+// X-Jentic-Session-Id header value (SEC-5, log hygiene). The id is untrusted
+// input (usually $JENTIC_SESSION_ID): Go's transport already rejects CR/LF
+// smuggling at request time, but a hostile or fat-fingered value would then
+// fail the WHOLE request, and exotic-but-legal header bytes would land verbatim
+// in server logs. Instead of failing, keep only [A-Za-z0-9._:-] (covers UUIDs,
+// ULIDs, and dotted/namespaced names), drop everything else, and truncate to
+// 128 bytes. Returns "" when nothing survives — correlation is best-effort and
+// an unusable id must never block a call.
+func SanitizeSessionID(id string) string {
+	var b strings.Builder
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == ':', r == '-':
+			b.WriteRune(r)
+		}
+		if b.Len() >= maxSessionIDLen {
+			break
+		}
+	}
+	return b.String()
+}
+
 // editorChain is the ordered request-editor list every plane shares: auth first
 // (so a later editor can observe the Authorization header), then the optional
 // session/telemetry editor, then any caller-supplied Editors.
 func (c Config) editorChain() []RequestEditor {
 	eds := make([]RequestEditor, 0, 2+len(c.Editors))
 	eds = append(eds, auth.RequestEditor(c.credentials()))
-	if c.SessionID != "" {
-		eds = append(eds, sessionEditor(c.SessionID))
+	if sid := SanitizeSessionID(c.SessionID); sid != "" {
+		eds = append(eds, sessionEditor(sid))
 	}
 	eds = append(eds, c.Editors...)
 	return eds

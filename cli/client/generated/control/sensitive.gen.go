@@ -6,4 +6,31 @@ package control
 // marks `x-sensitive: true`. The layer-1 typed redaction pass (impl/3.1 §1) treats
 // membership here exactly like a `redact:"true"` struct tag, so generated SDK types
 // (which carry no custom tags) are redacted from the spec, not by naming luck.
-var SensitiveFields = map[string][]string{}
+var SensitiveFields = map[string][]string{
+	"ApiKeyCreateRequest":      []string{"key"},
+	"ApiKeyUpdateRequest":      []string{"key"},
+	"BasicAuthCreateRequest":   []string{"password"},
+	"BasicAuthUpdateRequest":   []string{"password"},
+	"BearerTokenCreateRequest": []string{"token"},
+	"BearerTokenUpdateRequest": []string{"token"},
+	"ChangePasswordRequest":    []string{"current_password", "new_password"},
+	"CreateAdminRequest":       []string{"password"},
+	"CredentialCreateResponse": []string{"secret"},
+	"IntrospectRequest":        []string{"token"},
+	"InviteIssuedResponse":     []string{"token"},
+	"LoginRequest":             []string{"password"},
+	"LoginResponse":            []string{"access_token"},
+	"MintResponse":             []string{"access_token"},
+	"OAuth2CreateRequest":      []string{"client_secret"},
+	"OAuth2UpdateRequest":      []string{"client_secret"},
+	"RedeemInviteRequest":      []string{"invite_token", "password"},
+	"RegisterResponse":         []string{"registration_access_token"},
+	"RevokeRequest":            []string{"token"},
+	"Sigv4CreateRequest":       []string{"secret_access_key", "session_token"},
+	"Sigv4UpdateRequest":       []string{"secret_access_key", "session_token"},
+	"TokenRequest":             []string{"assertion", "client_secret", "refresh_token"},
+	"TokenResponse":            []string{"access_token", "id_token", "refresh_token"},
+	"ToolkitCreateResponse":    []string{"api_key"},
+	"ToolkitKeyCreateResponse": []string{"api_key"},
+	"UserCreatedResponse":      []string{"invite_token"},
+}

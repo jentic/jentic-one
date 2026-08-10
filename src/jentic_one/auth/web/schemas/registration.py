@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from jentic_one.shared.web.sensitive import SENSITIVE
+
 _SCOPE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_:./-]+$")
 
 
@@ -45,7 +47,7 @@ class RegisterResponse(BaseModel):
     """POST /register 201 response."""
 
     client_id: str
-    registration_access_token: str
+    registration_access_token: str = Field(json_schema_extra=SENSITIVE)
     registration_client_uri: str
     status: str
     grant_types: list[str] = ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
