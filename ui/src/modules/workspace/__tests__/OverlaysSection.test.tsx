@@ -13,12 +13,16 @@ function rawOverlay(overrides: Record<string, unknown> = {}) {
 	const base = {
 		id: 'ovl_abcdef123456',
 		status: 'pending',
-		created_by: 'alice@acme.dev',
+		created_by: 'usr_author_1',
+		contributed_by: null,
+		document: null,
 		created_at: '2026-01-01T00:00:00Z',
 		confirmed_at: null,
 		deprecated_at: null,
+		deprecated_reason: null,
 		target_revision_id: 'rev_1',
 		confirmed_revision_id: null,
+		superseded_revision_id: null,
 		...overrides,
 	};
 	// Mirror the backend's state-validity `_links` (see OverlayLinksResponse) so the
@@ -56,7 +60,7 @@ describe('OverlaysSection', () => {
 	it('renders the empty state when the API has no overlays', async () => {
 		mockOverlays([]);
 		renderWithProviders(<OverlaysSection apiKey={KEY} />);
-		expect(await screen.findByText('No overlays for this API.')).toBeInTheDocument();
+		expect(await screen.findByText(/Overlays are reviewed spec fixes/)).toBeInTheDocument();
 		expect(screen.getByTestId('overlays-section')).toBeInTheDocument();
 	});
 
@@ -76,18 +80,116 @@ describe('OverlaysSection', () => {
 		expect(screen.getByTestId('overlay-status-confirmed')).toBeInTheDocument();
 	});
 
-	it('shows the "Deprecated by re-import" note for a deprecated overlay', async () => {
+	it('shows a dated "Superseded" note for a deprecated overlay', async () => {
 		mockOverlays([
 			rawOverlay({
 				id: 'ovl_deprecated',
 				status: 'deprecated',
+				confirmed_at: '2026-03-01T00:00:00Z',
 				deprecated_at: '2026-03-15T09:30:00Z',
 			}),
 		]);
 		renderWithProviders(<OverlaysSection apiKey={KEY} />);
 
 		expect(await screen.findByTestId('overlay-status-deprecated')).toBeInTheDocument();
-		expect(screen.getByText(/Deprecated by re-import on/)).toBeInTheDocument();
+		expect(screen.getByText(/Superseded/)).toBeInTheDocument();
+	});
+
+	it('badges a rollback as "rolled back" when the superseded revision serves again', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_rolledback',
+				status: 'deprecated',
+				confirmed_revision_id: 'rev_overlay',
+				superseded_revision_id: 'rev_base',
+				confirmed_at: '2026-03-01T00:00:00Z',
+				deprecated_at: '2026-03-15T09:30:00Z',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_base" />);
+
+		const badge = await screen.findByTestId('overlay-status-deprecated');
+		expect(badge).toHaveAttribute('data-lifecycle', 'rolled-back');
+		expect(badge).toHaveTextContent('rolled back');
+		expect(screen.getByText(/Rolled back/)).toBeInTheDocument();
+	});
+
+	it('badges a serving overlay as "active" (distinct from confirmed)', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_serving',
+				status: 'confirmed',
+				confirmed_revision_id: 'rev_live',
+				confirmed_at: '2026-02-01T00:00:00Z',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_live" />);
+
+		const badge = await screen.findByTestId('overlay-status-confirmed');
+		expect(badge).toHaveAttribute('data-lifecycle', 'active');
+	});
+
+	it('renders unique short ids for KSUIDs sharing a time prefix, with copyable full ids', async () => {
+		// These two collided as "ovr_6a75" under the old slice(0, 8) rendering.
+		mockOverlays([
+			rawOverlay({ id: 'ovr_6a75aa8e6edd9723f71840e8' }),
+			rawOverlay({ id: 'ovr_6a75aaf71c1c073e38ab429c' }),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		await waitFor(() => expect(screen.getAllByTestId('overlay-row')).toHaveLength(2));
+		// textContent includes the sr-only "(full id …)" suffix; the visible
+		// part is the short form, which must be unique per overlay.
+		const ids = screen.getAllByTestId('overlay-id').map((el) => el.textContent ?? '');
+		expect(ids[0]).toMatch(/^ovr_…1840e8/);
+		expect(ids[1]).toMatch(/^ovr_…ab429c/);
+		expect(new Set(ids).size).toBe(2);
+		// The full id stays reachable: on hover (title) and via the copy button.
+		expect(screen.getByTitle('ovr_6a75aa8e6edd9723f71840e8')).toBeInTheDocument();
+		expect(screen.getAllByLabelText(/Copy full id of overlay/)).toHaveLength(2);
+	});
+
+	it('summarizes the overlay document actions and shows the attribution', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_described',
+				contributed_by: 'contribute-spec-fix skill',
+				document: {
+					overlay: '1.0.0',
+					actions: [
+						{
+							description: 'Remove the US-only servers block.',
+							target: '$.servers',
+							remove: true,
+						},
+						{ target: '$.info', update: { title: 'New title' } },
+					],
+				},
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		const summary = await screen.findByTestId('overlay-summary');
+		expect(summary).toHaveTextContent('Remove the US-only servers block.');
+		expect(summary).toHaveTextContent('Updated info (title)');
+		expect(screen.getByTestId('overlay-meta')).toHaveTextContent(
+			/via contribute-spec-fix skill/,
+		);
+	});
+
+	it('links a materialized overlay to the revision it produced', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_confirmed',
+				status: 'confirmed',
+				confirmed_at: '2026-02-01T00:00:00Z',
+				confirmed_revision_id: 'dc9bcdeb-f652-45eb-b7cb-d56e76a5d8aa',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		const link = await screen.findByTestId('overlay-produced-revision');
+		expect(link).toHaveTextContent('revision dc9bcdeb');
 	});
 
 	it('surfaces an error when the list request fails', async () => {
@@ -179,7 +281,8 @@ describe('OverlaysSection', () => {
 				return new HttpResponse(null, { status: 204 });
 			}),
 		);
-		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+		// Roll back is only offered while the overlay's revision is CURRENT.
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_materialized" />);
 
 		// Clicking "Roll back" opens the confirm dialog but does NOT fire the request yet.
 		await userEvent.click(await screen.findByTestId('overlay-rollback'));
@@ -187,5 +290,61 @@ describe('OverlaysSection', () => {
 		// Confirming in the dialog fires the rollback.
 		await userEvent.click(await screen.findByTestId('overlay-rollback-confirm'));
 		await waitFor(() => expect(rolledBack).toBe(true));
+	});
+
+	it('hides Roll back on a superseded overlay (the backend would 409)', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_superseded',
+				status: 'confirmed',
+				confirmed_at: '2026-02-01T00:00:00Z',
+				confirmed_revision_id: 'rev_materialized',
+			}),
+		]);
+		// A newer revision is current — the backend still advertises the
+		// rollback link, but the service refuses unless the overlay is live.
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_newer" />);
+
+		const badge = await screen.findByTestId('overlay-status-confirmed');
+		expect(badge).toHaveAttribute('data-lifecycle', 'superseded');
+		expect(screen.queryByTestId('overlay-rollback')).not.toBeInTheDocument();
+	});
+
+	it('flags a deprecated overlay whose revision still serves', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_depserving',
+				status: 'deprecated',
+				confirmed_at: '2026-02-01T00:00:00Z',
+				confirmed_revision_id: 'rev_materialized',
+				deprecated_at: '2026-03-15T09:30:00Z',
+				deprecated_reason: 'manual',
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} currentRevisionId="rev_materialized" />);
+
+		const badge = await screen.findByTestId('overlay-status-deprecated');
+		expect(badge).toHaveAttribute('data-lifecycle', 'deprecated-serving');
+		expect(screen.getByTestId('overlay-meta')).toHaveTextContent(/still serving/);
+	});
+
+	it('caps long action summaries with a "+N more actions" line', async () => {
+		mockOverlays([
+			rawOverlay({
+				id: 'ovl_manyactions',
+				document: {
+					overlay: '1.0.0',
+					actions: Array.from({ length: 6 }, (_, i) => ({
+						description: `Action number ${i + 1}.`,
+					})),
+				},
+			}),
+		]);
+		renderWithProviders(<OverlaysSection apiKey={KEY} />);
+
+		const summary = await screen.findByTestId('overlay-summary');
+		expect(summary).toHaveTextContent('Action number 3.');
+		expect(summary).not.toHaveTextContent('Action number 4.');
+		expect(screen.getByTestId('overlay-summary-more')).toHaveTextContent('+3 more actions');
 	});
 });

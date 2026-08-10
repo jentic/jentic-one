@@ -1975,6 +1975,53 @@ type OverlayConfirmRequest struct {
 	ExecutionId *string `json:"execution_id,omitempty"`
 }
 
+// OverlayLinksResponse Hypermedia links for an overlay resource.
+//
+// Links are advertised based on the overlay's *state validity* (mirroring the
+// revisions resource's promote/archive links), so a surface renders an action only
+// when it is applicable to the current status. They are not permission-scoped — the
+// “overlays:confirm“ gate on confirm/rollback is still enforced server-side (403).
+type OverlayLinksResponse struct {
+	Api       string  `json:"api"`
+	Confirm   *string `json:"confirm,omitempty"`
+	Deprecate *string `json:"deprecate,omitempty"`
+	Rollback  *string `json:"rollback,omitempty"`
+	Self      string  `json:"self"`
+}
+
+// OverlayListResponse Cursor-paginated list of overlays.
+type OverlayListResponse struct {
+	Data       []OverlayResponse `json:"data"`
+	HasMore    bool              `json:"has_more"`
+	NextCursor *string           `json:"next_cursor,omitempty"`
+}
+
+// OverlayResponse Full overlay resource response.
+type OverlayResponse struct {
+	// UnderscoreLinks Hypermedia links for an overlay resource.
+	//
+	// Links are advertised based on the overlay's *state validity* (mirroring the
+	// revisions resource's promote/archive links), so a surface renders an action only
+	// when it is applicable to the current status. They are not permission-scoped — the
+	// ``overlays:confirm`` gate on confirm/rollback is still enforced server-side (403).
+	UnderscoreLinks        OverlayLinksResponse   `json:"_links"`
+	ApiId                  string                 `json:"api_id"`
+	ConfirmedAt            *time.Time             `json:"confirmed_at"`
+	ConfirmedByExecutionId *string                `json:"confirmed_by_execution_id"`
+	ConfirmedRevisionId    *string                `json:"confirmed_revision_id,omitempty"`
+	ContributedBy          *string                `json:"contributed_by"`
+	CreatedAt              time.Time              `json:"created_at"`
+	CreatedBy              *string                `json:"created_by,omitempty"`
+	DeprecatedAt           *time.Time             `json:"deprecated_at"`
+	DeprecatedReason       *string                `json:"deprecated_reason,omitempty"`
+	Document               map[string]interface{} `json:"document"`
+	Id                     string                 `json:"id"`
+	Status                 string                 `json:"status"`
+	SupersededRevisionId   *string                `json:"superseded_revision_id,omitempty"`
+	TargetRevisionId       *string                `json:"target_revision_id"`
+	UpdatedAt              *time.Time             `json:"updated_at"`
+}
+
 // OverlaySubmitRequest Payload for submitting a new overlay.
 type OverlaySubmitRequest struct {
 	ContributedBy    *string                `json:"contributed_by,omitempty"`
@@ -22311,7 +22358,7 @@ type ListOverlaysHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *OverlayListResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -22327,7 +22374,7 @@ type ListOverlaysHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListOverlaysHTTPResp) GetJSON200() *interface{} {
+func (r ListOverlaysHTTPResp) GetJSON200() *OverlayListResponse {
 	return r.JSON200
 }
 
@@ -22394,7 +22441,7 @@ type SubmitOverlayHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *interface{}
+	JSON201 *OverlayResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -22410,7 +22457,7 @@ type SubmitOverlayHTTPResp struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r SubmitOverlayHTTPResp) GetJSON201() *interface{} {
+func (r SubmitOverlayHTTPResp) GetJSON201() *OverlayResponse {
 	return r.JSON201
 }
 
@@ -22553,7 +22600,7 @@ type GetOverlayHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *OverlayResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -22569,7 +22616,7 @@ type GetOverlayHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetOverlayHTTPResp) GetJSON200() *interface{} {
+func (r GetOverlayHTTPResp) GetJSON200() *OverlayResponse {
 	return r.JSON200
 }
 
@@ -22636,7 +22683,7 @@ type UpdateOverlayHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *OverlayResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -22652,7 +22699,7 @@ type UpdateOverlayHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateOverlayHTTPResp) GetJSON200() *interface{} {
+func (r UpdateOverlayHTTPResp) GetJSON200() *OverlayResponse {
 	return r.JSON200
 }
 
@@ -22719,7 +22766,7 @@ type ConfirmOverlayHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *interface{}
+	JSON200 *OverlayResponse
 	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationproblemJSON400 *ProblemDetail
 	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -22735,7 +22782,7 @@ type ConfirmOverlayHTTPResp struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ConfirmOverlayHTTPResp) GetJSON200() *interface{} {
+func (r ConfirmOverlayHTTPResp) GetJSON200() *OverlayResponse {
 	return r.JSON200
 }
 
@@ -37134,7 +37181,7 @@ func ParseListOverlaysHTTPResp(rsp *http.Response) (*ListOverlaysHTTPResp, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest OverlayListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37202,7 +37249,7 @@ func ParseSubmitOverlayHTTPResp(rsp *http.Response) (*SubmitOverlayHTTPResp, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest interface{}
+		var dest OverlayResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37334,7 +37381,7 @@ func ParseGetOverlayHTTPResp(rsp *http.Response) (*GetOverlayHTTPResp, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest OverlayResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37402,7 +37449,7 @@ func ParseUpdateOverlayHTTPResp(rsp *http.Response) (*UpdateOverlayHTTPResp, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest OverlayResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -37470,7 +37517,7 @@ func ParseConfirmOverlayHTTPResp(rsp *http.Response) (*ConfirmOverlayHTTPResp, e
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest interface{}
+		var dest OverlayResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

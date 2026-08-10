@@ -99,11 +99,13 @@ def _make_overlay(
     overlay.confirmed_revision_id = confirmed_revision_id
     overlay.superseded_revision_id = None
     overlay.contributed_by = "agent"
+    overlay.created_by = "usr_submitter"
     overlay.confirmed_by_execution_id = None
     overlay.created_at = datetime(2024, 6, 1, tzinfo=UTC)
     overlay.updated_at = None
     overlay.confirmed_at = None
     overlay.deprecated_at = None
+    overlay.deprecated_reason = None
     return overlay
 
 
@@ -1006,6 +1008,9 @@ async def test_deprecate_sets_status() -> None:
     mock_set_status.assert_called_once()
     assert mock_set_status.call_args.args[1] == "ovr_abc123def456ghi789"
     assert mock_set_status.call_args.args[2] == "deprecated"
+    # The cause is persisted so clients can label the event durably ("deprecated"
+    # vs "rolled back") instead of re-deriving it from the current revision pointer.
+    assert mock_set_status.call_args.kwargs["deprecated_reason"] == "manual"
 
 
 @pytest.mark.asyncio
