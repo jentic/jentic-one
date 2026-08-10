@@ -68,6 +68,10 @@ jobs:
               - 'ui/public/broker-openapi.json'
               - 'tools/**'
               - 'docs/reference/**'
+              # tests/arch/test_config_schema_conformance.py drift-gates the
+              # exported backend config schema against the Pydantic models, so
+              # a hand-edit to the artifact must run the suite (GEN-10).
+              - 'config/config-schema.json'
             integration-tests:
               - 'src/**'
               - 'tests/integration/**'
@@ -86,6 +90,14 @@ jobs:
               # The cli job drift-checks the generated CLI reference the docs
               # SPA renders, so hand-edits to the artifact must run it too.
               - 'ui/public/cli-reference.json'
+              # check-cli-gen / check-ctl-gen regenerate the Go client and
+              # installer config bindings FROM these backend-owned sources — a
+              # PR that changes only a spec/schema (without touching cli/)
+              # would otherwise merge with a stale generated client and break
+              # the post-merge main run (the exact #1013 incident; GEN-3).
+              - 'openapi/control/**'
+              - 'openapi/broker/**'
+              - 'config/config-schema.json'
             installer:
               - 'tools/install.sh'
               - 'tests/tools/**'

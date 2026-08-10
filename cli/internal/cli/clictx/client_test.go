@@ -41,6 +41,24 @@ func TestGetControlClient_RequiresState(t *testing.T) {
 	}
 }
 
+// TestGetClients_NilResolvedStateErrors is the AGT-1 regression: the root
+// interceptor's no-config degrade path used to inject an ActiveState with a nil
+// embedded *ResolvedState, and every client getter then panicked (nil-deref, Go
+// runtime exit 2 — colliding with ExitDenied). All three getters must return an
+// actionable error, never panic.
+func TestGetClients_NilResolvedStateErrors(t *testing.T) {
+	ctx := WithActiveState(context.Background(), &ActiveState{Mode: ModeAgent})
+	if _, err := GetControlClient(ctx); err == nil {
+		t.Fatal("GetControlClient: expected an error for nil ResolvedState")
+	}
+	if _, err := GetBrokerClient(ctx); err == nil {
+		t.Fatal("GetBrokerClient: expected an error for nil ResolvedState")
+	}
+	if _, err := GetControlRawClient(ctx); err == nil {
+		t.Fatal("GetControlRawClient: expected an error for nil ResolvedState")
+	}
+}
+
 // TestGetControlClient_BuildsWithState: with a control URL present the adapter
 // constructs a client.
 func TestGetControlClient_BuildsWithState(t *testing.T) {

@@ -28,14 +28,31 @@ func configFromState(state *ActiveState) client.Config {
 	}
 }
 
+// stateForClient validates the ActiveState a client constructor needs. It exists
+// so a degraded state (root interceptor's no-config fallback carries an empty
+// ResolvedState) or a nil embed can never nil-deref: commands get an actionable
+// error instead of a panic (whose runtime exit code 2 collides with ExitDenied).
+func stateForClient(state *ActiveState) (*ActiveState, error) {
+	if state == nil {
+		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
+	}
+	// A nil embed or a state with no plane URL at all is the unconfigured-machine
+	// case — surface the recovery command rather than the SDK's terser
+	// "control base URL is required".
+	if state.ResolvedState == nil || (state.BaseURL == "" && state.BrokerURL == "") {
+		return nil, errors.New("no configuration found; run 'jentic register' (or 'jentic migrate' on a machine with a V1 setup) first")
+	}
+	return state, nil
+}
+
 // GetControlClient is the single constructor every Control Plane command uses. It
 // pulls the ActiveState the root interceptor injected and delegates to the SDK, so
 // token state, API-key credentials, and the file-less override are all handled
 // transparently and identically to a third-party SDK consumer.
 func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error) {
-	state := FromContext(ctx)
-	if state == nil {
-		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
 	}
 	return client.NewControl(configFromState(state))
 }
@@ -43,9 +60,9 @@ func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error)
 // GetBrokerClient is the Data Plane counterpart. The Env's broker_url must be set
 // (the SDK errors otherwise); it is NEVER derived from the control base URL.
 func GetBrokerClient(ctx context.Context) (*broker.ClientWithResponses, error) {
-	state := FromContext(ctx)
-	if state == nil {
-		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
 	}
 	return client.NewBroker(configFromState(state))
 }
@@ -55,9 +72,9 @@ func GetBrokerClient(ctx context.Context) (*broker.ClientWithResponses, error) {
 // chain as GetControlClient, so the passthrough inherits auth, session, retry, and
 // the transport guard from the SDK rather than re-implementing them.
 func GetControlRawClient(ctx context.Context) (*control.Client, error) {
-	state := FromContext(ctx)
-	if state == nil {
-		return nil, errors.New("no active state in context (was the root PersistentPreRunE run?)")
+	state, err := stateForClient(FromContext(ctx))
+	if err != nil {
+		return nil, err
 	}
 	return client.NewControlRaw(configFromState(state))
 }

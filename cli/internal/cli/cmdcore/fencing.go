@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -43,9 +44,14 @@ func installInterceptor(app *App, root *cobra.Command) {
 			// agent on an un-provisioned machine is still fenced. Hardcoding human
 			// here would silently disable fencing (fail-OPEN) — the opposite of what
 			// a safety guard must do. Theme degrades to no-color regardless.
+			//
+			// The embedded ResolvedState must be non-nil: commands that reach
+			// clictx.GetControlClient on this degraded state would otherwise
+			// nil-deref (panic, runtime exit 2 — colliding with ExitDenied).
 			state = &clictx.ActiveState{
-				Mode:      clictx.ResolveMode(flagValue(cmd, "mode"), ""),
-				ThemeName: "no-color",
+				ResolvedState: &sdkconfig.ResolvedState{},
+				Mode:          clictx.ResolveMode(flagValue(cmd, "mode"), ""),
+				ThemeName:     "no-color",
 			}
 		}
 

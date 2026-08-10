@@ -92,6 +92,18 @@ func Open(paths config.Paths, name string) (*Profile, error) {
 	return &Profile{Name: name, dir: dir}, nil
 }
 
+// View returns a handle to the named profile WITHOUT creating its directory —
+// the read-only counterpart of Open, for callers that must not write (e.g.
+// `jentic doctor`, whose contract is strictly read-only). All Load* methods
+// treat an absent directory/file as their zero value, so viewing a
+// never-created profile is safe.
+func View(paths config.Paths, name string) *Profile {
+	if name == "" {
+		name = config.DefaultProfile
+	}
+	return &Profile{Name: name, dir: filepath.Join(paths.ProfilesDir(), name)}
+}
+
 // List returns the names of all existing profiles.
 func List(paths config.Paths) ([]string, error) {
 	entries, err := os.ReadDir(paths.ProfilesDir())

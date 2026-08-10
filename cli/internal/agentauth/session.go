@@ -5,6 +5,7 @@ package agentauth
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/agentkey"
@@ -75,6 +76,71 @@ func Open(paths config.Paths, profileName, baseURL string) (*Session, error) {
 	}
 	sess.Key = key
 	return sess, nil
+}
+
+// OpenView is the READ-ONLY counterpart of Open: it never creates the profile
+// directory, never generates a key, and never writes anything. Session.Key is
+// nil when no key file exists yet. It exists for strictly read-only callers —
+// `jentic doctor` documents "never mints tokens or writes config", and opening
+// a session via Open used to silently create ~/.jentic/profiles/<name>/agent.key
+// on a pristine machine (UX-1), which then made `jentic migrate` report a
+// phantom migrated context (UX-2).
+func OpenView(paths config.Paths, profileName, baseURL string) (*Session, error) {
+	p := profile.View(paths, profileName)
+	meta, err := p.LoadMeta()
+	if err != nil {
+		return nil, err
+	}
+	if meta.BaseURL == "" {
+		meta.BaseURL = baseURL
+	}
+
+	sess := &Session{
+		Profile: p,
+		Meta:    meta,
+		Client:  authclient.New(meta.BaseURL),
+	}
+
+	if meta.IsAPIKey() {
+		apiKey, keyErr := p.LoadAPIKey()
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		sess.APIKey = apiKey
+		return sess, nil
+	}
+
+	if meta.KID == "" {
+		meta.KID = "jentic-cli-" + p.Name
+	}
+	// Load the key ONLY if it already exists — never generate one here.
+	if _, statErr := os.Stat(p.KeyPath()); statErr == nil {
+		key, _, keyErr := agentkey.LoadOrGenerate(p.KeyPath(), meta.KID)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+		sess.Key = key
+	}
+	return sess, nil
+}
+
+// CachedToken returns an already-cached, non-expired access token WITHOUT
+// minting, refreshing, or persisting anything — the read-only complement of
+// ValidToken for callers (doctor) that must not write. For API-key profiles it
+// returns the stored key (the long-lived bearer credential; reading it writes
+// nothing). ok=false when no usable cached credential exists.
+func (s *Session) CachedToken() (string, bool) {
+	if s.Meta.IsAPIKey() {
+		if s.APIKey == "" {
+			return "", false
+		}
+		return s.APIKey, true
+	}
+	tokens, err := s.Profile.LoadTokens()
+	if err != nil || tokens.Expired(expirySkew) {
+		return "", false
+	}
+	return tokens.AccessToken, true
 }
 
 // ResetRegistration clears all DCR registration state from the session's

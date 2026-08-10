@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
 // meServer returns an httptest server answering GET /me with a minimal agent
@@ -115,6 +120,84 @@ func forgeJWTWithIat(t *testing.T, iat time.Time) string {
 	payloadJSON, _ := json.Marshal(map[string]any{"iat": iat.Unix()})
 	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
 	return strings.Join([]string{header, payload, "sig"}, ".")
+}
+
+// TestDoctorIsReadOnlyOnPristineHome is the UX-1 regression: doctor documents
+// "read-only (never mints tokens or writes config)", but it used to create
+// ~/.jentic/profiles/default/agent.key on a pristine machine via agentauth.Open
+// — which then made `jentic migrate` report a phantom migrated context (UX-2).
+// After a doctor run against a fresh root, NOTHING may exist on disk.
+func TestDoctorIsReadOnlyOnPristineHome(t *testing.T) {
+	app := testApp(t)
+	root := app.Paths.Root
+
+	cmd := newDoctorCmd(app)
+	cmd.SetContext(t.Context())
+	_ = cmd.Flags().Set("json", "true")
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("doctor on pristine home should not hard-fail: %v", err)
+	}
+
+	var created []string
+	_ = filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path != root {
+			created = append(created, path)
+		}
+		return nil
+	})
+	if len(created) != 0 {
+		t.Errorf("doctor wrote to a pristine home: %v", created)
+	}
+}
+
+// TestDoctorDoesNotMintTokens: with a registered profile whose cached token is
+// EXPIRED, doctor must warn (no fresh token) rather than hit the token endpoint
+// — a mint would both violate read-only and persist a new tokens.json.
+func TestDoctorDoesNotMintTokens(t *testing.T) {
+	var tokenCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "token") {
+			tokenCalls++
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+	p, err := profile.Open(app.Paths, "default")
+	if err != nil {
+		t.Fatalf("open profile: %v", err)
+	}
+	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_old", AccessExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatalf("save expired tokens: %v", err)
+	}
+	before := readFile(t, filepath.Join(p.Dir(), "tokens.json"))
+
+	cmd := newDoctorCmd(app)
+	cmd.SetContext(t.Context())
+	_ = cmd.Flags().Set("json", "true")
+	_ = cmd.Flags().Set("base-url", srv.URL)
+	_ = cmd.RunE(cmd, nil)
+
+	if tokenCalls != 0 {
+		t.Errorf("doctor hit the token endpoint %d time(s); it must never mint", tokenCalls)
+	}
+	if after := readFile(t, filepath.Join(p.Dir(), "tokens.json")); after != before {
+		t.Error("doctor rewrote tokens.json; it must be read-only")
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 // ensure the doctor command wires cleanly (constructor + flags) — a cheap guard

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -83,11 +84,22 @@ type ExitCoder interface {
 // process exit code. It is the shared entry point for the built-in binaries and
 // any downstream binary composed via NewRootCmd, so exit-code / signal semantics
 // stay identical. Callers typically do: os.Exit(core.Run(root)).
-func Run(root *cobra.Command) int {
+func Run(root *cobra.Command) (code int) {
 	// Cancel the command context on the first SIGINT/SIGTERM so long-running
 	// commands can unwind gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Panic backstop: an escaped panic would exit with the Go runtime's code 2,
+	// which collides with the CLI's ExitDenied taxonomy ("change the ask, don't
+	// retry") and would mislead an agent branching on exit codes. Convert it to a
+	// diagnosable internal error on stderr with the generic exit 1 instead.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(root.ErrOrStderr(), "error: internal error: %v\n%s", r, debug.Stack())
+			code = 1
+		}
+	}()
 
 	err := root.ExecuteContext(ctx)
 	if err == nil {

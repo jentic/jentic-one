@@ -102,7 +102,7 @@ func (a *app) doctorE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool)
 	ctx := cmd.Context()
 
 	d.checkPaths()
-	baseURL, token := d.checkIdentity(ctx, ident)
+	baseURL, token := d.checkIdentity(ident)
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
 
@@ -150,22 +150,51 @@ func (d *agentDoctor) checkPaths() {
 	}
 }
 
-// checkIdentity resolves the active identity and its token state WITHOUT minting
-// (the /me probe below only runs with an already-valid cached token). It returns
-// the resolved base URL and a usable token ("" if none), which the reachability
-// and skew checks reuse.
-func (d *agentDoctor) checkIdentity(ctx context.Context, ident *identityOptions) (baseURL, token string) {
+// checkIdentity resolves the active identity and its token state STRICTLY
+// READ-ONLY (UX-1): it opens the profile store via the view path — never
+// creating the profile directory, generating a key, or minting/persisting a
+// token — and reports each missing piece as a warning with the command that
+// creates it. It returns the resolved base URL and an already-cached usable
+// token ("" if none), which the reachability and skew checks reuse.
+func (d *agentDoctor) checkIdentity(ident *identityOptions) (baseURL, token string) {
 	const section = "Identity"
-	base, tok, err := d.app.agentSession(ctx, ident)
+	sess, profileName, err := d.app.agentSessionView(ident)
 	if err != nil {
-		// A resolvable-but-unusable identity is a warning, not a hard fail: the
-		// agent may simply be awaiting approval. The message from agentSession is
-		// already actionable (points at `jentic register`).
-		d.add(section, "session", agentWarn, err.Error(), "run `jentic register` (or wait for approval)")
+		d.add(section, "session", agentWarn, err.Error(), "")
 		return "", ""
 	}
-	d.add(section, "session", agentPass, "identity resolved, token usable", "")
-	return base, tok
+	if sess.Meta.IsAPIKey() {
+		if sess.APIKey == "" {
+			d.add(section, "session", agentWarn,
+				fmt.Sprintf("profile %q has no API key stored", profileName), "run `jentic profile add-key`")
+			return "", ""
+		}
+		d.add(section, "session", agentPass, "identity resolved (API key)", "")
+		return sess.Meta.BaseURL, sess.APIKey
+	}
+	if sess.Meta.AgentID == "" {
+		if sess.Key == nil {
+			// No key yet — REPORT it, never mint it: doctor writing agent.key on
+			// a pristine machine corrupted first-run and made `jentic migrate`
+			// report a phantom migrated context (UX-1/UX-2).
+			d.add(section, "session", agentWarn,
+				fmt.Sprintf("profile %q has no agent key yet", profileName),
+				"run `jentic register` to create and register one")
+			return "", ""
+		}
+		d.add(section, "session", agentWarn,
+			fmt.Sprintf("profile %q has no registered agent", profileName),
+			"run `jentic register` (or wait for approval)")
+		return "", ""
+	}
+	tok, ok := sess.CachedToken()
+	if !ok {
+		d.add(section, "session", agentWarn, "registered, but no fresh token is cached",
+			"doctor never mints; run any authenticated command (e.g. `jentic search`) to obtain one")
+		return sess.Meta.BaseURL, ""
+	}
+	d.add(section, "session", agentPass, "identity resolved, cached token usable", "")
+	return sess.Meta.BaseURL, tok
 }
 
 // checkClockSkew surfaces local clock drift relative to the token's issue time

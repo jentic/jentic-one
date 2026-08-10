@@ -83,6 +83,28 @@ func (a *app) agentSessionOpen(ident *identityOptions) (*agentauth.Session, stri
 	return sess, profileName, nil
 }
 
+// agentSessionView is the strictly READ-ONLY sibling of agentSession, for
+// `jentic doctor` (UX-1): it resolves the same profile/store but opens the
+// session via agentauth.OpenView — never creating the profile directory,
+// generating a key, or minting/persisting tokens. Callers inspect the returned
+// session's state (Key/AgentID/CachedToken) instead of receiving a hard error,
+// because doctor reports partial setups rather than failing on them.
+func (a *app) agentSessionView(ident *identityOptions) (*agentauth.Session, string, error) {
+	profileName, base, err := a.ResolveIdentity(ident.Profile, ident.BaseURL)
+	if err != nil {
+		return nil, "", err
+	}
+	paths, err := a.sessionPaths(profileName)
+	if err != nil {
+		return nil, "", err
+	}
+	sess, err := agentauth.OpenView(paths, profileName, base)
+	if err != nil {
+		return nil, "", err
+	}
+	return sess, profileName, nil
+}
+
 // agentAuthErr turns a token-mint failure into an actionable message. The agent
 // id is present (checked by the caller) but no usable token could be obtained:
 // the agent is awaiting approval, was revoked, or the signing key no longer
