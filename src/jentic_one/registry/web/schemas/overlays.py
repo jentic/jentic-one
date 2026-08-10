@@ -68,12 +68,24 @@ class OverlayResponse(BaseModel):
     document: dict[str, Any]
     target_revision_id: str | None
     confirmed_revision_id: str | None = None
+    #: The revision this overlay superseded when it materialized (its rollback
+    #: target) — lets a client tell "rolled back" (the superseded revision is
+    #: serving again) from "deprecated".
+    superseded_revision_id: str | None = None
     contributed_by: str | None
+    #: The authenticated principal that submitted the overlay (``identity.sub``).
+    #: Distinct from the free-text ``contributed_by`` attribution in the submit body.
+    created_by: str | None = None
     confirmed_by_execution_id: str | None
     created_at: datetime
     updated_at: datetime | None
     confirmed_at: datetime | None
     deprecated_at: datetime | None
+    #: Why the overlay was deprecated: ``manual`` (operator deprecate), ``rollback``
+    #: (un-confirm restored the superseded revision), or ``superseded_by_reimport``
+    #: (an authorized catalog re-import replaced it). ``null`` when not deprecated,
+    #: or for rows deprecated before this field existed.
+    deprecated_reason: str | None = None
     links: OverlayLinksResponse = Field(serialization_alias="_links")
 
 

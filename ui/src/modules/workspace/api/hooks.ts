@@ -183,12 +183,99 @@ export function useApiOperations(key: ApiKey | null, totalCount?: number): UseAp
 }
 
 /** Revisions for an API. */
-export function useApiRevisions(key: ApiKey | null): UseQueryResult<CursorPage<ApiRevision>> {
-	return useQuery({
-		queryKey: key ? workspaceKeys.revisions(key) : workspaceKeys.all,
-		queryFn: () => listRevisions({ key: key as ApiKey }),
-		enabled: key != null,
+export interface UsePagedList<T> {
+	/** All rows loaded so far (flattened across pages, newest first). */
+	items: T[];
+	/** First-page load in flight (nothing to show yet). */
+	isLoading: boolean;
+	/**
+	 * The background walk hasn't reached the last page yet. Derivations that
+	 * assume the FULL list (serving-state counts, previous-revision deltas,
+	 * cross-links) aren't exhaustive until this flips false.
+	 */
+	isLoadingAll: boolean;
+	isError: boolean;
+	error: unknown;
+	refetch: () => void;
+}
+
+/**
+ * Defensive bound on the background page walk (pages × 50/page). Revision and
+ * overlay lists grow by operator actions, not data volume, so 40 pages (2 000
+ * rows) is far beyond any real API while still capping a misbehaving backend.
+ */
+const MAX_LIST_PAGES = 40;
+
+/**
+ * Cursor-walk a paginated list endpoint to the end in the background (the
+ * same pattern as `useApiOperations`): the first page paints immediately,
+ * remaining pages stream in one at a time. Everything derived from these
+ * lists (serving-state counts, `previous` revision deltas, revision⇄overlay
+ * cross-links) silently lies when only page 1 of a >50-row list is loaded —
+ * so the walk, not the consumer, owns completeness.
+ *
+ * Bounded: stops on error, on a repeated cursor, and at {@link MAX_LIST_PAGES}.
+ */
+function useCursorWalk<T>(
+	queryKey: readonly unknown[],
+	fetchPage: (cursor: string | null) => Promise<CursorPage<T>>,
+	enabled: boolean,
+): UsePagedList<T> {
+	const query = useInfiniteQuery({
+		queryKey,
+		queryFn: ({ pageParam }) => fetchPage(pageParam as string | null),
+		initialPageParam: null as string | null,
+		getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
+		enabled,
+		// Keep the prior list on invalidation-driven refetches so the sections
+		// don't collapse to skeletons and visibly restart the walk.
+		placeholderData: keepPreviousData,
 	});
+
+	const items = useMemo(
+		() => query.data?.pages.flatMap((page) => page.items) ?? [],
+		[query.data],
+	);
+
+	const { hasNextPage, isFetchingNextPage, isError, fetchNextPage } = query;
+	const lastCursorRef = useRef<string | null | undefined>(undefined);
+	useEffect(() => {
+		if (!hasNextPage || isFetchingNextPage || isError) return;
+		const pages = query.data?.pages;
+		if (!pages || pages.length >= MAX_LIST_PAGES) return;
+		const nextCursor = pages[pages.length - 1]?.nextCursor ?? null;
+		if (nextCursor != null && nextCursor === lastCursorRef.current) return;
+		lastCursorRef.current = nextCursor;
+		void fetchNextPage();
+	}, [hasNextPage, isFetchingNextPage, isError, query.data, fetchNextPage]);
+
+	const boundHit = (query.data?.pages.length ?? 0) >= MAX_LIST_PAGES;
+	const isLoadingAll = !isError && !boundHit && (query.hasNextPage || query.isFetchingNextPage);
+
+	return {
+		items,
+		isLoading: query.isLoading,
+		isLoadingAll,
+		isError: query.isError,
+		error: query.error,
+		refetch: () => {
+			lastCursorRef.current = undefined;
+			void query.refetch();
+		},
+	};
+}
+
+/**
+ * Revisions for an API — the complete list (background page walk), newest
+ * first. Completeness matters here: rows compare against `items[i + 1]` for
+ * the "what changed" delta and the serving-state strip counts the whole list.
+ */
+export function useApiRevisions(key: ApiKey | null): UsePagedList<ApiRevision> {
+	return useCursorWalk(
+		key ? workspaceKeys.revisions(key) : [...workspaceKeys.all, 'revisions', 'disabled'],
+		(cursor) => listRevisions({ key: key as ApiKey, cursor }),
+		key != null,
+	);
 }
 
 /**
@@ -283,18 +370,20 @@ export function useRevisionActions(key: ApiKey) {
 	};
 }
 
-/** Overlays for an API (`GET /apis/{…}/overlays`). */
-export function useOverlays(key: ApiKey | null): UseQueryResult<CursorPage<Overlay>> {
-	return useQuery({
+/**
+ * Overlays for an API (`GET /apis/{…}/overlays`) — the complete list
+ * (background page walk), newest first. See {@link useCursorWalk} for why
+ * completeness matters (strip counts, revision⇄overlay cross-links).
+ */
+export function useOverlays(key: ApiKey | null): UsePagedList<Overlay> {
+	return useCursorWalk(
 		// A stable inert key while disabled — never the root `workspaceKeys.all`
 		// prefix, so a broad `invalidateQueries({ queryKey: workspaceKeys.all })`
 		// can't accidentally target this parked query.
-		queryKey: key
-			? workspaceKeys.overlays(key)
-			: [...workspaceKeys.all, 'overlays', 'disabled'],
-		queryFn: () => listOverlays({ key: key as ApiKey }),
-		enabled: key != null,
-	});
+		key ? workspaceKeys.overlays(key) : [...workspaceKeys.all, 'overlays', 'disabled'],
+		(cursor) => listOverlays({ key: key as ApiKey, cursor }),
+		key != null,
+	);
 }
 
 /**

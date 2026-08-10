@@ -82,7 +82,14 @@ export interface ApiOperation {
 }
 
 /** Lifecycle state of a revision (wire `StrEnum` serialized as a string). */
-export type RevisionState = 'draft' | 'published' | 'archived' | (string & {});
+export type RevisionState = 'draft' | 'imported' | 'published' | 'archived' | (string & {});
+
+/**
+ * Provenance of a revision (wire `RevisionOrigin`): `overlay` (materialized
+ * from a confirmed overlay), `catalog` (imported from the public catalog),
+ * `uploaded` (user-supplied spec), or null (plain import).
+ */
+export type RevisionOrigin = 'overlay' | 'catalog' | 'uploaded' | (string & {});
 
 /** A single revision of an API (from `GET /apis/{…}/revisions`). */
 export interface ApiRevision {
@@ -93,6 +100,10 @@ export interface ApiRevision {
 	specDigest: string;
 	operationCount: number;
 	state: RevisionState;
+	/** Provenance marker; null for a plain import (see {@link RevisionOrigin}). */
+	origin: RevisionOrigin | null;
+	/** The principal that submitted the spec this revision was ingested from. */
+	submittedBy: string | null;
 	isCurrent: boolean;
 	promotedAt: string | null;
 	archivedAt: string | null;
@@ -116,12 +127,39 @@ export type OverlayStatus = 'pending' | 'confirmed' | 'deprecated' | (string & {
 export interface Overlay {
 	id: string;
 	status: OverlayStatus;
+	/**
+	 * The authenticated principal that submitted the overlay (`identity.sub`,
+	 * e.g. `usr_…`) — resolve to a friendly name via `ActorLabel`. Distinct from
+	 * {@link contributedBy}, the free-text attribution a client may send.
+	 */
 	createdBy: string | null;
+	/** Free-text attribution supplied in the submit body (e.g. a skill name). */
+	contributedBy: string | null;
+	/**
+	 * The raw OpenAPI Overlay document (`{overlay, info, actions[]}`), used to
+	 * derive the human-readable action summary. Typed `unknown` — always read it
+	 * through `summarizeOverlayActions`.
+	 */
+	document: unknown;
 	createdAt: string;
 	confirmedAt: string | null;
 	deprecatedAt: string | null;
+	/**
+	 * Why the overlay was deprecated — `manual` / `rollback` /
+	 * `superseded_by_reimport` — persisted at the moment of deprecation so the
+	 * historical event keeps its verb (a rollback stays "rolled back") instead
+	 * of being re-derived from the API's moving current-revision pointer. Null
+	 * when not deprecated, or for rows deprecated before the field existed.
+	 */
+	deprecatedReason: string | null;
 	targetRevisionId: string | null;
 	confirmedRevisionId: string | null;
+	/**
+	 * The revision this overlay superseded when it materialized (its rollback
+	 * target). Non-null only after a confirm; when it equals the API's current
+	 * revision again, the overlay was rolled back.
+	 */
+	supersededRevisionId: string | null;
 	/**
 	 * Action links from `_links`; null when the action isn't valid for the
 	 * overlay's current status. Backend advertises these state-validity links
