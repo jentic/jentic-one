@@ -16,6 +16,7 @@ import json
 from dataclasses import asdict
 
 import pytest
+from fastapi import APIRouter, FastAPI
 from tools.endpoint_tree import (
     ENDPOINTS_JSON,
     ENDPOINTS_MD,
@@ -49,6 +50,7 @@ from jentic_one.shared.web.endpoint_scopes import (
     TYPICAL_OPERATOR,
     _closure_values,
     _typical_caller,
+    build_operation_auth_map,
 )
 
 
@@ -312,10 +314,6 @@ def test_prefixed_included_router_keyed_by_full_path() -> None:
     as public — tripping ``assert_classification_is_sound`` with a 500. The walk
     must reconstruct the prefix so the scope is recovered under the full path.
     """
-    from fastapi import APIRouter, FastAPI
-
-    from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
-
     router = APIRouter()
 
     @router.get("/toolkits/{toolkit_id}/shares", operation_id="prefixedListShares")
