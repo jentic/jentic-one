@@ -57,15 +57,23 @@ func newProfileViewCmd(app *app) *cobra.Command {
 }
 
 func newProfileListCmd(app *app) *cobra.Command {
-	return &cobra.Command{
+	var jsonFlag bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List profiles and mark the active one",
 		Args:    cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// AGT-2: the skill tells agents to run this first, so it must have a
+			// machine path — JSON when --json / non-TTY / agent mode.
+			if jsonOrPretty(cmd, jsonFlag) {
+				return app.profileListJSON()
+			}
 			return app.profileList()
 		},
 	}
+	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY or in agent mode)")
+	return cmd
 }
 
 func newProfileUseCmd(app *app) *cobra.Command {
@@ -210,6 +218,70 @@ func (a *app) profileList() error {
 	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("active: ")+theme.Command.Render(label))
 	return nil
+}
+
+// profileListJSON is the machine rendering of profileList (AGT-2): one document
+// with a row per profile and the resolved active name. Reads the same discovery
+// + metadata paths as the human rendering; secret material is never included
+// (the API key is reported only as a masked label). Emitted through writeJSON,
+// which applies the byte-level redaction backstop.
+func (a *app) profileListJSON() error {
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	refs, err := a.discoverProfiles(cfg)
+	if err != nil {
+		return err
+	}
+	active := a.activeRef(cfg)
+
+	type profileRow struct {
+		Name       string `json:"name"`
+		Active     bool   `json:"active"`
+		Owner      string `json:"owner"` // "operator" or "agent"
+		Auth       string `json:"auth"`  // "dcr" or "api_key"
+		Registered bool   `json:"registered"`
+		BaseURL    string `json:"base_url,omitempty"`
+		AgentID    string `json:"agent_id,omitempty"`
+		Token      string `json:"token,omitempty"`   // dcr: cached-token state
+		APIKey     string `json:"api_key,omitempty"` // api_key: masked label, never the key
+		Error      string `json:"error,omitempty"`
+	}
+
+	rows := make([]profileRow, 0, len(refs))
+	for _, ref := range refs {
+		row := profileRow{Name: ref.name, Active: isActive(ref, active), Owner: "operator", Auth: profile.AuthModeDCR}
+		if ref.owned() {
+			row.Owner = "agent"
+		}
+		p := profile.View(ref.paths, ref.name)
+		meta, metaErr := p.LoadMeta()
+		if metaErr != nil {
+			row.Error = metaErr.Error()
+			rows = append(rows, row)
+			continue
+		}
+		row.BaseURL = meta.BaseURL
+		row.AgentID = meta.AgentID
+		if meta.IsAPIKey() {
+			row.Auth = profile.AuthModeAPIKey
+			row.Registered = true
+			key, _ := p.LoadAPIKey()
+			row.APIKey = apiKeyLabel(key)
+		} else if meta.AgentID != "" {
+			row.Registered = true
+			tokens, _ := p.LoadTokens()
+			row.Token, _ = tokenStatus(tokens)
+		}
+		rows = append(rows, row)
+	}
+
+	out := struct {
+		Profiles []profileRow `json:"profiles"`
+		Active   string       `json:"active,omitempty"`
+	}{Profiles: rows, Active: active.name}
+	return writeJSON(a.Out, out)
 }
 
 // printProfileRow renders a single profile: a radio glyph + name header, then an

@@ -14,6 +14,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/authclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -288,7 +289,19 @@ func pollForTokens(ctx context.Context, out io.Writer, sess *agentauth.Session, 
 	delay := PollInitialDelay
 	for {
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("timed out after %s waiting for approval; re-run once approved", timeout)
+			// TIMEOUT_PENDING / exit 3 (AGT-4): "retry later is meaningful" — the
+			// registration is resumable (re-running reuses the pending agent_id),
+			// which is exactly what exit 3 promises. A generic exit 1 here would
+			// tell a scripted agent the command failed outright.
+			return nil, &ux.CodedError{
+				Code:       ux.CodeTimeoutPending,
+				Msg:        fmt.Sprintf("timed out after %s waiting for approval; re-run once approved", timeout),
+				Actionable: "have an operator approve the agent, then re-run the same command",
+				Details: map[string]any{
+					"agent_id":    sess.Meta.AgentID,
+					"approve_url": agentConsoleURL(sess.Meta.BaseURL, sess.Meta.AgentID),
+				},
+			}
 		}
 		select {
 		case <-ctx.Done():

@@ -44,12 +44,17 @@ func Ctl() core.TreeBuilder { return ctlcmd.TreeBuilder() }
 // color preference, not a management/context switch). NOTE: `context list` IS
 // fenced (impl/3.2 §2a): unlike `context view` (active context only) it
 // enumerates the operator's OTHER identities/contexts on a shared machine, a
-// disclosure an agent should not perform.
+// disclosure an agent should not perform. `bootstrap` IS fenced (AGT-5): it
+// blocks on a human approval poll (an effective hang for an unattended agent),
+// creates a server-side registration the agent cannot approve, and writes
+// skill files into operator runtimes — agents use `register`, which stays
+// available.
 //
 // Paths are space-separated ("context use" -> ["context","use"]) for root.Find.
 var MustBeFenced = []string{
 	"run",
 	"reset",
+	"bootstrap",
 	"context create",
 	"context use",
 	"context delete",

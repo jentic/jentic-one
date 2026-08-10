@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 func TestExecuteCmdJSONEnvelope(t *testing.T) {
@@ -105,8 +107,8 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 	})
 
 	err := root.Execute()
-	var ec *exitCodeError
-	if !errors.As(err, &ec) || ec.Code != 2 {
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
 		t.Fatalf("expected exit code 2 on denial, got err=%v", err)
 	}
 	// The recovery directive must be surfaced on stderr, including the command.
@@ -162,8 +164,8 @@ func TestExecuteCmdCredentialGapDirectiveExits2(t *testing.T) {
 	})
 
 	err := root.Execute()
-	var ec *exitCodeError
-	if !errors.As(err, &ec) || ec.Code != 2 {
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
 		t.Fatalf("expected exit code 2 on credential gap, got err=%v", err)
 	}
 	if !strings.Contains(errBuf.String(), "https://console.example/connect/stripe") {
@@ -204,8 +206,8 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 	})
 
 	err := root.Execute()
-	var ec *exitCodeError
-	if !errors.As(err, &ec) || ec.Code != 2 {
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
 		t.Fatalf("expected exit code 2 on directive-less denial, got err=%v", err)
 	}
 }
@@ -250,8 +252,8 @@ func TestExecuteCmdReconnect401DirectiveExits2(t *testing.T) {
 	})
 
 	err := root.Execute()
-	var ec *exitCodeError
-	if !errors.As(err, &ec) || ec.Code != 2 {
+	var ec interface{ ExitCode() int }
+	if !errors.As(err, &ec) || ec.ExitCode() != 2 {
 		t.Fatalf("expected exit code 2 on 401 reconnect, got err=%v", err)
 	}
 	if !strings.Contains(errBuf.String(), "must be reconnected") {
@@ -527,12 +529,12 @@ func TestExecuteCmdBadOperationExitsCode2(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var ec *exitCodeError
+	var ec *ux.CodedError
 	if !errors.As(err, &ec) {
-		t.Fatalf("error type = %T, want *exitCodeError", err)
+		t.Fatalf("error type = %T, want *ux.CodedError", err)
 	}
-	if ec.Code != 2 {
-		t.Errorf("exit code = %d, want 2", ec.Code)
+	if ec.Code != ux.CodeResolveFailed || ec.ExitCode() != 2 {
+		t.Errorf("code = %s (exit %d), want RESOLVE_FAILED (exit 2)", ec.Code, ec.ExitCode())
 	}
 }
 

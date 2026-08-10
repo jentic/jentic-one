@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -635,15 +636,28 @@ func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 
 	switch {
 	case timedOut:
-		fmt.Fprintln(a.Err, theme.Warnf("Still pending after %s; check `jentic access status %s` later.", opts.timeout, req.ID))
-		return &exitCodeError{Code: 3}
+		// Codes here mirror the exit taxonomy the help text documents (AGT-6):
+		// the decorator renders the envelope/styled line from the CodedError, so
+		// envelope code and exit code come from the same table.
+		return &ux.CodedError{
+			Code:       ux.CodeTimeoutPending,
+			Msg:        fmt.Sprintf("still pending after %s", opts.timeout),
+			Actionable: "jentic access status " + req.ID,
+		}
 	case req.Status == accessclient.StatusDenied:
-		return &exitCodeError{Code: 2}
+		return &ux.CodedError{
+			Code:       ux.CodeBrokerDenied,
+			Msg:        fmt.Sprintf("access request %s was denied", req.ID),
+			Actionable: "jentic access status " + req.ID,
+		}
 	case req.Status == accessclient.StatusExpired, req.Status == accessclient.StatusWithdrawn:
 		// Terminal but not granted: the agent still cannot do what it asked, so
 		// this must not look like success (exit 0). Treat it like a denial.
-		fmt.Fprintln(a.Err, theme.Warnf("Request %s is %s, not approved; nothing was granted.", req.ID, req.Status))
-		return &exitCodeError{Code: 2}
+		return &ux.CodedError{
+			Code:       ux.CodeBrokerDenied,
+			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.ID, req.Status),
+			Actionable: "jentic access status " + req.ID,
+		}
 	case req.Status == accessclient.StatusPartiallyApproved:
 		// A newly-granted scope only takes effect once re-minted into the token;
 		// do it for the agent so it needn't run a separate `access refresh`.
@@ -652,8 +666,11 @@ func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 		// the agent asked for is not fully granted. Signal a distinct non-zero
 		// code (not success) so a scripted agent doesn't proceed as if it can
 		// now execute; the printed items show which line items remain.
-		fmt.Fprintln(a.Err, theme.Warnf("Partially approved — not all requested items were granted; see `jentic access status %s`.", req.ID))
-		return &exitCodeError{Code: 4}
+		return &ux.CodedError{
+			Code:       ux.CodePartialApproval,
+			Msg:        "partially approved — not all requested items were granted",
+			Actionable: "jentic access status " + req.ID,
+		}
 	}
 	// Fully approved. A newly-granted scope bakes into the token at mint time, so
 	// re-mint now if the request granted one — the agent can then execute

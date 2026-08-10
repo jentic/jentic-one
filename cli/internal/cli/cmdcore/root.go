@@ -7,11 +7,13 @@
 package cmdcore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
@@ -94,6 +96,37 @@ func NewApp(deps *core.AppContainer) (*App, error) {
 	return &App{Paths: paths, Out: deps.Out, Err: deps.Err}, nil
 }
 
+// decorateCodedErrors walks the fully-built command tree and wraps every RunE so
+// a *ux.CodedError that escapes a command body WITHOUT having been rendered by
+// an Audience (via reportCoded / ReportError) is reported through the context
+// Audience before it propagates (AGT-3). Rationale: CodedError implements
+// ExitCoder, so core.Run maps it straight to an exit code without printing —
+// an unreported one would exit silently. With this backstop, shared helpers
+// (e.g. agentSession's NOT_AUTHENTICATED) can return typed errors and every
+// command gets the machine envelope / styled line for free; already-reported
+// errors (IsReported) pass through untouched, so cutover commands don't render
+// twice. Raw (non-coded) errors keep the legacy core.Run "error: ..." path.
+func decorateCodedErrors(root *cobra.Command) {
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		if orig := cmd.RunE; orig != nil {
+			cmd.RunE = func(c *cobra.Command, args []string) error {
+				err := orig(c, args)
+				var coded *ux.CodedError
+				if errors.As(err, &coded) && !coded.IsReported() {
+					aud := ux.FromContext(c.Context())
+					aud.ReportError(coded, coded.Actionable)
+				}
+				return err
+			}
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+}
+
 // TreeBuilder adapts an internal (*App)-based command-tree builder to a
 // core.TreeBuilder (which operates on the exported *core.AppContainer). Path
 // resolution can fail; surface it as a command that FAILS CLOSED rather than
@@ -116,7 +149,9 @@ func TreeBuilder(build func(*App) *cobra.Command) core.TreeBuilder {
 				PersistentPreRunE: func(*cobra.Command, []string) error { return err },
 			}
 		}
-		return build(app)
+		root := build(app)
+		decorateCodedErrors(root)
+		return root
 	}
 }
 

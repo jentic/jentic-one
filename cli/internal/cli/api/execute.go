@@ -18,6 +18,7 @@ import (
 	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -288,10 +289,11 @@ func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 				"error":  err.Error(),
 				"status": 0,
 			})
-		} else {
-			fmt.Fprintln(a.Err, theme.Warnf("transport error: %v", err))
 		}
-		return &exitCodeError{Code: 1}
+		return &ux.CodedError{
+			Code: ux.CodeTransportError,
+			Msg:  fmt.Sprintf("transport error: %v", err),
+		}
 	}
 	defer resp.Body.Close()
 
@@ -392,15 +394,19 @@ func (a *app) resolveOperation(cmd *cobra.Command, token, baseURL string, opts *
 					"error":  fmt.Sprintf("operation %q not found", target),
 					"status": 0,
 				})
-			} else {
-				fmt.Fprintln(a.Err, theme.Warnf("operation %q not found", target))
 			}
-			return nil, &exitCodeError{Code: 2}
+			return nil, &ux.CodedError{
+				Code:       ux.CodeResolveFailed,
+				Msg:        fmt.Sprintf("operation %q not found", target),
+				Actionable: "jentic search \"<what you want to do>\"",
+			}
 		}
 		// A non-404 inspect failure (transport, 5xx, malformed) still exits 2,
 		// but surface the cause so the agent isn't left with a bare exit code.
-		fmt.Fprintln(a.Err, theme.Warnf("resolve %q failed: %v", target, err))
-		return nil, &exitCodeError{Code: 2}
+		return nil, &ux.CodedError{
+			Code: ux.CodeResolveFailed,
+			Msg:  fmt.Sprintf("resolve %q failed: %v", target, err),
+		}
 	}
 
 	var opInfo operationInfo
@@ -421,7 +427,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 		// In raw mode we stream the body straight through, so we can't parse a
 		// directive out of it. Still signal a broker denial via the exit code.
 		if isBrokerDenial(resp) {
-			return &exitCodeError{Code: 2}
+			return brokerDeniedErr(resp)
 		}
 		return nil
 	}
@@ -450,9 +456,21 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 		if directive, ok := parseAgentDirective(resp, respBody); ok {
 			a.printAgentDirective(directive)
 		}
-		return &exitCodeError{Code: 2}
+		return brokerDeniedErr(resp)
 	}
 	return nil
+}
+
+// brokerDeniedErr is the typed denial every broker-denial exit shares (AGT-6):
+// BROKER_DENIED (exit 2) with the denying HTTP status in Details, so the agent
+// envelope and the exit code come from the same table. The response body /
+// directive recovery text is printed by the caller before this is returned.
+func brokerDeniedErr(resp *http.Response) *ux.CodedError {
+	return &ux.CodedError{
+		Code:    ux.CodeBrokerDenied,
+		Msg:     "the broker denied this call before it reached the upstream API",
+		Details: map[string]any{"http_status": resp.StatusCode},
+	}
 }
 
 // isBrokerDenial reports whether a response is one the broker itself emitted to

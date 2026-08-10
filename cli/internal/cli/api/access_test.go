@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
@@ -533,12 +534,12 @@ func TestAccessRequestWaitDeniedExitsCode2(t *testing.T) {
 	seedAccessProfile(t, app, "demo", srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--scope", "owner:toolkits:read", "--wait", "--timeout", "30s")
-	var ec *exitCodeError
+	var ec *ux.CodedError
 	if !errors.As(err, &ec) {
-		t.Fatalf("error type = %T (%v), want *exitCodeError\n%s", err, err, out)
+		t.Fatalf("error type = %T (%v), want *ux.CodedError\n%s", err, err, out)
 	}
-	if ec.Code != 2 {
-		t.Errorf("exit code = %d, want 2", ec.Code)
+	if ec.Code != ux.CodeBrokerDenied || ec.ExitCode() != 2 {
+		t.Errorf("code = %s (exit %d), want BROKER_DENIED (exit 2)", ec.Code, ec.ExitCode())
 	}
 	if !strings.Contains(out, `"status": "denied"`) {
 		t.Errorf("expected denied status in output:\n%s", out)
@@ -565,12 +566,12 @@ func TestAccessRequestWaitTimeoutExitsCode3(t *testing.T) {
 	seedAccessProfile(t, app, "demo", srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--scope", "owner:toolkits:read", "--wait", "--timeout", "1ms")
-	var ec *exitCodeError
+	var ec *ux.CodedError
 	if !errors.As(err, &ec) {
-		t.Fatalf("error type = %T (%v), want *exitCodeError\n%s", err, err, out)
+		t.Fatalf("error type = %T (%v), want *ux.CodedError\n%s", err, err, out)
 	}
-	if ec.Code != 3 {
-		t.Errorf("exit code = %d, want 3", ec.Code)
+	if ec.Code != ux.CodeTimeoutPending || ec.ExitCode() != 3 {
+		t.Errorf("code = %s (exit %d), want TIMEOUT_PENDING (exit 3)", ec.Code, ec.ExitCode())
 	}
 }
 

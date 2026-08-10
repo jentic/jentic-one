@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
@@ -83,7 +85,15 @@ func (h *HumanUX) Render(data any) {
 	// Paginated results arrive wrapped in a Page: render the items, then a navigation
 	// footer. Non-paginated data falls through to the type switch below.
 	if page, ok := data.(Page); ok {
-		fmt.Fprintln(os.Stdout, string(safeMarshalIndent(page.Items)))
+		// Config-list commands (context/env/identity list) pass []map[string]any
+		// rows; give humans the styled list treatment (UX-4) instead of the raw
+		// JSON dump their V1 predecessors already improved on. API-payload pages
+		// (typed slices) keep the JSON rendering — that data is the payload.
+		if rows, isRows := page.Items.([]map[string]any); isRows {
+			h.renderMapList(rows)
+		} else {
+			fmt.Fprintln(os.Stdout, string(safeMarshalIndent(page.Items)))
+		}
 		if page.HasNext() {
 			hint := lipgloss.NewStyle().Foreground(h.theme.Muted)
 			fmt.Fprintln(os.Stdout, hint.Render("\n"+page.NextHint()))
@@ -95,12 +105,58 @@ func (h *HumanUX) Render(data any) {
 	// ("✓ environment 'local' added") rather than a raw JSON dump.
 	if res, ok := data.(Result); ok {
 		fmt.Fprintln(os.Stdout, h.renderResultLine(res))
+		h.renderResultFields(res.Fields)
 		return
 	}
 
 	// Everything else: pretty-printed JSON (data uses the default terminal color;
 	// theme colors are for UI accents, not raw data).
 	fmt.Fprintln(os.Stdout, string(safeMarshalIndent(data)))
+}
+
+// renderMapList renders []map[string]any rows in the styled list treatment the
+// legacy `profile list` set the bar with (UX-4): a radio glyph for rows carrying
+// an "active" bool, the "name" value as an accented header, then the remaining
+// keys as sorted, indented field lines. Values pass the same redaction as
+// renderResultFields.
+func (h *HumanUX) renderMapList(rows []map[string]any) {
+	if len(rows) == 0 {
+		fmt.Fprintln(os.Stdout, lipgloss.NewStyle().Foreground(h.theme.Muted).Render("(none)"))
+		return
+	}
+	nameStyle := lipgloss.NewStyle().Foreground(h.theme.Primary).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(h.theme.Muted)
+	onStyle := lipgloss.NewStyle().Foreground(h.theme.Success)
+	offStyle := lipgloss.NewStyle().Foreground(h.theme.Muted)
+
+	for _, row := range rows {
+		header := ""
+		if active, hasActive := row["active"].(bool); hasActive {
+			if active {
+				header += onStyle.Render(theme.SelectOn) + " "
+			} else {
+				header += offStyle.Render(theme.SelectOff) + " "
+			}
+		}
+		if name, hasName := row["name"].(string); hasName {
+			header += nameStyle.Render(name)
+		}
+		if header != "" {
+			fmt.Fprintln(os.Stdout, header)
+		}
+
+		keys := make([]string, 0, len(row))
+		for k := range row {
+			if k == "name" || k == "active" {
+				continue // already in the header
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintln(os.Stdout, "    "+keyStyle.Render(k+":")+" "+h.fieldValue(k, row[k]))
+		}
+	}
 }
 
 // renderResultLine composes the one-line human confirmation for a Result.
@@ -122,11 +178,62 @@ func (h *HumanUX) renderResultLine(res Result) string {
 	return line
 }
 
+// renderResultFields prints Result.Fields as indented themed field lines under
+// the status line (UX-3): previously humans got ONLY the one-liner while agent
+// mode carried the full envelope — e.g. `context view` dropped the
+// environment/identity/mode map that is the whole point of the command. Keys
+// are sorted for stable output; every value passes the same redaction layers as
+// the JSON path (key heuristics + string scrub), and non-scalar values render
+// as compact redacted JSON.
+func (h *HumanUX) renderResultFields(fields map[string]any) {
+	if len(fields) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	keyStyle := lipgloss.NewStyle().Foreground(h.theme.Muted)
+	for _, k := range keys {
+		fmt.Fprintln(os.Stdout, "  "+keyStyle.Render(k+":")+" "+h.fieldValue(k, fields[k]))
+	}
+}
+
+// fieldValue formats one field value for human line rendering: scalars as-is,
+// nested values as compact redacted JSON, secret-shaped keys fully masked, and
+// every string through the same scrub the JSON path applies.
+func (h *HumanUX) fieldValue(key string, v any) string {
+	if isSensitiveKey(key) {
+		return "[REDACTED]"
+	}
+	var val string
+	switch tv := v.(type) {
+	case nil:
+		val = "-"
+	case string:
+		val = redactString(tv)
+	case bool, int, int32, int64, float32, float64:
+		val = fmt.Sprintf("%v", tv)
+	default:
+		val = string(safeMarshal(tv)) // compact, redacted JSON for nested values
+	}
+	return strings.TrimSpace(val)
+}
+
 // ReportError writes a redacted, styled error line (and optional next step) to stderr.
 func (h *HumanUX) ReportError(err error, step string) {
 	// Errors MUST go to stderr: stdout is reserved for Render payloads (a single
 	// stray byte corrupts a downstream parser). Redact the error path too (M6):
 	// error strings routinely echo backend bodies and callers capture 2>&1.
+	var coded *CodedError
+	if errors.As(err, &coded) {
+		if step == "" {
+			step = coded.Actionable
+		}
+		coded.MarkReported()
+	}
 	msg := redactString(err.Error())
 	style := lipgloss.NewStyle().Foreground(h.theme.Error).Bold(true)
 	fmt.Fprintf(os.Stderr, "%s\n", style.Render("✖ Error: "+msg))

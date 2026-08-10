@@ -201,6 +201,12 @@
                   "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
                 },
                 {
+                  "name": "json",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "force JSON output (default when stdout is not a TTY or in agent mode)"
+                },
+                {
                   "name": "mode",
                   "type": "string",
                   "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"

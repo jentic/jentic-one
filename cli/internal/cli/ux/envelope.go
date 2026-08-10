@@ -100,9 +100,22 @@ type CodedError struct {
 	Msg        string         // human/LLM-readable prose (redacted on output)
 	Actionable string         // machine-runnable recovery step, when one exists
 	Details    map[string]any // e.g. {"agent_directive": ..., "http_status": 403}
+
+	// reported records that an Audience.ReportError already rendered this error
+	// (envelope on stderr in agent mode, styled line in human mode), so the
+	// root-level residual-error backstop doesn't render it twice. Set by
+	// ReportError; read via IsReported.
+	reported bool
 }
 
 func (e *CodedError) Error() string { return e.Msg }
+
+// MarkReported flags the error as already rendered by an Audience. Called by
+// every ReportError implementation; command code never needs it.
+func (e *CodedError) MarkReported() { e.reported = true }
+
+// IsReported reports whether an Audience already rendered this error.
+func (e *CodedError) IsReported() bool { return e.reported }
 
 // ExitCode makes every CodedError satisfy pkg/core's ExitCoder mechanically, so
 // core.Run maps the closed enum to the exit taxonomy (13 §4) with no per-command

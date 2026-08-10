@@ -45,7 +45,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
 	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
 
-	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewBootstrapCmd(app.App)))
+	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(cmdcore.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
 	cmdcore.AddGrouped(root, "identity", newProfileCmd(app))
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))

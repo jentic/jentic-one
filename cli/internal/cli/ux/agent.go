@@ -75,6 +75,7 @@ func (a *AgentUX) ReportError(err error, step string) {
 		if ae.Actionable == "" {
 			ae.Actionable = coded.Actionable
 		}
+		coded.MarkReported()
 	}
 	fmt.Fprintln(os.Stderr, string(safeMarshal(ae)))
 }

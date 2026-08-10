@@ -88,9 +88,11 @@ var fencingExemptPrefixes = []string{
 	// Agent-facing self-check (read-only) and login/logout of the agent's own
 	// session (not an operator context switch).
 	"doctor", "whoami", "login", "logout",
-	// Skill / bootstrap self-provisioning + own-identity key management (writes
-	// only the agent's own runtime / its own credential, never another identity).
-	"skill", "bootstrap", "register", "profile",
+	// Skill self-provisioning + own-identity key management (writes only the
+	// agent's own runtime / its own credential, never another identity). NOTE:
+	// `bootstrap` is NOT here — it is fenced (AGT-5): it hangs on a human
+	// approval poll and writes skill files; agents use `register`.
+	"skill", "register", "profile",
 	// Operator admin config surface (jentic-tree mirror) — reachable to operators;
 	// server-side-authorized. (jenticctl is the primary operator binary.)
 	"admin",

@@ -3,12 +3,16 @@ package arch
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/api"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -58,18 +62,103 @@ func curatedRegistryPresent() bool {
 // renames/removals; this catches *additions* — a new optional param that a
 // curated command would otherwise silently never expose.
 //
-// Activation: needs the curated-command registry (command -> struct type ->
-// notExposed), a Phase-2 artifact (internal/cli/api). The vendored specs alone
-// (Phase 1) are NOT enough — there are no curated commands to reflect over yet —
-// so this stays dormant until that tree lands, then fails loud until upgraded.
+// Active since the curated-command registry (internal/cli/api/curated.go)
+// landed: it reflects over each registry entry against the REAL assembled
+// command tree, so a spec addition after `make generate-api` fails here until
+// a human classifies the new field (bind it, or record why not).
 func Test1G_SpecFlagCoverageParity(t *testing.T) {
 	if !curatedRegistryPresent() {
 		t.Skip("dormant: curated-command registry (internal/cli/api, Phase 2) not present — no commands to reflect over yet")
 	}
-	// Phase 2: reflect over each entry in the curated-command registry,
-	// asserting every json field name is in the flag set or notExposed, and
-	// that no notExposed entry references a since-removed field.
-	t.Fatal("curated-command registry is present but Test1G_SpecFlagCoverageParity was not upgraded to reflect over it — see impl/0.0 §1G and impl/2.1 §3a/§4")
+	root := api.NewDocsRoot()
+	for _, b := range api.CuratedBindings() {
+		t.Run(strings.ReplaceAll(b.Command, " ", "_"), func(t *testing.T) {
+			cmd := findCommand(t, root, b.Command)
+
+			flags := map[string]bool{}
+			cmd.Flags().VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
+
+			fields := jsonFieldNames(t, reflect.TypeOf(b.Params))
+
+			for _, name := range fields {
+				flag, bound := b.Bind[name]
+				_, excluded := b.NotExposed[name]
+				switch {
+				case bound && excluded:
+					t.Errorf("field %q is in BOTH Bind and NotExposed — pick one", name)
+				case !bound && !excluded:
+					t.Errorf("NEW spec field %q on %T is unclassified: bind it to a flag on `jentic %s`, "+
+						"or add it to NotExposed with a one-line reason (impl/0.0 §1G)", name, b.Params, b.Command)
+				case bound && flag != api.PositionalArg && !flags[flag]:
+					t.Errorf("field %q claims flag --%s, but `jentic %s` has no such flag", name, flag, b.Command)
+				}
+			}
+
+			// Staleness: a Bind/NotExposed key naming a since-removed field means
+			// the registry no longer matches the spec.
+			known := map[string]bool{}
+			for _, name := range fields {
+				known[name] = true
+			}
+			for name := range b.Bind {
+				if !known[name] {
+					t.Errorf("Bind references field %q which %T no longer has — remove the stale entry", name, b.Params)
+				}
+			}
+			for name := range b.NotExposed {
+				if !known[name] {
+					t.Errorf("NotExposed references field %q which %T no longer has — remove the stale entry", name, b.Params)
+				}
+			}
+		})
+	}
+}
+
+// findCommand resolves a space-separated command path under the root.
+func findCommand(t *testing.T, root *cobra.Command, path string) *cobra.Command {
+	t.Helper()
+	cmd := root
+	for _, part := range strings.Fields(path) {
+		var next *cobra.Command
+		for _, sub := range cmd.Commands() {
+			if sub.Name() == part {
+				next = sub
+				break
+			}
+		}
+		if next == nil {
+			t.Fatalf("command %q not found under %q (registry path stale?)", part, cmd.CommandPath())
+		}
+		cmd = next
+	}
+	return cmd
+}
+
+// jsonFieldNames returns the json names of a struct's exported, serialized
+// fields (skipping `json:"-"` and untagged unexported plumbing like union's
+// raw message).
+func jsonFieldNames(t *testing.T, typ reflect.Type) []string {
+	t.Helper()
+	if typ.Kind() != reflect.Struct {
+		t.Fatalf("curated Params must be a struct, got %s", typ)
+	}
+	var names []string
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		tag := f.Tag.Get("json")
+		name := strings.Split(tag, ",")[0]
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 // isSensitiveKey delegates to the redaction engine's exported predicate
@@ -191,4 +280,41 @@ func xSensitiveTrue(propSchema map[string]any) bool {
 	}
 	b, ok := v.(bool)
 	return ok && b
+}
+
+// TestSensitiveTablesRegistered drift-gates the GEN-2 wiring: specgen emits a
+// SensitiveFields table per plane, but the tables are INERT unless something
+// hands them to ux.RegisterSensitiveFields at composition time. This walks the
+// non-test sources of internal/cli/cmdcore (the composition point both binaries
+// and downstream embedders link) and requires a registration call for each
+// plane. Without this gate the wiring could be deleted and every `x-sensitive`
+// annotation the backend ever adds would silently stop reaching layer-1
+// redaction — the exact dormancy Test1H's sweep assumes cannot happen.
+func TestSensitiveTablesRegistered(t *testing.T) {
+	dir := filepath.Join("..", "..", "internal", "cli", "cmdcore")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read cmdcore dir: %v", err)
+	}
+	var src strings.Builder
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		src.Write(data)
+	}
+	for _, want := range []string{
+		"ux.RegisterSensitiveFields(control.SensitiveFields)",
+		"ux.RegisterSensitiveFields(broker.SensitiveFields)",
+	} {
+		if !strings.Contains(src.String(), want) {
+			t.Errorf("cmdcore no longer registers a generated sensitive-fields table: missing %q\n"+
+				"Fix: restore the init in internal/cli/cmdcore/redaction.go — specgen's x-sensitive output is inert without it (GEN-2).", want)
+		}
+	}
 }

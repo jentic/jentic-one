@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -17,11 +18,24 @@ func isTerminal(_ *cobra.Command) bool {
 	return term.IsTerminal(os.Stdout.Fd())
 }
 
-// JSONOrPretty returns true when the caller should emit JSON output: either
-// because --json was explicitly set, or because stdout is not a TTY (agent
-// friendly by default).
+// JSONOrPretty returns true when the caller should emit JSON output:
+//   - --json was explicitly set, or
+//   - stdout is not a TTY (agent friendly by default), or
+//   - the resolved mode is a fenced machine mode (agent/service-account).
+//
+// The mode rung (AGT-2) exists because agent harnesses often run the CLI on a
+// PTY: JENTIC_MODE=agent must force machine output even on a terminal, exactly
+// as it forces fencing and no-color. Any non-human mode counts — an unknown
+// mode fails closed to AgentUX at audience construction, so it fails closed to
+// JSON here too.
 func JSONOrPretty(cmd *cobra.Command, jsonFlag bool) bool {
-	return jsonFlag || !isTerminal(cmd)
+	if jsonFlag || !isTerminal(cmd) {
+		return true
+	}
+	if state := clictx.FromContext(cmd.Context()); state != nil {
+		return state.Mode != clictx.ModeHuman
+	}
+	return false
 }
 
 // WriteJSON encodes v as indented JSON to w, scrubbed by the byte-level

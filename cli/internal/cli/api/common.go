@@ -7,6 +7,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/authclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
@@ -33,6 +34,18 @@ func (a *app) sessionPaths(profileName string) (config.Paths, error) {
 	return a.Paths, nil
 }
 
+// notRegisteredErr is the typed form of the single most common agent error
+// (AGT-3): the profile has no registered agent. NOT_AUTHENTICATED so the agent
+// envelope carries a closed-enum code instead of raw prose; the message keeps
+// the exact V1 wording.
+func notRegisteredErr(profileName string) *ux.CodedError {
+	return &ux.CodedError{
+		Code:       ux.CodeNotAuthenticated,
+		Msg:        fmt.Sprintf("profile %q has no registered agent; run `jentic register` first", profileName),
+		Actionable: "jentic register",
+	}
+}
+
 // agentSession resolves the active profile, opens its agent session, and
 // returns the resolved control-plane base URL plus a valid access token. It
 // fails with an actionable error when the profile has no registered agent or
@@ -51,7 +64,7 @@ func (a *app) agentSession(ctx context.Context, ident *identityOptions) (baseURL
 		return "", "", err
 	}
 	if !sess.Meta.IsAPIKey() && sess.Meta.AgentID == "" {
-		return "", "", fmt.Errorf("profile %q has no registered agent; run `jentic register` first", profileName)
+		return "", "", notRegisteredErr(profileName)
 	}
 	tok, err := sess.ValidToken(ctx)
 	if err != nil {
@@ -78,7 +91,7 @@ func (a *app) agentSessionOpen(ident *identityOptions) (*agentauth.Session, stri
 		return nil, "", err
 	}
 	if !sess.Meta.IsAPIKey() && sess.Meta.AgentID == "" {
-		return nil, "", fmt.Errorf("profile %q has no registered agent; run `jentic register` first", profileName)
+		return nil, "", notRegisteredErr(profileName)
 	}
 	return sess, profileName, nil
 }
@@ -105,19 +118,28 @@ func (a *app) agentSessionView(ident *identityOptions) (*agentauth.Session, stri
 	return sess, profileName, nil
 }
 
-// agentAuthErr turns a token-mint failure into an actionable message. The agent
-// id is present (checked by the caller) but no usable token could be obtained:
-// the agent is awaiting approval, was revoked, or the signing key no longer
-// matches what the server registered — all of which `jentic register` resolves.
+// agentAuthErr turns a token-mint failure into an actionable, CODED message
+// (AGT-3/AGT-6). The agent id is present (checked by the caller) but no usable
+// token could be obtained: not registered → NOT_AUTHENTICATED; awaiting
+// approval → PENDING_APPROVAL; anything else (revoked, key mismatch) →
+// NOT_AUTHENTICATED — all of which `jentic register` resolves.
 func agentAuthErr(err error, profileName string) error {
 	if errors.Is(err, agentauth.ErrNotRegistered) {
-		return fmt.Errorf("profile %q has no registered agent; run `jentic register` first", profileName)
+		return notRegisteredErr(profileName)
 	}
 	var pending *authclient.PendingError
 	if errors.As(err, &pending) {
-		return fmt.Errorf("agent for profile %q is not active yet (%v); wait for approval, "+
-			"or re-run `jentic register --profile %s` if you removed it", profileName, err, profileName)
+		return &ux.CodedError{
+			Code: ux.CodePendingApproval,
+			Msg: fmt.Sprintf("agent for profile %q is not active yet (%v); wait for approval, "+
+				"or re-run `jentic register --profile %s` if you removed it", profileName, err, profileName),
+			Actionable: "jentic register --profile " + profileName,
+		}
 	}
-	return fmt.Errorf("could not authenticate profile %q (%w); re-run `jentic register --profile %s`",
-		profileName, err, profileName)
+	return &ux.CodedError{
+		Code: ux.CodeNotAuthenticated,
+		Msg: fmt.Sprintf("could not authenticate profile %q (%v); re-run `jentic register --profile %s`",
+			profileName, err, profileName),
+		Actionable: "jentic register --profile " + profileName,
+	}
 }
