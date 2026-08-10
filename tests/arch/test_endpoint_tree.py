@@ -300,6 +300,48 @@ def test_identity_dependency_recognition_is_qualname_scoped() -> None:
     assert _closure_values(_make_impostor()) == (False, None, None)
 
 
+def test_prefixed_included_router_keyed_by_full_path() -> None:
+    """A router included under a prefix is keyed by its FULL path in the auth map.
+
+    Regression for the ``AppContainer.extra_routers`` case (e.g. an enterprise
+    overlay's ``/enterprise/admin/*`` console): ``include_router(prefix=...)`` wraps
+    the router in a FastAPI ``_IncludedRouter`` whose child routes carry only their
+    own (prefix-stripped) ``.path``. If the introspection walk drops that prefix,
+    the auth map is keyed by the stripped path, fails to join the OpenAPI document
+    (which uses the full path), and the endpoint reference mis-classifies the route
+    as public — tripping ``assert_classification_is_sound`` with a 500. The walk
+    must reconstruct the prefix so the scope is recovered under the full path.
+    """
+    from fastapi import APIRouter, FastAPI
+
+    from jentic_one.shared.web.endpoint_scopes import build_operation_auth_map
+
+    router = APIRouter()
+
+    @router.get("/toolkits/{toolkit_id}/shares", operation_id="prefixedListShares")
+    async def _list_shares(
+        toolkit_id: str,
+        _identity: object = get_current_identity(required_permissions=["toolkits:write"]),
+    ) -> dict[str, str]:
+        return {"toolkit_id": toolkit_id}
+
+    app = FastAPI()
+    app.include_router(router, prefix="/enterprise/admin")
+
+    auth_map = build_operation_auth_map(app)
+
+    full_key = ("GET", "/enterprise/admin/toolkits/{toolkit_id}/shares")
+    stripped_key = ("GET", "/toolkits/{toolkit_id}/shares")
+    assert full_key in auth_map, (
+        "prefixed included route must be keyed by its FULL path so it joins the "
+        f"OpenAPI document; got keys {sorted(auth_map)}"
+    )
+    assert stripped_key not in auth_map, "route must NOT be keyed by the prefix-stripped path"
+    entry = auth_map[full_key]
+    assert entry["authenticated"] is True
+    assert entry["scopes"] == ["toolkits:write"]
+
+
 @pytest.mark.arch
 def test_committed_reference_matches_generated() -> None:
     """docs/reference/endpoints.{md,json} must equal what the generator produces.
