@@ -159,6 +159,11 @@ func (OperationSummaryListResponse) RequiredFields() []string  { return []string
 func (OperationSummaryResponse) RequiredFields() []string {
 	return []string{"_links", "api", "method", "operation_id", "path", "revision_id"}
 }
+func (OverlayLinksResponse) RequiredFields() []string { return []string{"api", "self"} }
+func (OverlayListResponse) RequiredFields() []string  { return []string{"data", "has_more"} }
+func (OverlayResponse) RequiredFields() []string {
+	return []string{"_links", "api_id", "confirmed_at", "confirmed_by_execution_id", "contributed_by", "created_at", "deprecated_at", "document", "id", "status", "target_revision_id", "updated_at"}
+}
 func (OverlaySubmitRequest) RequiredFields() []string   { return []string{"document"} }
 func (PermissionListResponse) RequiredFields() []string { return []string{"data"} }
 func (PermissionResponse) RequiredFields() []string {
