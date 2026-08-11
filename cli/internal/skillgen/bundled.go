@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -23,6 +24,9 @@ import (
 //go:generate sh -c "cd ../../.. && make skills"
 //go:embed content/*.md
 var bundledContent embed.FS
+
+//go:embed content/tasks
+var taskSkillsFS embed.FS
 
 // bundledDir is the embed sub-path the skill markdown files live under.
 const bundledDir = "content"
@@ -348,4 +352,79 @@ func parseSteps(section string) []Step {
 	}
 	flush()
 	return steps
+}
+
+// TaskSkill is a single task-level skill extracted from the embedded FS.
+type TaskSkill struct {
+	Product     string
+	TaskID      string
+	Name        string
+	Description string
+	Version     string
+	Content     string // markdown body below frontmatter
+	Raw         string // complete file including frontmatter
+}
+
+// TaskSkills reads all *.md files from the embedded FS for the given product
+// and returns them sorted by TaskID.
+func TaskSkills(product string) ([]TaskSkill, error) {
+	dir := filepath.Join("content", "tasks", product)
+	entries, err := taskSkillsFS.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read task skills for %q: %w", product, err)
+	}
+	var skills []TaskSkill
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
+			continue
+		}
+		data, err := taskSkillsFS.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", e.Name(), err)
+		}
+		ts, err := parseTaskSkill(product, e.Name(), string(data))
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+		}
+		skills = append(skills, ts)
+	}
+	sort.Slice(skills, func(i, j int) bool {
+		return skills[i].TaskID < skills[j].TaskID
+	})
+	return skills, nil
+}
+
+// TaskSkillByID finds a task skill by its ID within the given product.
+func TaskSkillByID(product, taskID string) (*TaskSkill, error) {
+	skills, err := TaskSkills(product)
+	if err != nil {
+		return nil, err
+	}
+	for i := range skills {
+		if skills[i].TaskID == taskID {
+			return &skills[i], nil
+		}
+	}
+	return nil, fmt.Errorf("task skill %q not found for product %q", taskID, product)
+}
+
+func parseTaskSkill(product, filename, src string) (TaskSkill, error) {
+	taskID := strings.TrimSuffix(filename, ".md")
+	body, fm := splitFrontmatter(src)
+	ts := TaskSkill{
+		Product: product,
+		TaskID:  taskID,
+		Name:    fm["name"],
+		Description: fm["description"],
+		Version: fm["version"],
+		Content: body,
+		Raw:     src,
+	}
+	if ts.Name == "" {
+		return ts, errors.New("missing name in frontmatter")
+	}
+	if ts.Description == "" {
+		return ts, errors.New("missing description in frontmatter")
+	}
+	return ts, nil
 }

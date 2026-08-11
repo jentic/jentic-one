@@ -557,6 +557,21 @@ func (a *App) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 		}
 	}
 
+	// Install task skills alongside the main skill.
+	taskSkills, terr := skillgen.TaskSkills("jentic")
+	if terr == nil && len(taskSkills) > 0 {
+		for _, t := range targets {
+			n, werr := a.writeTaskSkills(t.adapter, env, t.scope, taskSkills, opts.dryRun)
+			if werr != nil {
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s task skills: %v", t.adapter.Operator(), werr))
+			} else if opts.dryRun {
+				fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would install %d task skill(s)", t.adapter.Operator(), n))
+			} else {
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s installed %d task skill(s)", t.adapter.Operator(), n))
+			}
+		}
+	}
+
 	if opts.dryRun {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Dry run — nothing was written."))
 		return nil
@@ -855,6 +870,30 @@ func (a *App) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 			}
 		}
 	}
+	// Remove task skills directory for each adapter.
+	for _, ad := range adapters {
+		s := scope
+		if s == "" {
+			s = ad.DefaultScope()
+		}
+		dir := taskSkillsDir(ad, env, s)
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		if opts.dryRun {
+			fmt.Fprintln(a.Out, "  "+theme.Infof("%-8s would remove task skills from %s", ad.Operator(), prettyPath(dir)))
+		} else {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintln(a.Out, "  "+theme.Warnf("%s: failed to remove task skills: %v", ad.Operator(), err))
+			} else {
+				fmt.Fprintln(a.Out, "  "+theme.Successf("%-8s removed task skills from %s", ad.Operator(), prettyPath(dir)))
+			}
+		}
+	}
+
 	if opts.dryRun {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Dry run — nothing was removed."))
 	}
@@ -862,6 +901,25 @@ func (a *App) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 		fmt.Fprintln(a.Out, theme.Dim.Render("Re-run with --force to remove blocks you have edited."))
 	}
 	return nil
+}
+
+// taskSkillsDir returns the directory where task skills are installed for an
+// adapter, or empty string if the adapter doesn't use a directory layout.
+func taskSkillsDir(ad skillgen.Adapter, env skillgen.DetectEnv, scope skillgen.Scope) string {
+	base := env.Home
+	if scope == skillgen.ScopeProject {
+		base = env.Cwd
+	}
+	switch ad.Operator() {
+	case skillgen.OpClaude:
+		return filepath.Join(base, ".claude", "skills", "jentic-tasks")
+	case skillgen.OpCursor:
+		return filepath.Join(base, ".cursor", "skills", "jentic-tasks")
+	case skillgen.OpHermes:
+		return filepath.Join(base, ".hermes", "skills", "jentic-tasks")
+	default:
+		return ""
+	}
 }
 
 // prettyPath shortens an absolute path under $HOME to a ~-relative form for

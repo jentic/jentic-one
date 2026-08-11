@@ -132,6 +132,7 @@ func newAPIRootCmd(app *App) *cobra.Command {
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.
 	addGrouped(root, "client", newSkillCmd(app))
+	addGrouped(root, "client", newSkillsCmd(app))
 	addGrouped(root, "client", newRunCmd(app))
 	addGrouped(root, "client", newResetCmd(app))
 	addGrouped(root, "admin", newAdminCmd(app))

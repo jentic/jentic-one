@@ -5,16 +5,16 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic bootstrap`\nto create one (isolated account + registration + skills). If you're an agent\nwithout a profile yet, run `jentic register`. Then browse the catalog with\n`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\nCLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic bootstrap`\nto create one (isolated account + registration + skills). If you're an agent\nwithout a profile yet, run `jentic register`. Then browse the catalog with\n`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\nCLI (e.g. `jenticctl install`). Use `jentic <command> --help` for details.",
       "commands": [
         {
           "name": "bootstrap",
           "path": "jentic bootstrap",
           "use": "bootstrap",
-          "short": "Register an agent, wait for approval, and prime your operator — in one step",
+          "short": "Register an agent, wait for approval, and prime your operator \u2014 in one step",
           "long": "bootstrap takes a fresh machine from nothing to ready: it registers this\nprofile as an agent (Dynamic Client Registration), prints an approval link\nand waits for a human to approve it, mints and saves tokens, sets the\nprofile as the default, and generates the Jentic CLI-usage skill into your\nagent runtime's native layout.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
           "example": "  jentic bootstrap\n  jentic bootstrap --operator claude --yes\n  jentic bootstrap --profile demo --base-url http://localhost:9000 --all --yes\n  jentic bootstrap --skip-skill   # identity only\n  jentic bootstrap --dry-run",
-          "group_title": "Identity \u0026 access",
+          "group_title": "Identity & access",
           "flags": [
             {
               "name": "all",
@@ -93,7 +93,7 @@
           "use": "register",
           "short": "Register this profile as an agent and obtain tokens",
           "long": "register generates an Ed25519 keypair (if absent), performs Dynamic\nClient Registration, waits for an operator to approve the agent, then mints\nand saves an access/refresh token pair to the profile. `jentic execute` uses\nthose tokens as the Authorization bearer.",
-          "group_title": "Identity \u0026 access",
+          "group_title": "Identity & access",
           "flags": [
             {
               "name": "base-url",
@@ -137,7 +137,7 @@
           "use": "profile",
           "short": "View and switch the active profile",
           "long": "profile lists the local agent profiles under ~/.jentic/profiles and\nswitches which one commands act on by default. The active profile is the\n--profile flag, else $JENTIC_PROFILE, else config.yaml default_profile.\nRun bare on a terminal to pick interactively.",
-          "group_title": "Identity \u0026 access",
+          "group_title": "Identity & access",
           "subcommands": [
             {
               "name": "list",
@@ -153,7 +153,7 @@
               "path": "jentic profile view",
               "use": "view [name]",
               "short": "Show a profile's details and the directories its agent can access",
-              "long": "Show a profile's details plus the map of every directory its agent can\nreach. With no name it non-interactively shows the currently active profile —\nso an agent can run `jentic profile view` to see exactly what it can access."
+              "long": "Show a profile's details plus the map of every directory its agent can\nreach. With no name it non-interactively shows the currently active profile \u2014\nso an agent can run `jentic profile view` to see exactly what it can access."
             },
             {
               "name": "use",
@@ -166,7 +166,7 @@
               "path": "jentic profile add-key",
               "use": "add-key [name]",
               "short": "Create a profile authenticated by an agent API key",
-              "long": "add-key stores an agent API key (jak_*) generated in the Jentic console as\na new profile. Unlike `jentic register`, no key is generated and no operator\napproval is needed — the API key is sent directly as the bearer credential.\nPass --api-key for scripting, or run interactively to be prompted for it.",
+              "long": "add-key stores an agent API key (jak_*) generated in the Jentic console as\na new profile. Unlike `jentic register`, no key is generated and no operator\napproval is needed \u2014 the API key is sent directly as the bearer credential.\nPass --api-key for scripting, or run interactively to be prompted for it.",
               "flags": [
                 {
                   "name": "agent-id",
@@ -192,7 +192,7 @@
           "path": "jentic logout",
           "use": "logout",
           "short": "Revoke and clear the profile's cached tokens",
-          "group_title": "Identity \u0026 access",
+          "group_title": "Identity & access",
           "flags": [
             {
               "name": "base-url",
@@ -277,7 +277,7 @@
             {
               "name": "search",
               "path": "jentic catalog search",
-              "use": "search \u003cquery\u003e",
+              "use": "search <query>",
               "short": "Search the catalog by keyword",
               "flags": [
                 {
@@ -325,7 +325,7 @@
             {
               "name": "show",
               "path": "jentic catalog show",
-              "use": "show \u003capi_id\u003e",
+              "use": "show <api_id>",
               "short": "Show a catalog entry and preview its operations",
               "flags": [
                 {
@@ -360,7 +360,7 @@
             {
               "name": "import",
               "path": "jentic catalog import",
-              "use": "import \u003capi_id\u003e",
+              "use": "import <api_id>",
               "short": "Import a catalog entry into the local registry (auto-promotes to live)",
               "flags": [
                 {
@@ -461,7 +461,7 @@
           "path": "jentic apis",
           "use": "apis",
           "short": "Browse and manage APIs in the local registry",
-          "long": "apis inspects and manages the APIs imported into this deployment's local\nregistry — the other half of `jentic catalog import`. Run bare on a\nterminal to open an interactive browser (list, preview operations, manage\nrevisions); the subcommands (list/show/revisions/operations/inspect/\npromote/archive/rm/spec) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
+          "long": "apis inspects and manages the APIs imported into this deployment's local\nregistry \u2014 the other half of `jentic catalog import`. Run bare on a\nterminal to open an interactive browser (list, preview operations, manage\nrevisions); the subcommands (list/show/revisions/operations/inspect/\npromote/archive/rm/spec) are script-friendly.\nRequires a registered agent (run `jentic register` first).",
           "group_title": "APIs",
           "flags": [
             {
@@ -523,7 +523,7 @@
             {
               "name": "show",
               "path": "jentic apis show",
-              "use": "show \u003cvendor/name/version\u003e",
+              "use": "show <vendor/name/version>",
               "short": "Show an API and preview its operations",
               "flags": [
                 {
@@ -553,7 +553,7 @@
             {
               "name": "revisions",
               "path": "jentic apis revisions",
-              "use": "revisions \u003cvendor/name/version\u003e",
+              "use": "revisions <vendor/name/version>",
               "short": "List the revisions of an API",
               "aliases": [
                 "revs"
@@ -598,7 +598,7 @@
             {
               "name": "operations",
               "path": "jentic apis operations",
-              "use": "operations \u003cvendor/name/version\u003e",
+              "use": "operations <vendor/name/version>",
               "short": "List the operations of an API (current revision by default)",
               "aliases": [
                 "ops"
@@ -642,7 +642,7 @@
             {
               "name": "inspect",
               "path": "jentic apis inspect",
-              "use": "inspect \u003coperation_id\u003e",
+              "use": "inspect <operation_id>",
               "short": "Inspect an operation's structural detail",
               "flags": [
                 {
@@ -671,7 +671,7 @@
             {
               "name": "promote",
               "path": "jentic apis promote",
-              "use": "promote \u003cvendor/name/version\u003e \u003crevision_id\u003e",
+              "use": "promote <vendor/name/version> <revision_id>",
               "short": "Promote a draft revision to live",
               "flags": [
                 {
@@ -689,7 +689,7 @@
             {
               "name": "archive",
               "path": "jentic apis archive",
-              "use": "archive \u003cvendor/name/version\u003e \u003crevision_id\u003e",
+              "use": "archive <vendor/name/version> <revision_id>",
               "short": "Archive a draft revision",
               "flags": [
                 {
@@ -707,7 +707,7 @@
             {
               "name": "rm",
               "path": "jentic apis rm",
-              "use": "rm \u003cvendor/name/version\u003e [revision_id]",
+              "use": "rm <vendor/name/version> [revision_id]",
               "short": "Delete an API (or an archived revision)",
               "aliases": [
                 "delete"
@@ -734,7 +734,7 @@
             {
               "name": "spec",
               "path": "jentic apis spec",
-              "use": "spec \u003cvendor/name/version\u003e",
+              "use": "spec <vendor/name/version>",
               "short": "Download the OpenAPI spec for an API",
               "flags": [
                 {
@@ -772,7 +772,7 @@
           "path": "jentic endpoints",
           "use": "endpoints",
           "short": "Browse the API endpoint + scope reference",
-          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the scope(s) it requires. The grouping is an advisory hint — the\nscope is the real gate. It reads the server's public endpoint reference\n(/reference/endpoints.json, no token needed) — the same join published in\ndocs/reference/endpoints.md.\nFilter with --scope or --actor, or use --json for a machine-readable dump.",
+          "long": "endpoints prints every control-plane API endpoint grouped by its typical\ncaller and the scope(s) it requires. The grouping is an advisory hint \u2014 the\nscope is the real gate. It reads the server's public endpoint reference\n(/reference/endpoints.json, no token needed) \u2014 the same join published in\ndocs/reference/endpoints.md.\nFilter with --scope or --actor, or use --json for a machine-readable dump.",
           "group_title": "APIs",
           "flags": [
             {
@@ -806,7 +806,7 @@
         {
           "name": "search",
           "path": "jentic search",
-          "use": "search \u003cquery\u003e",
+          "use": "search <query>",
           "short": "Search for operations by natural-language query",
           "long": "search finds API operations whose descriptions, names, or paths match a\nquery. Results are ranked by lexical (full-text) relevance. The\nquery can also be passed via -q for piping.\n\nOutput defaults to JSON when stdout is not a TTY (agent-friendly);\nuse --json to force JSON on a terminal.",
           "example": "  jentic search \"list users\"\n  jentic search -q \"create payment\" --api stripe.com/api/v1 --limit 5\n  jentic search \"list pets\" --all --json | jq '.data[].operation_id'",
@@ -862,7 +862,7 @@
         {
           "name": "inspect",
           "path": "jentic inspect",
-          "use": "inspect \u003cMETHOD:url | operation_id\u003e",
+          "use": "inspect <METHOD:url | operation_id>",
           "short": "Inspect an operation's contract (schema, parameters, examples)",
           "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
           "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect createUser --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
@@ -899,9 +899,9 @@
         {
           "name": "execute",
           "path": "jentic execute",
-          "use": "execute \u003cMETHOD:url | METHOD:/path | operation_id\u003e",
+          "use": "execute <METHOD:url | METHOD:/path | operation_id>",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker.\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url \u2014 a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker.\n  2. operation_id \u2014 resolve via inspect, then route through the broker.\n  3. METHOD:/path \u2014 a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 \u2014 broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 \u2014 local/transport failure (DNS, TLS, timeout, connection refused)\n  2 \u2014 denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)",
           "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json",
           "group_title": "Find and run operations",
           "flags": [
@@ -988,7 +988,7 @@
               "path": "jentic access whoami",
               "use": "whoami",
               "short": "Show your agent identity, scopes, and toolkit bindings",
-              "long": "whoami answers \"what can I do right now?\" — your agent id, status, granted\nscopes, and the toolkits you are bound to. An empty bindings list means you\ncannot execute against any API yet; use `jentic access request` to ask.",
+              "long": "whoami answers \"what can I do right now?\" \u2014 your agent id, status, granted\nscopes, and the toolkits you are bound to. An empty bindings list means you\ncannot execute against any API yet; use `jentic access request` to ask.",
               "flags": [
                 {
                   "name": "base-url",
@@ -1013,14 +1013,14 @@
               "path": "jentic access request",
               "use": "request",
               "short": "File a request for toolkit bindings, scope grants, or provisioning plans",
-              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name a toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_…), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves an API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret — it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\nitem. With more than one --provision, key --auth and --rules-json by the\nsame vendor/name[/version] passed to --provision; the bare form applies\nwhen there is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 — request filed (or, with --wait, fully approved)\n  2 — request was denied, expired, or withdrawn (only with --wait)\n  3 — still pending when --timeout elapsed (only with --wait)\n  4 — partially approved; not all items granted (only with --wait)",
+              "long": "request files one access request for the access you are missing and prints an\napprove_url for your human operator. Name a toolkit by the API you found in\nsearch (--toolkit vendor/name), by id (--toolkit-id tk_\u2026), or ask for a scope\n(--scope). Use --wait to block until a human decides (or --timeout elapses).\n\nWhen nothing serves an API yet (a fresh import with no toolkit/credential),\nuse --provision vendor/name to file the whole path to first execution as one\nplan: create a toolkit, provision a credential, bind it (with your proposed\n--rules-json), and bind yourself. A human fulfils the create/provision steps\nin the dashboard (they enter the secret \u2014 it never rides in your request) and\napproves. Use --auth to declare the credential type you detected from the spec\n(bearer, api_key, basic, oauth2, or none for a no-auth API).\n\nAll target flags repeat and combine, so a job needing several APIs files ONE\ncomposite request the human decides in one sitting: each --provision appends\na provisioning plan, each --toolkit/--toolkit-id/--scope appends a single\nitem. With more than one --provision, key --auth and --rules-json by the\nsame vendor/name[/version] passed to --provision; the bare form applies\nwhen there is exactly one.\n\nAn existing pending request for the same resource is reused when this request\nnames a single target; a composite aborts instead (drop the already-pending\ntarget or withdraw the older request, then re-file).\n\nExit codes:\n  0 \u2014 request filed (or, with --wait, fully approved)\n  2 \u2014 request was denied, expired, or withdrawn (only with --wait)\n  3 \u2014 still pending when --timeout elapsed (only with --wait)\n  4 \u2014 partially approved; not all items granted (only with --wait)",
               "example": "  jentic access request --toolkit httpbin.org/httpbin --reason \"smoke test\"\n  jentic access request --toolkit-id tk_123 --wait\n  jentic access request --scope owner:toolkits:read --json\n  jentic access request --provision posthog.com/posthog-api --auth bearer \\\n    --rules-json '[{\"effect\":\"allow\",\"methods\":[\"GET\"],\"path\":\".*\"}]' --wait\n  jentic access request --provision slack.com/api --auth slack.com/api=bearer \\\n    --provision googleapis.com/sheets --auth googleapis.com/sheets=oauth2 \\\n    --toolkit github.com/api --scope apis:write \\\n    --reason \"release-notes automation\" --wait",
               "flags": [
                 {
                   "name": "auth",
                   "type": "stringArray",
                   "default": "[]",
-                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=\u003ctype\u003e)"
+                  "usage": "credential auth type for --provision: bearer, api_key, basic, oauth2, or none (default bearer); key by API when --provision repeats (vendor/name[/version]=<type>)"
                 },
                 {
                   "name": "base-url",
@@ -1053,7 +1053,7 @@
                   "name": "rules-json",
                   "type": "stringArray",
                   "default": "[]",
-                  "usage": "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=\u003cjson\u003e)"
+                  "usage": "proposed permission rules for --provision, as a JSON array; key by API when --provision repeats (vendor/name[/version]=<json>)"
                 },
                 {
                   "name": "scope",
@@ -1077,7 +1077,7 @@
                   "name": "toolkit-id",
                   "type": "stringArray",
                   "default": "[]",
-                  "usage": "request a binding to this toolkit id (tk_…; repeatable)"
+                  "usage": "request a binding to this toolkit id (tk_\u2026; repeatable)"
                 },
                 {
                   "name": "wait",
@@ -1129,14 +1129,14 @@
                 {
                   "name": "status",
                   "type": "string",
-                  "usage": "filter by status (pending, approved, denied, withdrawn, …)"
+                  "usage": "filter by status (pending, approved, denied, withdrawn, \u2026)"
                 }
               ]
             },
             {
               "name": "status",
               "path": "jentic access status",
-              "use": "status \u003crequest-id\u003e",
+              "use": "status <request-id>",
               "short": "Show one access request, including per-item state and approve_url",
               "flags": [
                 {
@@ -1160,7 +1160,7 @@
             {
               "name": "withdraw",
               "path": "jentic access withdraw",
-              "use": "withdraw \u003crequest-id\u003e",
+              "use": "withdraw <request-id>",
               "short": "Withdraw a pending access request",
               "flags": [
                 {
@@ -1213,7 +1213,7 @@
           "path": "jentic skill",
           "use": "skill",
           "short": "Generate the Jentic skill set into your agent's native layout",
-          "long": "skill writes the Jentic skill set into each supported agent runtime's\nnative layout — a clean, spec-conformant SKILL.md per skill for\nclaude-code, cursor, and hermes, or a named pointer block in AGENTS.md\nfor codex and generic — so the agent discovers how to use Jentic and the\nspec-flywheel skills without you hand-writing anything.\n\nThe shipped set is jentic (how to use the CLI), contribute-spec-fix, and\nimport-new-api; pass --skill to install a subset.\n\nWrites are idempotent: owned SKILL.md files carry provenance in a sidecar\nand AGENTS.md content lives in named managed blocks, so re-running never\nclobbers your own edits around them.",
+          "long": "skill writes the Jentic skill set into each supported agent runtime's\nnative layout \u2014 a clean, spec-conformant SKILL.md per skill for\nclaude-code, cursor, and hermes, or a named pointer block in AGENTS.md\nfor codex and generic \u2014 so the agent discovers how to use Jentic and the\nspec-flywheel skills without you hand-writing anything.\n\nThe shipped set is jentic (how to use the CLI), contribute-spec-fix, and\nimport-new-api; pass --skill to install a subset.\n\nWrites are idempotent: owned SKILL.md files carry provenance in a sidecar\nand AGENTS.md content lives in named managed blocks, so re-running never\nclobbers your own edits around them.",
           "group_title": "Local agent client",
           "subcommands": [
             {
@@ -1372,17 +1372,74 @@
           ]
         },
         {
+          "name": "skills",
+          "path": "jentic skills",
+          "use": "skills [name]",
+          "short": "List or display embedded task skills",
+          "long": "skills lists all embedded task skills (step-by-step guides for common\nJentic platform operations). Pass a skill name to print its full content.\nUse \"skills init\" to install them into your agent's native layout.",
+          "group_title": "Find and run operations",
+          "flags": [
+            {
+              "name": "json",
+              "type": "bool",
+              "default": "false",
+              "usage": "output as JSON array"
+            }
+          ],
+          "subcommands": [
+            {
+              "name": "init",
+              "path": "jentic skills init",
+              "use": "init [name]",
+              "short": "Install task skills into your agent's native layout",
+              "long": "init writes task-skill markdown files into each detected agent runtime's\nnative layout. Pass a skill name to install only that one.",
+              "example": "  jentic skills init\n  jentic skills init register-agent\n  jentic skills init --operator claude,cursor\n  jentic skills init --all --yes\n  jentic skills init --dry-run",
+              "flags": [
+                {
+                  "name": "all",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "target every supported operator"
+                },
+                {
+                  "name": "dry-run",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "print target paths without writing"
+                },
+                {
+                  "name": "operator",
+                  "type": "stringSlice",
+                  "default": "[]",
+                  "usage": "operators to target (repeatable or comma-separated)"
+                },
+                {
+                  "name": "scope",
+                  "type": "string",
+                  "usage": "placement scope: user or project (default: per-operator)"
+                },
+                {
+                  "name": "yes",
+                  "type": "bool",
+                  "default": "false",
+                  "usage": "skip the interactive picker (use --operator/--all)"
+                }
+              ]
+            }
+          ]
+        },
+        {
           "name": "run",
           "path": "jentic run",
-          "use": "run \u003cagent\u003e [path] [-- \u003cagent-args\u003e...]",
+          "use": "run <agent> [path] [-- <agent-args>...]",
           "short": "Launch a coding agent as its own isolated Unix user",
-          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator — it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- \u003cagent-args\u003e)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis in\ndocs/security/local-agent/local-agent-isolation.md for the full rationale.",
+          "long": "run launches a coding agent under a dedicated, unprivileged OS account\ndistinct from the operator's login user, so a compromised or prompt-injected\nagent cannot read the operator's keys, browser session, or the jentic-one\ncredential store. It provisions the agent's binary for that account if\nmissing, resolves filesystem access to the working directory (granting a\nscoped ACL only when the operator confirms), and starts the session as\nthe agent's own Unix user in a fresh login shell, so the operator's\nenvironment and secrets are not inherited by the agent.\n\nRunnable agents: claude, codex, cursor, hermes.\n(\"generic\" is a skill-only operator \u2014 it has no binary and cannot be run;\nuse `jentic skill` to write its onboarding docs instead.)\n\nArguments for the agent binary are forwarded verbatim, in either form:\n  jentic run claude -- --model opus -p \"hi\"   (agent, then -- <agent-args>)\n  jentic run -- claude --model opus -p \"hi\"   (-- then the whole agent command)\nboth run `claude --model opus -p \"hi\"` as the agent user. In the leading-`--`\nform the first token after `--` is the agent id and there is no path argument\n(the working directory defaults to the current one); use the trailing form to\npass a path. Without any `--`, run takes at most the agent id and a path.\n\nThe agent account, its home, and the directories it has been granted are\nrecorded in ~/.jentic/config.yaml. See the security analysis in\ndocs/security/local-agent/local-agent-isolation.md for the full rationale.",
           "group_title": "Local agent client",
           "flags": [
             {
               "name": "agent-user",
               "type": "string",
-              "usage": "override the derived \u003coperator\u003e-local-agent account"
+              "usage": "override the derived <operator>-local-agent account"
             },
             {
               "name": "allow-dir",
@@ -1449,7 +1506,7 @@
           "path": "jentic reset",
           "use": "reset [profile]",
           "short": "Tear down the agent account, or remove a single profile",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`.\nThere is ONE dedicated agent Unix account shared by every profile, so reset\nworks at two granularities.\n\n`jentic reset` with no argument is a full clean slate: it tears down the\nagent account — the dedicated Unix user, the named-user ACLs stamped across\nyour home (both the leaf read/write grants and the execute-only ancestor\ntraverse grants), the passwordless-launch sudoers drop-in, and every agent\nprofile in the account's home — and then also wipes your OWN jentic CLI\nconfig: every profile (keys, tokens, registration) under ~/.jentic/profiles\nand the default profile. The account's home is PRESERVED by default (re-owned\nto you); deleting it takes a separate, explicit confirmation.\n\n`jentic reset \u003cprofile\u003e` removes just that one profile. If it is an\nagent-owned profile and the LAST one in the account, reset offers to also\ntear down the whole account (grants, sudoers, Unix user, home) — otherwise\nthe account and its grants are left in place.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`.\nThere is ONE dedicated agent Unix account shared by every profile, so reset\nworks at two granularities.\n\n`jentic reset` with no argument is a full clean slate: it tears down the\nagent account \u2014 the dedicated Unix user, the named-user ACLs stamped across\nyour home (both the leaf read/write grants and the execute-only ancestor\ntraverse grants), the passwordless-launch sudoers drop-in, and every agent\nprofile in the account's home \u2014 and then also wipes your OWN jentic CLI\nconfig: every profile (keys, tokens, registration) under ~/.jentic/profiles\nand the default profile. The account's home is PRESERVED by default (re-owned\nto you); deleting it takes a separate, explicit confirmation.\n\n`jentic reset <profile>` removes just that one profile. If it is an\nagent-owned profile and the LAST one in the account, reset offers to also\ntear down the whole account (grants, sudoers, Unix user, home) \u2014 otherwise\nthe account and its grants are left in place.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
           "example": "  jentic reset                              # full clean slate: the account + your own config\n  jentic reset work                         # just the 'work' profile\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
@@ -1491,7 +1548,7 @@
                     {
                       "name": "set",
                       "path": "jentic admin config providers set",
-                      "use": "set \u003cname\u003e",
+                      "use": "set <name>",
                       "short": "Create or update a provider config",
                       "long": "set validates the provider-specific fields, encrypts the secret, and\nactivates the config at runtime. For `pipedream` the recognised flags are\n--project-id, --client-id, --environment, and --connect-base-url; the\nclient_secret is prompted for without echo (or read from stdin with\n--secret-stdin).",
                       "flags": [
@@ -1542,7 +1599,7 @@
                     {
                       "name": "get",
                       "path": "jentic admin config providers get",
-                      "use": "get \u003cname\u003e",
+                      "use": "get <name>",
                       "short": "Show a provider config (secrets redacted)",
                       "flags": [
                         {
@@ -1599,7 +1656,7 @@
       "name": "jenticctl",
       "tagline": "install and operate jentic-one locally",
       "short": "jenticctl: install and operate jentic-one locally",
-      "long": "jenticctl is the installer and lifecycle companion for jentic-one. It\nstands up a local deployment (from source via `uv`, or in Docker via\n`docker compose`) and manages the running app: health checks, start/stop,\nlog tailing, updates, and teardown.\n\nNew here? Run `jenticctl install` to set up locally. Once installed, use the\n`jentic` CLI to register an agent and run against the API catalog. Use\n`jenticctl \u003ccommand\u003e --help` for details on any command.",
+      "long": "jenticctl is the installer and lifecycle companion for jentic-one. It\nstands up a local deployment (from source via `uv`, or in Docker via\n`docker compose`) and manages the running app: health checks, start/stop,\nlog tailing, updates, and teardown.\n\nNew here? Run `jenticctl install` to set up locally. Once installed, use the\n`jentic` CLI to register an agent and run against the API catalog. Use\n`jenticctl <command> --help` for details on any command.",
       "commands": [
         {
           "name": "install",
@@ -1607,7 +1664,7 @@
           "use": "install",
           "short": "Interactive wizard to configure and onboard jentic-one",
           "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "fresh-secrets",
@@ -1646,9 +1703,9 @@
           "path": "jenticctl wizard",
           "use": "wizard",
           "short": "Guided first-run: create your admin account, connect an operator, and start using Jentic",
-          "long": "wizard is the hand-held onboarding that runs after `jenticctl install`. It\nwaits while you create your first admin account in the browser (so you get\nto know the product through the UI), then offers to connect your AI operator\n(Claude, Cursor, …): it registers an agent, points you at the console to\napprove it, waits for the approval, and finally suggests example prompts you\ncan try.\n\nEverything it does you can also do by hand (open the UI, `jenticctl setup`,\n`jentic bootstrap`); the wizard just sequences it into one continuous flow.\nRe-run it any time — each step is idempotent.",
+          "long": "wizard is the hand-held onboarding that runs after `jenticctl install`. It\nwaits while you create your first admin account in the browser (so you get\nto know the product through the UI), then offers to connect your AI operator\n(Claude, Cursor, \u2026): it registers an agent, points you at the console to\napprove it, waits for the approval, and finally suggests example prompts you\ncan try.\n\nEverything it does you can also do by hand (open the UI, `jenticctl setup`,\n`jentic bootstrap`); the wizard just sequences it into one continuous flow.\nRe-run it any time \u2014 each step is idempotent.",
           "example": "  jenticctl wizard\n  jenticctl wizard --operator claude --yes\n  jenticctl wizard --no-open   # don't auto-launch the browser",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "base-url",
@@ -1670,7 +1727,7 @@
             {
               "name": "operator",
               "type": "string",
-              "usage": "operator to connect (claude, cursor, …); default: auto-detect"
+              "usage": "operator to connect (claude, cursor, \u2026); default: auto-detect"
             },
             {
               "name": "skip-operator",
@@ -1698,8 +1755,8 @@
           "path": "jenticctl setup",
           "use": "setup",
           "short": "Create the first admin account (one-time first-run setup)",
-          "long": "setup creates the first administrator for a freshly-installed jentic-one.\nIt drives the app's one-time create-admin path against the running stack\n(Docker compose) or the local install (venv), so the credential never\nleaves the operator boundary — there is no default password to rotate.\n\nThis succeeds only while no users exist; once an admin is created, manage\nfurther users from the admin UI. Run `jenticctl install` first if you have\nnot set up locally yet.",
-          "group_title": "Setup \u0026 lifecycle",
+          "long": "setup creates the first administrator for a freshly-installed jentic-one.\nIt drives the app's one-time create-admin path against the running stack\n(Docker compose) or the local install (venv), so the credential never\nleaves the operator boundary \u2014 there is no default password to rotate.\n\nThis succeeds only while no users exist; once an admin is created, manage\nfurther users from the admin UI. Run `jenticctl install` first if you have\nnot set up locally yet.",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "config",
@@ -1730,8 +1787,8 @@
           "path": "jenticctl reset-password",
           "use": "reset-password",
           "short": "Set a temporary password for a user who is locked out or forgot theirs",
-          "long": "reset-password sets a one-time temporary password for an existing user and\nforces them to choose a new one at their next sign-in. The operator never\nlearns the user's standing password — you hand over the temporary one, the\nuser changes it themselves, and the temporary credential dies on first use.\n\nThis is the operator recovery path: there is no email-based self-service\nreset. It also clears any login lockout. Drives the app's reset path against\nthe running stack (Docker compose) or the local install (venv).",
-          "group_title": "Setup \u0026 lifecycle",
+          "long": "reset-password sets a one-time temporary password for an existing user and\nforces them to choose a new one at their next sign-in. The operator never\nlearns the user's standing password \u2014 you hand over the temporary one, the\nuser changes it themselves, and the temporary credential dies on first use.\n\nThis is the operator recovery path: there is no email-based self-service\nreset. It also clears any login lockout. Drives the app's reset path against\nthe running stack (Docker compose) or the local install (venv).",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "config",
@@ -1762,8 +1819,8 @@
           "path": "jenticctl doctor",
           "use": "doctor",
           "short": "Diagnose the local jentic environment",
-          "long": "doctor runs an exhaustive set of health checks across the local jentic\nsetup — filesystem and config, the recorded install, required tooling, the\ncontrol-plane server, and the agent profile — and prints a pass/warn/fail\nreport with remediation hints.\n\nIt is read-only and never mints tokens. It exits non-zero when any check\nfails (warnings keep a zero exit), so it is safe to wire into CI.",
-          "group_title": "Setup \u0026 lifecycle",
+          "long": "doctor runs an exhaustive set of health checks across the local jentic\nsetup \u2014 filesystem and config, the recorded install, required tooling, the\ncontrol-plane server, and the agent profile \u2014 and prints a pass/warn/fail\nreport with remediation hints.\n\nIt is read-only and never mints tokens. It exits non-zero when any check\nfails (warnings keep a zero exit), so it is safe to wire into CI.",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "base-url",
@@ -1789,7 +1846,7 @@
           "use": "status",
           "short": "Show install, server, and agent health",
           "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the agent identity/token state for a\nprofile. It degrades gracefully: missing pieces are reported, not fatal.",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "base-url",
@@ -1809,7 +1866,7 @@
           "use": "start",
           "short": "Start the configured jentic-one app",
           "long": "start launches the locally-installed jentic-one app in the background.\nIt requires a completed `jenticctl install` (a generated config and a built\nvenv); if either is missing it tells you to run `jenticctl install` first.",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "config",
@@ -1824,7 +1881,7 @@
           "use": "stop",
           "short": "Stop the background app or Docker stack",
           "long": "stop terminates the background jentic-one process recorded in\n~/.jentic/app.pid (started by `jenticctl install` or `jenticctl start`), or tears\ndown the Docker stack for a containerized install. It sends SIGTERM, waits\nfor a graceful exit, then escalates to SIGKILL if needed.\n\nFor a Docker install, --volumes also removes the stack's data volumes\n(SQLite data or the managed Postgres data dir). Use it to recover from an\nincompatible Postgres image upgrade. This destroys the database.",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "timeout",
@@ -1852,7 +1909,7 @@
           "use": "logs",
           "short": "View the jentic-one app logs",
           "long": "logs shows the captured output of the locally-installed app\n(~/.jentic/logs/app.log). Use --follow to stream new lines as they are\nwritten, or --json to read the structured JSON-lines sink configured by\n`jenticctl install`.",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "follow",
@@ -1888,7 +1945,7 @@
           "use": "update",
           "short": "Update the jentic CLIs (and check the stack) to the latest release",
           "long": "update reports the installed CLI and server versions, compares the\ninstalled version against the latest release tag on GitHub, and (unless\n--check) rebuilds and replaces the jenticctl and jentic binaries in place,\nthen rebuilds the installed stack. Use --cli-only or --stack-only to update\njust one half.\n\nA Homebrew-installed CLI is never swapped in place: the CLI half runs\n`brew upgrade jentic` instead, so brew's bookkeeping stays consistent\n(--ref cannot pin a Homebrew-managed CLI).",
-          "group_title": "Setup \u0026 lifecycle",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "base-url",
@@ -1931,8 +1988,8 @@
           "path": "jenticctl uninstall",
           "use": "uninstall",
           "short": "Remove everything under ~/.jentic (config files are backed up to *-old)",
-          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup — install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
-          "group_title": "Setup \u0026 lifecycle",
+          "long": "uninstall deletes the contents of ~/.jentic (venv, source, data, logs,\nprofiles, CA, etc.). Config files are preserved: each is renamed to a\n'-old' backup so you can restore your settings later. The ~/.jentic\ndirectory itself is kept.\n\nFor a Docker install the database lives in a named volume (SQLite data or\nthe managed Postgres data dir), not under ~/.jentic. uninstall tears the\nstack down but PRESERVES that volume by default, so a later `install`\nreattaches your data. The credential-encryption key for that data lives\nin the jentic-one-old.yaml backup \u2014 install auto-reuses it so encrypted\ncredentials stay readable; deleting the backup by hand strands them.\nUse --purge to also delete the data volume (this destroys the database),\nor --keep-data to force preservation. With no flag and an interactive\nterminal, uninstall asks before deleting it.\n\nOn a local (source) install it stops the background app/broker processes\nfirst so they aren't orphaned when their files are removed.",
+          "group_title": "Setup & lifecycle",
           "flags": [
             {
               "name": "keep-data",

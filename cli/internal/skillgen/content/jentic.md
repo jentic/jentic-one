@@ -419,6 +419,10 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   approve this identity (they block on human approval; not for autonomous use).
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
+- `jentic skills` — list available onboarding guidance (step-by-step
+  procedures, pitfalls, and verification for common platform workflows).
+- `jentic skills <name>` — view a specific task guide.
+- `jentic skills init [name]` — install task skill(s) for your operator.
 - Add `--json` to force machine-readable output on a terminal.
 
 ## Pitfalls
