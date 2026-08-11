@@ -100,7 +100,7 @@ async def authorize_endpoint(
     if code_challenge_method != "S256":
         return _error_redirect(redirect_uri, "invalid_request", state, "only S256 is supported")
 
-    callback_uri = str(request.url_for("oauth_callback"))
+    callback_uri = str(request.url_for("authorize_oauth_callback"))
 
     internal_state = _sign_state(
         {
@@ -129,7 +129,11 @@ async def authorize_endpoint(
     return RedirectResponse(url=idp_url, status_code=302)
 
 
-@router.get("/oauth/callback", operation_id="authorizeOauthCallback")
+@router.get(
+    "/oauth/callback",
+    operation_id="authorizeOauthCallback",
+    name="authorize_oauth_callback",
+)
 async def oauth_callback(
     request: Request,
     code: str = Query(...),
@@ -150,7 +154,7 @@ async def oauth_callback(
     nonce = params.get("nonce")
     original_state = params.get("original_state")
 
-    callback_uri = str(request.url_for("oauth_callback"))
+    callback_uri = str(request.url_for("authorize_oauth_callback"))
     try:
         platform_code = await authorize_svc.handle_idp_callback(
             code=code,
