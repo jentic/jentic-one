@@ -2355,7 +2355,7 @@
       "path": "/oauth/callback",
       "public": true,
       "required_scopes": [],
-      "summary": "Oauth Callback",
+      "summary": "Authorize Oauth Callback",
       "surface": "oauth",
       "typical_caller": null
     },

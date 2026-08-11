@@ -13326,7 +13326,7 @@ paths:
                 $ref: '#/components/schemas/ProblemDetail'
           description: Service Unavailable
       security: []
-      summary: Oauth Callback
+      summary: Authorize Oauth Callback
       tags:
       - OAuth
   /oauth/introspect:

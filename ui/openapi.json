@@ -24774,7 +24774,7 @@
           }
         },
         "security": [],
-        "summary": "Oauth Callback",
+        "summary": "Authorize Oauth Callback",
         "tags": [
           "OAuth"
         ]

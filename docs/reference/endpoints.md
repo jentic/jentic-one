@@ -422,7 +422,7 @@ _Total endpoints: **158**._
 
 | Method | Path | Scope(s) | Typical caller | Summary |
 |---|---|---|---|---|
-| GET | `/oauth/callback` | _public — no auth_ | — | Oauth Callback |
+| GET | `/oauth/callback` | _public — no auth_ | — | Authorize Oauth Callback |
 | POST | `/oauth/token` | _public — no auth_ | — | Token Endpoint |
 
 ### `ready`
