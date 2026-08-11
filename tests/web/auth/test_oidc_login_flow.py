@@ -35,6 +35,12 @@ from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
+from jentic_one.auth.core.idp import (
+    AdmissionDecision,
+    IdpClaims,
+    get_admission_policy,
+    set_admission_policy,
+)
 from jentic_one.auth.web.app import create_app
 from jentic_one.shared.config import IdpConfig, SigningKeyConfig
 from jentic_one.shared.context import Context
@@ -301,6 +307,46 @@ def test_authorization_code_is_single_use(client: TestClient, _cleanup: None) ->
 
     replay = _exchange(client, code=code, code_verifier=start.code_verifier)
     assert replay.status_code == 400, replay.text
+
+
+def test_auth_idp_descriptor_advertises_enabled(client: TestClient) -> None:
+    """WI-4 capability hint: the public descriptor reports enabled + provider."""
+    resp = client.get("/auth/idp")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["enabled"] is True
+    assert body["provider"] == FAKE_PROVIDER
+
+
+@respx.mock
+def test_admission_policy_reject_blocks_new_user(client: TestClient, _cleanup: None) -> None:
+    """WI-1: a reject-policy declines a brand-new email; no user is provisioned.
+
+    The already-linked / existing-account paths are unaffected — the seam only
+    gates never-seen emails. Here the policy rejects, so the callback redirects
+    to the internal error page instead of back to the client with a code.
+    """
+    _stub_idp(sub="google-sub-reject", email="blocked@example.com", email_verified=True)
+
+    original = get_admission_policy()
+
+    def _reject_all(claims: IdpClaims) -> AdmissionDecision:
+        return AdmissionDecision.REJECT
+
+    set_admission_policy(_reject_all)
+    try:
+        start = _begin_authorize(client, state="s", nonce="n")
+        resp = client.get(
+            "/oauth/callback",
+            params={"code": "fake-idp-code", "state": start.signed_state},
+        )
+    finally:
+        set_admission_policy(original)
+
+    assert resp.status_code == 302, resp.text
+    # Declined by policy → internal error page (access_denied), not a client code.
+    assert urlparse(resp.headers["location"]).path == "/error", resp.headers["location"]
+    assert "access_denied" in resp.headers["location"]
 
 
 SHARED_EMAIL = "victim@example.com"

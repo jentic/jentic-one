@@ -249,6 +249,11 @@ class IdpConfig(BaseModel):
     authorization_endpoint: str | None = None
     exchange_endpoint: str | None = None
     userinfo_endpoint: str | None = None
+    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
+    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
+    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
+    # admission policy.
+    hosted_domain: str | None = None
 
 
 class AuthConfig(BaseModel):

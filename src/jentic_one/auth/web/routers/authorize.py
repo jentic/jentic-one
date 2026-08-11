@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -161,6 +161,10 @@ async def oauth_callback(
             scopes=scope or "openid",
             nonce=nonce,
         )
+    except UserNotAdmittedError:
+        # Authenticated by the IdP, but the deployment's admission policy declined
+        # to provision this account. Distinct from a grant/exchange failure.
+        return RedirectResponse(url="/error?error=access_denied", status_code=302)
     except (InvalidGrantError, httpx.HTTPStatusError):
         return RedirectResponse(url="/error?error=server_error", status_code=302)
 

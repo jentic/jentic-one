@@ -14,8 +14,14 @@ from jentic_one.admin.repos import (
     UserRepository,
 )
 from jentic_one.auth.core.id_token import issue_id_token
-from jentic_one.auth.core.idp import IdpAdapter, IdpClaims, OidcAdapter
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.core.idp import (
+    AdmissionDecision,
+    IdpAdapter,
+    IdpClaims,
+    OidcAdapter,
+    get_admission_policy,
+)
+from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import TokenService
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.config import AuthConfig
@@ -279,6 +285,19 @@ class AuthorizeService:
                     )
                     return existing_user.id
 
+                # Brand-new (never-seen) verified email: consult the deployment's
+                # admission policy. Default (open) admits any verified email — the
+                # historical behaviour. A stricter policy (invite-only, domain-
+                # gated, …) can decline via set_admission_policy(); the already-
+                # linked and existing-account paths above are never gated. On
+                # reject we leave this transaction WITHOUT writing (a rollback
+                # would discard a reject audit), then audit + raise below.
+                if get_admission_policy()(claims) is not AdmissionDecision.ADMIT_AND_CREATE:
+                    await self._audit_admission_rejected(claims, provider)
+                    raise UserNotAdmittedError(
+                        "This account is not permitted to sign in to this deployment"
+                    )
+
                 new_user = await UserRepository.create(
                     session,
                     email=claims.email,
@@ -320,3 +339,22 @@ class AuthorizeService:
             if ext_id is not None:
                 return ext_id.user_id
             raise InvalidGrantError("concurrent identity creation failed")
+
+    async def _audit_admission_rejected(self, claims: IdpClaims, provider: str) -> None:
+        """Record a rejected external-IdP login in its own committed transaction.
+
+        Kept separate from the provisioning transaction because that transaction
+        rolls back when the reject is raised — inlining the audit there would
+        discard it.
+        """
+        async with self._ctx.admin_db.transaction() as session:
+            await record_audit(
+                session,
+                action=AuditAction.CREATE,
+                target_type=AuditTargetType.USER,
+                target_id=claims.email,
+                actor_type=ActorType.USER,
+                actor_id=claims.email,
+                reason=f"external IdP login not admitted ({provider})",
+                origin=None,
+            )

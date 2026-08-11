@@ -107,3 +107,57 @@ def test_map_claims_email_verified_false(adapter: OidcAdapter) -> None:
     }
     claims = adapter.map_claims(userinfo)
     assert claims.email_verified is False
+
+
+# ── Google provider profile (WI-2) ───────────────────────────────────────────
+
+
+@pytest.fixture()
+def google_config() -> IdpConfig:
+    return IdpConfig(
+        enabled=True,
+        provider="google",
+        client_id="google-client",
+        client_secret=SecretStr("google-secret"),
+    )
+
+
+def test_google_defaults_authorize_endpoint(google_config: IdpConfig) -> None:
+    adapter = OidcAdapter(google_config)
+    url = adapter.authorize_url(state="s", nonce="n", redirect_uri="https://app.example.com/cb")
+    parsed = urlparse(url)
+    assert parsed.hostname == "accounts.google.com"
+    assert parsed.path == "/o/oauth2/v2/auth"
+
+
+def test_google_explicit_endpoint_overrides_default() -> None:
+    config = IdpConfig(
+        enabled=True,
+        provider="google",
+        client_id="google-client",
+        client_secret=SecretStr("secret"),
+        authorization_endpoint="https://custom.example.com/auth",
+    )
+    adapter = OidcAdapter(config)
+    url = adapter.authorize_url(state="s", nonce="n", redirect_uri="https://app.example.com/cb")
+    assert url.startswith("https://custom.example.com/auth?")
+
+
+def test_google_map_claims_surfaces_hd(google_config: IdpConfig) -> None:
+    adapter = OidcAdapter(google_config)
+    claims = adapter.map_claims(
+        {
+            "sub": "g-1",
+            "email": "user@jentic.com",
+            "email_verified": True,
+            "hd": "jentic.com",
+        }
+    )
+    assert claims.hosted_domain == "jentic.com"
+    assert claims.email_verified is True
+
+
+def test_map_claims_hosted_domain_none_without_hd(adapter: OidcAdapter) -> None:
+    # Generic OIDC (and consumer Google) accounts carry no `hd` claim.
+    claims = adapter.map_claims({"sub": "x", "email": "user@example.com"})
+    assert claims.hosted_domain is None

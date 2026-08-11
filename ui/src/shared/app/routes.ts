@@ -20,6 +20,10 @@ import type { RouteObject } from 'react-router';
 export const ROUTES = {
 	root: '/',
 	login: '/login',
+	// SSO authorization-code callback landing (outside the Layout/AuthGuard):
+	// the browser returns here from the platform authorize flow with a one-time
+	// code, which the page exchanges for a session (→ /app/auth/callback).
+	authCallback: '/auth/callback',
 	// First-run, no-credential setup. Lives at the root (outside /app and the
 	// authenticated Layout): reachable before any account exists, and self-closes
 	// once the first admin is created (see SetupPage / setup_required health gate).
