@@ -8,9 +8,13 @@ import secrets
 from base64 import urlsafe_b64encode
 from datetime import UTC, datetime, timedelta
 
+import structlog
+
+from jentic_one.admin.core.permissions import ALL_PERMISSIONS
 from jentic_one.admin.repos import (
     AuthorizationCodeRepository,
     ExternalIdentityRepository,
+    UserPermissionGrantRepository,
     UserRepository,
 )
 from jentic_one.auth.core.id_token import issue_id_token
@@ -20,6 +24,7 @@ from jentic_one.auth.core.idp import (
     IdpClaims,
     build_idp_adapter,
     get_admission_policy,
+    get_default_idp_grants,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.auth.services.token_service import TokenService
@@ -32,6 +37,23 @@ from jentic_one.shared.models import ActorType, InviteState
 
 def _hash_code(code: str) -> str:
     return hashlib.sha256(code.encode()).hexdigest()
+
+
+_logger = structlog.get_logger(__name__)
+
+
+def _valid_grants(permissions: list[str]) -> list[str]:
+    """Keep only permission names present in the catalogue, dropping unknowns.
+
+    A default-grants provider is deployment-configured, so a typo or a scope that
+    no longer exists must not be able to fail an otherwise-valid login. Unknown
+    names are logged once and skipped.
+    """
+    known = [p for p in permissions if p in ALL_PERMISSIONS]
+    unknown = [p for p in permissions if p not in ALL_PERMISSIONS]
+    if unknown:
+        _logger.warning("idp_default_grants_unknown_dropped", unknown=sorted(set(unknown)))
+    return known
 
 
 def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
@@ -315,6 +337,20 @@ class AuthorizeService:
                     email=claims.email,
                     created_by=new_user.id,
                 )
+                # Baseline permissions for a brand-new IdP user (default: none).
+                # Applied only here, at creation — existing/linked accounts above
+                # are never touched. Written in this same transaction so the user
+                # and their grants land atomically. Unknown scope names are
+                # dropped defensively so a misconfigured list can't 500 the login.
+                default_grants = _valid_grants(get_default_idp_grants()(claims))
+                if default_grants:
+                    await UserPermissionGrantRepository.set_permissions(
+                        session,
+                        new_user.id,
+                        permissions=set(default_grants),
+                        granted_by=new_user.id,
+                        created_by=new_user.id,
+                    )
                 await record_audit(
                     session,
                     action=AuditAction.CREATE,
@@ -322,7 +358,11 @@ class AuthorizeService:
                     target_id=new_user.id,
                     actor_type=ActorType.USER,
                     actor_id=new_user.id,
-                    after={"email": claims.email, "auth_provider": provider},
+                    after={
+                        "email": claims.email,
+                        "auth_provider": provider,
+                        "granted_permissions": sorted(default_grants),
+                    },
                     reason="provisioned via external IdP",
                     origin=None,
                 )

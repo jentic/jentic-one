@@ -13,6 +13,11 @@ domain-allowlist, hosted-domain gating, …) installs its own callable via
 stays in ``AuthorizeService`` — the policy only answers "admit-and-create, or
 reject this new email?".
 
+A second, independent seam decides *what a brand-new user starts with*: the
+**default-grants provider** (:func:`set_default_idp_grants`) returns the baseline
+permissions a just-created IdP user receives (e.g. read-only). It defaults to
+granting nothing (today's behaviour) and applies only to brand-new users.
+
 Same process-global registry posture as ``register_config`` in
 ``shared/config.py``: a module-level default, replaceable at import time.
 """
@@ -71,3 +76,42 @@ def set_admission_policy(policy: AdmissionPolicy) -> None:
 def get_admission_policy() -> AdmissionPolicy:
     """Return the currently-installed admission policy (open by default)."""
     return _admission_policy
+
+
+class DefaultGrantsProvider(Protocol):
+    """Yields the permission grants a brand-new IdP-provisioned user receives."""
+
+    def __call__(self, claims: IdpClaims) -> list[str]:
+        """Return the permission names to grant a just-created user (may be empty)."""
+        ...
+
+
+def no_default_grants(claims: IdpClaims) -> list[str]:
+    """Default provider: grant nothing.
+
+    Preserves the historical behaviour — a self-provisioned IdP user starts with
+    no permissions until an admin grants them. A deployment that wants new users
+    to start with, say, read-only access installs its own provider via
+    :func:`set_default_idp_grants`.
+    """
+    return []
+
+
+_default_grants_provider: DefaultGrantsProvider = no_default_grants
+
+
+def set_default_idp_grants(provider: DefaultGrantsProvider) -> None:
+    """Install the process-wide default-grants provider for new IdP users.
+
+    Called once at import/boot by a deployment that wants newly-provisioned
+    external-IdP users to start with a baseline permission set (e.g. read-only).
+    The grants are applied ONLY to brand-new users at creation time; existing and
+    already-linked accounts are never modified. Last write wins.
+    """
+    global _default_grants_provider
+    _default_grants_provider = provider
+
+
+def get_default_idp_grants() -> DefaultGrantsProvider:
+    """Return the installed default-grants provider (grants nothing by default)."""
+    return _default_grants_provider

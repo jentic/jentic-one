@@ -13,8 +13,11 @@ from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpClaims,
     get_admission_policy,
+    get_default_idp_grants,
+    no_default_grants,
     open_admission_policy,
     set_admission_policy,
+    set_default_idp_grants,
 )
 
 
@@ -65,5 +68,33 @@ def test_set_admission_policy_overrides_and_restores() -> None:
 def _restore_policy() -> object:
     """Guard against a test leaking a non-default policy into the module global."""
     original = get_admission_policy()
+    original_grants = get_default_idp_grants()
     yield
     set_admission_policy(original)
+    set_default_idp_grants(original_grants)
+
+
+def test_default_grants_provider_grants_nothing() -> None:
+    assert no_default_grants(_claims(email_verified=True)) == []
+
+
+def test_default_installed_grants_provider_is_none() -> None:
+    assert get_default_idp_grants() is no_default_grants
+
+
+def test_set_default_idp_grants_overrides_and_restores() -> None:
+    original = get_default_idp_grants()
+    try:
+
+        def _read_only(claims: IdpClaims) -> list[str]:
+            return ["capabilities:read", "apis:read"]
+
+        set_default_idp_grants(_read_only)
+        assert get_default_idp_grants() is _read_only
+        assert get_default_idp_grants()(_claims(email_verified=True)) == [
+            "capabilities:read",
+            "apis:read",
+        ]
+    finally:
+        set_default_idp_grants(original)
+        assert get_default_idp_grants() is no_default_grants

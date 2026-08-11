@@ -29,17 +29,20 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 from jwt.algorithms import ECAlgorithm
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from jentic_one.admin.core.schema.authorization_codes import AuthorizationCode
 from jentic_one.admin.core.schema.external_identities import ExternalIdentity
+from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.users import User
 from jentic_one.admin.repos import UserRepository
 from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpClaims,
     get_admission_policy,
+    get_default_idp_grants,
     set_admission_policy,
+    set_default_idp_grants,
 )
 from jentic_one.auth.web.app import create_app
 from jentic_one.shared.config import IdpConfig, SigningKeyConfig
@@ -347,6 +350,62 @@ def test_admission_policy_reject_blocks_new_user(client: TestClient, _cleanup: N
     # Declined by policy → internal error page (access_denied), not a client code.
     assert urlparse(resp.headers["location"]).path == "/error", resp.headers["location"]
     assert "access_denied" in resp.headers["location"]
+
+
+async def _grants_for_email(ctx: Context, email: str) -> list[str]:
+    """Return the permission names written for the user with this email."""
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.get_by_email(session, email)
+        assert user is not None, f"expected a provisioned user for {email}"
+        result = await session.execute(
+            select(UserPermissionGrant.permission).where(UserPermissionGrant.user_id == user.id)
+        )
+        return sorted(result.scalars().all())
+
+
+@respx.mock
+async def test_new_user_gets_configured_default_grants(
+    client: TestClient, oidc_context: Context, _cleanup: None
+) -> None:
+    """A configured default-grants provider seeds a brand-new user's baseline grants.
+
+    An unknown scope in the configured list is dropped defensively rather than
+    failing the login.
+    """
+    _stub_idp(sub="google-sub-grants", email="reader@example.com", email_verified=True)
+
+    original = get_default_idp_grants()
+
+    def _read_only(claims: IdpClaims) -> list[str]:
+        return ["capabilities:read", "apis:read", "not:a:real:scope"]
+
+    set_default_idp_grants(_read_only)
+    try:
+        start = _begin_authorize(client, state="s", nonce="n")
+        code = _callback(client, signed_state=start.signed_state)
+        resp = _exchange(client, code=code, code_verifier=start.code_verifier)
+        assert resp.status_code == 200, resp.text
+    finally:
+        set_default_idp_grants(original)
+
+    grants = await _grants_for_email(oidc_context, "reader@example.com")
+    assert grants == ["apis:read", "capabilities:read"]
+
+
+@respx.mock
+async def test_new_user_defaults_to_no_grants(
+    client: TestClient, oidc_context: Context, _cleanup: None
+) -> None:
+    """With the default provider installed, a new user starts with zero grants."""
+    _stub_idp(sub="google-sub-nogrants", email="empty@example.com", email_verified=True)
+
+    start = _begin_authorize(client, state="s", nonce="n")
+    code = _callback(client, signed_state=start.signed_state)
+    resp = _exchange(client, code=code, code_verifier=start.code_verifier)
+    assert resp.status_code == 200, resp.text
+
+    grants = await _grants_for_email(oidc_context, "empty@example.com")
+    assert grants == []
 
 
 SHARED_EMAIL = "victim@example.com"
