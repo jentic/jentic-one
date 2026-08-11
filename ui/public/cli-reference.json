@@ -25,7 +25,7 @@
             {
               "name": "base-url",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "LEGACY: control-plane base URL for the ~/.jentic store"
             },
             {
               "name": "context",
@@ -37,6 +37,11 @@
               "type": "bool",
               "default": "false",
               "usage": "show what would happen without registering or writing"
+            },
+            {
+              "name": "env",
+              "type": "string",
+              "usage": "environment name for --url (default: derived from the URL host)"
             },
             {
               "name": "force",
@@ -69,7 +74,7 @@
             {
               "name": "profile",
               "type": "string",
-              "usage": "profile to create/use (default: config default_profile)"
+              "usage": "LEGACY: profile to create/use in the ~/.jentic store"
             },
             {
               "name": "scope",
@@ -94,6 +99,11 @@
               "usage": "how long to wait for approval"
             },
             {
+              "name": "url",
+              "type": "string",
+              "usage": "Jentic install URL to connect to (creates environment/identity/context on first run)"
+            },
+            {
               "name": "yes",
               "shorthand": "y",
               "type": "bool",
@@ -106,14 +116,15 @@
           "name": "register",
           "path": "jentic register",
           "use": "register",
-          "short": "Register this profile as an agent and obtain tokens",
-          "long": "register generates an Ed25519 keypair (if absent), performs Dynamic\nClient Registration, waits for an operator to approve the agent, then mints\nand saves an access/refresh token pair to the profile. `jentic execute` uses\nthose tokens as the Authorization bearer.",
+          "short": "Register this machine as an agent and obtain tokens",
+          "long": "register connects this machine to a Jentic install: it generates an\nEd25519 keypair (if absent), performs Dynamic Client Registration, waits\nfor an operator to approve the agent, then mints and saves tokens.\n\nWith an active context (`jentic context use`), it registers that context's\nidentity with its environment. On a fresh machine, pass --url (or answer\nthe prompt) and register creates the environment, identity and context in\none step, activates them, and registers. --profile/--base-url address the\nlegacy ~/.jentic profile store instead.",
+          "example": "  jentic register --url https://jentic.example.com\n  jentic register --url https://jentic.example.com --name crawler --env prod\n  jentic register                      # active context (or interactive setup)\n  jentic register --force              # re-register the active identity",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
               "name": "base-url",
               "type": "string",
-              "usage": "Jentic control-plane base URL"
+              "usage": "LEGACY: control-plane base URL for the ~/.jentic store"
             },
             {
               "name": "context",
@@ -121,10 +132,15 @@
               "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
             },
             {
+              "name": "env",
+              "type": "string",
+              "usage": "environment name for --url (default: derived from the URL host)"
+            },
+            {
               "name": "force",
               "type": "bool",
               "default": "false",
-              "usage": "re-register even if the profile already has an agent"
+              "usage": "re-register even if this identity already has a registration"
             },
             {
               "name": "mode",
@@ -134,12 +150,12 @@
             {
               "name": "name",
               "type": "string",
-              "usage": "agent client name"
+              "usage": "agent name shown to the approving operator (default: hostname)"
             },
             {
               "name": "profile",
               "type": "string",
-              "usage": "profile name (default: config default_profile)"
+              "usage": "LEGACY: profile name in the ~/.jentic store"
             },
             {
               "name": "theme",
@@ -151,6 +167,11 @@
               "type": "duration",
               "default": "5m0s",
               "usage": "how long to wait for approval"
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "usage": "Jentic install URL to connect to (creates environment/identity/context on first run)"
             },
             {
               "name": "yes",

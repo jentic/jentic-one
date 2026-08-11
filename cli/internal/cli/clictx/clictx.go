@@ -157,3 +157,21 @@ func FromContext(ctx context.Context) *ActiveState {
 	s, _ := ctx.Value(activeStateKey).(*ActiveState)
 	return s
 }
+
+// ActiveV2 returns the resolved state from ctx only when it represents a real
+// V2 context — an XDG-store (or file-less) resolution with a concrete
+// environment. It returns nil when no state was injected, when resolution
+// degraded (no config anywhere), or when the state is the legacy-read
+// adapter's compatibility view of ~/.jentic (EnvironmentName ==
+// LegacyEnvironment). This is THE shared arm-decision for every command that
+// behaves context-first with a legacy fallback (data plane, register).
+func ActiveV2(ctx context.Context) *ActiveState {
+	st := FromContext(ctx)
+	if st == nil || st.ResolvedState == nil {
+		return nil
+	}
+	if st.EnvironmentName == "" || st.EnvironmentName == LegacyEnvironment {
+		return nil
+	}
+	return st
+}

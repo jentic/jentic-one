@@ -152,27 +152,36 @@ func performOAuthExchange(creds Credentials) (*TokenSet, error) {
 	}, nil
 }
 
-// classifyTokenError decodes the OAuth error body of a non-200 token response.
+// classifyTokenError decodes the error body of a non-200 token response.
 // A 400 invalid_grant means the identity is unapproved -> *PendingError; anything
-// else is wrapped with the status and OAuth error code.
+// else is wrapped with the status and error code. The shipped backend emits
+// RFC 7807 problem-details ({"type": "invalid_grant", "detail": ...} — see
+// auth/web/errors.py), which is what the V1 client parsed; the RFC 6749 OAuth
+// shape ({"error": ..., "error_description": ...}) is also accepted so an
+// RFC-compliant server classifies identically.
 func classifyTokenError(resp *http.Response) error {
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	var oauthErr struct {
-		Error       string `json:"error"`
+	var body struct {
+		Type        string `json:"type"`  // RFC 7807 problem details (the shipped backend)
+		Error       string `json:"error"` // RFC 6749 OAuth error shape
 		Description string `json:"error_description"`
 		Detail      string `json:"detail"`
 	}
-	_ = json.Unmarshal(data, &oauthErr)
+	_ = json.Unmarshal(data, &body)
 
-	detail := oauthErr.Description
-	if detail == "" {
-		detail = oauthErr.Detail
+	code := body.Type
+	if code == "" {
+		code = body.Error
 	}
-	if resp.StatusCode == http.StatusBadRequest && oauthErr.Error == "invalid_grant" {
+	detail := body.Detail
+	if detail == "" {
+		detail = body.Description
+	}
+	if resp.StatusCode == http.StatusBadRequest && code == "invalid_grant" {
 		return &PendingError{Detail: detail}
 	}
-	if oauthErr.Error != "" {
-		return fmt.Errorf("token exchange failed (status %d, %s): %s", resp.StatusCode, oauthErr.Error, detail)
+	if code != "" {
+		return fmt.Errorf("token exchange failed (status %d, %s): %s", resp.StatusCode, code, detail)
 	}
 	return fmt.Errorf("token exchange failed (status %d)", resp.StatusCode)
 }

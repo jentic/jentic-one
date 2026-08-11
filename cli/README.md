@@ -81,10 +81,10 @@ Notes:
 ## Usage
 
 ```bash
-# Register an agent, browse the catalog, and execute an operation.
-jentic register --base-url http://127.0.0.1:8000
+# Connect this machine to a Jentic install, browse the catalog, execute an operation.
+jentic register --url https://jentic.example.com
 jentic apis
-jentic execute --profile default <operation>
+jentic execute <operation>
 ```
 
 ## Onboarding (`jenticctl install`)
@@ -310,32 +310,76 @@ To onboard a new `AppConfig` option:
 No changes to the command wiring are needed — the hub is built from the
 `Sections` registry automatically.
 
-## Agent identity (`jentic register`)
+## Agent identity & contexts (`jentic register`)
 
-Each profile is an **agent**. `jentic register` generates an Ed25519 keypair (if
-absent), performs Dynamic Client Registration against the control plane, waits
-for an operator to approve the agent, then mints and saves an access/refresh
-token pair to the profile. `jentic execute` attaches that token as the
-`Authorization` bearer when calling the catalog.
+The CLI's identity model has three small pieces, glued by one binding:
+
+- **Environment** — a Jentic install: its control-plane URL (and optionally a
+  broker URL). You'll usually have one; add more to talk to dev/staging/prod.
+- **Identity** — an actor (this agent). Its credential is an Ed25519 keypair
+  scoped **per environment** (or a `jak_*` API key).
+- **Context** — binds one environment + one identity (+ an interaction mode).
+  The **active context** is what every command acts through — switch context
+  and the whole CLI points somewhere else, atomically.
+
+You do **not** assemble that by hand. `jentic register` is the one onboarding
+command:
 
 ```bash
-# Register the default profile (waits for approval, then saves tokens)
-jentic register --base-url http://127.0.0.1:8000
+# Fresh machine → working setup, one command. Creates the environment,
+# identity and context, activates them, registers the key, waits for the
+# operator to approve, and mints a token.
+jentic register --url https://jentic.example.com
 
-# Named profile + custom client name
-jentic register --profile work --name my-agent
+# Name things explicitly (defaults: identity = hostname, env = URL's first label)
+jentic register --url https://jentic.example.com --name crawler --env prod
 
-# Inspect identity / clear tokens
+# With a context already active, re-register / resume that identity:
+jentic register
+
+# Interactive: bare `jentic register` on a fresh machine prompts for the two
+# values (install URL + agent name) and does the rest.
+```
+
+Approval is a human, out-of-band step: `register` prints the console link
+(`{base}/app/agents/{id}`), polls, and continues automatically once an operator
+approves. Re-running is idempotent and resumable (`--force` re-registers from
+scratch; exit code 3 means "still pending — approve, then re-run").
+
+After onboarding:
+
+```bash
+jentic context view      # what am I pointing at?
+jentic doctor            # paths / identity / token / reachability self-check
+jentic catalog           # you're in business
+```
+
+To work against several installs, add more environments and switch contexts:
+
+```bash
+jentic env add staging --url https://staging.jentic.example.com
+jentic context create staging --env staging --identity crawler
+jentic context use staging
+jentic register          # register the identity's key with the new env
+```
+
+State lives in the XDG layout (see below): the config in
+`~/.config/jentic/config.yaml`, keys/tokens per (identity, environment) in
+`~/.local/state/jentic/` (0600).
+
+### Legacy profile flow (`--profile` / `--base-url`)
+
+Machines with an existing `~/.jentic` profile store keep the exact V1 behavior
+until they run `jentic migrate`. The legacy flags remain an explicit escape
+hatch and always address the legacy store:
+
+```bash
+jentic register --profile work --base-url http://127.0.0.1:8000 --name my-agent
 jenticctl status --profile work
 jentic logout --profile work
 ```
 
-Approval is a human, out-of-band step (an operator with `agents:write` calls
-`POST {base}/agents/{id}:approve`). `register` polls the token endpoint and
-continues automatically once the agent is active. Re-running `register` is
-idempotent; `--force` re-keys and re-registers.
-
-Profiles are stored under `~/.jentic/profiles/<name>/` with `0600` perms:
+Legacy profiles are stored under `~/.jentic/profiles/<name>/` with `0600` perms:
 
 ```
 ~/.jentic/profiles/<name>/

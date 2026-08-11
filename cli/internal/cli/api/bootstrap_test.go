@@ -29,12 +29,15 @@ func bootstrapServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomi
 		case "/register":
 			registers.Add(1)
 			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated) // matches the real backend (POST /register, status_code=201)
 			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending","registration_access_token":"rat_1"}`))
 		case "/oauth/token":
 			if polls.Add(1) <= pendingPolls {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = w.Write([]byte(`{"error":"invalid_grant","detail":"agent pending approval"}`))
+				// RFC 7807 problem-details — the REAL backend error shape
+				// (auth/web/errors.py), which pending-classification must parse.
+				_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"agent pending approval","instance":"/oauth/token"}`))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")

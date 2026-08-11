@@ -11,6 +11,8 @@ func TestFlagsAllowPrompt(t *testing.T) {
 		c := &cobra.Command{Use: "register", Run: func(*cobra.Command, []string) {}}
 		c.Flags().String("profile", "", "")
 		c.Flags().String("base-url", "", "")
+		c.Flags().String("url", "", "")
+		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
 		return c
 	}
@@ -41,6 +43,8 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 		c := &cobra.Command{Use: "bootstrap", Run: func(*cobra.Command, []string) {}}
 		c.Flags().String("profile", "", "")
 		c.Flags().String("base-url", "", "")
+		c.Flags().String("url", "", "")
+		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
 		c.Flags().StringSlice("operator", nil, "")
 		c.Flags().Bool("all", false, "")

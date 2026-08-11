@@ -24,6 +24,8 @@ import (
 type registerOptions struct {
 	profile     string
 	baseURL     string
+	url         string // V2: install URL (fresh-machine setup arm)
+	env         string // V2: environment name override (default: derived from --url)
 	name        string
 	timeout     time.Duration
 	force       bool
@@ -31,18 +33,30 @@ type registerOptions struct {
 	interactive bool
 }
 
-// NewRegisterCmd builds the `register` command that provisions an agent
-// identity with the control plane. Shared by both trees via cmdcore.
+// NewRegisterCmd builds the `register` command — the single onboarding front
+// door. Which store it provisions is arm-resolved (register_v2.go): an active
+// V2 context registers that context's identity; a fresh machine gets the
+// one-command V2 setup (--url creates environment + identity + context, then
+// registers); --profile/--base-url pin the legacy V1 profile flow, which also
+// remains the default for unmigrated machines. Shared by both trees via cmdcore.
 func NewRegisterCmd(app *App) *cobra.Command {
 	opts := &registerOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "register",
-		Short: "Register this profile as an agent and obtain tokens",
-		Long: "register generates an Ed25519 keypair (if absent), performs Dynamic\n" +
-			"Client Registration, waits for an operator to approve the agent, then mints\n" +
-			"and saves an access/refresh token pair to the profile. `jentic execute` uses\n" +
-			"those tokens as the Authorization bearer.",
+		Short: "Register this machine as an agent and obtain tokens",
+		Long: "register connects this machine to a Jentic install: it generates an\n" +
+			"Ed25519 keypair (if absent), performs Dynamic Client Registration, waits\n" +
+			"for an operator to approve the agent, then mints and saves tokens.\n\n" +
+			"With an active context (`jentic context use`), it registers that context's\n" +
+			"identity with its environment. On a fresh machine, pass --url (or answer\n" +
+			"the prompt) and register creates the environment, identity and context in\n" +
+			"one step, activates them, and registers. --profile/--base-url address the\n" +
+			"legacy ~/.jentic profile store instead.",
+		Example: "  jentic register --url https://jentic.example.com\n" +
+			"  jentic register --url https://jentic.example.com --name crawler --env prod\n" +
+			"  jentic register                      # active context (or interactive setup)\n" +
+			"  jentic register --force              # re-register the active identity",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			opts.interactive = WantsInteractive(cmd, opts.yes, registerFieldFlags...)
@@ -50,11 +64,13 @@ func NewRegisterCmd(app *App) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.profile, "profile", "", "profile name (default: config default_profile)")
-	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
-	cmd.Flags().StringVar(&opts.name, "name", "", "agent client name")
+	cmd.Flags().StringVar(&opts.url, "url", "", "Jentic install URL to connect to (creates environment/identity/context on first run)")
+	cmd.Flags().StringVar(&opts.env, "env", "", "environment name for --url (default: derived from the URL host)")
+	cmd.Flags().StringVar(&opts.profile, "profile", "", "LEGACY: profile name in the ~/.jentic store")
+	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "LEGACY: control-plane base URL for the ~/.jentic store")
+	cmd.Flags().StringVar(&opts.name, "name", "", "agent name shown to the approving operator (default: hostname)")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "how long to wait for approval")
-	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register even if the profile already has an agent")
+	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register even if this identity already has a registration")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "skip the interactive prompt; use flags + defaults")
 
 	return cmd
@@ -76,7 +92,7 @@ func flagsAllowPrompt(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 }
 
 // registerFieldFlags are the flags whose presence makes `register` non-interactive.
-var registerFieldFlags = []string{"profile", "base-url", "name"}
+var registerFieldFlags = []string{"profile", "base-url", "url", "env", "name"}
 
 // bootstrapFieldFlags extend the register set with the skill-target and
 // activation flags bootstrap adds, so a flag-driven run (e.g. `--operator
@@ -90,6 +106,43 @@ func WantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 }
 
 func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
+	// Arm resolution FIRST (register_v2.go): the V2 arms never touch the
+	// legacy store, and the legacy arm below is byte-for-byte the V1 flow.
+	explicitLegacy := opts.profile != "" || opts.baseURL != ""
+	if explicitLegacy && (opts.url != "" || opts.env != "") {
+		return &ux.CodedError{
+			Code:       ux.CodeMissingArgument,
+			Msg:        "--url/--env (context store) and --profile/--base-url (legacy store) address different stores and cannot be combined",
+			Actionable: "Use --url for a V2 install, or --profile/--base-url for the legacy flow.",
+		}
+	}
+	// An explicit --url always means "connect me to THIS install": it takes the
+	// setup arm even when some other context is active, creating/reusing the
+	// matching environment and switching to it — never silently registering
+	// with whatever happened to be active.
+	if opts.url != "" {
+		vals := v2SetupValues{url: opts.url, env: opts.env, name: opts.name}
+		_, err := a.registerV2Setup(ctx, vals, opts.timeout, opts.force, opts.interactive)
+		if errors.Is(err, errOnboardCancelled) {
+			return nil
+		}
+		return err
+	}
+	arm, st := a.resolveOnboardArm(ctx, explicitLegacy)
+	switch arm {
+	case armV2Active:
+		return a.registerV2Active(ctx, st, opts.name, opts.timeout, opts.force)
+	case armV2Setup:
+		vals := v2SetupValues{env: opts.env, name: opts.name}
+		_, err := a.registerV2Setup(ctx, vals, opts.timeout, opts.force, opts.interactive)
+		if errors.Is(err, errOnboardCancelled) {
+			return nil
+		}
+		return err
+	case armLegacy:
+		// fall through to the legacy body below
+	}
+
 	if opts.interactive {
 		cfg, err := config.Load(a.Paths)
 		if err != nil {

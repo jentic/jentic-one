@@ -2,6 +2,9 @@ package auth
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -114,5 +117,47 @@ func TestRefreshBearerToken_StaticCredentialsPassThrough(t *testing.T) {
 	}
 	if got != "jak_stored" {
 		t.Errorf("RefreshBearerToken = %q, want the static API key as-is", got)
+	}
+}
+
+// TestClassifyTokenError_PendingShapes pins that BOTH wire shapes of a pending
+// 400 classify as *PendingError: the RFC 7807 problem-details the shipped
+// backend actually emits ({"type": "invalid_grant"} — auth/web/errors.py), and
+// the RFC 6749 OAuth shape ({"error": "invalid_grant"}). The V2 port
+// originally read only the OAuth key, so a real pending agent surfaced as a
+// hard "token exchange failed (status 400)" instead of the approval wait.
+func TestClassifyTokenError_PendingShapes(t *testing.T) {
+	cases := map[string]string{
+		"problem-details": `{"type":"invalid_grant","status":400,"detail":"agent pending approval","instance":"/oauth/token"}`,
+		"oauth":           `{"error":"invalid_grant","error_description":"agent pending approval"}`,
+	}
+	for name, body := range cases {
+		resp := &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}
+		err := classifyTokenError(resp)
+		var pending *PendingError
+		if !errors.As(err, &pending) {
+			t.Errorf("%s: classified as %v, want *PendingError", name, err)
+			continue
+		}
+		if pending.Detail != "agent pending approval" {
+			t.Errorf("%s: detail = %q", name, pending.Detail)
+		}
+	}
+
+	// A NON-pending 400 must stay a hard error carrying the code.
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body:       io.NopCloser(strings.NewReader(`{"type":"actor_not_found","detail":"gone"}`)),
+	}
+	err := classifyTokenError(resp)
+	var pending *PendingError
+	if errors.As(err, &pending) {
+		t.Fatalf("actor_not_found classified as pending")
+	}
+	if !strings.Contains(err.Error(), "actor_not_found") {
+		t.Errorf("error should carry the code: %v", err)
 	}
 }

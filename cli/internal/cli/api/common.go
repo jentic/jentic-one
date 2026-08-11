@@ -104,14 +104,7 @@ func (a *app) activeState(ctx context.Context, ident *identityOptions) *clictx.A
 	if ident != nil && (ident.Profile != "" || ident.BaseURL != "") {
 		return nil
 	}
-	st := clictx.FromContext(ctx)
-	if st == nil || st.ResolvedState == nil {
-		return nil
-	}
-	if st.EnvironmentName == "" || st.EnvironmentName == clictx.LegacyEnvironment {
-		return nil
-	}
-	return st
+	return clictx.ActiveV2(ctx)
 }
 
 // contextSession obtains (baseURL, bearer) for an active V2 context via the

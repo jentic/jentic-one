@@ -37,19 +37,20 @@ to external APIs and handles credentials for you.
 ### 1. Confirm you have a valid identity
 
 You normally don't set up your own identity — your human operator runs
-`jentic bootstrap` (or `jentic register`) out-of-band, which registers this
-agent, waits for a human to approve it, and writes this skill. First, check that
-you already have a usable token:
+`jentic register` (or `jentic bootstrap`) out-of-band, which connects this
+machine to a Jentic install, registers this agent, waits for a human to approve
+it, and (for bootstrap) writes this skill. First, check your setup:
 
 ```
-jentic profile list
+jentic doctor
 ```
 
-If the active profile shows a valid token, skip to step 2. If it does not (no
-token, or "not registered"), **stop and ask your operator** to run
-`jentic bootstrap` and approve the agent — that step blocks on a human and
-cannot be completed by an autonomous agent. Once approved, tokens are saved to
-the active profile and reused automatically; you never handle raw API
+If the Identity section passes (a registered identity and a usable token or API
+key), skip to step 2. If it does not (no context, "not registered", or
+"pending"), **stop and ask your operator** to run
+`jentic register --url <install URL>` and approve the agent — that step blocks
+on a human and cannot be completed by an autonomous agent. Once approved, a
+token is minted and reused automatically; you never handle raw API
 credentials — the CLI attaches the bearer token for you.
 
 ### 2. Check what you can do, and request access if needed
@@ -458,8 +459,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ## Pitfalls
 
 - Calling `execute` before the agent is registered and approved fails — there is
-  no token. Check `jentic profile list`; if there's no valid token, ask your
-  operator to run `jentic bootstrap` / `jentic register` and approve you.
+  no token. Check `jentic doctor`; if the Identity section warns, ask your
+  operator to run `jentic register` (with `--url <install URL>` on a fresh
+  machine) and approve you.
 - `search` returning `{"data": []}` usually means **nothing is imported yet**,
   not that you lack access. Run `jentic catalog search` → `jentic catalog
   import`, then search again. Both reading the registry and importing a

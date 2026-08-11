@@ -10,7 +10,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/agentauth"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -23,6 +25,8 @@ import (
 type bootstrapOptions struct {
 	profile   string
 	baseURL   string
+	url       string // V2: install URL (fresh-machine setup arm)
+	env       string // V2: environment name override
 	name      string
 	timeout   time.Duration
 	force     bool
@@ -99,8 +103,10 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&opts.profile, "profile", "", "profile to create/use (default: config default_profile)")
-	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "Jentic control-plane base URL")
+	cmd.Flags().StringVar(&opts.url, "url", "", "Jentic install URL to connect to (creates environment/identity/context on first run)")
+	cmd.Flags().StringVar(&opts.env, "env", "", "environment name for --url (default: derived from the URL host)")
+	cmd.Flags().StringVar(&opts.profile, "profile", "", "LEGACY: profile to create/use in the ~/.jentic store")
+	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "LEGACY: control-plane base URL for the ~/.jentic store")
 	cmd.Flags().StringVar(&opts.name, "name", "", "agent client name shown to the approver")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "how long to wait for approval")
 	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register the agent even if the profile already has one (does not overwrite an edited skill block)")
@@ -118,6 +124,26 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	fmt.Fprintln(a.Out, theme.Headingf("Bootstrap"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("Register this machine as an agent, wait for approval, then prime your operator."))
+
+	// Arm resolution first (register_v2.go), mirroring registerE: the V2 arms
+	// provision the XDG context store and never touch legacy profiles; the
+	// legacy body below stays byte-for-byte V1 for unmigrated machines and the
+	// --profile/--base-url escape hatch (also what the ctl wizard pins via
+	// BootstrapForWizard's explicit baseURL).
+	explicitLegacy := opts.profile != "" || opts.baseURL != ""
+	if explicitLegacy && (opts.url != "" || opts.env != "") {
+		return &ux.CodedError{
+			Code:       ux.CodeMissingArgument,
+			Msg:        "--url/--env (context store) and --profile/--base-url (legacy store) address different stores and cannot be combined",
+			Actionable: "Use --url for a V2 install, or --profile/--base-url for the legacy flow.",
+		}
+	}
+	if opts.url != "" {
+		return a.bootstrapV2(ctx, armV2Setup, nil, opts)
+	}
+	if arm, st := a.resolveOnboardArm(ctx, explicitLegacy); arm != armLegacy {
+		return a.bootstrapV2(ctx, arm, st, opts)
+	}
 
 	if opts.interactive {
 		if err := a.promptBootstrap(opts); err != nil {
@@ -269,6 +295,125 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		}
 	}
 	return nil
+}
+
+// bootstrapV2 is the V2 (context-store) arm of bootstrap: register through the
+// shared V2 flow, then write the skill. The legacy-store steps (profile
+// checkout, agent-account translation/hand-off) have no V2 counterpart here —
+// local-agent isolation provisioning remains a jenticctl/legacy-store concern
+// for now (tracked in the plans repo as follow-up work).
+func (a *App) bootstrapV2(ctx context.Context, arm onboardArm, st *clictx.ActiveState, opts *bootstrapOptions) error {
+	// Same fail-early rationale as the legacy body: validate flags and resolve
+	// skill targets BEFORE registration's irreversible side effects.
+	if _, err := resolveScope(opts.scope); err != nil {
+		return err
+	}
+	var (
+		targets []skillTarget
+		env     skillgen.DetectEnv
+		err     error
+	)
+	if !opts.skipSkill {
+		reg := skillgen.DefaultRegistry()
+		env, err = a.detectEnv()
+		if err != nil {
+			return err
+		}
+		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
+		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+				return nil
+			}
+			if errors.Is(err, errNothingDetected) {
+				return fmt.Errorf("%w — or pass --skip-skill to provision identity only", err)
+			}
+			return err
+		}
+		if len(targets) == 0 {
+			opts.skipSkill = true
+		}
+	}
+
+	if opts.dryRun {
+		return a.bootstrapV2DryRun(arm, st, targets, env, opts)
+	}
+
+	// Step 1+2: register and wait for approval via the shared V2 flow.
+	var installURL string
+	identity := opts.name
+	switch arm {
+	case armV2Active:
+		installURL = st.BaseURL
+		if identity == "" {
+			identity = st.IdentityName
+		}
+		if err := a.registerV2Active(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
+			return err
+		}
+	default: // armV2Setup
+		vals, err := a.registerV2Setup(ctx,
+			v2SetupValues{url: opts.url, env: opts.env, name: opts.name},
+			opts.timeout, opts.force, opts.interactive)
+		if errors.Is(err, errOnboardCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		installURL, identity = vals.url, vals.name
+	}
+
+	// Step 3: write the skill into the operator's native layout, templated
+	// with the install URL the identity just registered with (NOT the legacy
+	// config default, which is what the localhost-flavored resolveBaseURL
+	// fallback would produce).
+	if !opts.skipSkill {
+		fmt.Fprintln(a.Out)
+		so := opts.skillOptions()
+		so.baseURL = installURL
+		if err := a.writeSkill(targets, env, so); err != nil {
+			// Identity is already provisioned, so a skill-content failure is
+			// reported but not fatal — the agent can re-run `jentic skill init`.
+			fmt.Fprintln(a.Out, theme.Warnf("skill generation failed: %v", err))
+		}
+	}
+
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Success.Render("You're ready."))
+	fmt.Fprintln(a.Out, theme.Field("identity", identity))
+	if installURL != "" {
+		fmt.Fprintln(a.Out, theme.Field("install", installURL))
+	}
+	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Try:"), theme.Command.Render("jentic catalog"))
+	return nil
+}
+
+// bootstrapV2DryRun describes the V2 steps without registering or writing.
+func (a *App) bootstrapV2DryRun(arm onboardArm, st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
+	if arm == armV2Active {
+		fmt.Fprintln(a.Out, theme.Infof("would register identity %q with environment %q (%s), or reuse an existing registration",
+			st.IdentityName, st.EnvironmentName, st.BaseURL))
+	} else {
+		fmt.Fprintln(a.Out, theme.Infof("would create environment/identity/context for %s and register (or reuse an existing registration)",
+			valueOrPlaceholder(opts.url, "<prompted URL>")))
+	}
+	fmt.Fprintln(a.Out, theme.Infof("would wait up to %s for human approval if the agent is still pending, then mint a token", opts.timeout))
+	if opts.skipSkill {
+		fmt.Fprintln(a.Out, theme.Dim.Render("would skip skill generation (--skip-skill)"))
+		return nil
+	}
+	fmt.Fprintln(a.Out)
+	dry := opts.skillOptions()
+	dry.dryRun = true
+	return a.writeSkill(targets, env, dry)
+}
+
+func valueOrPlaceholder(s, placeholder string) string {
+	if s == "" {
+		return placeholder
+	}
+	return s
 }
 
 // offerAgentSession asks whether to start a session in the freshly-isolated
