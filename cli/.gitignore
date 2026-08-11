@@ -4,3 +4,6 @@
 
 # Coverage output (make cov)
 /coverage.out
+
+# Task skill docs (synced from skills/generated branch at build time)
+/internal/skillgen/content/tasks/jentic/*.md

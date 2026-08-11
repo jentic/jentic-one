@@ -267,6 +267,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
+      - name: Sync skill docs from skills/generated
+        working-directory: cli
+        run: bash scripts/sync-skills.sh
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
       - name: Install syft (SBOMs)

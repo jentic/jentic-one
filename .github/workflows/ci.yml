@@ -615,6 +615,9 @@ jobs:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
 
+      - name: Sync skill docs from skills/generated
+        run: bash scripts/sync-skills.sh
+
       - name: Build
         run: go build ./...
 
