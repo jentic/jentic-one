@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -692,6 +694,21 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, ident *identityOptions, 
 	if !requestGrantedScope(req) {
 		return
 	}
+	if st := a.activeState(cmd.Context(), ident); st != nil {
+		creds := credsFromState(st)
+		// Static credentials (injected token, jak_* API key) have no mintable
+		// token — nothing to refresh, exactly like the legacy IsAPIKey skip.
+		if creds.InjectedBearerToken != "" {
+			return
+		}
+		if key, err := auth.ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
+			return
+		}
+		if _, err := auth.RefreshBearerToken(creds); err != nil {
+			fmt.Fprintln(a.Err, theme.Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
+		}
+		return
+	}
 	sess, _, err := a.agentSessionOpen(ident)
 	if err != nil || sess.Meta.IsAPIKey() {
 		return
@@ -790,6 +807,9 @@ func (a *app) accessWithdrawE(cmd *cobra.Command, ident *identityOptions, id str
 }
 
 func (a *app) accessRefreshE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool) error {
+	if st := a.activeState(cmd.Context(), ident); st != nil {
+		return a.accessRefreshContextE(cmd, st, jsonFlag)
+	}
 	sess, profileName, err := a.agentSessionOpen(ident)
 	if err != nil {
 		return err
@@ -809,6 +829,43 @@ func (a *app) accessRefreshE(cmd *cobra.Command, ident *identityOptions, jsonFla
 		return agentAuthErr(err, profileName)
 	}
 	me, err := accessclient.New(sess.Meta.BaseURL).Me(cmd.Context(), token)
+	if err != nil {
+		return err
+	}
+	if jsonOrPretty(cmd, jsonFlag) {
+		return writeJSON(a.Out, me)
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.ID))
+	a.printMe(me)
+	return nil
+}
+
+// accessRefreshContextE is the V2-context arm of `jentic access refresh`: force
+// a fresh assertion exchange for the active (identity, environment) so the new
+// token carries the current scope grants, then confirm with /me. Same
+// fresh-mint-not-refresh-token semantics as the legacy arm (issue #673).
+func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, jsonFlag bool) error {
+	creds := credsFromState(st)
+	if creds.InjectedBearerToken != "" {
+		return errors.New("this session uses an injected bearer token ($JENTIC_BEARER_TOKEN), which the CLI cannot re-mint; " +
+			"obtain a fresh token from your orchestrator")
+	}
+	if key, err := auth.ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
+		return fmt.Errorf("identity %q authenticates with a static API key, which has no token to refresh; "+
+			"its scopes change only when an admin updates the key", st.IdentityName)
+	}
+	if st.BaseURL == "" {
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        fmt.Sprintf("environment %q has no base_url", st.EnvironmentName),
+			Actionable: "Set it with `jentic env add` / edit the environment.",
+		}
+	}
+	token, err := auth.RefreshBearerToken(creds)
+	if err != nil {
+		return asCoded(err)
+	}
+	me, err := accessclient.New(st.BaseURL).Me(cmd.Context(), token)
 	if err != nil {
 		return err
 	}

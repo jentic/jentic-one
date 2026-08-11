@@ -112,11 +112,11 @@ func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 		return err
 	}
 
-	// Resolve the broker target with precedence defaults < config.yaml < flags,
-	// mirroring `jentic run`. Without this, execute always targets the built-in
-	// default (https://127.0.0.1:8100); an install can point at its own broker via
-	// ~/.jentic/config.yaml (broker.scheme/host) instead of passing flags on
-	// every call.
+	// Resolve the broker target with precedence defaults < legacy config.yaml <
+	// active environment broker_url < flags, mirroring `jentic run`. The V2 rung
+	// (Phase 5): a context whose environment declares broker_url routes through
+	// THAT broker — without it, pointing a context at a remote install would
+	// still execute against the built-in local default.
 	fileCfg, err := config.Load(a.Paths)
 	if err != nil {
 		return err
@@ -124,6 +124,16 @@ func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *execute
 	flags := cmd.Flags()
 	opts.brokerScheme = fileCfg.ResolvedBrokerScheme(opts.brokerScheme, flags.Changed("broker-scheme"))
 	opts.brokerHost = fileCfg.ResolvedBrokerHost(opts.brokerHost, flags.Changed("broker-host"))
+	if st := a.activeState(cmd.Context(), ident); st != nil && st.BrokerURL != "" {
+		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
+			if !flags.Changed("broker-scheme") {
+				opts.brokerScheme = u.Scheme
+			}
+			if !flags.Changed("broker-host") {
+				opts.brokerHost = u.Host
+			}
+		}
+	}
 
 	// Resolve phase: determine method and path either from METHOD:/path syntax
 	// or by inspecting an operation_id.

@@ -45,11 +45,26 @@ func AttachAuth(creds Credentials, req *http.Request) error {
 	if err := requireSecureHost(req.URL); err != nil {
 		return fmt.Errorf("refusing to attach credentials: %w", err)
 	}
+	token, err := BearerToken(creds)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return nil
+}
 
+// BearerToken resolves the Authorization bearer value for creds: the injected
+// token, the stored jak_* API key, or the cached disk token — exchanged (and
+// persisted) when missing/expired. It is the credential-resolution half of
+// AttachAuth, exported so callers that assemble their own requests (rather
+// than going through the SDK's request editor) present exactly the same
+// credential the SDK would. Callers own the transport-security guard AttachAuth
+// applies (the SDK never sends a bearer to a non-HTTPS, non-loopback host —
+// F3); the exchange itself is protected regardless by tokenEndpoint (F1).
+func BearerToken(creds Credentials) (string, error) {
 	// 1. FILE-LESS OVERRIDE. If the orchestrator injected a token, use it.
 	if creds.InjectedBearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+creds.InjectedBearerToken)
-		return nil
+		return creds.InjectedBearerToken, nil
 	}
 
 	// 2. API-KEY CREDENTIAL (Phase 4 item 4). A jak_* agent API key is a
@@ -62,8 +77,7 @@ func AttachAuth(creds Credentials, req *http.Request) error {
 	// "no API key, fall through to OAuth" — never as a hard failure, so an
 	// identity without a stored key still reaches the exchange path below.
 	if key, err := ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-		return nil
+		return key, nil
 	}
 
 	// 3. DISK-BASED TOKEN STATE. Treat missing/corrupt/expired uniformly as
@@ -75,16 +89,34 @@ func AttachAuth(creds Credentials, req *http.Request) error {
 	if needsExchange {
 		newTokens, xerr := performOAuthExchange(creds)
 		if xerr != nil {
-			return fmt.Errorf("failed to authenticate: %w", xerr)
+			return "", fmt.Errorf("failed to authenticate: %w", xerr)
 		}
 		if serr := SaveTokens(creds.IdentityRef(), newTokens); serr != nil {
-			return serr
+			return "", serr
 		}
 		tokens = newTokens
 	}
+	return tokens.AccessToken, nil
+}
 
-	req.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
-	return nil
+// RefreshBearerToken drops any cached token and forces a fresh assertion
+// exchange, returning the new bearer value. This is how a caller picks up
+// server-side grant changes that are baked into the token at mint time (scope
+// grants — `jentic access refresh`): a refresh-token rotation would carry the
+// old scopes forward unchanged, a fresh exchange re-reads them. Static
+// credentials (injected token, jak_* API key) have nothing to re-mint; they are
+// returned as-is, matching BearerToken's resolution order.
+func RefreshBearerToken(creds Credentials) (string, error) {
+	if creds.InjectedBearerToken != "" {
+		return creds.InjectedBearerToken, nil
+	}
+	if key, err := ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
+		return key, nil
+	}
+	if err := InvalidateTokens(creds.IdentityRef()); err != nil {
+		return "", err
+	}
+	return BearerToken(creds)
 }
 
 // CanReExchange reports whether creds can mint a NEW token on a 401 (i.e. the

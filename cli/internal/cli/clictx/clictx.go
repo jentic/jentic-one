@@ -30,6 +30,14 @@ const (
 	ModeServiceAccount = "service-account"
 )
 
+// LegacyEnvironment is the sentinel EnvironmentName the legacy-read adapter
+// stamps on state resolved from the ~/.jentic profile store (loadLegacyState).
+// Command code uses it to tell "a real V2 context is active" apart from "this
+// state is a compatibility view of the V1 store" — the V2 auth bridge
+// (api.activeState) must NOT treat the latter as an XDG identity, or it would
+// look for keys/tokens under a (profile, "legacy") stem that never existed.
+const LegacyEnvironment = "legacy"
+
 // ActiveState is the CLI's resolved view of the world: the SDK's UX-free
 // ResolvedState plus the CLI-only Mode/ThemeName the SDK deliberately leaves
 // uninterpreted. It embeds *ResolvedState so command code reads BaseURL/identity
@@ -128,7 +136,7 @@ func loadLegacyState() (*sdkconfig.ResolvedState, bool) {
 	}
 	return &sdkconfig.ResolvedState{
 		IdentityName:    fc.ResolvedDefaultProfile(),
-		EnvironmentName: "legacy",
+		EnvironmentName: LegacyEnvironment,
 		BaseURL:         fc.ResolvedBaseURL(),
 		// PersistedMode/PersistedTheme intentionally empty -> human/default.
 	}, true

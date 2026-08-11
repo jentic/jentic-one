@@ -59,11 +59,18 @@ type endpoint struct {
 }
 
 func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
-	// endpoints is unauthenticated (reads the public reference endpoint), so the
-	// resolved profile name and token are intentionally unused.
-	_, baseURL, err := a.ResolveIdentity(o.Profile, o.BaseURL)
-	if err != nil {
-		return err
+	// endpoints is unauthenticated (reads the public reference endpoint), so only
+	// the base URL matters. Context-first like agentSession: an active V2 context
+	// supplies its environment URL; the legacy profile store is the fallback.
+	var baseURL string
+	if st := a.activeState(ctx, &o.identityOptions); st != nil && st.BaseURL != "" {
+		baseURL = st.BaseURL
+	} else {
+		_, legacyBase, err := a.ResolveIdentity(o.Profile, o.BaseURL)
+		if err != nil {
+			return err
+		}
+		baseURL = legacyBase
 	}
 	client := apiclient.New(baseURL)
 	body, err := client.Reference(ctx)

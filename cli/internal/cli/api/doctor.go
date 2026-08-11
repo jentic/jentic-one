@@ -11,8 +11,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
@@ -102,7 +104,7 @@ func (a *app) doctorE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool)
 	ctx := cmd.Context()
 
 	d.checkPaths()
-	baseURL, token := d.checkIdentity(ident)
+	baseURL, token := d.checkIdentity(ctx, ident)
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
 
@@ -151,13 +153,18 @@ func (d *agentDoctor) checkPaths() {
 }
 
 // checkIdentity resolves the active identity and its token state STRICTLY
-// READ-ONLY (UX-1): it opens the profile store via the view path — never
-// creating the profile directory, generating a key, or minting/persisting a
-// token — and reports each missing piece as a warning with the command that
-// creates it. It returns the resolved base URL and an already-cached usable
-// token ("" if none), which the reachability and skew checks reuse.
-func (d *agentDoctor) checkIdentity(ident *identityOptions) (baseURL, token string) {
+// READ-ONLY (UX-1): it never creates a directory, generates a key, or mints/
+// persists a token — it reports each missing piece as a warning with the
+// command that creates it. Context-first like agentSession: with an active V2
+// context it inspects the XDG store; otherwise it opens the legacy profile
+// store via the view path. It returns the resolved base URL and an
+// already-cached usable token ("" if none), which the reachability and skew
+// checks reuse.
+func (d *agentDoctor) checkIdentity(ctx context.Context, ident *identityOptions) (baseURL, token string) {
 	const section = "Identity"
+	if st := d.app.activeState(ctx, ident); st != nil {
+		return d.checkContextIdentity(st)
+	}
 	sess, profileName, err := d.app.agentSessionView(ident)
 	if err != nil {
 		d.add(section, "session", agentWarn, err.Error(), "")
@@ -195,6 +202,58 @@ func (d *agentDoctor) checkIdentity(ident *identityOptions) (baseURL, token stri
 	}
 	d.add(section, "session", agentPass, "identity resolved, cached token usable", "")
 	return sess.Meta.BaseURL, tok
+}
+
+// checkContextIdentity is the V2-context arm of checkIdentity: it inspects the
+// XDG store for the active (identity, environment) pair — registration state
+// from config.yaml, credential files from the state dir — reporting each
+// missing piece read-only, exactly like the legacy arm.
+func (d *agentDoctor) checkContextIdentity(st *clictx.ActiveState) (baseURL, token string) {
+	const section = "Identity"
+	pair := fmt.Sprintf("identity %q in environment %q", st.IdentityName, st.EnvironmentName)
+
+	if st.InjectedBearerToken != "" {
+		d.add(section, "session", agentPass, "file-less session ($JENTIC_BEARER_TOKEN)", "")
+		return st.BaseURL, st.InjectedBearerToken
+	}
+	if st.BaseURL == "" {
+		d.add(section, "session", agentWarn,
+			fmt.Sprintf("environment %q has no base_url", st.EnvironmentName),
+			"set it with `jentic env add`")
+		return "", ""
+	}
+
+	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
+	if key, err := auth.ReadAPIKey(ref); err == nil && key != "" {
+		d.add(section, "session", agentPass, pair+" resolved (API key)", "")
+		return st.BaseURL, key
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		d.add(section, "session", agentWarn, "cannot read config: "+err.Error(), "")
+		return st.BaseURL, ""
+	}
+	reg, registered := cfg.Identities[st.IdentityName].Environments[st.EnvironmentName]
+	switch {
+	case !registered || reg.ClientID == "":
+		d.add(section, "session", agentWarn, pair+" is not registered",
+			"run `jentic identity register`")
+		return st.BaseURL, ""
+	case reg.Status != "approved":
+		d.add(section, "session", agentWarn,
+			fmt.Sprintf("%s is registered but %s", pair, valueOr(reg.Status, "pending")),
+			"wait for an operator to approve it")
+	}
+
+	tokens, err := auth.ReadTokens(ref)
+	if err != nil || tokens == nil || tokens.AccessToken == "" || time.Now().After(tokens.ExpiresAt) {
+		d.add(section, "session", agentWarn, "registered, but no fresh token is cached",
+			"doctor never mints; run any authenticated command (e.g. `jentic search`) to obtain one")
+		return st.BaseURL, ""
+	}
+	d.add(section, "session", agentPass, pair+" resolved, cached token usable", "")
+	return st.BaseURL, tokens.AccessToken
 }
 
 // checkClockSkew surfaces local clock drift relative to the token's issue time
