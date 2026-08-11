@@ -18,7 +18,7 @@ from jentic_one.auth.core.idp import (
     AdmissionDecision,
     IdpAdapter,
     IdpClaims,
-    OidcAdapter,
+    build_idp_adapter,
     get_admission_policy,
 )
 from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
@@ -52,9 +52,7 @@ class AuthorizeService:
         return self._ctx.config.auth
 
     def _get_idp_adapter(self) -> IdpAdapter | None:
-        if not self._auth_config.idp.enabled:
-            return None
-        return OidcAdapter(self._auth_config.idp)
+        return build_idp_adapter(self._auth_config.idp)
 
     def get_authorize_redirect_url(
         self,

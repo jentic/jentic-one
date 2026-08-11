@@ -7,7 +7,11 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from pydantic import SecretStr
 
-from jentic_one.auth.core.idp import OidcAdapter
+from jentic_one.auth.core.idp import (
+    GoogleOidcAdapter,
+    OidcAdapter,
+    build_idp_adapter,
+)
 from jentic_one.auth.core.idp.adapter import IdpClaims
 from jentic_one.shared.config import IdpConfig
 
@@ -123,7 +127,7 @@ def google_config() -> IdpConfig:
 
 
 def test_google_defaults_authorize_endpoint(google_config: IdpConfig) -> None:
-    adapter = OidcAdapter(google_config)
+    adapter = GoogleOidcAdapter(google_config)
     url = adapter.authorize_url(state="s", nonce="n", redirect_uri="https://app.example.com/cb")
     parsed = urlparse(url)
     assert parsed.hostname == "accounts.google.com"
@@ -138,13 +142,13 @@ def test_google_explicit_endpoint_overrides_default() -> None:
         client_secret=SecretStr("secret"),
         authorization_endpoint="https://custom.example.com/auth",
     )
-    adapter = OidcAdapter(config)
+    adapter = GoogleOidcAdapter(config)
     url = adapter.authorize_url(state="s", nonce="n", redirect_uri="https://app.example.com/cb")
     assert url.startswith("https://custom.example.com/auth?")
 
 
 def test_google_map_claims_surfaces_hd(google_config: IdpConfig) -> None:
-    adapter = OidcAdapter(google_config)
+    adapter = GoogleOidcAdapter(google_config)
     claims = adapter.map_claims(
         {
             "sub": "g-1",
@@ -157,7 +161,32 @@ def test_google_map_claims_surfaces_hd(google_config: IdpConfig) -> None:
     assert claims.email_verified is True
 
 
-def test_map_claims_hosted_domain_none_without_hd(adapter: OidcAdapter) -> None:
-    # Generic OIDC (and consumer Google) accounts carry no `hd` claim.
-    claims = adapter.map_claims({"sub": "x", "email": "user@example.com"})
+def test_google_map_claims_hosted_domain_none_without_hd(google_config: IdpConfig) -> None:
+    # Consumer Google accounts carry no `hd` claim.
+    adapter = GoogleOidcAdapter(google_config)
+    claims = adapter.map_claims({"sub": "x", "email": "user@gmail.com"})
     assert claims.hosted_domain is None
+
+
+def test_generic_adapter_never_sets_hosted_domain(adapter: OidcAdapter) -> None:
+    # The generic OIDC adapter leaves hosted_domain None even if `hd` is present
+    # — `hd` handling is a Google-specific concern.
+    claims = adapter.map_claims({"sub": "x", "email": "user@example.com", "hd": "example.com"})
+    assert claims.hosted_domain is None
+
+
+# ── Adapter factory ───────────────────────────────────────────────────────────
+
+
+def test_factory_returns_none_when_disabled() -> None:
+    config = IdpConfig(enabled=False, provider="google")
+    assert build_idp_adapter(config) is None
+
+
+def test_factory_selects_google_adapter(google_config: IdpConfig) -> None:
+    assert isinstance(build_idp_adapter(google_config), GoogleOidcAdapter)
+
+
+def test_factory_falls_back_to_generic_for_standard_oidc(idp_config: IdpConfig) -> None:
+    adapter = build_idp_adapter(idp_config)
+    assert type(adapter) is OidcAdapter
