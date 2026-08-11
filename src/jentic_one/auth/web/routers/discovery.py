@@ -66,3 +66,22 @@ async def oauth_authorization_server(
 async def jwks(ctx: Context = Depends(get_ctx)) -> dict[str, Any]:
     """Return the JWKS document with the active public signing keys (ES256)."""
     return _get_publisher(ctx.config.auth).get_jwks()
+
+
+@router.get(
+    "/auth/idp",
+    operation_id="authIdpDescriptor",
+    summary="External IdP login descriptor",
+)
+async def auth_idp_descriptor(ctx: Context = Depends(get_ctx)) -> dict[str, Any]:
+    """Public capability hint: whether IdP login is enabled, and which provider.
+
+    The SPA reads this before login to decide whether to show a "Continue with
+    <provider>" button. Unauthenticated and secret-free — it advertises only the
+    enabled flag and the provider name (never client secrets or endpoints).
+    """
+    idp = ctx.config.auth.idp
+    return {
+        "enabled": idp.enabled,
+        "provider": idp.provider if idp.enabled else None,
+    }

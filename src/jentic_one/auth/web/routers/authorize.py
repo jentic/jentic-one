@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
 
 from jentic_one.auth.services.authorize_service import AuthorizeService
-from jentic_one.auth.services.errors import InvalidGrantError
+from jentic_one.auth.services.errors import InvalidGrantError, UserNotAdmittedError
 from jentic_one.shared.context import Context
 from jentic_one.shared.web.deps import get_ctx
 
@@ -100,7 +100,7 @@ async def authorize_endpoint(
     if code_challenge_method != "S256":
         return _error_redirect(redirect_uri, "invalid_request", state, "only S256 is supported")
 
-    callback_uri = str(request.url_for("oauth_callback"))
+    callback_uri = str(request.url_for("authorize_oauth_callback"))
 
     internal_state = _sign_state(
         {
@@ -129,7 +129,11 @@ async def authorize_endpoint(
     return RedirectResponse(url=idp_url, status_code=302)
 
 
-@router.get("/oauth/callback", operation_id="authorizeOauthCallback")
+@router.get(
+    "/oauth/callback",
+    operation_id="authorizeOauthCallback",
+    name="authorize_oauth_callback",
+)
 async def oauth_callback(
     request: Request,
     code: str = Query(...),
@@ -150,7 +154,7 @@ async def oauth_callback(
     nonce = params.get("nonce")
     original_state = params.get("original_state")
 
-    callback_uri = str(request.url_for("oauth_callback"))
+    callback_uri = str(request.url_for("authorize_oauth_callback"))
     try:
         platform_code = await authorize_svc.handle_idp_callback(
             code=code,
@@ -161,6 +165,10 @@ async def oauth_callback(
             scopes=scope or "openid",
             nonce=nonce,
         )
+    except UserNotAdmittedError:
+        # Authenticated by the IdP, but the deployment's admission policy declined
+        # to provision this account. Distinct from a grant/exchange failure.
+        return RedirectResponse(url="/error?error=access_denied", status_code=302)
     except (InvalidGrantError, httpx.HTTPStatusError):
         return RedirectResponse(url="/error?error=server_error", status_code=302)
 
