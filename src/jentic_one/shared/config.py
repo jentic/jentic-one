@@ -6,7 +6,7 @@ import ipaddress
 import os
 import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import structlog
 import yaml
@@ -253,6 +253,11 @@ class IdpConfig(BaseModel):
     authorization_endpoint: str | None = None
     exchange_endpoint: str | None = None
     userinfo_endpoint: str | None = None
+    # Google `hd` (hosted-domain) restriction. When set, only accounts whose
+    # userinfo carries a matching `hd` claim should be admitted. OSS surfaces the
+    # claim (see IdpClaims.hosted_domain); enforcement is left to the deployment's
+    # admission policy.
+    hosted_domain: str | None = None
 
 
 class AuthConfig(BaseModel):
@@ -952,10 +957,40 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _coerce_indexed_dicts_to_lists(value: Any) -> Any:
+    """Recursively turn digit-keyed dicts into lists.
+
+    The env convention (``JENTIC__SECTION__KEY``) can only ever build nested
+    dicts, so a *list*-valued field addressed by index —
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` — arrives as ``{"0": {"kid": ...}}``
+    rather than ``[{"kid": ...}]`` and fails validation with ``list_type``.
+
+    A dict is treated as a list when its keys are exactly the contiguous integer
+    sequence ``0..n-1`` (as strings); it's then rebuilt in index order. Any other
+    dict (real string keys, or a sparse/1-based set) is left untouched and
+    recursed into, so ordinary config is unaffected.
+    """
+    if isinstance(value, dict):
+        coerced = {k: _coerce_indexed_dicts_to_lists(v) for k, v in value.items()}
+        keys = list(coerced.keys())
+        if keys and all(k.isdigit() for k in keys):
+            ordered = sorted(keys, key=int)
+            if [int(k) for k in ordered] == list(range(len(ordered))):
+                return [coerced[k] for k in ordered]
+        return coerced
+    if isinstance(value, list):
+        return [_coerce_indexed_dicts_to_lists(item) for item in value]
+    return value
+
+
 def _env_overrides() -> dict[str, Any]:
     """Build a nested dict from JENTIC__* environment variables.
 
     Convention: JENTIC__SECTION__KEY=value → {"section": {"key": "value"}}
+
+    A numeric path segment addresses a list index, so
+    ``JENTIC__AUTH__ID_SIGNING__0__KID`` builds ``{"0": {...}}`` here and is
+    coerced to a one-element list by :func:`_coerce_indexed_dicts_to_lists`.
     """
     prefix = "JENTIC__"
     result: dict[str, Any] = {}
@@ -967,7 +1002,9 @@ def _env_overrides() -> dict[str, Any]:
         for part in parts[:-1]:
             current = current.setdefault(part, {})
         current[parts[-1]] = value
-    return result
+    # Top-level keys are section names (never all-digit), so the result stays a
+    # dict; the coercion only reshapes nested indexed segments.
+    return cast("dict[str, Any]", _coerce_indexed_dicts_to_lists(result))
 
 
 def load_config(path: Path | None = None) -> AppConfig:

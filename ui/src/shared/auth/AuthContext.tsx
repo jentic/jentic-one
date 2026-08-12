@@ -32,6 +32,13 @@ export interface AuthContextValue {
 	/** True once logged in but the backend requires a password change first. */
 	mustChangePassword: boolean;
 	login: (credentials: LoginRequest) => Promise<void>;
+	/**
+	 * Adopt a session minted out-of-band (e.g. the SSO authorization-code
+	 * exchange), taking the same `{ access_token, expires_in }` bundle password
+	 * login produces. Feeds the shared session path (setSession + /users/me
+	 * refresh) so refresh-renewal and expiry handling are identical.
+	 */
+	loginWithSession: (bundle: { access_token: string; expires_in: number }) => Promise<void>;
 	/** First-run setup: create the first admin and adopt the returned session. */
 	createAdmin: (payload: CreateAdminRequest) => Promise<void>;
 	/**
@@ -175,6 +182,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		[adoptSession],
 	);
 
+	const loginWithSession = useCallback(
+		async (bundle: { access_token: string; expires_in: number }) => {
+			// The SSO callback already exchanged the code for a session; adopt it
+			// through the same path as password login so /users/me refreshes and
+			// the refresh-renewal effect schedules against the real expiry.
+			await adoptSession(bundle as LoginResponse);
+		},
+		[adoptSession],
+	);
+
 	const createAdmin = useCallback(
 		async (payload: CreateAdminRequest) => {
 			// First-run setup returns a ready-to-use token (auto-login), so the
@@ -244,6 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			user,
 			mustChangePassword: user?.must_change_password ?? false,
 			login,
+			loginWithSession,
 			createAdmin,
 			changePassword,
 			redeemInvite,
@@ -255,6 +273,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		meQuery.isError,
 		meQuery.data,
 		login,
+		loginWithSession,
 		createAdmin,
 		changePassword,
 		redeemInvite,

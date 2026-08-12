@@ -121,6 +121,9 @@ export const handlers = [
 		}
 		return HttpResponse.json(mockUser);
 	}),
+	// External-IdP (SSO) login capability hint (GET /auth/idp). Default: disabled,
+	// so the login page shows password-only. SSO tests enable it via worker.use.
+	http.get('/auth/idp', () => HttpResponse.json({ enabled: false, provider: null })),
 	// Actor directory (GET /actors) — cross-cutting reference data the UI hydrates
 	// once to resolve raw `actor_id` values into names. Seeded to match the ids
 	// other module stores emit (agents store + the access-request fixtures) so

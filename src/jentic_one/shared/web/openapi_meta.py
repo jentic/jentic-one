@@ -776,6 +776,9 @@ PUBLIC_OPERATION_IDS: frozenset[str] = frozenset(
         # Unauthenticated discovery metadata.
         "jwks",
         "oauthAuthorizationServer",
+        # Public IdP-login capability hint (enabled flag + provider name only;
+        # no secrets). The SPA reads this pre-login to render the SSO button.
+        "authIdpDescriptor",
     }
 )
 
@@ -833,6 +836,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),
     (re.compile(r"^/auth/(login|refresh)"), "Users"),
+    (re.compile(r"^/auth/idp"), "Discovery"),
     (re.compile(r"^/audit"), "Audit"),
     # Platform-actor surfaces (superset, not in the original reference).
     (re.compile(r"^/agents"), "Agents"),
