@@ -106,7 +106,9 @@ def _make_verifier(ctx: Context) -> Any:
 
 def create_app(ctx: Context) -> FastAPI:
     """Create the admin FastAPI application for standalone deployment."""
-    app = create_surface_app(ctx, title="jentic-one-admin", routers=get_routers())
+    app = create_surface_app(
+        ctx, title="jentic-one-admin", routers=get_routers(), enabled_apps={"admin"}
+    )
     install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)

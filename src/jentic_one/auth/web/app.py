@@ -137,7 +137,9 @@ def _make_auth_verifier(ctx: Context) -> Any:
 
 def create_app(ctx: Context) -> FastAPI:
     """Create the auth FastAPI application for standalone deployment."""
-    app = create_surface_app(ctx, title="jentic-one-auth", routers=get_routers())
+    app = create_surface_app(
+        ctx, title="jentic-one-auth", routers=get_routers(), enabled_apps={"auth"}
+    )
     install_on_app(app, ctx)
     for exc_class, handler in get_exception_handlers():
         app.add_exception_handler(exc_class, handler)
