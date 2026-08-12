@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import time
+from typing import cast
+from urllib.parse import urlparse
 
 import pytest
+from fastapi import Request
 
 from jentic_one.auth.services.errors import InvalidGrantError
 from jentic_one.auth.web.routers.authorize import (
     STATE_MAX_AGE_SECONDS,
+    _callback_uri,
     _is_allowed_redirect_uri,
     _sign_state,
     _verify_state,
@@ -118,3 +122,44 @@ def test_redirect_different_port_rejected() -> None:
     assert not _is_allowed_redirect_uri(
         "https://app.example.com:9999/callback", "https://app.example.com"
     )
+
+
+class _FakeUrl:
+    """Minimal stand-in for starlette's URL: str() + .path, like url_for returns."""
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+
+    def __str__(self) -> str:
+        return self._url
+
+    @property
+    def path(self) -> str:
+        return urlparse(self._url).path
+
+
+class _FakeRequest:
+    def __init__(self, resolved: str) -> None:
+        self._resolved = resolved
+
+    def url_for(self, _name: str) -> _FakeUrl:
+        return _FakeUrl(self._resolved)
+
+
+def test_callback_uri_prefers_canonical_origin_over_request_scheme() -> None:
+    # Behind a TLS-terminating proxy the request is plain http; the callback must
+    # still carry the canonical https origin so it matches what's registered.
+    request = _FakeRequest("http://internal-host/oauth/callback")
+    result = _callback_uri(cast("Request", request), "https://app.example.com")
+    assert result == "https://app.example.com/oauth/callback"
+
+
+def test_callback_uri_keeps_resolved_path() -> None:
+    request = _FakeRequest("http://internal-host/oauth/callback")
+    result = _callback_uri(cast("Request", request), "https://app.example.com/")
+    assert result == "https://app.example.com/oauth/callback"
+
+
+def test_callback_uri_without_canonical_falls_back_to_request() -> None:
+    request = _FakeRequest("http://localhost:8000/oauth/callback")
+    assert _callback_uri(cast("Request", request), "") == "http://localhost:8000/oauth/callback"
