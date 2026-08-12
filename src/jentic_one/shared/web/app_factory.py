@@ -164,11 +164,22 @@ def instrument_databases(ctx: Context) -> None:
 
 def _start_worker(
     ctx: Context,
+    enabled_apps: set[str],
     *,
     upstream_executor: Any | None = None,
     credential_injector: Any | None = None,
 ) -> tuple[WorkerLoop, asyncio.Task[None]] | None:
     """Start the background worker if the admin DB is available.
+
+    ``enabled_apps`` is the set of surfaces this process actually serves (from
+    ``config.apps``). Handler registration keys off *that*, not merely which DBs
+    are reachable: a broker-only process is granted the registry DB so its
+    **synchronous** proxy can resolve specs (``SURFACE_DB_DEPS["broker"]``), but
+    it is not the registry surface and must not claim ``IMPORT`` jobs — which are
+    drawn from the shared jobs table, so a broker worker would otherwise race
+    (and win) import jobs against the control plane and run the full ingest
+    pipeline (including any registered import-time stages) with the wrong
+    service's config.
 
     ``upstream_executor`` is the broker-side ``UpstreamExecutor`` (the
     ``PipelineExecutor`` over the shared composed runner, §11 RN-0.3) and
@@ -190,7 +201,7 @@ def _start_worker(
 
     handler_registry = JobHandlerRegistry()
 
-    if ctx.has_db("registry"):
+    if "registry" in enabled_apps and ctx.has_db("registry"):
         handler_registry.register(JobKind.IMPORT, ImportHandler(ctx))
 
     if ctx.has_db("control") and upstream_executor is not None:
@@ -216,14 +227,19 @@ def _start_worker(
 
 def _start_expiry_scanner(
     ctx: Context,
+    enabled_apps: set[str],
 ) -> tuple[CredentialExpiryScanner, asyncio.Task[None]] | None:
-    """Start the credential-expiry scanner when both control + admin DBs exist.
+    """Start the credential-expiry scanner when the control surface runs it.
 
     The sweep reads OAuth token expiries from the **control** DB and writes
     ``credential.expiring_soon`` / ``credential.expired`` events into the
-    **admin** DB, so both must be present. Without either DB there is nothing to
-    scan (or nowhere to record events), so the scanner is not started.
+    **admin** DB, so both must be present. It is a control-plane background job:
+    gate it on the ``control`` surface being enabled (``config.apps``), not on
+    mere DB reachability — a broker-only process is granted the control DB to
+    resolve credentials, but must not run the control plane's expiry sweep.
     """
+    if "control" not in enabled_apps:
+        return None
     if not (ctx.has_db("control") and ctx.has_db("admin")):
         return None
     scanner = CredentialExpiryScanner(
@@ -252,14 +268,20 @@ async def _stop_expiry_scanner(
 
 def _start_catalog_update_scanner(
     ctx: Context,
+    enabled_apps: set[str],
 ) -> tuple[CatalogUpdateScanner, asyncio.Task[None]] | None:
-    """Start the Flow-3 catalog update-notify scanner when registry + admin DBs exist.
+    """Start the Flow-3 catalog update-notify scanner when the registry runs it.
 
     The sweep reads sweep candidates + check rows from the **registry** DB and emits
     ``catalog.update_available`` events into the **admin** DB, so both must be present.
-    A standalone-registry deployment (no admin DB) gets no scanner — there is nowhere
-    to record the notifications.
+    Like the import worker it is a registry-surface background job: gate it on the
+    ``registry`` surface being enabled (``config.apps``), not on DB reachability, so a
+    broker-only process (granted the registry DB for its sync-proxy spec lookups) does
+    not run it. A standalone-registry deployment (no admin DB) still gets no scanner —
+    there is nowhere to record the notifications.
     """
+    if "registry" not in enabled_apps:
+        return None
     if not (ctx.has_db("registry") and ctx.has_db("admin")):
         return None
     scanner = CatalogUpdateScanner(ctx)
@@ -391,6 +413,7 @@ def create_surface_app(
     *,
     title: str,
     routers: Sequence[tuple[APIRouter, str, list[str]]],
+    enabled_apps: set[str],
     extra_lifespan: Callable[[FastAPI], AbstractAsyncContextManager[None]] | None = None,
     container: AppContainer | None = None,
     include_instance_router: bool = True,
@@ -400,6 +423,13 @@ def create_surface_app(
     Routers are mounted without their prefix (standalone mode serves at root,
     e.g. /health rather than /broker/health — the combined-mode root app
     keeps the prefix so /broker/health, /admin/health, etc. don't collide).
+
+    ``enabled_apps`` is the set of surfaces this process serves — for a
+    standalone surface it is that one surface's name. It gates the shared
+    background jobs (import worker, catalog + expiry scanners) so they run only
+    for the surface that owns them, independent of which DBs happen to be
+    reachable (the broker is granted the registry/control DBs for its proxy +
+    credential paths, but must not run registry/control background work).
 
     ``extra_lifespan`` is an optional surface-owned async context manager entered
     after ``ctx.startup()`` and exited before ``ctx.shutdown()`` — the broker
@@ -429,11 +459,12 @@ def create_surface_app(
             # extra_lifespan) — §04 / §11 RN-0.3.
             worker_task = _start_worker(
                 ctx,
+                enabled_apps,
                 upstream_executor=getattr(app.state, "broker_upstream_executor", None),
                 credential_injector=getattr(app.state, "broker_credential_injector", None),
             )
-            scanner_task = _start_expiry_scanner(ctx)
-            catalog_scanner_task = _start_catalog_update_scanner(ctx)
+            scanner_task = _start_expiry_scanner(ctx, enabled_apps)
+            catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
             try:
                 yield
             finally:
@@ -519,9 +550,9 @@ def create_combined_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        worker_task = _start_worker(ctx)
-        scanner_task = _start_expiry_scanner(ctx)
-        catalog_scanner_task = _start_catalog_update_scanner(ctx)
+        worker_task = _start_worker(ctx, set(apps))
+        scanner_task = _start_expiry_scanner(ctx, set(apps))
+        catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
         try:
             yield
         finally:

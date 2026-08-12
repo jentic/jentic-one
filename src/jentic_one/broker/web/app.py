@@ -202,6 +202,7 @@ def create_app(ctx: Context, container: AppContainer | None = None) -> FastAPI:
         ctx,
         title="jentic-one-broker",
         routers=_routers(readiness_saturation_threshold=resilience.readiness_saturation_threshold),
+        enabled_apps={"broker"},
         extra_lifespan=broker_lifespan,
         container=container,
         include_instance_router=False,
