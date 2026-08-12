@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.1](https://github.com/jentic/jentic-one/compare/v0.30.0...v0.30.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **config:** coerce indexed env vars into lists ([#1023](https://github.com/jentic/jentic-one/issues/1023)) ([a4bc4fb](https://github.com/jentic/jentic-one/commit/a4bc4fb1f41f41b2595eb8c3c4014f5ce28fe5aa))
+
 ## [0.30.0](https://github.com/jentic/jentic-one/compare/v0.29.1...v0.30.0) (2026-08-11)
 
 
