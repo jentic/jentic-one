@@ -73,3 +73,26 @@ func valueFor(flag string) string {
 		return "x"
 	}
 }
+
+// TestLocalBrokerURL pins the local-convenience broker seeding: a loopback
+// control-plane URL gets the co-located http broker on the standard port, while
+// any remote/enterprise URL gets "" (broker_url must be set explicitly there —
+// it is never derived from a remote base_url).
+func TestLocalBrokerURL(t *testing.T) {
+	cases := map[string]string{
+		"http://127.0.0.1:8000":       "http://127.0.0.1:8100",
+		"http://localhost:8000":       "http://localhost:8100",
+		"http://127.0.0.1:9000":       "http://127.0.0.1:8100", // control port irrelevant; broker is its own port
+		"http://[::1]:8000":           "http://[::1]:8100",
+		"https://jentic.example.com":  "",
+		"https://10.0.0.5:8000":       "",
+		"http://192.168.1.10:8000":    "",
+		"https://jentic-one.qa1.test": "",
+		"not a url":                   "",
+	}
+	for in, want := range cases {
+		if got := localBrokerURL(in); got != want {
+			t.Errorf("localBrokerURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

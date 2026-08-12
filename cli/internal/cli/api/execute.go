@@ -77,11 +77,21 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n" +
 			"  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n" +
 			"  2 — denied by the broker (carries an agent_directive) or resolve failure\n" +
-			"      (inspect error, e.g. unknown operation_id)",
+			"      (inspect error, e.g. unknown operation_id)\n\n" +
+			"Broker target: resolved as built-in default (https://127.0.0.1:8100) <\n" +
+			"the active environment's broker_url < --broker-scheme/--broker-host. A\n" +
+			"local install serves the broker over plain HTTP, so `jentic register`\n" +
+			"seeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\n" +
+			"error like \"server gave HTTP response to HTTPS client\" means the target\n" +
+			"resolved to https against a local http broker — set the environment's\n" +
+			"broker_url (`jentic env add <env> --broker-url http://127.0.0.1:8100\n" +
+			"--force`) or override per call with --broker-scheme http.",
 		Example: "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n" +
 			"  jentic execute listPets --query limit=10 --json\n" +
 			"  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n" +
-			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json",
+			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n" +
+			"  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n" +
+			"  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.executeE(cmd, opts, args[0])

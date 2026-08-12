@@ -87,6 +87,43 @@ jentic apis
 jentic execute <operation>
 ```
 
+## Local setup
+
+Running against a **local** install (the stack `jenticctl install` stands up on
+`127.0.0.1`) has two rules that trip people up. Both are handled for you if you
+follow the commands below.
+
+1. **Use `127.0.0.1`, not `localhost`.** The token-exchange assertion's audience
+   is compared byte-for-byte against the backend's `auth.canonical_base_url`,
+   which is `http://127.0.0.1:8000` for a local install. Registering with
+   `--url http://localhost:8000` signs the wrong audience and every token
+   exchange fails with `invalid_grant` — even after you approve the agent.
+
+2. **The local broker is plain HTTP on port 8100.** `jentic execute` targets
+   the broker at `https://127.0.0.1:8100` by default; against a local http
+   broker that yields `server gave HTTP response to HTTPS client`. The
+   environment's `broker_url` overrides that default — and `jentic register`
+   seeds it automatically when the control-plane URL is loopback.
+
+```bash
+# One command: creates the environment/identity/context, seeds broker_url, registers.
+jentic register --url http://127.0.0.1:8000
+
+# Approve the agent in the console, then:
+jentic doctor                 # identity + reachability + clock-skew report
+jentic catalog                # browse APIs
+jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
+```
+
+If an environment already exists without a broker URL (e.g. created before this
+behavior, or pointing at a remote broker), set it explicitly:
+
+```bash
+jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
+```
+
+or override the broker per call: `jentic execute <op> --broker-scheme http --broker-host 127.0.0.1:8100`.
+
 ## Onboarding (`jenticctl install`)
 
 `jenticctl install` is an interactive wizard (colored, keyboard-selectable menus
@@ -425,8 +462,19 @@ Directory spec, and `jentic migrate` copies a legacy profile store into it
 ```
 
 `config.yaml` here is a different document from the legacy one: it declares
-**environments** (control/broker URLs), **identities** (agent keypairs), and
-**contexts** binding an environment + identity + mode, plus `active_context`.
+**environments** (control-plane `base_url` and an optional `broker_url` — the
+latter is never derived from `base_url`, but `jentic register` seeds it for a
+loopback install), **identities** (agent keypairs), and **contexts** binding an
+environment + identity + mode, plus `active_context`. A local environment looks
+like:
+
+```yaml
+environments:
+  local:
+    base_url: http://127.0.0.1:8000    # control plane (use 127.0.0.1, not localhost)
+    broker_url: http://127.0.0.1:8100  # data plane; http, seeded by register for loopback
+```
+
 Inspect and edit it with `jentic context/env/identity` rather than by hand;
 `jentic context view` shows the resolved state. The standard `XDG_CONFIG_HOME`
 and `XDG_STATE_HOME` variables relocate the config and state directories (the

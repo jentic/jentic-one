@@ -44,7 +44,16 @@ func newEnvAddCmd(_ *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add a Control Plane environment",
-		Args:  cobra.ExactArgs(1),
+		Long: "Add a Control Plane environment. --broker-url is optional and is NEVER\n" +
+			"derived from --url (Control Plane and Broker often live on different\n" +
+			"domains). `jentic register` seeds broker_url automatically for a loopback\n" +
+			"install; set it explicitly here for a remote broker or to fix an existing\n" +
+			"environment (use --force to replace one of the same name).",
+		Example: "  # Local install: point both the control plane and broker at loopback (http).\n" +
+			"  jentic env add local --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force\n" +
+			"  # Remote: broker on its own host.\n" +
+			"  jentic env add prod --url https://jentic.example.com --broker-url https://broker.example.com",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())

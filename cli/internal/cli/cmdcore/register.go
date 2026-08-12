@@ -41,8 +41,14 @@ func NewRegisterCmd(app *App) *cobra.Command {
 			"With an active context (`jentic context use`), it registers that context's\n" +
 			"identity with its environment. On a fresh machine, pass --url (or answer\n" +
 			"the prompt) and register creates the environment, identity and context in\n" +
-			"one step, activates them, and registers.",
-		Example: "  jentic register --url https://jentic.example.com\n" +
+			"one step, activates them, and registers.\n\n" +
+			"Local install: use http://127.0.0.1:8000 (NOT http://localhost:8000) — the\n" +
+			"token-exchange audience is matched exactly against the backend's\n" +
+			"canonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\n" +
+			"register also seeds the environment's broker_url (http://127.0.0.1:8100) so\n" +
+			"`jentic execute` works without extra flags.",
+		Example: "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n" +
+			"  jentic register --url https://jentic.example.com\n" +
 			"  jentic register --url https://jentic.example.com --name crawler --env prod\n" +
 			"  jentic register                      # active context (or interactive setup)\n" +
 			"  jentic register --force              # re-register the active identity",

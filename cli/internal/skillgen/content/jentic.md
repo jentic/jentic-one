@@ -49,7 +49,9 @@ If the Identity section passes (a registered identity and a usable token or API
 key), skip to step 2. If it does not (no context, "not registered", or
 "pending"), **stop and ask your operator** to run
 `jentic register --url <install URL>` and approve the agent — that step blocks
-on a human and cannot be completed by an autonomous agent. Once approved, a
+on a human and cannot be completed by an autonomous agent. (For a local install
+the URL must be `http://127.0.0.1:8000`, not `localhost` — the token audience is
+matched exactly.) Once approved, a
 token is minted and reused automatically; you never handle raw API
 credentials — the CLI attaches the bearer token for you.
 
@@ -374,14 +376,16 @@ failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
 > transport failures are the retryable ones.
 
 - **Wrong target (DNS or TLS error).** The broker target resolves as
-  built-in default (`https://127.0.0.1:8100`) < `~/.jentic/config.yaml`
-  (`broker.scheme` / `broker.host`, recorded by `jenticctl install`) <
-  flags. `lookup broker.jentic.ai: no such host` means the config points at
-  the hosted broker from a local install; a TLS error against a local
-  target usually means `broker.scheme` should be `http`. Fix the config, or
-  override per call:
+  built-in default (`https://127.0.0.1:8100`) < the active environment's
+  `broker_url` in `~/.config/jentic/config.yaml` < flags. `lookup
+  broker.jentic.ai: no such host` means the environment points at the hosted
+  broker from a local install; a TLS error like `server gave HTTP response to
+  HTTPS client` against a local target means the broker is plain http but the
+  target resolved to https. `jentic register` seeds `broker_url` for a loopback
+  install; otherwise set it on the environment, or override per call:
 
 ```
+jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
 jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
 

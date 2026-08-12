@@ -18,6 +18,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -107,7 +109,19 @@ func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout t
 			}
 		}
 		if _, ok := cfg.Environments[envName]; !ok {
-			cfg.Environments[envName] = sdkconfig.Env{BaseURL: vals.url}
+			env := sdkconfig.Env{BaseURL: vals.url}
+			// Local convenience: when the control plane is a loopback address,
+			// the broker is co-located on the standard local broker port over
+			// plain HTTP (jenticctl install stands both up together). Seeding it
+			// here means `jentic execute` works out of the box on a local install
+			// instead of falling back to the https default and hitting a TLS
+			// error. For REMOTE/enterprise URLs we leave broker_url unset — there
+			// the broker frequently lives on a different domain and MUST be set
+			// explicitly (`jentic env add --broker-url`); it is never derived.
+			if bu := localBrokerURL(vals.url); bu != "" {
+				env.BrokerURL = bu
+			}
+			cfg.Environments[envName] = env
 		}
 		if _, ok := cfg.Identities[vals.name]; !ok {
 			cfg.Identities[vals.name] = sdkconfig.Identity{Type: "agent"}
@@ -322,6 +336,38 @@ func deriveEnvName(installURL string) string {
 		return s
 	}
 	return "default"
+}
+
+// localBrokerURL returns the co-located local broker URL for a loopback control
+// plane, or "" for any non-loopback (remote/enterprise) URL. On a local install
+// jenticctl stands the broker up on the standard broker port over plain HTTP, on
+// the same loopback host, so `jentic execute` should target it there rather than
+// the https default. It is deliberately NOT a general base_url→broker_url
+// derivation: remote deployments run the broker on a different domain and must
+// set broker_url explicitly.
+func localBrokerURL(installURL string) string {
+	u, err := url.Parse(installURL)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	if !isLoopbackHost(host) {
+		return ""
+	}
+	_, port, _ := strings.Cut(config.DefaultBrokerHost, ":")
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+// isLoopbackHost reports whether host is a loopback name/address ("localhost",
+// 127.0.0.0/8, or ::1).
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // defaultIdentityName proposes an identity name from the machine hostname
