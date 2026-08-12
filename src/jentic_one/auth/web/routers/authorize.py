@@ -40,6 +40,23 @@ def _is_allowed_redirect_uri(redirect_uri: str, canonical_base_url: str) -> bool
     )
 
 
+def _callback_uri(request: Request, canonical_base_url: str) -> str:
+    """Build the IdP callback URI (the ``redirect_uri`` sent to the IdP).
+
+    Behind a TLS-terminating proxy (e.g. an ALB) the app sees a plain-``http``
+    request, so ``request.url_for`` would emit an ``http://`` callback that no
+    longer matches the ``https://`` URI registered with the IdP — the IdP then
+    rejects the request. When a canonical base URL is configured we therefore
+    take its scheme + host and keep only the *path* resolved by ``url_for`` (so
+    a route rename still flows through). Without a canonical base URL (local
+    dev) we fall back to the request-derived URL unchanged.
+    """
+    resolved = request.url_for("authorize_oauth_callback")
+    if not canonical_base_url:
+        return str(resolved)
+    return f"{canonical_base_url.rstrip('/')}{resolved.path}"
+
+
 def get_authorize_service(ctx: Context = Depends(get_ctx)) -> AuthorizeService:
     return AuthorizeService(ctx)
 
@@ -100,7 +117,7 @@ async def authorize_endpoint(
     if code_challenge_method != "S256":
         return _error_redirect(redirect_uri, "invalid_request", state, "only S256 is supported")
 
-    callback_uri = str(request.url_for("authorize_oauth_callback"))
+    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
 
     internal_state = _sign_state(
         {
@@ -154,7 +171,7 @@ async def oauth_callback(
     nonce = params.get("nonce")
     original_state = params.get("original_state")
 
-    callback_uri = str(request.url_for("authorize_oauth_callback"))
+    callback_uri = _callback_uri(request, ctx.config.auth.canonical_base_url)
     try:
         platform_code = await authorize_svc.handle_idp_callback(
             code=code,
