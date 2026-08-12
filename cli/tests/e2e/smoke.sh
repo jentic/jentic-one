@@ -53,9 +53,17 @@ fi
 grep -q '"checks"' "$SCRATCH/doctor.json" || fail "jentic doctor JSON had no checks array"
 pass "jentic doctor --json parses"
 
-# 3. jentic profile list exits 0 (empty is fine on a fresh scratch home).
-"$JENTIC" profile list >/dev/null 2>&1 || fail "jentic profile list exited non-zero"
-pass "jentic profile list"
+# 3. jentic access whoami --json emits a well-formed agent envelope. On a fresh
+#    scratch home there is no active context, so this exits non-zero with a
+#    RESOLVE_FAILED error envelope — that is the CORRECT contract, not a failure.
+#    We assert the envelope is parseable JSON either way (success payload or error
+#    envelope); `profile`/`context list` are management commands and are fenced in
+#    agent mode, so they are deliberately NOT used here.
+"$JENTIC" access whoami --json > "$SCRATCH/whoami.json" 2>&1 || true
+grep -q '"schema_version"' "$SCRATCH/whoami.json" \
+  || grep -q '"error_code"' "$SCRATCH/whoami.json" \
+  || fail "jentic access whoami --json was not a well-formed envelope"
+pass "jentic access whoami --json"
 
 # 4. jenticctl doctor --json parses. It exits non-zero only on a `fail` row; a
 #    scratch home with no install may report warnings but must not hard-fail

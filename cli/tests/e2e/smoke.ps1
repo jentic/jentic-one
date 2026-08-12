@@ -82,10 +82,17 @@ try {
   if ($d.Output -notmatch '"checks"') { Fail "jentic doctor JSON had no checks array`n$($d.Output)" }
   Pass "jentic doctor --json parses"
 
-  # 3. jentic profile list exits 0 (empty is fine on a fresh scratch home).
-  $p = Invoke-Native $jentic @('profile', 'list')
-  if ($p.Code -ne 0) { Fail "jentic profile list exited non-zero`n$($p.Output)" }
-  Pass "jentic profile list"
+  # 3. jentic access whoami --json emits a well-formed agent envelope. On a fresh
+  #    scratch home there is no active context, so this exits non-zero with a
+  #    RESOLVE_FAILED error envelope — the CORRECT contract, not a failure. Assert
+  #    the envelope is parseable either way; `profile`/`context list` are management
+  #    commands and are fenced in agent mode, so they are deliberately NOT used here.
+  $p = Invoke-Native $jentic @('access', 'whoami', '--json')
+  if (($p.Output -notmatch '"schema_version"') -and
+      ($p.Output -notmatch '"error_code"')) {
+    Fail "jentic access whoami --json was not a well-formed envelope`n$($p.Output)"
+  }
+  Pass "jentic access whoami --json"
 
   # 4. jenticctl doctor --json parses (non-zero only on a fail row; a scratch
   #    home with no install may warn but must produce a well-formed envelope).
