@@ -256,3 +256,10 @@ export { OverlaysService } from '@/shared/api/generated/services/OverlaysService
 // line via `useVersionInfo`. `SystemService` is already exported above; only the
 // response model is added here. Append-only.
 export type { VersionResponse } from '@/shared/api/generated/models/VersionResponse';
+
+// External-IdP (SSO) login. The public capability descriptor (`GET /auth/idp`)
+// tells the login page whether to show a "Continue with <provider>" button, and
+// the authorization-code + PKCE exchange (`POST /oauth/token`) yields the same
+// session bundle as password login. Append-only, like the rest.
+export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
+export type { IdpDescriptor } from '@/shared/api/idp';
