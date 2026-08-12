@@ -1346,6 +1346,21 @@
       "authenticated": false,
       "group": "Public (unauthenticated)",
       "implied_scopes": {},
+      "method": "GET",
+      "operation_id": "authIdpDescriptor",
+      "path": "/auth/idp",
+      "public": true,
+      "required_scopes": [],
+      "summary": "External IdP login descriptor",
+      "surface": "auth",
+      "typical_caller": null
+    },
+    {
+      "actor_types": [],
+      "auth_note": null,
+      "authenticated": false,
+      "group": "Public (unauthenticated)",
+      "implied_scopes": {},
       "method": "POST",
       "operation_id": "login",
       "path": "/auth/login",
@@ -2340,7 +2355,7 @@
       "path": "/oauth/callback",
       "public": true,
       "required_scopes": [],
-      "summary": "Oauth Callback",
+      "summary": "Authorize Oauth Callback",
       "surface": "oauth",
       "typical_caller": null
     },
@@ -4648,5 +4663,5 @@
     ],
     "total": 31
   },
-  "total": 157
+  "total": 158
 }

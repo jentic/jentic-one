@@ -23,6 +23,7 @@ from jentic_one.shared.config import (
     RuntimeConfig,
     _csv_to_list,
     _deep_merge,
+    _env_overrides,
     load_config,
 )
 
@@ -100,6 +101,47 @@ def test_env_coerces_float(config_file: Path):
     with patch.dict(os.environ, env, clear=False):
         config = load_config(config_file)
     assert config.services.request_timeout_s == 60.5
+
+
+def test_env_indexed_keys_build_list_of_models(config_file: Path):
+    # JENTIC__AUTH__ID_SIGNING__0__* addresses a list index; the env parser
+    # can only build dicts, so this exercises the digit-keyed dict -> list
+    # coercion that lets list[SigningKeyConfig] validate.
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__0__PRIVATE_KEY_PEM": "pem-zero",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+        "JENTIC__AUTH__ID_SIGNING__1__PRIVATE_KEY_PEM": "pem-one",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        config = load_config(config_file)
+    assert [k.kid for k in config.auth.id_signing] == ["k0", "k1"]
+    assert config.auth.id_signing[0].private_key_pem.get_secret_value() == "pem-zero"
+
+
+def test_env_overrides_coerces_contiguous_digit_dict_to_list():
+    env = {
+        "JENTIC__AUTH__ID_SIGNING__0__KID": "k0",
+        "JENTIC__AUTH__ID_SIGNING__1__KID": "k1",
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    signing = overrides["auth"]["id_signing"]
+    assert isinstance(signing, list)
+    assert [item["kid"] for item in signing] == ["k0", "k1"]
+
+
+def test_env_overrides_leaves_non_indexed_dicts_untouched():
+    # Real string keys (databases.registry) must stay a dict, and a sparse /
+    # 1-based numeric set must NOT be coerced (it isn't a valid list address).
+    env = {
+        "JENTIC__DATABASES__REGISTRY__HOST": "h",
+        "JENTIC__WIDGETS__1__NAME": "one",  # missing index 0 -> not a list
+    }
+    with patch.dict(os.environ, env, clear=False):
+        overrides = _env_overrides()
+    assert overrides["databases"]["registry"] == {"host": "h"}
+    assert overrides["widgets"] == {"1": {"name": "one"}}
 
 
 def test_numeric_password_preserved_as_string(config_file: Path):

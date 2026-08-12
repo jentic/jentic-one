@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.30.2](https://github.com/jentic/jentic-one/compare/v0.30.1...v0.30.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **auth:** build OIDC callback URI from canonical base URL ([#1026](https://github.com/jentic/jentic-one/issues/1026)) ([1c2934b](https://github.com/jentic/jentic-one/commit/1c2934b7736b47c9084e0a412e403fae77736956))
+
+## [0.30.1](https://github.com/jentic/jentic-one/compare/v0.30.0...v0.30.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **config:** coerce indexed env vars into lists ([#1023](https://github.com/jentic/jentic-one/issues/1023)) ([a4bc4fb](https://github.com/jentic/jentic-one/commit/a4bc4fb1f41f41b2595eb8c3c4014f5ce28fe5aa))
+
+## [0.30.0](https://github.com/jentic/jentic-one/compare/v0.29.1...v0.30.0) (2026-08-11)
+
+
+### Features
+
+* **auth:** add SSO login seams — Google provider, provisioning hook, superset verifier ([#1021](https://github.com/jentic/jentic-one/issues/1021)) ([2795a05](https://github.com/jentic/jentic-one/commit/2795a0534ccb86ba863a80e34d6978dc259b0b6d))
+
+## [0.29.1](https://github.com/jentic/jentic-one/compare/v0.29.0...v0.29.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **reference:** key prefixed included-router routes by their full path ([#1018](https://github.com/jentic/jentic-one/issues/1018)) ([9805994](https://github.com/jentic/jentic-one/commit/9805994cecb7e1bf1308311d2cc673a45a8622b9))
+
 ## [0.29.0](https://github.com/jentic/jentic-one/compare/v0.28.1...v0.29.0) (2026-08-07)
 
 
