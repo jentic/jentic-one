@@ -88,7 +88,7 @@ export class OAuthService {
         });
     }
     /**
-     * Oauth Callback
+     * Authorize Oauth Callback
      * External IdP callback — exchanges upstream code and issues platform auth code.
      * @returns any Successful Response
      * @throws ApiError

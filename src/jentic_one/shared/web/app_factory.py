@@ -564,6 +564,7 @@ def create_combined_app(
     # order as create_surface_app).
     root.include_router(get_agent_discovery_router())
 
+    auth_superset_verifier = None
     for surface in apps:
         module_path = SURFACE_MODULES[surface]
         mod = importlib.import_module(module_path)
@@ -574,6 +575,19 @@ def create_combined_app(
                 root.add_exception_handler(exc_class, handler)
         if hasattr(mod, "install_on_app"):
             mod.install_on_app(root, ctx)
+        # Capture the auth surface's full-taxonomy verifier factory (dynamic, to
+        # avoid a static shared->auth import — same posture as the surface loop).
+        if surface == "auth":
+            auth_superset_verifier = mod.make_superset_verifier
+
+    # Deterministic identity verifier: when the auth surface is enabled, install
+    # its full-taxonomy verifier (API keys + opaque `at_` + HS256) explicitly so
+    # admin/enterprise routes resolve `at_` tokens regardless of the order
+    # surfaces ran `install_on_app`. Without this the active verifier depends on
+    # surface ordering (the admin surface installs an HS256-only, `at_`-blind
+    # verifier). No-op for app sets without the auth surface.
+    if auth_superset_verifier is not None:
+        root.state.verify_token = auth_superset_verifier(ctx)
 
     # Public, schema-hidden endpoint reference (the CLI + docs SPA read this
     # instead of parsing the OpenAPI document). Registered after all surfaces so

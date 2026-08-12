@@ -8765,7 +8765,7 @@
     },
     "summary": "HTTP surface of the Jentic platform's control plane — Core / Access (credentials, toolkits), Registry (registered APIs, operations, search), and Admin / Audit (execution telemetry, async jobs).",
     "title": "Jentic Control Plane API",
-    "version": "0.29.0"
+    "version": "0.30.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -17746,6 +17746,105 @@
         ]
       }
     },
+    "/auth/idp": {
+      "get": {
+        "description": "Public capability hint: whether IdP login is enabled, and which provider.\n\nThe SPA reads this before login to decide whether to show a \"Continue with\n<provider>\" button. Unauthenticated and secret-free — it advertises only the\nenabled flag and the provider name (never client secrets or endpoints).",
+        "operationId": "authIdpDescriptor",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Authidpdescriptor",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The request was malformed or failed a precondition.",
+                  "instance": "/example/path",
+                  "status": 400,
+                  "title": "Bad Request",
+                  "type": "bad_request"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "Request validation failed; see errors[] for details.",
+                  "errors": [
+                    {
+                      "detail": "Field 'name' must not be blank.",
+                      "pointer": "#/name"
+                    }
+                  ],
+                  "instance": "/example/path",
+                  "status": 422,
+                  "title": "Unprocessable Entity",
+                  "type": "validation_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "An unexpected error occurred.",
+                  "instance": "/example/path",
+                  "status": 500,
+                  "title": "Internal Server Error",
+                  "type": "server_error"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "example": {
+                  "detail": "The database is temporarily unavailable; please retry.",
+                  "instance": "/example/path",
+                  "status": 503,
+                  "title": "Service Unavailable",
+                  "type": "database_unavailable"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [],
+        "summary": "External IdP login descriptor",
+        "tags": [
+          "Discovery"
+        ]
+      }
+    },
     "/auth/login": {
       "post": {
         "description": "Authenticate and return a JWT token bundle.",
@@ -24675,7 +24774,7 @@
           }
         },
         "security": [],
-        "summary": "Oauth Callback",
+        "summary": "Authorize Oauth Callback",
         "tags": [
           "OAuth"
         ]

@@ -53,6 +53,20 @@ class InvalidGrantError(AuthServiceError):
         self.reason = reason
 
 
+class UserNotAdmittedError(AuthServiceError):
+    """Raised when a verified external-IdP login is not admitted by the policy.
+
+    The IdP authenticated the user, but the deployment's admission policy declined
+    to provision a brand-new account for them (e.g. invite-only or domain-gated
+    deployments). Distinct from ``InvalidGrantError`` so callers/tests can tell an
+    authentication failure from a policy rejection.
+    """
+
+    def __init__(self, reason: str = "user_not_admitted") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class TokenExpiredError(AuthServiceError):
     """Raised when a token has expired."""
 

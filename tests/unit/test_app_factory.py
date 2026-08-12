@@ -98,6 +98,22 @@ def test_combined_app_mounts_auth(ctx: Context) -> None:
     assert resp.json() == {"status": "ok", "surface": "auth", "version": __version__}
 
 
+def test_sso_callback_not_shadowed_by_credentials_connect_callback(ctx: Context) -> None:
+    """The SSO login callback must resolve to its own root path, not /credentials.
+
+    The auth surface's login callback and the control surface's credential-connect
+    callback are both Python functions named ``oauth_callback``. ``/authorize``
+    builds its redirect_uri via ``url_path_for``, so the SSO route carries a unique
+    name (``authorize_oauth_callback``) to avoid the connect route winning the
+    name lookup and sending Google's login code to the wrong handler.
+    """
+    app = create_combined_app(ctx, ["control", "auth"])
+    # SSO login callback resolves to the root path...
+    assert app.url_path_for("authorize_oauth_callback") == "/oauth/callback"
+    # ...distinct from the credentials-connect callback, which is unchanged.
+    assert app.url_path_for("oauth_callback") == "/credentials/oauth/callback"
+
+
 def test_auth_standalone_app(ctx: Context) -> None:
     app = create_auth_app(ctx)
     client = TestClient(app, raise_server_exceptions=False)
