@@ -1018,6 +1018,9 @@ type IdpConfig struct {
 	// ExchangeEndpoint corresponds to the JSON schema field "exchange_endpoint".
 	ExchangeEndpoint interface{} `json:"exchange_endpoint,omitempty,omitzero" yaml:"exchange_endpoint,omitempty" mapstructure:"exchange_endpoint,omitempty"`
 
+	// HostedDomain corresponds to the JSON schema field "hosted_domain".
+	HostedDomain interface{} `json:"hosted_domain,omitempty,omitzero" yaml:"hosted_domain,omitempty" mapstructure:"hosted_domain,omitempty"`
+
 	// Issuer corresponds to the JSON schema field "issuer".
 	Issuer string `json:"issuer,omitempty,omitzero" yaml:"issuer,omitempty" mapstructure:"issuer,omitempty"`
 
@@ -1034,6 +1037,8 @@ type IdpConfig struct {
 type IdpConfigAuthorizationEndpoint_0 *string
 
 type IdpConfigExchangeEndpoint_0 *string
+
+type IdpConfigHostedDomain_0 *string
 
 type IdpConfigUserinfoEndpoint_0 *string
 
