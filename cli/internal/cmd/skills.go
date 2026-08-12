@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newSkillsCmd builds the `jentic skills` subcommand tree.
 func newSkillsCmd(app *App) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
