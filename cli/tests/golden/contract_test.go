@@ -36,7 +36,10 @@ func mockControl(t *testing.T) *httptest.Server {
 
 // agentEnv forces the agent audience so the recorded contract is the machine
 // shape (pure JSON on stdout, no prompts), which is what agents depend on.
-var agentEnv = map[string]string{"NO_COLOR": "1"}
+// agentEnv forces the agent audience so the recorded contract is the machine
+// envelope an autonomous caller actually parses (JENTIC_MODE=agent), with ANSI
+// suppressed for good measure.
+var agentEnv = map[string]string{"JENTIC_MODE": "agent", "NO_COLOR": "1"}
 
 // TestGolden_AgentContract freezes the observable V2 contract of the core
 // agent-facing commands (impl/0.0 §2a scope, post-activation). Human-mode ANSI

@@ -21,6 +21,7 @@ package golden
 import (
 	"bytes"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,16 +58,40 @@ func runAPI(t *testing.T, home string, env map[string]string, args ...string) re
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
-	var out, errBuf bytes.Buffer
+
+	// Capture the PROCESS streams, not just the AppContainer buffers. The UX
+	// render layer (ux.Render / ux.ReportError) writes to os.Stdout/os.Stderr
+	// directly by design — that confinement is enforced by the arch boundary
+	// test (1F). So the agent contract an agent actually observes lands on the
+	// process streams; capturing only deps.Out/Err would silently miss every
+	// error envelope (and is exactly why the no-context golden looked empty).
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	oldOut, oldErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	defer func() { os.Stdout, os.Stderr = oldOut, oldErr }()
+
 	deps := &core.AppContainer{
 		In:  strings.NewReader(""),
-		Out: &out,
-		Err: &errBuf,
+		Out: outW,
+		Err: errW,
 	}
 	root := core.NewRootCmd(deps, api.TreeBuilder())
 	root.SetArgs(args)
 	code := core.Run(root)
-	return result{stdout: out.String(), stderr: errBuf.String(), exitCode: code}
+
+	_ = outW.Close()
+	_ = errW.Close()
+	var outBuf, errBuf bytes.Buffer
+	_, _ = io.Copy(&outBuf, outR)
+	_, _ = io.Copy(&errBuf, errR)
+	return result{stdout: outBuf.String(), stderr: errBuf.String(), exitCode: code}
 }
 
 // seedSession points the run at baseURL via the file-less env override — the

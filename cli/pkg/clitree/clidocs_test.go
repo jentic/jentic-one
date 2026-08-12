@@ -37,29 +37,33 @@ func TestCLIReferenceShape(t *testing.T) {
 		t.Error("jentic binary missing tagline/short")
 	}
 
-	// profile has subcommands; assert the tree recursed. Value-typed lookup
+	// context has subcommands; assert the tree recursed. Value-typed lookup
 	// (not a *CommandDoc guarded by t.Fatal) — staticcheck's SA5011 in CI
 	// doesn't always see t.Fatal as terminating and flags the derefs.
-	profile, ok := findCommand(jentic.Commands, "profile")
+	//
+	// Post-activation the V1 `profile` command is gone (replaced by alias shims
+	// that are not a real `profile` command in the tree); `context` is its
+	// successor and the surface this shape check now guards.
+	contextCmd, ok := findCommand(jentic.Commands, "context")
 	if !ok {
-		t.Fatal("jentic missing profile command")
+		t.Fatal("jentic missing context command")
 		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
-	if len(profile.Subcommands) == 0 {
-		t.Error("profile should expose subcommands (list/use/add-key)")
+	if len(contextCmd.Subcommands) == 0 {
+		t.Error("context should expose subcommands (create/use/list/view/delete)")
 	}
-	if profile.GroupTitle == "" {
-		t.Error("profile should carry its group title")
+	if contextCmd.GroupTitle == "" {
+		t.Error("context should carry its group title")
 	}
 
-	// endpoints should inherit/carry the --profile flag.
+	// endpoints should carry the --context selector + the --scope filter.
 	endpoints, ok := findCommand(jentic.Commands, "endpoints")
 	if !ok {
 		t.Fatal("jentic missing endpoints command")
 		return // unreachable; satisfies SA5011 when noreturn facts are cold
 	}
-	if !hasFlag(endpoints.Flags, "profile") || !hasFlag(endpoints.Flags, "scope") {
-		t.Errorf("endpoints flags = %+v, want profile + scope", endpoints.Flags)
+	if !hasFlag(endpoints.Flags, "context") || !hasFlag(endpoints.Flags, "scope") {
+		t.Errorf("endpoints flags = %+v, want context + scope", endpoints.Flags)
 	}
 
 	if _, ok := byName["jenticctl"]; !ok {

@@ -2,4 +2,4 @@ exit: 2
 --- stdout ---
 
 --- stderr ---
-
+{"actionable_step":"Run `jentic register --url \u003cinstall URL\u003e` to onboard, or `jentic context use \u003cname\u003e` to select an existing context.","error":"no active context","error_code":"RESOLVE_FAILED","schema_version":"1"}

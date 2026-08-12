@@ -321,8 +321,8 @@ bound to a different one. Check the backend your base URL serves before
 diagnosing data loss:
 
 ```
-jentic context view        # shows the active context's base_url
-curl -s "<base-url>/instance"   # e.g. http://127.0.0.1:8000/instance on a default local install
+jentic context view        # shows the active context's environment + base_url
+jentic api GET /instance   # reads the connected backend's identity (auth attached)
 ```
 
 The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
@@ -403,8 +403,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   (always current, works offline), or open the platform docs at `/app/docs` on
   the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
-- `jentic context view` — the active context: identity, environment, base_url,
-  and granted directories (start here).
+- `jentic context view` — the active context (environment + identity + base_url); start here.
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
@@ -479,8 +478,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
   missing or broken, check where each surface points — `jentic context view`
-  shows this CLI's `base_url`, and `curl -s <base-url>/instance` reports
-  which backend serves it (see "confirm which backend you're on" in step 3);
+  shows this CLI's active environment/`base_url`, and `jentic api GET /instance`
+  reports which backend serves it (see "confirm which backend you're on" in step 3);
   ask your operator which backend the MCP server was configured against —
   and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
@@ -522,7 +521,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 
 ## Verification
 
-- `jentic doctor` reports the Identity section healthy (registered, token OK).
+- `jentic doctor` shows a resolvable identity with a valid token.
 - After `jentic catalog import <vendor/name>`, `jentic search "<something in
   that API>"` returns at least one result.
 - A known-allowed `jentic execute …` (pointed at the right broker) returns a 2xx

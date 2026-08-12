@@ -62,7 +62,7 @@ instead; this skill only fixes specs that already exist.
   formatting, which is why step 4 uses a small in-repo Python applier instead.
 - `gh` authenticated (`gh auth status`) for the PR.
 - For the local fallback only: a running Jentic control plane (default `http://127.0.0.1:8000`)
-  and a registered agent (`jentic doctor` shows a healthy Identity section).
+  and a registered agent (`jentic doctor` shows a resolvable identity with a valid token).
 
 ## Steps
 
@@ -334,17 +334,20 @@ The API must already exist in the local registry (import it from the catalog fir
 `jentic catalog import <api_id>`, where `<api_id>` is the catalog entry id — the dotted
 `<vendor>/<api>` form, e.g. `posthog.com/posthog-api`). Then resolve the **registry** identity
 (slugified — not the folder segments) and submit + confirm the overlay against the local control
-plane. All calls below go through `jentic api` (the authenticated control-plane passthrough), so
-they hit whatever your **active context** points at — check with `jentic context view` that its
-base_url is the local install before proceeding.
+plane (default `http://127.0.0.1:8000`).
 
 ```
 # Run this block with bash (it uses `read ... < <(...)` process substitution, which
 # POSIX `sh`/`dash` does not support).
-# Submit needs an apis:write identity; confirm needs overlays:confirm (may be the same
-# identity if it holds both; an org:admin identity also satisfies confirm). `jentic api`
-# authenticates as the ACTIVE context's identity — switch contexts (`jentic context use`)
-# or ask an operator when yours lacks a scope.
+#
+# Every call goes through `jentic api` — the control-plane passthrough that
+# reuses the CLI's active context, auth, and transport, so there is NO token to
+# extract or export (the CLI attaches the bearer for you; V2 never exposes it).
+# It targets whatever install your active context points at; use
+# `--context <name>` to pick another. Submit needs apis:write; confirm needs
+# overlays:confirm (an org:admin identity satisfies both) — if your agent
+# identity lacks a scope, request it (`jentic access request`) or have an
+# operator run the confirm step.
 
 # Resolve the registry identity for the catalog entry you imported. The registry slugifies
 # vendor/name from the spec's info block, so these differ from the jentic-public-apis folder
@@ -366,8 +369,8 @@ jentic api POST "/apis/$V/$N/$VER/overlays" \
 
 # Confirm it (pending → confirmed) — requires overlays:confirm. This materializes the
 # overlay: it re-ingests the base spec with the overlay applied and serves the result.
-# Runs as the same active identity; if it lacks overlays:confirm, switch to (or ask for)
-# an operator identity that has it (an org:admin identity also works).
+# If your active identity lacks overlays:confirm, run this step under a context whose
+# identity has it (`--context <operator>`; an org:admin identity also works).
 jentic api POST "/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" -d '{}'
 ```
 
@@ -407,7 +410,8 @@ pending for this API:
 
 ```
 # Reuse the registry identity + source_url resolved in step 9 ($V/$N/$VER/$SRC). If you
-# start fresh here, re-resolve them the same way (GET /apis, match on catalog_api_id).
+# start fresh here, re-resolve them the same way (jentic api GET /apis, match on catalog_api_id).
+# All calls go through `jentic api` — active context + auth attached automatically.
 # Is there ANY pending update? (API view; boolean, no class):
 jentic api GET "/apis/$V/$N/$VER" \
   | python3 -c "import json,sys; a=json.load(sys.stdin); \
@@ -417,9 +421,11 @@ print('update_available:', a.get('update_available'))"
 # WHICH class? Look for an actionable conflict event for this API. If this returns a row,
 # it's the operator-decision path; if empty (but update_available is true), it's the
 # routine adopt path. The conflict event's data carries the overlay_id to act on.
-# (Events live on the admin/control plane; listing needs an events:read identity — an
-# org:admin/operator identity has it.)
-jentic api GET "/events?event_type=catalog.update_conflicts_overlay&requires_action=true&acknowledged=false" \
+# (Events live on the admin/control plane; listing needs events:read — an org:admin/
+# operator identity has it. Use `--context <operator>` if your agent identity lacks it.)
+jentic api GET /events \
+  --query event_type=catalog.update_conflicts_overlay \
+  --query requires_action=true --query acknowledged=false \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
 mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
@@ -435,7 +441,7 @@ print('overlay_id:', (mine[0]['data'].get('overlay_id') if mine else None))"
 **Reacting to `catalog.update_available`** (adopt upstream — your fix is upstream now, or the
 change is unrelated and you no longer need the overlay): re-import the catalog entry. A plain
 re-import adopts the upstream spec and **settles the event** automatically. This needs
-`catalog:import` (an `apis:write` token implies it):
+`catalog:import` (an `apis:write` scope implies it):
 
 ```
 jentic api POST "/catalog/<api_id>:import" -d '{}'
@@ -451,21 +457,19 @@ is an operator call with two clean options — **never** hand-edit around it:
    catalog entry over a *live confirmed overlay* is doubly gated: the `:import` route itself
    requires **`catalog:import`**, and superseding the overlay additionally requires
    **`overlays:confirm`** (because it discards an operator's fix). So the caller needs **both**
-   scopes — an `org:admin` token satisfies both by implication; `overlays:confirm` *alone* is
+   scopes — an `org:admin` identity satisfies both by implication; `overlays:confirm` *alone* is
    rejected by the route guard before the supersede is even evaluated. An authorized re-import
    auto-deprecates the overlay and serves the fresh upstream in one step; a caller with
    `catalog:import` but **not** `overlays:confirm` is **refused** (403 `overlay_supersede_forbidden`)
    and the conflict is re-surfaced for someone who can decide — the fix is never silently reverted.
 
 ```
-# $OPERATOR_TOKEN: a profile whose token holds BOTH catalog:import and overlays:confirm
-# (or org:admin, which implies both). Derive it like $TOKEN from an operator profile, e.g.
-#   OPERATOR_TOKEN=$(jentic profile list --json | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
-# — ask an operator to run this if your agent profile lacks the scopes.
-# Authorized adopt-upstream. The platform detects the live overlay and supersedes it because
-# you hold overlays:confirm; the same call by a catalog:import-only token returns 403.
-curl -sS -X POST "$BASE/catalog/<api_id>:import" \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' -d '{}'
+# Authorized adopt-upstream. Run under a context whose identity holds BOTH catalog:import
+# and overlays:confirm (org:admin implies both) — e.g. `--context <operator>`, or ask an
+# operator to run it if your agent identity lacks the scopes. The platform detects the live
+# overlay and supersedes it because you hold overlays:confirm; the same call by a
+# catalog:import-only identity returns 403.
+jentic api POST "/catalog/<api_id>:import" -d '{}'
 ```
 
 If instead you decide the overlay was the right answer and want to **undo** a materialization you
@@ -473,8 +477,7 @@ just made (e.g. confirmed the wrong overlay), roll it back — this restores the
 overlay superseded (also `overlays:confirm`):
 
 ```
-curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:rollback" \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" -H 'Content-Type: application/json' -d '{}'
+jentic api POST "/apis/$V/$N/$VER/overlays/<overlay_id>:rollback" -d '{}'
 ```
 
 The loop is closed when the served spec, the overlay's lifecycle status, and the action inbox all
