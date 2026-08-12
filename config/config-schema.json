@@ -683,6 +683,18 @@
           "default": null,
           "title": "Exchange Endpoint"
         },
+        "hosted_domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hosted Domain"
+        },
         "issuer": {
           "default": "",
           "title": "Issuer",
