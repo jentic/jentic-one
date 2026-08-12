@@ -33,7 +33,6 @@ import (
 // token's issue time that the server will accept it (the clock-skew surfacing
 // P4.3/P6.2 require, here for the agent sibling — F8-9).
 func newDoctorCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -48,11 +47,10 @@ func newDoctorCmd(app *app) *cobra.Command {
 			"Output defaults to JSON when stdout is not a TTY (agent-friendly).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.doctorE(cmd, ident, jsonFlag)
+			return app.doctorE(cmd, jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
@@ -99,12 +97,12 @@ func (d *agentDoctor) add(section, name string, status agentCheckStatus, detail,
 	})
 }
 
-func (a *app) doctorE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool) error {
+func (a *app) doctorE(cmd *cobra.Command, jsonFlag bool) error {
 	d := &agentDoctor{app: a}
 	ctx := cmd.Context()
 
 	d.checkPaths()
-	baseURL, token := d.checkIdentity(ctx, ident)
+	baseURL, token := d.checkIdentity(ctx)
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
 
@@ -155,53 +153,19 @@ func (d *agentDoctor) checkPaths() {
 // checkIdentity resolves the active identity and its token state STRICTLY
 // READ-ONLY (UX-1): it never creates a directory, generates a key, or mints/
 // persists a token — it reports each missing piece as a warning with the
-// command that creates it. Context-first like agentSession: with an active V2
-// context it inspects the XDG store; otherwise it opens the legacy profile
-// store via the view path. It returns the resolved base URL and an
-// already-cached usable token ("" if none), which the reachability and skew
-// checks reuse.
-func (d *agentDoctor) checkIdentity(ctx context.Context, ident *identityOptions) (baseURL, token string) {
+// command that creates it. It inspects the XDG store for the active context;
+// with no context there is nothing to inspect and it reports the onboarding
+// remediation. It returns the resolved base URL and an already-cached usable
+// token ("" if none), which the reachability and skew checks reuse.
+func (d *agentDoctor) checkIdentity(ctx context.Context) (baseURL, token string) {
 	const section = "Identity"
-	if st := d.app.activeState(ctx, ident); st != nil {
-		return d.checkContextIdentity(st)
-	}
-	sess, profileName, err := d.app.agentSessionView(ident)
-	if err != nil {
-		d.add(section, "session", agentWarn, err.Error(), "")
+	st := clictx.ActiveV2(ctx)
+	if st == nil {
+		d.add(section, "session", agentWarn, "no active context",
+			"run `jentic register --url <install URL>` to onboard, or `jentic context use <name>`")
 		return "", ""
 	}
-	if sess.Meta.IsAPIKey() {
-		if sess.APIKey == "" {
-			d.add(section, "session", agentWarn,
-				fmt.Sprintf("profile %q has no API key stored", profileName), "run `jentic profile add-key`")
-			return "", ""
-		}
-		d.add(section, "session", agentPass, "identity resolved (API key)", "")
-		return sess.Meta.BaseURL, sess.APIKey
-	}
-	if sess.Meta.AgentID == "" {
-		if sess.Key == nil {
-			// No key yet — REPORT it, never mint it: doctor writing agent.key on
-			// a pristine machine corrupted first-run and made `jentic migrate`
-			// report a phantom migrated context (UX-1/UX-2).
-			d.add(section, "session", agentWarn,
-				fmt.Sprintf("profile %q has no agent key yet", profileName),
-				"run `jentic register` to create and register one")
-			return "", ""
-		}
-		d.add(section, "session", agentWarn,
-			fmt.Sprintf("profile %q has no registered agent", profileName),
-			"run `jentic register` (or wait for approval)")
-		return "", ""
-	}
-	tok, ok := sess.CachedToken()
-	if !ok {
-		d.add(section, "session", agentWarn, "registered, but no fresh token is cached",
-			"doctor never mints; run any authenticated command (e.g. `jentic search`) to obtain one")
-		return sess.Meta.BaseURL, ""
-	}
-	d.add(section, "session", agentPass, "identity resolved, cached token usable", "")
-	return sess.Meta.BaseURL, tok
+	return d.checkContextIdentity(st)
 }
 
 // checkContextIdentity is the V2-context arm of checkIdentity: it inspects the

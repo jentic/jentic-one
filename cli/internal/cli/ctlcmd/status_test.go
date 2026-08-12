@@ -7,13 +7,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
-// A fresh setup (no manifest, no server, no profile) should render all three
+// A fresh setup (no manifest, no server, no context) should render all four
 // sections and report each missing piece without erroring.
 func TestStatusEmptySetupDegradesGracefully(t *testing.T) {
+	// Isolate the XDG store so the identity section can't pick up a real
+	// developer context.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("JENTIC_BASE_URL", "")
+	t.Setenv("JENTIC_BEARER_TOKEN", "")
 	app := testApp(t)
 	// Point at a closed port so the server probe is deterministically offline
 	// and the test never depends on a live local control plane.
@@ -21,7 +28,7 @@ func TestStatusEmptySetupDegradesGracefully(t *testing.T) {
 		t.Fatalf("statusE on empty setup: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
-	for _, want := range []string{"Install", "Server", "Broker", "Agent", "no install manifest", "offline", "not registered"} {
+	for _, want := range []string{"Install", "Server", "Broker", "Identity", "no install manifest", "offline", "no active context"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status output missing %q\n---\n%s", want, got)
 		}
@@ -50,10 +57,10 @@ func TestTokenStatus(t *testing.T) {
 	if label, _ := tokenStatus(nil); label != "none" {
 		t.Errorf("nil tokens label = %q, want none", label)
 	}
-	if label, _ := tokenStatus(&profile.Tokens{AccessToken: "a", AccessExpiresAt: time.Now().Add(-time.Hour)}); label != "expired" {
+	if label, _ := tokenStatus(&auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(-time.Hour)}); label != "expired" {
 		t.Errorf("past tokens label = %q, want expired", label)
 	}
-	if label, _ := tokenStatus(&profile.Tokens{AccessToken: "a", AccessExpiresAt: time.Now().Add(time.Hour)}); !strings.HasPrefix(label, "valid") {
+	if label, _ := tokenStatus(&auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)}); !strings.HasPrefix(label, "valid") {
 		t.Errorf("future tokens label = %q, want valid*", label)
 	}
 }

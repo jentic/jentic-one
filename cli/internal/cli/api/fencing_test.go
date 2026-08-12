@@ -22,7 +22,7 @@ func TestFencing_BlocksFencedCommandInAgentMode(t *testing.T) {
 	root.SetErr(new(bytes.Buffer))
 	// No --help: help short-circuits before PersistentPreRunE, so we exercise the
 	// real interceptor path. The fence returns before reset's RunE does any work.
-	root.SetArgs([]string{"reset", "some-profile"})
+	root.SetArgs([]string{"reset"})
 
 	err := root.Execute()
 	var coded *ux.CodedError

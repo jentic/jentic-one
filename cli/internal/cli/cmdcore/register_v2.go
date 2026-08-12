@@ -1,12 +1,11 @@
 package cmdcore
 
-// register_v2.go is the V2 (XDG context-store) arm of `jentic register` and
-// `jentic bootstrap`. `register` is the single onboarding FRONT DOOR: which
-// store it provisions is decided by resolveOnboardArm, so a fresh machine and
-// a context-driven machine both get the one-command experience, while
-// unmigrated V1 users keep the exact legacy behavior. The V2 arm is the
-// human-facing composition of the same primitives `jentic env/identity/context`
-// + `jentic identity register` expose individually:
+// register_v2.go is the body of `jentic register` / `jentic bootstrap`
+// onboarding against the XDG context store. `register` is the single
+// onboarding FRONT DOOR: a machine with an active context registers that
+// context's identity; a fresh machine gets the one-command setup. It is the
+// human-facing composition of the same primitives `jentic env/identity/
+// context` + `jentic identity register` expose individually:
 //
 //	env add <derived> --url <URL>       (setup arm only)
 //	identity add <name> --type agent    (setup arm only)
@@ -31,46 +30,8 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
-
-// onboardArm selects which store an onboarding command (register/bootstrap)
-// provisions.
-type onboardArm int
-
-const (
-	// armLegacy provisions a ~/.jentic profile (V1). Chosen only when the
-	// caller explicitly pinned the legacy store (--profile/--base-url) or the
-	// machine has legacy config and no V2 config — unmigrated users keep V1
-	// behavior verbatim until `jentic migrate`.
-	armLegacy onboardArm = iota
-	// armV2Active registers the ACTIVE context's identity with its environment
-	// (the `identity register` flow plus the approval wait).
-	armV2Active
-	// armV2Setup is the fresh-machine flow: no config anywhere. One command
-	// creates the environment + identity + context trio in the XDG store,
-	// activates it, then registers — the V2 onboarding path.
-	armV2Setup
-)
-
-// resolveOnboardArm decides the onboarding arm. explicitLegacy is true when the
-// caller set --profile/--base-url (those name legacy-store entities, so they
-// pin the V1 arm — same escape-hatch contract as the data-plane commands).
-func (a *App) resolveOnboardArm(ctx context.Context, explicitLegacy bool) (onboardArm, *clictx.ActiveState) {
-	if explicitLegacy {
-		return armLegacy, nil
-	}
-	if st := clictx.ActiveV2(ctx); st != nil {
-		return armV2Active, st
-	}
-	// No V2 context: an unmigrated V1 machine stays legacy; a machine with no
-	// config at all onboards onto V2.
-	if fc, err := config.Load(a.Paths); err == nil && fc != nil && fc.Loaded {
-		return armLegacy, nil
-	}
-	return armV2Setup, nil
-}
 
 // v2SetupValues are the two things the fresh-machine arm must learn: where the
 // install lives and what to call this agent. Everything else is derived.

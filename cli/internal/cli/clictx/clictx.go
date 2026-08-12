@@ -8,11 +8,13 @@
 // boundary"):
 //  1. Mode/Theme interpretation — the SDK carries only raw PersistedMode/Theme
 //     strings; ResolveActiveState applies flag overrides + the precedence ladder.
-//  2. The pre-activation legacy-read adapter — until `jentic migrate` reaches
-//     end-of-life, a user with no XDG config still resolves state from the legacy
-//     ~/.jentic profile store, so wrapping commands in the Audience is a no-op for
-//     existing users (plan Phase 2 item 1, 16 §5, 14 BC-1).
-//  3. State injection into the Cobra context (WithActiveState/FromContext).
+//  2. State injection into the Cobra context (WithActiveState/FromContext).
+//
+// The pre-activation legacy-read adapter that used to live here (resolving
+// state from the V1 ~/.jentic profile store when no XDG config existed) was
+// removed at activation: the migrate gate (cmdcore/gate.go) now stops every
+// command on an unmigrated machine instead, so nothing downstream ever sees a
+// compatibility view of the legacy store.
 package clictx
 
 import (
@@ -20,7 +22,6 @@ import (
 	"os"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
 )
 
 // Canonical mode strings (14 BC-9; mirrored in client/config Context.Mode docs).
@@ -29,14 +30,6 @@ const (
 	ModeAgent          = "agent"
 	ModeServiceAccount = "service-account"
 )
-
-// LegacyEnvironment is the sentinel EnvironmentName the legacy-read adapter
-// stamps on state resolved from the ~/.jentic profile store (loadLegacyState).
-// Command code uses it to tell "a real V2 context is active" apart from "this
-// state is a compatibility view of the V1 store" — the V2 auth bridge
-// (api.activeState) must NOT treat the latter as an XDG identity, or it would
-// look for keys/tokens under a (profile, "legacy") stem that never existed.
-const LegacyEnvironment = "legacy"
 
 // ActiveState is the CLI's resolved view of the world: the SDK's UX-free
 // ResolvedState plus the CLI-only Mode/ThemeName the SDK deliberately leaves
@@ -63,17 +56,16 @@ type ActiveState struct {
 //
 // Resolution order:
 //  1. client/config.LoadState (env-var file-less path, else XDG config.yaml).
-//  2. On "no XDG config" ONLY, fall back to the legacy ~/.jentic adapter so
-//     unmigrated users keep working. Any other LoadState error propagates.
-//  3. Apply the mode ladder: --mode > $JENTIC_MODE > persisted > human.
+//  2. Apply the mode ladder: --mode > $JENTIC_MODE > persisted > human.
+//
+// There is no legacy ~/.jentic fallback: an unmigrated machine is stopped by
+// the migrate gate before any command body runs, and a machine with no config
+// at all surfaces the LoadState error (the interceptor degrades it to a
+// default state so bootstrap-safe commands still run).
 func ResolveActiveState(contextOverride, modeOverride string) (*ActiveState, error) {
 	rs, err := sdkconfig.LoadState(contextOverride)
 	if err != nil {
-		legacy, ok := loadLegacyState()
-		if !ok {
-			return nil, err // no XDG config AND no legacy config: surface the original error
-		}
-		rs = legacy
+		return nil, err
 	}
 
 	mode, explicit := ResolveModeExplicit(modeOverride, rs.PersistedMode)
@@ -116,32 +108,6 @@ func ResolveModeExplicit(flagOverride, persisted string) (mode string, explicit 
 	return ModeHuman, false
 }
 
-// loadLegacyState reads the legacy ~/.jentic profile store and maps it onto the
-// SDK ResolvedState shape (read-only; the adapter never writes the legacy tree).
-// Returns ok=false when no legacy config file exists, so the caller can surface
-// the original "no configuration" error rather than a silent empty state.
-//
-// The legacy store has no mode/theme concept, so those are left empty — the mode
-// ladder resolves them to human/default, which is exactly V1's behavior. This is
-// the pre-activation compatibility shim; it retires with `jentic migrate`'s
-// end-of-life (14 BC-1).
-func loadLegacyState() (*sdkconfig.ResolvedState, bool) {
-	paths, err := legacyconfig.NewPaths()
-	if err != nil {
-		return nil, false
-	}
-	fc, err := legacyconfig.Load(paths)
-	if err != nil || fc == nil || !fc.Loaded {
-		return nil, false
-	}
-	return &sdkconfig.ResolvedState{
-		IdentityName:    fc.ResolvedDefaultProfile(),
-		EnvironmentName: LegacyEnvironment,
-		BaseURL:         fc.ResolvedBaseURL(),
-		// PersistedMode/PersistedTheme intentionally empty -> human/default.
-	}, true
-}
-
 type contextKey string
 
 const activeStateKey contextKey = "jentic_active_state"
@@ -160,17 +126,16 @@ func FromContext(ctx context.Context) *ActiveState {
 
 // ActiveV2 returns the resolved state from ctx only when it represents a real
 // V2 context — an XDG-store (or file-less) resolution with a concrete
-// environment. It returns nil when no state was injected, when resolution
-// degraded (no config anywhere), or when the state is the legacy-read
-// adapter's compatibility view of ~/.jentic (EnvironmentName ==
-// LegacyEnvironment). This is THE shared arm-decision for every command that
-// behaves context-first with a legacy fallback (data plane, register).
+// environment. It returns nil when no state was injected or when resolution
+// degraded (no config anywhere: the interceptor injects a default state with
+// an empty EnvironmentName so fencing still works). This is THE shared
+// resolution check for every command that needs a context to act.
 func ActiveV2(ctx context.Context) *ActiveState {
 	st := FromContext(ctx)
 	if st == nil || st.ResolvedState == nil {
 		return nil
 	}
-	if st.EnvironmentName == "" || st.EnvironmentName == LegacyEnvironment {
+	if st.EnvironmentName == "" {
 		return nil
 	}
 	return st

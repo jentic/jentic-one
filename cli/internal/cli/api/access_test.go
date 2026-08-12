@@ -10,11 +10,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/accessclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
 // --- option parsing (no network) ---
@@ -226,21 +224,15 @@ func TestParseToolkitRef(t *testing.T) {
 
 // --- end-to-end through the command tree ---
 
-func seedAccessProfile(t *testing.T, app *app, name, baseURL string) {
+// seedAccessSession points the full-tree run at baseURL via the file-less env
+// override, so the interceptor resolves an authenticated V2 state without any
+// on-disk profile store.
+func seedAccessSession(t *testing.T, baseURL string) {
 	t.Helper()
-	p, err := profile.Open(app.Paths, name)
-	if err != nil {
-		t.Fatalf("open profile: %v", err)
-	}
-	if err := p.SaveMeta(&profile.Meta{AgentID: "agnt_test", BaseURL: baseURL, KID: "k"}); err != nil {
-		t.Fatalf("save meta: %v", err)
-	}
-	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_abc", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("save tokens: %v", err)
-	}
+	seedRegistered(t, nil, "", baseURL)
 }
 
-func runAccess(t *testing.T, app *app, baseURL string, args ...string) (string, error) {
+func runAccess(t *testing.T, app *app, _ string, args ...string) (string, error) {
 	t.Helper()
 	out := new(bytes.Buffer)
 	app.Out = out
@@ -248,7 +240,7 @@ func runAccess(t *testing.T, app *app, baseURL string, args ...string) (string, 
 	root.SetOut(out)
 	root.SetErr(out)
 	full := append([]string{"access"}, args...)
-	full = append(full, "--profile", "demo", "--base-url", baseURL, "--json")
+	full = append(full, "--json")
 	root.SetArgs(full)
 	err := root.Execute()
 	return out.String(), err
@@ -266,7 +258,7 @@ func TestAccessWhoami(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "whoami")
 	if err != nil {
@@ -295,7 +287,7 @@ func TestAccessWhoamiRendersToolkitName(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	// No --json: exercise the human-readable rendering that shows name (tk_…).
 	out := new(bytes.Buffer)
@@ -303,7 +295,7 @@ func TestAccessWhoamiRendersToolkitName(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(out)
-	root.SetArgs([]string{"access", "whoami", "--profile", "demo", "--base-url", srv.URL})
+	root.SetArgs([]string{"access", "whoami"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("whoami: %v\n%s", err, out.String())
 	}
@@ -316,10 +308,10 @@ func TestAccessWhoamiRendersToolkitName(t *testing.T) {
 	}
 }
 
-// printMe points the agent at `jentic profile view` for the filesystem side of
+// printMe points the agent at `jentic context view` for the filesystem side of
 // "what can I do?", both when it has toolkit bindings and when it has none (the
 // no-bindings branch must not short-circuit before the hint).
-func TestPrintMePointsAtProfileView(t *testing.T) {
+func TestPrintMePointsAtContextView(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		me   *accessclient.Me
@@ -331,8 +323,8 @@ func TestPrintMePointsAtProfileView(t *testing.T) {
 			app := testApp(t)
 			app.printMe(tc.me)
 			got := app.Out.(*bytes.Buffer).String()
-			if !strings.Contains(got, "jentic profile view") {
-				t.Errorf("expected a pointer to `jentic profile view`, got:\n%s", got)
+			if !strings.Contains(got, "jentic context view") {
+				t.Errorf("expected a pointer to `jentic context view`, got:\n%s", got)
 			}
 		})
 	}
@@ -353,7 +345,7 @@ func TestAccessRequestFiles(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--toolkit", "httpbin.org/httpbin", "--reason", "smoke")
 	if err != nil {
@@ -393,7 +385,7 @@ func TestAccessRequestAttachesToExistingPending(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--toolkit-id", "tk_1")
 	if err != nil {
@@ -418,7 +410,7 @@ func TestAccessRequestCompositeFilesAllItems(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request",
 		"--provision", "slack.com/api", "--auth", "slack.com/api=api_key",
@@ -464,7 +456,7 @@ func TestAccessRequestCompositeDuplicateAborts(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	// Filing is all-or-nothing: attaching a composite to the older, smaller
 	// pending request would silently drop the other targets, so it must abort
@@ -504,7 +496,7 @@ func TestAccessRequestWaitPollsUntilTerminal(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--scope", "owner:toolkits:read", "--wait", "--timeout", "30s")
 	if err != nil {
@@ -531,7 +523,7 @@ func TestAccessRequestWaitDeniedExitsCode2(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--scope", "owner:toolkits:read", "--wait", "--timeout", "30s")
 	var ec *ux.CodedError
@@ -563,7 +555,7 @@ func TestAccessRequestWaitTimeoutExitsCode3(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	out, err := runAccess(t, app, srv.URL, "request", "--scope", "owner:toolkits:read", "--wait", "--timeout", "1ms")
 	var ec *ux.CodedError
@@ -596,7 +588,7 @@ func TestAccessListAndStatusAndWithdraw(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedAccessProfile(t, app, "demo", srv.URL)
+	seedAccessSession(t, srv.URL)
 
 	if out, err := runAccess(t, app, srv.URL, "list", "--status", "pending"); err != nil {
 		t.Fatalf("list: %v\n%s", err, out)

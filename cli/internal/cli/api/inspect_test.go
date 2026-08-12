@@ -34,7 +34,7 @@ func TestInspectCmdJSON(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"inspect", "listPets", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"inspect", "listPets", "--json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -73,7 +73,7 @@ func TestInspectCmdMarkdown(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"inspect", "listPets", "--format", "markdown", "--base-url", srv.URL})
+	root.SetArgs([]string{"inspect", "listPets", "--format", "markdown"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -96,7 +96,7 @@ func TestInspectCmdNotFoundExitsCode2(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(new(bytes.Buffer))
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"inspect", "badOp", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"inspect", "badOp", "--json"})
 
 	err := root.Execute()
 	if err == nil {
@@ -127,7 +127,7 @@ func TestInspectCmdRevisionParam(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"inspect", "listPets", "--revision", "rev9", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"inspect", "listPets", "--revision", "rev9", "--json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)

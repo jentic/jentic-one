@@ -19,7 +19,6 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
 // migratedMarkerName is dropped in the legacy root after a successful migration
@@ -147,16 +146,13 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 
 	seenContexts := map[string]bool{}
 	for _, src := range sources {
-		names, lerr := profile.List(src)
+		names, lerr := listLegacyProfiles(src)
 		if lerr != nil {
 			return res, fmt.Errorf("listing legacy profiles in %s: %w", src.Root, lerr)
 		}
 		for _, name := range names {
-			p, oerr := profile.Open(src, name)
-			if oerr != nil {
-				return res, fmt.Errorf("opening legacy profile %q: %w", name, oerr)
-			}
-			meta, merr := p.LoadMeta()
+			p := viewLegacyProfile(src, name)
+			meta, merr := p.loadMeta()
 			if merr != nil {
 				return res, fmt.Errorf("reading legacy profile %q: %w", name, merr)
 			}
@@ -176,7 +172,7 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 			envName := envNameFromURL(baseURL)
 			identName := ctxName
 			idType := "agent"
-			if meta.IsAPIKey() {
+			if meta.isAPIKey() {
 				idType = "user"
 			}
 
@@ -275,9 +271,9 @@ func mergeEnv(existing sdkconfig.Env, baseURL, broker string) sdkconfig.Env {
 // layout: the Ed25519 key -> keys/<stem>.key, the API key -> <stem>.apikey, and
 // the access token -> <stem>_tokens.json (dropping the refresh token, BC-6). All
 // copies are idempotent (overwrite in place) and skip absent material.
-func copyProfileMaterial(p *profile.Profile, meta *profile.Meta, ref auth.IdentityRef) error {
+func copyProfileMaterial(p *legacyProfile, meta *legacyMeta, ref auth.IdentityRef) error {
 	// Ed25519 signing key (DCR identities).
-	if !meta.IsAPIKey() {
+	if !meta.isAPIKey() {
 		if err := copyLegacyKey(p, ref); err != nil {
 			return err
 		}
@@ -287,7 +283,7 @@ func copyProfileMaterial(p *profile.Profile, meta *profile.Meta, ref auth.Identi
 		return nil
 	}
 	// API-key identities: copy the jak_* credential.
-	key, err := p.LoadAPIKey()
+	key, err := p.loadAPIKey()
 	if err != nil {
 		return fmt.Errorf("reading legacy API key: %w", err)
 	}
@@ -303,8 +299,8 @@ func copyProfileMaterial(p *profile.Profile, meta *profile.Meta, ref auth.Identi
 // copyLegacyKey reads the legacy PKCS#8 PEM agent.key, validates it is Ed25519,
 // and writes it under the XDG keys dir via the SDK helper so the destination
 // stem and perms match what auth reads back.
-func copyLegacyKey(p *profile.Profile, ref auth.IdentityRef) error {
-	data, err := os.ReadFile(p.KeyPath())
+func copyLegacyKey(p *legacyProfile, ref auth.IdentityRef) error {
+	data, err := os.ReadFile(p.keyPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil // unregistered profile with no key — nothing to copy
@@ -336,8 +332,8 @@ func copyLegacyKey(p *profile.Profile, ref auth.IdentityRef) error {
 // copyLegacyAccessToken copies the (non-expired-or-not) access token into the
 // XDG token state, DROPPING the refresh token (BC-6). A missing/empty token is
 // not an error — the JWT-bearer grant re-mints from the key on next use.
-func copyLegacyAccessToken(p *profile.Profile, ref auth.IdentityRef) error {
-	toks, err := p.LoadTokens()
+func copyLegacyAccessToken(p *legacyProfile, ref auth.IdentityRef) error {
+	toks, err := p.loadTokens()
 	if err != nil {
 		return fmt.Errorf("reading legacy tokens: %w", err)
 	}

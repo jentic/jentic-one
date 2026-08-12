@@ -4,24 +4,22 @@
 // selection surface onto the V2 context model:
 //
 //   - `jentic profile <verb>`  → `jentic context <verb>` (delegated, not re-exec)
+//   - `profile add-key`        → `jentic identity add --api-key` (guidance only)
 //   - `--profile <p>` / `$JENTIC_PROFILE` → `--context <p>` / `$JENTIC_CONTEXT`
-//   - `--json` → agent-mode OUTPUT ENVELOPE only (BC-5; does NOT flip behavior)
 //
-// IMPORTANT — DORMANT UNTIL ACTIVATION. Per 16_landing_strategy.md §1, the
-// breaking-half code lands but stays gated: V1's real `profile` command and
-// `--profile` flag remain the live, default path until the activation release
-// (cut only after Phases 3 AND 4 merge — 14 rollout item 0). Wiring these shims
-// live now would DOUBLE-DEFINE `profile` and break V1. So this file exposes the
-// mapping as PURE, TESTED helpers plus a single registration entry point
-// (registerProfileAliasShims) that the activation release will call in place of
-// newProfileCmd — nothing here is registered on the tree today.
-//
-// Keeping the whole layer in one file means the post-window removal (14 BC-1 EOL)
-// is a single file deletion, verified by the clidocs drift check.
+// ACTIVE since the activation release: the V1 `profile` command was removed and
+// registerProfileAliasShims is registered on the tree in its place, so V1
+// muscle memory lands on the successor instead of an "unknown command" error.
+// Keeping the whole layer in one file means the post-window removal (14 BC-1
+// EOL) is a single file deletion, verified by the clidocs drift check.
 package api
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 // profileVerbToContext maps a V1 `profile` subcommand verb onto its V2 `context`
@@ -33,7 +31,7 @@ import (
 //	profile view [p]    -> context view           (active only; V1 [p] arg dropped)
 //	profile delete <p>  -> context delete <p>
 //	profile add-key <p> -> identity add <p> --api-key ...   (handled separately —
-//	                       it targets identity, not context; see addKeyToIdentity)
+//	                       it targets identity, not context; see the shim RunE)
 func profileVerbToContext(verb string, args []string) ([]string, bool) {
 	switch verb {
 	case "list", "ls":
@@ -57,9 +55,6 @@ func profileVerbToContext(verb string, args []string) ([]string, bool) {
 // rule), so the mapping is identity. It returns the context override to use,
 // preferring an explicit --profile value over $JENTIC_PROFILE, or "" when neither
 // is set (the normal --context/$JENTIC_CONTEXT ladder then applies).
-//
-// This is the pure core the activation-release ResolveActiveState pre-step calls
-// before the standard ladder; it is unit-tested independently of Cobra.
 func remapProfileSelection(profileFlag, profileEnv string) string {
 	if profileFlag != "" {
 		return profileFlag
@@ -67,16 +62,9 @@ func remapProfileSelection(profileFlag, profileEnv string) string {
 	return profileEnv
 }
 
-// registerProfileAliasShims is the ACTIVATION-RELEASE entry point. It attaches
-// the hidden `profile` shim command (delegating each verb to its V2 successor's
-// RunE) in place of the V1 profile command. It is intentionally NOT called today
-// (see the package-block doc): the V1 profile command owns that name until
-// activation. Kept here so activation is a one-line swap in newAPIRootCmd and the
-// whole layer removes as one unit at EOL.
-//
-// The delegation runs the successor command's RunE directly (never re-exec) and
-// emits a deprecation warning that respects the machine contract: a styled stderr
-// line in human mode, a structured slog warn line in agent mode (impl/1.3 §7).
+// registerProfileAliasShims attaches the hidden `profile` shim command,
+// delegating each verb to its V2 successor (never re-exec). It replaced the V1
+// profile command at activation and removes as one unit at the BC-1 EOL.
 func registerProfileAliasShims(root *cobra.Command, _ *app) {
 	shim := &cobra.Command{
 		Use:    "profile",
@@ -89,16 +77,29 @@ func registerProfileAliasShims(root *cobra.Command, _ *app) {
 			if len(args) > 0 {
 				verb, rest = args[0], args[1:]
 			}
+			// add-key retargets IDENTITY, not context, and needs flags this
+			// shim doesn't parse — point at the successor instead of guessing.
+			if verb == "add-key" {
+				name := ""
+				if len(rest) > 0 {
+					name = " " + rest[0]
+				}
+				return &ux.CodedError{
+					Code:       ux.CodeMissingArgument,
+					Msg:        "`jentic profile add-key` was removed in the V2 CLI: API-key credentials are stored on an identity, scoped to an environment",
+					Actionable: fmt.Sprintf("jentic identity add%s --env <env> --api-key <jak_...>", name),
+				}
+			}
 			ctxArgs, ok := profileVerbToContext(verb, rest)
 			if !ok {
 				return cmd.Help()
 			}
 			// Delegate by re-dispatching through the root so the successor's full
-			// PersistentPreRunE (audience/fencing) runs exactly as if invoked directly.
+			// PersistentPreRunE (audience/fencing/gate) runs exactly as if invoked
+			// directly.
 			root.SetArgs(ctxArgs)
 			return root.Execute()
 		},
 	}
-	// add-key retargets identity, not context, so it is a distinct shim leaf.
 	root.AddCommand(shim)
 }

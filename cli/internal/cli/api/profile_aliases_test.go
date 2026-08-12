@@ -3,8 +3,6 @@ package api
 import (
 	"reflect"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
 func TestProfileVerbToContext(t *testing.T) {
@@ -46,39 +44,26 @@ func TestRemapProfileSelection(t *testing.T) {
 	}
 }
 
-// TestProfileAliasShimsDormant proves the alias layer is NOT wired into the live
-// tree today (16 §1: breaking-half code stays gated until activation). The real
-// V1 profile command owns the "profile" name; registering the shim is an
-// activation-release swap, not a merge-time change.
-func TestProfileAliasShimsDormant(t *testing.T) {
+// TestProfileAliasShimsLive proves the activation swap happened: the V1 profile
+// command is GONE and the hidden alias shim owns the "profile" name, delegating
+// V1 muscle memory onto the context successors (BC-3) instead of erroring with
+// "unknown command".
+func TestProfileAliasShimsLive(t *testing.T) {
 	app := testApp(t)
 	root := newAPIRootCmd(app.App)
 	profileCmd, _, err := root.Find([]string{"profile"})
 	if err != nil {
-		t.Fatalf("profile command missing: %v", err)
+		t.Fatalf("profile shim missing from the live tree: %v", err)
 	}
-	// The live profile command is the V1 one (not hidden). If this ever flips to
-	// Hidden, the activation swap has happened and this test should be updated.
-	if profileCmd.Hidden {
-		t.Error("profile command is hidden — the alias shim appears to be wired live before activation")
+	// The live profile command is the shim: hidden, no V1 subcommands, and an
+	// ArbitraryArgs delegator.
+	if !profileCmd.Hidden {
+		t.Error("profile alias shim should be hidden in the live tree")
 	}
-	// And it still has its V1 subcommands (list/use/add-key), not the shim's
-	// ArbitraryArgs delegation.
-	if len(profileCmd.Commands()) == 0 {
-		t.Error("live profile command should retain its V1 subcommands until activation")
+	if len(profileCmd.Commands()) != 0 {
+		t.Errorf("shim should carry no V1 subcommands, got %d", len(profileCmd.Commands()))
 	}
-
-	// The activation entry point exists and produces a HIDDEN shim (kept ready
-	// for the one-line activation swap), but is NOT attached to the live tree
-	// above. Constructing it on a throwaway root proves the shim shape without
-	// wiring it live.
-	shimRoot := &cobra.Command{Use: "jentic"}
-	registerProfileAliasShims(shimRoot, app)
-	shim, _, err := shimRoot.Find([]string{"profile"})
-	if err != nil {
-		t.Fatalf("shim profile not attached to throwaway root: %v", err)
-	}
-	if !shim.Hidden {
-		t.Error("alias shim profile command should be hidden")
+	if profileCmd.RunE == nil {
+		t.Error("shim should delegate through RunE")
 	}
 }

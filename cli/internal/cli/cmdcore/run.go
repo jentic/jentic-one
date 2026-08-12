@@ -17,7 +17,6 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -55,7 +54,6 @@ type runOptions struct {
 	noAllowDir   bool
 	yes          bool
 	agentUser    string
-	profile      string
 	listGrants   bool
 	grant        string
 	revoke       string
@@ -120,8 +118,6 @@ func NewRunCmd(app *App) *cobra.Command {
 		"assume the safe default for every prompt (never grants a flagged-dangerous dir)")
 	cmd.Flags().StringVar(&opts.agentUser, "agent-user", "",
 		"override the derived <operator>-local-agent account")
-	cmd.Flags().StringVar(&opts.profile, "profile", "",
-		"launch with this agent profile checked out for the session (overrides the checked-out default)")
 	cmd.Flags().BoolVar(&opts.listGrants, "list-grants", false,
 		"list the directories the agent has been granted, then exit")
 	cmd.Flags().StringVar(&opts.grant, "grant", "",
@@ -276,48 +272,16 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return err
 	}
 
-	// 3a. Resolve the profile to check out for this session: --profile if given,
-	// else the agent account's own checked-out default. It is injected as
-	// JENTIC_PROFILE so the launched agent (and any `jentic` it runs) acts on the
-	// right profile without the operator passing a flag inside the session.
-	sessionProfile, err := a.resolveSessionProfile(opts.profile, acct)
-	if err != nil {
+	// 3a. Hand the operator's ACTIVE context to the agent account: a minimal
+	// config + the env-scoped credentials, freshly exported into the agent
+	// home's own XDG store, so the `jentic` the agent runs inside the session
+	// resolves the same environment/identity — in agent mode — without flags.
+	if err := a.exportContextToAgent(ctx, acct); err != nil {
 		return err
 	}
 
 	// 4. Launch (confined — see launchAgent for the error-closed contract).
-	return a.launchAgent(ctx, acct, agentUser, binary, dir, sessionProfile, agentArgs)
-}
-
-// resolveSessionProfile picks the profile injected as JENTIC_PROFILE into the
-// confined session: the --profile override if given (validated against the agent
-// home's profile store), else the account's own checked-out profile (the agent
-// home's default_profile, which register/bootstrap set on check-out). Returns ""
-// when nothing is checked out and no override was given, so the agent falls back
-// to its own default.
-func (a *App) resolveSessionProfile(flag string, acct config.AgentAccount) (string, error) {
-	if acct.ConfigDir == "" {
-		return flag, nil
-	}
-	agentPaths := config.Paths{Root: acct.ConfigDir}
-	if flag != "" {
-		names, err := profile.List(agentPaths)
-		if err != nil {
-			return "", err
-		}
-		for _, n := range names {
-			if n == flag {
-				return flag, nil
-			}
-		}
-		return "", fmt.Errorf("profile %q is not registered for the agent account; "+
-			"run `jentic profile list` to see the agent's profiles", flag)
-	}
-	agentCfg, err := config.Load(agentPaths)
-	if err != nil {
-		return "", err
-	}
-	return agentCfg.DefaultProfile, nil
+	return a.launchAgent(ctx, acct, agentUser, binary, dir, agentArgs)
 }
 
 // runSameUser launches the agent binary directly as the operator, with no Unix
@@ -348,9 +312,8 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 	c := exec.CommandContext(ctx, binary, agentArgs...) //nolint:gosec // binary is resolved from the agent descriptor registry; agentArgs are the operator's own pass-through args for their coding agent.
 	c.Dir = dir
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-	// The operator's own active profile (flag < JENTIC_PROFILE < config default)
-	// carries into the session so the agent's `jentic` calls act on it.
-	c.Env = append(os.Environ(), config.ProfileEnv+"="+cfg.ResolvedProfileName(opts.profile))
+	// Same-user shares the operator's home, so the agent's `jentic` calls pick
+	// up the operator's own active context from the XDG store — nothing to inject.
 	wireGracefulCancel(c)
 	if err := c.Run(); err != nil {
 		var exit interface{ ExitCode() int }
@@ -834,13 +797,36 @@ func (a *App) PrintRevokeHint() {
 
 // ── step 4: launch ───────────────────────────────────────────────────────────
 
+// launchIsolated is the programmatic entry to the confined launch used by flows
+// that already know the agent user (bootstrap's "start a session now?" offer).
+// It reloads the recorded account (for grants + home), validates the user,
+// exports the active context into the agent's own store, and launches confined
+// — the same steps 3a/4 that a `jentic run` performs after its prompts.
+func (a *App) launchIsolated(ctx context.Context, agentUser, binary, dir string, agentArgs []string) error {
+	if err := localagent.ValidateAgentUser(agentUser); err != nil {
+		return err
+	}
+	cfg, err := config.Load(a.Paths)
+	if err != nil {
+		return err
+	}
+	acct, _ := cfg.AgentAccount()
+	if acct.User == "" {
+		acct.User = agentUser
+	}
+	if err := a.exportContextToAgent(ctx, acct); err != nil {
+		return err
+	}
+	return a.launchAgent(ctx, acct, agentUser, binary, dir, agentArgs)
+}
+
 // launchAgent starts the confined agent session. Confinement is REQUIRED: it
 // closes the sibling-traversal leak that the coarse ACL grant leaves open, and it
 // is what replaces the old `chmod 700 ~` guarantee. When this machine can't confine
 // the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.
-func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir, sessionProfile string, agentArgs []string) error {
+func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir string, agentArgs []string) error {
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString("confined agent sessions aren't available on this machine:\n")
@@ -870,7 +856,7 @@ func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 		where = "the agent's home"
 	}
 	fmt.Fprintln(a.Out, theme.Infof("Launching %s as %s in %s (confined) ...", binary, agentUser, where))
-	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, sessionProfile, grantedDirs, agentArgs)
+	cmd := localagent.ConfineLaunchCmd(ctx, agentUser, binary, dir, agentHome, grantedDirs, agentArgs)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	// On a programmatic cancel (SIGINT/SIGTERM to jentic), terminate the confined
 	// session gracefully instead of SIGKILLing sudo and orphaning the agent tree.

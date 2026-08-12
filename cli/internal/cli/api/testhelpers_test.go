@@ -2,9 +2,12 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"testing"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -19,6 +22,32 @@ func testApp(t *testing.T) *app {
 		Out:   new(bytes.Buffer),
 		Err:   new(bytes.Buffer),
 	}}
+}
+
+// v2Ctx returns a context carrying an active V2 state pointed at baseURL with
+// an injected bearer token, so direct command-method calls resolve a session
+// without any disk config or network token exchange — the white-box equivalent
+// of the file-less env override.
+func v2Ctx(baseURL string) context.Context {
+	return clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "test-agent",
+			EnvironmentName:     "test",
+			BaseURL:             baseURL,
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+}
+
+// seedRegistered points full-tree executions (root.Execute) at baseURL via the
+// file-less env override (JENTIC_BASE_URL + JENTIC_BEARER_TOKEN), so the root
+// interceptor resolves an authenticated V2 state without disk config. The app
+// arg is kept for call-site compatibility with the old profile-store seeder.
+func seedRegistered(t *testing.T, _ *app, _ string, baseURL string) {
+	t.Helper()
+	t.Setenv("JENTIC_BASE_URL", baseURL)
+	t.Setenv("JENTIC_BEARER_TOKEN", "tok_abc")
 }
 
 // stubDetect wires the App's environment-detection seam so skill/bootstrap tests

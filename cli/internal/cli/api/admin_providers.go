@@ -23,7 +23,6 @@ import (
 // interactively (no echo) or read from stdin — so they never land in shell
 // history. Non-secret fields map straight onto the provider config.
 type providerSetOptions struct {
-	identityOptions
 	projectID      string
 	clientID       string
 	environment    string
@@ -66,7 +65,6 @@ func newProvidersSetCmd(app *app) *cobra.Command {
 			return app.providersSet(cmd, opts, args[0])
 		},
 	}
-	opts.Bind(cmd)
 	cmd.Flags().StringVar(&opts.projectID, "project-id", "", "provider project id")
 	cmd.Flags().StringVar(&opts.clientID, "client-id", "", "provider client id")
 	cmd.Flags().StringVar(&opts.environment, "environment", "", "provider environment (e.g. production)")
@@ -77,41 +75,37 @@ func newProvidersSetCmd(app *app) *cobra.Command {
 }
 
 func newProvidersGetCmd(app *app) *cobra.Command {
-	opts := &identityOptions{}
 	jsonFlag := false
 	cmd := &cobra.Command{
 		Use:   "get <name>",
 		Short: "Show a provider config (secrets redacted)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.providersGet(cmd, opts, jsonFlag, args[0])
+			return app.providersGet(cmd, jsonFlag, args[0])
 		},
 	}
-	opts.Bind(cmd)
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "emit JSON output")
 	return cmd
 }
 
 func newProvidersListCmd(app *app) *cobra.Command {
-	opts := &identityOptions{}
 	jsonFlag := false
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List provider configs (secrets redacted)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.providersList(cmd, opts, jsonFlag)
+			return app.providersList(cmd, jsonFlag)
 		},
 	}
-	opts.Bind(cmd)
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "emit JSON output")
 	return cmd
 }
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-func (a *app) adminSession(ctx context.Context, ident *identityOptions) (*adminclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx, ident)
+func (a *app) adminSession(ctx context.Context) (*adminclient.Client, string, error) {
+	baseURL, token, err := a.agentSession(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -136,7 +130,7 @@ func (a *app) providersSet(cmd *cobra.Command, opts *providerSetOptions, name st
 		config["client_secret"] = secret
 	}
 
-	client, token, err := a.adminSession(ctx, &opts.identityOptions)
+	client, token, err := a.adminSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -191,9 +185,9 @@ func (a *app) readProviderSecret(fromStdin bool) (string, error) {
 
 // ── get ──────────────────────────────────────────────────────────────────────
 
-func (a *app) providersGet(cmd *cobra.Command, ident *identityOptions, jsonFlag bool, name string) error {
+func (a *app) providersGet(cmd *cobra.Command, jsonFlag bool, name string) error {
 	ctx := cmd.Context()
-	client, token, err := a.adminSession(ctx, ident)
+	client, token, err := a.adminSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -210,9 +204,9 @@ func (a *app) providersGet(cmd *cobra.Command, ident *identityOptions, jsonFlag 
 
 // ── list ─────────────────────────────────────────────────────────────────────
 
-func (a *app) providersList(cmd *cobra.Command, ident *identityOptions, jsonFlag bool) error {
+func (a *app) providersList(cmd *cobra.Command, jsonFlag bool) error {
 	ctx := cmd.Context()
-	client, token, err := a.adminSession(ctx, ident)
+	client, token, err := a.adminSession(ctx)
 	if err != nil {
 		return err
 	}

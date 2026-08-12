@@ -17,7 +17,6 @@ type app struct {
 
 // Tree-local aliases so relocated api code keeps referencing the shared cmdcore
 // helpers by their original (unexported) spellings without per-call-site churn.
-type identityOptions = cmdcore.IdentityOptions
 
 // exitCodeError aliases the shared type so api code keeps constructing
 // &exitCodeError{Code: n}. Defined in cmdcore, so its field is exported (Code).
@@ -28,7 +27,6 @@ var (
 	dotWarn      = cmdcore.DotWarn
 	dotDown      = cmdcore.DotDown
 	valueOr      = cmdcore.ValueOr
-	tokenStatus  = cmdcore.TokenStatus
 	jsonOrPretty = cmdcore.JSONOrPretty
 )
 

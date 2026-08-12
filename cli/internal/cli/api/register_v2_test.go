@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,8 +16,9 @@ import (
 
 // These tests pin `jentic register` as the single V2 onboarding front door
 // (register_v2.go): one command takes a fresh machine to a working, approved
-// context; an active context re-registers in place; --profile/--base-url stay
-// the byte-for-byte legacy flow.
+// context; an active context re-registers in place. The legacy --profile/
+// --base-url arm was REMOVED at the activation release (14 BC-1) — the flags
+// no longer exist.
 
 // fastPollV2 shrinks the shared approval-poll cadence (cmdcore package vars)
 // for the duration of a test.
@@ -156,47 +156,32 @@ func TestRegister_V2PendingThenApproved(t *testing.T) {
 	assertRegApproved(t, "crawler", "qa")
 }
 
-// TestRegister_LegacyFlagsPinLegacyStore: --profile/--base-url remain the
-// byte-for-byte V1 flow — a legacy profile with tokens, and NOTHING written to
-// the XDG store.
-func TestRegister_LegacyFlagsPinLegacyStore(t *testing.T) {
+// TestRegister_LegacyFlagsRemoved: the V1 --profile/--base-url arm is gone
+// (14 BC-1). The flags must fail as unknown — nothing may silently fall back
+// to the legacy store.
+func TestRegister_LegacyFlagsRemoved(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
 
 	app := testApp(t)
 	root := newAPIRootCmd(app.App)
 	root.SetOut(new(bytes.Buffer))
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"register", "--profile", "demo", "--base-url", srv.URL, "--timeout", "5s", "--yes"})
-	if err := root.Execute(); err != nil {
-		t.Fatalf("legacy register: %v", err)
+	root.SetArgs([]string{"register", "--profile", "demo", "--base-url", "http://127.0.0.1:1"})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("expected an unknown-flag error for the removed legacy flags, got %v", err)
 	}
 
-	// register (unlike bootstrap) does not activate the profile, so the legacy
-	// CONFIG file may not exist — the profile's tokens are the proof.
-	tokensPath := filepath.Join(app.Paths.Root, "profiles", "demo", "tokens.json")
-	if _, statErr := os.Stat(tokensPath); statErr != nil {
-		t.Fatalf("legacy register did not persist profile tokens at %s: %v", tokensPath, statErr)
+	// And nothing was written to either store.
+	if _, statErr := os.Stat(filepath.Join(app.Paths.Root, "profiles")); statErr == nil {
+		t.Error("removed legacy flags must not create a profile store")
 	}
 	cfg, err := sdkconfig.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(cfg.Environments) != 0 || len(cfg.Identities) != 0 || cfg.ActiveContext != "" {
-		t.Errorf("legacy register leaked into the XDG store: %+v", cfg)
-	}
-}
-
-// TestRegister_ConflictingStoreFlagsRejected: mixing the two stores' flags is
-// a hard error before any side effect.
-func TestRegister_ConflictingStoreFlagsRejected(t *testing.T) {
-	withXDG(t)
-	srv := httptest.NewServer(nil)
-	defer srv.Close()
-
-	err := runJentic(t, "register", "--url", srv.URL, "--profile", "demo")
-	if err == nil || !strings.Contains(err.Error(), "different stores") {
-		t.Fatalf("expected a conflicting-flags error, got %v", err)
+		t.Errorf("failed register leaked into the XDG store: %+v", cfg)
 	}
 }
 

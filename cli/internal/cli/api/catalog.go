@@ -16,7 +16,6 @@ import (
 )
 
 func newCatalogCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	cmd := &cobra.Command{
 		Use:   "catalog",
 		Short: "Browse, search, and import APIs from the public catalog",
@@ -27,38 +26,36 @@ func newCatalogCmd(app *app) *cobra.Command {
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.catalogBrowse(cmd.Context(), ident)
+			return app.catalogBrowse(cmd.Context())
 		},
 	}
-	cmd.PersistentFlags().StringVar(&ident.Profile, "profile", "", "profile name (default: config default_profile)")
-	cmd.PersistentFlags().StringVar(&ident.BaseURL, "base-url", "", "Jentic control-plane base URL")
 
-	cmd.AddCommand(newCatalogListCmd(app, ident))
-	cmd.AddCommand(newCatalogSearchCmd(app, ident))
-	cmd.AddCommand(newCatalogShowCmd(app, ident))
-	cmd.AddCommand(newCatalogImportCmd(app, ident))
-	cmd.AddCommand(newCatalogOutdatedCmd(app, ident))
-	cmd.AddCommand(newCatalogRefreshCmd(app, ident))
+	cmd.AddCommand(newCatalogListCmd(app))
+	cmd.AddCommand(newCatalogSearchCmd(app))
+	cmd.AddCommand(newCatalogShowCmd(app))
+	cmd.AddCommand(newCatalogImportCmd(app))
+	cmd.AddCommand(newCatalogOutdatedCmd(app))
+	cmd.AddCommand(newCatalogRefreshCmd(app))
 	return cmd
 }
 
 // ── command constructors ─────────────────────────────────────────────────────
 
-func newCatalogListCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogListCmd(app *app) *cobra.Command {
 	o := &catalogListOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List catalog entries",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.catalogList(cmd.Context(), ident, o, "")
+			return app.catalogList(cmd.Context(), o, "")
 		},
 	}
 	o.bind(cmd)
 	return cmd
 }
 
-func newCatalogSearchCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogSearchCmd(app *app) *cobra.Command {
 	o := &catalogListOptions{}
 	cmd := &cobra.Command{
 		Use:   "search <query>",
@@ -69,21 +66,21 @@ func newCatalogSearchCmd(app *app, ident *identityOptions) *cobra.Command {
 			if len(args) == 1 {
 				query = args[0]
 			}
-			return app.catalogList(cmd.Context(), ident, o, query)
+			return app.catalogList(cmd.Context(), o, query)
 		},
 	}
 	o.bind(cmd)
 	return cmd
 }
 
-func newCatalogShowCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogShowCmd(app *app) *cobra.Command {
 	o := &catalogShowOptions{}
 	cmd := &cobra.Command{
 		Use:   "show <api_id>",
 		Short: "Show a catalog entry and preview its operations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.catalogShow(cmd.Context(), ident, o, args[0])
+			return app.catalogShow(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&o.tag, "tag", "", "only preview operations with this tag")
@@ -92,14 +89,14 @@ func newCatalogShowCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newCatalogImportCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogImportCmd(app *app) *cobra.Command {
 	o := &catalogImportOptions{}
 	cmd := &cobra.Command{
 		Use:   "import <api_id>",
 		Short: "Import a catalog entry into the local registry (auto-promotes to live)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.catalogImport(cmd.Context(), ident, o, args[0])
+			return app.catalogImport(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&o.noWait, "no-wait", false, "enqueue the import and return the job id without waiting")
@@ -109,7 +106,7 @@ func newCatalogImportCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newCatalogOutdatedCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogOutdatedCmd(app *app) *cobra.Command {
 	o := &catalogListOptions{}
 	cmd := &cobra.Command{
 		Use:   "outdated",
@@ -121,7 +118,7 @@ func newCatalogOutdatedCmd(app *app, ident *identityOptions) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o.outdated = true
-			return app.catalogList(cmd.Context(), ident, o, "")
+			return app.catalogList(cmd.Context(), o, "")
 		},
 	}
 	cmd.Flags().IntVar(&o.limit, "limit", 50, "page size (1-200)")
@@ -131,13 +128,13 @@ func newCatalogOutdatedCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newCatalogRefreshCmd(app *app, ident *identityOptions) *cobra.Command {
+func newCatalogRefreshCmd(app *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "refresh",
 		Short: "Refresh the catalog manifest from upstream (requires org:admin)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.catalogRefresh(cmd.Context(), ident)
+			return app.catalogRefresh(cmd.Context())
 		},
 	}
 }
@@ -177,10 +174,10 @@ type catalogImportOptions struct {
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-// catalogSession resolves the active profile's agent token and returns a
+// catalogSession resolves the active context's agent token and returns a
 // catalog client bound to the control-plane base URL.
-func (a *app) catalogSession(ctx context.Context, ident *identityOptions) (*catalogclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx, ident)
+func (a *app) catalogSession(ctx context.Context) (*catalogclient.Client, string, error) {
+	baseURL, token, err := a.agentSession(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -189,17 +186,17 @@ func (a *app) catalogSession(ctx context.Context, ident *identityOptions) (*cata
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
-func (a *app) catalogBrowse(ctx context.Context, ident *identityOptions) error {
+func (a *app) catalogBrowse(ctx context.Context) error {
 	if !term.IsTerminal(os.Stdin.Fd()) {
-		return a.catalogList(ctx, ident, &catalogListOptions{limit: 50}, "")
+		return a.catalogList(ctx, &catalogListOptions{limit: 50}, "")
 	}
-	return a.runCatalogBrowser(ctx, ident)
+	return a.runCatalogBrowser(ctx)
 }
 
 // ── list / search ────────────────────────────────────────────────────────────
 
-func (a *app) catalogList(ctx context.Context, ident *identityOptions, o *catalogListOptions, query string) error {
-	client, token, err := a.catalogSession(ctx, ident)
+func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query string) error {
+	client, token, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -291,8 +288,8 @@ func catalogStatusLine(m *catalogclient.ListResult) string {
 
 // ── show ─────────────────────────────────────────────────────────────────────
 
-func (a *app) catalogShow(ctx context.Context, ident *identityOptions, o *catalogShowOptions, apiID string) error {
-	client, token, err := a.catalogSession(ctx, ident)
+func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID string) error {
+	client, token, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -372,8 +369,8 @@ func catalogOpLine(op catalogclient.PreviewOp) string {
 
 // ── import ───────────────────────────────────────────────────────────────────
 
-func (a *app) catalogImport(ctx context.Context, ident *identityOptions, o *catalogImportOptions, apiID string) error {
-	client, token, err := a.catalogSession(ctx, ident)
+func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID string) error {
+	client, token, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -530,8 +527,8 @@ func (a *app) printImportResult(result *catalogclient.ImportResult, promoted map
 
 // ── refresh ──────────────────────────────────────────────────────────────────
 
-func (a *app) catalogRefresh(ctx context.Context, ident *identityOptions) error {
-	client, token, err := a.catalogSession(ctx, ident)
+func (a *app) catalogRefresh(ctx context.Context) error {
+	client, token, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}

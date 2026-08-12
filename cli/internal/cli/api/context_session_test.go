@@ -118,8 +118,8 @@ func TestDataPlane_ContextUnregistered_FailsActionable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected whoami to fail for an unregistered context identity")
 	}
-	if !strings.Contains(err.Error(), "identity register") {
-		t.Errorf("error = %v, want the V2 remediation (`jentic identity register`)", err)
+	if !strings.Contains(err.Error(), "jentic register") {
+		t.Errorf("error = %v, want the onboarding remediation (`jentic register`)", err)
 	}
 }
 

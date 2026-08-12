@@ -321,7 +321,7 @@ bound to a different one. Check the backend your base URL serves before
 diagnosing data loss:
 
 ```
-jentic profile list        # shows each profile's base_url
+jentic context view        # shows the active context's base_url
 curl -s "<base-url>/instance"   # e.g. http://127.0.0.1:8000/instance on a default local install
 ```
 
@@ -403,7 +403,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   (always current, works offline), or open the platform docs at `/app/docs` on
   the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
-- `jentic profile list` — see profiles and which is active (start here).
+- `jentic context view` — the active context: identity, environment, base_url,
+  and granted directories (start here).
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
@@ -448,7 +449,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
 - Add `--json` to force machine-readable output on a terminal (works on
-  `search`, `execute`, `inspect`, `apis`, `access`, `profile list`, `doctor`).
+  `search`, `execute`, `inspect`, `apis`, `access`, `context view`, `doctor`).
 - **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
   every request carries it as `X-Jentic-Session-Id`, so operators can group all
   of your calls in server logs; each `execute` also sends a fresh W3C
@@ -477,7 +478,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   replied. The symptom is *silent wrong answers*, not errors: an API the user
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
-  missing or broken, check where each surface points — `jentic profile list`
+  missing or broken, check where each surface points — `jentic context view`
   shows this CLI's `base_url`, and `curl -s <base-url>/instance` reports
   which backend serves it (see "confirm which backend you're on" in step 3);
   ask your operator which backend the MCP server was configured against —
@@ -521,7 +522,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 
 ## Verification
 
-- `jentic profile list` shows your profile with a valid token.
+- `jentic doctor` reports the Identity section healthy (registered, token OK).
 - After `jentic catalog import <vendor/name>`, `jentic search "<something in
   that API>"` returns at least one result.
 - A known-allowed `jentic execute …` (pointed at the right broker) returns a 2xx

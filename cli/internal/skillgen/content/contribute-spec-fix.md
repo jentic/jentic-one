@@ -62,7 +62,7 @@ instead; this skill only fixes specs that already exist.
   formatting, which is why step 4 uses a small in-repo Python applier instead.
 - `gh` authenticated (`gh auth status`) for the PR.
 - For the local fallback only: a running Jentic control plane (default `http://127.0.0.1:8000`)
-  and a registered agent (`jentic profile list` shows a valid token).
+  and a registered agent (`jentic doctor` shows a healthy Identity section).
 
 ## Steps
 
@@ -334,23 +334,24 @@ The API must already exist in the local registry (import it from the catalog fir
 `jentic catalog import <api_id>`, where `<api_id>` is the catalog entry id — the dotted
 `<vendor>/<api>` form, e.g. `posthog.com/posthog-api`). Then resolve the **registry** identity
 (slugified — not the folder segments) and submit + confirm the overlay against the local control
-plane (default `http://127.0.0.1:8000`).
+plane. All calls below go through `jentic api` (the authenticated control-plane passthrough), so
+they hit whatever your **active context** points at — check with `jentic context view` that its
+base_url is the local install before proceeding.
 
 ```
-BASE=http://127.0.0.1:8000
 # Run this block with bash (it uses `read ... < <(...)` process substitution, which
 # POSIX `sh`/`dash` does not support).
-# Submit uses an apis:write token; confirm uses an overlays:confirm token (may be the
-# same token if your profile has both; an org:admin token also satisfies confirm).
-# Adjust to however your active token is exposed.
-TOKEN=$(jentic profile list --json 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['active']['token'])")
+# Submit needs an apis:write identity; confirm needs overlays:confirm (may be the same
+# identity if it holds both; an org:admin identity also satisfies confirm). `jentic api`
+# authenticates as the ACTIVE context's identity — switch contexts (`jentic context use`)
+# or ask an operator when yours lacks a scope.
 
 # Resolve the registry identity for the catalog entry you imported. The registry slugifies
 # vendor/name from the spec's info block, so these differ from the jentic-public-apis folder
 # segments (posthog.com → posthog-com; name = slug of info.title). Match the imported API by
 # its catalog_api_id and read back the slugified (vendor, name, version) to use below.
 API_ID=<api_id>   # the dotted catalog id, e.g. posthog.com/posthog-api
-read V N VER SRC < <(curl -sS "$BASE/apis" -H "Authorization: Bearer $TOKEN" \
+read V N VER SRC < <(jentic api GET /apis \
   | python3 -c "import json,sys; \
 apis=json.load(sys.stdin).get('data', []); \
 m=next((x for x in apis if x.get('catalog_api_id')=='$API_ID'), None); \
@@ -359,17 +360,15 @@ print(a.get('vendor',''), a.get('name',''), a.get('version',''), (m or {}).get('
 echo "registry identity: $V/$N/$VER   source_url: $SRC"   # empty ⇒ not imported yet; import first
 
 # Submit the overlay (document is the SAME overlay.json used for the PR)
-curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+jentic api POST "/apis/$V/$N/$VER/overlays" \
   -d "$(python3 -c "import json;print(json.dumps({'document':json.load(open('$OVL')),'contributed_by':'contribute-spec-fix skill'}))")"
 # → note the returned overlay "id" and the "_links.confirm" URL
 
 # Confirm it (pending → confirmed) — requires overlays:confirm. This materializes the
 # overlay: it re-ingests the base spec with the overlay applied and serves the result.
-# Uses $TOKEN too; if your active profile lacks overlays:confirm, swap in an operator
-# token that has it (an org:admin token also works).
-curl -sS -X POST "$BASE/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
+# Runs as the same active identity; if it lacks overlays:confirm, switch to (or ask for)
+# an operator identity that has it (an org:admin identity also works).
+jentic api POST "/apis/$V/$N/$VER/overlays/<overlay_id>:confirm" -d '{}'
 ```
 
 Verify the fix actually landed on the served spec (this is the local verification of the fix):
@@ -378,7 +377,7 @@ Verify the fix actually landed on the served spec (this is the local verificatio
 # Give the ingest job a moment, then re-download and diff against your PR-branch spec.
 # The served-spec route is `…/openapi` (JSON by content negotiation) — there is no
 # `…/openapi.json` route on the registry.
-curl -sS "$BASE/apis/$V/$N/$VER/openapi" -H "Authorization: Bearer $TOKEN" > /tmp/served.json
+jentic api GET "/apis/$V/$N/$VER/openapi" > /tmp/served.json
 python3 -c "import json; print('served matches PR spec:', json.load(open('/tmp/served.json'))==json.load(open('$SPEC')))"
 ```
 
@@ -407,11 +406,10 @@ only carries a boolean `update_available`). Query the events surface and branch 
 pending for this API:
 
 ```
-BASE=http://127.0.0.1:8000
 # Reuse the registry identity + source_url resolved in step 9 ($V/$N/$VER/$SRC). If you
 # start fresh here, re-resolve them the same way (GET /apis, match on catalog_api_id).
 # Is there ANY pending update? (API view; boolean, no class):
-curl -sS "$BASE/apis/$V/$N/$VER" -H "Authorization: Bearer $TOKEN" \
+jentic api GET "/apis/$V/$N/$VER" \
   | python3 -c "import json,sys; a=json.load(sys.stdin); \
 print('origin          :', a.get('origin')); \
 print('update_available:', a.get('update_available'))"
@@ -419,10 +417,9 @@ print('update_available:', a.get('update_available'))"
 # WHICH class? Look for an actionable conflict event for this API. If this returns a row,
 # it's the operator-decision path; if empty (but update_available is true), it's the
 # routine adopt path. The conflict event's data carries the overlay_id to act on.
-# (Events live on the admin/control plane; listing needs an events:read token — an
-# org:admin/operator token has it.)
-curl -sS "$BASE/events?event_type=catalog.update_conflicts_overlay&requires_action=true&acknowledged=false" \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" \
+# (Events live on the admin/control plane; listing needs an events:read identity — an
+# org:admin/operator identity has it.)
+jentic api GET "/events?event_type=catalog.update_conflicts_overlay&requires_action=true&acknowledged=false" \
   | python3 -c "import json,sys; \
 evs=json.load(sys.stdin).get('data', []); \
 mine=[e for e in evs if (e.get('data') or {}).get('spec_url')=='$SRC']; \
@@ -441,8 +438,7 @@ re-import adopts the upstream spec and **settles the event** automatically. This
 `catalog:import` (an `apis:write` token implies it):
 
 ```
-curl -sS -X POST "$BASE/catalog/<api_id>:import" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'
+jentic api POST "/catalog/<api_id>:import" -d '{}'
 ```
 
 **Reacting to `catalog.update_conflicts_overlay`** (upstream diverged from your fix's base): this

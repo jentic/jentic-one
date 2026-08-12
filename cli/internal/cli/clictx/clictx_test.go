@@ -49,9 +49,11 @@ func TestResolveActiveState_FileLess(t *testing.T) {
 	}
 }
 
-func TestResolveActiveState_LegacyFallback(t *testing.T) {
-	// No XDG config, but a legacy ~/.jentic/config.yaml exists: the adapter must
-	// resolve state (V1 keeps working) rather than erroring.
+func TestResolveActiveState_LegacyIgnored(t *testing.T) {
+	// A legacy ~/.jentic/config.yaml alone no longer resolves anything: the
+	// activation release removed the legacy-read adapter, so resolution fails
+	// exactly as if no config existed (the migrate gate points users at
+	// `jentic migrate`).
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// Isolate the XDG path so LoadState finds nothing there.
@@ -76,19 +78,8 @@ func TestResolveActiveState_LegacyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	st, err := ResolveActiveState("", "")
-	if err != nil {
-		t.Fatalf("legacy fallback should resolve, got error: %v", err)
-	}
-	if st.BaseURL != "https://legacy.test" {
-		t.Errorf("legacy base URL not mapped: %q", st.BaseURL)
-	}
-	if st.IdentityName != "oldprofile" {
-		t.Errorf("legacy profile not mapped to identity: %q", st.IdentityName)
-	}
-	// Legacy store has no mode -> defaults to human.
-	if st.Mode != ModeHuman {
-		t.Errorf("legacy mode should default to human, got %q", st.Mode)
+	if _, err := ResolveActiveState("", ""); err == nil {
+		t.Fatal("legacy config must NOT resolve — the V1 adapter was removed at activation")
 	}
 }
 

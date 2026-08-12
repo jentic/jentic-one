@@ -39,8 +39,8 @@ const (
 )
 
 // runApisBrowser opens the interactive APIs browser.
-func (a *app) runApisBrowser(ctx context.Context, ident *identityOptions) error {
-	client, token, err := a.apisSession(ctx, ident)
+func (a *app) runApisBrowser(ctx context.Context) error {
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}

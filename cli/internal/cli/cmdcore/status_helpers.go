@@ -5,38 +5,37 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/profile"
-	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/client/auth"
+	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-// IdentityOptions carries the common --profile/--base-url selection flags shared
-// by the identity-scoped commands in both trees (jentic: status/logout/catalog/
-// apis/…; jenticctl: status/doctor). Fields are exported so the tree packages
-// (which alias this type as identityOptions) can read them from their own
-// command handlers.
+// IdentityOptions carries the --base-url override shared by the jenticctl
+// install-facing commands (status/doctor): it points their server probes at a
+// non-default control plane. Identity selection is NOT a flag anymore — the
+// jentic tree acts on the active V2 context, and the ctl tree only reads the
+// context read-only for display.
 type IdentityOptions struct {
-	Profile string
 	BaseURL string
 }
 
-// Bind registers the --profile and --base-url flags onto cmd.
+// Bind registers the --base-url flag onto cmd.
 func (o *IdentityOptions) Bind(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&o.Profile, "profile", "", "profile name (default: config default_profile)")
 	cmd.Flags().StringVar(&o.BaseURL, "base-url", "", "Jentic control-plane base URL")
 }
 
-// TokenStatus summarizes a cached token pair as a human label plus a status dot.
-func TokenStatus(t *profile.Tokens) (label, dot string) {
+// TokenStatus summarizes a cached V2 token as a human label plus a status dot.
+func TokenStatus(t *auth.TokenSet) (label, dot string) {
 	switch {
 	case t == nil || t.AccessToken == "":
 		return "none", DotWarn()
-	case t.Expired(0):
-		return "expired", DotWarn()
-	case t.AccessExpiresAt.IsZero():
+	case t.ExpiresAt.IsZero():
 		return "valid", DotOK()
+	case time.Now().After(t.ExpiresAt):
+		return "expired", DotWarn()
 	default:
-		return fmt.Sprintf("valid (%s left)", time.Until(t.AccessExpiresAt).Round(time.Minute)), DotOK()
+		return fmt.Sprintf("valid (%s left)", time.Until(t.ExpiresAt).Round(time.Minute)), DotOK()
 	}
 }
 

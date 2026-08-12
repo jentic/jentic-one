@@ -51,7 +51,6 @@ type executeOptions struct {
 }
 
 func newExecuteCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	opts := &executeOptions{}
 
 	cmd := &cobra.Command{
@@ -85,7 +84,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.executeE(cmd, ident, opts, args[0])
+			return app.executeE(cmd, opts, args[0])
 		},
 	}
 
@@ -101,30 +100,22 @@ func newExecuteCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID for inspect")
 	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker (13 §4)")
 	planFlags(cmd)
-	ident.Bind(cmd)
 
 	return cmd
 }
 
-func (a *app) executeE(cmd *cobra.Command, ident *identityOptions, opts *executeOptions, target string) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
 
-	// Resolve the broker target with precedence defaults < legacy config.yaml <
-	// active environment broker_url < flags, mirroring `jentic run`. The V2 rung
-	// (Phase 5): a context whose environment declares broker_url routes through
-	// THAT broker — without it, pointing a context at a remote install would
-	// still execute against the built-in local default.
-	fileCfg, err := config.Load(a.Paths)
-	if err != nil {
-		return err
-	}
+	// Resolve the broker target with precedence defaults < active environment
+	// broker_url < flags. A context whose environment declares broker_url
+	// routes through THAT broker — without it, pointing a context at a remote
+	// install would still execute against the built-in local default.
 	flags := cmd.Flags()
-	opts.brokerScheme = fileCfg.ResolvedBrokerScheme(opts.brokerScheme, flags.Changed("broker-scheme"))
-	opts.brokerHost = fileCfg.ResolvedBrokerHost(opts.brokerHost, flags.Changed("broker-host"))
-	if st := a.activeState(cmd.Context(), ident); st != nil && st.BrokerURL != "" {
+	if st := clictx.ActiveV2(cmd.Context()); st != nil && st.BrokerURL != "" {
 		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
 			if !flags.Changed("broker-scheme") {
 				opts.brokerScheme = u.Scheme

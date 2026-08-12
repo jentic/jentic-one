@@ -3,12 +3,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
 // TestSurveyResetPlan checks the plan is built from the account record and includes
@@ -228,6 +230,7 @@ func TestBuildResetStepsSkipsMissingAccount(t *testing.T) {
 // to the plan; the non-interactive-without-force guard then stops it — proving it
 // got past any (removed) root gate. There must be NO "must run as root" error.
 func TestResetRunsAsOperator(t *testing.T) {
+	withXDG(t)
 	out := &bytes.Buffer{}
 	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
 	cfg := &config.FileConfig{}
@@ -236,7 +239,7 @@ func TestResetRunsAsOperator(t *testing.T) {
 		t.Fatalf("save config: %v", err)
 	}
 
-	err := app.resetE(context.Background(), &resetOptions{}, nil)
+	err := app.resetE(context.Background(), &resetOptions{})
 	if err != nil && strings.Contains(err.Error(), "must run as root") {
 		t.Fatalf("reset must not require root, got %v", err)
 	}
@@ -249,127 +252,85 @@ func TestResetRunsAsOperator(t *testing.T) {
 	}
 }
 
-// TestResetFullWipesProfiles confirms a bare `jentic reset --force` (no account) is
-// a clean slate: it removes every profile and clears default_profile, even when no
-// agent account is configured.
-func TestResetFullWipesProfiles(t *testing.T) {
+// seedIdentityState creates a V2 XDG config tree, V2 state tree, and a legacy
+// V1 profiles dir (plus MIGRATED marker), so a full reset has identity state to
+// wipe in all three places.
+func seedIdentityState(t *testing.T, app *app) (configDir, stateDir, legacyProfiles string) {
+	t.Helper()
+	configDir, err := sdkconfig.ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir, err = sdkconfig.StateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{configDir, stateDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("active_context: work\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyProfiles = filepath.Join(app.Paths.ProfilesDir(), "work")
+	if err := os.MkdirAll(legacyProfiles, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app.Paths.Dir(), "MIGRATED"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return configDir, stateDir, legacyProfiles
+}
+
+// TestResetFullWipesIdentityState confirms a bare `jentic reset --force` (no
+// account) is a clean slate: it removes the V2 config/state trees, the legacy
+// profiles dir, and the MIGRATED marker.
+func TestResetFullWipesIdentityState(t *testing.T) {
+	withXDG(t)
 	out := &bytes.Buffer{}
 	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
-	seedProfile(t, app, "default", "agnt_default")
-	seedProfile(t, app, "work", "agnt_work")
-	if err := config.SetDefaultProfile(app.Paths, "work"); err != nil {
-		t.Fatalf("set default: %v", err)
-	}
+	configDir, stateDir, legacyProfiles := seedIdentityState(t, app)
 
-	// No account configured + no profile arg: a valid config-only clean slate.
-	err := app.resetE(context.Background(), &resetOptions{force: true}, nil)
-	if err != nil {
+	// No account configured: a valid identity-state-only clean slate.
+	if err := app.resetE(context.Background(), &resetOptions{force: true}); err != nil {
 		t.Fatalf("resetE: %v", err)
 	}
 
-	names, err := profile.List(app.Paths)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(names) != 0 {
-		t.Errorf("expected all profiles removed, got %v", names)
-	}
-	cfg, err := config.Load(app.Paths)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.DefaultProfile != "" {
-		t.Errorf("default_profile should be cleared, got %q", cfg.DefaultProfile)
-	}
-}
-
-// TestResetSingleProfileKeepsOthers confirms `jentic reset <profile> --force`
-// removes only the named operator-owned profile and never touches the others or
-// the agent account.
-func TestResetSingleProfileKeepsOthers(t *testing.T) {
-	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
-	seedProfile(t, app, "default", "agnt_default")
-	seedProfile(t, app, "work", "agnt_work")
-
-	if err := app.resetE(context.Background(), &resetOptions{force: true}, []string{"work"}); err != nil {
-		t.Fatalf("resetE: %v", err)
-	}
-
-	names, err := profile.List(app.Paths)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-	if len(names) != 1 || names[0] != "default" {
-		t.Errorf("a single-profile reset must keep the other profiles, got %v", names)
-	}
-}
-
-// TestResetSingleProfileClearsDefault confirms removing the profile that was the
-// operator's default also clears the default_profile pointer.
-func TestResetSingleProfileClearsDefault(t *testing.T) {
-	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
-	seedProfile(t, app, "solo", "agnt_solo")
-	if err := config.SetDefaultProfile(app.Paths, "solo"); err != nil {
-		t.Fatalf("set default: %v", err)
-	}
-
-	if err := app.resetE(context.Background(), &resetOptions{force: true}, []string{"solo"}); err != nil {
-		t.Fatalf("resetE: %v", err)
-	}
-
-	cfg, err := config.Load(app.Paths)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if cfg.DefaultProfile != "" {
-		t.Errorf("default_profile should be cleared after removing it, got %q", cfg.DefaultProfile)
-	}
-}
-
-// TestResetUnknownProfileNameErrors confirms a name that matches no profile errors,
-// and that a name matching a known agent binary id points the operator at the bare
-// full reset instead.
-func TestResetUnknownProfileNameErrors(t *testing.T) {
-	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
-	seedProfile(t, app, "default", "agnt_default")
-
-	// A plain unknown name.
-	err := app.resetE(context.Background(), &resetOptions{}, []string{"ghost"})
-	if err == nil || !strings.Contains(err.Error(), "no profile") {
-		t.Fatalf("expected a no-profile error, got %v", err)
-	}
-
-	// A name that is a known agent binary id → steer to the bare full reset.
-	err = app.resetE(context.Background(), &resetOptions{}, []string{"claude"})
-	if err == nil || !strings.Contains(err.Error(), "with no argument") {
-		t.Fatalf("expected a steer-to-full-reset error, got %v", err)
+	for _, gone := range []string{configDir, stateDir, legacyProfiles, filepath.Join(app.Paths.Dir(), "MIGRATED")} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed (err=%v)", gone, err)
+		}
 	}
 }
 
 // TestResetConfigRequiresForceNonInteractive confirms a full reset is not run
 // non-interactively without --force. Tests run with a non-terminal stdin, so a
-// bare `jentic reset` with profiles present must hit the single whole-slate guard.
+// bare `jentic reset` with identity state present must hit the single
+// whole-slate guard — and the state must survive the refusal.
 func TestResetConfigRequiresForceNonInteractive(t *testing.T) {
+	withXDG(t)
 	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}}
-	seedProfile(t, app, "default", "agnt_default")
+	configDir, _, legacyProfiles := seedIdentityState(t, app)
 
-	err := app.resetE(context.Background(), &resetOptions{}, nil)
+	err := app.resetE(context.Background(), &resetOptions{})
 	if err == nil || !strings.Contains(err.Error(), "without --force") {
 		t.Fatalf("expected a non-interactive --force guard, got %v", err)
 	}
-	// Profile must survive the refusal.
-	names, _ := profile.List(app.Paths)
-	if len(names) != 1 {
-		t.Errorf("profile should survive the refusal, got %v", names)
+	for _, kept := range []string{configDir, legacyProfiles} {
+		if _, serr := os.Stat(kept); serr != nil {
+			t.Errorf("%s should survive the refusal: %v", kept, serr)
+		}
 	}
 }
 
-// TestResetNothingToDo is a friendly no-op when there is no account and no config
-// to remove.
+// TestResetNothingToDo is a friendly no-op when there is no account and no
+// identity state to remove.
 func TestResetNothingToDo(t *testing.T) {
+	withXDG(t)
 	out := &bytes.Buffer{}
 	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
-	if err := app.resetE(context.Background(), &resetOptions{force: true}, nil); err != nil {
+	if err := app.resetE(context.Background(), &resetOptions{force: true}); err != nil {
 		t.Fatalf("resetE: %v", err)
 	}
 	if !strings.Contains(out.String(), "Nothing to reset") {

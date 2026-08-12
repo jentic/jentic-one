@@ -9,8 +9,6 @@ import (
 func TestFlagsAllowPrompt(t *testing.T) {
 	newCmd := func() *cobra.Command {
 		c := &cobra.Command{Use: "register", Run: func(*cobra.Command, []string) {}}
-		c.Flags().String("profile", "", "")
-		c.Flags().String("base-url", "", "")
 		c.Flags().String("url", "", "")
 		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
@@ -41,8 +39,6 @@ func TestFlagsAllowPrompt(t *testing.T) {
 func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 	newCmd := func() *cobra.Command {
 		c := &cobra.Command{Use: "bootstrap", Run: func(*cobra.Command, []string) {}}
-		c.Flags().String("profile", "", "")
-		c.Flags().String("base-url", "", "")
 		c.Flags().String("url", "", "")
 		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
@@ -50,14 +46,13 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 		c.Flags().Bool("all", false, "")
 		c.Flags().String("scope", "", "")
 		c.Flags().Bool("skip-skill", false, "")
-		c.Flags().Bool("no-activate", false, "")
 		return c
 	}
 
 	if !flagsAllowPrompt(newCmd(), false, bootstrapFieldFlags...) {
 		t.Errorf("bare bootstrap (no flags, no --yes) should allow prompting")
 	}
-	for _, f := range []string{"operator", "all", "scope", "skip-skill", "no-activate"} {
+	for _, f := range []string{"operator", "all", "scope", "skip-skill"} {
 		c := newCmd()
 		if err := c.Flags().Set(f, valueFor(f)); err != nil {
 			t.Fatalf("set %s: %v", f, err)
@@ -70,7 +65,7 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 
 func valueFor(flag string) string {
 	switch flag {
-	case "all", "skip-skill", "no-activate":
+	case "all", "skip-skill":
 		return "true"
 	case "operator":
 		return "claude"

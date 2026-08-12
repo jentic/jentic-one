@@ -7,16 +7,18 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/spf13/cobra"
+
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/internal/theme"
-	"github.com/spf13/cobra"
 )
 
 // resetOptions collects the two escape-hatch flags. Neither is a convenience:
@@ -34,35 +36,31 @@ type resetOptions struct {
 func newResetCmd(app *app) *cobra.Command {
 	opts := &resetOptions{}
 	cmd := &cobra.Command{
-		Use:   "reset [profile]",
-		Short: "Tear down the agent account, or remove a single profile",
-		Long: "reset is the inverse of the agent-user setup folded into `jentic bootstrap`.\n" +
-			"There is ONE dedicated agent Unix account shared by every profile, so reset\n" +
-			"works at two granularities.\n\n" +
-			"`jentic reset` with no argument is a full clean slate: it tears down the\n" +
-			"agent account — the dedicated Unix user, the named-user ACLs stamped across\n" +
-			"your home (both the leaf read/write grants and the execute-only ancestor\n" +
-			"traverse grants), the passwordless-launch sudoers drop-in, and every agent\n" +
-			"profile in the account's home — and then also wipes your OWN jentic CLI\n" +
-			"config: every profile (keys, tokens, registration) under ~/.jentic/profiles\n" +
-			"and the default profile. The account's home is PRESERVED by default (re-owned\n" +
-			"to you); deleting it takes a separate, explicit confirmation.\n\n" +
-			"`jentic reset <profile>` removes just that one profile. If it is an\n" +
-			"agent-owned profile and the LAST one in the account, reset offers to also\n" +
-			"tear down the whole account (grants, sudoers, Unix user, home) — otherwise\n" +
-			"the account and its grants are left in place.\n\n" +
+		Use:   "reset",
+		Short: "Tear down the agent account and wipe this machine's jentic identity state",
+		Long: "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\n" +
+			"and the clean-slate hatch for this machine's jentic identity state.\n\n" +
+			"It tears down the agent account — the dedicated Unix user, the named-user\n" +
+			"ACLs stamped across your home (both the leaf read/write grants and the\n" +
+			"execute-only ancestor traverse grants), and the passwordless-launch sudoers\n" +
+			"drop-in — and then also wipes your OWN jentic identity state: the V2 store\n" +
+			"(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n" +
+			"~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\n" +
+			"account's home is PRESERVED by default (re-owned to you); deleting it takes\n" +
+			"a separate, explicit confirmation.\n\n" +
+			"To remove a single context/identity instead of everything, use\n" +
+			"`jentic context delete` / `jentic identity delete`.\n\n" +
 			"Deleting the account and stripping ACLs are privileged, so reset requires\n" +
 			"sudo to complete: run it as yourself and you'll be prompted for your\n" +
 			"password when it reaches the privileged steps. It shows the full plan before\n" +
 			"touching anything. It only ever removes the agent's own named-user ACLs and\n" +
 			"never touches another user's files.",
-		Example: "  jentic reset                              # full clean slate: the account + your own config\n" +
-			"  jentic reset work                         # just the 'work' profile\n" +
+		Example: "  jentic reset                              # full clean slate: the account + your identity state\n" +
 			"  jentic reset --force                      # non-interactive; keeps the home\n" +
 			"  jentic reset --force --delete-home        # non-interactive; deletes the home",
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.resetE(cmd.Context(), opts, args)
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.resetE(cmd.Context(), opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.force, "force", false,
@@ -72,7 +70,7 @@ func newResetCmd(app *app) *cobra.Command {
 	return cmd
 }
 
-func (a *app) resetE(ctx context.Context, opts *resetOptions, args []string) error {
+func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 	// reset runs as the operator (not `sudo jentic reset`): it reads the operator's
 	// own config and only the teardown STEPS are privileged (each is sudo-fronted),
 	// so a single password prompt is triggered when it reaches them — the same
@@ -85,20 +83,13 @@ func (a *app) resetE(ctx context.Context, opts *resetOptions, args []string) err
 	}
 
 	interactive := term.IsTerminal(os.Stdin.Fd())
-
-	// Scope follows the argument. `jentic reset <profile>` removes a single
-	// profile; a bare `jentic reset` is a full clean slate — the whole agent
-	// account plus the operator's own jentic CLI config.
-	if len(args) == 1 {
-		return a.resetProfile(ctx, cfg, opts, interactive, operator, operatorHome, args[0])
-	}
 	return a.resetAll(ctx, cfg, opts, interactive, operator, operatorHome)
 }
 
 // resetAll is the full clean slate: it tears down the shared agent account (Unix
-// user, ACLs, sudoers, home disposition, and every agent profile) and then wipes
-// the operator's OWN jentic CLI config. Everything is previewed first, then a
-// single "reset" confirmation authorises the lot.
+// user, ACLs, sudoers, home disposition) and then wipes the operator's OWN
+// jentic identity state — the V2 XDG store and any legacy V1 tree. Everything is
+// previewed first, then a single "reset" confirmation authorises the lot.
 func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetOptions, interactive bool, operator, operatorHome string) error {
 	acct, hasAcct := cfg.AgentAccount()
 	hasPlan := hasAcct && acct.User != ""
@@ -112,19 +103,15 @@ func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetO
 		a.printResetPlan(plan)
 	}
 
-	// Preview the operator's own config wipe alongside the account plan.
-	cfgNames, err := profile.List(a.Paths)
-	if err != nil {
-		return err
-	}
-	wipeConfig := len(cfgNames) > 0 || cfg.DefaultProfile != ""
-	if wipeConfig {
-		a.printConfigResetPlan(cfgNames, cfg.DefaultProfile)
+	// Preview the operator's own identity-state wipe alongside the account plan.
+	wipe := surveyIdentityWipe(a.Paths)
+	if wipe.any() {
+		a.printIdentityWipePlan(wipe)
 	}
 
-	// Nothing to do at all — no account and no config — is a friendly no-op.
-	if !hasPlan && !wipeConfig {
-		fmt.Fprintln(a.Out, theme.Dim.Render("Nothing to reset (no agent account, no jentic CLI config)."))
+	// Nothing to do at all — no account and no identity state — is a friendly no-op.
+	if !hasPlan && !wipe.any() {
+		fmt.Fprintln(a.Out, theme.Dim.Render("Nothing to reset (no agent account, no jentic identity state)."))
 		return nil
 	}
 
@@ -143,12 +130,12 @@ func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetO
 		}
 	}
 
-	// Execute: tear the account down, then wipe the operator's own config LAST so a
-	// failure tearing down the account never leaves the operator without the config
-	// that records what still needs cleaning. The whole-slate "reset" confirmation
-	// authorises the teardown, but NOT home deletion — that stays a separate, opt-in
-	// decision (the same bar as a named reset), so a full reset preserves the agent
-	// home unless the operator explicitly asks otherwise.
+	// Execute: tear the account down, then wipe the operator's own identity state
+	// LAST so a failure tearing down the account never leaves the operator without
+	// the config that records what still needs cleaning. The whole-slate "reset"
+	// confirmation authorises the teardown, but NOT home deletion — that stays a
+	// separate, opt-in decision, so a full reset preserves the agent home unless
+	// the operator explicitly asks otherwise.
 	if hasPlan {
 		deleteHome := opts.deleteHome
 		if !opts.force && interactive && plan.homeDir != "" {
@@ -162,193 +149,117 @@ func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetO
 			return err
 		}
 	}
-	if wipeConfig {
-		if err := a.execConfigWipe(cfgNames, cfg); err != nil {
+	if wipe.any() {
+		if err := a.execIdentityWipe(wipe); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// resetProfile removes a single profile — operator-owned (in ~/.jentic/profiles)
-// or agent-owned (in the shared account's home). It never touches the account,
-// its grants, or its other profiles, with one exception: if the profile is the
-// LAST agent-owned profile, reset offers to also tear the whole account down (the
-// account exists only to run profiles, so an empty one is dead weight).
-func (a *app) resetProfile(ctx context.Context, cfg *config.FileConfig, opts *resetOptions, interactive bool, operator, operatorHome, name string) error {
-	// A profile name that collides with a known agent binary id is almost always a
-	// mistake ("jentic reset claude" meaning the account) — say so rather than
-	// silently trying to delete a profile literally named "claude".
-	ref, found, err := a.findProfileRef(cfg, name)
-	if err != nil {
-		return err
-	}
-	if !found {
-		if _, isAgent := localagent.Lookup(name); isAgent {
-			return fmt.Errorf("no profile %q. To tear down the whole agent account, run `jentic reset` "+
-				"with no argument (there is one shared account for every agent)", name)
-		}
-		return fmt.Errorf("no profile %q (nothing to reset); run `jentic profile list` to see profiles", name)
-	}
+// identityWipe is the resolved plan for wiping the operator's own jentic
+// identity state: the V2 XDG trees and (if still present) the legacy V1 tree.
+// Directories are recorded only when they exist, so the plan is truthful.
+type identityWipe struct {
+	// configDir is the V2 config tree (~/.config/jentic): config.yaml + keys/.
+	configDir string
+	// stateDir is the V2 state tree (~/.local/state/jentic): tokens + API keys.
+	stateDir string
+	// legacyRoot is the V1 ~/.jentic profile tree (profiles/ + MIGRATED marker).
+	// Only the identity material is wiped — the rest of ~/.jentic is jenticctl's
+	// install root and reset must not touch it.
+	legacyProfilesDir string
+	legacyMarker      string
+}
 
-	// Is this the last agent-owned profile? If so we may offer full account teardown.
-	acct, hasAcct := cfg.AgentAccount()
-	lastAgentProfile := false
-	if ref.owned() && hasAcct && acct.ConfigDir != "" {
-		agentNames, lerr := profile.List(config.Paths{Root: acct.ConfigDir})
-		if lerr == nil && len(agentNames) == 1 && agentNames[0] == name {
-			lastAgentProfile = true
-		}
-	}
+func (w identityWipe) any() bool {
+	return w.configDir != "" || w.stateDir != "" || w.legacyProfilesDir != ""
+}
 
-	// --delete-home only takes effect when this reset actually tears the account
-	// down — i.e. it's the last agent profile AND teardown is confirmed (never on
-	// a lone --force, which removes just the profile). Warn rather than silently
-	// ignore the flag, so the operator isn't left believing the home was purged.
-	if opts.deleteHome && (!lastAgentProfile || opts.force) {
-		fmt.Fprintln(a.Out, theme.Warnf(
-			"--delete-home has no effect here: it only applies when a reset tears the whole "+
-				"agent account down. Run `jentic reset` (no argument) to remove the account and its home."))
-	}
-
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Error.Render("⚠  jentic reset will PERMANENTLY remove profile '"+name+"'"+
-		ownerTag(ref)+" (key, tokens, registration). This cannot be undone."))
-	fmt.Fprintln(a.Out)
-
-	// Confirm the profile removal (typed name; --force skips).
-	if !opts.force {
-		if !interactive {
-			return errors.New("refusing to reset non-interactively without --force (no safe default for destruction)")
-		}
-		ok, cerr := a.confirmResetName(name)
-		if cerr != nil {
-			return cerr
-		}
-		if !ok {
-			fmt.Fprintln(a.Out, theme.Dim.Render("Aborted — nothing was changed."))
-			return nil
+// surveyIdentityWipe resolves which identity trees exist on this machine. It
+// never errors: an unresolvable dir simply isn't wiped (and was never readable
+// by the CLI either).
+func surveyIdentityWipe(paths config.Paths) identityWipe {
+	var w identityWipe
+	if dir, err := sdkconfig.ConfigDir(); err == nil {
+		if _, serr := os.Stat(dir); serr == nil {
+			w.configDir = dir
 		}
 	}
-
-	// Optionally tear the whole account down when this was its last profile.
-	tearDownAccount := false
-	if lastAgentProfile {
-		if opts.force {
-			// Non-interactive: a lone --force removes just the profile; pair with
-			// nothing else, so leave the (now-empty) account in place unless the
-			// operator runs a full `jentic reset`.
-			tearDownAccount = false
-		} else if interactive {
-			accepted, aerr := a.confirmTeardownLastProfile()
-			if aerr != nil {
-				return aerr
-			}
-			tearDownAccount = accepted
+	if dir, err := sdkconfig.StateDir(); err == nil {
+		if _, serr := os.Stat(dir); serr == nil {
+			w.stateDir = dir
 		}
 	}
-
-	if err := a.execProfileRemoval(ctx, cfg, ref, acct); err != nil {
-		return err
-	}
-	fmt.Fprintln(a.Out, theme.Successf("Removed profile %q.", name))
-
-	if tearDownAccount {
-		plan := surveyReset(ctx, operator, operatorHome, acct)
-		a.printResetPlan(plan)
-		deleteHome := opts.deleteHome
-		if !opts.force && interactive && plan.homeDir != "" {
-			accepted, herr := a.confirmDeleteHome(plan.homeDir)
-			if herr != nil {
-				return herr
-			}
-			deleteHome = accepted
+	if dir := paths.ProfilesDir(); dir != "" {
+		if _, serr := os.Stat(dir); serr == nil {
+			w.legacyProfilesDir = dir
 		}
-		return a.execAccountReset(a.Paths, plan, deleteHome)
 	}
+	if marker := filepath.Join(paths.Dir(), "MIGRATED"); marker != "" {
+		if _, serr := os.Stat(marker); serr == nil {
+			w.legacyMarker = marker
+		}
+	}
+	return w
+}
+
+// execIdentityWipe deletes the surveyed identity trees. It runs entirely as the
+// operator (reset is never launched under sudo), so it can only ever touch the
+// invoking account's own dirs — never another user's. The plan was already shown
+// and confirmed by the caller; this is the execution tail only. Local deletion is
+// the whole job — we deliberately do NOT try to revoke tokens server-side (the
+// tokens are typically expired, so revocation just prints 401 noise; and deleting
+// the local key/tokens already severs this machine's access).
+func (a *app) execIdentityWipe(w identityWipe) error {
+	for _, dir := range []string{w.configDir, w.stateDir, w.legacyProfilesDir} {
+		if dir == "" {
+			continue
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("removing %s: %w", dir, err)
+		}
+		fmt.Fprintln(a.Out, theme.Infof("• removed %s", dir))
+	}
+	// Drop the MIGRATED marker with the legacy profiles: a marker without a
+	// store is stale, and a future V1 tree (downgrade) should gate again.
+	if w.legacyMarker != "" {
+		if err := os.Remove(w.legacyMarker); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing %s: %w", w.legacyMarker, err)
+		}
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Your jentic identity state was reset."))
 	return nil
 }
 
-// ownerTag renders " (agent)" for an agent-owned profile, "" otherwise, for
-// inclusion in a plan line.
-func ownerTag(ref profileRef) string {
-	if ref.owned() {
-		return " (agent)"
+// printIdentityWipePlan shows exactly which identity trees will be deleted, as
+// part of the full-reset preview.
+func (a *app) printIdentityWipePlan(w identityWipe) {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Error.Render("⚠  DANGER ZONE — a full reset will PERMANENTLY remove YOUR OWN jentic "+
+		"identity state from this account. This cannot be undone."))
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Warn.Render("  Identity state to delete (contexts, environments, identities, keys, tokens):"))
+	for _, line := range []struct{ label, dir string }{
+		{"V2 config ", w.configDir},
+		{"V2 state  ", w.stateDir},
+		{"V1 legacy ", w.legacyProfilesDir},
+	} {
+		if line.dir == "" {
+			continue
+		}
+		fmt.Fprintln(a.Out, theme.Dim.Render("    - "+line.label+" "+line.dir))
 	}
-	return ""
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Success.Render("  NOT touched:"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - another user's config — this only affects the account you ran reset from"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - the jentic-one install itself (~/.jentic install root, data, logs)"))
+	fmt.Fprintln(a.Out)
 }
 
-// execProfileRemoval deletes one profile's on-disk directory. An operator-owned
-// profile is removed directly (the operator owns it); an agent-owned one is
-// removed with sudo (the files are owned by the agent uid). When the removed
-// profile was the account's checked-out one, the agent-home default_profile
-// pointer is cleared so nothing references a profile that no longer exists.
-func (a *app) execProfileRemoval(_ context.Context, cfg *config.FileConfig, ref profileRef, acct config.AgentAccount) error {
-	if ref.owned() {
-		c := localagent.RemoveAgentProfileCmd(acct.ConfigDir, ref.name)
-		c.Stdout, c.Stderr = a.Out, a.Err
-		if err := c.Run(); err != nil {
-			return fmt.Errorf("remove agent profile %q: %w", ref.name, err)
-		}
-		// Clear the checked-out pointer if it named this profile.
-		agentPaths := config.Paths{Root: acct.ConfigDir}
-		agentCfg, err := config.Load(agentPaths)
-		if err == nil && agentCfg.DefaultProfile == ref.name {
-			if serr := config.SetDefaultProfile(agentPaths, ""); serr != nil {
-				fmt.Fprintln(a.Out, theme.Warnf("could not clear the checked-out profile pointer: %v", serr))
-			}
-		}
-		return nil
-	}
-	p, err := profile.Open(a.Paths, ref.name)
-	if err != nil {
-		return err
-	}
-	if err := p.Delete(); err != nil {
-		return err
-	}
-	// Clear the operator's default_profile if it named this profile (under the
-	// config lock so it can't race a concurrent grant write).
-	if cfg.DefaultProfile == ref.name {
-		updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-			if c.DefaultProfile == ref.name {
-				c.DefaultProfile = ""
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		*cfg = *updated
-	}
-	return nil
-}
-
-// confirmTeardownLastProfile offers full account teardown after removing the last
-// agent-owned profile. Declining leaves the (now-empty) account in place.
-func (a *app) confirmTeardownLastProfile() (bool, error) {
-	fmt.Fprintln(a.Out, theme.Dim.Render(
-		"That was the agent account's last profile. You can also tear down the whole "+
-			"account now (Unix user, ACLs, sudoers, home)."))
-	var tear bool
-	if err := prompt.RunConfirm(huh.NewConfirm().
-		Title("Tear down the agent account too?").
-		Description("Removes the dedicated Unix user and all its grants. Requires sudo.").
-		Affirmative("Yes, tear it down").
-		Negative("No, keep the account").
-		Value(&tear)); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return false, nil
-		}
-		return false, err
-	}
-	return tear, nil
-}
-
-// confirmFullReset is the single whole-slate acknowledgement for a bare
-// `jentic reset`: type "reset" to tear down every agent and wipe the operator's
-// own config. It replaces the per-agent typed name and the separate "reset
-// config" prompt, since the operator has already been shown every plan above.
+// confirmFullReset is the single whole-slate acknowledgement for `jentic
+// reset`: type "reset" to tear down the agent account and wipe the operator's
+// own identity state. The operator has already been shown every plan above.
 func (a *app) confirmFullReset() (bool, error) {
 	var typed string
 	if err := prompt.NewForm(huh.NewGroup(
@@ -362,70 +273,6 @@ func (a *app) confirmFullReset() (bool, error) {
 		return false, err
 	}
 	return strings.TrimSpace(typed) == "reset", nil
-}
-
-// execConfigWipe deletes every profile under ~/.jentic/profiles and clears the
-// default_profile pointer in config.yaml — the operator's OWN jentic CLI identity.
-// It runs only on a full `jentic reset` (no named agent), and entirely as the
-// operator (reset is never launched under sudo), so it can only ever touch the
-// invoking account's ~/.jentic — never another user's. The plan was already shown
-// and confirmed by the caller; this is the execution tail only. Local deletion is
-// the whole job — we deliberately do NOT try to revoke tokens server-side (the
-// tokens are typically expired, so revocation just prints 401 noise; and deleting
-// the local key/tokens already severs this machine's access).
-func (a *app) execConfigWipe(names []string, cfg *config.FileConfig) error {
-	for _, name := range names {
-		p, err := profile.Open(a.Paths, name)
-		if err != nil {
-			return err
-		}
-		if err := p.Delete(); err != nil {
-			return err
-		}
-		fmt.Fprintln(a.Out, theme.Infof("• removed profile %q", name))
-	}
-
-	// Clear the default_profile pointer so the config no longer references a
-	// profile that no longer exists (under the config lock).
-	if cfg.DefaultProfile != "" {
-		if _, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-			c.DefaultProfile = ""
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-
-	fmt.Fprintln(a.Out, theme.Successf("Your jentic CLI config was reset (%d profile(s) removed).", len(names)))
-	return nil
-}
-
-// printConfigResetPlan shows exactly which profiles will be deleted and that the
-// default pointer will be cleared, as part of the full-reset preview.
-func (a *app) printConfigResetPlan(names []string, defaultProfile string) {
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Error.Render("⚠  DANGER ZONE — a full reset will PERMANENTLY remove YOUR OWN jentic CLI "+
-		"identity from this account's ~/.jentic. This cannot be undone."))
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Warn.Render("  Profiles to delete (key, tokens, registration metadata):"))
-	if len(names) == 0 {
-		fmt.Fprintln(a.Out, theme.Dim.Render("    - none"))
-	}
-	for _, name := range names {
-		fmt.Fprintln(a.Out, theme.Dim.Render("    - "+name))
-	}
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Warn.Render("  Config to clear:"))
-	if defaultProfile != "" {
-		fmt.Fprintln(a.Out, theme.Dim.Render("    - default_profile ('"+defaultProfile+"') in config.yaml"))
-	} else {
-		fmt.Fprintln(a.Out, theme.Dim.Render("    - default_profile (already unset)"))
-	}
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Success.Render("  NOT touched:"))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    - another user's config — this only affects the account you ran reset from"))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    - installed skills, and Jentic One itself"))
-	fmt.Fprintln(a.Out)
 }
 
 // execAccountReset runs the privileged teardown steps for the already-surveyed,
@@ -787,23 +634,6 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - your own home's permissions — reset only drops the agent's named-user ACLs"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - your own files, config, keys, and Jentic One itself"))
 	fmt.Fprintln(a.Out)
-}
-
-// confirmResetName requires the operator to type the profile name to proceed —
-// the same bar as a dangerous directory grant. Anything else aborts.
-func (a *app) confirmResetName(name string) (bool, error) {
-	var typed string
-	if err := prompt.NewForm(huh.NewGroup(
-		prompt.Input().
-			Title("Type the profile name ('" + name + "') to confirm, or anything else to abort").
-			Value(&typed),
-	)).Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return false, nil
-		}
-		return false, err
-	}
-	return strings.TrimSpace(typed) == name, nil
 }
 
 // confirmDeleteHome is the separate, explicit acceptance for deleting the agent's

@@ -16,14 +16,21 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	app := &app{App: core}
 	root := cmdcore.NewBaseRoot(app.App, "jentic")
 	root.Short = "jentic: discover, inspect, and run against the Jentic API catalog"
-	root.Annotations = map[string]string{"tagline": "discover, inspect, and run against the Jentic API catalog"}
+	root.Annotations = map[string]string{
+		"tagline": "discover, inspect, and run against the Jentic API catalog",
+		// The jentic tree is subject to the migrate gate: on a machine with an
+		// unmigrated V1 profile store, every non-exempt command stops and
+		// demands `jentic migrate` (cmdcore/gate.go). jenticctl is NOT gated —
+		// it owns ~/.jentic as the install root, identity-free.
+		cmdcore.GateAnnotation: "true",
+	}
 	root.Long = "jentic is the command-line companion for working with the Jentic API\n" +
 		"catalog. Register and switch agent identities, browse and import APIs from\n" +
 		"the public catalog into your local registry, inspect operations, and execute\n" +
 		"against them.\n\n" +
 		"New here? If you're a person setting up a local agent, run `jentic bootstrap`\n" +
 		"to create one (isolated account + registration + skills). If you're an agent\n" +
-		"without a profile yet, run `jentic register`. Then browse the catalog with\n" +
+		"without an identity yet, run `jentic register`. Then browse the catalog with\n" +
 		"`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\n" +
 		"CLI (e.g. `jenticctl install`). Use `jentic <command> --help` for details."
 
@@ -47,17 +54,16 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 
 	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(cmdcore.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
-	cmdcore.AddGrouped(root, "identity", newProfileCmd(app))
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
-	// V2 context model (Phase 3): the Environment × Identity × Context surface
-	// that supersedes flat profiles, plus the one-shot migrator. These COEXIST
-	// with the V1 profile commands above during the deprecation window — V1 stays
-	// the active path until the activation release (14 rollout item 0); nothing
-	// here flips breaking behavior on merge.
+	// V2 context model: the Environment × Identity × Context surface plus the
+	// one-shot migrator. This IS the activation release — the V1 profile
+	// command is gone; `jentic profile <verb>` survives only as the hidden
+	// deprecation shim below (BC-2/BC-3), which delegates to these successors.
 	cmdcore.AddGrouped(root, "identity", newContextCmd(app))
 	cmdcore.AddGrouped(root, "identity", newEnvCmd(app))
 	cmdcore.AddGrouped(root, "identity", newIdentityCmd(app))
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(newMigrateCmd(app))) // NOT fenced (BC-1); bootstrap-safe (runs with no XDG config)
+	registerProfileAliasShims(root, app)
 	cmdcore.AddGrouped(root, "apis", newCatalogCmd(app))
 	cmdcore.AddGrouped(root, "apis", newApisCmd(app))
 	cmdcore.AddGrouped(root, "apis", newEndpointsCmd(app))

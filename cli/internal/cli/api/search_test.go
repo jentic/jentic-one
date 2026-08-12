@@ -37,7 +37,7 @@ func TestSearchCmdJSON(t *testing.T) {
 	app.Out = out
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"search", "pets", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"search", "pets", "--json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -80,7 +80,7 @@ func TestSearchCmdEmptyResultsEmitEmptyArray(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"search", "nothing", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"search", "nothing", "--json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -173,7 +173,7 @@ func TestSearchCmdAutopagination(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"search", "test", "--all", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"search", "test", "--all", "--json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -209,7 +209,7 @@ func TestSearchCmd501FriendlyMessage(t *testing.T) {
 	root := newAPIRootCmd(app.App)
 	root.SetOut(new(bytes.Buffer))
 	root.SetErr(new(bytes.Buffer))
-	root.SetArgs([]string{"search", "test", "--json", "--base-url", srv.URL})
+	root.SetArgs([]string{"search", "test", "--json"})
 
 	err := root.Execute()
 	if err == nil {

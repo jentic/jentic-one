@@ -120,45 +120,9 @@ func TestResolvedPrecedence(t *testing.T) {
 		t.Errorf("broker host flag should win: got %q", got)
 	}
 
-	if got := cfg.ResolvedProfileName("explicit"); got != "explicit" {
-		t.Errorf("profile flag should win: got %q", got)
-	}
 	if got := cfg.ResolvedBaseURLOr(""); got != DefaultBaseURL {
 		t.Errorf("base url empty flag -> default: got %q", got)
 	}
-}
-
-func TestResolvedProfilePrecedence(t *testing.T) {
-	cfg := &FileConfig{DefaultProfile: "cfg"}
-
-	t.Run("flag beats env and config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName("flagprof"); got != "flagprof" {
-			t.Errorf("flag should win: got %q", got)
-		}
-	})
-
-	t.Run("env beats config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName(""); got != "envprof" {
-			t.Errorf("env should win over config: got %q", got)
-		}
-	})
-
-	t.Run("config beats default when env unset", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		if got := cfg.ResolvedProfileName(""); got != "cfg" {
-			t.Errorf("config should win: got %q", got)
-		}
-	})
-
-	t.Run("built-in default when all empty", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		empty := &FileConfig{}
-		if got := empty.ResolvedProfileName(""); got != DefaultProfile {
-			t.Errorf("default should win: got %q", got)
-		}
-	})
 }
 
 func TestSaveRoundTrip(t *testing.T) {
@@ -184,24 +148,6 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 	if got.Broker != cfg.Broker {
 		t.Errorf("nested mismatch: %+v", got)
-	}
-}
-
-func TestSetDefaultProfile(t *testing.T) {
-	paths := writeConfig(t, "base_url: http://example:9000\ndefault_profile: old\n")
-	if err := SetDefaultProfile(paths, "new"); err != nil {
-		t.Fatalf("SetDefaultProfile: %v", err)
-	}
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.DefaultProfile != "new" {
-		t.Errorf("DefaultProfile = %q, want new", got.DefaultProfile)
-	}
-	// Existing fields must survive the rewrite.
-	if got.BaseURL != "http://example:9000" {
-		t.Errorf("base_url not preserved: %q", got.BaseURL)
 	}
 }
 

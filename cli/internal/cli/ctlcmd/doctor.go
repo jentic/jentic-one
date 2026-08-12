@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/agentauth"
+	"github.com/jentic/jentic-one/cli/client/auth"
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
@@ -83,7 +84,6 @@ func newDoctorCmd(app *app) *cobra.Command {
 type doctor struct {
 	app     *app
 	ctx     context.Context
-	profile string
 	baseURL string
 	checks  []check
 }
@@ -103,7 +103,6 @@ func (a *app) doctorE(ctx context.Context, opts *doctorOptions) error {
 	if cfg == nil {
 		cfg = &config.FileConfig{}
 	}
-	d.profile = cfg.ResolvedProfileName(opts.Profile)
 	d.baseURL = cfg.ResolvedBaseURLOr(opts.BaseURL)
 
 	manifest, manifestFound, _ := config.LoadManifest(a.Paths)
@@ -304,38 +303,40 @@ func (d *doctor) checkExposure(section, composePath, psOut string) {
 	d.add(section, "exposure", statusPass, "published ports are bound to specific interfaces", "")
 }
 
-// checkAgent reports the profile's registration and token state. Like status,
-// it never mints or refreshes a token: the /me probe runs only with an
-// already-valid cached token.
+// checkAgent reports the ACTIVE V2 context's identity and token state, read-only
+// from the XDG store. Like status, it never mints or refreshes a token: the /me
+// probe (deep credential check) is `jentic doctor`'s job — this operator-side
+// row only reflects what is on disk.
 func (d *doctor) checkAgent() {
 	const section = "Agent"
-	sess, err := agentauth.Open(d.app.Paths, d.profile, d.baseURL)
+	st, err := sdkconfig.LoadState("")
 	if err != nil {
-		d.add(section, "profile", statusWarn, fmt.Sprintf("profile %q unavailable: %v", d.profile, err), "run `jentic register`")
+		d.add(section, "context", statusWarn, "no active context: "+err.Error(),
+			"run `jentic register` (or `jentic migrate` on an upgraded machine)")
 		return
 	}
-	if sess.Meta.AgentID == "" {
-		d.add(section, "profile", statusWarn, fmt.Sprintf("%q not registered", d.profile), "run `jentic register`")
+	if st.InjectedBearerToken != "" {
+		d.add(section, "context", statusPass, "file-less session ($JENTIC_BEARER_TOKEN)", "")
 		return
 	}
 
-	tokens, _ := sess.Profile.LoadTokens()
+	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
+	pair := fmt.Sprintf("identity %q in environment %q", st.IdentityName, st.EnvironmentName)
+
+	if key, kerr := auth.ReadAPIKey(ref); kerr == nil && key != "" {
+		d.add(section, "context", statusPass, pair+" (api-key)", "")
+		return
+	}
+
+	tokens, _ := auth.ReadTokens(ref)
 	state, _ := tokenStatus(tokens)
 	status := statusPass
 	hint := ""
-	if tokens == nil || tokens.AccessToken == "" || tokens.Expired(0) {
+	if tokens == nil || tokens.AccessToken == "" || time.Now().After(tokens.ExpiresAt) {
 		status = statusWarn
-		hint = "run `jentic register` to refresh tokens"
+		hint = "run any `jentic` command to mint a fresh token, or `jentic register` if unregistered"
 	}
-	d.add(section, "profile "+d.profile, status, "token "+state, hint)
-
-	if tokens != nil && !tokens.Expired(0) {
-		if me, meErr := sess.Client.Me(d.ctx, tokens.AccessToken); meErr == nil {
-			d.add(section, "identity", statusPass, identityLabel(me), "")
-		} else {
-			d.add(section, "identity", statusWarn, "identity check failed: "+meErr.Error(), "")
-		}
-	}
+	d.add(section, "context", status, pair+", token "+state, hint)
 }
 
 // checkLocalAgent is the client-side sibling of jenticctl's local-agent probe

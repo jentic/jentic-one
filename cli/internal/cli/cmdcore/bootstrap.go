@@ -9,11 +9,8 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/jentic/jentic-one/cli/internal/agentauth"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
-	"github.com/jentic/jentic-one/cli/internal/cli/ux"
-	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -23,15 +20,12 @@ import (
 // bootstrapOptions collects every knob for the zero-to-playing flow. It is a
 // superset of register + skill options because bootstrap orchestrates both.
 type bootstrapOptions struct {
-	profile   string
-	baseURL   string
-	url       string // V2: install URL (fresh-machine setup arm)
-	env       string // V2: environment name override
+	url       string // install URL (fresh-machine setup arm)
+	env       string // environment name override
 	name      string
 	timeout   time.Duration
 	force     bool
 	yes       bool
-	noActive  bool
 	skipSkill bool
 
 	// skill placement
@@ -54,7 +48,6 @@ func (o *bootstrapOptions) skillOptions() *skillOptions {
 		operators: o.operators,
 		all:       o.all,
 		scope:     o.scope,
-		baseURL:   o.baseURL,
 		yes:       o.yes,
 	}
 }
@@ -62,13 +55,14 @@ func (o *bootstrapOptions) skillOptions() *skillOptions {
 // BootstrapForWizard runs the shared bootstrap flow (register + approval wait +
 // skill) from the ctl `wizard` command. It keeps bootstrapOptions private to
 // cmdcore while letting the ctl tree drive it with just the values the wizard
-// owns: operators empty + yes=false runs bootstrap's interactive operator picker;
-// a named operator (yes=true) drives it non-interactively; empty operators +
-// yes=true auto-detects. interactive stays false so bootstrap does not re-prompt
-// for the profile/base-url/name the wizard already collected.
-func (a *App) BootstrapForWizard(ctx context.Context, baseURL string, timeout time.Duration, operators []string, yes bool) error {
+// owns: the install URL the wizard just brought up, plus the operator picks.
+// operators empty + yes=false runs bootstrap's interactive operator picker; a
+// named operator (yes=true) drives it non-interactively; empty operators +
+// yes=true auto-detects. interactive stays false so bootstrap does not
+// re-prompt for the URL the wizard already collected.
+func (a *App) BootstrapForWizard(ctx context.Context, installURL string, timeout time.Duration, operators []string, yes bool) error {
 	return a.bootstrapE(ctx, &bootstrapOptions{
-		baseURL:   baseURL,
+		url:       installURL,
 		timeout:   timeout,
 		operators: operators,
 		yes:       yes,
@@ -83,17 +77,17 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
 		Short: "Register an agent, wait for approval, and prime your operator — in one step",
-		Long: "bootstrap takes a fresh machine from nothing to ready: it registers this\n" +
-			"profile as an agent (Dynamic Client Registration), prints an approval link\n" +
-			"and waits for a human to approve it, mints and saves tokens, sets the\n" +
-			"profile as the default, and generates the Jentic CLI-usage skill into your\n" +
-			"agent runtime's native layout.\n\n" +
+		Long: "bootstrap takes a fresh machine from nothing to ready: it connects this\n" +
+			"machine to a Jentic install (creating the environment, identity and context\n" +
+			"if needed), registers the agent (Dynamic Client Registration), prints an\n" +
+			"approval link and waits for a human to approve it, mints and saves tokens,\n" +
+			"and generates the Jentic CLI-usage skill into your agent runtime's native\n" +
+			"layout. It also offers to isolate the coding agent behind its own Unix user.\n\n" +
 			"It is a thin orchestration of `jentic register` and `jentic skill`: nothing\n" +
 			"here you can't do by hand, just sequenced so you can start playing right\n" +
 			"away. Re-running refreshes everything idempotently.",
 		Example: "  jentic bootstrap\n" +
-			"  jentic bootstrap --operator claude --yes\n" +
-			"  jentic bootstrap --profile demo --base-url http://localhost:9000 --all --yes\n" +
+			"  jentic bootstrap --url https://jentic.example.com --operator claude --yes\n" +
 			"  jentic bootstrap --skip-skill   # identity only\n" +
 			"  jentic bootstrap --dry-run",
 		Args: cobra.NoArgs,
@@ -105,12 +99,9 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 
 	cmd.Flags().StringVar(&opts.url, "url", "", "Jentic install URL to connect to (creates environment/identity/context on first run)")
 	cmd.Flags().StringVar(&opts.env, "env", "", "environment name for --url (default: derived from the URL host)")
-	cmd.Flags().StringVar(&opts.profile, "profile", "", "LEGACY: profile to create/use in the ~/.jentic store")
-	cmd.Flags().StringVar(&opts.baseURL, "base-url", "", "LEGACY: control-plane base URL for the ~/.jentic store")
 	cmd.Flags().StringVar(&opts.name, "name", "", "agent client name shown to the approver")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 5*time.Minute, "how long to wait for approval")
-	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register the agent even if the profile already has one (does not overwrite an edited skill block)")
-	cmd.Flags().BoolVar(&opts.noActive, "no-activate", false, "do not set this profile as the default")
+	cmd.Flags().BoolVar(&opts.force, "force", false, "re-register the agent even if the identity already has one (does not overwrite an edited skill block)")
 	cmd.Flags().BoolVar(&opts.skipSkill, "skip-skill", false, "provision identity only; do not write skill files")
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to target (repeatable or comma-separated)")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "target every supported operator")
@@ -125,41 +116,6 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	fmt.Fprintln(a.Out, theme.Headingf("Bootstrap"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("Register this machine as an agent, wait for approval, then prime your operator."))
 
-	// Arm resolution first (register_v2.go), mirroring registerE: the V2 arms
-	// provision the XDG context store and never touch legacy profiles; the
-	// legacy body below stays byte-for-byte V1 for unmigrated machines and the
-	// --profile/--base-url escape hatch (also what the ctl wizard pins via
-	// BootstrapForWizard's explicit baseURL).
-	explicitLegacy := opts.profile != "" || opts.baseURL != ""
-	if explicitLegacy && (opts.url != "" || opts.env != "") {
-		return &ux.CodedError{
-			Code:       ux.CodeMissingArgument,
-			Msg:        "--url/--env (context store) and --profile/--base-url (legacy store) address different stores and cannot be combined",
-			Actionable: "Use --url for a V2 install, or --profile/--base-url for the legacy flow.",
-		}
-	}
-	if opts.url != "" {
-		return a.bootstrapV2(ctx, armV2Setup, nil, opts)
-	}
-	if arm, st := a.resolveOnboardArm(ctx, explicitLegacy); arm != armLegacy {
-		return a.bootstrapV2(ctx, arm, st, opts)
-	}
-
-	if opts.interactive {
-		if err := a.promptBootstrap(opts); err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
-				return nil
-			}
-			return err
-		}
-	}
-
-	profileName, baseURL, err := a.ResolveIdentity(opts.profile, opts.baseURL)
-	if err != nil {
-		return err
-	}
-
 	// Flag validation happens before anything else, even for paths a flag
 	// doesn't apply to: `--skip-skill --scope typo` should error, not be
 	// silently ignored (a typo the user meant to matter must never pass).
@@ -167,15 +123,24 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		return err
 	}
 
+	// Which arm? An explicit --url always connects to THAT install; otherwise
+	// an active context registers in place, and a fresh machine gets the
+	// one-command setup (interactive prompt or MISSING_ARGUMENT).
+	st := clictx.ActiveV2(ctx)
+	if opts.url != "" {
+		st = nil // --url pins the setup arm even when a context is active
+	}
+
 	// Resolve the skill targets (operators + placement scope) up front, before
 	// any registration or activation. Identity provisioning has irreversible
-	// side effects (a registered agent, an activated profile); a selection
+	// side effects (a registered agent, an activated context); a selection
 	// error (e.g. no operators resolvable on a non-interactive shell) must
 	// surface here so we never half-complete the flow and then fail at the
 	// skill step.
 	var (
 		targets []skillTarget
 		env     skillgen.DetectEnv
+		err     error
 	)
 	if !opts.skipSkill {
 		reg := skillgen.DefaultRegistry()
@@ -185,8 +150,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		}
 		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
 		if err != nil {
-			// Same cancel idiom as promptBootstrap above: Esc in the skill
-			// picker means "never mind", not a failed bootstrap.
+			// Esc in the skill picker means "never mind", not a failed bootstrap.
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
 				return nil
@@ -206,22 +170,21 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	if opts.dryRun {
-		return a.bootstrapDryRun(profileName, baseURL, targets, env, opts)
+		return a.bootstrapDryRun(st, targets, env, opts)
 	}
 
 	// After the operator is chosen, offer to isolate it behind a dedicated Unix
 	// user (the true credential boundary). This is asked BEFORE any registration
 	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
 	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
-	// it through this same bootstrap flow.
-	// setup carries the agent-user decision so the identity write below can be
-	// TARGETED correctly: a self-user agent's platform identity belongs in the
-	// agent's own config dir (single source of truth), not the operator's.
+	// it through this same bootstrap flow. The identity itself stays in the
+	// operator's XDG store; `jentic run` exports the active context's material
+	// into the agent's home at launch.
 	var setup agentSetup
 	if !opts.skipSkill {
 		// Interactivity for the sudo gate matches the skill picker's own rule
 		// (!yes && a real TTY), not opts.interactive — the wizard deliberately
-		// leaves opts.interactive false (it owns the profile prompts) while the
+		// leaves opts.interactive false (it owns the URL prompt) while the
 		// user is very much at a terminal.
 		agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
 		s, err := a.setupAgentUser(ctx, operatorNames(targetAdapters(targets)), agentInteractive)
@@ -237,113 +200,10 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		setup = s
 	}
 
-	// Registration is deliberately AFTER the agent-user decision: only now do we
-	// know WHERE to write the identity. Reload config so an account just created by
-	// setupAgentUser is seen; resolveIdentityTarget then sends the identity to the
-	// shared agent home (chowned + checked out) whenever an account exists — whether
-	// created in this run or an earlier one — and to the operator's ~/.jentic
-	// otherwise. An identity already registered operator-side is translated over
-	// first, so enabling isolation carries an existing registration across.
-	cfg, err := config.Load(a.Paths)
-	if err != nil {
-		return err
-	}
-	target := a.resolveIdentityTarget(cfg)
-	if _, err := a.translateOperatorProfile(target, profileName); err != nil {
-		return err
-	}
-
-	// Step 1+2: register (DCR) and wait for human approval, reusing the exact
-	// register plumbing so behaviour stays identical.
-	tokens, err := a.bootstrapIdentity(ctx, target.paths, profileName, baseURL, opts)
-	if err != nil {
-		return err
-	}
-
-	// Step 3: check out the profile. For an agent-owned target this always sets the
-	// agent home's default (what `jentic run` injects) and never the operator's own
-	// default; for an operator-owned target it sets the operator default unless
-	// --no-activate. Then hand the agent its config dir.
-	if err := a.checkOutProfile(target, profileName, !opts.noActive); err != nil {
-		return err
-	}
-	a.handOffToAgent(target)
-
-	// Step 4: write the skill into the operator's native layout, reusing the
-	// shared skill-writing body. A user-edited managed block is reported but
-	// not fatal: the identity is already provisioned.
-	if !opts.skipSkill {
-		fmt.Fprintln(a.Out)
-		if err := a.writeSkill(targets, env, opts.skillOptions()); err != nil {
-			// Identity is already provisioned, so a skill-content failure is
-			// reported but not fatal — the agent can re-run `jentic skill init`.
-			fmt.Fprintln(a.Out, theme.Warnf("skill generation failed: %v", err))
-		}
-	}
-
-	a.bootstrapSummary(profileName, tokens)
-
-	// If we created a dedicated agent account, offer to start a session in the
-	// agent's home right now — the operator has just seen the profile summary and
-	// the natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
-	// declining leaves the printed command for later. Only when interactive and a
-	// real account exists.
-	agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
-	if setup.created && setup.agentUser != "" && agentInteractive {
-		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
-			return err
-		}
-	}
-	return nil
-}
-
-// bootstrapV2 is the V2 (context-store) arm of bootstrap: register through the
-// shared V2 flow, then write the skill. The legacy-store steps (profile
-// checkout, agent-account translation/hand-off) have no V2 counterpart here —
-// local-agent isolation provisioning remains a jenticctl/legacy-store concern
-// for now (tracked in the plans repo as follow-up work).
-func (a *App) bootstrapV2(ctx context.Context, arm onboardArm, st *clictx.ActiveState, opts *bootstrapOptions) error {
-	// Same fail-early rationale as the legacy body: validate flags and resolve
-	// skill targets BEFORE registration's irreversible side effects.
-	if _, err := resolveScope(opts.scope); err != nil {
-		return err
-	}
-	var (
-		targets []skillTarget
-		env     skillgen.DetectEnv
-		err     error
-	)
-	if !opts.skipSkill {
-		reg := skillgen.DefaultRegistry()
-		env, err = a.detectEnv()
-		if err != nil {
-			return err
-		}
-		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
-		if err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
-				return nil
-			}
-			if errors.Is(err, errNothingDetected) {
-				return fmt.Errorf("%w — or pass --skip-skill to provision identity only", err)
-			}
-			return err
-		}
-		if len(targets) == 0 {
-			opts.skipSkill = true
-		}
-	}
-
-	if opts.dryRun {
-		return a.bootstrapV2DryRun(arm, st, targets, env, opts)
-	}
-
-	// Step 1+2: register and wait for approval via the shared V2 flow.
+	// Step 1+2: register and wait for approval via the shared flow.
 	var installURL string
 	identity := opts.name
-	switch arm {
-	case armV2Active:
+	if st != nil {
 		installURL = st.BaseURL
 		if identity == "" {
 			identity = st.IdentityName
@@ -351,7 +211,7 @@ func (a *App) bootstrapV2(ctx context.Context, arm onboardArm, st *clictx.Active
 		if err := a.registerV2Active(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
 			return err
 		}
-	default: // armV2Setup
+	} else {
 		vals, err := a.registerV2Setup(ctx,
 			v2SetupValues{url: opts.url, env: opts.env, name: opts.name},
 			opts.timeout, opts.force, opts.interactive)
@@ -365,9 +225,7 @@ func (a *App) bootstrapV2(ctx context.Context, arm onboardArm, st *clictx.Active
 	}
 
 	// Step 3: write the skill into the operator's native layout, templated
-	// with the install URL the identity just registered with (NOT the legacy
-	// config default, which is what the localhost-flavored resolveBaseURL
-	// fallback would produce).
+	// with the install URL the identity just registered with.
 	if !opts.skipSkill {
 		fmt.Fprintln(a.Out)
 		so := opts.skillOptions()
@@ -386,12 +244,25 @@ func (a *App) bootstrapV2(ctx context.Context, arm onboardArm, st *clictx.Active
 		fmt.Fprintln(a.Out, theme.Field("install", installURL))
 	}
 	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Try:"), theme.Command.Render("jentic catalog"))
+
+	// If we created a dedicated agent account, offer to start a session in the
+	// agent's home right now — the operator has just seen the summary and the
+	// natural next step is `cd <home>; jentic run <agent>`. Accepting runs it;
+	// declining leaves the printed command for later. Only when interactive and
+	// a real account exists.
+	agentInteractive := !opts.yes && term.IsTerminal(os.Stdin.Fd())
+	if setup.created && setup.agentUser != "" && agentInteractive {
+		if err := a.offerAgentSession(ctx, setup); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
+	}
 	return nil
 }
 
-// bootstrapV2DryRun describes the V2 steps without registering or writing.
-func (a *App) bootstrapV2DryRun(arm onboardArm, st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
-	if arm == armV2Active {
+// bootstrapDryRun describes the steps without registering or writing. st is
+// the active context (nil for the fresh-machine setup arm).
+func (a *App) bootstrapDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
+	if st != nil {
 		fmt.Fprintln(a.Out, theme.Infof("would register identity %q with environment %q (%s), or reuse an existing registration",
 			st.IdentityName, st.EnvironmentName, st.BaseURL))
 	} else {
@@ -443,95 +314,10 @@ func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
 		return nil
 	}
 
-	// Launch in the agent's own home (dir "" → login shell starts in $HOME). No
-	// working-dir grant is involved here, but launchAgent still loads the recorded
-	// grants to build the confinement profile, so pass the current account. The
-	// checked-out profile (agent-home default) is injected as JENTIC_PROFILE.
+	// Launch in the agent's own home (dir "" → login shell starts in $HOME).
+	// No working-dir grant is involved here, but the launch still loads the
+	// recorded grants to build the confinement profile and hands the active
+	// context's credentials to the agent's own store first.
 	desc, _ := localagent.Lookup(setup.agentID)
-	binary := desc.Binary
-	cfg, err := config.Load(a.Paths)
-	if err != nil {
-		return err
-	}
-	acct, _ := cfg.AgentAccount()
-	sessionProfile, err := a.resolveSessionProfile("", acct)
-	if err != nil {
-		return err
-	}
-	return a.launchAgent(ctx, acct, setup.agentUser, binary, "", sessionProfile, nil)
-}
-
-// bootstrapIdentity registers the agent if needed and resolves a token pair. It
-// mints once first: an already-approved agent returns tokens immediately, so we
-// skip the approval banner and wait loop entirely. Only when the first mint is
-// pending do we print the approval link and poll until approval (or timeout /
-// Ctrl-C).
-func (a *App) bootstrapIdentity(ctx context.Context, paths config.Paths, profileName, baseURL string, opts *bootstrapOptions) (*tokensView, error) {
-	sess, err := agentauth.Open(paths, profileName, baseURL)
-	if err != nil {
-		return nil, err
-	}
-	if opts.force {
-		sess.ResetRegistration()
-	}
-
-	if err := a.ensureRegistered(ctx, sess, profileName, opts.name); err != nil {
-		return nil, err
-	}
-
-	return waitForApproval(ctx, a.Out, sess, opts.timeout, bootstrapResumeHint)
-}
-
-// bootstrapDryRun describes the steps without registering or writing anything.
-func (a *App) bootstrapDryRun(profileName, baseURL string, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
-	fmt.Fprintln(a.Out, theme.Infof("would register agent for profile %q at %s (or reuse an existing registration)", profileName, baseURL))
-	fmt.Fprintln(a.Out, theme.Infof("would wait up to %s for human approval if the agent is still pending, then mint tokens", opts.timeout))
-	if !opts.noActive {
-		fmt.Fprintln(a.Out, theme.Infof("would set %q as the default profile", profileName))
-	}
-	if opts.skipSkill {
-		fmt.Fprintln(a.Out, theme.Dim.Render("would skip skill generation (--skip-skill)"))
-	} else {
-		fmt.Fprintln(a.Out)
-		dry := opts.skillOptions()
-		dry.dryRun = true
-		if err := a.writeSkill(targets, env, dry); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (a *App) bootstrapSummary(profileName string, tokens *tokensView) {
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Success.Render("You're ready."))
-	fmt.Fprintln(a.Out, theme.Field("profile", profileName))
-	if tokens != nil {
-		fmt.Fprintln(a.Out, theme.Field("access", shorten(tokens.AccessToken)))
-		if !tokens.AccessExpiresAt.IsZero() {
-			fmt.Fprintln(a.Out, theme.Field("expires", tokens.AccessExpiresAt.Format(time.RFC3339)))
-		}
-	}
-	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Try:"), theme.Command.Render(fmt.Sprintf("jentic execute --profile %s <operation>", profileName)))
-}
-
-// promptBootstrap collects the onboarding values interactively, reusing the
-// register wizard fields. Skill targets are picked later by skillInit's own
-// interactive picker, so they are not prompted here.
-func (a *App) promptBootstrap(opts *bootstrapOptions) error {
-	cfg, err := config.Load(a.Paths)
-	if err != nil {
-		return err
-	}
-	profileName := cfg.ResolvedProfileName(opts.profile)
-	baseURL := cfg.ResolvedBaseURLOr(opts.baseURL)
-	name := opts.name
-	if name == "" {
-		name = "jentic-cli-" + profileName
-	}
-	if err := promptOnboarding(&profileName, &baseURL, &name); err != nil {
-		return err
-	}
-	opts.profile, opts.baseURL, opts.name = profileName, baseURL, name
-	return nil
+	return a.launchIsolated(ctx, setup.agentUser, desc.Binary, "", nil)
 }

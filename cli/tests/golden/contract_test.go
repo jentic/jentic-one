@@ -38,34 +38,35 @@ func mockControl(t *testing.T) *httptest.Server {
 // shape (pure JSON on stdout, no prompts), which is what agents depend on.
 var agentEnv = map[string]string{"NO_COLOR": "1"}
 
-// TestGolden_V1Contract freezes the observable contract of the core agent-facing
-// commands (impl/0.0 §2a scope). Human-mode ANSI is deliberately out of scope;
-// we assert the structural JSON/exit/stderr contract that agents parse.
+// TestGolden_AgentContract freezes the observable V2 contract of the core
+// agent-facing commands (impl/0.0 §2a scope, post-activation). Human-mode ANSI
+// is deliberately out of scope; we assert the structural JSON/exit/stderr
+// contract that agents parse.
 //
 // New cases: add a row, run `go test ./tests/golden -update`, and commit the
 // generated testdata. Changing an EXISTING golden requires citing the
 // authorizing BC number (14_breaking_changes.md) in the PR.
-func TestGolden_V1Contract(t *testing.T) {
+func TestGolden_AgentContract(t *testing.T) {
 	srv := mockControl(t)
 
 	cases := []struct {
 		name string
 		args []string
-		seed bool // seed a registered profile pointed at the mock
+		seed bool // seed the file-less env session pointed at the mock
 	}{
 		{
 			name: "search_json",
-			args: []string{"search", "pets", "--json", "--base-url", srv.URL},
+			args: []string{"search", "pets", "--json"},
 			seed: true,
 		},
 		{
 			name: "apis_list_json",
-			args: []string{"apis", "list", "--json", "--base-url", srv.URL},
+			args: []string{"apis", "list", "--json"},
 			seed: true,
 		},
 		{
 			name: "catalog_list_json",
-			args: []string{"catalog", "list", "--json", "--base-url", srv.URL},
+			args: []string{"catalog", "list", "--json"},
 			seed: true,
 		},
 		{
@@ -74,13 +75,23 @@ func TestGolden_V1Contract(t *testing.T) {
 			args: []string{"definitely-not-a-command"},
 			seed: false,
 		},
+		{
+			// No session at all: the canonical no-context resolve error agents
+			// must be able to parse and act on.
+			name: "no_context_json",
+			args: []string{"search", "pets", "--json"},
+			seed: false,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			if tc.seed {
-				seedRegistered(t, home, "default", srv.URL)
+				seedSession(t, srv.URL)
+			} else {
+				t.Setenv("JENTIC_BASE_URL", "")
+				t.Setenv("JENTIC_BEARER_TOKEN", "")
 			}
 			got := runAPI(t, home, agentEnv, tc.args...)
 			assertGolden(t, tc.name, got)

@@ -52,7 +52,6 @@ func newAccessCmd(app *app) *cobra.Command {
 }
 
 func newAccessWhoamiCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "whoami",
@@ -62,16 +61,14 @@ func newAccessWhoamiCmd(app *app) *cobra.Command {
 			"cannot execute against any API yet; use `jentic access request` to ask.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.accessWhoamiE(cmd, ident, jsonFlag)
+			return app.accessWhoamiE(cmd, jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
 func newAccessRequestCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	opts := &accessRequestOptions{}
 	cmd := &cobra.Command{
 		Use:   "request",
@@ -112,7 +109,7 @@ func newAccessRequestCmd(app *app) *cobra.Command {
 			"    --reason \"release-notes automation\" --wait",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.accessRequestE(cmd, ident, opts)
+			return app.accessRequestE(cmd, opts)
 		},
 	}
 	cmd.Flags().StringArrayVar(&opts.toolkits, "toolkit", nil, "request a binding to the toolkit serving this API (vendor/name[/version]; repeatable)")
@@ -125,19 +122,17 @@ func newAccessRequestCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.wait, "wait", false, "block until the request is decided")
 	cmd.Flags().DurationVar(&opts.timeout, "timeout", 10*time.Minute, "max time to wait with --wait")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
 func newAccessListCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	opts := &accessListOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List your access requests",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.accessListE(cmd, ident, opts)
+			return app.accessListE(cmd, opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.status, "status", "", "filter by status (pending, approved, denied, withdrawn, …)")
@@ -145,44 +140,38 @@ func newAccessListCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "pagination cursor from a previous response")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "follow pagination and return all results")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
 func newAccessStatusCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "status <request-id>",
 		Short: "Show one access request, including per-item state and approve_url",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.accessStatusE(cmd, ident, args[0], jsonFlag)
+			return app.accessStatusE(cmd, args[0], jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
 func newAccessWithdrawCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "withdraw <request-id>",
 		Short: "Withdraw a pending access request",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.accessWithdrawE(cmd, ident, args[0], jsonFlag)
+			return app.accessWithdrawE(cmd, args[0], jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
 func newAccessRefreshCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	var jsonFlag bool
 	cmd := &cobra.Command{
 		Use:   "refresh",
@@ -194,11 +183,10 @@ func newAccessRefreshCmd(app *app) *cobra.Command {
 			"under \"granted\" that isn't yet active on your token.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.accessRefreshE(cmd, ident, jsonFlag)
+			return app.accessRefreshE(cmd, jsonFlag)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonFlag, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 	return cmd
 }
 
@@ -554,8 +542,8 @@ type accessListOptions struct {
 	json   bool
 }
 
-func (a *app) accessWhoamiE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) accessWhoamiE(cmd *cobra.Command, jsonFlag bool) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -570,13 +558,13 @@ func (a *app) accessWhoamiE(cmd *cobra.Command, ident *identityOptions, jsonFlag
 	return nil
 }
 
-func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *accessRequestOptions) error {
+func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) error {
 	items, err := opts.compose()
 	if err != nil {
 		return err
 	}
 
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -663,7 +651,7 @@ func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 	case req.Status == accessclient.StatusPartiallyApproved:
 		// A newly-granted scope only takes effect once re-minted into the token;
 		// do it for the agent so it needn't run a separate `access refresh`.
-		a.refreshIfScopeGranted(cmd, ident, req)
+		a.refreshIfScopeGranted(cmd, req)
 		// Some items were approved but at least one was not, so the capability
 		// the agent asked for is not fully granted. Signal a distinct non-zero
 		// code (not success) so a scripted agent doesn't proceed as if it can
@@ -679,7 +667,7 @@ func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 	// immediately without a separate `access refresh`. A binding-only plan
 	// (toolkit/credential binds, no scope) needs no re-mint: bindings are live
 	// server-side, so this is a no-op in that case.
-	a.refreshIfScopeGranted(cmd, ident, req)
+	a.refreshIfScopeGranted(cmd, req)
 	return nil
 }
 
@@ -689,31 +677,25 @@ func (a *app) accessRequestE(cmd *cobra.Command, ident *identityOptions, opts *a
 // bindings are resolved live by the broker, so a `--provision`/`--toolkit` plan
 // needs no re-mint; re-minting anyway would be a wasted round-trip. Best-effort:
 // a mint failure is non-fatal (the agent can still run `jentic access refresh`),
-// and API-key profiles (no mintable token) are skipped.
-func (a *app) refreshIfScopeGranted(cmd *cobra.Command, ident *identityOptions, req *accessclient.Request) {
+// and static credentials (injected token, API key) are skipped.
+func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *accessclient.Request) {
 	if !requestGrantedScope(req) {
 		return
 	}
-	if st := a.activeState(cmd.Context(), ident); st != nil {
-		creds := credsFromState(st)
-		// Static credentials (injected token, jak_* API key) have no mintable
-		// token — nothing to refresh, exactly like the legacy IsAPIKey skip.
-		if creds.InjectedBearerToken != "" {
-			return
-		}
-		if key, err := auth.ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
-			return
-		}
-		if _, err := auth.RefreshBearerToken(creds); err != nil {
-			fmt.Fprintln(a.Err, theme.Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
-		}
+	st := clictx.ActiveV2(cmd.Context())
+	if st == nil {
 		return
 	}
-	sess, _, err := a.agentSessionOpen(ident)
-	if err != nil || sess.Meta.IsAPIKey() {
+	creds := credsFromState(st)
+	// Static credentials (injected token, jak_* API key) have no mintable
+	// token — nothing to refresh.
+	if creds.InjectedBearerToken != "" {
 		return
 	}
-	if _, err := sess.MintFresh(cmd.Context()); err != nil {
+	if key, err := auth.ReadAPIKey(creds.IdentityRef()); err == nil && key != "" {
+		return
+	}
+	if _, err := auth.RefreshBearerToken(creds); err != nil {
 		fmt.Fprintln(a.Err, theme.Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
 	}
 }
@@ -731,8 +713,8 @@ func requestGrantedScope(req *accessclient.Request) bool {
 	return false
 }
 
-func (a *app) accessListE(cmd *cobra.Command, ident *identityOptions, opts *accessListOptions) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -772,8 +754,8 @@ func (a *app) accessListE(cmd *cobra.Command, ident *identityOptions, opts *acce
 	return nil
 }
 
-func (a *app) accessStatusE(cmd *cobra.Command, ident *identityOptions, id string, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) accessStatusE(cmd *cobra.Command, id string, jsonFlag bool) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -789,8 +771,8 @@ func (a *app) accessStatusE(cmd *cobra.Command, ident *identityOptions, id strin
 	return nil
 }
 
-func (a *app) accessWithdrawE(cmd *cobra.Command, ident *identityOptions, id string, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) accessWithdrawE(cmd *cobra.Command, id string, jsonFlag bool) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -806,38 +788,12 @@ func (a *app) accessWithdrawE(cmd *cobra.Command, ident *identityOptions, id str
 	return nil
 }
 
-func (a *app) accessRefreshE(cmd *cobra.Command, ident *identityOptions, jsonFlag bool) error {
-	if st := a.activeState(cmd.Context(), ident); st != nil {
-		return a.accessRefreshContextE(cmd, st, jsonFlag)
-	}
-	sess, profileName, err := a.agentSessionOpen(ident)
+func (a *app) accessRefreshE(cmd *cobra.Command, jsonFlag bool) error {
+	st, err := a.requireState(cmd.Context())
 	if err != nil {
 		return err
 	}
-	if sess.Meta.IsAPIKey() {
-		return fmt.Errorf("profile %q authenticates with a static API key, which has no token to refresh; "+
-			"its scopes change only when an admin updates the key", profileName)
-	}
-	// Force a fresh assertion mint (not a refresh-token rotation, which would
-	// carry the old token's scopes forward unchanged) so the server re-reads the
-	// agent's current scope grants. See issue #673.
-	if _, err := sess.MintFresh(cmd.Context()); err != nil {
-		return agentAuthErr(err, profileName)
-	}
-	token, err := sess.ValidToken(cmd.Context())
-	if err != nil {
-		return agentAuthErr(err, profileName)
-	}
-	me, err := accessclient.New(sess.Meta.BaseURL).Me(cmd.Context(), token)
-	if err != nil {
-		return err
-	}
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, me)
-	}
-	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.ID))
-	a.printMe(me)
-	return nil
+	return a.accessRefreshContextE(cmd, st, jsonFlag)
 }
 
 // accessRefreshContextE is the V2-context arm of `jentic access refresh`: force
@@ -937,11 +893,11 @@ func (a *app) printMe(me *accessclient.Me) {
 	}
 
 	// whoami answers "what can I do?" for the control-plane (scopes, toolkits); the
-	// filesystem side of that answer lives in `profile view`, which maps every
+	// filesystem side of that answer lives in `context view`, which maps every
 	// directory the agent can reach. Point at it so an agent has one place to learn
 	// its full access surface.
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("To see which directories you can access, run `jentic profile view`."))
+	fmt.Fprintln(a.Out, theme.Dim.Render("To see which directories you can access, run `jentic context view`."))
 }
 
 func (a *app) printRequestList(reqs []accessclient.Request, hasMore bool) {

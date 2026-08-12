@@ -4,93 +4,37 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/authclient"
+	"github.com/jentic/jentic-one/cli/client/auth"
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/catalogclient"
-	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-// seedRegistered writes a registered profile with a cached, non-expired token
-// pointed at baseURL, so catalogSession resolves a token without any network.
-func seedRegistered(t *testing.T, app *app, name, baseURL string) {
-	t.Helper()
-	p, err := profile.Open(app.Paths, name)
-	if err != nil {
-		t.Fatalf("open profile: %v", err)
-	}
-	if err := p.SaveMeta(&profile.Meta{AgentID: "agnt_test", BaseURL: baseURL, KID: "k"}); err != nil {
-		t.Fatalf("save meta: %v", err)
-	}
-	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_abc", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("save tokens: %v", err)
-	}
-}
-
-// TestAgentSessionRunsAsCheckedOutAgent proves the in-process run-as: when the
-// operator's active profile is an agent-owned one (checked out via `profile
-// use`), agentSession resolves THAT profile's token from the agent store — not
-// the operator's own ~/.jentic — so profile-scoped commands act as the agent.
-// The agent-owned profile lives only in the agent home (translation removes any
-// operator copy), which is the realistic post-checkout state.
-func TestAgentSessionRunsAsCheckedOutAgent(t *testing.T) {
+// TestAgentSessionResolvesFromContext proves the context-only session: the
+// base URL and bearer come from the ACTIVE V2 state in the context — there is
+// no profile store, no flag override, and no fallback to read from anywhere
+// else on disk.
+func TestAgentSessionResolvesFromContext(t *testing.T) {
 	app := testApp(t)
 
-	// An unrelated operator-owned profile carries a DIFFERENT token; if routing
-	// ignored the checkout we'd risk falling back to an operator store.
-	op, err := profile.Open(app.Paths, "operator-only")
-	if err != nil {
-		t.Fatalf("open operator profile: %v", err)
-	}
-	if err := op.SaveMeta(&profile.Meta{AgentID: "agnt_op", BaseURL: "http://op:9000", KID: "k"}); err != nil {
-		t.Fatalf("save operator meta: %v", err)
-	}
-	if err := op.SaveTokens(&profile.Tokens{AccessToken: "tok_operator", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("save operator tokens: %v", err)
-	}
-
-	// The agent-owned profile in the shared account's home.
-	agentRoot := t.TempDir()
-	agentPaths := config.Paths{Root: agentRoot}
-	ap, err := profile.Open(agentPaths, "botprofile")
-	if err != nil {
-		t.Fatalf("open agent profile: %v", err)
-	}
-	if err := ap.SaveMeta(&profile.Meta{AgentID: "agnt_bot", BaseURL: "http://bot:9000", KID: "k"}); err != nil {
-		t.Fatalf("save agent meta: %v", err)
-	}
-	if err := ap.SaveTokens(&profile.Tokens{AccessToken: "tok_agent", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("save agent tokens: %v", err)
-	}
-
-	cfg, err := config.Load(app.Paths)
-	if err != nil {
-		t.Fatalf("load cfg: %v", err)
-	}
-	cfg.SetAgentAccount(config.AgentAccount{User: "bot-agent", AccountCreated: true, Enabled: true, ConfigDir: agentRoot})
-	if err := cfg.Save(app.Paths); err != nil {
-		t.Fatalf("save cfg: %v", err)
-	}
-	// Check out the agent-owned profile as the operator default.
-	if err := config.SetDefaultProfile(app.Paths, "botprofile"); err != nil {
-		t.Fatalf("check out agent profile: %v", err)
-	}
-
-	baseURL, token, err := app.agentSession(context.Background(), &identityOptions{})
+	baseURL, token, err := app.agentSession(v2Ctx("http://ctrl:9000"))
 	if err != nil {
 		t.Fatalf("agentSession: %v", err)
 	}
-	if token != "tok_agent" {
-		t.Errorf("run-as token = %q, want tok_agent (the agent store's)", token)
+	if token != "tok_abc" {
+		t.Errorf("token = %q, want the context's injected tok_abc", token)
 	}
-	if baseURL != "http://bot:9000" {
-		t.Errorf("run-as base_url = %q, want the agent profile's http://bot:9000", baseURL)
+	if baseURL != "http://ctrl:9000" {
+		t.Errorf("base_url = %q, want the context's http://ctrl:9000", baseURL)
 	}
 }
 
@@ -106,10 +50,7 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	if err := app.catalogList(context.Background(), ident, &catalogListOptions{limit: 50}, ""); err != nil {
+	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50}, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -133,10 +74,7 @@ func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	if err := app.catalogList(context.Background(), ident, &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
+	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if !strings.Contains(gotQuery, "outdated_only=true") {
@@ -166,11 +104,8 @@ func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
 	opts := &catalogListOptions{limit: 50, outdated: true, includeSnoozed: true}
-	if err := app.catalogList(context.Background(), ident, opts, ""); err != nil {
+	if err := app.catalogList(v2Ctx(srv.URL), opts, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if !strings.Contains(gotQuery, "include_snoozed=true") {
@@ -190,10 +125,7 @@ func TestCatalogSearchPassesQuery(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	if err := app.catalogList(context.Background(), ident, &catalogListOptions{limit: 50}, "payments"); err != nil {
+	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50}, "payments"); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if gotQuery != "payments" {
@@ -214,10 +146,7 @@ func TestCatalogShowPreview(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	if err := app.catalogShow(context.Background(), ident, &catalogShowOptions{}, "stripe.com"); err != nil {
+	if err := app.catalogShow(v2Ctx(srv.URL), &catalogShowOptions{}, "stripe.com"); err != nil {
 		t.Fatalf("catalogShow: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -249,11 +178,8 @@ func TestCatalogImportAutoPromotes(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
 	opts := &catalogImportOptions{timeout: 5 * time.Second}
-	if err := app.catalogImport(context.Background(), ident, opts, "stripe.com"); err != nil {
+	if err := app.catalogImport(v2Ctx(srv.URL), opts, "stripe.com"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoted != "/apis/stripe.com/main/2024/revisions/rev_1:promote" {
@@ -288,12 +214,9 @@ func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
 	opts := &catalogImportOptions{timeout: 30 * time.Second}
 	start := time.Now()
-	err := app.catalogImport(context.Background(), ident, opts, "stripe.com")
+	err := app.catalogImport(v2Ctx(srv.URL), opts, "stripe.com")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -331,11 +254,8 @@ func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
 	opts := &catalogImportOptions{timeout: 5 * time.Second, noPromote: true}
-	if err := app.catalogImport(context.Background(), ident, opts, "v/n"); err != nil {
+	if err := app.catalogImport(v2Ctx(srv.URL), opts, "v/n"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoteCalled {
@@ -346,13 +266,20 @@ func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 	}
 }
 
-func TestCatalogNotRegisteredErrors(t *testing.T) {
+func TestCatalogNoContextErrors(t *testing.T) {
 	app := testApp(t)
-	// No profile seeded → no agent id.
-	ident := &identityOptions{BaseURL: "http://127.0.0.1:1"}
-	err := app.catalogList(context.Background(), ident, &catalogListOptions{}, "")
-	if err == nil || !strings.Contains(err.Error(), "jentic register") {
-		t.Fatalf("expected register hint, got %v", err)
+	// A bare context (no active V2 state) must fail with the canonical
+	// no-context resolve error, not attempt any legacy fallback.
+	err := app.catalogList(context.Background(), &catalogListOptions{}, "")
+	if err == nil || !strings.Contains(err.Error(), "no active context") {
+		t.Fatalf("expected no-context error, got %v", err)
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) || coded.Code != ux.CodeResolveFailed {
+		t.Fatalf("expected RESOLVE_FAILED coded error, got %v", err)
+	}
+	if !strings.Contains(coded.Actionable, "jentic register") {
+		t.Errorf("remediation should name jentic register, got %q", coded.Actionable)
 	}
 }
 
@@ -364,10 +291,7 @@ func TestCatalogListNotAvailable(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	err := app.catalogList(context.Background(), ident, &catalogListOptions{}, "")
+	err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{}, "")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("expected not-available error, got %v", err)
 	}
@@ -381,59 +305,51 @@ func TestCatalogShowEntryNotFound(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-
-	ident := &identityOptions{BaseURL: srv.URL}
-	err := app.catalogShow(context.Background(), ident, &catalogShowOptions{}, "ghost.com")
+	err := app.catalogShow(v2Ctx(srv.URL), &catalogShowOptions{}, "ghost.com")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected not-found error, got %v", err)
 	}
 }
 
 func TestCatalogAuthErrIsActionable(t *testing.T) {
-	// A pending/invalid-assertion mint failure must point at register, not leak
-	// the raw "Assertion is invalid" detail on its own.
-	pending := agentAuthErr(&authclient.PendingError{Detail: "Assertion is invalid"}, "default")
-	if !strings.Contains(pending.Error(), "jentic register") {
-		t.Errorf("pending error not actionable: %v", pending)
+	st := &clictx.ActiveState{ResolvedState: &sdkconfig.ResolvedState{
+		IdentityName:    "bot",
+		EnvironmentName: "prod",
+	}}
+
+	// A pending mint failure must point at approval + register, not leak the
+	// raw "Assertion is invalid" detail on its own.
+	pending := contextAuthErr(&auth.PendingError{Detail: "Assertion is invalid"}, st)
+	var coded *ux.CodedError
+	if !errors.As(pending, &coded) || coded.Code != ux.CodePendingApproval {
+		t.Fatalf("pending error not PENDING_APPROVAL: %v", pending)
 	}
 	if !strings.Contains(pending.Error(), "Assertion is invalid") {
 		t.Errorf("pending error dropped server detail: %v", pending)
 	}
-
-	generic := agentAuthErr(errors.New("boom"), "work")
-	if !strings.Contains(generic.Error(), "jentic register --profile work") {
-		t.Errorf("generic error not actionable: %v", generic)
+	if !strings.Contains(coded.Actionable, "jentic register") {
+		t.Errorf("pending remediation should name jentic register: %q", coded.Actionable)
 	}
-}
 
-// A registered profile whose mint is rejected by the server must degrade to the
-// friendly register hint rather than surfacing the raw assertion error.
-func TestCatalogSessionRejectedMintDegrades(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/oauth/token") {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"detail":"Assertion is invalid"}`))
-			return
+	// An unregistered identity degrades to the typed not-registered error.
+	unreg := contextAuthErr(fmt.Errorf("mint: %w", auth.ErrNotRegistered), st)
+	if !errors.As(unreg, &coded) || coded.Code != ux.CodeNotAuthenticated {
+		t.Fatalf("unregistered error not NOT_AUTHENTICATED: %v", unreg)
+	}
+	for _, want := range []string{"bot", "prod", "jentic register"} {
+		if !strings.Contains(unreg.Error(), want) {
+			t.Errorf("unregistered error missing %q: %v", want, unreg)
 		}
-		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-	}))
-	defer srv.Close()
-
-	app := testApp(t)
-	p, err := profile.Open(app.Paths, "default")
-	if err != nil {
-		t.Fatalf("open profile: %v", err)
-	}
-	// Registered agent but no cached token → ValidToken must mint and fail.
-	if err := p.SaveMeta(&profile.Meta{AgentID: "agnt_test", BaseURL: srv.URL, KID: "k"}); err != nil {
-		t.Fatalf("save meta: %v", err)
 	}
 
-	ident := &identityOptions{BaseURL: srv.URL}
-	err = app.catalogList(context.Background(), ident, &catalogListOptions{}, "")
-	if err == nil || !strings.Contains(err.Error(), "jentic register") {
-		t.Fatalf("expected register hint, got %v", err)
+	// Anything else (revoked key, server misconfig) still lands on a coded,
+	// actionable NOT_AUTHENTICATED — never a bare error.
+	generic := contextAuthErr(errors.New("boom"), st)
+	if !errors.As(generic, &coded) || coded.Code != ux.CodeNotAuthenticated {
+		t.Fatalf("generic error not coded: %v", generic)
+	}
+	if coded.Actionable != "jentic register" {
+		t.Errorf("generic remediation = %q, want jentic register", coded.Actionable)
 	}
 }
 

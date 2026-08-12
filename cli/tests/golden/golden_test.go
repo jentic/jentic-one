@@ -1,38 +1,38 @@
-// Package golden holds the V1 characterization (golden) tests for the CLI
-// (plan Phase 0, themes/cli-v2/impl/0.0 §2a, 16_landing_strategy.md §4).
+// Package golden holds the characterization (golden) tests for the CLI's
+// agent-facing machine contract.
 //
-// They freeze the shipped ("V1") CLI's observable contract — the off-TTY JSON
-// envelope shapes, exit codes, and stderr error form of the core agent-facing
-// commands — BEFORE any command is re-plumbed onto the V2 machinery. That makes
-// "V1 keeps working" a CI property, not a reviewer promise, through every later
-// migration phase: a golden diff is only mergeable when the same PR cites the
-// breaking-change number (14_breaking_changes.md) that authorizes it.
+// HISTORY: this suite was introduced in Phase 0 to freeze the shipped V1
+// contract through the re-plumbing phases. The activation release then removed
+// the V1 surface outright (14 BC-1: context-only resolution, no legacy
+// ~/.jentic reads, no --profile/--base-url data-plane flags) — the authorized
+// breaking change that retired the V1 goldens. What remains frozen here is the
+// V2 contract the same commands now expose: the off-TTY JSON envelope shapes,
+// exit codes, and stderr error form that agents parse.
 //
 // Drive model: each case builds the real `jentic` command tree via
 // api.TreeBuilder() and runs it through pkg/core.Run — the exact path the
-// shipped binary uses — with stdout/stderr captured to buffers and a temp
-// ~/.jentic. Output is recorded under testdata/golden/v1/<case>.txt; regenerate
-// with `go test ./tests/golden -update`.
+// shipped binary uses — with stdout/stderr captured to buffers, an isolated
+// $JENTIC_HOME, and the file-less env session (JENTIC_BASE_URL +
+// JENTIC_BEARER_TOKEN) standing in for a configured context. Output is
+// recorded under testdata/golden/v2/<case>.txt; regenerate with
+// `go test ./tests/golden -update`.
 package golden
 
 import (
 	"bytes"
-	"context"
 	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/api"
 	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
 
 // update regenerates the golden files instead of comparing (`-update`).
-var update = flag.Bool("update", false, "regenerate golden files under testdata/golden/v1")
+var update = flag.Bool("update", false, "regenerate golden files under testdata/golden/v2")
 
 // result is the observable contract of one CLI invocation.
 type result struct {
@@ -49,6 +49,11 @@ type result struct {
 func runAPI(t *testing.T, home string, env map[string]string, args ...string) result {
 	t.Helper()
 	t.Setenv(config.HomeEnv, home)
+	// Isolate the XDG store too: the V2 resolver reads ~/.config/jentic when
+	// the env session vars are absent, and a developer's real config must
+	// never leak into a recorded contract.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "xdg-state"))
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -64,28 +69,19 @@ func runAPI(t *testing.T, home string, env map[string]string, args ...string) re
 	return result{stdout: out.String(), stderr: errBuf.String(), exitCode: code}
 }
 
-// seedRegistered writes a registered profile with a cached, non-expired token
-// pointed at baseURL under home, so profile-scoped commands resolve without any
-// network round-trip — mirroring the shipped test helper of the same name.
-func seedRegistered(t *testing.T, home, name, baseURL string) {
+// seedSession points the run at baseURL via the file-less env override — the
+// V2 stand-in for the old registered-profile seeder: commands resolve an
+// authenticated session without any network or disk config.
+func seedSession(t *testing.T, baseURL string) {
 	t.Helper()
-	paths := config.Paths{Root: home}
-	p, err := profile.Open(paths, name)
-	if err != nil {
-		t.Fatalf("open profile: %v", err)
-	}
-	if err := p.SaveMeta(&profile.Meta{AgentID: "agnt_test", BaseURL: baseURL, KID: "k"}); err != nil {
-		t.Fatalf("save meta: %v", err)
-	}
-	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_abc", AccessExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("save tokens: %v", err)
-	}
+	t.Setenv("JENTIC_BASE_URL", baseURL)
+	t.Setenv("JENTIC_BEARER_TOKEN", "tok_abc")
 }
 
 // assertGolden compares (or, under -update, writes) the recorded contract.
 func assertGolden(t *testing.T, name string, got result) {
 	t.Helper()
-	path := filepath.Join("testdata", "golden", "v1", name+".txt")
+	path := filepath.Join("testdata", "golden", "v2", name+".txt")
 	rec := formatResult(got)
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -147,5 +143,3 @@ func itoa(i int) string {
 	}
 	return string(buf[pos:])
 }
-
-var _ = context.Background // reserved for cases that need an explicit context

@@ -18,7 +18,6 @@ type inspectOptions struct {
 }
 
 func newInspectCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	opts := &inspectOptions{}
 
 	cmd := &cobra.Command{
@@ -36,20 +35,19 @@ func newInspectCmd(app *app) *cobra.Command {
 			"  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.inspectE(cmd, ident, opts, args[0])
+			return app.inspectE(cmd, opts, args[0])
 		},
 	}
 
 	cmd.Flags().StringVar(&opts.revision, "revision", "", "pin to a specific revision ID")
 	cmd.Flags().StringVar(&opts.format, "format", "", "output format: json, markdown, openapi (default: json for non-TTY, markdown for TTY)")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "shorthand for --format json")
-	ident.Bind(cmd)
 
 	return cmd
 }
 
-func (a *app) inspectE(cmd *cobra.Command, ident *identityOptions, opts *inspectOptions, operationID string) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID string) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}

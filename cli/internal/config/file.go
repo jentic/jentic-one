@@ -163,19 +163,6 @@ func stripScheme(host string) string {
 	return host
 }
 
-// ResolvedProfileName resolves the profile to act on, in precedence order: the
-// flag if non-empty, else the JENTIC_PROFILE env var, else the configured
-// default profile (or the built-in default).
-func (c *FileConfig) ResolvedProfileName(flag string) string {
-	if flag != "" {
-		return flag
-	}
-	if env := os.Getenv(ProfileEnv); env != "" {
-		return env
-	}
-	return c.ResolvedDefaultProfile()
-}
-
 // ResolvedBaseURLOr resolves the control-plane base URL: the flag if non-empty,
 // otherwise the configured base URL (or the built-in default).
 func (c *FileConfig) ResolvedBaseURLOr(flag string) string {
@@ -299,16 +286,6 @@ func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
-}
-
-// SetDefaultProfile loads config.yaml, sets default_profile to name, and saves.
-// It is the persisting half of `jentic profile use`.
-func SetDefaultProfile(paths Paths, name string) error {
-	_, err := Mutate(paths, func(cfg *FileConfig) error {
-		cfg.DefaultProfile = name
-		return nil
-	})
-	return err
 }
 
 // AgentAccount returns the configured agent account and whether one is recorded.

@@ -38,11 +38,6 @@ const (
 	// HomeEnv overrides the root directory (mainly for tests and unusual setups).
 	HomeEnv = "JENTIC_HOME"
 
-	// ProfileEnv overrides the active profile for the current shell (AWS_PROFILE
-	// style). It sits between the --profile flag and config.yaml default_profile
-	// in precedence.
-	ProfileEnv = "JENTIC_PROFILE"
-
 	dataDirName     = "data"
 	logsDirName     = "logs"
 	venvDirName     = "venv"

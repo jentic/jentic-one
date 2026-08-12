@@ -80,3 +80,40 @@ func Register(baseURL, clientName string, jwks JWKS) (*RegistrationResult, error
 	}
 	return &out, nil
 }
+
+// RevokeToken revokes a token (RFC 7009) at the base URL's /oauth/revoke
+// endpoint, authenticated by accessToken. Revocation is best-effort by RFC
+// (the server treats unknown tokens as success), but transport and non-2xx
+// failures are returned so callers can warn. Same TLS/loopback invariant as
+// the other auth-server routes (F1).
+func RevokeToken(baseURL, accessToken, token string) error {
+	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	if err != nil {
+		return fmt.Errorf("invalid base URL %q: %w", baseURL, err)
+	}
+	if err := requireSecureHost(u); err != nil {
+		return err
+	}
+	u.Path += "/oauth/revoke"
+
+	reqBody, err := json.Marshal(map[string]string{"token": token})
+	if err != nil {
+		return fmt.Errorf("encoding revoke request: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("building revoke request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("revoke failed (status %d)", resp.StatusCode)
+	}
+	return nil
+}

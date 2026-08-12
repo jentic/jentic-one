@@ -23,7 +23,6 @@ type searchOptions struct {
 }
 
 func newSearchCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	opts := &searchOptions{}
 
 	cmd := &cobra.Command{
@@ -45,7 +44,7 @@ func newSearchCmd(app *app) *cobra.Command {
 			if opts.query == "" {
 				return errSearchQueryRequired
 			}
-			return app.searchE(cmd, ident, opts)
+			return app.searchE(cmd, opts)
 		},
 	}
 
@@ -55,13 +54,12 @@ func newSearchCmd(app *app) *cobra.Command {
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "pagination cursor from a previous response")
 	cmd.Flags().BoolVar(&opts.all, "all", false, "follow pagination and return all results")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON output (default when stdout is not a TTY)")
-	ident.Bind(cmd)
 
 	return cmd
 }
 
-func (a *app) searchE(cmd *cobra.Command, ident *identityOptions, opts *searchOptions) error {
-	baseURL, token, err := a.agentSession(cmd.Context(), ident)
+func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
+	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}

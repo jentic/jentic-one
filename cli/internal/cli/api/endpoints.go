@@ -10,13 +10,13 @@ import (
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 // endpointsOptions holds flags for `jentic endpoints`.
 type endpointsOptions struct {
-	identityOptions
 	json  bool
 	scope string
 	actor string
@@ -38,8 +38,6 @@ func newEndpointsCmd(app *app) *cobra.Command {
 			return app.endpointsE(cmd.Context(), o)
 		},
 	}
-	cmd.Flags().StringVar(&o.Profile, "profile", "", "profile name (default: config default_profile)")
-	cmd.Flags().StringVar(&o.BaseURL, "base-url", "", "Jentic control-plane base URL")
 	cmd.Flags().BoolVar(&o.json, "json", false, "emit JSON instead of formatted output")
 	cmd.Flags().StringVar(&o.scope, "scope", "", "only endpoints requiring this scope")
 	cmd.Flags().StringVar(&o.actor, "actor", "", "only endpoints callable by this actor type (user, agent, service_account, toolkit)")
@@ -60,18 +58,19 @@ type endpoint struct {
 
 func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 	// endpoints is unauthenticated (reads the public reference endpoint), so only
-	// the base URL matters. Context-first like agentSession: an active V2 context
-	// supplies its environment URL; the legacy profile store is the fallback.
-	var baseURL string
-	if st := a.activeState(ctx, &o.identityOptions); st != nil && st.BaseURL != "" {
-		baseURL = st.BaseURL
-	} else {
-		_, legacyBase, err := a.ResolveIdentity(o.Profile, o.BaseURL)
-		if err != nil {
-			return err
-		}
-		baseURL = legacyBase
+	// the base URL matters — the active context's environment URL.
+	st, err := a.requireState(ctx)
+	if err != nil {
+		return err
 	}
+	if st.BaseURL == "" {
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        fmt.Sprintf("environment %q has no base_url", st.EnvironmentName),
+			Actionable: "Set it with `jentic env add` / edit the environment.",
+		}
+	}
+	baseURL := st.BaseURL
 	client := apiclient.New(baseURL)
 	body, err := client.Reference(ctx)
 	if err != nil {

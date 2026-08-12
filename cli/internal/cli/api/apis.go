@@ -18,7 +18,6 @@ import (
 )
 
 func newApisCmd(app *app) *cobra.Command {
-	ident := &identityOptions{}
 	cmd := &cobra.Command{
 		Use:   "apis",
 		Short: "Browse and manage APIs in the local registry",
@@ -30,28 +29,26 @@ func newApisCmd(app *app) *cobra.Command {
 			"Requires a registered agent (run `jentic register` first).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.apisBrowse(cmd.Context(), ident)
+			return app.apisBrowse(cmd.Context())
 		},
 	}
-	cmd.PersistentFlags().StringVar(&ident.Profile, "profile", "", "profile name (default: config default_profile)")
-	cmd.PersistentFlags().StringVar(&ident.BaseURL, "base-url", "", "Jentic control-plane base URL")
 
-	cmd.AddCommand(newApisListCmd(app, ident))
-	cmd.AddCommand(newApisShowCmd(app, ident))
-	cmd.AddCommand(newApisRevisionsCmd(app, ident))
-	cmd.AddCommand(newApisOperationsCmd(app, ident))
-	cmd.AddCommand(newApisInspectCmd(app, ident))
-	cmd.AddCommand(newApisPromoteCmd(app, ident))
-	cmd.AddCommand(newApisArchiveCmd(app, ident))
-	cmd.AddCommand(newApisRmCmd(app, ident))
-	cmd.AddCommand(newApisSpecCmd(app, ident))
+	cmd.AddCommand(newApisListCmd(app))
+	cmd.AddCommand(newApisShowCmd(app))
+	cmd.AddCommand(newApisRevisionsCmd(app))
+	cmd.AddCommand(newApisOperationsCmd(app))
+	cmd.AddCommand(newApisInspectCmd(app))
+	cmd.AddCommand(newApisPromoteCmd(app))
+	cmd.AddCommand(newApisArchiveCmd(app))
+	cmd.AddCommand(newApisRmCmd(app))
+	cmd.AddCommand(newApisSpecCmd(app))
 	cmd.AddCommand(newApisImportCmd(app))
 	return cmd
 }
 
 // ── command constructors ─────────────────────────────────────────────────────
 
-func newApisListCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisListCmd(app *app) *cobra.Command {
 	o := &apisListOptions{}
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -59,7 +56,7 @@ func newApisListCmd(app *app, ident *identityOptions) *cobra.Command {
 		Short:   "List locally registered APIs",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.apisList(cmd.Context(), ident, o)
+			return app.apisList(cmd.Context(), o)
 		},
 	}
 	cmd.Flags().StringVar(&o.vendor, "vendor", "", "only APIs from this vendor")
@@ -69,14 +66,14 @@ func newApisListCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newApisShowCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisShowCmd(app *app) *cobra.Command {
 	o := &apisShowOptions{}
 	cmd := &cobra.Command{
 		Use:   "show <vendor/name/version>",
 		Short: "Show an API and preview its operations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisShow(cmd.Context(), ident, o, args[0])
+			return app.apisShow(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().IntVar(&o.limit, "limit", 0, "max operations to preview (default 50)")
@@ -84,7 +81,7 @@ func newApisShowCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newApisRevisionsCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisRevisionsCmd(app *app) *cobra.Command {
 	o := &apisRevisionsOptions{}
 	cmd := &cobra.Command{
 		Use:     "revisions <vendor/name/version>",
@@ -92,7 +89,7 @@ func newApisRevisionsCmd(app *app, ident *identityOptions) *cobra.Command {
 		Short:   "List the revisions of an API",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisRevisions(cmd.Context(), ident, o, args[0])
+			return app.apisRevisions(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringSliceVar(&o.states, "state", nil, "filter by state (draft, published, archived); repeatable")
@@ -102,7 +99,7 @@ func newApisRevisionsCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newApisOperationsCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisOperationsCmd(app *app) *cobra.Command {
 	o := &apisOperationsOptions{}
 	cmd := &cobra.Command{
 		Use:     "operations <vendor/name/version>",
@@ -110,7 +107,7 @@ func newApisOperationsCmd(app *app, ident *identityOptions) *cobra.Command {
 		Short:   "List the operations of an API (current revision by default)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisOperations(cmd.Context(), ident, o, args[0])
+			return app.apisOperations(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&o.revision, "revision", "", "list operations for a specific revision id")
@@ -120,14 +117,14 @@ func newApisOperationsCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newApisInspectCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisInspectCmd(app *app) *cobra.Command {
 	o := &apisInspectOptions{}
 	cmd := &cobra.Command{
 		Use:   "inspect <operation_id>",
 		Short: "Inspect an operation's structural detail",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisInspect(cmd.Context(), ident, o, args[0])
+			return app.apisInspect(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&o.revision, "revision", "", "pin to a specific revision id")
@@ -135,29 +132,29 @@ func newApisInspectCmd(app *app, ident *identityOptions) *cobra.Command {
 	return cmd
 }
 
-func newApisPromoteCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisPromoteCmd(app *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "promote <vendor/name/version> <revision_id>",
 		Short: "Promote a draft revision to live",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisLifecycle(cmd.Context(), ident, args[0], args[1], lifecyclePromote)
+			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecyclePromote)
 		},
 	}
 }
 
-func newApisArchiveCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisArchiveCmd(app *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "archive <vendor/name/version> <revision_id>",
 		Short: "Archive a draft revision",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisLifecycle(cmd.Context(), ident, args[0], args[1], lifecycleArchive)
+			return app.apisLifecycle(cmd.Context(), args[0], args[1], lifecycleArchive)
 		},
 	}
 }
 
-func newApisRmCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisRmCmd(app *app) *cobra.Command {
 	o := &apisRmOptions{}
 	cmd := &cobra.Command{
 		Use:     "rm <vendor/name/version> [revision_id]",
@@ -169,21 +166,21 @@ func newApisRmCmd(app *app, ident *identityOptions) *cobra.Command {
 			if len(args) == 2 {
 				revisionID = args[1]
 			}
-			return app.apisRemove(cmd.Context(), ident, o, args[0], revisionID)
+			return app.apisRemove(cmd.Context(), o, args[0], revisionID)
 		},
 	}
 	cmd.Flags().BoolVarP(&o.yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
 }
 
-func newApisSpecCmd(app *app, ident *identityOptions) *cobra.Command {
+func newApisSpecCmd(app *app) *cobra.Command {
 	o := &apisSpecOptions{}
 	cmd := &cobra.Command{
 		Use:   "spec <vendor/name/version>",
 		Short: "Download the OpenAPI spec for an API",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.apisSpec(cmd.Context(), ident, o, args[0])
+			return app.apisSpec(cmd.Context(), o, args[0])
 		},
 	}
 	cmd.Flags().StringVar(&o.revision, "revision", "", "download a specific revision id (default: current/live)")
@@ -244,10 +241,10 @@ const (
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-// apisSession resolves the active profile's agent token and returns an apis
+// apisSession resolves the active context's agent token and returns an apis
 // client bound to the control-plane base URL.
-func (a *app) apisSession(ctx context.Context, ident *identityOptions) (*apiclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx, ident)
+func (a *app) apisSession(ctx context.Context) (*apiclient.Client, string, error) {
+	baseURL, token, err := a.agentSession(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -256,17 +253,17 @@ func (a *app) apisSession(ctx context.Context, ident *identityOptions) (*apiclie
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
-func (a *app) apisBrowse(ctx context.Context, ident *identityOptions) error {
+func (a *app) apisBrowse(ctx context.Context) error {
 	if !term.IsTerminal(os.Stdin.Fd()) {
-		return a.apisList(ctx, ident, &apisListOptions{limit: 50})
+		return a.apisList(ctx, &apisListOptions{limit: 50})
 	}
-	return a.runApisBrowser(ctx, ident)
+	return a.runApisBrowser(ctx)
 }
 
 // ── list ─────────────────────────────────────────────────────────────────────
 
-func (a *app) apisList(ctx context.Context, ident *identityOptions, o *apisListOptions) error {
-	client, token, err := a.apisSession(ctx, ident)
+func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -328,12 +325,12 @@ func apiRow(api apiclient.API) string {
 
 // ── show ─────────────────────────────────────────────────────────────────────
 
-func (a *app) apisShow(ctx context.Context, ident *identityOptions, o *apisShowOptions, ref string) error {
+func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -421,12 +418,12 @@ func apiOpLine(op apiclient.Operation) string {
 
 // ── revisions ────────────────────────────────────────────────────────────────
 
-func (a *app) apisRevisions(ctx context.Context, ident *identityOptions, o *apisRevisionsOptions, ref string) error {
+func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref string) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -487,12 +484,12 @@ func revisionLine(rev apiclient.Revision) string {
 
 // ── operations ───────────────────────────────────────────────────────────────
 
-func (a *app) apisOperations(ctx context.Context, ident *identityOptions, o *apisOperationsOptions, ref string) error {
+func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref string) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -526,8 +523,8 @@ func (a *app) apisOperations(ctx context.Context, ident *identityOptions, o *api
 
 // ── inspect ──────────────────────────────────────────────────────────────────
 
-func (a *app) apisInspect(ctx context.Context, ident *identityOptions, o *apisInspectOptions, operationID string) error {
-	client, token, err := a.apisSession(ctx, ident)
+func (a *app) apisInspect(ctx context.Context, o *apisInspectOptions, operationID string) error {
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -546,12 +543,12 @@ func (a *app) apisInspect(ctx context.Context, ident *identityOptions, o *apisIn
 
 // ── lifecycle (promote / archive) ────────────────────────────────────────────
 
-func (a *app) apisLifecycle(ctx context.Context, ident *identityOptions, ref, revisionID string, action lifecycleAction) error {
+func (a *app) apisLifecycle(ctx context.Context, ref, revisionID string, action lifecycleAction) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -572,7 +569,7 @@ func (a *app) apisLifecycle(ctx context.Context, ident *identityOptions, ref, re
 
 // ── rm (delete) ──────────────────────────────────────────────────────────────
 
-func (a *app) apisRemove(ctx context.Context, ident *identityOptions, o *apisRmOptions, ref, revisionID string) error {
+func (a *app) apisRemove(ctx context.Context, o *apisRmOptions, ref, revisionID string) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
@@ -596,7 +593,7 @@ func (a *app) apisRemove(ctx context.Context, ident *identityOptions, o *apisRmO
 		}
 	}
 
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -633,12 +630,12 @@ func confirmDelete(target string) (bool, error) {
 
 // ── spec ─────────────────────────────────────────────────────────────────────
 
-func (a *app) apisSpec(ctx context.Context, ident *identityOptions, o *apisSpecOptions, ref string) error {
+func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) error {
 	vendor, name, version, err := parseAPIRef(ref)
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx, ident)
+	client, token, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}

@@ -31,6 +31,11 @@ const (
 	CodeConfinementMissing = "CONFINEMENT_UNAVAILABLE"
 	CodeTransportError     = "TRANSPORT_ERROR"
 	CodeInternalError      = "INTERNAL_ERROR"
+	// CodeMigrationRequired gates every command on an unmigrated V1 machine
+	// (legacy ~/.jentic profiles, no MIGRATED marker): the V2 CLI no longer
+	// reads the legacy store, so nothing can run until `jentic migrate` copies
+	// it into the XDG context model. actionable_step is always "jentic migrate".
+	CodeMigrationRequired = "MIGRATION_REQUIRED"
 )
 
 // errorCodeExit maps each closed error_code to its exit code (13 §3a "Typical
@@ -49,6 +54,7 @@ var errorCodeExit = map[string]int{
 	CodeConfinementMissing: ExitError,
 	CodeTransportError:     ExitError,
 	CodeInternalError:      ExitError,
+	CodeMigrationRequired:  ExitError,
 }
 
 // exitCodeFor returns the exit code for a closed error_code. An unknown/empty code

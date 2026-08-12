@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -11,42 +12,61 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/profile"
 )
 
-// seedLegacyProfile writes a legacy DCR profile (agent.key + profile.yaml +
-// tokens.json) under paths, returning nothing. It mirrors what `jentic register`
-// leaves on disk so migrate has real material to copy.
-func seedLegacyDCRProfile(t *testing.T, paths legacyconfig.Paths, name, baseURL string) {
+// writeLegacyProfileFiles writes raw V1 profile files (profile.yaml + optional
+// friends) under paths, byte-compatible with what the V1 CLI left on disk. The
+// V1 writer packages are deleted, so the tests seed the layout directly — which
+// also pins the on-disk contract migrate must keep reading.
+func writeLegacyProfileFiles(t *testing.T, paths legacyconfig.Paths, name string, meta *legacyMeta, files map[string][]byte) {
 	t.Helper()
-	p, err := profile.Open(paths, name)
+	dir := filepath.Join(paths.ProfilesDir(), name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	metaBytes, err := yaml.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SaveMeta(&profile.Meta{
-		BaseURL: baseURL,
-		AgentID: "agnt_" + name,
-		KID:     "jentic-cli-" + name,
-	}); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, legacyProfileFile), metaBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Ed25519 PKCS#8 PEM key, exactly as agentkey.Save writes it.
+	for fname, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, fname), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// seedLegacyDCRProfile writes a legacy DCR profile (agent.key + profile.yaml +
+// tokens.json) under paths. It mirrors what V1 `jentic register` left on disk
+// so migrate has real material to copy.
+func seedLegacyDCRProfile(t *testing.T, paths legacyconfig.Paths, name, baseURL string) {
+	t.Helper()
+	// Ed25519 PKCS#8 PEM key, exactly as the V1 agentkey.Save wrote it.
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	if err := os.WriteFile(p.KeyPath(), pemBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.SaveTokens(&profile.Tokens{
+	toks, err := json.Marshal(&legacyTokens{
 		AccessToken:     "access-" + name,
 		RefreshToken:    "refresh-should-be-dropped",
 		AccessExpiresAt: time.Now().Add(time.Hour),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	writeLegacyProfileFiles(t, paths, name, &legacyMeta{
+		BaseURL: baseURL,
+		AgentID: "agnt_" + name,
+	}, map[string][]byte{
+		legacyKeyFile:    pemBytes,
+		legacyTokensFile: toks,
+	})
 }
 
 func TestMigrate_CopiesProfilesToXDG(t *testing.T) {
@@ -57,7 +77,12 @@ func TestMigrate_CopiesProfilesToXDG(t *testing.T) {
 	// Seed two legacy profiles and mark one the default.
 	seedLegacyDCRProfile(t, legacyPaths, "work", "https://api.jentic.com")
 	seedLegacyDCRProfile(t, legacyPaths, "staging", "https://staging.jentic.com:8443")
-	if err := legacyconfig.SetDefaultProfile(legacyPaths, "work"); err != nil {
+	lcfg, err := legacyconfig.Load(legacyPaths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lcfg.DefaultProfile = "work"
+	if err := lcfg.Save(legacyPaths); err != nil {
 		t.Fatal(err)
 	}
 
@@ -138,16 +163,9 @@ func TestMigrate_APIKeyProfile(t *testing.T) {
 	withXDG(t)
 	app := testApp(t)
 
-	p, err := profile.Open(app.Paths, "apikeyprof")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.SaveMeta(&profile.Meta{BaseURL: "https://api.jentic.com", AuthMode: profile.AuthModeAPIKey}); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.SaveAPIKey("jak_migratedkey"); err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyProfileFiles(t, app.Paths, "apikeyprof",
+		&legacyMeta{BaseURL: "https://api.jentic.com", AuthMode: legacyAuthModeAPIKey},
+		map[string][]byte{legacyAPIKeyFile: []byte("jak_migratedkey\n")})
 
 	if _, err := runMigrate(app, false); err != nil {
 		t.Fatal(err)

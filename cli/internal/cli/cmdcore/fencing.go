@@ -99,6 +99,15 @@ func installInterceptor(app *App, root *cobra.Command) {
 			return ferr
 		}
 
+		// 4.5. MIGRATE GATE (activation): on a machine that still carries an
+		// unmigrated V1 profile store, stop every gated command and demand
+		// `jentic migrate`. Reported through the audience so agents get the
+		// machine envelope with actionable_step and humans a styled line.
+		if gerr := migrateGateError(app, cmd); gerr != nil {
+			audience.ReportError(gerr, gerr.Actionable)
+			return gerr
+		}
+
 		// 5. Inject Audience + ActiveState (and mirror the palette for theme.FromContext).
 		ctx := ux.WithAudience(cmd.Context(), audience)
 		ctx = clictx.WithActiveState(ctx, state)

@@ -223,7 +223,7 @@ func TestSbplPathEscaping(t *testing.T) {
 // agent socket and act as the operator.
 func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
 	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
-		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+		"", "/Users/Shared/alice-local-agent", nil, nil)
 	// The snippet is the last sudo arg (…-c <snippet>).
 	snippet := cmd.Args[len(cmd.Args)-1]
 	for _, v := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO"} {
@@ -244,7 +244,7 @@ func TestConfineLaunchCmdUnsetsSensitiveEnv(t *testing.T) {
 // matches the sudoers NOPASSWD rule exactly.
 func TestConfineLaunchCmdUsesAbsoluteShell(t *testing.T) {
 	cmd := ConfineLaunchCmd(context.Background(), "alice-local-agent", "/usr/bin/claude",
-		"", "/Users/Shared/alice-local-agent", "", nil, nil)
+		"", "/Users/Shared/alice-local-agent", nil, nil)
 
 	// argv shape: sudo -u <user> -H <shell> -c <snippet> — the shell is the
 	// third-to-last arg and must be the absolute agentLaunchShell.

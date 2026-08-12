@@ -41,7 +41,6 @@ func TestExecuteCmdJSONEnvelope(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "listPets",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -101,7 +100,6 @@ func TestExecuteCmdDeniedSurfacesDirectiveAndExits2(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "GET:/v1/pets",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -158,7 +156,6 @@ func TestExecuteCmdCredentialGapDirectiveExits2(t *testing.T) {
 	root.SetErr(errBuf)
 	root.SetArgs([]string{
 		"execute", "GET:/v1/pets",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -200,7 +197,6 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 	root.SetErr(app.Err)
 	root.SetArgs([]string{
 		"execute", "GET:/v1/pets",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -246,7 +242,6 @@ func TestExecuteCmdReconnect401DirectiveExits2(t *testing.T) {
 	root.SetErr(errBuf)
 	root.SetArgs([]string{
 		"execute", "GET:/v1/pets",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -295,7 +290,6 @@ func TestExecuteCmdUpstreamPassthrough4xxExitsZero(t *testing.T) {
 			root.SetArgs([]string{
 				"execute", "GET:/v1/pets",
 				"--json",
-				"--base-url", srv.URL,
 				"--broker-scheme", "http",
 				"--broker-host", srv.Listener.Addr().String(),
 			})
@@ -327,7 +321,6 @@ func TestExecuteCmdSuccessExitsZero(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "POST:/v1/pets",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -361,7 +354,6 @@ func TestExecuteCmdPathSubstitution(t *testing.T) {
 		"execute", "getPet",
 		"--path", "petId=42",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -414,7 +406,6 @@ func TestExecuteCmdPathParamsEscapeTraversal(t *testing.T) {
 		"execute", "getItem",
 		"--path", "itemId=../admin",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -451,7 +442,6 @@ func TestExecuteCmdRawMode(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "getData",
 		"--raw",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -486,7 +476,6 @@ func TestExecuteCmdUpstream4xxExitsZero(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "missing",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -522,7 +511,6 @@ func TestExecuteCmdBadOperationExitsCode2(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "badOp",
 		"--json",
-		"--base-url", srv.URL,
 	})
 
 	err := root.Execute()
@@ -566,7 +554,6 @@ func TestExecuteCmdSendsBody(t *testing.T) {
 		"execute", "createUser",
 		"-d", `{"name":"Alice"}`,
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -607,7 +594,6 @@ func TestExecuteCmdQueryParams(t *testing.T) {
 		"--query", "limit=10",
 		"--query", "offset=5",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -645,7 +631,6 @@ func TestExecuteCmdQueryParamsEncoded(t *testing.T) {
 		"--query", "name=foo bar",
 		"--query", "tag=a&b",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -680,7 +665,6 @@ func TestExecuteCmdMethodPathDirect(t *testing.T) {
 		"execute", "POST:/v1/users",
 		"-d", `{"name":"Alice"}`,
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -724,7 +708,6 @@ func TestExecuteCmdMethodPathWithPathParams(t *testing.T) {
 		"execute", "GET:/v1/pets/{petId}",
 		"--path", "petId=42",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -762,7 +745,6 @@ func TestExecuteCmdMethodURLDirect(t *testing.T) {
 	root.SetArgs([]string{
 		"execute", "GET:https://upstream.example/v3/markets",
 		"--json",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -843,7 +825,6 @@ func TestExecuteSendsCorrelationAndIdempotencyHeaders(t *testing.T) {
 		"--json",
 		"--data", `{"name":"x"}`,
 		"--idempotency-key", "idem-abc-123",
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})
@@ -891,7 +872,6 @@ func TestExecuteDryRunDoesNotCallBroker(t *testing.T) {
 		"execute", "createThing",
 		"--json", "--dry-run",
 		"--data", `{"name":"x"}`,
-		"--base-url", srv.URL,
 		"--broker-scheme", "http",
 		"--broker-host", srv.Listener.Addr().String(),
 	})

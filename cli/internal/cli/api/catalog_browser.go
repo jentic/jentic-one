@@ -43,8 +43,8 @@ func (f catalogFilter) label() string {
 func (f catalogFilter) next() catalogFilter { return (f + 1) % 3 }
 
 // runCatalogBrowser opens the interactive two-column catalog browser.
-func (a *app) runCatalogBrowser(ctx context.Context, ident *identityOptions) error {
-	client, token, err := a.catalogSession(ctx, ident)
+func (a *app) runCatalogBrowser(ctx context.Context) error {
+	client, token, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}

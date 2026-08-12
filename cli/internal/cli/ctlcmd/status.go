@@ -3,26 +3,28 @@ package ctlcmd
 import (
 	"context"
 	"fmt"
+	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/agentauth"
+	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/client/auth"
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/catalogclient"
-	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
-	"github.com/spf13/cobra"
 )
 
 func newStatusCmd(app *app) *cobra.Command {
 	opts := &identityOptions{}
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show install, server, and agent health",
+		Short: "Show install, server, and identity health",
 		Long: "status is a health dashboard for the local jentic setup. It reports the\n" +
 			"recorded install (mode/db/source), whether the control-plane server is\n" +
-			"reachable and its version, and the agent identity/token state for a\n" +
-			"profile. It degrades gracefully: missing pieces are reported, not fatal.",
+			"reachable and its version, and the active V2 context's identity/token\n" +
+			"state. It degrades gracefully: missing pieces are reported, not fatal.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.statusE(cmd.Context(), opts)
@@ -33,7 +35,7 @@ func newStatusCmd(app *app) *cobra.Command {
 }
 
 func (a *app) statusE(ctx context.Context, opts *identityOptions) error {
-	profileName, baseURL, err := a.ResolveIdentity(opts.Profile, opts.BaseURL)
+	baseURL, err := a.ResolveBaseURL(opts.BaseURL)
 	if err != nil {
 		return err
 	}
@@ -44,7 +46,7 @@ func (a *app) statusE(ctx context.Context, opts *identityOptions) error {
 	fmt.Fprintln(a.Out)
 	a.statusBroker()
 	fmt.Fprintln(a.Out)
-	a.statusAgent(ctx, profileName, baseURL)
+	a.statusIdentity(ctx)
 	return nil
 }
 
@@ -141,61 +143,43 @@ func (a *app) statusBroker() {
 	}
 }
 
-// statusAgent reports the profile's registration and token state, and performs a
-// best-effort identity check only with an already-valid cached token (so status
-// never mints/refreshes a token as a side effect).
-func (a *app) statusAgent(ctx context.Context, profileName, baseURL string) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Agent"))
+// statusIdentity reports the ACTIVE V2 context's identity and token state,
+// read-only from the XDG store (it never mints or refreshes a token; the /me
+// probe runs only with an already-valid cached token).
+func (a *app) statusIdentity(ctx context.Context) {
+	fmt.Fprintln(a.Out, theme.Heading.Render("Identity"))
 
-	sess, err := agentauth.Open(a.Paths, profileName, baseURL)
+	st, err := sdkconfig.LoadState("")
 	if err != nil {
-		fmt.Fprintln(a.Out, dotWarn()+" "+theme.Warnf("profile %q unavailable: %v", profileName, err))
+		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no active context — run `jentic register` (or `jentic migrate` on an upgraded machine)"))
 		return
 	}
-	if sess.Meta.IsAPIKey() {
-		dot := dotOK()
-		if sess.APIKey == "" {
-			dot = dotWarn()
-		}
-		fmt.Fprintln(a.Out, dot+" "+theme.Field("profile", profileName))
-		fmt.Fprintln(a.Out, "  "+theme.Field("auth", "api-key"))
-		fmt.Fprintln(a.Out, "  "+theme.Field("base_url", sess.Meta.BaseURL))
-		if sess.Meta.AgentID != "" {
-			fmt.Fprintln(a.Out, "  "+theme.Field("agent_id", sess.Meta.AgentID))
-		}
-		fmt.Fprintln(a.Out, "  "+theme.Field("key", cmdcore.APIKeyLabel(sess.APIKey)))
-		if sess.APIKey != "" {
-			if me, meErr := sess.Client.Me(ctx, sess.APIKey); meErr == nil {
-				fmt.Fprintln(a.Out, "  "+theme.Field("identity", identityLabel(me)))
-			} else {
-				fmt.Fprintln(a.Out, "  "+theme.Dimf("identity check failed: %v", meErr))
-			}
-		}
-		return
-	}
-	if sess.Meta.AgentID == "" {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Field("profile", profileName))
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("not registered — run `jentic register`"))
+	if st.InjectedBearerToken != "" {
+		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("session", "file-less ($JENTIC_BEARER_TOKEN)"))
+		fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
 		return
 	}
 
-	tokens, _ := sess.Profile.LoadTokens()
-	state, dot := tokenStatus(tokens)
-	fmt.Fprintln(a.Out, dot+" "+theme.Field("profile", profileName))
-	fmt.Fprintln(a.Out, "  "+theme.Field("base_url", sess.Meta.BaseURL))
-	fmt.Fprintln(a.Out, "  "+theme.Field("agent_id", sess.Meta.AgentID))
-	if sess.Meta.AgentName != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("name", sess.Meta.AgentName))
+	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
+
+	// API-key credential (user identity): present == usable, no expiry to show.
+	if key, kerr := auth.ReadAPIKey(ref); kerr == nil && key != "" {
+		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("identity", st.IdentityName))
+		fmt.Fprintln(a.Out, "  "+theme.Field("environment", st.EnvironmentName))
+		fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
+		fmt.Fprintln(a.Out, "  "+theme.Field("auth", "api-key"))
+		return
 	}
+
+	tokens, _ := auth.ReadTokens(ref)
+	state, dot := tokenStatus(tokens)
+	fmt.Fprintln(a.Out, dot+" "+theme.Field("identity", st.IdentityName))
+	fmt.Fprintln(a.Out, "  "+theme.Field("environment", st.EnvironmentName))
+	fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
 	fmt.Fprintln(a.Out, "  "+theme.Field("token", state))
 
-	if tokens != nil && !tokens.Expired(0) {
-		if me, meErr := sess.Client.Me(ctx, tokens.AccessToken); meErr == nil {
-			fmt.Fprintln(a.Out, "  "+theme.Field("identity", identityLabel(me)))
-		} else {
-			fmt.Fprintln(a.Out, "  "+theme.Dimf("identity check failed: %v", meErr))
-		}
-		a.statusCatalogUpdates(ctx, sess.Meta.BaseURL, tokens.AccessToken)
+	if tokens != nil && tokens.AccessToken != "" && time.Now().Before(tokens.ExpiresAt) {
+		a.statusCatalogUpdates(ctx, st.BaseURL, tokens.AccessToken)
 	}
 }
 

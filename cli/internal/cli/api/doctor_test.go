@@ -7,13 +7,13 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jentic/jentic-one/cli/internal/profile"
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
 // meServer returns an httptest server answering GET /me with a minimal agent
@@ -30,20 +30,18 @@ func meServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-// TestDoctorReportsReachableIdentity: with a registered profile + reachable /me,
+// TestDoctorReportsReachableIdentity: with an active context + reachable /me,
 // the report includes a passing reachability and identity row.
 func TestDoctorReportsReachableIdentity(t *testing.T) {
 	srv := meServer(t)
 	defer srv.Close()
 
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
 
-	// Override the identity to the seeded profile's base URL.
+	// The doctor inspects the ACTIVE context from the command context.
 	cmd := newDoctorCmd(app)
-	cmd.SetContext(t.Context())
+	cmd.SetContext(v2Ctx(srv.URL))
 	_ = cmd.Flags().Set("json", "true")
-	_ = cmd.Flags().Set("base-url", srv.URL)
 	if err := cmd.RunE(cmd, nil); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
@@ -153,9 +151,10 @@ func TestDoctorIsReadOnlyOnPristineHome(t *testing.T) {
 	}
 }
 
-// TestDoctorDoesNotMintTokens: with a registered profile whose cached token is
-// EXPIRED, doctor must warn (no fresh token) rather than hit the token endpoint
-// — a mint would both violate read-only and persist a new tokens.json.
+// TestDoctorDoesNotMintTokens: with an active context whose identity has no
+// cached token (and is not registered in the XDG store), doctor must warn
+// rather than hit the token endpoint — a mint would both violate read-only and
+// persist fresh token state.
 func TestDoctorDoesNotMintTokens(t *testing.T) {
 	var tokenCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,38 +165,30 @@ func TestDoctorDoesNotMintTokens(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// Isolate the XDG store so the identity resolves as credential-less.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
 	app := testApp(t)
-	seedRegistered(t, app, "default", srv.URL)
-	p, err := profile.Open(app.Paths, "default")
-	if err != nil {
-		t.Fatalf("open profile: %v", err)
-	}
-	if err := p.SaveTokens(&profile.Tokens{AccessToken: "tok_old", AccessExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
-		t.Fatalf("save expired tokens: %v", err)
-	}
-	before := readFile(t, filepath.Join(p.Dir(), "tokens.json"))
+	// Active context WITHOUT an injected token: doctor must inspect only.
+	ctx := clictx.WithActiveState(t.Context(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:    "test-agent",
+			EnvironmentName: "test",
+			BaseURL:         srv.URL,
+		},
+		Mode: clictx.ModeHuman,
+	})
 
 	cmd := newDoctorCmd(app)
-	cmd.SetContext(t.Context())
+	cmd.SetContext(ctx)
 	_ = cmd.Flags().Set("json", "true")
-	_ = cmd.Flags().Set("base-url", srv.URL)
 	_ = cmd.RunE(cmd, nil)
 
 	if tokenCalls != 0 {
 		t.Errorf("doctor hit the token endpoint %d time(s); it must never mint", tokenCalls)
 	}
-	if after := readFile(t, filepath.Join(p.Dir(), "tokens.json")); after != before {
-		t.Error("doctor rewrote tokens.json; it must be read-only")
-	}
-}
-
-func readFile(t *testing.T, path string) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
 }
 
 // ensure the doctor command wires cleanly (constructor + flags) — a cheap guard
