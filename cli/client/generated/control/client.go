@@ -4647,6 +4647,17 @@ type ClientInterface interface {
 	// Corresponds with GET /auth/health (the `AuthHealth` operationId).
 	AuthHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// AuthIdpDescriptor External IdP login descriptor
+	//
+	// Public capability hint: whether IdP login is enabled, and which provider.
+	//
+	// The SPA reads this before login to decide whether to show a "Continue with
+	// <provider>" button. Unauthenticated and secret-free — it advertises only the
+	// enabled flag and the provider name (never client secrets or endpoints).
+	//
+	// Corresponds with GET /auth/idp (the `AuthIdpDescriptor` operationId).
+	AuthIdpDescriptor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// LoginWithBody Log in
 	//
 	// Authenticate and return a JWT token bundle.
@@ -5083,7 +5094,7 @@ type ClientInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNote(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizeOauthCallback Oauth Callback
+	// AuthorizeOauthCallback Authorize Oauth Callback
 	//
 	// External IdP callback — exchanges upstream code and issues platform auth code.
 	//
@@ -7085,6 +7096,27 @@ func (c *Client) AuthHealth(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
+// AuthIdpDescriptor External IdP login descriptor
+//
+// Public capability hint: whether IdP login is enabled, and which provider.
+//
+// The SPA reads this before login to decide whether to show a "Continue with
+// <provider>" button. Unauthenticated and secret-free — it advertises only the
+// enabled flag and the provider name (never client secrets or endpoints).
+//
+// Corresponds with GET /auth/idp (the `AuthIdpDescriptor` operationId).
+func (c *Client) AuthIdpDescriptor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAuthIdpDescriptorRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // LoginWithBody Log in
 //
 // Authenticate and return a JWT token bundle.
@@ -8011,7 +8043,7 @@ func (c *Client) UpdateNote(ctx context.Context, noteId string, params *UpdateNo
 	return c.Client.Do(req)
 }
 
-// AuthorizeOauthCallback Oauth Callback
+// AuthorizeOauthCallback Authorize Oauth Callback
 //
 // External IdP callback — exchanges upstream code and issues platform auth code.
 //
@@ -12361,6 +12393,33 @@ func NewAuthHealthRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/auth/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAuthIdpDescriptorRequest constructs an http.Request for the AuthIdpDescriptor method
+func NewAuthIdpDescriptorRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/auth/idp")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -17995,6 +18054,19 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /auth/health (the `AuthHealth` operationId).
 	AuthHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthHealthHTTPResp, error)
 
+	// AuthIdpDescriptorWithResponse External IdP login descriptor
+	//
+	// Public capability hint: whether IdP login is enabled, and which provider.
+	//
+	// The SPA reads this before login to decide whether to show a "Continue with
+	// <provider>" button. Unauthenticated and secret-free — it advertises only the
+	// enabled flag and the provider name (never client secrets or endpoints).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /auth/idp (the `AuthIdpDescriptor` operationId).
+	AuthIdpDescriptorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthIdpDescriptorHTTPResp, error)
+
 	// LoginWithBodyWithResponse Log in
 	//
 	// Authenticate and return a JWT token bundle.
@@ -18497,7 +18569,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /notes/{note_id} (the `UpdateNote` operationId).
 	UpdateNoteWithResponse(ctx context.Context, noteId string, params *UpdateNoteParams, body UpdateNoteJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateNoteHTTPResp, error)
 
-	// AuthorizeOauthCallbackWithResponse Oauth Callback
+	// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 	//
 	// External IdP callback — exchanges upstream code and issues platform auth code.
 	//
@@ -23814,6 +23886,75 @@ func (r AuthHealthHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r AuthHealthHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AuthIdpDescriptorHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AuthIdpDescriptorHTTPResp) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r AuthIdpDescriptorHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r AuthIdpDescriptorHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AuthIdpDescriptorHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AuthIdpDescriptorHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AuthIdpDescriptorHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -32604,6 +32745,25 @@ func (c *ClientWithResponses) AuthHealthWithResponse(ctx context.Context, reqEdi
 	return ParseAuthHealthHTTPResp(rsp)
 }
 
+// AuthIdpDescriptorWithResponse External IdP login descriptor
+//
+// Public capability hint: whether IdP login is enabled, and which provider.
+//
+// The SPA reads this before login to decide whether to show a "Continue with
+// <provider>" button. Unauthenticated and secret-free — it advertises only the
+// enabled flag and the provider name (never client secrets or endpoints).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /auth/idp (the `AuthIdpDescriptor` operationId).
+func (c *ClientWithResponses) AuthIdpDescriptorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthIdpDescriptorHTTPResp, error) {
+	rsp, err := c.AuthIdpDescriptor(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAuthIdpDescriptorHTTPResp(rsp)
+}
+
 // LoginWithBodyWithResponse Log in
 //
 // Authenticate and return a JWT token bundle.
@@ -33400,7 +33560,7 @@ func (c *ClientWithResponses) UpdateNoteWithResponse(ctx context.Context, noteId
 	return ParseUpdateNoteHTTPResp(rsp)
 }
 
-// AuthorizeOauthCallbackWithResponse Oauth Callback
+// AuthorizeOauthCallbackWithResponse Authorize Oauth Callback
 //
 // External IdP callback — exchanges upstream code and issues platform auth code.
 //
@@ -38333,6 +38493,60 @@ func ParseAuthHealthHTTPResp(rsp *http.Response) (*AuthHealthHTTPResp, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest map[string]string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAuthIdpDescriptorHTTPResp parses an HTTP response from a AuthIdpDescriptorWithResponse call
+func ParseAuthIdpDescriptorHTTPResp(rsp *http.Response) (*AuthIdpDescriptorHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AuthIdpDescriptorHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
