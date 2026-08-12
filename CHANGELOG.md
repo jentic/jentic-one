@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.3](https://github.com/jentic/jentic-one/compare/v0.30.2...v0.30.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **broker:** gate background jobs on enabled apps, not DB presence ([#1028](https://github.com/jentic/jentic-one/issues/1028)) ([b6cf312](https://github.com/jentic/jentic-one/commit/b6cf3122b21d333f46615277ad480023757f33c0))
+
 ## [0.30.2](https://github.com/jentic/jentic-one/compare/v0.30.1...v0.30.2) (2026-08-12)
 
 
