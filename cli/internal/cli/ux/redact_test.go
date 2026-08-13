@@ -3,6 +3,7 @@ package ux
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -74,7 +75,7 @@ type genLike struct {
 }
 
 func TestSafeMarshal_RegisteredSensitiveFields(t *testing.T) {
-	RegisterSensitiveFields(map[string][]string{"genLike": {"token_value"}})
+	RegisterSensitiveFields(reflect.TypeOf(genLike{}).PkgPath(), map[string][]string{"genLike": {"token_value"}})
 	out := string(safeMarshal(genLike{Token: "supersecret", Name: "ok"}))
 	if strings.Contains(out, "supersecret") {
 		t.Errorf("registered sensitive field leaked: %s", out)
@@ -165,5 +166,41 @@ func TestSafeMarshalIndent_IsIndented(t *testing.T) {
 	out := safeMarshalIndent(map[string]any{"a": 1})
 	if !bytes.Contains(out, []byte("\n")) {
 		t.Errorf("indent output not multi-line: %s", out)
+	}
+}
+
+// TestRegisteredSensitiveNameRedactedInBytesAndValue pins GEN-21: a field a plane
+// declared `x-sensitive` must be redacted on the RAW passthrough paths (byte
+// backstop + untyped map value) even when its name does NOT trip the generic
+// key heuristics — because the raw path has no typed struct to key layer-1 by.
+// We register an innocuous-looking name ("vault_handle") that isSensitiveKey
+// would let through, then assert both RedactBytes and redactValue scrub it.
+func TestRegisteredSensitiveNameRedactedInBytesAndValue(t *testing.T) {
+	const field = "vault_handle"
+	if isSensitiveKey(field) {
+		t.Fatalf("test premise broken: %q must NOT be caught by the generic heuristics", field)
+	}
+	RegisterSensitiveFields(reflect.TypeOf(genLike{}).PkgPath(), map[string][]string{"Widget": {field}})
+
+	// Byte backstop (jentic api passthrough / execute --raw).
+	body := []byte(`{"vault_handle":"abc123","name":"safe"}`)
+	got := string(RedactBytes(body))
+	if strings.Contains(got, "abc123") {
+		t.Errorf("x-sensitive field leaked through RedactBytes: %s", got)
+	}
+	if !strings.Contains(got, `"vault_handle":"[REDACTED]"`) {
+		t.Errorf("x-sensitive field not redacted in byte pass: %s", got)
+	}
+	if strings.Contains(got, `"name":"[REDACTED]"`) {
+		t.Errorf("byte pass over-redacted a non-sensitive field: %s", got)
+	}
+
+	// Untyped structured pass (layer 2).
+	red := redactValue(map[string]any{"vault_handle": "abc123", "name": "safe"}).(map[string]any)
+	if red["vault_handle"] != "[REDACTED]" {
+		t.Errorf("x-sensitive field not redacted in value pass: %v", red)
+	}
+	if red["name"] != "safe" {
+		t.Errorf("value pass over-redacted a non-sensitive field: %v", red)
 	}
 }

@@ -10,18 +10,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/jentic/jentic-one/cli/client"
-	"github.com/jentic/jentic-one/cli/client/generated/broker"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
 // configFromState maps the CLI's resolved ActiveState onto the SDK's UX-free
 // Config. ActiveState embeds *config.ResolvedState, so the SDK fields (BaseURL,
 // BrokerURL, IdentityName, …) are promoted and read through the same value.
-func configFromState(state *ActiveState) client.Config {
+func configFromState(state *ActiveState) (client.Config, error) {
 	cfg := client.Config{
 		ControlBaseURL:      state.BaseURL,
 		BrokerBaseURL:       state.BrokerURL,
@@ -30,34 +30,54 @@ func configFromState(state *ActiveState) client.Config {
 		InjectedBearerToken: state.InjectedBearerToken,
 		SessionID:           state.SessionID,
 	}
-	// SEC-3: a per-environment custom CA bundle is honored by building an
-	// HTTPClient whose transport verifies against that pool. Best-effort: a bad
-	// path/PEM leaves the default transport (system roots) rather than failing
-	// the command — the TLS handshake then surfaces any real trust error.
-	if hc := caCertHTTPClient(state.CACertPath); hc != nil {
+	// SEC-3/SEC-20: a per-environment custom CA bundle is honored by building an
+	// HTTPClient whose transport verifies against that pool. When ca_cert_path is
+	// set but cannot be loaded, we FAIL CLOSED (SEC-20) — previously this silently
+	// fell back to system roots, downgrading the operator's explicit trust
+	// decision without a word. A corrupted/deleted bundle is a hard error the
+	// operator must fix, not a silent trust widening.
+	hc, err := caCertHTTPClient(state.CACertPath)
+	if err != nil {
+		return client.Config{}, err
+	}
+	if hc != nil {
 		cfg.HTTPClient = hc
 	}
-	return cfg
+	return cfg, nil
 }
 
 // caCertHTTPClient returns an *http.Client pinned to the CA bundle at path, or
-// nil when path is empty or cannot be loaded into a pool (SEC-3).
-func caCertHTTPClient(path string) *http.Client {
+// (nil, nil) when path is empty (no custom CA configured → SDK default transport
+// on system roots). When path is set but the bundle can't be read or contains no
+// usable certificate, it returns an ERROR (SEC-20): the operator asked to trust
+// a specific CA, so a broken bundle must fail closed rather than silently fall
+// back to system roots.
+func caCertHTTPClient(path string) (*http.Client, error) {
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	pem, err := os.ReadFile(path) //nolint:gosec // path is the operator-configured ca_cert_path from their own config.
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("ca_cert_path %q is set but could not be read: %w", path, err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return nil
+		return nil, fmt.Errorf("ca_cert_path %q contains no usable PEM certificate", path)
 	}
 	return &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
-	}
+	}, nil
 }
+
+// ErrNoConfig is returned by the client constructors when the machine has no
+// usable configuration (nil/degraded ActiveState, or a state with no plane URL).
+// It is a typed sentinel — not a *ux.CodedError — so this leaf package stays
+// free of the ux/command layers (the leaf-layering arch gate forbids clictx →
+// ux). The api command layer's asCoded recognizes it and maps it to
+// RESOLVE_FAILED (AGT-22): an unconfigured machine is a recoverable "run
+// register" state, NOT the INTERNAL_ERROR "stop, CLI bug" bucket a bare error
+// would fall into.
+var ErrNoConfig = errors.New("no configuration found; run 'jentic register' (or 'jentic migrate' on a machine with a V1 setup) first")
 
 // stateForClient validates the ActiveState a client constructor needs. It exists
 // so a degraded state (root interceptor's no-config fallback carries an empty
@@ -69,9 +89,10 @@ func stateForClient(state *ActiveState) (*ActiveState, error) {
 	}
 	// A nil embed or a state with no plane URL at all is the unconfigured-machine
 	// case — surface the recovery command rather than the SDK's terser
-	// "control base URL is required".
+	// "control base URL is required". Returned as the typed ErrNoConfig sentinel
+	// so the command layer codes it RESOLVE_FAILED, not INTERNAL_ERROR (AGT-22).
 	if state.ResolvedState == nil || (state.BaseURL == "" && state.BrokerURL == "") {
-		return nil, errors.New("no configuration found; run 'jentic register' (or 'jentic migrate' on a machine with a V1 setup) first")
+		return nil, ErrNoConfig
 	}
 	return state, nil
 }
@@ -85,17 +106,11 @@ func GetControlClient(ctx context.Context) (*control.ClientWithResponses, error)
 	if err != nil {
 		return nil, err
 	}
-	return client.NewControl(configFromState(state))
-}
-
-// GetBrokerClient is the Data Plane counterpart. The Env's broker_url must be set
-// (the SDK errors otherwise); it is NEVER derived from the control base URL.
-func GetBrokerClient(ctx context.Context) (*broker.ClientWithResponses, error) {
-	state, err := stateForClient(FromContext(ctx))
+	cfg, err := configFromState(state)
 	if err != nil {
 		return nil, err
 	}
-	return client.NewBroker(configFromState(state))
+	return client.NewControl(cfg)
 }
 
 // GetControlRawClient returns the raw control client for the `jentic api`
@@ -107,5 +122,9 @@ func GetControlRawClient(ctx context.Context) (*control.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.NewControlRaw(configFromState(state))
+	cfg, err := configFromState(state)
+	if err != nil {
+		return nil, err
+	}
+	return client.NewControlRaw(cfg)
 }

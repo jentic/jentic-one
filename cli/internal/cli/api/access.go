@@ -634,33 +634,13 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 			Msg:        fmt.Sprintf("still pending after %s", opts.timeout),
 			Actionable: "jentic access status " + req.ID,
 		}
-	case req.Status == accessclient.StatusDenied:
-		return &ux.CodedError{
-			Code:       ux.CodeBrokerDenied,
-			Msg:        fmt.Sprintf("access request %s was denied", req.ID),
-			Actionable: "jentic access status " + req.ID,
-		}
-	case req.Status == accessclient.StatusExpired, req.Status == accessclient.StatusWithdrawn:
-		// Terminal but not granted: the agent still cannot do what it asked, so
-		// this must not look like success (exit 0). Treat it like a denial.
-		return &ux.CodedError{
-			Code:       ux.CodeBrokerDenied,
-			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.ID, req.Status),
-			Actionable: "jentic access status " + req.ID,
-		}
 	case req.Status == accessclient.StatusPartiallyApproved:
 		// A newly-granted scope only takes effect once re-minted into the token;
 		// do it for the agent so it needn't run a separate `access refresh`.
 		a.refreshIfScopeGranted(cmd, req)
-		// Some items were approved but at least one was not, so the capability
-		// the agent asked for is not fully granted. Signal a distinct non-zero
-		// code (not success) so a scripted agent doesn't proceed as if it can
-		// now execute; the printed items show which line items remain.
-		return &ux.CodedError{
-			Code:       ux.CodePartialApproval,
-			Msg:        "partially approved — not all requested items were granted",
-			Actionable: "jentic access status " + req.ID,
-		}
+	}
+	if err := terminalAccessError(req); err != nil {
+		return err
 	}
 	// Fully approved. A newly-granted scope bakes into the token at mint time, so
 	// re-mint now if the request granted one — the agent can then execute
@@ -668,6 +648,43 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 	// (toolkit/credential binds, no scope) needs no re-mint: bindings are live
 	// server-side, so this is a no-op in that case.
 	a.refreshIfScopeGranted(cmd, req)
+	return nil
+}
+
+// terminalAccessError maps a decided access request's status to the coded error
+// that drives the exit taxonomy documented in the `access request` help (AGT-6):
+//
+//	denied / expired / withdrawn -> BROKER_DENIED  (exit 2) — the agent still
+//	    cannot do what it asked, so this must never look like success.
+//	partially_approved           -> PARTIAL_APPROVAL (exit 4) — some items were
+//	    granted but at least one was not, so a scripted agent must not proceed as
+//	    if the capability is fully available; the printed items show what remains.
+//	anything else (approved, …)  -> nil (exit 0).
+//
+// Pure and status-only so the exit-code contract can be tested without a live
+// backend (QA-20). The caller handles timeout (TIMEOUT_PENDING) and the re-mint
+// side effect before calling this.
+func terminalAccessError(req *accessclient.Request) error {
+	switch req.Status {
+	case accessclient.StatusDenied:
+		return &ux.CodedError{
+			Code:       ux.CodeBrokerDenied,
+			Msg:        fmt.Sprintf("access request %s was denied", req.ID),
+			Actionable: "jentic access status " + req.ID,
+		}
+	case accessclient.StatusExpired, accessclient.StatusWithdrawn:
+		return &ux.CodedError{
+			Code:       ux.CodeBrokerDenied,
+			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.ID, req.Status),
+			Actionable: "jentic access status " + req.ID,
+		}
+	case accessclient.StatusPartiallyApproved:
+		return &ux.CodedError{
+			Code:       ux.CodePartialApproval,
+			Msg:        "partially approved — not all requested items were granted",
+			Actionable: "jentic access status " + req.ID,
+		}
+	}
 	return nil
 }
 

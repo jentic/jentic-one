@@ -2,6 +2,7 @@ package clictx
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
@@ -20,7 +21,10 @@ func TestConfigFromState_MapsResolvedState(t *testing.T) {
 		},
 		Mode: ModeAgent,
 	}
-	cfg := configFromState(state)
+	cfg, err := configFromState(state)
+	if err != nil {
+		t.Fatalf("configFromState: %v", err)
+	}
 	if cfg.ControlBaseURL != "https://ctl.example" || cfg.BrokerBaseURL != "https://brk.example" {
 		t.Errorf("urls = %q/%q", cfg.ControlBaseURL, cfg.BrokerBaseURL)
 	}
@@ -29,6 +33,37 @@ func TestConfigFromState_MapsResolvedState(t *testing.T) {
 	}
 	if cfg.InjectedBearerToken != "at_x" {
 		t.Errorf("injected token = %q", cfg.InjectedBearerToken)
+	}
+}
+
+// TestConfigFromState_BadCACertFailsClosed pins SEC-20: when ca_cert_path is set
+// but the bundle can't be loaded, configFromState must ERROR (fail closed)
+// rather than silently drop to system roots — the operator's explicit trust
+// decision must not be downgraded without a word.
+func TestConfigFromState_BadCACertFailsClosed(t *testing.T) {
+	// A path that doesn't exist.
+	state := &ActiveState{ResolvedState: &sdkconfig.ResolvedState{
+		BaseURL:    "https://ctl.example",
+		CACertPath: "/definitely/not/a/real/ca-bundle.pem",
+	}}
+	if _, err := configFromState(state); err == nil {
+		t.Fatal("configFromState must fail closed when ca_cert_path is unreadable (SEC-20)")
+	}
+
+	// A path that exists but is not a valid PEM.
+	f := t.TempDir() + "/bad.pem"
+	if err := os.WriteFile(f, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.CACertPath = f
+	if _, err := configFromState(state); err == nil {
+		t.Fatal("configFromState must fail closed when ca_cert_path has no usable cert (SEC-20)")
+	}
+
+	// Empty path is fine (no custom CA → SDK default).
+	state.CACertPath = ""
+	if _, err := configFromState(state); err != nil {
+		t.Fatalf("empty ca_cert_path must not error: %v", err)
 	}
 }
 
@@ -51,9 +86,6 @@ func TestGetClients_NilResolvedStateErrors(t *testing.T) {
 	if _, err := GetControlClient(ctx); err == nil {
 		t.Fatal("GetControlClient: expected an error for nil ResolvedState")
 	}
-	if _, err := GetBrokerClient(ctx); err == nil {
-		t.Fatal("GetBrokerClient: expected an error for nil ResolvedState")
-	}
 	if _, err := GetControlRawClient(ctx); err == nil {
 		t.Fatal("GetControlRawClient: expected an error for nil ResolvedState")
 	}
@@ -73,18 +105,5 @@ func TestGetControlClient_BuildsWithState(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("nil control client")
-	}
-}
-
-// TestGetBrokerClient_RequiresBrokerURL: the broker URL is never derived from the
-// control URL, so a state without a broker_url errors.
-func TestGetBrokerClient_RequiresBrokerURL(t *testing.T) {
-	state := &ActiveState{
-		ResolvedState: &sdkconfig.ResolvedState{BaseURL: "https://ctl.example"},
-		Mode:          ModeHuman,
-	}
-	ctx := WithActiveState(context.Background(), state)
-	if _, err := GetBrokerClient(ctx); err == nil {
-		t.Fatal("expected GetBrokerClient to require a broker URL")
 	}
 }

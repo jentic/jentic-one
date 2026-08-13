@@ -25,15 +25,26 @@ import (
 // ExitCoder.
 //
 // An error that is ALREADY an *ux.CodedError (e.g. our own SetFlagErrorFunc
-// output, or a coded error that bubbled out of Execute) is passed through
-// untouched — it was rendered at its source.
+// output, or a coded error returned by an Args validator such as exactNamedArgs)
+// is passed through untouched — but if it has not yet been rendered
+// (IsReported() is false), it is reported here first so its envelope reaches the
+// user/agent exactly once. Args-validator errors take this path because they are
+// returned from Execute without ever passing through a RunE wrapper.
 func InvocationErrorMapper(root *cobra.Command, err error) error {
 	if err == nil {
 		return nil
 	}
 	var coded *ux.CodedError
 	if errors.As(err, &coded) {
-		return err // already typed (and, for our paths, already reported)
+		// Already typed. Our SetFlagErrorFunc / register paths render at their
+		// source and MarkReported; but a coded error returned straight from an
+		// Args validator (e.g. exactNamedArgs) or bubbled out of Execute has not
+		// been rendered yet — it never passed through a RunE wrapper. Render it
+		// once here so the envelope reaches the user/agent, then pass it through.
+		if !coded.IsReported() {
+			reportInvocationError(root, coded)
+		}
+		return err
 	}
 	ce := &ux.CodedError{
 		Code:       ux.CodeMissingArgument,

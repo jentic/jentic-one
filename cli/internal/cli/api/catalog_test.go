@@ -351,6 +351,35 @@ func TestCatalogAuthErrIsActionable(t *testing.T) {
 	if coded.Actionable != "jentic register" {
 		t.Errorf("generic remediation = %q, want jentic register", coded.Actionable)
 	}
+
+	// QA-24: an assertion-validation failure (audience mismatch) on a data-plane
+	// command carries the same URL/canonical_base_url hint the register poll path
+	// gives — not the generic "run register", which would loop the agent.
+	assertion := contextAuthErr(&auth.AssertionInvalidError{Detail: "aud mismatch"}, st)
+	if !errors.As(assertion, &coded) || coded.Code != ux.CodeNotAuthenticated {
+		t.Fatalf("assertion error not NOT_AUTHENTICATED: %v", assertion)
+	}
+	if !strings.Contains(coded.Actionable, "canonical_base_url") || !strings.Contains(coded.Actionable, "127.0.0.1") {
+		t.Errorf("assertion remediation must give the audience-mismatch hint: %q", coded.Actionable)
+	}
+}
+
+// TestAsCodedMapsNoConfigToResolveFailed pins AGT-22: the typed clictx.ErrNoConfig
+// sentinel (returned by the client constructors on an unconfigured machine) must
+// map to RESOLVE_FAILED (exit 2, recoverable) with a `jentic register` step —
+// NOT INTERNAL_ERROR (exit 1, "CLI bug"), which is where a bare error would fall.
+func TestAsCodedMapsNoConfigToResolveFailed(t *testing.T) {
+	coded := asCoded(fmt.Errorf("build client: %w", clictx.ErrNoConfig))
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("no-config error mapped to %q, want %q", coded.Code, ux.CodeResolveFailed)
+	}
+	if !strings.Contains(coded.Actionable, "jentic register") {
+		t.Errorf("no-config remediation must name jentic register: %q", coded.Actionable)
+	}
+	// A plain error with no known sentinel still falls to INTERNAL_ERROR.
+	if got := asCoded(errors.New("kaboom")); got.Code != ux.CodeInternalError {
+		t.Errorf("unknown error mapped to %q, want INTERNAL_ERROR", got.Code)
+	}
 }
 
 // ── pure browser-helper tests (no TTY loop) ──────────────────────────────────

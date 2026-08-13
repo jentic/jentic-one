@@ -78,7 +78,7 @@ func LoadState(cmdContextOverride string) (*ResolvedState, error) {
 			// Phase 2 item 1, 16 §2) will fall back to the legacy ~/.jentic profile
 			// store here, read-only, until `jentic migrate`'s end-of-life (14 BC-1).
 			// Until that adapter lands, no XDG config means no configuration.
-			return nil, errors.New("no configuration found. Run 'jentic env add' or set JENTIC_BASE_URL and JENTIC_BEARER_TOKEN")
+			return nil, errors.New("no configuration found. Run 'jentic register --url <control-plane URL>' to onboard, or set JENTIC_BASE_URL and JENTIC_BEARER_TOKEN")
 		}
 		return nil, fmt.Errorf("reading %s: %w", file, err)
 	}

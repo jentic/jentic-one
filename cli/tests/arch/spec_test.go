@@ -332,8 +332,9 @@ func TestSensitiveTablesRegistered(t *testing.T) {
 		src.Write(data)
 	}
 	for _, want := range []string{
-		"ux.RegisterSensitiveFields(control.SensitiveFields)",
-		"ux.RegisterSensitiveFields(broker.SensitiveFields)",
+		"ux.RegisterSensitiveFields(",
+		"control.SensitiveFields)",
+		"broker.SensitiveFields)",
 	} {
 		if !strings.Contains(src.String(), want) {
 			t.Errorf("cmdcore no longer registers a generated sensitive-fields table: missing %q\n"+

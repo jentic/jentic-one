@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -79,6 +82,11 @@ func TestExecuteCmdJSONEnvelope(t *testing.T) {
 	var envelope map[string]any
 	if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
 		t.Fatalf("unmarshal: %v\nraw: %s", err, out.String())
+	}
+	// AGT-23: the success envelope carries a schema_version like every sanctioned
+	// wrapper, so an agent can branch on the shape.
+	if envelope["schema_version"] != apiEnvelopeSchemaVersion {
+		t.Errorf("schema_version = %v, want %q", envelope["schema_version"], apiEnvelopeSchemaVersion)
 	}
 	if envelope["status"] != float64(200) {
 		t.Errorf("status = %v, want 200", envelope["status"])
@@ -905,5 +913,70 @@ func TestExecuteDryRunDoesNotCallBroker(t *testing.T) {
 	}
 	if brokerHit {
 		t.Fatal("broker was called despite --dry-run")
+	}
+}
+
+// TestExecuteAgentModeBrokerHostPinned pins SEC-21: in agent mode an explicit
+// --broker-host that differs from the environment's broker_url host is rejected
+// with a coded RESOLVE_FAILED — an agent must not redirect its bearer + injected
+// upstream context at an arbitrary host. A human keeps the override.
+func TestExecuteAgentModeBrokerHostPinned(t *testing.T) {
+	agentCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "bot",
+			EnvironmentName:     "prod",
+			BaseURL:             "https://ctl.example",
+			BrokerURL:           "https://broker.jentic.example",
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeAgent,
+	})
+
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	// Simulate an agent passing --broker-host at a DIFFERENT host than broker_url.
+	if err := cmd.Flags().Set("broker-host", "evil.attacker.example"); err != nil {
+		t.Fatal(err)
+	}
+	cmd.SetContext(agentCtx)
+
+	err := app.executeE(cmd, &executeOptions{brokerHost: "evil.attacker.example", brokerScheme: "https"}, "someOp")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("agent-mode broker-host override returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
+	}
+	if !strings.Contains(coded.Msg, "broker.jentic.example") {
+		t.Errorf("error should name the pinned broker host: %q", coded.Msg)
+	}
+}
+
+// TestExecuteHumanModeBrokerHostAllowed is the SEC-21 negative: a HUMAN keeps the
+// --broker-host override even against a broker_url env (they own the machine).
+// It only needs to get past the SEC-21 gate; we assert the failure (if any) is
+// NOT the SEC-21 pin error.
+func TestExecuteHumanModeBrokerHostAllowed(t *testing.T) {
+	humanCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "me",
+			EnvironmentName:     "prod",
+			BaseURL:             "https://ctl.example",
+			BrokerURL:           "https://broker.jentic.example",
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	if err := cmd.Flags().Set("broker-host", "localhost:9999"); err != nil {
+		t.Fatal(err)
+	}
+	cmd.SetContext(humanCtx)
+	err := app.executeE(cmd, &executeOptions{brokerHost: "localhost:9999", brokerScheme: "http"}, "someOp")
+	// It will fail later (no server), but must NOT be the SEC-21 pin error.
+	if err != nil && strings.Contains(err.Error(), "not allowed in") {
+		t.Errorf("human mode must keep the --broker-host override, got SEC-21 pin error: %v", err)
 	}
 }

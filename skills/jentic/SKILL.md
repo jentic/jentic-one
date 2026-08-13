@@ -29,8 +29,11 @@ to external APIs and handles credentials for you.
 ## Prerequisites
 
 - The `jentic` CLI is installed and on PATH.
-- A reachable Jentic control plane (the base URL; defaults to the local
-  install). Override with `--base-url` or `config.yaml`.
+- A reachable Jentic control plane. The base URL comes from the active
+  context's environment — set it with `jentic env add <name> --url <URL>`
+  and select it with `jentic context use <name>` (inspect via
+  `jentic context view`). Onboard a fresh machine with `jentic register --url
+  <URL>`. There is no `--base-url` flag on data-plane commands.
 
 ## Procedure
 
@@ -452,7 +455,8 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
 - Add `--json` to force machine-readable output on a terminal (works on
-  `search`, `execute`, `inspect`, `apis`, `access`, `context view`, `doctor`).
+  `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
+  has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.
 - **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
   every request carries it as `X-Jentic-Session-Id`, so operators can group all
   of your calls in server logs; each `execute` also sends a fresh W3C

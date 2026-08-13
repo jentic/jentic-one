@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
@@ -27,6 +28,27 @@ func TestRunRequiresAgentArg(t *testing.T) {
 	err := app.runE(cmd, &runOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "missing agent") {
 		t.Fatalf("expected missing-agent error, got %v", err)
+	}
+}
+
+// TestRunGrantMgmtWithoutAccountIsCoded pins ARCH-23: a grant-management op
+// (`--list-grants`) on a machine with no provisioned agent account returns a
+// CODED RESOLVE_FAILED (exit 2, "provision first") rather than a raw exit-1
+// string an agent can't branch on. Before ARCH-23 localagentcmd returned only
+// raw fmt.Errorf, leaving the whole feature outside the machine contract.
+func TestRunGrantMgmtWithoutAccountIsCoded(t *testing.T) {
+	app := testApp(t) // fresh temp home: no agent user configured
+	cmd := NewRunCmd(app.App)
+	err := app.runE(cmd, &runOptions{listGrants: true}, []string{"claude"})
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("grant-mgmt without account returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
+	}
+	if !strings.Contains(coded.Actionable, "bootstrap") {
+		t.Errorf("actionable should point at bootstrap: %q", coded.Actionable)
 	}
 }
 

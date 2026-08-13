@@ -1,12 +1,15 @@
 # Jentic CLI
 
 The Jentic CLI ships as **two Go binaries** built from one module, sharing the
-same `internal/` packages and the same `~/.jentic` state:
+same `internal/` packages. Their state is split: `jenticctl` (the installer)
+keeps its install/lifecycle state under `~/.jentic`, while the `jentic` agent
+CLI stores its config/state in the **XDG layout** (`~/.config/jentic`,
+`~/.local/state/jentic` — see the XDG section below).
 
 - **`jenticctl`** — the **installer / lifecycle** CLI. It **installs and operates
   jentic-one locally**: stand up a deployment (source venv **or** Docker) and
   manage the running app (health, start/stop, logs, updates, teardown).
-- **`jentic`** — the **API-spec** CLI. It manages **agent identities**,
+- **`jentic`** — the **agent** CLI. It manages **agent identities**,
   **discovers and imports APIs** from the public catalog, inspects operations,
   and executes against them.
 
@@ -154,13 +157,14 @@ jenticctl install --defaults --no-wizard          # zero-prompt default install
 jenticctl install --answers answers.yaml --no-wizard
 ```
 
-Everything the CLI owns is rooted under `~/.jentic`:
+Everything `jenticctl` owns (plus the legacy `jentic` store read only by
+`migrate`) is rooted under `~/.jentic`:
 
 ```
 ~/.jentic/
 ├── jentic-one.yaml      # generated app config (this wizard)
 ├── docker-compose.yaml  # generated stack (Run in Docker path only)
-├── config.yaml          # CLI settings (base_url, profiles)
+├── config.yaml          # legacy CLI settings (base_url, default_profile) — read only by `migrate`
 ├── data/                # local databases (SQLite files)
 └── logs/                # log output
 ```

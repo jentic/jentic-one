@@ -160,7 +160,7 @@ func newApisRmCmd(app *app) *cobra.Command {
 		Use:     "rm <vendor/name/version> [revision_id]",
 		Aliases: []string{"delete"},
 		Short:   "Delete an API (or an archived revision)",
-		Args:    cobra.RangeArgs(1, 2),
+		Args:    rangeNamedArgs(1, 2, "<vendor/name/version> [revision_id]", "vendor/name/version", "revision_id"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			revisionID := ""
 			if len(args) == 2 {

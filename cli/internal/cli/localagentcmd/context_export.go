@@ -50,7 +50,7 @@ func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount
 		// File-less orchestrator mode: there is no on-disk material to export,
 		// and the injected token belongs to THIS process's environment only.
 		fmt.Fprintln(a.Out, theme.Dim.Render(
-			"Running file-less (JENTIC_BASE_URL/JENTIC_AGENT_TOKEN) — nothing to export to the agent home."))
+			"Running file-less (JENTIC_BASE_URL/JENTIC_BEARER_TOKEN) — nothing to export to the agent home."))
 		return nil
 	}
 	if acct.HomeDir == "" {

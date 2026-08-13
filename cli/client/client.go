@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
-	broker "github.com/jentic/jentic-one/cli/client/generated/broker"
+
 	control "github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
@@ -138,16 +138,6 @@ func controlOptions(c Config) []control.ClientOption {
 	return opts
 }
 
-func brokerOptions(c Config) []broker.ClientOption {
-	eds := c.editorChain()
-	opts := make([]broker.ClientOption, 0, 1+len(eds))
-	opts = append(opts, broker.WithHTTPClient(c.httpClient()))
-	for _, e := range eds {
-		opts = append(opts, broker.WithRequestEditorFn(broker.RequestEditorFn(e)))
-	}
-	return opts
-}
-
 // httpClient returns the *http.Client both planes share, with the SDK-level
 // response policy (401 re-exchange, 429 Retry-After, bounded 5xx/transport
 // backoff — 13 §5) wrapped around the caller's transport. A caller-supplied
@@ -258,24 +248,6 @@ func ProbeServerVersion(ctx context.Context, raw *control.Client) (string, error
 		return "", derr
 	}
 	return vr.Current, nil
-}
-
-// NewBroker builds the strictly-typed broker-plane (execution) client. It reuses
-// the control-plane identity's bearer, since the broker validates the same token.
-func NewBroker(c Config) (*broker.ClientWithResponses, error) {
-	if c.BrokerBaseURL == "" {
-		return nil, errors.New("broker base URL is required (set the environment's broker_url)")
-	}
-	// The auth editor derives its token endpoint from ControlBaseURL, so it must be
-	// present even when the caller only wants the broker.
-	if c.ControlBaseURL == "" {
-		return nil, errors.New("control base URL is required to authenticate the broker client")
-	}
-	cli, err := broker.NewClientWithResponses(c.BrokerBaseURL, brokerOptions(c)...)
-	if err != nil {
-		return nil, fmt.Errorf("building broker client: %w", err)
-	}
-	return cli, nil
 }
 
 // BrokerTransport returns the *http.Client the broker plane uses — the caller's

@@ -31,15 +31,6 @@ func TestNewControl_RequiresBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewBroker_RequiresBrokerAndControlURL(t *testing.T) {
-	if _, err := NewBroker(Config{ControlBaseURL: "https://ctl"}); err == nil {
-		t.Error("NewBroker without BrokerBaseURL should error")
-	}
-	if _, err := NewBroker(Config{BrokerBaseURL: "https://brk"}); err == nil {
-		t.Error("NewBroker without ControlBaseURL (needed to authenticate) should error")
-	}
-}
-
 // TestEditorChain drives a real request through the generated control client and
 // asserts the assembled chain: the auth editor attaches the injected bearer AND a
 // caller-supplied editor also runs. This is exactly the wiring arch test 1A

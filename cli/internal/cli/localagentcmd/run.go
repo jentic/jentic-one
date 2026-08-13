@@ -13,9 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/charmbracelet/huh"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
-	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -194,8 +192,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	// --agent-user override is the one way to still target an account explicitly.
 	if !cfg.HasAgentUser() && opts.agentUser == "" {
 		if opts.listGrants || opts.grant != "" || opts.revoke != "" {
-			return errors.New("no agent account is set up, so there are no directory grants to manage — " +
-				"run `jentic bootstrap` to create the isolated agent user first")
+			return accountMissingErr("no agent account is set up, so there are no directory grants to manage")
 		}
 		return a.runSameUser(ctx, cfg, desc, opts, posArgs, agentArgs)
 	}
@@ -217,9 +214,9 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	}
 
 	if !localagent.UserExists(ctx, agentUser) {
-		return fmt.Errorf("agent account %q does not exist — create it first with "+
+		return accountMissingErr(fmt.Sprintf("agent account %q does not exist — create it first with "+
 			"`jentic bootstrap` or `jenticctl wizard` (see "+
-			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser)
+			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser))
 	}
 
 	// Confirm we can actually become the agent user before anything else. Every
@@ -289,15 +286,17 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 // runSameUser launches the agent binary directly as the operator, with no Unix
 // user, no confinement, and no ACL grants. This is the path for an operator who
 // never enabled agent-user isolation (HasAgentUser is false): `jentic run` is
-// then just a convenient launcher that resolves the binary and injects the
-// operator's active profile as JENTIC_PROFILE. The working directory is the path
-// argument if given, else the current directory (there is nothing to grant — the
-// agent already runs with the operator's own filesystem access).
+// then just a convenient launcher that resolves the binary. It injects nothing
+// into the environment — because it shares the operator's home, the agent's own
+// `jentic` calls pick up the operator's active context from the XDG store. The
+// working directory is the path argument if given, else the current directory
+// (there is nothing to grant — the agent already runs with the operator's own
+// filesystem access).
 func (a *Cmd) runSameUser(ctx context.Context, cfg *config.FileConfig, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
 	binary, err := exec.LookPath(desc.Binary)
 	if err != nil {
-		return fmt.Errorf("%s is not installed or not on your PATH; install it, then re-run "+
-			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary)
+		return binaryMissingErr(fmt.Sprintf("%s is not installed or not on your PATH; install it, then re-run "+
+			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary))
 	}
 
 	a.warnSameUserOnce(cfg)
@@ -381,151 +380,6 @@ func resolveAgentUser(flag string, acct config.AgentAccount) string {
 // sudoers rights), which every later `sudo -u <agent>` would hit too; we surface
 // that as the real reason rather than letting the binary probe misread it as a
 // missing install.
-func (a *Cmd) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
-	c := localagent.CanRunAsAgentCmd(ctx, agentUser)
-	c.Stdin, c.Stdout, c.Stderr = os.Stdin, a.Out, a.Err
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("couldn't switch to the agent user %q — the launch needs to run as that "+
-			"account (every step uses `sudo -u %s`).\n"+
-			"  If you were asked for your password and cancelled, re-run and enter it. To skip the\n"+
-			"  prompt each time, enable passwordless launch during `jentic bootstrap` (or re-run it)",
-			agentUser, agentUser)
-	}
-	return nil
-}
-
-// ── step 2: binary provisioning ──────────────────────────────────────────────
-
-func (a *Cmd) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
-	switch localagent.ProbeBinary(ctx, agentUser, desc) {
-	case localagent.BinaryOnPath:
-		return nil
-	case localagent.BinaryFoundOffPath:
-		// Installed at a known location but not resolvable by the login shell —
-		// put ~/.local/bin on the agent's PATH and carry on, rather than erroring.
-		fmt.Fprintln(a.Out, theme.Infof("%s is installed for %s but not on its PATH — adding ~/.local/bin ...", desc.Binary, agentUser))
-		return a.ensureLocalBinOnPath(agentUser)
-	case localagent.BinaryMissing:
-		return a.provisionBinary(ctx, cmd, opts, agentUser, desc)
-	}
-	return nil
-}
-
-// ensureLocalBinOnPath appends ~/.local/bin to the agent's login PATH so the
-// launch can exec a binary that lives there (copy and install both land there).
-func (a *Cmd) ensureLocalBinOnPath(agentUser string) error {
-	c := localagent.EnsureLocalBinOnPathCmd(agentUser)
-	c.Stdout, c.Stderr = a.Out, a.Err
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("add ~/.local/bin to the agent's PATH: %w", err)
-	}
-	return nil
-}
-
-// ensureSharedBinsOnPath appends the operator's world-readable CLI tool dirs to
-// the agent's login PATH (idempotent). It is best-effort convenience, not a
-// security boundary: on failure it warns and continues rather than blocking the
-// launch, and it no-ops when there is nothing safe to share.
-func (a *Cmd) ensureSharedBinsOnPath(agentUser string) error {
-	dirs := localagent.SharedBinPaths(localagent.OperatorHome())
-	c := localagent.EnsureSharedBinsOnPathCmd(agentUser, dirs)
-	if c == nil {
-		return nil
-	}
-	c.Stdout, c.Stderr = a.Out, a.Err
-	if err := c.Run(); err != nil {
-		fmt.Fprintln(a.Out, theme.Warnf("could not add operator CLI tool dirs to the agent's PATH: %v", err))
-	}
-	return nil
-}
-
-func (a *Cmd) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
-	fmt.Fprintln(a.Out, theme.Warnf("Agent %q is not installed for user %s.", desc.ID, agentUser))
-
-	opBin := ""
-	if desc.SingleBinary {
-		opBin = localagent.OperatorBinaryPath(ctx, desc.Binary)
-	}
-
-	choice := "copy"
-	if opBin == "" {
-		choice = "install"
-	}
-	if cmdcore.WantsInteractive(cmd, opts.yes) {
-		c, err := a.pickProvisionRoute(desc, agentUser, opBin)
-		if err != nil {
-			return err
-		}
-		choice = c
-	}
-
-	switch choice {
-	case "copy":
-		if opBin == "" {
-			return fmt.Errorf("no operator copy of %s found to copy; re-run and choose install", desc.Binary)
-		}
-		fmt.Fprintln(a.Out, theme.Infof("Copying %s → %s ...", opBin, agentUser))
-		agentHome, err := localagent.LookupHomeDir(agentUser)
-		if err != nil {
-			return err
-		}
-		cp := localagent.CopyBinaryCmd(agentUser, agentHome, opBin, desc.Binary)
-		cp.Stdout, cp.Stderr = a.Out, a.Err
-		if err := cp.Run(); err != nil {
-			return fmt.Errorf("copy binary: %w", err)
-		}
-		fmt.Fprintln(a.Out, theme.Dim.Render("  The copy carries the binary, not credentials — the agent still logs in as itself on first run."))
-		// The copy lands in ~/.local/bin, which a fresh account may not have on
-		// its login PATH — make sure it does so the launch can find it.
-		if err := a.ensureLocalBinOnPath(agentUser); err != nil {
-			return err
-		}
-	case "install":
-		fmt.Fprintln(a.Out, theme.Infof("Installing %s as %s ...", desc.Binary, agentUser))
-		inst := localagent.InstallBinaryCmd(agentUser, desc.Install)
-		inst.Stdin, inst.Stdout, inst.Stderr = os.Stdin, a.Out, a.Err
-		if err := inst.Run(); err != nil {
-			return fmt.Errorf("install binary: %w", err)
-		}
-		if err := a.ensureLocalBinOnPath(agentUser); err != nil {
-			return err
-		}
-	case "skip":
-		fmt.Fprintln(a.Out, theme.Dim.Render("Skipped. Install it for the agent yourself, then re-run."))
-		return errors.New("agent binary not installed")
-	}
-	return nil
-}
-
-func (a *Cmd) pickProvisionRoute(desc localagent.Descriptor, agentUser, opBin string) (string, error) {
-	var choice string
-	opts := []huh.Option[string]{}
-	if opBin != "" {
-		opts = append(opts, huh.NewOption(fmt.Sprintf("Copy the operator's binary (%s)", opBin), "copy"))
-		choice = "copy"
-	}
-	opts = append(opts,
-		huh.NewOption("Install a fresh copy as the agent", "install"),
-		huh.NewOption("Skip — I'll set it up myself", "skip"),
-	)
-	if opBin == "" {
-		choice = "install"
-	}
-	err := prompt.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title(fmt.Sprintf("Provision %q for %s?", desc.Binary, agentUser)).
-			Options(opts...).
-			Value(&choice),
-	)).Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return "skip", nil
-		}
-		return "", err
-	}
-	return choice, nil
-}
-
 // ── step 3: working directory + access ───────────────────────────────────────
 
 func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
@@ -576,227 +430,6 @@ func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 	return abs, nil
 }
 
-// grantDir applies the "traverse-walk + rwx-leaf" ACL model so the agent uid can
-// read/write abs. For a path under the home it (1) opens execute-only traverse on
-// each ancestor the agent can't already pass through, then (2) grants the rwx leaf.
-// For a path outside the home the leaf grant alone suffices. These grants only ever
-// OPEN access (the sandbox is intersection-only, so a DAC grant is still required);
-// the sibling-traversal leak they leave open is closed per session by the
-// process-confinement layer (see localagent/confine.go), not by an ACL deny sweep.
-// All grants are scoped to the agent user and never touch the operator's own
-// permissions.
-func (a *Cmd) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
-	// Canonicalize home to match abs (already canonical from the callers): the
-	// under-home test and ancestor walk must reason about the same resolved tree.
-	home := localagent.Canonicalize(localagent.OperatorHome())
-
-	if home != "" && localagent.IsUnderHome(home, abs) {
-		// Layer 1: open traverse on the ancestors the agent can't yet pass through.
-		for _, anc := range localagent.AncestorsNeedingTraverse(ctx, agentUser, home, abs) {
-			if err := a.runGrant(localagent.TraverseGrantCmd(agentUser, anc), "grant traverse on "+anc); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Layer 2: the rwx leaf.
-	fmt.Fprintln(a.Out, theme.Infof("Granting %s read/write to %s ...", agentUser, abs))
-	if err := a.runGrant(localagent.LeafGrantCmd(agentUser, abs), "grant directory access"); err != nil {
-		return err
-	}
-	// Positively confirm the leaf ACE actually landed rather than trusting the exit
-	// code + stderr classification alone: runGrant treats a benign mid-scan race as
-	// success, and a subtly malformed ACE spec could exit zero without granting. Read
-	// the ACL back and require the agent's entry to be present before recording —
-	// otherwise we'd persist a grant that doesn't exist on disk, and a later launch
-	// would silently fail to reach the directory. This closes the gap between "the
-	// grant command returned" and "the agent can actually read/write here".
-	if !localagent.AgentACLPresent(ctx, agentUser, abs) {
-		return fmt.Errorf("grant directory access: the access-control entry for %s did not "+
-			"appear on %s after granting — not recording it", agentUser, abs)
-	}
-	// Record the grant under the config lock, reloading first, so a concurrent
-	// `jentic run` granting a different directory can't drop this one (each would
-	// otherwise load, append its own dir, and the last Save would win). Mutate
-	// returns the committed config; adopt it so the in-memory cfg stays current.
-	updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-		c.AddGrantedDir(abs)
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	*cfg = *updated
-	return nil
-}
-
-// runGrant runs one ACL command, wiring output and wrapping any failure.
-//
-// A recursive stamp over a large, live tree can race the filesystem: an entry the
-// walk saw can be gone by the time chmod reaches it, and chmod exits non-zero after
-// printing "No such file or directory" for that entry even though every surviving
-// file was stamped. Those per-entry misses are benign, so stderr is captured and
-// classified: if the only failures are missing entries the grant is reported as a
-// success (with a count), and any other error still fails.
-func (a *Cmd) runGrant(c *exec.Cmd, what string) error {
-	c.Stdout = a.Out
-	var stderr strings.Builder
-	c.Stderr = &stderr
-	err := c.Run()
-	out := stderr.String()
-	if err == nil {
-		fmt.Fprint(a.Err, out)
-		return nil
-	}
-	if missing, benign := classifyGrantStderr(out); benign {
-		fmt.Fprintln(a.Err, theme.Infof(
-			"%s: skipped %d entr%s that disappeared during the scan (harmless).",
-			what, missing, plural(missing, "y", "ies")))
-		return nil
-	}
-	fmt.Fprint(a.Err, out)
-	return fmt.Errorf("%s: %w", what, err)
-}
-
-// classifyGrantStderr reports how many entries chmod could not find and whether
-// every non-blank stderr line was one of those benign "No such file or directory"
-// misses. Any other diagnostic makes the failure real.
-func classifyGrantStderr(out string) (missing int, benign bool) {
-	sawLine := false
-	for _, line := range strings.Split(out, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		sawLine = true
-		if strings.HasSuffix(strings.TrimRight(line, "\r"), "No such file or directory") {
-			missing++
-			continue
-		}
-		return missing, false
-	}
-	return missing, sawLine
-}
-
-// plural returns one or other depending on n.
-func plural(n int, one, other string) string {
-	if n == 1 {
-		return one
-	}
-	return other
-}
-
-// decideDirGrant returns whether to grant the agent access to dir, honouring the
-// flags and the path's ban class. A banned path (the operator's or another
-// user's home, or any sensitive/system subtree) is NEVER grantable — there is no
-// "grant anyway" escape hatch; the operator may only open in the agent's home or
-// cancel. Only an ordinary, unbanned path can be granted.
-func (a *Cmd) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
-	// A banned path can never be granted, by any flag or prompt.
-	if verdict.Banned() {
-		if opts.allowDir {
-			return false, fmt.Errorf("refusing to grant a protected directory (%s); "+
-				"this path cannot be handed to the agent — pick a directory outside it", verdict.Reason)
-		}
-		if !cmdcore.WantsInteractive(cmd, opts.yes) {
-			// Non-interactive: fall back to the agent's home (no grant).
-			return false, nil
-		}
-		return a.confirmBannedPath(agentUser, dir, verdict)
-	}
-
-	// Ordinary path: flags may pre-answer.
-	if opts.noAllowDir {
-		return false, nil
-	}
-	if opts.allowDir {
-		return true, nil
-	}
-	if opts.yes {
-		return false, nil // safe default: open in home
-	}
-	if !cmdcore.WantsInteractive(cmd, opts.yes) {
-		return false, nil
-	}
-	return a.confirmPlainGrant(agentUser, dir)
-}
-
-func (a *Cmd) confirmPlainGrant(agentUser, dir string) (bool, error) {
-	fmt.Fprintln(a.Out, theme.Warnf("Agent %s has no access to %s.", agentUser, dir))
-	// Focus "Allow" by default: this is an ordinary (non-banned) workspace the
-	// operator explicitly asked to open, so granting is the expected choice. huh
-	// focuses the option whose value matches the bound field's current value.
-	choice := "allow"
-	err := prompt.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("How should the session reach this directory?").
-			Options(
-				huh.NewOption("Open in the agent's home instead", "home"),
-				huh.NewOption("Allow the agent read/write here (adds an inherited ACL)", "allow"),
-				huh.NewOption("Cancel", "cancel"),
-			).
-			Value(&choice),
-	)).Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return false, errCancelled
-		}
-		return false, err
-	}
-	switch choice {
-	case "allow":
-		return true, nil
-	case "cancel":
-		return false, errCancelled
-	default:
-		return false, nil
-	}
-}
-
-// confirmBannedPath handles a protected path: it explains why the directory
-// cannot be granted and offers only to open in the agent's home or cancel. There
-// is deliberately no "grant anyway" option — a banned path is a non-negotiable
-// boundary, so this returns (false, ...) in every non-error case.
-func (a *Cmd) confirmBannedPath(agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
-	fmt.Fprintln(a.Out, theme.Error.Render("⚠  "+dir))
-	fmt.Fprintln(a.Out, theme.Warnf("   %s can't be granted access here: %s.", agentUser, verdict.Reason))
-	fmt.Fprintln(a.Out, theme.Dim.Render("   This directory is a protected boundary and cannot be handed to the agent."))
-
-	var choice string
-	err := prompt.NewForm(huh.NewGroup(
-		huh.NewSelect[string]().
-			Title("This directory cannot be granted.").
-			Options(
-				huh.NewOption("Open in the agent's home instead", "home"),
-				huh.NewOption("Cancel", "cancel"),
-			).
-			Value(&choice),
-	)).Run()
-	if err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return false, errCancelled
-		}
-		return false, err
-	}
-	if choice == "cancel" {
-		return false, errCancelled
-	}
-	return false, nil
-}
-
-// errCancelled signals a user-initiated cancel that runE turns into a clean exit.
-var errCancelled = errors.New("cancelled")
-
-// PrintRevokeHint prints a small footer, under any directory-access tree, telling
-// the operator how to take a grant away again. It mirrors the "Granted (…)" line
-// the grant flow prints, so revocation is always one command away from wherever
-// access is shown. Grants are account-scoped (one set for every agent binary), so
-// the hint is generic over which `<agent>` binary the operator names.
-func (a *Cmd) PrintRevokeHint() {
-	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("To take a directory away: `jentic run <agent> --revoke <dir>` "+
-		"(`--list-grants` to review)."))
-}
-
 // ── step 4: launch ───────────────────────────────────────────────────────────
 
 // launchIsolated is the programmatic entry to the confined launch used by flows
@@ -842,7 +475,7 @@ func (a *Cmd) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 		b.WriteString("  home beyond the directories granted. Install the prerequisites above and re-run, or run\n")
 		b.WriteString("  this agent in isolation another way (e.g. inside Docker). See ")
 		b.WriteString("docs/security/local-agent/sandbox-exec-plan.md")
-		return errors.New(b.String())
+		return confinementUnavailableErr(b.String())
 	}
 
 	grantedDirs := acct.GrantedDirs

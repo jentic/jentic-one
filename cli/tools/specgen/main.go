@@ -348,8 +348,11 @@ func renderRequired(pkg string, required map[string][]string) []byte {
 	b.WriteString(genHeader)
 	fmt.Fprintf(&b, "\npackage %s\n\n", pkg)
 	b.WriteString("// RequiredFields companions expose each component schema's spec `required:`\n")
-	b.WriteString("// array (verbatim json property names) so hand-written command validation and any\n")
-	b.WriteString("// future binder can enforce required fields without re-parsing the spec (impl/2.1 §4a).\n\n")
+	b.WriteString("// array (verbatim json property names). This is a PUBLIC SDK-consumer helper:\n")
+	b.WriteString("// downstream code building requests against the generated models can enforce\n")
+	b.WriteString("// required fields without re-parsing the spec. The CLI itself does NOT consume\n")
+	b.WriteString("// it — `api describe`'s required_fields come from the runtime spec parse\n")
+	b.WriteString("// (internal/cli/apispec), so this surface has no in-tree caller by design.\n\n")
 	for _, name := range sortedKeys(required) {
 		fmt.Fprintf(&b, "func (%s) RequiredFields() []string { return %s }\n", name, goStringSlice(required[name]))
 	}

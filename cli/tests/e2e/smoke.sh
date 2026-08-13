@@ -91,7 +91,39 @@ grep -q '"checks"' "$SCRATCH/ctl-doctor.json" 2>/dev/null \
   || fail "jenticctl doctor JSON was not well-formed"
 pass "jenticctl doctor --json parses"
 
-# 5. LIVE ONLY (QA-2): against a running control plane, make an assertion the
+# 6. OPS-22 degrade paths — assert "sane error / clean no-op", not a crash, for
+#    the two OS-sensitive lifecycle commands whose behavior forks by GOOS
+#    (they otherwise only execute on the Ubuntu leg, which is why OPS-20's
+#    Windows signal bug regressed silently). Both run offline on a scratch home.
+#
+# 6a. `jentic run <agent>` on a home with no isolated agent user takes the
+#     same-user launcher path. Whether or not the agent binary happens to be
+#     installed on the runner, the command must terminate GRACEFULLY (a normal
+#     non-zero exit with a rendered error) rather than panic or hang: either the
+#     binary is missing (resolve error) or it is present and exits non-zero
+#     without a prompt. `run` is fenced in agent mode, so force human mode for
+#     this check only — the point is the launcher's degrade, not the fence.
+set +e
+JENTIC_MODE=human "$JENTIC" run claude --yes </dev/null > "$SCRATCH/run.out" 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "jentic run claude exit=0 offline, want a graceful non-zero"
+if grep -qi 'panic' "$SCRATCH/run.out"; then fail "jentic run claude crashed (panic): $(cat "$SCRATCH/run.out")"; fi
+pass "jentic run claude degrades cleanly (exit $rc, no crash)"
+
+# 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
+#     report "nothing to stop" and exit 0 — never error on the process path.
+#     This is the assertion OPS-20 would have failed on native Windows.
+set +e
+"$JENTICCTL" stop > "$SCRATCH/stop.out" 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "jenticctl stop exit=$rc on a scratch home, want 0; got: $(cat "$SCRATCH/stop.out")"
+grep -qi 'nothing to stop' "$SCRATCH/stop.out" \
+  || fail "jenticctl stop (scratch home) gave no 'nothing to stop'; got: $(cat "$SCRATCH/stop.out")"
+pass "jenticctl stop is a clean no-op on a scratch home (exit 0)"
+
+# 7. LIVE ONLY (QA-2): against a running control plane, make an assertion the
 #    offline legs structurally cannot — that the base URL the CLI resolves to is
 #    actually serving. A fresh CI stack has no approved agent token, so an
 #    authenticated CLI data call (search/catalog) cannot succeed here; instead we

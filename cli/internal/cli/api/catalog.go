@@ -385,7 +385,9 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 
 	if o.noWait {
 		if o.json {
-			return writeJSON(a.Out, map[string]any{"job_id": jobID, "status": "queued"})
+			// AGT-23: stamp schema_version on the ad-hoc import envelope like the
+			// sanctioned ux wrappers, so an agent can branch on the shape.
+			return writeJSON(a.Out, map[string]any{"schema_version": apiEnvelopeSchemaVersion, "job_id": jobID, "status": "queued"})
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Import queued: job %s", jobID))
 		fmt.Fprintln(a.Out, theme.Dim.Render("Re-run without --no-wait to track it to completion."))
@@ -415,10 +417,11 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 
 	if o.json {
 		return writeJSON(a.Out, map[string]any{
-			"job_id":    jobID,
-			"status":    job.Status,
-			"revisions": result.Revisions,
-			"promoted":  promoted,
+			"schema_version": apiEnvelopeSchemaVersion,
+			"job_id":         jobID,
+			"status":         job.Status,
+			"revisions":      result.Revisions,
+			"promoted":       promoted,
 		})
 	}
 	a.printImportResult(result, promoted, o.noPromote)

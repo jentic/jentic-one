@@ -21,10 +21,13 @@ package golden
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/api"
@@ -35,6 +38,63 @@ import (
 
 // update regenerates the golden files instead of comparing (`-update`).
 var update = flag.Bool("update", false, "regenerate golden files under testdata/golden/v2")
+
+// seenGoldens records every case name that assertGolden touched during the run
+// (QA-22). TestMain walks the golden dir afterwards and fails on any .txt with
+// no owning case — an orphan-guard so deleting a case under `-update` can't
+// silently strand a stale golden. Guarded by a mutex because subtests can run
+// in parallel.
+var (
+	seenMu     sync.Mutex
+	seenGolden = map[string]bool{}
+)
+
+// TestMain runs the suite, then (unless -update) fails if any file under
+// testdata/golden/v2 was not claimed by an assertGolden call. Under -update the
+// on-disk set is authoritative (we are rewriting it), so the guard is skipped.
+func TestMain(m *testing.M) {
+	flag.Parse()
+	code := m.Run()
+	if code == 0 && !*update {
+		if err := checkNoOrphanGoldens(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
+	os.Exit(code)
+}
+
+// checkNoOrphanGoldens lists every *.txt under the golden dir and reports any
+// whose case name was never exercised by assertGolden this run.
+func checkNoOrphanGoldens() error {
+	dir := filepath.Join("testdata", "golden", "v2")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // no goldens yet is not an orphan condition
+		}
+		return fmt.Errorf("orphan-guard: read golden dir: %w", err)
+	}
+	var orphans []string
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".txt") {
+			continue
+		}
+		name := strings.TrimSuffix(e.Name(), ".txt")
+		if !seenGolden[name] {
+			orphans = append(orphans, e.Name())
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		return fmt.Errorf("orphan golden file(s) under %s with no owning test case: %s\n"+
+			"Delete the stale file(s) or restore the case, then run `go test ./tests/golden -update`.",
+			dir, strings.Join(orphans, ", "))
+	}
+	return nil
+}
 
 // result is the observable contract of one CLI invocation.
 type result struct {
@@ -110,6 +170,9 @@ func seedSession(t *testing.T, baseURL string) {
 // assertGolden compares (or, under -update, writes) the recorded contract.
 func assertGolden(t *testing.T, name string, got result) {
 	t.Helper()
+	seenMu.Lock()
+	seenGolden[name] = true
+	seenMu.Unlock()
 	path := filepath.Join("testdata", "golden", "v2", name+".txt")
 	rec := formatResult(got)
 	if *update {

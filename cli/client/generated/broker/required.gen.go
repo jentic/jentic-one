@@ -3,8 +3,11 @@
 package broker
 
 // RequiredFields companions expose each component schema's spec `required:`
-// array (verbatim json property names) so hand-written command validation and any
-// future binder can enforce required fields without re-parsing the spec (impl/2.1 §4a).
+// array (verbatim json property names). This is a PUBLIC SDK-consumer helper:
+// downstream code building requests against the generated models can enforce
+// required fields without re-parsing the spec. The CLI itself does NOT consume
+// it — `api describe`'s required_fields come from the runtime spec parse
+// (internal/cli/apispec), so this surface has no in-tree caller by design.
 
 func (AsyncQueuedResponse) RequiredFields() []string { return []string{"_links", "job_id"} }
 func (HealthResponse) RequiredFields() []string      { return []string{"status"} }

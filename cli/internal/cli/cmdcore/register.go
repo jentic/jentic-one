@@ -629,25 +629,9 @@ func defaultIdentityName() string {
 	return "agent"
 }
 
-// sanitizeConfigName lowercases s and strips everything outside the config
-// name charset (^[a-z0-9][a-z0-9-]{0,63}$), returning "" when nothing valid
-// survives.
+// sanitizeConfigName coerces s into the config name charset via the canonical
+// config.SanitizeName (ARCH-22), returning "" when nothing valid survives so the
+// callers (deriveEnvName/deriveIdentityName) can apply their own fallback.
 func sanitizeConfigName(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-' && b.Len() > 0:
-			b.WriteRune(r)
-		}
-		if b.Len() >= 64 {
-			break
-		}
-	}
-	out := strings.TrimRight(b.String(), "-")
-	if !sdkconfig.ValidName(out) {
-		return ""
-	}
-	return out
+	return sdkconfig.SanitizeName(s)
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -197,8 +198,38 @@ func (h *HumanUX) renderResultFields(fields map[string]any) {
 
 	keyStyle := lipgloss.NewStyle().Foreground(h.theme.Muted)
 	for _, k := range keys {
+		// UX-23: suppress empty/nil field lines (nil, "", empty slice/map) — they
+		// are noise a human doesn't need ("active_context:", "migrated_contexts:
+		// null"). The full machine envelope (agent mode) still carries them for
+		// programmatic branching; this is a human-render polish only.
+		if isEmptyFieldValue(fields[k]) {
+			continue
+		}
 		fmt.Fprintln(os.Stdout, "  "+keyStyle.Render(k+":")+" "+h.fieldValue(k, fields[k]))
 	}
+}
+
+// isEmptyFieldValue reports whether a Result.Field value carries no information
+// worth a human-facing line: a nil, an empty string, or an empty slice/map
+// (UX-23). Scalars (bool/number), including a false bool, are NOT empty — false
+// is meaningful (e.g. purged_legacy: false is worth showing only when a
+// migration ran, which the caller already gates; here we only drop truly empty
+// values).
+func isEmptyFieldValue(v any) bool {
+	switch tv := v.(type) {
+	case nil:
+		return true
+	case string:
+		return tv == ""
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Map, reflect.Array:
+		return rv.Len() == 0
+	case reflect.Pointer, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // fieldValue formats one field value for human line rendering: scalars as-is,

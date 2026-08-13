@@ -17,40 +17,74 @@ import (
 
 // --- Layer 1 support: generated SensitiveFields tables -----------------------
 
-// sensitiveFieldsByType maps a generated struct's type NAME (e.g.
-// "CredentialResponse") to the json names of its `x-sensitive` properties
-// (impl/2.1 §4b). oapi-codegen emits no custom struct tags, so redactTagged can't
-// see a `redact:"true"` on generated types; instead it consults this table by
-// type name. The composition layer registers the real per-plane tables via
-// RegisterSensitiveFields so ux stays decoupled from client/generated (and unit-
-// testable). Guarded by a mutex only for registration-at-init safety.
+// sensitiveFieldsByType maps a generated struct's FULLY-QUALIFIED type name
+// ("<pkgPath>.<TypeName>", e.g. ".../client/generated/control.CredentialResponse")
+// to the json names of its `x-sensitive` properties (impl/2.1 §4b). oapi-codegen
+// emits no custom struct tags, so redactTagged can't see a `redact:"true"` on
+// generated types; instead it consults this table by qualified type name. Keying
+// by PkgPath.Name (GEN-23) — not the bare type name — means a name clash across
+// planes (control vs broker) or between a generated type and an app struct of the
+// same name can never apply the wrong sensitive set. The composition layer
+// registers the real per-plane tables via RegisterSensitiveFields so ux stays
+// decoupled from client/generated (and unit-testable). Guarded by a mutex only
+// for registration-at-init safety.
 var (
 	sensitiveFieldsMu   sync.RWMutex
 	sensitiveFieldsType = map[string]map[string]bool{}
+	// sensitiveFieldNames is the FLAT union of every json field name marked
+	// `x-sensitive` across all registered plane tables, keyed camel->snake so it
+	// shares the byte pass's normalization. It exists for GEN-21: the layer-3
+	// byte backstop (redactSensitive / RedactBytes, used by the `jentic api`
+	// passthrough and `execute --raw`) has no typed struct to key layer-1 by, so
+	// an x-sensitive field whose name doesn't also trip the generic key
+	// heuristics would leak through the raw path. Folding the registered names in
+	// here closes that gap without reshaping the body.
+	sensitiveFieldNames = map[string]bool{}
 )
 
 // RegisterSensitiveFields merges a plane's generated SensitiveFields table
-// (type name -> []json field names) into the redaction registry. Idempotent and
-// additive; call once per plane at startup.
-func RegisterSensitiveFields(table map[string][]string) {
+// (bare type name -> []json field names) into the redaction registry, qualifying
+// every key with pkgPath (GEN-23) so lookups are collision-proof across planes
+// and against app structs. Idempotent and additive; call once per plane at
+// startup. pkgPath is the plane package's import path (control/broker), which
+// redactTagged reads back from reflect.Type.PkgPath at redaction time.
+func RegisterSensitiveFields(pkgPath string, table map[string][]string) {
 	sensitiveFieldsMu.Lock()
 	defer sensitiveFieldsMu.Unlock()
 	for typeName, fields := range table {
-		set := sensitiveFieldsType[typeName]
+		key := pkgPath + "." + typeName
+		set := sensitiveFieldsType[key]
 		if set == nil {
 			set = make(map[string]bool, len(fields))
-			sensitiveFieldsType[typeName] = set
+			sensitiveFieldsType[key] = set
 		}
 		for _, f := range fields {
 			set[f] = true
+			// GEN-21: also record the bare name (normalized) so the byte pass can
+			// redact it even without a typed struct.
+			sensitiveFieldNames[camelToSnake(f)] = true
 		}
 	}
 }
 
-func sensitiveFieldsFor(typeName string) map[string]bool {
+// sensitiveFieldsFor returns the x-sensitive json field set for a generated type,
+// keyed by PkgPath.Name (GEN-23). An empty pkgPath (e.g. an anonymous or
+// non-generated struct) can still match a registration made with pkgPath "",
+// which is how the ux unit tests register test structs in-package.
+func sensitiveFieldsFor(pkgPath, typeName string) map[string]bool {
 	sensitiveFieldsMu.RLock()
 	defer sensitiveFieldsMu.RUnlock()
-	return sensitiveFieldsType[typeName]
+	return sensitiveFieldsType[pkgPath+"."+typeName]
+}
+
+// isRegisteredSensitiveName reports whether key (normalized camel->snake) matches
+// a field name any plane declared `x-sensitive` (GEN-21). Read side of the flat
+// union RegisterSensitiveFields maintains; used by the byte backstop so the raw
+// passthrough honors x-sensitive even when the generic heuristics wouldn't.
+func isRegisteredSensitiveName(key string) bool {
+	sensitiveFieldsMu.RLock()
+	defer sensitiveFieldsMu.RUnlock()
+	return sensitiveFieldNames[camelToSnake(key)]
 }
 
 // --- Layer 2 support: key heuristics -----------------------------------------
@@ -176,7 +210,7 @@ func redactValueDepth(v any, depth int) any {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, val := range t {
-			if isSensitiveKey(k) {
+			if isSensitiveKey(k) || isRegisteredSensitiveName(k) {
 				out[k] = "[REDACTED]"
 			} else {
 				out[k] = redactValueDepth(val, depth+1)
@@ -216,10 +250,19 @@ var (
 func redactSensitive(data []byte) []byte {
 	out := reKV.ReplaceAllFunc(data, func(m []byte) []byte {
 		sub := reKV.FindSubmatch(m)
-		if sub == nil || !isSensitiveKey(string(sub[1])) {
-			return m // not a sensitive key (honors the allowlist): leave untouched
+		if sub == nil {
+			return m
 		}
-		return []byte(`"` + string(sub[1]) + `"` + string(sub[2]) + `"[REDACTED]"`)
+		key := string(sub[1])
+		// Redact if the key is secret-shaped by the generic heuristics OR was
+		// declared x-sensitive by any plane (GEN-21). The allowlist still wins
+		// (isSensitiveKey enforces it), so a preserved next_token/has_api_key is
+		// never clobbered — but an x-sensitive field never trips the allowlist
+		// (those entries are known-safe presence booleans/cursors).
+		if !isSensitiveKey(key) && !isRegisteredSensitiveName(key) {
+			return m // not sensitive: leave untouched
+		}
+		return []byte(`"` + key + `"` + string(sub[2]) + `"[REDACTED]"`)
 	})
 	out = reBearer.ReplaceAll(out, []byte(`${1}[REDACTED]`))
 	out = rePEM.ReplaceAll(out, []byte(`[REDACTED PRIVATE KEY]`))
@@ -357,7 +400,7 @@ func redactTagged(v reflect.Value) any {
 		}
 		out := make(map[string]any)
 		t := v.Type()
-		tableFields := sensitiveFieldsFor(t.Name()) // generated SensitiveFields, if any
+		tableFields := sensitiveFieldsFor(t.PkgPath(), t.Name()) // generated SensitiveFields, if any
 		for i := range t.NumField() {
 			f := t.Field(i)
 			if f.PkgPath != "" { // unexported: json ignores it, so do we

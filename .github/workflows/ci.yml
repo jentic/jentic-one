@@ -770,6 +770,19 @@ jobs:
         working-directory: cli
         run: make build
 
+      # ---- Win/mac: run the OS-sensitive Go tests (OPS-21) ----
+      # The full race/unit/golden/arch suite runs only on Ubuntu (the `cli`
+      # job). The packages whose behavior forks by GOOS — process liveness/
+      # terminate (`internal/proc`), `jenticctl stop`, and the local-agent
+      # launcher/degrade path — must also execute on Windows and macOS so a
+      # GOOS-specific regression (e.g. OPS-20's Windows signal semantics) fails
+      # CI here instead of silently on a user's machine. Ubuntu already covers
+      # these in the `cli` job, so this leg is Win/mac only.
+      - name: OS-sensitive Go tests (Windows/macOS)
+        if: runner.os != 'Linux'
+        working-directory: cli
+        run: go test ./internal/proc/... ./internal/cli/ctlcmd/... ./internal/cli/localagentcmd/...
+
       # ---- Windows: build + offline smoke (install.sh is WSL-only) ----
       # `shell: pwsh` already runs this block in PowerShell; invoke the script
       # with the call operator and re-propagate its exit code. (A nested

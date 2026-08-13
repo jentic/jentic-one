@@ -57,7 +57,7 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 			"this directly — `jentic register --url …` creates the trio for you.",
 		Example: "  jentic context create prod --env prod --identity crawler --use\n" +
 			"  jentic context create local --env local --identity laptop --mode agent",
-		Args: cobra.ExactArgs(1),
+		Args: exactNamedArgs("<name>", "name"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
@@ -141,7 +141,7 @@ func newContextUseCmd(_ *app) *cobra.Command {
 			"already exist (`jentic context list`); this only switches which one is active.",
 		Example: "  jentic context use prod\n" +
 			"  jentic context use local   # then: jentic catalog / jentic execute …",
-		Args: cobra.ExactArgs(1),
+		Args: exactNamedArgs("<name>", "name"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())

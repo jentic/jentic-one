@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
@@ -24,6 +25,37 @@ var validNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 // This is the single source of truth for the charset; client/auth aliases it.
 func ValidName(name string) bool {
 	return validNamePattern.MatchString(name)
+}
+
+// nonNameChars matches any run of characters OUTSIDE the name charset
+// ([a-z0-9-]); SanitizeName collapses each such run to a single hyphen.
+var nonNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
+
+// SanitizeName coerces an arbitrary string into a name that satisfies ValidName
+// (ARCH-22: the single canonical "arbitrary string → valid config name"
+// primitive, replacing the two subtly-divergent sanitizers in cmdcore/register
+// and api/migrate). It lowercases, collapses non-charset runs to "-", trims
+// leading/trailing "-", prefixes "x" when the result doesn't start with an
+// alnum, and clamps to 64 chars. Returns "" only when nothing survives (empty
+// input) — callers supply their own fallback ("default"/"agent"). It is
+// idempotent on names that already satisfy ValidName.
+func SanitizeName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = nonNameChars.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if s == "" {
+		return ""
+	}
+	if c := s[0]; (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+		s = "x" + s
+	}
+	if len(s) > 64 {
+		s = strings.TrimRight(s[:64], "-")
+	}
+	if !ValidName(s) {
+		return ""
+	}
+	return s
 }
 
 // MutateConfig loads the current config, applies the mutator, and writes it back

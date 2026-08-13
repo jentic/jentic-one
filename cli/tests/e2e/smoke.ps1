@@ -41,8 +41,8 @@ $scratch = Join-Path ([System.IO.Path]::GetTempPath()) ("jentic-smoke-" + [Syste
 New-Item -ItemType Directory -Path $scratch -Force | Out-Null
 $env:JENTIC_HOME      = Join-Path $scratch '.jentic'
 $env:XDG_CONFIG_HOME  = Join-Path $scratch '.config'
-$env:XDG_STATE_HOME   = Join-Path $scratch 'state'
-$env:XDG_CACHE_HOME   = Join-Path $scratch 'cache'
+$env:XDG_STATE_HOME   = Join-Path $scratch '.local/state'
+$env:XDG_CACHE_HOME   = Join-Path $scratch '.cache'
 $env:JENTIC_MODE      = 'agent'
 
 function Pass($m) { Write-Host "  ok   $m" }
@@ -102,7 +102,33 @@ try {
   }
   Pass "jenticctl doctor --json parses"
 
-  # 5. LIVE ONLY (QA-2): prove reachability of the base URL the CLI resolves to —
+  # 6. OPS-22 degrade paths — assert "sane error / clean no-op", not a crash, for
+  #    the two OS-sensitive lifecycle commands whose behavior forks by GOOS. On
+  #    native Windows `os.Process.Signal` supports only Kill, so this is exactly
+  #    where OPS-20's SIGTERM/Signal(0) bug would surface; the go-test leg covers
+  #    the unit contract, and these assert the end-to-end CLI behavior offline.
+  #
+  # 6a. `jentic run <agent>` on a home with no isolated agent user takes the
+  #     same-user launcher path; it must terminate GRACEFULLY (non-zero, rendered
+  #     error) rather than panic or hang, whether or not the agent binary is
+  #     present. `run` is fenced in agent mode, so force human mode for this only.
+  $env:JENTIC_MODE = 'human'
+  $r = & $jentic 'run' 'claude' '--yes' 2>&1 | Out-String
+  $rc = $LASTEXITCODE
+  $env:JENTIC_MODE = 'agent'
+  if ($rc -eq 0) { Fail "jentic run claude exit=0 offline, want a graceful non-zero`n$r" }
+  if ($r -match 'panic') { Fail "jentic run claude crashed (panic)`n$r" }
+  Pass "jentic run claude degrades cleanly (exit $rc, no crash)"
+
+  # 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
+  #     report "nothing to stop" and exit 0 — the assertion OPS-20 would have
+  #     failed on native Windows if `stop` errored on the process path.
+  $s = Invoke-Native $jenticctl @('stop')
+  if ($s.Code -ne 0) { Fail "jenticctl stop exit=$($s.Code) on a scratch home, want 0`n$($s.Output)" }
+  if ($s.Output -notmatch 'nothing to stop') { Fail "jenticctl stop gave no 'nothing to stop'`n$($s.Output)" }
+  Pass "jenticctl stop is a clean no-op on a scratch home (exit 0)"
+
+  # 7. LIVE ONLY (QA-2): prove reachability of the base URL the CLI resolves to —
   #    an assertion the offline legs structurally cannot make — then confirm
   #    `jentic doctor` sees the live stack (exit 0). A fresh stack has no approved
   #    agent token, so an authenticated data call cannot succeed here.

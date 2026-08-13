@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -67,6 +66,19 @@ func newMigrateCmd(app *app) *cobra.Command {
 			res, err := runMigrate(app, purgeLegacy)
 			if err != nil {
 				return reportCoded(aud, err)
+			}
+			// UX-23: a no-op migrate (nothing to migrate) reports a distinct
+			// "created"/"noop" outcome and omits the noisy null/empty fields
+			// (migrated_contexts: null, active_context:, purged_legacy: false,
+			// legacy_root:) that the full result carries. Only a run that actually
+			// migrated something emits those fields.
+			if len(res.contexts) == 0 {
+				aud.Render(ux.Result{
+					Status:   ux.StatusUpdated,
+					Resource: "migration",
+					Message:  res.message(),
+				})
+				return nil
 			}
 			aud.Render(ux.Result{
 				Status:   ux.StatusUpdated,
@@ -372,27 +384,15 @@ func writeMigratedMarker(legacyRoot string) error {
 	return os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o600)
 }
 
-var nonNameChars = regexp.MustCompile(`[^a-z0-9-]+`)
-
-// sanitizeName maps an arbitrary legacy profile name to the V2 charset
-// (^[a-z0-9][a-z0-9-]{0,63}$): lowercase, non-charset runs -> "-", trimmed, and
-// prefixed with "x" if it does not start with an alnum. Idempotent on names that
-// already satisfy the charset.
+// sanitizeName maps an arbitrary legacy profile name to the V2 charset via the
+// canonical config.SanitizeName (ARCH-22), falling back to "default" when the
+// name has no usable characters. Idempotent on names that already satisfy the
+// charset.
 func sanitizeName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	s = nonNameChars.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if s == "" {
-		s = "default"
+	if s := sdkconfig.SanitizeName(name); s != "" {
+		return s
 	}
-	if c := s[0]; (c < 'a' || c > 'z') && (c < '0' || c > '9') {
-		s = "x" + s
-	}
-	if len(s) > 64 {
-		s = s[:64]
-		s = strings.TrimRight(s, "-")
-	}
-	return s
+	return "default"
 }
 
 // envNameFromURL derives a sanitized environment name from a base URL's host

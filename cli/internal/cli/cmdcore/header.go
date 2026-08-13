@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/x/term"
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -26,16 +27,35 @@ func (a *App) BrandHeader(baseURLFlag, cliVersion string) string {
 		return theme.Logo()
 	}
 
-	baseURL := config.DefaultBaseURL
-	if cfg, err := config.Load(a.Paths); err == nil {
-		baseURL = cfg.ResolvedBaseURLOr(baseURLFlag)
-	} else if baseURLFlag != "" {
-		baseURL = baseURLFlag
-	}
+	baseURL := headerProbeURL(a.Paths, baseURLFlag)
 	info := a.probeServer(baseURL)
 
 	panel := theme.VersionPanel(cliVersion, info.Version, info.Running)
 	return theme.LogoHeader(width, panel)
+}
+
+// headerProbeURL resolves the control-plane URL the help header probes for a
+// server version, with precedence: an explicit --base-url flag > the active V2
+// context's environment base_url > the legacy config's base_url > the built-in
+// default (UX-25). Before this the header only consulted the legacy
+// internal/config store, so a V2-only machine pointed at a remote install
+// still probed the local default (127.0.0.1:8000) in its banner. Every branch
+// is best-effort and non-fatal — the header is cosmetic, so any resolution
+// failure just falls through to the next source.
+func headerProbeURL(paths config.Paths, baseURLFlag string) string {
+	if baseURLFlag != "" {
+		return baseURLFlag
+	}
+	// V2 first: the active context's environment base_url is what data-plane
+	// commands actually use, so the header should reflect the same target.
+	if st, err := sdkconfig.LoadState(""); err == nil && st != nil && st.BaseURL != "" {
+		return st.BaseURL
+	}
+	// Legacy fallback (a machine still on the ~/.jentic store).
+	if cfg, err := config.Load(paths); err == nil {
+		return cfg.ResolvedBaseURLOr("")
+	}
+	return config.DefaultBaseURL
 }
 
 // probeServer resolves the interactive header's server-version probe through the

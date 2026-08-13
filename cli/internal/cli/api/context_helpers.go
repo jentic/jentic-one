@@ -9,6 +9,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -55,6 +56,18 @@ func asCoded(err error) *ux.CodedError {
 			Code:       ux.CodePendingApproval,
 			Msg:        err.Error(),
 			Actionable: "wait for an operator to approve this identity, then retry",
+		}
+	}
+	// AGT-22: an unconfigured machine (no XDG context / no plane URL) is a
+	// recoverable RESOLVE_FAILED (exit 2, "change the ask, don't retry the same
+	// call"), NOT INTERNAL_ERROR. The client constructors return the typed
+	// clictx.ErrNoConfig sentinel for exactly this; give an agent the recovery
+	// command instead of the terse "internal error" a bare wrap would produce.
+	if errors.Is(err, clictx.ErrNoConfig) {
+		return &ux.CodedError{
+			Code:       ux.CodeResolveFailed,
+			Msg:        err.Error(),
+			Actionable: "jentic register --url <control-plane URL>",
 		}
 	}
 	return &ux.CodedError{Code: ux.CodeInternalError, Msg: err.Error()}

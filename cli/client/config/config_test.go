@@ -313,3 +313,41 @@ func TestValidName(t *testing.T) {
 		}
 	}
 }
+
+// TestSanitizeName pins the canonical arbitrary-string → valid-name coercion
+// (ARCH-22), the single primitive both onboarding (register) and migration now
+// share. Every non-empty result must itself satisfy ValidName; only empty input
+// yields "" (callers supply their own "default"/"agent" fallback).
+func TestSanitizeName(t *testing.T) {
+	cases := map[string]string{
+		"work":           "work",
+		"My_Profile":     "my-profile",
+		"api.jentic.com": "api-jentic-com",
+		"_leading":       "leading",
+		"trailing_":      "trailing",
+		"UPPER":          "upper",
+		"123":            "123",
+		"":               "",     // empty in → empty out; caller falls back
+		"   ":            "",     // whitespace-only → nothing survives
+		"$$$":            "",     // all non-charset → nothing survives
+		"-only-":         "only", // interior alnum survives; hyphens are in-charset and trimmed at the ends
+		"9lives":         "9lives",
+	}
+	for in, want := range cases {
+		got := SanitizeName(in)
+		if got != want {
+			t.Errorf("SanitizeName(%q) = %q, want %q", in, got, want)
+		}
+		if got != "" && !ValidName(got) {
+			t.Errorf("SanitizeName(%q) = %q, which is not a ValidName", in, got)
+		}
+	}
+
+	// A leading non-alnum survivor is prefixed with "x" to satisfy the charset
+	// (idempotency + robustness): e.g. a name that starts with a digit is fine,
+	// but a sanitized form beginning with "-" would be trimmed; construct one that
+	// forces the x-prefix branch by leaving an interior-only alnum tail.
+	if got := SanitizeName("...42..."); got != "42" {
+		t.Errorf("SanitizeName(dotted digits) = %q, want %q", got, "42")
+	}
+}

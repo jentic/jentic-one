@@ -28,6 +28,14 @@ import (
 
 var errInspectMissingFields = errors.New("inspect response missing method or url")
 
+// apiEnvelopeSchemaVersion pins the machine-contract version of the ad-hoc JSON
+// envelopes this package emits that are NOT a ux wrapper (the execute success
+// map and the catalog import maps). Their bodies are arbitrary upstream/job data
+// so they can't reuse ux.List/Result, but they must still carry schema_version
+// like every sanctioned envelope (AGT-23). Mirrors ux.currentSchemaVersion; bump
+// in lockstep with the ux envelope contract.
+const apiEnvelopeSchemaVersion = "1"
+
 // operationInfo holds the resolved HTTP method and target for an operation.
 // URL is an absolute upstream URL (from inspect or a METHOD:URL target); Path
 // is a broker-relative path (from a METHOD:/path target). Exactly one of URL or
@@ -94,7 +102,7 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n" +
 			"  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n" +
 			"  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
-		Args: cobra.ExactArgs(1),
+		Args: exactNamedArgs("<METHOD:url | METHOD:/path | operation_id>", "target"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return app.executeE(cmd, opts, args[0])
 		},
@@ -116,6 +124,13 @@ func newExecuteCmd(app *app) *cobra.Command {
 	return cmd
 }
 
+// isMachineMode reports whether a resolved mode is a fenced machine mode
+// (agent / service-account), used by SEC-21 to pin the broker host to the
+// environment's broker_url. Human mode keeps the --broker-host override.
+func isMachineMode(mode string) bool {
+	return mode == clictx.ModeAgent || mode == clictx.ModeServiceAccount
+}
+
 func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
 	baseURL, token, err := a.agentSession(cmd.Context())
 	if err != nil {
@@ -129,6 +144,21 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	flags := cmd.Flags()
 	if st := clictx.ActiveV2(cmd.Context()); st != nil && st.BrokerURL != "" {
 		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
+			// SEC-21: in a machine mode (agent/service-account) the broker host is
+			// pinned to the environment's configured broker_url. An agent must not
+			// be able to redirect its bearer + injected upstream context at an
+			// arbitrary host via --broker-host/--broker-scheme. A human operator
+			// keeps the override (they own the machine and may be testing). The
+			// scheme may still be overridden (http↔https on the same host is the
+			// common local papercut, guarded separately by RequireSecureURL).
+			if isMachineMode(st.Mode) && flags.Changed("broker-host") && opts.brokerHost != u.Host {
+				return &ux.CodedError{
+					Code: ux.CodeResolveFailed,
+					Msg: fmt.Sprintf("--broker-host %q is not allowed in %s mode: the broker is pinned to the "+
+						"environment's broker_url host (%s)", opts.brokerHost, st.Mode, u.Host),
+					Actionable: "Drop --broker-host (it uses the environment's broker_url), or change the environment's broker_url with `jentic env add <env> --broker-url <URL> --force`.",
+				}
+			}
 			if !flags.Changed("broker-scheme") {
 				opts.brokerScheme = u.Scheme
 			}
@@ -305,12 +335,10 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	})
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		if jsonOrPretty(cmd, opts.json) {
-			_ = writeJSON(a.Out, map[string]any{
-				"error":  err.Error(),
-				"status": 0,
-			})
-		}
+		// AGT-23: a failure is single-sourced on stderr as the coded envelope
+		// below. We deliberately do NOT also write an unversioned
+		// {error,status:0} to stdout — that double-signalled the same failure on
+		// two streams, and an agent parsing stdout would see a bogus "response".
 		coded := &ux.CodedError{
 			Code: ux.CodeTransportError,
 			Msg:  fmt.Sprintf("transport error: %v", err),
@@ -462,12 +490,8 @@ func (a *app) resolveOperation(cmd *cobra.Command, token, baseURL string, opts *
 	if err != nil {
 		var he *apiclient.HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-			if jsonOrPretty(cmd, opts.json) || opts.raw {
-				_ = writeJSON(a.Out, map[string]any{
-					"error":  fmt.Sprintf("operation %q not found", target),
-					"status": 0,
-				})
-			}
+			// AGT-23: single-source the failure on stderr (the coded envelope
+			// below). No unversioned {error,status:0} on stdout.
 			return nil, &ux.CodedError{
 				Code:       ux.CodeResolveFailed,
 				Msg:        fmt.Sprintf("operation %q not found", target),
@@ -680,9 +704,14 @@ func (a *app) executeJSONOutput(resp *http.Response, body []byte) error {
 	}
 
 	envelope := map[string]any{
-		"status":  resp.StatusCode,
-		"headers": headers,
-		"body":    parsedBody,
+		// AGT-23: stamp the machine-contract schema_version like every sanctioned
+		// wrapper (ux.List/Page/Result/Export), so an agent can branch on the
+		// envelope shape. execute builds an ad-hoc map (not a ux type) because its
+		// body is the arbitrary upstream response, so the version is set here.
+		"schema_version": apiEnvelopeSchemaVersion,
+		"status":         resp.StatusCode,
+		"headers":        headers,
+		"body":           parsedBody,
 	}
 	if execID := resp.Header.Get("Jentic-Execution-Id"); execID != "" {
 		envelope["execution_id"] = execID

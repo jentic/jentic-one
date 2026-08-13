@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -48,20 +47,6 @@ func bootstrapServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomi
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &registers
-}
-
-// fastPoll shrinks the api-package approval poll cadence (mirrored from
-// cmdcore) to milliseconds for the duration of a test, so access --wait cases
-// assert behaviour without real wall-clock seconds.
-func fastPoll(t *testing.T) {
-	t.Helper()
-	oi, om, os := pollInitialDelay, pollMaxDelay, pollDelayStep
-	pollInitialDelay = 2 * time.Millisecond
-	pollMaxDelay = 5 * time.Millisecond
-	pollDelayStep = 1 * time.Millisecond
-	t.Cleanup(func() {
-		pollInitialDelay, pollMaxDelay, pollDelayStep = oi, om, os
-	})
 }
 
 // runBootstrap executes the bootstrap command through the full jentic tree,
