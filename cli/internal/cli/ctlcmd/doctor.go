@@ -160,20 +160,32 @@ func (d *doctor) checkInstall(m *config.Manifest, found bool) {
 }
 
 // checkTooling verifies the external tools the recorded install mode needs.
+// Severity of a missing tool depends on whether an install manifest exists: on a
+// fresh box (no manifest) a missing tool is a WARNING, so doctor stays a
+// zero-exit, CI-safe diagnostic (mirroring the missing-docker/daemon-down policy
+// — see TestDoctorReportsDockerDaemonDown). Once an install manifest records a
+// mode, a tool that mode REQUIRES but is missing is a real broken install and
+// stays a hard fail.
 func (d *doctor) checkTooling(m *config.Manifest, found bool) {
 	const section = "Tooling"
 	mode := config.ModeLocal
 	if found && m.Mode != "" {
 		mode = m.Mode
 	}
+	// A missing tool is only a hard failure when an install manifest exists; on a
+	// fresh machine it is a warning (nothing is installed yet).
+	missing := statusFail
+	if !found {
+		missing = statusWarn
+	}
 
 	if mode == config.ModeDocker {
-		d.checkTool(section, "docker", "https://docs.docker.com/get-docker/")
+		d.checkTool(section, "docker", "https://docs.docker.com/get-docker/", missing)
 		return
 	}
 
-	d.checkTool(section, "uv", "https://docs.astral.sh/uv/")
-	d.checkTool(section, "git", "https://git-scm.com/downloads")
+	d.checkTool(section, "uv", "https://docs.astral.sh/uv/", missing)
+	d.checkTool(section, "git", "https://git-scm.com/downloads", missing)
 	venv := d.app.Paths.VenvPath()
 	if fi, err := os.Stat(venv); err == nil && fi.IsDir() {
 		d.add(section, "venv", statusPass, venv, "")
@@ -182,10 +194,10 @@ func (d *doctor) checkTooling(m *config.Manifest, found bool) {
 	}
 }
 
-func (d *doctor) checkTool(section, name, url string) {
+func (d *doctor) checkTool(section, name, url string, missing checkStatus) {
 	path, err := exec.LookPath(name)
 	if err != nil {
-		d.add(section, name, statusFail, "not found on PATH", "install "+name+": "+url)
+		d.add(section, name, missing, "not found on PATH", "install "+name+": "+url)
 		return
 	}
 	detail := path

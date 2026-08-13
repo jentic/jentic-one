@@ -86,6 +86,56 @@ func TestDoctorJSON(t *testing.T) {
 	}
 }
 
+// On a fresh machine (no install manifest) a missing local-mode tool (uv/git)
+// must be a WARNING, not a fail — otherwise `jenticctl doctor` returns a
+// non-zero exit on any box that hasn't run a source install (e.g. a Windows CI
+// runner without uv). This mirrors the missing-docker/daemon-down "CI-safe,
+// zero-exit" policy. We force a manifest-less state and a guaranteed-absent tool
+// name via a temp PATH so the assertion holds regardless of what the host has.
+func TestDoctorToolingMissingIsWarnWithoutManifest(t *testing.T) {
+	app := testApp(t)
+	// Point PATH at an empty dir so uv/git are guaranteed absent.
+	t.Setenv("PATH", t.TempDir())
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkTooling(&config.Manifest{}, false /* no manifest */)
+
+	sawUV := false
+	for _, c := range d.checks {
+		if c.name == "uv" {
+			sawUV = true
+			if c.status != statusWarn {
+				t.Errorf("missing uv on a fresh box should be statusWarn (zero-exit), got %v", c.status)
+			}
+		}
+	}
+	if !sawUV {
+		t.Fatalf("checkTooling recorded no uv row: %+v", d.checks)
+	}
+	if f := d.failed(); f != 0 {
+		t.Errorf("tooling on a manifest-less box should contribute 0 hard failures, got %d", f)
+	}
+}
+
+// Once an install manifest records local mode, a REQUIRED tool that is missing
+// is a real broken install and stays a hard fail (non-zero exit).
+func TestDoctorToolingMissingIsFailWithManifest(t *testing.T) {
+	app := testApp(t)
+	t.Setenv("PATH", t.TempDir())
+
+	d := &doctor{app: app, ctx: context.Background()}
+	d.checkTooling(&config.Manifest{Mode: config.ModeLocal}, true /* manifest present */)
+
+	for _, c := range d.checks {
+		if c.name == "uv" && c.status != statusFail {
+			t.Errorf("missing uv with a local-mode manifest should be statusFail, got %v", c.status)
+		}
+	}
+	if d.failed() == 0 {
+		t.Error("a missing required tool with a manifest should be a hard failure")
+	}
+}
+
 func TestDoctorCounts(t *testing.T) {
 	d := &doctor{checks: []check{
 		{status: statusPass},
