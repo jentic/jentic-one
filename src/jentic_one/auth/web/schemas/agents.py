@@ -42,6 +42,12 @@ class DenyRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=1024)
 
 
+class ClaimRequest(BaseModel):
+    """Request body for claiming ownership of a self-registered agent."""
+
+    token: str = Field(min_length=1, max_length=512)
+
+
 class ToolkitBindingResponse(BaseModel):
     """Toolkit binding representation in API responses."""
 

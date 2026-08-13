@@ -24,6 +24,7 @@ from jentic_one.auth.web.schemas.agents import (
     ApiKeyHistoryResponse,
     ApiKeyInfoResponse,
     ApiKeyResponse,
+    ClaimRequest,
     DenyRequest,
     ToolkitBindingListResponse,
     ToolkitBindingResponse,
@@ -131,6 +132,24 @@ async def approve_agent(
 ) -> AgentResponse:
     """Approve a pending agent."""
     view = await agent_svc.approve(agent_id, identity=identity)
+    return _agent_response(view)
+
+
+@router.post("/agents/{agent_id}:claim", status_code=200)
+async def claim_agent(
+    agent_id: str,
+    body: ClaimRequest,
+    identity: Identity = get_current_identity(allow_expired_password=True),
+    agent_svc: AgentService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Claim ownership of a self-registered agent using its claim token.
+
+    Authenticated by the platform bearer token but requires **no** agent
+    permission — the single-use claim token minted at ``/register`` is the proof,
+    so the registering human (even a plain member) can take ownership. Sets
+    ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+    """
+    view = await agent_svc.claim(agent_id, token=body.token, identity=identity)
     return _agent_response(view)
 
 

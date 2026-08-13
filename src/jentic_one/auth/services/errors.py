@@ -105,3 +105,19 @@ class InvalidOwnerError(AuthServiceError):
     def __init__(self, owner_id: str) -> None:
         super().__init__(f"User '{owner_id}' does not exist")
         self.owner_id = owner_id
+
+
+class ClaimTokenInvalidError(AuthServiceError):
+    """Raised when an agent-ownership claim token is missing, wrong, or expired."""
+
+    def __init__(self, reason: str = "invalid_claim_token") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class AgentAlreadyOwnedError(AuthServiceError):
+    """Raised when claiming an agent that already has an owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' already has an owner")
+        self.agent_id = agent_id

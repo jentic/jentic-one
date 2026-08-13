@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.repos import ActorScopeGrantRepository
 from jentic_one.admin.repos.agent_repo import AgentRepository
+from jentic_one.auth.core.claim import get_claim_token_minter
 from jentic_one.auth.services.errors import InvalidGrantError, RegistrationAccessDeniedError
 from jentic_one.shared.audit import AuditAction, AuditTargetType, record_audit
 from jentic_one.shared.context import Context
@@ -33,6 +34,9 @@ class RegisterResult:
     registration_access_token: str
     registration_client_uri: str
     status: str
+    # Opaque, single-use ownership-claim token — present only when a claim-token
+    # minter is installed (auth/core/claim.py). None on OSS single-user default.
+    claim_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +106,14 @@ class RegistrationService:
         rat_ttl = self._ctx.config.auth.rat_ttl_seconds
         rat_expires_at = datetime.now(UTC) + timedelta(seconds=rat_ttl)
 
+        claim_ttl = self._ctx.config.auth.claim_ttl_seconds
+        claim_minter = get_claim_token_minter()
+        # Minted lazily inside _write (needs the agent id) but cached so a
+        # transaction retry reuses the same plaintext — otherwise the token
+        # returned to the caller wouldn't match the stored hash. OSS default
+        # minter returns None → no claim token, response identical to today.
+        minted: dict[str, str | None] = {}
+
         async def _write(session: AsyncSession) -> Agent:
             agent = await AgentRepository.create_dcr(
                 session,
@@ -110,6 +122,13 @@ class RegistrationService:
                 rat_hash=rat_hash,
                 rat_expires_at=rat_expires_at,
             )
+            if "claim_token" not in minted:
+                minted["claim_token"] = claim_minter(agent.id)
+            claim_plain = minted["claim_token"]
+            if claim_plain is not None:
+                agent.claim_token_hash = _hash_rat(claim_plain)
+                agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
+                await session.flush()
             if scope:
                 for scope_value in list(dict.fromkeys(scope.split())):
                     await ActorScopeGrantRepository.grant(
@@ -161,6 +180,7 @@ class RegistrationService:
             registration_access_token=rat_plain,
             registration_client_uri=f"{base_url}/register/{agent.id}",
             status=agent.status,
+            claim_token=minted.get("claim_token"),
         )
 
     async def poll_status(self, agent_id: str, rat: str) -> PollResult:

@@ -1630,6 +1630,18 @@ components:
       - new_password
       title: ChangePasswordRequest
       type: object
+    ClaimRequest:
+      description: Request body for claiming ownership of a self-registered agent.
+      properties:
+        token:
+          maxLength: 512
+          minLength: 1
+          title: Token
+          type: string
+      required:
+      - token
+      title: ClaimRequest
+      type: object
     ConnectChallengeResponse:
       description: Response from a connect initiation.
       properties:
@@ -4017,6 +4029,11 @@ components:
     RegisterResponse:
       description: POST /register 201 response.
       properties:
+        claim_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Claim Token
         client_id:
           title: Client Id
           type: string
@@ -7548,6 +7565,83 @@ paths:
       security:
       - BearerAuth: []
       summary: Approve Agent
+      tags:
+      - Agents
+  /agents/{agent_id}:claim:
+    post:
+      description: |-
+        Claim ownership of a self-registered agent using its claim token.
+
+        Authenticated by the platform bearer token but requires **no** agent
+        permission — the single-use claim token minted at ``/register`` is the proof,
+        so the registering human (even a plain member) can take ownership. Sets
+        ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+      operationId: claimAgent
+      parameters:
+      - in: path
+        name: agent_id
+        required: true
+        schema:
+          title: Agent Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Claim Agent
       tags:
       - Agents
   /agents/{agent_id}:deny:

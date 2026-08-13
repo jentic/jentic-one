@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+from datetime import UTC, datetime
+
 import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +21,8 @@ from jentic_one.admin.scoping.filters import build_access_filters
 from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
+    AgentAlreadyOwnedError,
+    ClaimTokenInvalidError,
     InvalidOwnerError,
     InvalidTransitionError,
     ToolkitBindingConflictError,
@@ -235,6 +241,52 @@ class AgentService:
                 actor_type=identity.actor_type.value,
             )
             await self._settle_registration_alerts(session, agent_id, acknowledged_by=identity.sub)
+        return AgentView.model_validate(agent)
+
+    async def claim(self, agent_id: str, *, token: str, identity: Identity) -> AgentView:
+        """Assign ownership of a self-registered agent to the claiming caller.
+
+        The registering human presents the single-use claim token that was minted
+        at ``/register`` (see ``auth/core/claim.py``). Any *authenticated* caller
+        may claim — the token is the proof, not a role — so a plain member can
+        take ownership of the agent they registered. Once owned, the agent shows
+        under the caller via the normal scoping filter and the existing approve
+        path applies (an admin approving later no longer steals ownership, because
+        ``owner_id`` is already set).
+
+        Raises ``ActorNotFoundError`` (unknown/archived agent),
+        ``AgentAlreadyOwnedError`` (already claimed/owned), or
+        ``ClaimTokenInvalidError`` (no token issued, mismatch, or expired).
+        """
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        async with self._ctx.admin_db.transaction() as session:
+            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+            if agent is None or agent.status == ActorStatus.ARCHIVED:
+                raise ActorNotFoundError(agent_id)
+            if agent.owner_id is not None:
+                raise AgentAlreadyOwnedError(agent_id)
+            # Constant-time compare, and treat "no token was ever issued" the same
+            # as a mismatch so we never leak which agents are claimable.
+            if not agent.claim_token_hash or not hmac.compare_digest(
+                agent.claim_token_hash, token_hash
+            ):
+                raise ClaimTokenInvalidError()
+            if agent.claim_expires_at is not None and agent.claim_expires_at < datetime.now(UTC):
+                raise ClaimTokenInvalidError("claim_token_expired")
+            agent = await AgentRepository.set_owner_from_claim(
+                session, agent, owner_id=identity.sub
+            )
+            await record_audit(
+                session,
+                action=AuditAction.CLAIM,
+                target_type=AuditTargetType.AGENT,
+                target_id=agent_id,
+                actor_type=identity.actor_type,
+                actor_id=identity.sub,
+                after={"owner_id": identity.sub},
+                reason="agent_ownership_claim",
+                origin=identity.origin.value,
+            )
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:

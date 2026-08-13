@@ -597,6 +597,26 @@
       ],
       "auth_note": null,
       "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {},
+      "method": "POST",
+      "operation_id": "claimAgent",
+      "path": "/agents/{agent_id}:claim",
+      "public": false,
+      "required_scopes": [],
+      "summary": "Claim Agent",
+      "surface": "agents",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
       "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {
         "agents:write": [
@@ -4663,5 +4683,5 @@
     ],
     "total": 31
   },
-  "total": 158
+  "total": 159
 }

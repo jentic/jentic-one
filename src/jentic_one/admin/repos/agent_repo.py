@@ -157,6 +157,8 @@ class AgentRepository:
         jwks: dict[str, Any],
         rat_hash: str,
         rat_expires_at: datetime,
+        claim_token_hash: str | None = None,
+        claim_expires_at: datetime | None = None,
     ) -> Agent:
         agent = Agent(
             name=name,
@@ -165,6 +167,8 @@ class AgentRepository:
             jwks=jwks,
             registration_access_token_hash=rat_hash,
             rat_expires_at=rat_expires_at,
+            claim_token_hash=claim_token_hash,
+            claim_expires_at=claim_expires_at,
             created_by="self",
         )
         session.add(agent)
@@ -193,3 +197,18 @@ class AgentRepository:
         stmt = select(Agent).where(Agent.id == agent_id).with_for_update()
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def set_owner_from_claim(session: AsyncSession, agent: Agent, *, owner_id: str) -> Agent:
+        """Assign ``owner_id`` to a claimant and consume the claim token.
+
+        Caller (service) is responsible for locking the row, verifying the token
+        hash + expiry, and checking the agent is still unowned. This method just
+        performs the mutation: set the owner and null the single-use claim token
+        so it cannot be replayed.
+        """
+        agent.owner_id = owner_id
+        agent.claim_token_hash = None
+        agent.claim_expires_at = None
+        await session.flush()
+        return agent

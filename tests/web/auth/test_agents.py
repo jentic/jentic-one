@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import hashlib
+from collections.abc import AsyncGenerator, Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -13,10 +14,17 @@ from jentic_one.admin.core.schema.actor_scope_grants import ActorScopeGrant
 from jentic_one.admin.core.schema.agent_toolkit_bindings import AgentToolkitBinding
 from jentic_one.admin.core.schema.agents import Agent
 from jentic_one.admin.core.schema.events import Event
-from jentic_one.admin.repos import ActorScopeGrantRepository, AgentRepository, EventRepository
+from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.repos import (
+    ActorScopeGrantRepository,
+    AgentRepository,
+    EventRepository,
+    UserRepository,
+)
 from jentic_one.admin.repos.agent_toolkit_binding_repo import AgentToolkitBindingRepository
 from jentic_one.admin.services._support.tokens import issue_jwt
 from jentic_one.shared.context import Context
+from jentic_one.shared.models import InviteState
 from jentic_one.shared.models.events import EventType
 from tests.web.auth.conftest import _build_app
 
@@ -435,3 +443,102 @@ def test_password_rotation_required(web_context: Context) -> None:
         resp = client.get("/agents")
         assert resp.status_code == 403
         assert resp.json()["type"] == "password_rotation_required"
+
+
+# --- Ownership claim (POST /agents/{id}:claim) -----------------------------------
+
+_CLAIM_TOKEN = "claim-web-secret-abc123"
+
+
+def _sha256(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@pytest.fixture()
+async def claimable_agent_id(web_context: Context) -> AsyncGenerator[str, None]:
+    """A self-registered (unowned, pending) agent carrying a valid claim token."""
+    ctx = web_context
+    async with ctx.admin_db.transaction() as session:
+        agent = await AgentRepository.create_dcr(
+            session,
+            name="claimable-agent",
+            jwks={"keys": []},
+            rat_hash="unused",
+            rat_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            claim_token_hash=_sha256(_CLAIM_TOKEN),
+            claim_expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+    yield agent.id
+
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.id == agent.id))
+        await session.commit()
+
+
+@pytest.fixture()
+async def member_user_id(web_context: Context) -> AsyncGenerator[str, None]:
+    """A real user row with NO agent permissions — a valid FK target for owner_id."""
+    ctx = web_context
+    async with ctx.admin_db.transaction() as session:
+        user = await UserRepository.create(
+            session,
+            email="auth-web-test-member@test.local",
+            first_name="Member",
+            last_name="User",
+            invite_state=InviteState.REDEEMED,
+            created_by="usr_test",
+        )
+    yield user.id
+
+    async with ctx.admin_db.session() as session:
+        await session.execute(delete(Agent).where(Agent.owner_id == user.id))
+        await session.execute(delete(User).where(User.id == user.id))
+        await session.commit()
+
+
+@pytest.fixture()
+def member_client(web_context: Context, member_user_id: str) -> Iterator[TestClient]:
+    """A logged-in user with NO agent permissions — the claim token is the proof."""
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": member_user_id,
+        "email": "auth-web-test-member@test.local",
+        "actor_type": "user",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as tc:
+        yield tc
+
+
+def test_claim_agent_sets_owner_to_caller(
+    member_client: TestClient, member_user_id: str, claimable_agent_id: str
+) -> None:
+    """A member with a valid token becomes the owner — no agents:write needed."""
+    resp = member_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
+    assert resp.status_code == 200
+    assert resp.json()["owner_id"] == member_user_id
+
+
+def test_claim_agent_is_single_use(member_client: TestClient, claimable_agent_id: str) -> None:
+    """The token is consumed on first claim; a replay fails (already owned)."""
+    first = member_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
+    assert first.status_code == 200
+    replay = member_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
+    assert replay.status_code == 409
+    assert replay.json()["type"] == "agent_already_owned"
+
+
+def test_claim_agent_wrong_token(member_client: TestClient, claimable_agent_id: str) -> None:
+    resp = member_client.post(
+        f"/agents/{claimable_agent_id}:claim", json={"token": "not-the-token"}
+    )
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "invalid_claim_token"
+
+
+def test_claim_agent_unauthenticated(unauthed_client: TestClient, claimable_agent_id: str) -> None:
+    resp = unauthed_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
+    assert resp.status_code == 401
