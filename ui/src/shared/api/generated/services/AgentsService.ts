@@ -11,6 +11,7 @@ import type { AgentScopesResponse } from '../models/AgentScopesResponse';
 import type { ApiKeyHistoryResponse } from '../models/ApiKeyHistoryResponse';
 import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
+import type { ClaimRequest } from '../models/ClaimRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
 import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
 import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
@@ -380,6 +381,42 @@ export class AgentsService {
             path: {
                 'agent_id': agentId,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Claim Agent
+     * Claim ownership of a self-registered agent using its claim token.
+     *
+     * Authenticated by the platform bearer token but requires **no** agent
+     * permission — the single-use claim token minted at ``/register`` is the proof,
+     * so the registering human (even a plain member) can take ownership. Sets
+     * ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+     * @returns AgentResponse Successful Response
+     * @throws ApiError
+     */
+    public static claimAgent({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: ClaimRequest,
+    }): CancelablePromise<AgentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/agents/{agent_id}:claim',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,
