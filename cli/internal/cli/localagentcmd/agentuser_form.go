@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 // "No" with a "none found" note, so the operator isn't offered a copy of nothing.
 // Each toggle's default (set by the caller) is Yes when there is something to
 // copy, so the affirmative option is focused for the common case.
-func (a *App) promptAgentUserFields(fields *agentUserFields, configSrcs []string, providerName string, providerSrcs []string) error {
+func (a *Cmd) promptAgentUserFields(fields *agentUserFields, configSrcs []string, providerName string, providerSrcs []string) error {
 	return prompt.NewForm(huh.NewGroup(
 		prompt.Input().
 			Title("Agent account name").
@@ -111,7 +111,7 @@ func passwordlessSelect(value *bool) *huh.Select[bool] {
 // printAgentRunInstructions closes the setup with the copy-paste launch command
 // and the first-run permissions caveat, so the operator knows exactly how to
 // start a session and why the home can't be broadly granted.
-func (a *App) printAgentRunInstructions(agentID, homeDir string) {
+func (a *Cmd) printAgentRunInstructions(agentID, homeDir string) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Success.Render("Agent isolated. Start a session with:"))
 	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(fmt.Sprintf("cd %s; jentic run %s", homeDir, agentID)))

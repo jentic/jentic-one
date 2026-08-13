@@ -37,7 +37,7 @@ func Test1B_NakedPrint(t *testing.T) {
 	pkgs := loadCLI(t)
 
 	// The V2 command tree is strict — it ships clean (baseline 0) and must stay so.
-	strictRoots := []string{"internal/cli/cmdcore", "internal/cli/api", "internal/cli/ctlcmd"}
+	strictRoots := []string{"internal/cli/cmdcore", "internal/cli/api", "internal/cli/ctlcmd", "internal/cli/localagentcmd"}
 	// No grandfathered packages remain; kept empty so the ratchet arm is inert but
 	// present (a future legacy import could be added here with a non-zero baseline).
 	legacyRoots := []string{}

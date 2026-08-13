@@ -8,7 +8,7 @@ import (
 
 // app is the api (jentic) tree's command receiver. It embeds *cmdcore.App so
 // every api leaf-command method (func (a *app) …) keeps calling shared helpers
-// (a.ResolveIdentity, a.PrintRevokeHint, …) verbatim — those promote from the
+// (a.WriteJSON, a.WantsInteractive, …) verbatim — those promote from the
 // embedded App — while api-local methods hang off *app itself. The api root
 // builder constructs &app{core} from the shared *cmdcore.App.
 type app struct {

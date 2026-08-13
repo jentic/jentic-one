@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"context"
@@ -67,7 +67,7 @@ type agentSetup struct {
 // operators is the list of selected operator names (from chooseAdapters); we act
 // on the first one that maps to a known local coding agent (claude, codex,
 // cursor, or hermes — the runnable entries in localagent.Registry).
-func (a *App) setupAgentUser(ctx context.Context, operators []string, interactive bool) (agentSetup, error) {
+func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactive bool) (agentSetup, error) {
 	agentID, desc, ok := firstKnownAgent(operators)
 	if !ok {
 		// None of the selected operators is a launchable local agent (e.g. only
@@ -192,7 +192,7 @@ func (a *App) setupAgentUser(ctx context.Context, operators []string, interactiv
 // executed) and never returns a hard error for the missing dependency: whichever
 // branch the operator picks, the account is recorded as not-created and setup
 // hands back cleanly so the rest of bootstrap continues.
-func (a *App) agentUserPrereqGate(agentID, defaultName string, missing []localagent.Prereq) (agentSetup, error) {
+func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localagent.Prereq) (agentSetup, error) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warnf(
 		"Can't isolate the agent yet — this machine is missing what full agent isolation needs:"))
@@ -244,7 +244,7 @@ func (a *App) agentUserPrereqGate(agentID, defaultName string, missing []localag
 // here — the caller records the account first, then seeds best-effort (see
 // seedAgentConfig), so a seeding failure can't leave an unrecorded, un-reclaimable
 // account behind.
-func (a *App) createAgentAccount(ctx context.Context, operator string, fields agentUserFields) error {
+func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields agentUserFields) error {
 	// Re-validate at the point of use, not just in the form: a hand-edited
 	// config.yaml or a future non-form caller could otherwise thread an unsafe
 	// name/home into the privileged commands built below (sudo runas, sudoers rule,
@@ -377,7 +377,7 @@ func (a *App) createAgentAccount(ctx context.Context, operator string, fields ag
 // so a copy failure is warned about, not fatal, and must never un-record or block
 // the setup the operator came for. The field bools drive the decision directly, so
 // there is no second prompt; the per-copy warnings still print.
-func (a *App) seedAgentConfig(ctx context.Context, fields agentUserFields, desc localagent.Descriptor) {
+func (a *Cmd) seedAgentConfig(ctx context.Context, fields agentUserFields, desc localagent.Descriptor) {
 	prefs := seedPrefs{forceSeed: fields.portConfig, interactive: false}
 	if err := a.ensureAgentConfig(ctx, prefs, fields.name, desc); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf(
@@ -395,7 +395,7 @@ func (a *App) seedAgentConfig(ctx context.Context, fields agentUserFields, desc 
 // is stamped with CreatedAt; an existing one keeps its original stamp and its
 // recorded grants. Enabled tracks AccountCreated: creating the account enables it,
 // and recording a declined (created=false) account leaves it disabled.
-func (a *App) recordAgentAccount(userName, homeDir, configDir string, created bool) {
+func (a *Cmd) recordAgentAccount(userName, homeDir, configDir string, created bool) {
 	// Route through Mutate: it reloads under the config lock before applying, so a
 	// concurrent grant that appended a dir to GrantedDirs isn't clobbered by this
 	// record write (which preserves whatever grants the reloaded config carries).

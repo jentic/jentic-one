@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 // list. When it becomes multi-choice this must run per selected operator — the
 // trusted-projects source is per-agent (Claude Code's ~/.claude.json here), so each
 // operator reads its own, not a shared home scan.
-func (a *App) offerWorkspaceGrants(ctx context.Context, desc localagent.Descriptor, agentID, agentUser string) {
+func (a *Cmd) offerWorkspaceGrants(ctx context.Context, desc localagent.Descriptor, agentID, agentUser string) {
 	workspaces := localagent.TrustedWorkspaces(localagent.OperatorHome(), desc)
 	if len(workspaces) == 0 {
 		return
@@ -70,7 +70,7 @@ func (a *App) offerWorkspaceGrants(ctx context.Context, desc localagent.Descript
 // pickWorkspaces shows the trusted workspaces as a pre-selected multiselect so the
 // operator can trim the set before granting. All are checked by default: they are
 // the operator's own trusted project dirs and bringing them over is the point.
-func (a *App) pickWorkspaces(workspaces []string) ([]string, error) {
+func (a *Cmd) pickWorkspaces(workspaces []string) ([]string, error) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Step.Render("Bring your workspaces over"))
 	fmt.Fprintln(a.Out, theme.Dim.Render(

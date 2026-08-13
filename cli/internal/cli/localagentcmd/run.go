@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
@@ -63,7 +64,8 @@ type runOptions struct {
 
 // NewRunCmd builds the `run` command that launches a coding agent inside the
 // per-session sandbox. Shared by both trees via cmdcore.
-func NewRunCmd(app *App) *cobra.Command {
+func NewRunCmd(app *cmdcore.App) *cobra.Command {
+	a := &Cmd{App: app}
 	opts := &runOptions{}
 	cmd := &cobra.Command{
 		Use:   "run <agent> [path] [-- <agent-args>...]",
@@ -105,7 +107,7 @@ func NewRunCmd(app *App) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return app.runE(cmd, opts, args)
+			return a.runE(cmd, opts, args)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.home, "home", false,
@@ -131,7 +133,7 @@ func NewRunCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
+func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	ctx := cmd.Context()
 
 	// Split jentic's own positional args (agent id, optional path) from the agent
@@ -291,7 +293,7 @@ func (a *App) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 // operator's active profile as JENTIC_PROFILE. The working directory is the path
 // argument if given, else the current directory (there is nothing to grant — the
 // agent already runs with the operator's own filesystem access).
-func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
+func (a *Cmd) runSameUser(ctx context.Context, cfg *config.FileConfig, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
 	binary, err := exec.LookPath(desc.Binary)
 	if err != nil {
 		return fmt.Errorf("%s is not installed or not on your PATH; install it, then re-run "+
@@ -318,7 +320,7 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 	if err := c.Run(); err != nil {
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-			return &ExitCodeError{Code: exit.ExitCode()}
+			return &cmdcore.ExitCodeError{Code: exit.ExitCode()}
 		}
 		return fmt.Errorf("launch %s: %w", desc.Binary, err)
 	}
@@ -334,7 +336,7 @@ func (a *App) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 // operator should know the boundary isn't there and how to get it. The notice is
 // shown once (persisted via SameUserNoticeSeen) so it informs without nagging every
 // launch. Persisting is best-effort: a save failure just means it may show again.
-func (a *App) warnSameUserOnce(cfg *config.FileConfig) {
+func (a *Cmd) warnSameUserOnce(cfg *config.FileConfig) {
 	if cfg.SameUserNoticeSeen {
 		return
 	}
@@ -379,7 +381,7 @@ func resolveAgentUser(flag string, acct config.AgentAccount) string {
 // sudoers rights), which every later `sudo -u <agent>` would hit too; we surface
 // that as the real reason rather than letting the binary probe misread it as a
 // missing install.
-func (a *App) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
+func (a *Cmd) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
 	c := localagent.CanRunAsAgentCmd(ctx, agentUser)
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, a.Out, a.Err
 	if err := c.Run(); err != nil {
@@ -394,7 +396,7 @@ func (a *App) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
 
 // ── step 2: binary provisioning ──────────────────────────────────────────────
 
-func (a *App) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
+func (a *Cmd) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
 	switch localagent.ProbeBinary(ctx, agentUser, desc) {
 	case localagent.BinaryOnPath:
 		return nil
@@ -411,7 +413,7 @@ func (a *App) ensureAgentBinary(ctx context.Context, cmd *cobra.Command, opts *r
 
 // ensureLocalBinOnPath appends ~/.local/bin to the agent's login PATH so the
 // launch can exec a binary that lives there (copy and install both land there).
-func (a *App) ensureLocalBinOnPath(agentUser string) error {
+func (a *Cmd) ensureLocalBinOnPath(agentUser string) error {
 	c := localagent.EnsureLocalBinOnPathCmd(agentUser)
 	c.Stdout, c.Stderr = a.Out, a.Err
 	if err := c.Run(); err != nil {
@@ -424,7 +426,7 @@ func (a *App) ensureLocalBinOnPath(agentUser string) error {
 // the agent's login PATH (idempotent). It is best-effort convenience, not a
 // security boundary: on failure it warns and continues rather than blocking the
 // launch, and it no-ops when there is nothing safe to share.
-func (a *App) ensureSharedBinsOnPath(agentUser string) error {
+func (a *Cmd) ensureSharedBinsOnPath(agentUser string) error {
 	dirs := localagent.SharedBinPaths(localagent.OperatorHome())
 	c := localagent.EnsureSharedBinsOnPathCmd(agentUser, dirs)
 	if c == nil {
@@ -437,7 +439,7 @@ func (a *App) ensureSharedBinsOnPath(agentUser string) error {
 	return nil
 }
 
-func (a *App) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
+func (a *Cmd) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *runOptions, agentUser string, desc localagent.Descriptor) error {
 	fmt.Fprintln(a.Out, theme.Warnf("Agent %q is not installed for user %s.", desc.ID, agentUser))
 
 	opBin := ""
@@ -449,7 +451,7 @@ func (a *App) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *run
 	if opBin == "" {
 		choice = "install"
 	}
-	if WantsInteractive(cmd, opts.yes) {
+	if cmdcore.WantsInteractive(cmd, opts.yes) {
 		c, err := a.pickProvisionRoute(desc, agentUser, opBin)
 		if err != nil {
 			return err
@@ -495,7 +497,7 @@ func (a *App) provisionBinary(ctx context.Context, cmd *cobra.Command, opts *run
 	return nil
 }
 
-func (a *App) pickProvisionRoute(desc localagent.Descriptor, agentUser, opBin string) (string, error) {
+func (a *Cmd) pickProvisionRoute(desc localagent.Descriptor, agentUser, opBin string) (string, error) {
 	var choice string
 	opts := []huh.Option[string]{}
 	if opBin != "" {
@@ -526,7 +528,7 @@ func (a *App) pickProvisionRoute(desc localagent.Descriptor, agentUser, opBin st
 
 // ── step 3: working directory + access ───────────────────────────────────────
 
-func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
+func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
 	if opts.home {
 		return "", nil // login shell starts in the agent's home
 	}
@@ -583,7 +585,7 @@ func (a *App) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 // process-confinement layer (see localagent/confine.go), not by an ACL deny sweep.
 // All grants are scoped to the agent user and never touch the operator's own
 // permissions.
-func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
+func (a *Cmd) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
 	// Canonicalize home to match abs (already canonical from the callers): the
 	// under-home test and ancestor walk must reason about the same resolved tree.
 	home := localagent.Canonicalize(localagent.OperatorHome())
@@ -636,7 +638,7 @@ func (a *App) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, a
 // file was stamped. Those per-entry misses are benign, so stderr is captured and
 // classified: if the only failures are missing entries the grant is reported as a
 // success (with a count), and any other error still fails.
-func (a *App) runGrant(c *exec.Cmd, what string) error {
+func (a *Cmd) runGrant(c *exec.Cmd, what string) error {
 	c.Stdout = a.Out
 	var stderr strings.Builder
 	c.Stderr = &stderr
@@ -688,14 +690,14 @@ func plural(n int, one, other string) string {
 // user's home, or any sensitive/system subtree) is NEVER grantable — there is no
 // "grant anyway" escape hatch; the operator may only open in the agent's home or
 // cancel. Only an ordinary, unbanned path can be granted.
-func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
+func (a *Cmd) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
 	// A banned path can never be granted, by any flag or prompt.
 	if verdict.Banned() {
 		if opts.allowDir {
 			return false, fmt.Errorf("refusing to grant a protected directory (%s); "+
 				"this path cannot be handed to the agent — pick a directory outside it", verdict.Reason)
 		}
-		if !WantsInteractive(cmd, opts.yes) {
+		if !cmdcore.WantsInteractive(cmd, opts.yes) {
 			// Non-interactive: fall back to the agent's home (no grant).
 			return false, nil
 		}
@@ -712,13 +714,13 @@ func (a *App) decideDirGrant(cmd *cobra.Command, opts *runOptions, agentUser, di
 	if opts.yes {
 		return false, nil // safe default: open in home
 	}
-	if !WantsInteractive(cmd, opts.yes) {
+	if !cmdcore.WantsInteractive(cmd, opts.yes) {
 		return false, nil
 	}
 	return a.confirmPlainGrant(agentUser, dir)
 }
 
-func (a *App) confirmPlainGrant(agentUser, dir string) (bool, error) {
+func (a *Cmd) confirmPlainGrant(agentUser, dir string) (bool, error) {
 	fmt.Fprintln(a.Out, theme.Warnf("Agent %s has no access to %s.", agentUser, dir))
 	// Focus "Allow" by default: this is an ordinary (non-banned) workspace the
 	// operator explicitly asked to open, so granting is the expected choice. huh
@@ -754,7 +756,7 @@ func (a *App) confirmPlainGrant(agentUser, dir string) (bool, error) {
 // cannot be granted and offers only to open in the agent's home or cancel. There
 // is deliberately no "grant anyway" option — a banned path is a non-negotiable
 // boundary, so this returns (false, ...) in every non-error case.
-func (a *App) confirmBannedPath(agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
+func (a *Cmd) confirmBannedPath(agentUser, dir string, verdict localagent.DangerVerdict) (bool, error) {
 	fmt.Fprintln(a.Out, theme.Error.Render("⚠  "+dir))
 	fmt.Fprintln(a.Out, theme.Warnf("   %s can't be granted access here: %s.", agentUser, verdict.Reason))
 	fmt.Fprintln(a.Out, theme.Dim.Render("   This directory is a protected boundary and cannot be handed to the agent."))
@@ -789,7 +791,7 @@ var errCancelled = errors.New("cancelled")
 // the grant flow prints, so revocation is always one command away from wherever
 // access is shown. Grants are account-scoped (one set for every agent binary), so
 // the hint is generic over which `<agent>` binary the operator names.
-func (a *App) PrintRevokeHint() {
+func (a *Cmd) PrintRevokeHint() {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Dim.Render("To take a directory away: `jentic run <agent> --revoke <dir>` "+
 		"(`--list-grants` to review)."))
@@ -802,7 +804,7 @@ func (a *App) PrintRevokeHint() {
 // It reloads the recorded account (for grants + home), validates the user,
 // exports the active context into the agent's own store, and launches confined
 // — the same steps 3a/4 that a `jentic run` performs after its prompts.
-func (a *App) launchIsolated(ctx context.Context, agentUser, binary, dir string, agentArgs []string) error {
+func (a *Cmd) launchIsolated(ctx context.Context, agentUser, binary, dir string, agentArgs []string) error {
 	if err := localagent.ValidateAgentUser(agentUser); err != nil {
 		return err
 	}
@@ -826,7 +828,7 @@ func (a *App) launchIsolated(ctx context.Context, agentUser, binary, dir string,
 // the process (no sandbox-exec on macOS; no bwrap / unprivileged userns on Linux)
 // we ERROR CLOSED — refuse the launch rather than silently drop to an unconfined
 // session — and point the operator at an alternative isolation route.
-func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir string, agentArgs []string) error {
+func (a *Cmd) launchAgent(ctx context.Context, acct config.AgentAccount, agentUser, binary, dir string, agentArgs []string) error {
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		var b strings.Builder
 		b.WriteString("confined agent sessions aren't available on this machine:\n")
@@ -864,7 +866,7 @@ func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 	if err := cmd.Run(); err != nil {
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-			return &ExitCodeError{Code: exit.ExitCode()}
+			return &cmdcore.ExitCodeError{Code: exit.ExitCode()}
 		}
 		return fmt.Errorf("launch %s: %w", binary, err)
 	}
@@ -873,7 +875,7 @@ func (a *App) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 
 // ── management: --list-grants / --revoke ─────────────────────────────────────
 
-func (a *App) runListGrants(agentID, agentUser string, acct config.AgentAccount, hasAcct bool) error {
+func (a *Cmd) runListGrants(agentID, agentUser string, acct config.AgentAccount, hasAcct bool) error {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Directory grants"))
 	fmt.Fprintln(a.Out, "  "+theme.Field("agent", agentID))
 	fmt.Fprintln(a.Out, "  "+theme.Field("user", agentUser))
@@ -898,7 +900,7 @@ func (a *App) runListGrants(agentID, agentUser string, acct config.AgentAccount,
 // the agent already reaches dir it is a no-op; otherwise it applies the same
 // danger-confirmation and scoped-ACL grant (grantDir) as `jentic run <agent>
 // <path>` would, and records it.
-func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser, dir string) error {
+func (a *Cmd) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser, dir string) error {
 	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}
@@ -929,7 +931,7 @@ func (a *App) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 	return nil
 }
 
-func (a *App) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, dir string) error {
+func (a *Cmd) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, dir string) error {
 	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}

@@ -49,7 +49,7 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 		return c
 	}
 
-	if !flagsAllowPrompt(newCmd(), false, bootstrapFieldFlags...) {
+	if !flagsAllowPrompt(newCmd(), false, BootstrapFieldFlags...) {
 		t.Errorf("bare bootstrap (no flags, no --yes) should allow prompting")
 	}
 	for _, f := range []string{"operator", "all", "scope", "skip-skill"} {
@@ -57,7 +57,7 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 		if err := c.Flags().Set(f, valueFor(f)); err != nil {
 			t.Fatalf("set %s: %v", f, err)
 		}
-		if flagsAllowPrompt(c, false, bootstrapFieldFlags...) {
+		if flagsAllowPrompt(c, false, BootstrapFieldFlags...) {
 			t.Errorf("setting --%s should suppress prompting for bootstrap", f)
 		}
 	}

@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 // context_export.go hands the operator's ACTIVE V2 context to the shared agent
 // account at launch time. The identity's home store stays the OPERATOR's XDG
@@ -38,7 +38,7 @@ import (
 // The exported context's mode is forced to "agent": inside the isolated
 // session the actor IS an agent, so fencing must hold there regardless of the
 // operator-side mode.
-func (a *App) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
+func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
 	st := clictx.ActiveV2(ctx)
 	if st == nil {
 		fmt.Fprintln(a.Out, theme.Dim.Render(

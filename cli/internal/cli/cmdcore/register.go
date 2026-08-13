@@ -97,10 +97,11 @@ func flagsAllowPrompt(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 // registerFieldFlags are the flags whose presence makes `register` non-interactive.
 var registerFieldFlags = []string{"url", "env", "name"}
 
-// bootstrapFieldFlags extend the register set with the skill-target and
+// BootstrapFieldFlags extend the register set with the skill-target and
 // activation flags bootstrap adds, so a flag-driven run (e.g. `--operator
-// claude`) is not treated as interactive.
-var bootstrapFieldFlags = append(append([]string{}, registerFieldFlags...),
+// claude`) is not treated as interactive. Exported because bootstrap now lives
+// in the localagentcmd package (ARCH-1) and needs this set.
+var BootstrapFieldFlags = append(append([]string{}, registerFieldFlags...),
 	"operator", "all", "scope", "skip-skill")
 
 // WantsInteractive also requires a real terminal (so pipes/CI stay non-interactive).
@@ -115,12 +116,12 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	// with whatever happened to be active.
 	if opts.url == "" {
 		if st := clictx.ActiveV2(ctx); st != nil {
-			return a.registerV2Active(ctx, st, opts.name, opts.timeout, opts.force)
+			return a.RegisterV2Active(ctx, st, opts.name, opts.timeout, opts.force)
 		}
 	}
-	vals := v2SetupValues{url: opts.url, env: opts.env, name: opts.name}
-	_, err := a.registerV2Setup(ctx, vals, opts.timeout, opts.force, opts.interactive)
-	if errors.Is(err, errOnboardCancelled) {
+	vals := SetupValues{URL: opts.url, Env: opts.env, Name: opts.name}
+	_, err := a.RegisterV2Setup(ctx, vals, opts.timeout, opts.force, opts.interactive)
+	if errors.Is(err, ErrOnboardCancelled) {
 		return nil
 	}
 	return err
@@ -170,66 +171,68 @@ func agentConsoleURL(baseURL, agentID string) string {
 //	identity register                   (key mint + RFC 7591 DCR)
 //	...wait for operator approval, then prove it with a token exchange.
 
-// v2SetupValues are the two things the fresh-machine arm must learn: where the
+// SetupValues are the two things the fresh-machine arm must learn: where the
 // install lives and what to call this agent. Everything else is derived.
-type v2SetupValues struct {
-	url  string // control-plane URL (becomes the environment's base_url)
-	env  string // environment name ("" -> derived from the URL host)
-	name string // identity + client name ("" -> derived from the hostname)
+// Exported (with exported fields) because bootstrap now lives in the
+// localagentcmd package (ARCH-1) and constructs this to drive onboarding.
+type SetupValues struct {
+	URL  string // control-plane URL (becomes the environment's base_url)
+	Env  string // environment name ("" -> derived from the URL host)
+	Name string // identity + client name ("" -> derived from the hostname)
 }
 
-// errOnboardCancelled signals a user-aborted interactive onboarding (Esc in
+// ErrOnboardCancelled signals a user-aborted interactive onboarding (Esc in
 // the form). Callers treat it as a clean no-op exit (matching the legacy arm's
 // "Cancelled." + nil contract) — it exists so composed flows (bootstrap) can
 // stop their remaining steps without inventing a fake success.
-var errOnboardCancelled = errors.New("onboarding cancelled")
+var ErrOnboardCancelled = errors.New("onboarding cancelled")
 
-// registerV2Setup is the fresh-machine onboarding: create the environment +
+// RegisterV2Setup is the fresh-machine onboarding: create the environment +
 // identity + context trio (idempotently — re-running reuses what exists),
 // activate it, then fall into the shared register-and-wait flow. It returns
 // the resolved values so composed flows (bootstrap) can reuse them (e.g. the
 // install URL for skill templating).
-func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout time.Duration, force, interactive bool) (v2SetupValues, error) {
-	if interactive && vals.url == "" {
+func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout time.Duration, force, interactive bool) (SetupValues, error) {
+	if interactive && vals.URL == "" {
 		fmt.Fprintln(a.Out, theme.Headingf("Agent onboarding"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("Connect this machine to a Jentic install; an operator approves it, then tokens mint."))
-		if vals.name == "" {
-			vals.name = defaultIdentityName()
+		if vals.Name == "" {
+			vals.Name = defaultIdentityName()
 		}
-		if err := promptOnboardingV2(&vals.url, &vals.name); err != nil {
+		if err := promptOnboardingV2(&vals.URL, &vals.Name); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
-				return vals, errOnboardCancelled
+				return vals, ErrOnboardCancelled
 			}
 			return vals, err
 		}
 	}
-	if vals.url == "" {
+	if vals.URL == "" {
 		return vals, &ux.CodedError{
 			Code:       ux.CodeMissingArgument,
 			Msg:        "no Jentic install to register with",
 			Actionable: "Pass --url <control-plane URL> (e.g. jentic register --url https://jentic.example.com).",
 		}
 	}
-	vals.url = strings.TrimRight(vals.url, "/")
+	vals.URL = strings.TrimRight(vals.URL, "/")
 	// UX-2/QA-9: rewrite a localhost control-plane URL to 127.0.0.1. The
 	// token-exchange audience is matched byte-for-byte against the backend's
 	// canonical_base_url, and a local backend canonicalises to 127.0.0.1 — so
 	// `--url http://localhost:8000` would sign an aud the server rejects with
 	// invalid_grant (mis-read as "pending approval"). Normalising here removes
 	// the papercut at the source and keeps the seeded broker_url on 127.0.0.1 too.
-	if norm, changed := normalizeLoopbackURL(vals.url); changed {
+	if norm, changed := normalizeLoopbackURL(vals.URL); changed {
 		fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf(
 			"note: using %s (localhost is normalised to 127.0.0.1 so the token audience matches the local backend)", norm)))
-		vals.url = norm
+		vals.URL = norm
 	}
-	if vals.name == "" {
-		vals.name = defaultIdentityName()
+	if vals.Name == "" {
+		vals.Name = defaultIdentityName()
 	}
-	if vals.env == "" {
-		vals.env = deriveEnvName(vals.url)
+	if vals.Env == "" {
+		vals.Env = deriveEnvName(vals.URL)
 	}
-	for flag, name := range map[string]string{"--env": vals.env, "--name": vals.name} {
+	for flag, name := range map[string]string{"--env": vals.Env, "--name": vals.Name} {
 		if !sdkconfig.ValidName(name) {
 			return vals, &ux.CodedError{
 				Code:       ux.CodeMissingArgument,
@@ -243,19 +246,19 @@ func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout t
 	// the same name is REUSED only when it points at the same URL (silently
 	// re-pointing an env would hijack every context bound to it); identity and
 	// context are reused as-is.
-	envName := vals.env
+	envName := vals.Env
 	contextName := envName
 	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
-		if env, ok := cfg.Environments[envName]; ok && env.BaseURL != vals.url {
+		if env, ok := cfg.Environments[envName]; ok && env.BaseURL != vals.URL {
 			return &ux.CodedError{
 				Code: ux.CodeMissingArgument,
 				Msg: fmt.Sprintf("environment %q already exists and points at %s, not %s",
-					envName, env.BaseURL, vals.url),
+					envName, env.BaseURL, vals.URL),
 				Actionable: "Pass a different --env name, or re-point it explicitly with `jentic env add --force`.",
 			}
 		}
 		if _, ok := cfg.Environments[envName]; !ok {
-			env := sdkconfig.Env{BaseURL: vals.url}
+			env := sdkconfig.Env{BaseURL: vals.URL}
 			// Local convenience: when the control plane is a loopback address,
 			// the broker is co-located on the standard local broker port over
 			// plain HTTP (jenticctl install stands both up together). Seeding it
@@ -264,17 +267,17 @@ func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout t
 			// error. For REMOTE/enterprise URLs we leave broker_url unset — there
 			// the broker frequently lives on a different domain and MUST be set
 			// explicitly (`jentic env add --broker-url`); it is never derived.
-			if bu := localBrokerURL(vals.url); bu != "" {
+			if bu := localBrokerURL(vals.URL); bu != "" {
 				env.BrokerURL = bu
 			}
 			cfg.Environments[envName] = env
 		}
-		if _, ok := cfg.Identities[vals.name]; !ok {
-			cfg.Identities[vals.name] = sdkconfig.Identity{Type: "agent"}
+		if _, ok := cfg.Identities[vals.Name]; !ok {
+			cfg.Identities[vals.Name] = sdkconfig.Identity{Type: "agent"}
 		}
 		if _, ok := cfg.Contexts[contextName]; !ok {
 			cfg.Contexts[contextName] = sdkconfig.Context{
-				Environment: envName, Identity: vals.name, Mode: clictx.ModeHuman,
+				Environment: envName, Identity: vals.Name, Mode: clictx.ModeHuman,
 			}
 		}
 		cfg.ActiveContext = contextName
@@ -283,17 +286,17 @@ func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout t
 		return vals, err
 	}
 
-	fmt.Fprintln(a.Out, theme.Successf("Environment %q → %s", envName, vals.url))
-	fmt.Fprintln(a.Out, theme.Successf("Identity %q (agent)", vals.name))
+	fmt.Fprintln(a.Out, theme.Successf("Environment %q → %s", envName, vals.URL))
+	fmt.Fprintln(a.Out, theme.Successf("Identity %q (agent)", vals.Name))
 	fmt.Fprintln(a.Out, theme.Successf("Context %q (active)", contextName))
 
-	return vals, a.registerV2(ctx, vals.name, envName, vals.url, vals.name, timeout, force)
+	return vals, a.registerV2(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
 }
 
-// registerV2Active registers the ACTIVE context's identity with its
+// RegisterV2Active registers the ACTIVE context's identity with its
 // environment — the same store `jentic identity register` writes, plus the
 // human-facing approval wait.
-func (a *App) registerV2Active(ctx context.Context, st *clictx.ActiveState, clientName string, timeout time.Duration, force bool) error {
+func (a *App) RegisterV2Active(ctx context.Context, st *clictx.ActiveState, clientName string, timeout time.Duration, force bool) error {
 	if st.BaseURL == "" {
 		return &ux.CodedError{
 			Code:       ux.CodeResolveFailed,

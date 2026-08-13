@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -60,7 +61,7 @@ func (o *bootstrapOptions) skillOptions() *skillOptions {
 // named operator (yes=true) drives it non-interactively; empty operators +
 // yes=true auto-detects. interactive stays false so bootstrap does not
 // re-prompt for the URL the wizard already collected.
-func (a *App) BootstrapForWizard(ctx context.Context, installURL string, timeout time.Duration, operators []string, yes bool) error {
+func (a *Cmd) BootstrapForWizard(ctx context.Context, installURL string, timeout time.Duration, operators []string, yes bool) error {
 	return a.bootstrapE(ctx, &bootstrapOptions{
 		url:       installURL,
 		timeout:   timeout,
@@ -71,7 +72,8 @@ func (a *App) BootstrapForWizard(ctx context.Context, installURL string, timeout
 
 // NewBootstrapCmd builds the `bootstrap` command that runs first-time agent
 // setup (register + skill install) in one step. Shared by both trees via cmdcore.
-func NewBootstrapCmd(app *App) *cobra.Command {
+func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
+	a := &Cmd{App: app}
 	opts := &bootstrapOptions{}
 
 	cmd := &cobra.Command{
@@ -92,8 +94,8 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 			"  jentic bootstrap --dry-run",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts.interactive = WantsInteractive(cmd, opts.yes, bootstrapFieldFlags...)
-			return app.bootstrapE(cmd.Context(), opts)
+			opts.interactive = cmdcore.WantsInteractive(cmd, opts.yes, cmdcore.BootstrapFieldFlags...)
+			return a.bootstrapE(cmd.Context(), opts)
 		},
 	}
 
@@ -112,7 +114,7 @@ func NewBootstrapCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
+func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	fmt.Fprintln(a.Out, theme.Headingf("Bootstrap"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("Register this machine as an agent, wait for approval, then prime your operator."))
 
@@ -208,20 +210,20 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		if identity == "" {
 			identity = st.IdentityName
 		}
-		if err := a.registerV2Active(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
+		if err := a.RegisterV2Active(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
 			return err
 		}
 	} else {
-		vals, err := a.registerV2Setup(ctx,
-			v2SetupValues{url: opts.url, env: opts.env, name: opts.name},
+		vals, err := a.RegisterV2Setup(ctx,
+			cmdcore.SetupValues{URL: opts.url, Env: opts.env, Name: opts.name},
 			opts.timeout, opts.force, opts.interactive)
-		if errors.Is(err, errOnboardCancelled) {
+		if errors.Is(err, cmdcore.ErrOnboardCancelled) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		installURL, identity = vals.url, vals.name
+		installURL, identity = vals.URL, vals.Name
 	}
 
 	// Step 3: write the skill into the operator's native layout, templated
@@ -261,7 +263,7 @@ func (a *App) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 
 // bootstrapDryRun describes the steps without registering or writing. st is
 // the active context (nil for the fresh-machine setup arm).
-func (a *App) bootstrapDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
+func (a *Cmd) bootstrapDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
 	if st != nil {
 		fmt.Fprintln(a.Out, theme.Infof("would register identity %q with environment %q (%s), or reuse an existing registration",
 			st.IdentityName, st.EnvironmentName, st.BaseURL))
@@ -292,7 +294,7 @@ func valueOrPlaceholder(s, placeholder string) string {
 // <agent>`). The launch runs the agent under its own user in a login shell, so
 // the operator lands straight in the isolated session. Declining is a no-op — the
 // copy-paste command was already printed by the agent-user setup step.
-func (a *App) offerAgentSession(ctx context.Context, setup agentSetup) error {
+func (a *Cmd) offerAgentSession(ctx context.Context, setup agentSetup) error {
 	homeDir := setup.homeDir
 	launch := fmt.Sprintf("cd %s; jentic run %s", homeDir, setup.agentID)
 

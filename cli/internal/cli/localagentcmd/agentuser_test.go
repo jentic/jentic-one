@@ -1,7 +1,6 @@
-package cmdcore
+package localagentcmd
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -82,7 +81,7 @@ func TestOperatorNames(t *testing.T) {
 // TestRecordAgentAccount checks the persisted booleans and that a re-record keeps
 // the original CreatedAt stamp while updating the create flag.
 func TestRecordAgentAccount(t *testing.T) {
-	app := &App{Paths: config.Paths{Root: t.TempDir()}, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	app := testApp(t)
 
 	// Declined: recorded as not created, no home, no config-dir reference.
 	app.recordAgentAccount("alice-local-agent", "", "", false)

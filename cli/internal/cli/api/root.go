@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
 
@@ -52,7 +53,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
 	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
 
-	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(cmdcore.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
+	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(localagentcmd.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
 	// V2 context model: the Environment × Identity × Context surface plus the
@@ -81,8 +82,8 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	// The agent-client commands manage and drive the local coding agent
 	// (generate its skills, launch it under isolation, tear its account down),
 	// distinct from the catalog find/run operations above.
-	cmdcore.AddGrouped(root, "client", cmdcore.NewSkillCmd(app.App))
-	cmdcore.AddGrouped(root, "client", fenced(cmdcore.NewRunCmd(app.App)))
+	cmdcore.AddGrouped(root, "client", localagentcmd.NewSkillCmd(app.App))
+	cmdcore.AddGrouped(root, "client", fenced(localagentcmd.NewRunCmd(app.App)))
 	cmdcore.AddGrouped(root, "client", fenced(newResetCmd(app)))
 	// Agent-side read-only self-check (F8-4, impl/5.1 §3c). Not fenced: it never
 	// mutates host state and is exactly the diagnostic an agent needs where

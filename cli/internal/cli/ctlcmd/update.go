@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/proc"
@@ -227,7 +228,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 func (a *app) refreshSkillsAfterUpdate() {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Dim.Render("Refreshing installed skills for the new CLI ..."))
-	if err := a.SkillUpdateDefault(nil); err != nil {
+	if err := localagentcmd.New(a.App).SkillUpdateDefault(nil); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not refresh skills (run `jentic skill update`): %v", err))
 	}
 }

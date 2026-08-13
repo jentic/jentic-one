@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"errors"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
@@ -52,7 +53,8 @@ type skillOptions struct {
 
 // NewSkillCmd builds the `skill` command group (install/update/remove the
 // agent-facing skill files). Shared by both trees via cmdcore.
-func NewSkillCmd(app *App) *cobra.Command {
+func NewSkillCmd(app *cmdcore.App) *cobra.Command {
+	a := &Cmd{App: app}
 	cmd := &cobra.Command{
 		Use:   "skill",
 		Short: "Generate the Jentic skill set into your agent's native layout",
@@ -69,17 +71,17 @@ func NewSkillCmd(app *App) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Bare `jentic skill` behaves like `skill init`.
-			return app.skillInit(cmd, &skillOptions{})
+			return a.skillInit(cmd, &skillOptions{})
 		},
 	}
-	cmd.AddCommand(newSkillInitCmd(app))
-	cmd.AddCommand(newSkillListCmd(app))
-	cmd.AddCommand(newSkillUpdateCmd(app))
-	cmd.AddCommand(newSkillRemoveCmd(app))
+	cmd.AddCommand(newSkillInitCmd(a))
+	cmd.AddCommand(newSkillListCmd(a))
+	cmd.AddCommand(newSkillUpdateCmd(a))
+	cmd.AddCommand(newSkillRemoveCmd(a))
 	return cmd
 }
 
-func newSkillInitCmd(app *App) *cobra.Command {
+func newSkillInitCmd(a *Cmd) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -99,7 +101,7 @@ func newSkillInitCmd(app *App) *cobra.Command {
 			"  jentic skill init --operator generic --dry-run",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.skillInit(cmd, opts)
+			return a.skillInit(cmd, opts)
 		},
 	}
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to target (repeatable or comma-separated)")
@@ -113,21 +115,21 @@ func newSkillInitCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func newSkillListCmd(app *App) *cobra.Command {
+func newSkillListCmd(a *Cmd) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Show supported operators and where each skill is installed",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.skillList(cmd, opts)
+			return a.skillList(cmd, opts)
 		},
 	}
 	cmd.Flags().BoolVar(&opts.json, "json", false, "force JSON output")
 	return cmd
 }
 
-func newSkillUpdateCmd(app *App) *cobra.Command {
+func newSkillUpdateCmd(a *Cmd) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -142,7 +144,7 @@ func newSkillUpdateCmd(app *App) *cobra.Command {
 			"  jentic skill update --skill jentic --force",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.SkillUpdate(cmd, opts)
+			return a.SkillUpdate(cmd, opts)
 		},
 	}
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to update (repeatable or comma-separated; default: all)")
@@ -153,7 +155,7 @@ func newSkillUpdateCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func newSkillRemoveCmd(app *App) *cobra.Command {
+func newSkillRemoveCmd(a *Cmd) *cobra.Command {
 	opts := &skillOptions{}
 	cmd := &cobra.Command{
 		Use: "remove",
@@ -166,7 +168,7 @@ func newSkillRemoveCmd(app *App) *cobra.Command {
 			"  jentic skill remove --all --force",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return app.skillRemove(cmd, opts)
+			return a.skillRemove(cmd, opts)
 		},
 	}
 	cmd.Flags().StringSliceVar(&opts.operators, "operator", nil, "operators to clean up (repeatable or comma-separated)")
@@ -183,7 +185,7 @@ func newSkillRemoveCmd(app *App) *cobra.Command {
 // standard library. The real probe errors if home or working directory cannot
 // be resolved, since every target path is rooted at one of them and proceeding
 // with empty bases would write files to surprising places.
-func (a *App) detectEnv() (skillgen.DetectEnv, error) {
+func (a *Cmd) detectEnv() (skillgen.DetectEnv, error) {
 	if a.DetectEnv != nil {
 		return a.DetectEnv()
 	}
@@ -225,7 +227,7 @@ func resolveScope(flag string) (skillgen.Scope, error) {
 }
 
 // resolveBaseURL resolves the control-plane base URL from config + flag.
-func (a *App) resolveBaseURL(baseURLFlag string) string {
+func (a *Cmd) resolveBaseURL(baseURLFlag string) string {
 	cfg, err := config.Load(a.Paths)
 	baseURL := config.DefaultBaseURL
 	if err == nil {
@@ -280,7 +282,7 @@ func selectSkills(want []string) ([]string, error) {
 // The deployment also serves this same canonical content at /skills/<name>.md
 // (#651); a hosted-fetch source can be wired here later. For now it always uses
 // the bundled copies.
-func (a *App) canonicalSet(baseURLFlag string, skills []string) ([]skillgen.Canonical, error) {
+func (a *Cmd) canonicalSet(baseURLFlag string, skills []string) ([]skillgen.Canonical, error) {
 	names, err := selectSkills(skills)
 	if err != nil {
 		return nil, err
@@ -314,7 +316,7 @@ type skillTarget struct {
 // *detected* operators instead of erroring (#755); the resolved targets are
 // echoed before anything is written. When nothing is detected either, the
 // error spells out the flags to pass.
-func (a *App) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts *skillOptions) ([]skillTarget, error) {
+func (a *Cmd) chooseTargets(reg *skillgen.Registry, env skillgen.DetectEnv, opts *skillOptions) ([]skillTarget, error) {
 	flagScope, err := resolveScope(opts.scope)
 	if err != nil {
 		return nil, err
@@ -394,7 +396,7 @@ func displayTarget(ad skillgen.Adapter, scope skillgen.Scope, env skillgen.Detec
 // A project-scope target inside a git worktree gets a real warning on top of
 // the echo: nobody explicitly asked for that write, and the file will show up
 // in `git status` — the #552 repo-pollution case.
-func (a *App) echoDefaultedTargets(targets []skillTarget, env skillgen.DetectEnv) {
+func (a *Cmd) echoDefaultedTargets(targets []skillTarget, env skillgen.DetectEnv) {
 	fmt.Fprintln(a.Out, theme.Dim.Render("No --operator/--all given; defaulting to detected operators (--operator/--all overrides):"))
 	for _, t := range targets {
 		target := displayTarget(t.adapter, t.scope, env)
@@ -423,7 +425,7 @@ func insideGitWorktree(dir string) bool {
 
 // pickOperators runs the interactive multi-select with detected operators
 // pre-checked.
-func (a *App) pickOperators(reg *skillgen.Registry, env skillgen.DetectEnv) ([]skillgen.Adapter, error) {
+func (a *Cmd) pickOperators(reg *skillgen.Registry, env skillgen.DetectEnv) ([]skillgen.Adapter, error) {
 	detected := map[skillgen.Operator]bool{}
 	for _, d := range reg.Detected(env) {
 		detected[d.Operator()] = true
@@ -463,7 +465,7 @@ func (a *App) pickOperators(reg *skillgen.Registry, env skillgen.DetectEnv) ([]s
 // or into the current project, showing the exact resolved path for each
 // choice. The #552-ratified per-operator default is pre-selected, so Enter
 // through keeps today's behavior — but the placement is now a visible choice.
-func (a *App) pickScopes(adapters []skillgen.Adapter, env skillgen.DetectEnv) ([]skillTarget, error) {
+func (a *Cmd) pickScopes(adapters []skillgen.Adapter, env skillgen.DetectEnv) ([]skillTarget, error) {
 	values := make([]string, len(adapters))
 	fields := make([]huh.Field, 0, len(adapters))
 	for i, ad := range adapters {
@@ -503,7 +505,7 @@ func scopeLabel(ad skillgen.Adapter, scope, def skillgen.Scope, env skillgen.Det
 	return label
 }
 
-func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) skillInit(_ *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
@@ -536,7 +538,7 @@ func (a *App) skillInit(_ *cobra.Command, opts *skillOptions) error {
 // For a shared AGENTS.md, each skill's named block is spliced in turn: Apply
 // re-reads the file between skills, so sibling blocks written earlier in the
 // loop are preserved and never clobbered.
-func (a *App) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) error {
+func (a *Cmd) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *skillOptions) error {
 	set, err := a.canonicalSet(opts.baseURL, opts.skills)
 	if err != nil {
 		return err
@@ -575,7 +577,7 @@ func (a *App) writeSkill(targets []skillTarget, env skillgen.DetectEnv, opts *sk
 
 // reportOutcome prints a single (operator, skill) result line, tagged with the
 // scope the write resolved to so placement is always visible in the output.
-func (a *App) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun bool) {
+func (a *Cmd) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun bool) {
 	label := fmt.Sprintf("%s/%s", out.Operator, out.Skill)
 	rel := fmt.Sprintf("%s (%s scope)", prettyPath(out.Path), scope)
 	switch {
@@ -596,7 +598,7 @@ func (a *App) reportOutcome(out skillgen.Outcome, scope skillgen.Scope, dryRun b
 	}
 }
 
-func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) skillList(cmd *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
@@ -607,7 +609,7 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 		detected[d.Operator()] = true
 	}
 
-	if JSONOrPretty(cmd, opts.json) {
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
 		return a.skillListJSON(reg, env, detected)
 	}
 	return a.skillListPretty(reg, env, detected)
@@ -617,7 +619,7 @@ func (a *App) skillList(cmd *cobra.Command, opts *skillOptions) error {
 // looks present) and "installed" (a skill artifact actually exists on disk) are
 // reported separately — #752 — and each shipped skill is probed individually so
 // a partial install is visible.
-func (a *App) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
+func (a *Cmd) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
 	names := skillgen.BundledNames()
 	fmt.Fprintln(a.Out, theme.Heading.Render("Supported operators"))
 	for _, ad := range reg.Adapters() {
@@ -656,7 +658,7 @@ func (a *App) skillListPretty(reg *skillgen.Registry, env skillgen.DetectEnv, de
 	return nil
 }
 
-func (a *App) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
+func (a *Cmd) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, detected map[skillgen.Operator]bool) error {
 	// installRow is now per (skill, scope): the multi-skill split adds a
 	// `skill` dimension to the row shape (a JSON compat surface — called out in
 	// the PR body).
@@ -704,13 +706,13 @@ func (a *App) skillListJSON(reg *skillgen.Registry, env skillgen.DetectEnv, dete
 		}
 		rows = append(rows, r)
 	}
-	return WriteJSON(a.Out, map[string]any{"operators": rows})
+	return cmdcore.WriteJSON(a.Out, map[string]any{"operators": rows})
 }
 
 // SkillUpdateDefault runs SkillUpdate with the default (empty) options. The ctl
 // tree calls it to refresh installed skills after a CLI upgrade without needing
 // to construct the unexported skillOptions.
-func (a *App) SkillUpdateDefault(cmd *cobra.Command) error {
+func (a *Cmd) SkillUpdateDefault(cmd *cobra.Command) error {
 	return a.SkillUpdate(cmd, &skillOptions{})
 }
 
@@ -718,7 +720,7 @@ func (a *App) SkillUpdateDefault(cmd *cobra.Command) error {
 // currently resolved base URL and rewrites it when the recorded content hash
 // differs. It only touches installs that already exist — it never creates a new
 // one — so it is a refresh, not an install (#407).
-func (a *App) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 	reg := skillgen.DefaultRegistry()
 	env, err := a.detectEnv()
 	if err != nil {
@@ -790,7 +792,7 @@ func (a *App) SkillUpdate(_ *cobra.Command, opts *skillOptions) error {
 	return nil
 }
 
-func (a *App) skillRemove(_ *cobra.Command, opts *skillOptions) error {
+func (a *Cmd) skillRemove(_ *cobra.Command, opts *skillOptions) error {
 	scope, err := resolveScope(opts.scope)
 	if err != nil {
 		return err

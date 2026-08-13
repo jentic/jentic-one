@@ -1,4 +1,4 @@
-package cmdcore
+package localagentcmd
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 
 func TestRunRejectsUnknownAgent(t *testing.T) {
 	app := testApp(t)
-	cmd := NewRunCmd(app)
+	cmd := NewRunCmd(app.App)
 	err := app.runE(cmd, &runOptions{}, []string{"definitely-not-an-agent"})
 	if err == nil || !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("expected unknown-agent error, got %v", err)
@@ -23,7 +23,7 @@ func TestRunRejectsUnknownAgent(t *testing.T) {
 
 func TestRunRequiresAgentArg(t *testing.T) {
 	app := testApp(t)
-	cmd := NewRunCmd(app)
+	cmd := NewRunCmd(app.App)
 	err := app.runE(cmd, &runOptions{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "missing agent") {
 		t.Fatalf("expected missing-agent error, got %v", err)
@@ -50,7 +50,7 @@ func TestRunArgsValidatorCountsBeforeDash(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := NewRunCmd(app)
+			cmd := NewRunCmd(app.App)
 			if err := cmd.ParseFlags(tc.argv); err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -67,7 +67,7 @@ func TestRunArgsValidatorCountsBeforeDash(t *testing.T) {
 // so a forwarded flag never lands in jentic's positional slice (which would be
 // misread as a working-directory path).
 func TestRunSplitsAtDash(t *testing.T) {
-	cmd := NewRunCmd(testApp(t))
+	cmd := NewRunCmd(testApp(t).App)
 	if err := cmd.ParseFlags([]string{"claude", "/work", "--", "--model", "opus"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestRunSplitsAtDash(t *testing.T) {
 // bypassing jentic's flag parser — so an agent flag can never collide with a
 // jentic flag. The agent id is then the first forwarded token.
 func TestRunLeadingDashCapturesAgentCommand(t *testing.T) {
-	cmd := NewRunCmd(testApp(t))
+	cmd := NewRunCmd(testApp(t).App)
 	// --resumeSessionId is not a jentic flag; parsing must NOT error on it.
 	if err := cmd.ParseFlags([]string{"--", "claude", "--resumeSessionId=1234", "-p", "hi"}); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -115,7 +115,7 @@ func TestRunLeadingDashCapturesAgentCommand(t *testing.T) {
 // A bare leading `--` with nothing after it is a missing-agent error, not a panic.
 func TestRunLeadingDashRequiresAgent(t *testing.T) {
 	app := testApp(t)
-	cmd := NewRunCmd(app)
+	cmd := NewRunCmd(app.App)
 	if err := cmd.ParseFlags([]string{"--"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRunLeadingDashRequiresAgent(t *testing.T) {
 
 func TestRunListGrantsEmpty(t *testing.T) {
 	app := testApp(t)
-	cmd := NewRunCmd(app)
+	cmd := NewRunCmd(app.App)
 	if err := app.runE(cmd, &runOptions{listGrants: true, agentUser: "x-local-agent"}, []string{"claude"}); err != nil {
 		t.Fatalf("list-grants: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRunListGrantsShowsRecorded(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	cmd := NewRunCmd(app)
+	cmd := NewRunCmd(app.App)
 	if err := app.runE(cmd, &runOptions{listGrants: true}, []string{"claude"}); err != nil {
 		t.Fatalf("list-grants: %v", err)
 	}

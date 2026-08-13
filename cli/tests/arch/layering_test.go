@@ -71,10 +71,11 @@ func TestCLILeafPackagesStayLeaves(t *testing.T) {
 }
 
 // TestCmdcoreDoesNotImportCommandTrees asserts the shared base (cmdcore) never
-// imports either binary's command tree (ARCH-2). cmdcore is embedded by BOTH
-// `jentic` and `jenticctl`; if it reached up into api/ or ctl(cmd)/, the agent
-// binary would transitively link operator-only code (and vice versa) and the
-// two trees could no longer be built independently.
+// imports either binary's command tree, nor the local-agent feature package
+// (ARCH-1/ARCH-2). cmdcore is embedded by BOTH `jentic` and `jenticctl`; if it
+// reached up into api/, ctl(cmd)/, or localagentcmd/, the shared base would
+// depend on its own consumers — inverting the arrow (localagentcmd → cmdcore)
+// and re-linking operator/agent-only code into every binary.
 func TestCmdcoreDoesNotImportCommandTrees(t *testing.T) {
 	pkgs := loadCLI(t)
 
@@ -82,6 +83,7 @@ func TestCmdcoreDoesNotImportCommandTrees(t *testing.T) {
 		"internal/cli/api",
 		"internal/cli/ctl",
 		"internal/cli/ctlcmd",
+		"internal/cli/localagentcmd",
 	}
 	var seen int
 	for _, p := range pkgs {

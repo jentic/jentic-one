@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/localagentcmd"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
@@ -172,7 +173,7 @@ func (a *app) wizardE(ctx context.Context, opts *wizardOptions) error {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Step.Render("Connecting your operator"))
-	if err := a.BootstrapForWizard(ctx, baseURL, opts.timeout, operators, bootYes); err != nil {
+	if err := localagentcmd.New(a.App).BootstrapForWizard(ctx, baseURL, opts.timeout, operators, bootYes); err != nil {
 		return err
 	}
 
