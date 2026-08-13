@@ -26,7 +26,19 @@ func TestThemesRegistryClosedSet(t *testing.T) {
 	}
 }
 
+// forceTTY makes ResolveTheme's stdout-TTY probe return want for the duration of
+// the test, so the human colour ladder can be exercised deterministically off a
+// real terminal (the ladder assumes an interactive stdout; the non-TTY branch is
+// covered separately by TestResolveTheme_NonTTYForcesNoColor).
+func forceTTY(t *testing.T, want bool) {
+	t.Helper()
+	prev := stdoutIsTTY
+	stdoutIsTTY = func() bool { return want }
+	t.Cleanup(func() { stdoutIsTTY = prev })
+}
+
 func TestResolveTheme_Ladder(t *testing.T) {
+	forceTTY(t, true)
 	// Ensure NO_COLOR is absent (present-but-empty still counts as present).
 	t.Setenv("NO_COLOR", "")
 	os.Unsetenv("NO_COLOR")
@@ -72,6 +84,7 @@ func TestResolveTheme_Ladder(t *testing.T) {
 }
 
 func TestResolveTheme_NoColorEnv(t *testing.T) {
+	forceTTY(t, true) // isolate the NO_COLOR decision from the non-TTY branch
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("JENTIC_THEME", "dark")
 
@@ -82,6 +95,24 @@ func TestResolveTheme_NoColorEnv(t *testing.T) {
 	// But an explicit --theme overrides NO_COLOR (per no-color.org: user asked).
 	if _, ok := ResolveTheme("light", "dark").Primary.(lipgloss.NoColor); ok {
 		t.Error("explicit --theme light should override NO_COLOR")
+	}
+}
+
+// TestResolveTheme_NonTTYForcesNoColor pins OPS-1: when stdout is NOT a terminal
+// (piped/redirected human run) and no --theme was given, ResolveTheme degrades to
+// no-color so ANSI never leaks into a consumer — but an explicit --theme still
+// wins, because that is the operator deliberately asking for colour.
+func TestResolveTheme_NonTTYForcesNoColor(t *testing.T) {
+	forceTTY(t, false)
+	t.Setenv("NO_COLOR", "")
+	os.Unsetenv("NO_COLOR")
+	t.Setenv("JENTIC_THEME", "dark") // would pick dark on a TTY
+
+	if _, ok := ResolveTheme("", "dark").Primary.(lipgloss.NoColor); !ok {
+		t.Error("non-TTY stdout should force no-color when no --theme is given")
+	}
+	if _, ok := ResolveTheme("light", "dark").Primary.(lipgloss.NoColor); ok {
+		t.Error("explicit --theme light should override non-TTY auto no-color")
 	}
 }
 

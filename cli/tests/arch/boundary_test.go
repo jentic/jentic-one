@@ -137,6 +137,7 @@ func Test1F_StdoutStderrBoundary(t *testing.T) {
 	legacyStdoutAllowlist := map[string]bool{
 		"internal/cli/cmdcore/output.go":    true, // jsonOrPretty TTY probe + shipped render seam
 		"internal/cli/cmdcore/header.go":    true, // term.IsTerminal(os.Stdout.Fd()) — TTY detection
+		"internal/theme/resolve.go":         true, // term.IsTerminal(os.Stdout.Fd()) — auto no-color TTY probe (OPS-1)
 		"internal/cli/localagentcmd/run.go": true, // child-process c.Stdout = os.Stdout (must be real fd)
 		"internal/cli/cmdcore/root.go":      true, // AppContainer{Out: os.Stdout} — the bootstrap capture point
 		"internal/cli/ctlcmd/install.go":    true, // banner writer handed to an install helper

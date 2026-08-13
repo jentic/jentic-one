@@ -27,11 +27,17 @@ func ConfigDir() (string, error) {
 	return filepath.Join(dir, "jentic"), nil
 }
 
-// CacheDir resolves the Jentic cache directory. Unlike ConfigDir/StateDir this
-// defers to os.UserCacheDir (platform-native: ~/Library/Caches on macOS,
-// ~/.cache on Linux) because cache contents are disposable and platform
-// conventions are fine. Never store tokens here (see StateDir).
+// CacheDir resolves the Jentic cache directory. It honors XDG_CACHE_HOME first
+// (OPS-1) so the cache location is predictable and overridable on EVERY OS —
+// matching ConfigDir/StateDir, and important for Docker volume mounts and
+// cross-machine docs where os.UserCacheDir's platform-native path (~/Library/
+// Caches on macOS, %LocalAppData% on Windows) would ignore the operator's
+// XDG_CACHE_HOME. When XDG_CACHE_HOME is unset it defers to os.UserCacheDir.
+// Cache contents are disposable; never store tokens here (see StateDir).
 func CacheDir() (string, error) {
+	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
+		return filepath.Join(dir, "jentic"), nil
+	}
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return "", err

@@ -3,22 +3,35 @@ package theme
 import (
 	"context"
 	"os"
+
+	"github.com/charmbracelet/x/term"
 )
+
+// stdoutIsTTY reports whether standard output is a terminal. It is a package var
+// so tests can force either branch of the auto-no-color decision without
+// redirecting a real fd. Production always uses the real os.Stdout.
+var stdoutIsTTY = func() bool { return term.IsTerminal(os.Stdout.Fd()) }
 
 // ResolveTheme applies the HUMAN-mode precedence ladder and returns the resolved
 // Palette. The Stage-0 Mode gate (agent/service-account -> no-color) is applied by
 // the root interceptor (impl/3.2 §2) BEFORE this function and overrides everything
 // here; this function only owns the human-mode ladder (impl/1.4 §3):
 //
-//	--theme  >  JENTIC_THEME  >  NO_COLOR  >  config theme  >  dark
+//	--theme  >  NO_COLOR / non-TTY stdout  >  JENTIC_THEME  >  config theme  >  dark
 //
 // flagOverride is the --theme value (may be ""); configTheme is
 // ActiveState.ThemeName (the persisted config `theme`).
 func ResolveTheme(flagOverride, configTheme string) Palette {
-	// NO_COLOR wins over JENTIC_THEME/config but NOT over an explicit --theme, per
-	// the no-color.org convention: its mere presence (even empty) disables colour.
-	if _, noColor := os.LookupEnv("NO_COLOR"); noColor && flagOverride == "" {
-		return Themes["no-color"]
+	// An explicit --theme is the operator saying "I want THIS", so it wins even
+	// over auto-detection and NO_COLOR. Absent that, disable colour when either
+	// (a) NO_COLOR is set (no-color.org: mere presence, even empty, disables it),
+	// or (b) stdout is not a terminal (OPS-1): a piped/redirected human run
+	// (`jentic … | jq`, `> out.txt`) must not smuggle ANSI escapes into the
+	// consumer, matching the universal CLI convention.
+	if flagOverride == "" {
+		if _, noColor := os.LookupEnv("NO_COLOR"); noColor || !stdoutIsTTY() {
+			return Themes["no-color"]
+		}
 	}
 	name := firstNonEmpty(flagOverride, os.Getenv("JENTIC_THEME"), configTheme, "dark")
 	if p, ok := Themes[name]; ok {

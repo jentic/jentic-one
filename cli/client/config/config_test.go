@@ -45,6 +45,33 @@ func TestPaths_XDGLayout(t *testing.T) {
 	}
 }
 
+// TestCacheDir_HonorsXDGCacheHome pins OPS-1: CacheDir honors XDG_CACHE_HOME on
+// every OS (not just Linux, where os.UserCacheDir happens to read it), so the
+// cache location is predictable/overridable for Docker mounts and cross-machine
+// docs — matching ConfigDir/StateDir. When XDG_CACHE_HOME is unset it must fall
+// back to the platform-native os.UserCacheDir rather than erroring.
+func TestCacheDir_HonorsXDGCacheHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	got, err := CacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "jentic"); got != want {
+		t.Errorf("CacheDir with XDG_CACHE_HOME = %q, want %q", got, want)
+	}
+
+	// Unset: must still resolve (to the platform default) with tail "jentic".
+	t.Setenv("XDG_CACHE_HOME", "")
+	got, err = CacheDir()
+	if err != nil {
+		t.Fatalf("CacheDir without XDG_CACHE_HOME: %v", err)
+	}
+	if base := filepath.Base(got); base != "jentic" {
+		t.Errorf("CacheDir default tail = %q, want jentic", base)
+	}
+}
+
 // TestLoadState_FilelessRequiresBothVars is the impl/0.0 §2 item 3 contract: the
 // file-less path activates ONLY when both JENTIC_BASE_URL and JENTIC_BEARER_TOKEN
 // are set. Token or URL alone must fall through to disk resolution.
