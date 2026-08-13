@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/api"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/pkg/core"
 )
@@ -84,7 +85,10 @@ func runAPI(t *testing.T, home string, env map[string]string, args ...string) re
 	}
 	root := core.NewRootCmd(deps, api.TreeBuilder())
 	root.SetArgs(args)
-	code := core.Run(root)
+	// Thread the same invocation-error mapper the shipped binary uses (RunRoot →
+	// core.RunTree), so cobra-native parse errors are recorded as the coded
+	// envelope an agent actually sees, not the raw cobra text (AGT-20).
+	code := core.RunTree(root, cmdcore.InvocationErrorMapper)
 
 	_ = outW.Close()
 	_ = errW.Close()

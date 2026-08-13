@@ -1,9 +1,14 @@
 package cmdcore
 
 import (
+	"bytes"
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
 func TestFlagsAllowPrompt(t *testing.T) {
@@ -72,6 +77,57 @@ func valueFor(flag string) string {
 	default:
 		return "x"
 	}
+}
+
+// TestIsMachineCtx pins AGT-21's mode gate: register (unfenced, run by agents)
+// consults the resolved mode via the context to decide whether its human
+// progress prose is allowed on stdout. Agent/service-account => machine (prose
+// suppressed); human or a missing state (register outside the interceptor) =>
+// prose allowed.
+func TestIsMachineCtx(t *testing.T) {
+	cases := []struct {
+		name string
+		st   *clictx.ActiveState
+		want bool
+	}{
+		{"agent", &clictx.ActiveState{Mode: clictx.ModeAgent}, true},
+		{"service-account", &clictx.ActiveState{Mode: clictx.ModeServiceAccount}, true},
+		{"human", &clictx.ActiveState{Mode: clictx.ModeHuman}, false},
+		{"no-state fails open to human", nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			if c.st != nil {
+				ctx = clictx.WithActiveState(ctx, c.st)
+			}
+			if got := isMachineCtx(ctx); got != c.want {
+				t.Errorf("isMachineCtx = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestRegisterProgressSuppressedInMachineMode pins AGT-21: a human progress line
+// is written to stdout in human mode but MUST NOT reach stdout in agent mode
+// (where the single JSON Result is the only sanctioned stdout content).
+func TestRegisterProgressSuppressedInMachineMode(t *testing.T) {
+	t.Run("human writes prose", func(t *testing.T) {
+		app := testApp(t)
+		ctx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{Mode: clictx.ModeHuman})
+		app.registerProgress(ctx, "hello human")
+		if got := app.Out.(*bytes.Buffer).String(); !strings.Contains(got, "hello human") {
+			t.Errorf("human progress not written to stdout: %q", got)
+		}
+	})
+	t.Run("agent suppresses prose", func(t *testing.T) {
+		app := testApp(t)
+		ctx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{Mode: clictx.ModeAgent})
+		app.registerProgress(ctx, "hello human")
+		if got := app.Out.(*bytes.Buffer).String(); got != "" {
+			t.Errorf("agent-mode progress leaked to stdout: %q", got)
+		}
+	})
 }
 
 // TestLocalBrokerURL pins the local-convenience broker seeding: a loopback

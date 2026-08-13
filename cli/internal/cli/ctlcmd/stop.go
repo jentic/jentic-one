@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/huh"
@@ -92,7 +91,7 @@ func (a *app) stopProcess(pidPath, label string, timeout time.Duration) error {
 	}
 
 	fmt.Fprintln(a.Out, theme.Infof("Stopping %s (pid %d) ...", label, pid))
-	if err := p.Signal(syscall.SIGTERM); err != nil {
+	if err := proc.Terminate(p); err != nil {
 		return fmt.Errorf("signal process %d: %w", pid, err)
 	}
 

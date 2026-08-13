@@ -406,7 +406,19 @@ func TestCuratedRegistryCoversGeneratedStructs(t *testing.T) {
 
 // scanGeneratedStructConstructions parses every non-test .go file in dir and
 // returns the set of `control.X{...}` / `broker.X{...}` composite-literal type
-// names where X ends in "Params" or "Request" (the generated request structs).
+// names that carry user-bindable request data. It matches:
+//   - the generated request PARAMS/BODY structs (name ends "Params"/"Request"), and
+//   - request-body UNION MEMBER structs (GEN-20): types a command hand-builds as
+//     the actual wire payload (e.g. control.ApiSourceUrl / ApiSourceInline). These
+//     don't carry the Params/Request suffix, so the old suffix-only filter made
+//     them invisible to BOTH the 1G parity gate and this coverage net — a new
+//     optional field on one (submitted_by) shipped silently unwired.
+//
+// It excludes generated union CONTAINER wrappers (names containing "_Item"):
+// those are the oapi-codegen union envelope (a raw json.RawMessage), have no
+// user-facing fields to bind, and are populated only via their From*/Merge*
+// methods — reflecting over them would be meaningless.
+//
 // It is deliberately syntactic — no type checking — so it stays fast and has no
 // build dependency on the analysed package.
 func scanGeneratedStructConstructions(t *testing.T, dir string) map[string]bool {
@@ -439,8 +451,19 @@ func scanGeneratedStructConstructions(t *testing.T, dir string) map[string]bool 
 			if !ok || (pkg.Name != "control" && pkg.Name != "broker") {
 				return true
 			}
-			if strings.HasSuffix(sel.Sel.Name, "Params") || strings.HasSuffix(sel.Sel.Name, "Request") {
-				found[pkg.Name+"."+sel.Sel.Name] = true
+			typ := sel.Sel.Name
+			// Skip oapi-codegen union container wrappers: no bindable fields.
+			if strings.Contains(typ, "_Item") {
+				return true
+			}
+			// A generated struct construction is in scope if it is a request
+			// params/body (suffix) OR a request-body union member with fields set
+			// in the literal (GEN-20). An empty composite literal (control.Foo{})
+			// is a zero-value registration in curated.go, already covered by the
+			// suffix arm when applicable; a NON-empty literal with fields is a real
+			// payload build we must cover.
+			if strings.HasSuffix(typ, "Params") || strings.HasSuffix(typ, "Request") || len(cl.Elts) > 0 {
+				found[pkg.Name+"."+typ] = true
 			}
 			return true
 		})

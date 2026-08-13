@@ -33,13 +33,15 @@ func TestCredentialsList_WalksPages(t *testing.T) {
 }
 
 func TestBuildImportSource_URLvsFile(t *testing.T) {
-	// A URL becomes an ApiSourceUrl.
-	item, err := buildImportSource("https://example.com/openapi.yaml", "acme", "", "")
+	// A URL becomes an ApiSourceUrl, and --submitted-by is wired through (GEN-20).
+	item, err := buildImportSource("https://example.com/openapi.yaml", "acme", "", "", "renton")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if src, uerr := item.AsApiSourceUrl(); uerr != nil || src.Url != "https://example.com/openapi.yaml" {
 		t.Errorf("expected ApiSourceUrl, got err=%v src=%+v", uerr, src)
+	} else if src.SubmittedBy == nil || *src.SubmittedBy != "renton" {
+		t.Errorf("submitted_by not wired: %+v", src.SubmittedBy)
 	}
 
 	// A local file becomes an ApiSourceInline with the file content.
@@ -48,16 +50,18 @@ func TestBuildImportSource_URLvsFile(t *testing.T) {
 	if werr := os.WriteFile(p, []byte("openapi: 3.0.0"), 0o600); werr != nil {
 		t.Fatal(werr)
 	}
-	item, err = buildImportSource(p, "", "", "")
+	item, err = buildImportSource(p, "", "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if src, ierr := item.AsApiSourceInline(); ierr != nil || src.Content != "openapi: 3.0.0" || src.Filename != "spec.yaml" {
 		t.Errorf("expected inline source, got err=%v src=%+v", ierr, src)
+	} else if src.SubmittedBy != nil {
+		t.Errorf("submitted_by should be nil when --submitted-by unset, got %+v", src.SubmittedBy)
 	}
 
 	// A missing file is an error.
-	if _, ferr := buildImportSource(dir+"/nope.yaml", "", "", ""); ferr == nil {
+	if _, ferr := buildImportSource(dir+"/nope.yaml", "", "", "", ""); ferr == nil {
 		t.Error("expected an error for a missing file")
 	}
 }

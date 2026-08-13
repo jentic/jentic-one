@@ -109,6 +109,33 @@ func WantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 	return flagsAllowPrompt(cmd, yes, fieldFlags...) && term.IsTerminal(os.Stdin.Fd())
 }
 
+// registerProgress writes a human-facing progress line to stdout ONLY in a
+// human session. `register` is deliberately UNFENCED (agents run it as the
+// onboarding front door — api/root.go), so in agent/service-account mode these
+// banners would otherwise land on stdout and corrupt the single JSON envelope an
+// agent parses (AGT-21). In machine mode the lines are suppressed here; the
+// terminal outcome is emitted once as a ux.Result via the Audience. Diagnostics
+// that must survive machine mode (e.g. the localhost-normalisation note) go to
+// a.Err, not through this helper.
+func (a *App) registerProgress(ctx context.Context, line string) {
+	if isMachineCtx(ctx) {
+		return
+	}
+	fmt.Fprintln(a.Out, line)
+}
+
+// isMachineCtx reports whether the resolved mode is a fenced machine mode
+// (agent/service-account) — the same test JSONOrPretty uses, but keyed off the
+// context so the register body can consult it without a *cobra.Command. A
+// missing state (register invoked outside the interceptor) fails OPEN to human
+// prose, matching the pre-AGT-21 behavior for non-agent callers.
+func isMachineCtx(ctx context.Context) bool {
+	if st := clictx.FromContext(ctx); st != nil {
+		return st.Mode != clictx.ModeHuman
+	}
+	return false
+}
+
 func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	// An explicit --url always means "connect me to THIS install": it takes the
 	// setup arm even when some other context is active, creating/reusing the
@@ -286,9 +313,9 @@ func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout tim
 		return vals, err
 	}
 
-	fmt.Fprintln(a.Out, theme.Successf("Environment %q → %s", envName, vals.URL))
-	fmt.Fprintln(a.Out, theme.Successf("Identity %q (agent)", vals.Name))
-	fmt.Fprintln(a.Out, theme.Successf("Context %q (active)", contextName))
+	a.registerProgress(ctx, theme.Successf("Environment %q → %s", envName, vals.URL))
+	a.registerProgress(ctx, theme.Successf("Identity %q (agent)", vals.Name))
+	a.registerProgress(ctx, theme.Successf("Context %q (active)", contextName))
 
 	return vals, a.registerV2(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
 }
@@ -321,7 +348,13 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	// A jak_* API-key identity has nothing to register: the key IS the
 	// long-lived credential.
 	if key, err := auth.ReadAPIKey(ref); err == nil && key != "" {
-		fmt.Fprintln(a.Out, theme.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", identity, envName))
+		a.registerProgress(ctx, theme.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", identity, envName))
+		if isMachineCtx(ctx) {
+			ux.FromContext(ctx).Render(ux.Result{
+				Status: ux.StatusRegistered, Resource: "identity", Name: identity,
+				Message: "already authenticates with an API key",
+			})
+		}
 		return nil
 	}
 
@@ -350,10 +383,19 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 
 	clientID := reg.ClientID
 	if clientID == "" {
-		fmt.Fprintln(a.Out, theme.Infof("Registering agent %q with %s ...", clientName, baseURL))
+		a.registerProgress(ctx, theme.Infof("Registering agent %q with %s ...", clientName, baseURL))
 		r, rerr := auth.Register(baseURL, clientName, auth.PublicKeyToJWKS(pub))
 		if rerr != nil {
-			return rerr
+			// AGT-21: DCR is the most common failure point (control plane
+			// unreachable / TLS / 4xx). Surface it as a coded TRANSPORT_ERROR so
+			// an agent gets a closed error_code + actionable step instead of a
+			// raw exit-1 string it cannot branch on. The interceptor's
+			// decorateCodedErrors renders this through the Audience.
+			return &ux.CodedError{
+				Code:       ux.CodeTransportError,
+				Msg:        "agent registration failed: " + rerr.Error(),
+				Actionable: "Check the install URL is reachable (jentic env list) and the control plane is running, then re-run register.",
+			}
 		}
 		clientID = r.ClientID
 		status := r.Status
@@ -363,9 +405,9 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 		if err := saveRegState(identity, envName, clientID, status); err != nil {
 			return err
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Registered: client_id=%s status=%s", clientID, status))
+		a.registerProgress(ctx, theme.Successf("Registered: client_id=%s status=%s", clientID, status))
 	} else {
-		fmt.Fprintln(a.Out, theme.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
+		a.registerProgress(ctx, theme.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
 	}
 
 	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
@@ -376,6 +418,16 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 		return err
 	}
 
+	if isMachineCtx(ctx) {
+		// Machine mode: one JSON Result on stdout is the terminal success signal,
+		// replacing the human "Token minted" / "Ready:" prose (which stays
+		// suppressed by registerProgress).
+		ux.FromContext(ctx).Render(ux.Result{
+			Status: ux.StatusRegistered, Resource: "identity", Name: identity, ID: clientID,
+			Message: "approved; token minted",
+		})
+		return nil
+	}
 	fmt.Fprintln(a.Out, theme.Successf("Token minted for %s.", identity))
 	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Ready:"), theme.Command.Render("jentic catalog"))
 	return nil
@@ -432,10 +484,19 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 		return cerr
 	}
 
-	fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Approve this agent in the Jentic console:"))
-	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
-	fmt.Fprintf(a.Out, "    %s\n\n", theme.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
-	fmt.Fprintln(a.Out, theme.Dim.Render(registerResumeHint))
+	// Pending: point the operator (human) at the console, or (machine) surface
+	// the approve URL as a stderr diagnostic — never on stdout, which is reserved
+	// for the terminal JSON Result. The TIMEOUT_PENDING envelope also carries
+	// approve_url in details, so an agent that times out still gets it machine-
+	// readably (AGT-21/AGT-4).
+	if isMachineCtx(ctx) {
+		fmt.Fprintf(a.Err, "waiting for approval: %s\n", agentConsoleURL(creds.BaseURL, clientID))
+	} else {
+		fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Approve this agent in the Jentic console:"))
+		fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
+		fmt.Fprintf(a.Out, "    %s\n\n", theme.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
+		fmt.Fprintln(a.Out, theme.Dim.Render(registerResumeHint))
+	}
 
 	deadline := time.Now().Add(timeout)
 	delay := PollInitialDelay
@@ -461,7 +522,7 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 		}
 
 		if _, err := auth.BearerToken(creds); err == nil {
-			fmt.Fprintln(a.Out, theme.Success.Render("Agent approved."))
+			a.registerProgress(ctx, theme.Success.Render("Agent approved."))
 			return nil
 		} else if pending, cerr := classify(err); !pending {
 			return cerr

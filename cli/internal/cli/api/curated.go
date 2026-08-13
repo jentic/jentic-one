@@ -91,5 +91,42 @@ func CuratedBindings() []CuratedBinding {
 			},
 			NotExposed: map[string]string{},
 		},
+		// GEN-20: the request-body UNION MEMBERS `apis import` actually builds.
+		// Test1G reflects over ApiImportRequest above, but the wire payload is one
+		// of these union members — registering them here means a new optional field
+		// on either (like submitted_by, which was silently unwired) fails 1G until a
+		// human binds it or records why not. Both members share the same CLI flag
+		// surface; `type` is the discriminator the code sets, not a user flag.
+		{
+			Command: "apis import",
+			Params:  control.ApiSourceUrl{},
+			Bind: map[string]string{
+				"url":          PositionalArg,
+				"vendor":       "vendor",
+				"api_name":     "name",
+				"version":      "version",
+				"submitted_by": "submitted-by",
+			},
+			NotExposed: map[string]string{
+				"type": "union discriminator; set to \"url\" by buildImportSource, not a user flag",
+			},
+		},
+		{
+			Command: "apis import",
+			Params:  control.ApiSourceInline{},
+			Bind: map[string]string{
+				// content+filename are derived from reading the positional file
+				// argument, so the positional arg satisfies both.
+				"content":      PositionalArg,
+				"filename":     PositionalArg,
+				"vendor":       "vendor",
+				"api_name":     "name",
+				"version":      "version",
+				"submitted_by": "submitted-by",
+			},
+			NotExposed: map[string]string{
+				"type": "union discriminator; set to \"inline\" by buildImportSource, not a user flag",
+			},
+		},
 	}
 }

@@ -54,6 +54,12 @@ func NewBaseRoot(app *App, binary string) *cobra.Command {
 	// the shipped banner + update-nudge side effects (previously PersistentPreRun).
 	installInterceptor(app, root)
 
+	// AGT-20: flag-parse failures (unknown flag, missing required flag, bad flag
+	// value) surface as a coded MISSING_ARGUMENT envelope instead of cobra's raw
+	// "unknown flag: --x". cobra propagates this to subcommands automatically, so
+	// setting it on the root covers the whole tree.
+	root.SetFlagErrorFunc(flagErrorFunc)
+
 	root.SetHelpFunc(app.helpFunc)
 	root.SetVersionTemplate(
 		fmt.Sprintf("%s %s (commit %s, built %s)\n", binary, version, commit, date),
@@ -157,9 +163,11 @@ func TreeBuilder(build func(*App) *cobra.Command) core.TreeBuilder {
 
 // RunRoot builds the root command via the given tree builder and runs it through
 // core.Run (shared signal-context + exit-code semantics). The tree packages call
-// this from their Execute functions.
+// this from their Execute functions. It threads mapInvocationError so cobra-native
+// parse errors (unknown command/flag, bad arg count) become coded envelopes
+// (AGT-20) rather than raw "error: …" lines.
 func RunRoot(build func(*App) *cobra.Command) int {
 	deps := DefaultContainer()
 	root := core.NewRootCmd(deps, TreeBuilder(build))
-	return core.Run(root)
+	return core.RunTree(root, InvocationErrorMapper)
 }

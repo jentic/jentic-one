@@ -1375,6 +1375,11 @@
                   "usage": "Override the API name"
                 },
                 {
+                  "name": "submitted-by",
+                  "type": "string",
+                  "usage": "Attribution for who submitted this import (default: server infers from the caller)"
+                },
+                {
                   "name": "theme",
                   "type": "string",
                   "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"

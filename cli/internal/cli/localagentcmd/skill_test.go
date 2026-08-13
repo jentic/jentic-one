@@ -34,6 +34,49 @@ func runSkill(t *testing.T, args ...string) (*Cmd, string) {
 	return app, out.String()
 }
 
+// TestBareSkillShowsHelpAndWritesNothing pins UX-20: bare `jentic skill` must
+// behave like every other group parent — print help, mutate NOTHING — instead
+// of the old alias to `skill init`, which non-interactively wrote SKILL.md into
+// every detected operator home with no confirmation. Writes now live only under
+// the explicit `skill init` subcommand.
+func TestBareSkillShowsHelpAndWritesNothing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Chdir(tmp)
+
+	// Pre-create a detectable operator home so the OLD behavior would have
+	// written into it — proving the new behavior does not.
+	if err := os.MkdirAll(filepath.Join(tmp, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := new(bytes.Buffer)
+	app := testApp(t)
+	app.Out = out
+	app.Err = out
+	cmd := NewSkillCmd(app.App)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs(nil) // bare `jentic skill`
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("bare skill should succeed (show help): %v", err)
+	}
+
+	// Help, not a write: the usage/subcommand listing appears, and no operator
+	// home gained a SKILL.md / AGENTS.md.
+	if !strings.Contains(out.String(), "init") || !strings.Contains(strings.ToLower(out.String()), "usage") {
+		t.Errorf("bare skill did not render help (expected USAGE + init subcommand):\n%s", out.String())
+	}
+	for _, p := range []string{
+		filepath.Join(tmp, ".claude", "SKILL.md"),
+		filepath.Join(tmp, "AGENTS.md"),
+	} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("bare skill must not write %s (UX-20 footgun)", p)
+		}
+	}
+}
+
 func TestSkillInitGenericWritesManagedBlock(t *testing.T) {
 	_, out := runSkill(t, "init", "--operator", "generic", "--yes")
 	if !strings.Contains(out, "created") {

@@ -85,6 +85,20 @@ type ExitCoder interface {
 // any downstream binary composed via NewRootCmd, so exit-code / signal semantics
 // stay identical. Callers typically do: os.Exit(core.Run(root)).
 func Run(root *cobra.Command) (code int) {
+	return RunTree(root, nil)
+}
+
+// RunTree is Run with an optional error mapper applied to the error returned by
+// Execute before exit-code/render handling. The mapper lets the internal layer
+// convert cobra-native parse errors (unknown command/flag, bad arg count,
+// missing required flag) — which cobra returns from Execute rather than through
+// a command's RunE, so decorateCodedErrors can't see them — into a typed
+// *ux.CodedError so an agent gets a closed error_code + envelope instead of raw
+// "error: …" text (AGT-20). pkg/core stays free of internal/ux: the mapper both
+// classifies AND renders (returning an already-reported ExitCoder), so Run only
+// needs the ExitCoder it already understands. A nil mapper preserves the legacy
+// behavior exactly.
+func RunTree(root *cobra.Command, mapErr func(*cobra.Command, error) error) (code int) {
 	// Cancel the command context on the first SIGINT/SIGTERM so long-running
 	// commands can unwind gracefully.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -104,6 +118,9 @@ func Run(root *cobra.Command) (code int) {
 	err := root.ExecuteContext(ctx)
 	if err == nil {
 		return 0
+	}
+	if mapErr != nil {
+		err = mapErr(root, err)
 	}
 	// A wrapped child's non-zero exit is mirrored verbatim.
 	var ec ExitCoder
