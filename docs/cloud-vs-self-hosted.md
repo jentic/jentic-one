@@ -59,8 +59,9 @@ half the tools are talking to a different product.
   Claude Desktop's `claude_desktop_config.json`, Cursor's MCP settings): a
   URL on `api.jentic.com` is the cloud platform. A self-hosted install is
   never behind an MCP entry.
-- **CLI** — `jentic profile list` prints each profile's `base_url`; local
-  installs point at your own host (e.g. `http://127.0.0.1:8000`).
+- **CLI** — `jentic env list` prints each environment's `base_url` (and
+  `broker_url`); `jentic context view` shows the active one. Local installs
+  point at your own host (e.g. `http://127.0.0.1:8000`).
 
 **Rule of thumb:** pick one surface per task and stay on it. If you work
 against the self-hosted install, use the `jentic` CLI for everything, and

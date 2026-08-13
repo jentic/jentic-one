@@ -32,18 +32,6 @@ func TestProfileVerbToContext(t *testing.T) {
 	}
 }
 
-func TestRemapProfileSelection(t *testing.T) {
-	if got := remapProfileSelection("flagval", "envval"); got != "flagval" {
-		t.Errorf("flag should win: got %q", got)
-	}
-	if got := remapProfileSelection("", "envval"); got != "envval" {
-		t.Errorf("env fallback: got %q", got)
-	}
-	if got := remapProfileSelection("", ""); got != "" {
-		t.Errorf("neither set should yield empty: got %q", got)
-	}
-}
-
 // TestProfileAliasShimsLive proves the activation swap happened: the V1 profile
 // command is GONE and the hidden alias shim owns the "profile" name, delegating
 // V1 muscle memory onto the context successors (BC-3) instead of erroring with

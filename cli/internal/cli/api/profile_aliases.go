@@ -5,7 +5,10 @@
 //
 //   - `jentic profile <verb>`  → `jentic context <verb>` (delegated, not re-exec)
 //   - `profile add-key`        → `jentic identity add --api-key` (guidance only)
-//   - `--profile <p>` / `$JENTIC_PROFILE` → `--context <p>` / `$JENTIC_CONTEXT`
+//
+// Note: the activation release intentionally dropped V1 *selection* flags — there
+// is no `--profile`/`$JENTIC_PROFILE`; use `--context`/`$JENTIC_CONTEXT` (contexts
+// migrated from profiles keep the same name).
 //
 // ACTIVE since the activation release: the V1 `profile` command was removed and
 // registerProfileAliasShims is registered on the tree in its place, so V1
@@ -48,18 +51,6 @@ func profileVerbToContext(verb string, args []string) ([]string, bool) {
 	default:
 		return nil, false
 	}
-}
-
-// remapProfileSelection implements the `--profile`/`$JENTIC_PROFILE` → context
-// resolution (BC-3): migrated context names equal profile names (the BC-1 naming
-// rule), so the mapping is identity. It returns the context override to use,
-// preferring an explicit --profile value over $JENTIC_PROFILE, or "" when neither
-// is set (the normal --context/$JENTIC_CONTEXT ladder then applies).
-func remapProfileSelection(profileFlag, profileEnv string) string {
-	if profileFlag != "" {
-		return profileFlag
-	}
-	return profileEnv
 }
 
 // registerProfileAliasShims attaches the hidden `profile` shim command,

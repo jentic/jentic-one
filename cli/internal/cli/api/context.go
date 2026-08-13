@@ -51,7 +51,13 @@ func newContextCreateCmd(_ *app) *cobra.Command {
 		// stays the canonical name.
 		Aliases: []string{"add"},
 		Short:   "Create a context binding an environment + identity + mode",
-		Args:    cobra.ExactArgs(1),
+		Long: "Create a context — a named binding of an environment (--env), an identity\n" +
+			"(--identity), and a mode (--mode, default human). Contexts are what commands\n" +
+			"act through; --use activates the new one immediately. Most people never run\n" +
+			"this directly — `jentic register --url …` creates the trio for you.",
+		Example: "  jentic context create prod --env prod --identity crawler --use\n" +
+			"  jentic context create local --env local --identity laptop --mode agent",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())
@@ -130,7 +136,12 @@ func newContextUseCmd(_ *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
 		Short: "Set the active context",
-		Args:  cobra.ExactArgs(1),
+		Long: "Set the active context — the environment + identity + mode that every\n" +
+			"command acts through when you don't pass --context. The named context must\n" +
+			"already exist (`jentic context list`); this only switches which one is active.",
+		Example: "  jentic context use prod\n" +
+			"  jentic context use local   # then: jentic catalog / jentic execute …",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			aud := ux.FromContext(cmd.Context())

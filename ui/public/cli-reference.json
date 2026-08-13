@@ -210,6 +210,8 @@
               "path": "jentic context create",
               "use": "create \u003cname\u003e",
               "short": "Create a context binding an environment + identity + mode",
+              "long": "Create a context — a named binding of an environment (--env), an identity\n(--identity), and a mode (--mode, default human). Contexts are what commands\nact through; --use activates the new one immediately. Most people never run\nthis directly — `jentic register --url …` creates the trio for you.",
+              "example": "  jentic context create prod --env prod --identity crawler --use\n  jentic context create local --env local --identity laptop --mode agent",
               "aliases": [
                 "add"
               ],
@@ -258,6 +260,8 @@
               "path": "jentic context use",
               "use": "use \u003cname\u003e",
               "short": "Set the active context",
+              "long": "Set the active context — the environment + identity + mode that every\ncommand acts through when you don't pass --context. The named context must\nalready exist (`jentic context list`); this only switches which one is active.",
+              "example": "  jentic context use prod\n  jentic context use local   # then: jentic catalog / jentic execute …",
               "flags": [
                 {
                   "name": "context",
@@ -1682,7 +1686,7 @@
             {
               "name": "idempotency-key",
               "type": "string",
-              "usage": "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker (13 §4)"
+              "usage": "caller-supplied Idempotency-Key so a retried POST/PUT is de-duplicated by the broker"
             },
             {
               "name": "json",
