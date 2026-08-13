@@ -74,6 +74,16 @@ control:
 global:
   postgresql:
     enabled: true
+  # Dev-only literals (must match docker/local-setup/init-schemas.sql). The
+  # umbrella chart ships no password defaults — every values file states its
+  # own. Never reuse these outside the local kind cluster.
+  databases:
+    registry:
+      password: registry_pass  # pragma: allowlist secret
+    control:
+      password: control_pass  # pragma: allowlist secret
+    admin:
+      password: admin_pass  # pragma: allowlist secret
 
 postgresql:
   enabled: true

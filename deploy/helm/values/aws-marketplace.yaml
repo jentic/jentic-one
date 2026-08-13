@@ -1,0 +1,91 @@
+# AWS Marketplace deployment values (container product listing).
+#
+# Overlay for the jentic-one umbrella chart when deploying from the AWS
+# Marketplace listing. Placeholders marked <…> are filled in when the listing
+# exists (plan PR 6): the Marketplace portal assigns the ECR registry path and
+# repository names when the product is created.
+#
+# Marketplace rule of thumb: every image a deployment pulls must come from the
+# listing's ECR registry — no docker.io / ghcr.io pulls at install time.
+
+global:
+  image:
+    # ECR registry path from the Marketplace portal, e.g.
+    # "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>". Used as the
+    # fallback for any service without an explicit image.repository.
+    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>"
+    # Pin per release, per the listing's deployment instructions (the
+    # Marketplace does not allow floating tags like :latest).
+    tag: ""
+
+  # Combined mode: the app pod serves registry/admin/control; only the app
+  # and broker deployments (and their shared image) exist.
+  postgresql:
+    enabled: true
+
+  # NOTE: global.observability.otel.enabled must stay false for Marketplace
+  # deploys — the sidecar image (otel/opentelemetry-collector-contrib) is
+  # pulled from docker.io, which the Marketplace disallows. Mirror it into
+  # the listing's ECR first if observability is needed.
+
+  # No database password defaults ship with the chart; set them at install:
+  #   --set global.databases.registry.password=… \
+  #   --set global.databases.control.password=…  \
+  #   --set global.databases.admin.password=…
+  # or (preferred) replace common.db-env with a Secret-backed env block —
+  # see deploy/README.md "Production secrets".
+
+# app and broker run the same jentic-one-app image, differentiated by the
+# JENTIC__APPS env each subchart sets. If the Marketplace portal provisions a
+# single ECR repository for the product, keep the explicit repository values
+# below identical; if it provisions one repo per name, drop the overrides and
+# let <global.image.registry>/<chart-name> resolve them instead.
+app:
+  enabled: true
+  image:
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
+  # Entitlement gate wiring (plan PR 4). DO NOT uncomment until the deployed
+  # image ships the entitlement config: AppConfig rejects unknown config
+  # sections (extra="forbid"), so these env vars crash older images at boot.
+  # extraEnv:
+  #   JENTIC__ENTITLEMENT__ENABLED: "true"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+
+broker:
+  enabled: true
+  image:
+    repository: "709825985650.dkr.ecr.us-east-1.amazonaws.com/<seller>/jentic-one-app"
+  # extraEnv:  # same caveat as app.extraEnv above
+  #   JENTIC__ENTITLEMENT__ENABLED: "true"
+  #   JENTIC__ENTITLEMENT__PRODUCT_CODE: "<product-code from the portal>"
+
+registry:
+  enabled: false
+admin:
+  enabled: false
+control:
+  enabled: false
+gateway:
+  enabled: false
+
+# In-cluster Postgres from the ECR-mirrored image (plan PR 6 mirrors it).
+# RDS variant: set postgresql.enabled=false, global.postgresql.enabled=false,
+# and point global.databases.*.host at the RDS endpoint instead.
+postgresql:
+  enabled: true
+  image:
+    registry: "709825985650.dkr.ecr.us-east-1.amazonaws.com"
+    repository: "<seller>/postgresql"
+    tag: "17.2.0-debian-12-r6"
+  auth:
+    username: postgres
+    # password: set at install (--set postgresql.auth.password=…) or via
+    # auth.existingSecret; no default ships with the chart.
+    database: jentic
+  # The per-surface DB roles/schemas (registry/control/admin) must exist
+  # before the app boots — create a ConfigMap from
+  # docker/local-setup/init-schemas.sql (with real passwords) and reference
+  # it here, as the local deploy tooling does:
+  # primary:
+  #   initdb:
+  #     scriptsConfigMap: "jentic-pg-init"
