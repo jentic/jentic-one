@@ -292,6 +292,8 @@ def _skip_if_unreachable(request: pytest.FixtureRequest, base_url: str) -> None:
     exempt_modules = (
         "tests.smoke.test_env",
         "tests.smoke.test_helm_modes",
+        # Render-only helm assertions: no deployed stack needed at all.
+        "tests.smoke.test_helm_render",
         # Real-AWS SigV4 tests: the signer-level tests need only AWS env vars
         # (no deployed stack); the broker E2E test does its own reachability skip.
         "tests.smoke.test_sigv4_real_aws",
