@@ -227,7 +227,7 @@ jobs:
           echo "Generated UI client is in sync with ui/openapi.json."
 
   security:
-    name: Security scan
+    name: Security / source scan
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -271,7 +271,7 @@ jobs:
   # unfixed low-priority CVEs, and a permanently red gate gets ignored.
   # Overrides go in .trivyignore (CVE id + justification + expiry).
   image-scan:
-    name: Image CVE scan
+    name: Security / image scan
     needs: changes
     if: needs.changes.outputs.docker-image == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
