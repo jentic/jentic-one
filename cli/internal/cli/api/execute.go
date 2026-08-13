@@ -16,6 +16,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	sdkclient "github.com/jentic/jentic-one/cli/client"
+	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
@@ -224,6 +225,14 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	}
 
 	// Forward the agent bearer token to the broker.
+	// SEC-1: never send the bearer over plaintext to a non-loopback broker.
+	if err := auth.RequireSecureURL(brokerURL); err != nil {
+		return &ux.CodedError{
+			Code:       ux.CodeTransportError,
+			Msg:        err.Error(),
+			Actionable: "Use an https broker URL, or a loopback (127.0.0.1/localhost) http broker for local installs.",
+		}
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	// Auto-set Content-Type for body requests.
@@ -436,11 +445,17 @@ func (a *app) resolveOperation(cmd *cobra.Command, token, baseURL string, opts *
 
 func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http.Response) error {
 	if opts.raw {
-		if _, err := io.Copy(a.Out, resp.Body); err != nil {
+		// Read (bounded by the broker transport's cap) then redact before
+		// streaming, so --raw matches the redaction guarantee of the JSON and
+		// `jentic api` paths (SEC-2). A secret in an upstream body must not leak
+		// just because the caller asked for raw output.
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+		if _, err := a.Out.Write(ux.RedactBytes(body)); err != nil {
 			return err
 		}
-		// In raw mode we stream the body straight through, so we can't parse a
-		// directive out of it. Still signal a broker denial via the exit code.
 		if isBrokerDenial(resp) {
 			return brokerDeniedErr(resp)
 		}
@@ -646,11 +661,14 @@ func (a *app) executePrettyOutput(resp *http.Response, body []byte) {
 
 	fmt.Fprintln(a.Out)
 	if len(body) > 0 {
+		// Redact the upstream body before display (SEC-2): the pretty path is
+		// human-facing but can still carry secrets echoed by an upstream API.
 		var pretty bytes.Buffer
 		if err := json.Indent(&pretty, body, "", "  "); err == nil {
-			fmt.Fprintln(a.Out, pretty.String())
+			_, _ = a.Out.Write(ux.RedactBytes(pretty.Bytes()))
 		} else {
-			fmt.Fprintln(a.Out, string(body))
+			_, _ = a.Out.Write(ux.RedactBytes(body))
 		}
+		fmt.Fprintln(a.Out)
 	}
 }

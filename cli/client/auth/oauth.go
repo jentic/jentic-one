@@ -63,6 +63,20 @@ func requireSecureHost(u *url.URL) error {
 	return fmt.Errorf("refusing to use insecure endpoint %q: https is required (http allowed only for localhost)", u.Redacted())
 }
 
+// RequireSecureURL is the exported transport guard: it parses rawurl and applies
+// the same https-or-loopback invariant the SDK enforces before attaching a
+// bearer (requireSecureHost). It exists so the hand-rolled control-plane clients
+// (internal/httpx) and the broker POST in `jentic execute` hold the agent token
+// to the same rule — the token must never traverse plaintext http to a
+// non-loopback host (SEC-1). A malformed URL is rejected fail-closed.
+func RequireSecureURL(rawurl string) error {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", rawurl, err)
+	}
+	return requireSecureHost(u)
+}
+
 // isLoopbackHost reports whether host is a loopback address or "localhost".
 func isLoopbackHost(host string) bool {
 	if host == "localhost" {

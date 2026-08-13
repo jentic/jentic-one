@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/jentic/jentic-one/cli/client/auth"
 )
 
 // maxResponseBytes caps how much of a response body we buffer, so a hostile or
@@ -106,6 +108,12 @@ func (c *Client) Do(ctx context.Context, method, path, bearer string, body, out 
 	}
 	req.Header.Set("Accept", "application/json")
 	if bearer != "" {
+		// SEC-1: never send the agent bearer over plaintext to a non-loopback
+		// host. Mirrors the SDK's AttachAuth guard so the hand-rolled clients
+		// hold the token to the same https-or-loopback invariant.
+		if err := auth.RequireSecureURL(c.baseURL + path); err != nil {
+			return err
+		}
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 
@@ -139,6 +147,10 @@ func (c *Client) DoRaw(ctx context.Context, method, path, bearer, accept string)
 	}
 	req.Header.Set("Accept", accept)
 	if bearer != "" {
+		// SEC-1: guard the bearer against plaintext to a remote host (see Do).
+		if err := auth.RequireSecureURL(c.baseURL + path); err != nil {
+			return nil, err
+		}
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
 

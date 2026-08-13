@@ -205,6 +205,21 @@ func TestRequireSecureHost(t *testing.T) {
 	}
 }
 
+func TestRequireSecureURL(t *testing.T) {
+	ok := []string{"https://api.example.com/agents", "http://localhost:8000/x", "http://127.0.0.1:8100/broker"}
+	bad := []string{"http://api.example.com/x", "http://10.0.0.5:8100/y", "://malformed"}
+	for _, s := range ok {
+		if err := RequireSecureURL(s); err != nil {
+			t.Errorf("RequireSecureURL(%q) = %v, want nil", s, err)
+		}
+	}
+	for _, s := range bad {
+		if err := RequireSecureURL(s); err == nil {
+			t.Errorf("RequireSecureURL(%q) = nil, want rejection", s)
+		}
+	}
+}
+
 func TestTokenEndpoint(t *testing.T) {
 	got, err := tokenEndpoint("https://ctl.example/")
 	if err != nil {

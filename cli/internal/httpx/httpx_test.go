@@ -107,3 +107,17 @@ func TestBaseURLTrims(t *testing.T) {
 		t.Errorf("BaseURL = %q", got)
 	}
 }
+
+// TestBearerRefusedOverPlaintextRemote proves SEC-1: a bearer is never sent to a
+// non-loopback plaintext host. The request must fail before any dial, and an
+// empty bearer to the same host is unaffected (no auth to protect).
+func TestBearerRefusedOverPlaintextRemote(t *testing.T) {
+	c := New("http://api.example.com", time.Second)
+	err := c.Do(context.Background(), http.MethodGet, "/x", "secret-token", nil, nil)
+	if err == nil {
+		t.Fatal("Do with bearer over plaintext remote = nil, want rejection")
+	}
+	if _, rawErr := c.DoRaw(context.Background(), http.MethodGet, "/x", "secret-token", "application/json"); rawErr == nil {
+		t.Fatal("DoRaw with bearer over plaintext remote = nil, want rejection")
+	}
+}

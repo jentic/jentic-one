@@ -7,7 +7,11 @@ package clictx
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"net/http"
+	"os"
 
 	"github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/client/generated/broker"
@@ -18,13 +22,40 @@ import (
 // Config. ActiveState embeds *config.ResolvedState, so the SDK fields (BaseURL,
 // BrokerURL, IdentityName, …) are promoted and read through the same value.
 func configFromState(state *ActiveState) client.Config {
-	return client.Config{
+	cfg := client.Config{
 		ControlBaseURL:      state.BaseURL,
 		BrokerBaseURL:       state.BrokerURL,
 		IdentityName:        state.IdentityName,
 		EnvironmentName:     state.EnvironmentName,
 		InjectedBearerToken: state.InjectedBearerToken,
 		SessionID:           state.SessionID,
+	}
+	// SEC-3: a per-environment custom CA bundle is honored by building an
+	// HTTPClient whose transport verifies against that pool. Best-effort: a bad
+	// path/PEM leaves the default transport (system roots) rather than failing
+	// the command — the TLS handshake then surfaces any real trust error.
+	if hc := caCertHTTPClient(state.CACertPath); hc != nil {
+		cfg.HTTPClient = hc
+	}
+	return cfg
+}
+
+// caCertHTTPClient returns an *http.Client pinned to the CA bundle at path, or
+// nil when path is empty or cannot be loaded into a pool (SEC-3).
+func caCertHTTPClient(path string) *http.Client {
+	if path == "" {
+		return nil
+	}
+	pem, err := os.ReadFile(path) //nolint:gosec // path is the operator-configured ca_cert_path from their own config.
+	if err != nil {
+		return nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil
+	}
+	return &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
 	}
 }
 

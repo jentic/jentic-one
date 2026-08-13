@@ -28,6 +28,7 @@ type ResolvedState struct {
 	EnvironmentName     string
 	BaseURL             string
 	BrokerURL           string // Data Plane / Broker endpoint (Phase 5); separate from BaseURL
+	CACertPath          string // optional custom CA bundle for TLS verification (SEC-3)
 	InjectedBearerToken string
 	SessionID           string // X-Jentic-Session-Id (telemetry, Phase 5)
 
@@ -108,7 +109,8 @@ func LoadState(cmdContextOverride string) (*ResolvedState, error) {
 	state.EnvironmentName = ctx.Environment
 	state.BaseURL = env.BaseURL
 	state.BrokerURL = env.BrokerURL // explicit; not derived from BaseURL (Phase 5)
-	state.PersistedMode = ctx.Mode  // raw string; CLI interprets it
+	state.CACertPath = env.CACertPath
+	state.PersistedMode = ctx.Mode // raw string; CLI interprets it
 	state.PersistedTheme = cfg.Theme
 
 	// Fetching a disk-cached bearer token via the identity is Phase 4 (auth); the
