@@ -876,6 +876,55 @@ class ReleaseCheckConfig(BaseModel):
     cache_ttl_seconds: int = 21600  # 6h
 
 
+class EntitlementConfig(BaseModel):
+    """AWS Marketplace license gate for the Marketplace-listed deployment.
+
+    Powers the entitlement checker (``integrations/aws_marketplace``): on
+    startup — and every ``refresh_interval_seconds`` after — the process asks
+    AWS whether this deployment's Marketplace subscription is still active, and
+    locks the HTTP surface (503, health excepted) when it definitively is not.
+    Defaults to **OFF**: a non-Marketplace install that omits this block runs
+    exactly as before — nothing is wired, no AWS call is ever made.
+
+    Failure posture: an *unreachable* or *erroring* AWS API is never grounds
+    for lockout by itself — the last definitive verdict holds for
+    ``grace_period_seconds`` before the gate fails closed. Only an explicit
+    "not entitled" answer from AWS locks out immediately.
+    """
+
+    enabled: bool = False
+    # The Marketplace product code, issued by the AWS Marketplace portal when
+    # the container product is created. Required whenever ``enabled``.
+    product_code: str | None = None
+    region: str = "us-east-1"
+    # Which paid listing model the check calls: ``usage`` → Metering Service
+    # ``RegisterUsage`` (hourly/usage pricing); ``contract`` → License Manager
+    # ``CheckoutLicense`` (contract pricing, needs ``license_sku``).
+    pricing_model: Literal["usage", "contract"] = "usage"
+    refresh_interval_seconds: int = 3600
+    grace_period_seconds: int = 86400
+    # Contract pricing only (License Manager); unused for usage pricing:
+    license_sku: str | None = None
+    # Contract pricing only: the entitlement dimension name from the listing.
+    license_dimension: str | None = None
+    # Test-only endpoint override (same posture as ``TelemetryConfig.endpoint``):
+    # points the client at a stub server for deployed-gate rehearsal —
+    # moto/LocalStack do not implement these AWS APIs. Not for operators.
+    endpoint: str | None = None
+
+    @model_validator(mode="after")
+    def _require_gate_inputs(self) -> EntitlementConfig:
+        if not self.enabled:
+            return self
+        if not self.product_code:
+            raise ValueError("entitlement.enabled requires entitlement.product_code")
+        if self.pricing_model == "contract" and not self.license_sku:
+            raise ValueError(
+                "entitlement.pricing_model 'contract' requires entitlement.license_sku"
+            )
+        return self
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -903,6 +952,7 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     release_check: ReleaseCheckConfig = Field(default_factory=ReleaseCheckConfig)
+    entitlement: EntitlementConfig = Field(default_factory=EntitlementConfig)
     apps: list[str] = Field(default_factory=lambda: ["registry", "admin", "control", "auth"])
 
     # Validated extension sub-configs, keyed by their registered section name.
