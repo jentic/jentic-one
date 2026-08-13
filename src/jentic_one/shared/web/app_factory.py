@@ -452,7 +452,15 @@ def create_surface_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        async with extra_lifespan(app) if extra_lifespan else _null_lifespan():
+        # Container-injected lifespans enter after the surface's own
+        # extra_lifespan (so they may read surface state stashed on app.state)
+        # and exit in reverse order before it.
+        async with (
+            extra_lifespan(app) if extra_lifespan else _null_lifespan(),
+            contextlib.AsyncExitStack() as lifespan_stack,
+        ):
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
             # Worker starts *inside* the surface lifespan so it can share any
             # surface-owned resource (e.g. the broker's shared upstream
             # executor + credential injector stashed on app.state by
@@ -550,17 +558,22 @@ def create_combined_app(
         await ctx.startup()
         instrument_databases(ctx)
         telemetry_handle = await _start_telemetry(ctx)
-        worker_task = _start_worker(ctx, set(apps))
-        scanner_task = _start_expiry_scanner(ctx, set(apps))
-        catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
-        try:
-            yield
-        finally:
-            await _stop_catalog_update_scanner(catalog_scanner_task)
-            await _stop_expiry_scanner(scanner_task)
-            await _stop_worker(worker_task)
-            await _stop_telemetry(telemetry_handle)
-            await ctx.shutdown()
+        # Container-injected lifespans (default empty) — entered after
+        # ctx.startup(), exited in reverse order before ctx.shutdown().
+        async with contextlib.AsyncExitStack() as lifespan_stack:
+            for lifespan_factory in container.extra_lifespans:
+                await lifespan_stack.enter_async_context(lifespan_factory(app, ctx))
+            worker_task = _start_worker(ctx, set(apps))
+            scanner_task = _start_expiry_scanner(ctx, set(apps))
+            catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+            try:
+                yield
+            finally:
+                await _stop_catalog_update_scanner(catalog_scanner_task)
+                await _stop_expiry_scanner(scanner_task)
+                await _stop_worker(worker_task)
+                await _stop_telemetry(telemetry_handle)
+                await ctx.shutdown()
 
     root = FastAPI(lifespan=lifespan, **fastapi_metadata_kwargs())
     root.state.ctx = ctx
