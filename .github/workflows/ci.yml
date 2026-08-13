@@ -845,7 +845,7 @@ jobs:
 
       - name: Live-stack smoke (Linux)
         if: runner.os == 'Linux'
-        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli"
+        run: bash cli/tests/e2e/smoke.sh "${{ github.workspace }}/cli" --live http://127.0.0.1:8000
 
       # Offline smoke ALWAYS runs on Linux and IS hard-gating — it proves the
       # binaries + agent surface work regardless of the Docker-stack install.

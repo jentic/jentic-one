@@ -12,7 +12,8 @@
 
 param(
   [Parameter(Mandatory = $true)]
-  [string]$BinDir
+  [string]$BinDir,
+  [string]$LiveUrl = ''
 )
 
 # NB: intentionally NOT 'Stop'. Under 'Stop', PowerShell turns any bytes a NATIVE
@@ -70,29 +71,28 @@ try {
   if ($v.Output -notmatch 'jentic') { Fail "jenticctl --version had no version line`n$($v.Output)" }
   Pass "--version on both binaries"
 
-  # 2. jentic doctor --json parses; exits 0 unless a HARD check fails. Identity /
-  #    reachability rows only WARN with no server, so a fresh scratch home is a
-  #    clean (exit 0) report.
+  # 2. jentic doctor --json parses AND exits 0 (QA-1: assert the code too).
+  #    Identity/reachability rows only WARN with no server, so a fresh scratch
+  #    home is a clean (exit 0) report.
   $d = Invoke-Native $jentic @('doctor', '--json')
   if ($d.Code -ne 0) {
     Write-Host "---- jentic doctor --json (exit $($d.Code)) ----"
     Write-Host $d.Output
-    Fail "jentic doctor --json exited non-zero (a hard check failed)"
+    Fail "jentic doctor --json exit=$($d.Code), want 0 (a hard check failed)"
   }
   if ($d.Output -notmatch '"checks"') { Fail "jentic doctor JSON had no checks array`n$($d.Output)" }
-  Pass "jentic doctor --json parses"
+  Pass "jentic doctor --json parses and exits 0"
 
-  # 3. jentic access whoami --json emits a well-formed agent envelope. On a fresh
-  #    scratch home there is no active context, so this exits non-zero with a
-  #    RESOLVE_FAILED error envelope — the CORRECT contract, not a failure. Assert
-  #    the envelope is parseable either way; `profile`/`context list` are management
-  #    commands and are fenced in agent mode, so they are deliberately NOT used here.
+  # 3. jentic access whoami --json on a FRESH scratch home has no active context,
+  #    so the contract is a RESOLVE_FAILED error envelope AND a non-zero exit
+  #    (QA-1: assert BOTH, not merely "some well-formed envelope"). `context list`
+  #    is a management command fenced in agent mode, so it is NOT used here.
   $p = Invoke-Native $jentic @('access', 'whoami', '--json')
-  if (($p.Output -notmatch '"schema_version"') -and
-      ($p.Output -notmatch '"error_code"')) {
-    Fail "jentic access whoami --json was not a well-formed envelope`n$($p.Output)"
+  if ($p.Code -eq 0) { Fail "jentic access whoami --json exit=0 on a no-context home, want non-zero`n$($p.Output)" }
+  if ($p.Output -notmatch '"error_code"\s*:\s*"RESOLVE_FAILED"') {
+    Fail "jentic access whoami --json (no context) must emit error_code RESOLVE_FAILED`n$($p.Output)"
   }
-  Pass "jentic access whoami --json"
+  Pass "jentic access whoami --json (no context) -> RESOLVE_FAILED, exit $($p.Code)"
 
   # 4. jenticctl doctor --json parses (non-zero only on a fail row; a scratch
   #    home with no install may warn but must produce a well-formed envelope).
@@ -101,6 +101,19 @@ try {
     Fail "jenticctl doctor JSON was not well-formed`n$($c.Output)"
   }
   Pass "jenticctl doctor --json parses"
+
+  # 5. LIVE ONLY (QA-2): prove reachability of the base URL the CLI resolves to —
+  #    an assertion the offline legs structurally cannot make — then confirm
+  #    `jentic doctor` sees the live stack (exit 0). A fresh stack has no approved
+  #    agent token, so an authenticated data call cannot succeed here.
+  if ($LiveUrl -ne '') {
+    try { Invoke-WebRequest -UseBasicParsing -Uri "$LiveUrl/health" -TimeoutSec 10 | Out-Null }
+    catch { Fail "live: control plane health endpoint at $LiveUrl/health not reachable`n$_" }
+    $env:JENTIC_BASE_URL = $LiveUrl
+    $ld = Invoke-Native $jentic @('doctor', '--json')
+    if ($ld.Code -ne 0) { Fail "live: jentic doctor --json exit=$($ld.Code) against a live stack, want 0`n$($ld.Output)" }
+    Pass "live: control plane reachable at $LiveUrl + jentic doctor exit 0"
+  }
 
   Write-Host "== smoke passed =="
 }

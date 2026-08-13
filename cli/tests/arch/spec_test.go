@@ -1,6 +1,9 @@
 package arch
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -337,4 +340,110 @@ func TestSensitiveTablesRegistered(t *testing.T) {
 				"Fix: restore the init in internal/cli/cmdcore/redaction.go — specgen's x-sensitive output is inert without it (GEN-2).", want)
 		}
 	}
+}
+
+// curatedMigrationAllowlist lists generated *Params/*Request types that ARE
+// constructed by a command but are deliberately NOT (yet) in CuratedBindings()
+// (QA-3/GEN-4). Two legitimate reasons: (a) the type is used by a non-command
+// helper (e.g. pagination inside `jentic api`/negotiation) where there is no
+// single user-facing flag surface to reflect over, or (b) the command is still
+// on internal/apiclient and migrates into the registry later. Every entry needs
+// a one-line reason; the meta-test fails on any UNLISTED constructed type so a
+// new curated-eligible command cannot silently skip the 1G parity gate.
+//
+// Currently EMPTY: every generated request struct constructed in the command
+// package is registered in CuratedBindings(). A new one must be registered
+// (preferred) or added here with a reason.
+var curatedMigrationAllowlist = map[string]string{}
+
+// TestCuratedRegistryCoversGeneratedStructs is the QA-3/GEN-4 meta-test: it
+// AST-scans the shipped command package (internal/cli/api) for every
+// construction of a generated control.*/broker.* request struct (a composite
+// literal of a type whose name ends in "Params" or "Request") and requires each
+// such type to be EITHER registered in CuratedBindings() OR present in the
+// reviewed curatedMigrationAllowlist. Without it, a new command could construct
+// a generated params struct, gain optional spec fields over time, and silently
+// never expose them — the exact drift Test1G exists to prevent, but which 1G
+// only checks for commands someone remembered to register.
+func TestCuratedRegistryCoversGeneratedStructs(t *testing.T) {
+	dir := filepath.Join("..", "..", "internal", "cli", "api")
+	if _, err := os.Stat(filepath.Join(dir, "curated.go")); err != nil {
+		t.Skip("dormant: curated registry not present")
+	}
+
+	registered := map[string]bool{}
+	for _, b := range api.CuratedBindings() {
+		registered[reflect.TypeOf(b.Params).String()] = true
+	}
+
+	constructed := scanGeneratedStructConstructions(t, dir)
+
+	var missing []string
+	for typ := range constructed {
+		if registered[typ] {
+			continue
+		}
+		if _, ok := curatedMigrationAllowlist[typ]; ok {
+			continue
+		}
+		missing = append(missing, typ)
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		t.Fatalf("generated request struct(s) constructed in internal/cli/api but neither registered in "+
+			"CuratedBindings() nor allowlisted (QA-3/GEN-4):\n  %s\n"+
+			"Fix: add a CuratedBinding for the command that builds it (so Test1G reflects over its fields), "+
+			"or add it to curatedMigrationAllowlist with a one-line reason.", strings.Join(missing, "\n  "))
+	}
+
+	// Staleness: an allowlist entry for a type nobody constructs anymore is dead.
+	for typ := range curatedMigrationAllowlist {
+		if !constructed[typ] {
+			t.Errorf("curatedMigrationAllowlist has stale entry %q — no longer constructed in internal/cli/api; remove it", typ)
+		}
+	}
+}
+
+// scanGeneratedStructConstructions parses every non-test .go file in dir and
+// returns the set of `control.X{...}` / `broker.X{...}` composite-literal type
+// names where X ends in "Params" or "Request" (the generated request structs).
+// It is deliberately syntactic — no type checking — so it stays fast and has no
+// build dependency on the analysed package.
+func scanGeneratedStructConstructions(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	found := map[string]bool{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read api dir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			sel, ok := cl.Type.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || (pkg.Name != "control" && pkg.Name != "broker") {
+				return true
+			}
+			if strings.HasSuffix(sel.Sel.Name, "Params") || strings.HasSuffix(sel.Sel.Name, "Request") {
+				found[pkg.Name+"."+sel.Sel.Name] = true
+			}
+			return true
+		})
+	}
+	return found
 }

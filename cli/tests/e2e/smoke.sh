@@ -14,9 +14,18 @@
 # Uses a scratch JENTIC_HOME so it never touches a real install.
 set -euo pipefail
 
-BIN_DIR="${1:?usage: smoke.sh <bin-dir>}"
+BIN_DIR="${1:?usage: smoke.sh <bin-dir> [--live <base-url>]}"
 JENTIC="$BIN_DIR/jentic"
 JENTICCTL="$BIN_DIR/jenticctl"
+
+# --live <base-url> enables the success-path assertions that only hold against a
+# running control plane (QA-2). Without it, only the offline binary/agent-surface
+# contract is checked — the same script therefore serves both the offline matrix
+# legs and the Linux live-stack leg, and the two no longer silently diverge.
+LIVE_URL=""
+if [ "${2:-}" = "--live" ]; then
+  LIVE_URL="${3:?--live requires a base URL}"
+fi
 
 # Isolate all state under a scratch dir removed on exit — the smoke must not read
 # or write the developer's / runner's real ~/.jentic.
@@ -32,7 +41,7 @@ export JENTIC_MODE="agent"
 pass() { printf '  ok  %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1" >&2; exit 1; }
 
-echo "== jentic CLI smoke (bin: $BIN_DIR) =="
+echo "== jentic CLI smoke (bin: $BIN_DIR${LIVE_URL:+, live: $LIVE_URL}) =="
 
 [ -x "$JENTIC" ]    || fail "jentic binary not found/executable at $JENTIC"
 [ -x "$JENTICCTL" ] || fail "jenticctl binary not found/executable at $JENTICCTL"
@@ -43,27 +52,35 @@ pass "both binaries present"
 "$JENTICCTL" --version | grep -Eiq 'jentic'    || fail "jenticctl --version had no version line"
 pass "--version on both binaries"
 
-# 2. jentic doctor --json parses. Identity/reachability rows may WARN with no
-#    server; doctor exits 0 unless a hard check FAILS, so a clean exit here means
-#    the XDG-paths self-check ran and the envelope is well-formed.
-if ! "$JENTIC" doctor --json > "$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err"; then
+# 2. jentic doctor --json parses AND exits 0 (QA-1: assert the code, not just the
+#    body). Identity/reachability rows may WARN with no server; doctor exits 0
+#    unless a hard check FAILS, so a clean exit means the XDG-paths self-check ran
+#    and the envelope is well-formed.
+set +e
+"$JENTIC" doctor --json > "$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
   cat "$SCRATCH/doctor.err" >&2
-  fail "jentic doctor --json exited non-zero (a hard check failed)"
+  fail "jentic doctor --json exit=$rc, want 0 (a hard check failed)"
 fi
 grep -q '"checks"' "$SCRATCH/doctor.json" || fail "jentic doctor JSON had no checks array"
-pass "jentic doctor --json parses"
+pass "jentic doctor --json parses and exits 0"
 
-# 3. jentic access whoami --json emits a well-formed agent envelope. On a fresh
-#    scratch home there is no active context, so this exits non-zero with a
-#    RESOLVE_FAILED error envelope — that is the CORRECT contract, not a failure.
-#    We assert the envelope is parseable JSON either way (success payload or error
-#    envelope); `profile`/`context list` are management commands and are fenced in
-#    agent mode, so they are deliberately NOT used here.
-"$JENTIC" access whoami --json > "$SCRATCH/whoami.json" 2>&1 || true
-grep -q '"schema_version"' "$SCRATCH/whoami.json" \
-  || grep -q '"error_code"' "$SCRATCH/whoami.json" \
-  || fail "jentic access whoami --json was not a well-formed envelope"
-pass "jentic access whoami --json"
+# 3. jentic access whoami --json on a FRESH scratch home has no active context, so
+#    the contract is a RESOLVE_FAILED error envelope AND a non-zero exit (QA-1: we
+#    now assert BOTH the exact error_code and the exit code, not merely "some
+#    well-formed envelope" — a silently-succeeding empty result would previously
+#    have passed). `context list` is a management command fenced in agent mode, so
+#    it is deliberately NOT used here.
+set +e
+"$JENTIC" access whoami --json > "$SCRATCH/whoami.json" 2>&1
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "jentic access whoami --json exit=0 on a no-context home, want non-zero"
+grep -q '"error_code": *"RESOLVE_FAILED"' "$SCRATCH/whoami.json" \
+  || fail "jentic access whoami --json (no context) must emit error_code RESOLVE_FAILED; got: $(cat "$SCRATCH/whoami.json")"
+pass "jentic access whoami --json (no context) → RESOLVE_FAILED, exit $rc"
 
 # 4. jenticctl doctor --json parses. It exits non-zero only on a `fail` row; a
 #    scratch home with no install may report warnings but must not hard-fail
@@ -73,5 +90,27 @@ grep -q '"checks"' "$SCRATCH/ctl-doctor.json" 2>/dev/null \
   || grep -q '"failures"' "$SCRATCH/ctl-doctor.json" 2>/dev/null \
   || fail "jenticctl doctor JSON was not well-formed"
 pass "jenticctl doctor --json parses"
+
+# 5. LIVE ONLY (QA-2): against a running control plane, make an assertion the
+#    offline legs structurally cannot — that the base URL the CLI resolves to is
+#    actually serving. A fresh CI stack has no approved agent token, so an
+#    authenticated CLI data call (search/catalog) cannot succeed here; instead we
+#    prove reachability of the public health route at the exact base URL, then
+#    confirm `jentic doctor` sees it reachable. This closes the gap where the live
+#    leg re-ran the offline checks and proved nothing extra.
+if [ -n "$LIVE_URL" ]; then
+  curl -fsS "$LIVE_URL/health" >/dev/null 2>&1 \
+    || fail "live: control plane health endpoint at $LIVE_URL/health not reachable"
+  # doctor against the live base URL must report the reachability check as passing
+  # (it exits 0 when no hard check fails; with a live server the reachability row
+  # is a pass rather than a warn).
+  export JENTIC_BASE_URL="$LIVE_URL"
+  set +e
+  "$JENTIC" doctor --json > "$SCRATCH/live-doctor.json" 2>"$SCRATCH/live-doctor.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || { cat "$SCRATCH/live-doctor.err" >&2; fail "live: jentic doctor --json exit=$rc against a live stack, want 0"; }
+  pass "live: control plane reachable at $LIVE_URL + jentic doctor exit 0"
+fi
 
 echo "== smoke passed =="
