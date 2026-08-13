@@ -27,6 +27,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       openapi-client: ${{ steps.filter.outputs.openapi-client }}
       installer: ${{ steps.filter.outputs.installer }}
+      docker-image: ${{ steps.filter.outputs.docker-image }}
     steps:
       - uses: actions/checkout@v7
 
@@ -97,6 +98,16 @@ jobs:
               - 'src/jentic_one/admin/web/app.py'
               - 'src/jentic_one/shared/web/app_factory.py'
               - 'scripts/spa_packaging_smoke.*'
+            # Everything that changes the published app image's contents:
+            # the wheel (src + locked deps), the UI bundle baked into it,
+            # and the Docker build definition (base digests included).
+            docker-image:
+              - 'deploy/docker/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'src/**'
+              - 'ui/**'
+              - '.trivyignore'
 
   lint:
     name: Lint & type-check
@@ -227,7 +238,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -252,6 +263,44 @@ jobs:
           uv sync --frozen
           uv run --with pip-licenses pip-licenses \
             --fail-on="GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later"
+
+  # The fs scan above checks the source tree; this scans the built app image
+  # (base-image OS packages included) — the same class of finding AWS ECR /
+  # registry scanners reject on, so we fail here before a registry does.
+  # `ignore-unfixed` keeps the gate actionable: Debian-slim always carries
+  # unfixed low-priority CVEs, and a permanently red gate gets ignored.
+  # Overrides go in .trivyignore (CVE id + justification + expiry).
+  image-scan:
+    name: Image CVE scan
+    needs: changes
+    if: needs.changes.outputs.docker-image == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+
+      - uses: actions/checkout@v7
+
+      # Same recipe as the release publish job (release.yml): base stages
+      # first, then the app image that FROMs python-base:runtime/:builder.
+      - name: Build the app image
+        run: |
+          make build-base
+          docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:scan .
+
+      - name: Trivy image scan (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: jentic-one/app:scan
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
 
   test-unit:
     name: Unit tests
@@ -660,7 +709,7 @@ jobs:
   ci-status:
     name: CI status
     if: always()
-    needs: [lint, openapi-client-drift, security, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
+    needs: [lint, openapi-client-drift, security, image-scan, test-unit, test-integration, ui, ui-e2e, ui-e2e-realbackend, smoke-packaging, cli, installer]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
@@ -669,6 +718,7 @@ jobs:
             ${{ needs.lint.result }}
             ${{ needs.openapi-client-drift.result }}
             ${{ needs.security.result }}
+            ${{ needs.image-scan.result }}
             ${{ needs.test-unit.result }}
             ${{ needs.test-integration.result }}
             ${{ needs.ui.result }}
