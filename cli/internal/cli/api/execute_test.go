@@ -13,6 +13,30 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
+// TestBadFlagKV pins ARCH-4: a malformed key=value flag (--path/--query/
+// --header) is agent-causable INPUT and must surface a coded MISSING_ARGUMENT
+// (exit 2) with an actionable hint, not a bare exit-1 string an agent can't
+// branch on.
+func TestBadFlagKV(t *testing.T) {
+	err := badFlagKV("--query", "nope")
+	var ce *ux.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("badFlagKV returned %T, want *ux.CodedError", err)
+	}
+	if ce.Code != ux.CodeMissingArgument {
+		t.Errorf("code = %q, want %q", ce.Code, ux.CodeMissingArgument)
+	}
+	if ce.ExitCode() != 1 {
+		t.Errorf("exit = %d, want 1 (MISSING_ARGUMENT is a generic input error)", ce.ExitCode())
+	}
+	if ce.Actionable == "" {
+		t.Error("badFlagKV must carry an actionable hint")
+	}
+	if !strings.Contains(ce.Msg, "--query") || !strings.Contains(ce.Msg, "nope") {
+		t.Errorf("msg %q should name the flag and offending value", ce.Msg)
+	}
+}
+
 func TestExecuteCmdJSONEnvelope(t *testing.T) {
 	// One server plays both roles: control plane (/inspect) and broker (the
 	// catch-all that receives /{upstreamURL}). Inspect returns an upstream URL;

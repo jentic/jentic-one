@@ -5,20 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 )
 
 const (
 	// DefaultBrokerScheme is the scheme of the broker target used by execute.
-	DefaultBrokerScheme = "https"
+	// Canonical value lives in the public SDK config package (ARCH-3); aliased
+	// here so CLI call sites keep using config.DefaultBrokerScheme unchanged.
+	DefaultBrokerScheme = sdkconfig.DefaultBrokerScheme
 	// DefaultBrokerHost is the host of the broker target used by execute. It is a
 	// bare host[:port] with no scheme — the scheme lives in DefaultBrokerScheme
 	// (and broker.scheme in config.yaml). Callers assemble the URL as
 	// scheme + "://" + host, so embedding a scheme here would double it.
-	DefaultBrokerHost = "127.0.0.1:8100"
+	// Canonical value lives in client/config (ARCH-3).
+	DefaultBrokerHost = sdkconfig.DefaultBrokerHost
 
 	// DefaultBaseURL is the Jentic control-plane (auth surface) base URL used for
-	// agent registration and token minting.
-	DefaultBaseURL = "http://127.0.0.1:8000"
+	// agent registration and token minting. Canonical value lives in
+	// client/config (ARCH-3).
+	DefaultBaseURL = sdkconfig.DefaultBaseURL
 
 	// DefaultProfile is the profile name used when none is specified.
 	DefaultProfile = "default"

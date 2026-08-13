@@ -169,7 +169,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	for _, kv := range opts.pathParams {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			return fmt.Errorf("invalid --path value %q; expected key=value", kv)
+			return badFlagKV("--path", kv)
 		}
 		upstream = strings.ReplaceAll(upstream, "{"+k+"}", url.PathEscape(v))
 	}
@@ -180,7 +180,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 		for _, kv := range opts.queryParams {
 			k, v, ok := strings.Cut(kv, "=")
 			if !ok {
-				return fmt.Errorf("invalid --query value %q; expected key=value", kv)
+				return badFlagKV("--query", kv)
 			}
 			qv.Add(k, v)
 		}
@@ -253,7 +253,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	for _, kv := range opts.headers {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			return fmt.Errorf("invalid --header value %q; expected key=value", kv)
+			return badFlagKV("--header", kv)
 		}
 		req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
 	}
@@ -355,6 +355,18 @@ func isLoopbackHostname(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// badFlagKV builds the coded error for a malformed key=value flag (ARCH-4). A
+// bad --path/--query/--header value is agent-causable INPUT, so it must surface
+// a machine error_code (MISSING_ARGUMENT) with an actionable hint — not a bare
+// fmt.Errorf that an agent sees only as an untyped generic-failure string.
+func badFlagKV(flag, value string) error {
+	return &ux.CodedError{
+		Code:       ux.CodeMissingArgument,
+		Msg:        fmt.Sprintf("invalid %s value %q; expected key=value", flag, value),
+		Actionable: fmt.Sprintf("Pass %s as key=value (e.g. %s id=123).", flag, flag),
+	}
 }
 
 // executePlanPayload summarizes the resolved outbound request for --dry-run/
