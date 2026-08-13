@@ -102,11 +102,7 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
-		return writeJSON(a.Out, map[string]any{
-			"data":        allHits,
-			"has_more":    hasMore,
-			"next_cursor": nextCursor,
-		})
+		return writeList(a.Out, allHits, nextCursor, nil)
 	}
 
 	a.printSearchResults(allHits, hasMore)

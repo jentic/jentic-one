@@ -4,22 +4,24 @@ exit: 0
   "data": [
     {
       "api": {
-        "vendor": "stripe.com",
+        "host": "",
         "name": "api",
-        "version": "v1",
-        "host": ""
+        "vendor": "stripe.com",
+        "version": "v1"
       },
-      "display_name": "",
-      "description": "",
-      "icon_url": "",
-      "current_revision_id": "r1",
-      "revision_count": 0,
-      "operation_count": 12,
-      "security_schemes": null,
       "created_at": "",
+      "current_revision_id": "r1",
+      "description": "",
+      "display_name": "",
+      "icon_url": "",
+      "operation_count": 12,
+      "revision_count": 0,
+      "security_schemes": null,
       "updated_at": ""
     }
-  ]
+  ],
+  "has_more": false,
+  "schema_version": "1"
 }
 --- stderr ---
 

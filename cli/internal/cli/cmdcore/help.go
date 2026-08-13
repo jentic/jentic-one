@@ -82,6 +82,18 @@ func (a *App) helpFunc(cmd *cobra.Command, _ []string) {
 		b.WriteString("\n" + inherited + "\n")
 	}
 
+	// EXAMPLES renders cmd.Example (UX-1). Cobra's default template shows it, but
+	// this custom renderer omitted it, so every command's runnable examples were
+	// invisible — the single most common thing a user (or agent) wants from -h.
+	if ex := strings.TrimRight(cmd.Example, "\n"); ex != "" {
+		b.WriteString(sectionStyle.Render("EXAMPLES"))
+		b.WriteString("\n")
+		for _, ln := range strings.Split(ex, "\n") {
+			b.WriteString(usageStyle.Render(strings.TrimRight(ln, " ")) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	if cmd.HasAvailableSubCommands() {
 		hint := accentStyle.Render(cmd.CommandPath() + " [command] --help")
 		b.WriteString(mutedStyle.Render("Run ") + hint + mutedStyle.Render(" for more about a command.") + "\n")

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
 func TestInspectCmdJSON(t *testing.T) {
@@ -102,12 +104,17 @@ func TestInspectCmdNotFoundExitsCode2(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var ec *exitCodeError
-	if !errors.As(err, &ec) {
-		t.Fatalf("error type = %T, want *exitCodeError", err)
+	// AGT-2: not-found now surfaces a coded RESOLVE_FAILED (mapped to ExitDenied /
+	// exit 2), not a bare *exitCodeError, so an agent gets a machine error_code.
+	var ce *ux.CodedError
+	if !errors.As(err, &ce) {
+		t.Fatalf("error type = %T, want *ux.CodedError", err)
 	}
-	if ec.Code != 2 {
-		t.Errorf("exit code = %d, want 2", ec.Code)
+	if ce.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want %q", ce.Code, ux.CodeResolveFailed)
+	}
+	if ce.ExitCode() != 2 {
+		t.Errorf("exit code = %d, want 2", ce.ExitCode())
 	}
 }
 

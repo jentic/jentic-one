@@ -44,6 +44,23 @@ func (e *PendingError) Error() string {
 	return e.Detail
 }
 
+// AssertionInvalidError is a 400 invalid_grant whose detail signals that the
+// signed assertion itself was rejected (bad audience/signature/expiry) rather
+// than a pending approval. It exists so the register wait loop can STOP and
+// surface an actionable fix (usually an audience mismatch — the CLI signed an
+// aud the backend's canonical_base_url does not match) instead of polling
+// forever as if the agent were merely unapproved (QA-9).
+type AssertionInvalidError struct {
+	Detail string
+}
+
+func (e *AssertionInvalidError) Error() string {
+	if e.Detail == "" {
+		return "token exchange rejected the assertion (likely an audience mismatch)"
+	}
+	return e.Detail
+}
+
 // ErrNotRegistered indicates the identity has no client-id registration in the
 // active environment — the exchange cannot even be attempted. Exposed as a
 // sentinel so CLI layers can map it to the NOT_AUTHENTICATED error code rather
@@ -192,12 +209,38 @@ func classifyTokenError(resp *http.Response) error {
 		detail = body.Description
 	}
 	if resp.StatusCode == http.StatusBadRequest && code == "invalid_grant" {
+		// An assertion-validation failure (audience/signature/expiry) also comes
+		// back as 400 invalid_grant, but it is NOT a pending approval — polling
+		// will never clear it. Distinguish on the backend's detail text so the
+		// register wait loop stops with an actionable audience-mismatch hint
+		// instead of hanging (QA-9). Pending approvals carry no such phrasing.
+		if isAssertionInvalidDetail(detail) {
+			return &AssertionInvalidError{Detail: detail}
+		}
 		return &PendingError{Detail: detail}
 	}
 	if code != "" {
 		return fmt.Errorf("token exchange failed (status %d, %s): %s", resp.StatusCode, code, detail)
 	}
 	return fmt.Errorf("token exchange failed (status %d)", resp.StatusCode)
+}
+
+// isAssertionInvalidDetail reports whether a 400 invalid_grant detail describes a
+// rejected assertion (audience/signature/expiry) rather than a pending approval.
+// The shipped backend returns "Assertion is invalid" for these; we also match
+// the common audience/signature phrasings defensively. Kept deliberately narrow
+// so a genuinely-pending agent is never mistaken for a hard failure.
+func isAssertionInvalidDetail(detail string) bool {
+	d := strings.ToLower(detail)
+	if d == "" {
+		return false
+	}
+	for _, phrase := range []string{"assertion is invalid", "invalid assertion", "audience", "aud claim", "signature", "expired"} {
+		if strings.Contains(d, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // renewalDeadline computes when a token should be treated as expired, renewing

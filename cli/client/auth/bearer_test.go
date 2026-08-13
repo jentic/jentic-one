@@ -161,3 +161,38 @@ func TestClassifyTokenError_PendingShapes(t *testing.T) {
 		t.Errorf("error should carry the code: %v", err)
 	}
 }
+
+// TestClassifyTokenError_AssertionInvalid pins QA-9: a 400 invalid_grant whose
+// detail signals a rejected assertion (audience/signature) must NOT be a
+// PendingError — otherwise the register wait loop polls forever. It becomes an
+// *AssertionInvalidError so the caller can stop with an actionable hint. A
+// genuinely-pending detail must remain a PendingError.
+func TestClassifyTokenError_AssertionInvalid(t *testing.T) {
+	invalid := []string{
+		`{"type":"invalid_grant","detail":"Assertion is invalid"}`,
+		`{"error":"invalid_grant","error_description":"invalid audience"}`,
+		`{"type":"invalid_grant","detail":"signature verification failed"}`,
+	}
+	for _, body := range invalid {
+		resp := &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(body))}
+		err := classifyTokenError(resp)
+		var ai *AssertionInvalidError
+		if !errors.As(err, &ai) {
+			t.Errorf("body %q classified as %T, want *AssertionInvalidError", body, err)
+		}
+		var pending *PendingError
+		if errors.As(err, &pending) {
+			t.Errorf("body %q must not be pending", body)
+		}
+	}
+
+	// A pending-approval detail stays pending.
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body:       io.NopCloser(strings.NewReader(`{"type":"invalid_grant","detail":"agent pending approval"}`)),
+	}
+	var ai *AssertionInvalidError
+	if errors.As(classifyTokenError(resp), &ai) {
+		t.Errorf("pending detail must not be AssertionInvalidError")
+	}
+}

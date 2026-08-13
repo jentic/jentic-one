@@ -56,6 +56,40 @@ type Page struct {
 // HasNext reports whether another page is available.
 func (p Page) HasNext() bool { return p.NextToken != "" }
 
+// List is the canonical, versioned envelope for data-plane list output (AGT-1/
+// AGT-5). Before this, list commands wrote ad-hoc maps: most used
+// {data, has_more, next_cursor} but `endpoints` used {endpoints} and NONE
+// carried schema_version, so an agent could not (a) detect the envelope version
+// or (b) rely on a single collection/pagination key across commands. This struct
+// makes every list emit the same three keys plus schema_version; marshalRedacted
+// stamps the version like the other envelopes. Data is `any` so each command
+// passes its concrete non-nil slice (an empty result serialises as [], not null).
+type List struct {
+	SchemaVersion string `json:"schema_version"`
+	Data          any    `json:"data"`
+	// HasMore/NextCursor mirror the Jentic list APIs' cursor pagination. NextCursor
+	// is omitted when empty; HasMore is always present so an agent can branch on it
+	// without a null check.
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	// Meta carries command-specific summary fields that are NOT the collection
+	// itself (e.g. catalog's catalog_total / manifest_age_seconds). Kept under one
+	// key so the top level stays a stable, closed shape across every list command;
+	// omitted entirely when a command has no summary.
+	Meta map[string]any `json:"meta,omitempty"`
+}
+
+// NewList builds a List envelope. nextCursor is empty on the last (or only) page;
+// hasMore is derived from it so callers cannot set the two inconsistently. meta,
+// when non-empty, carries command-specific summary fields under `meta`.
+func NewList(data any, nextCursor string, meta map[string]any) List {
+	l := List{Data: data, HasMore: nextCursor != "", NextCursor: nextCursor}
+	if len(meta) > 0 {
+		l.Meta = meta
+	}
+	return l
+}
+
 // Export is the versioned envelope for bulk export commands (history export). It
 // wraps a fully-walked, filtered result set (never a single page) plus the pivot
 // it was queried by, so an agent can template a workflow from a run's real

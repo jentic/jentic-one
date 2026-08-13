@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/internal/apiclient"
-	"github.com/jentic/jentic-one/cli/internal/theme"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/spf13/cobra"
 )
 
@@ -69,14 +69,19 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 	if err != nil {
 		var he *apiclient.HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
-			fmt.Fprintln(a.Err, theme.Warnf("operation %q not found", operationID))
-			fmt.Fprintln(a.Err, theme.Dim.Render(
-				"inspect accepts the registry operation id (from `jentic search` _links.inspect / "+
-					"`jentic apis operations`), a \"METHOD URL\" pair (e.g. "+
-					"jentic inspect 'GET https://api.example.com/v1/things'), or the spec operationId "+
-					"shown by `jentic catalog show` when it's unique across imported APIs. "+
-					"If a spec operationId is ambiguous, use the registry operation id from `jentic search`."))
-			return &exitCodeError{Code: 2}
+			// AGT-2: return a coded error (not a human string + bare exit-2) so an
+			// agent gets a machine error_code (RESOLVE_FAILED) identical to the
+			// execute-side resolve failure. The UX layer renders the human hint;
+			// the agent envelope carries the same guidance as Actionable.
+			return &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg:  fmt.Sprintf("operation %q not found", operationID),
+				Actionable: "inspect accepts the registry operation id (from `jentic search` _links.inspect / " +
+					"`jentic apis operations`), a \"METHOD URL\" pair (e.g. " +
+					"jentic inspect 'GET https://api.example.com/v1/things'), or the spec operationId " +
+					"shown by `jentic catalog show` when it's unique across imported APIs. " +
+					"If a spec operationId is ambiguous, use the registry operation id from `jentic search`.",
+			}
 		}
 		return err
 	}

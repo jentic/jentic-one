@@ -81,7 +81,7 @@ func valueFor(flag string) string {
 func TestLocalBrokerURL(t *testing.T) {
 	cases := map[string]string{
 		"http://127.0.0.1:8000":       "http://127.0.0.1:8100",
-		"http://localhost:8000":       "http://localhost:8100",
+		"http://localhost:8000":       "http://127.0.0.1:8100", // QA-9: localhost canonicalises to 127.0.0.1
 		"http://127.0.0.1:9000":       "http://127.0.0.1:8100", // control port irrelevant; broker is its own port
 		"http://[::1]:8000":           "http://[::1]:8100",
 		"https://jentic.example.com":  "",
@@ -93,6 +93,31 @@ func TestLocalBrokerURL(t *testing.T) {
 	for in, want := range cases {
 		if got := localBrokerURL(in); got != want {
 			t.Errorf("localBrokerURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestNormalizeLoopbackURL pins QA-9's control-plane normalization: a localhost
+// URL is rewritten to 127.0.0.1 (preserving scheme/port/path) so the signed
+// token audience matches the backend's canonical_base_url; every other host is
+// returned verbatim.
+func TestNormalizeLoopbackURL(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		changed bool
+	}{
+		{"http://localhost:8000", "http://127.0.0.1:8000", true},
+		{"http://localhost", "http://127.0.0.1", true},
+		{"http://localhost:8000/base", "http://127.0.0.1:8000/base", true},
+		{"http://127.0.0.1:8000", "http://127.0.0.1:8000", false},
+		{"https://jentic.example.com", "https://jentic.example.com", false},
+		{"not a url", "not a url", false},
+	}
+	for _, c := range cases {
+		got, changed := normalizeLoopbackURL(c.in)
+		if got != c.want || changed != c.changed {
+			t.Errorf("normalizeLoopbackURL(%q) = (%q,%v), want (%q,%v)", c.in, got, changed, c.want, c.changed)
 		}
 	}
 }

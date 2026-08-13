@@ -3,44 +3,44 @@ exit: 0
 {
   "data": [
     {
-      "type": "operation",
-      "api": {
-        "vendor": "acme",
-        "name": "pets",
-        "version": "v1",
-        "host": "acme.com"
-      },
-      "operation_id": "op1",
-      "method": "GET",
-      "url": "/pets",
-      "name": "List Pets",
-      "description": "",
-      "relevance_score": 0.9,
       "_links": {
         "inspect": ""
-      }
+      },
+      "api": {
+        "host": "acme.com",
+        "name": "pets",
+        "vendor": "acme",
+        "version": "v1"
+      },
+      "description": "",
+      "method": "GET",
+      "name": "List Pets",
+      "operation_id": "op1",
+      "relevance_score": 0.9,
+      "type": "operation",
+      "url": "/pets"
     },
     {
-      "type": "operation",
-      "api": {
-        "vendor": "acme",
-        "name": "pets",
-        "version": "v1",
-        "host": "acme.com"
-      },
-      "operation_id": "op2",
-      "method": "POST",
-      "url": "/pets",
-      "name": "Create Pet",
-      "description": "",
-      "relevance_score": 0.8,
       "_links": {
         "inspect": ""
-      }
+      },
+      "api": {
+        "host": "acme.com",
+        "name": "pets",
+        "vendor": "acme",
+        "version": "v1"
+      },
+      "description": "",
+      "method": "POST",
+      "name": "Create Pet",
+      "operation_id": "op2",
+      "relevance_score": 0.8,
+      "type": "operation",
+      "url": "/pets"
     }
   ],
   "has_more": false,
-  "next_cursor": ""
+  "schema_version": "1"
 }
 --- stderr ---
 

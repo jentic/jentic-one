@@ -213,8 +213,9 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 		Limit:          limit,
 	}
 
-	var entries []catalogclient.Entry
+	entries := []catalogclient.Entry{}
 	var first *catalogclient.ListResult
+	var nextCursor string
 	for {
 		page, err := client.List(ctx, token, params)
 		if err != nil {
@@ -224,6 +225,10 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 			first = page
 		}
 		entries = append(entries, page.Data...)
+		nextCursor = ""
+		if page.HasMore {
+			nextCursor = page.NextCursor
+		}
 		if !o.all || !page.HasMore || page.NextCursor == "" {
 			break
 		}
@@ -231,8 +236,7 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 	}
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{
-			"data":                 entries,
+		return writeList(a.Out, entries, nextCursor, map[string]any{
 			"catalog_total":        first.CatalogTotal,
 			"registered_count":     first.RegisteredCount,
 			"outdated_count":       first.OutdatedCount,

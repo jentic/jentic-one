@@ -284,6 +284,11 @@ func marshalRedacted(data any, indent bool) []byte {
 			v.SchemaVersion = currentSchemaVersion
 		}
 		data = v
+	case List:
+		if v.SchemaVersion == "" {
+			v.SchemaVersion = currentSchemaVersion
+		}
+		data = v
 	case Export:
 		if v.SchemaVersion == "" {
 			v.SchemaVersion = currentSchemaVersion

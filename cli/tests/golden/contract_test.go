@@ -98,6 +98,18 @@ func TestGolden_AgentContract(t *testing.T) {
 			}
 			got := runAPI(t, home, agentEnv, tc.args...)
 			assertGolden(t, tc.name, got)
+			// AGT-1/AGT-5: every data-plane --json SUCCESS must carry
+			// schema_version so an agent can detect the envelope version. The
+			// success cases are the seeded list commands; the error/usage cases
+			// carry it via the AgentError envelope (asserted by the golden itself).
+			if tc.seed && strings.Contains(strings.Join(tc.args, " "), "--json") {
+				if !strings.Contains(got.stdout, `"schema_version"`) {
+					t.Errorf("%s: --json success output missing schema_version:\n%s", tc.name, got.stdout)
+				}
+				if !strings.Contains(got.stdout, `"data"`) {
+					t.Errorf("%s: --json list output missing standard `data` key:\n%s", tc.name, got.stdout)
+				}
+			}
 		})
 	}
 }

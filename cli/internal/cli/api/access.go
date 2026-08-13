@@ -744,11 +744,7 @@ func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
-		return writeJSON(a.Out, map[string]any{
-			"data":        all,
-			"has_more":    hasMore,
-			"next_cursor": nextCursor,
-		})
+		return writeList(a.Out, all, nextCursor, nil)
 	}
 	a.printRequestList(all, hasMore)
 	return nil

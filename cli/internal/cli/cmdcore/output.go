@@ -77,3 +77,16 @@ func WriteJSON(w io.Writer, v any) error {
 	_, err := w.Write(ux.RedactBytes(buf.Bytes()))
 	return err
 }
+
+// WriteList emits the canonical, versioned data-plane list envelope (AGT-1/
+// AGT-5): {schema_version, data, has_more, next_cursor[, meta]}. Every list
+// command (search, catalog, apis, endpoints, access list, ...) routes through
+// this so an agent sees ONE collection key (`data`), ONE pagination shape, and a
+// stamped schema_version everywhere — replacing the ad-hoc `{data: …}` /
+// `{endpoints: …}` maps that carried no version. data must be a non-nil slice so
+// an empty result serialises as [] (never null). nextCursor is empty on the
+// last/only page. meta carries command-specific summary fields (may be nil).
+func WriteList(w io.Writer, data any, nextCursor string, meta map[string]any) error {
+	_, err := w.Write(append(ux.MarshalForFile(ux.NewList(data, nextCursor, meta)), '\n'))
+	return err
+}

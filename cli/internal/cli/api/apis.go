@@ -273,13 +273,18 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	}
 	params := apiclient.ListParams{Vendor: o.vendor, Limit: limit}
 
-	var apis []apiclient.API
+	apis := []apiclient.API{}
+	var nextCursor string
 	for {
 		page, err := client.List(ctx, token, params)
 		if err != nil {
 			return apisListErr(err)
 		}
 		apis = append(apis, page.Data...)
+		nextCursor = ""
+		if page.HasMore {
+			nextCursor = page.NextCursor
+		}
 		if !o.all || !page.HasMore || page.NextCursor == "" {
 			break
 		}
@@ -287,7 +292,7 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	}
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{"data": apis})
+		return writeList(a.Out, apis, nextCursor, nil)
 	}
 	a.printAPIList(apis)
 	return nil
@@ -433,13 +438,18 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	}
 	params := apiclient.RevisionParams{States: o.states, Limit: limit}
 
-	var revs []apiclient.Revision
+	revs := []apiclient.Revision{}
+	var nextCursor string
 	for {
 		page, err := client.Revisions(ctx, token, vendor, name, version, params)
 		if err != nil {
 			return apiNotFoundErr(err, ref)
 		}
 		revs = append(revs, page.Data...)
+		nextCursor = ""
+		if page.HasMore {
+			nextCursor = page.NextCursor
+		}
 		if !o.all || !page.HasMore || page.NextCursor == "" {
 			break
 		}
@@ -447,7 +457,7 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	}
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{"data": revs})
+		return writeList(a.Out, revs, nextCursor, nil)
 	}
 	a.printRevisions(ref, revs)
 	return nil
@@ -498,9 +508,10 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 		limit = 50
 	}
 
-	var ops []apiclient.Operation
+	ops := []apiclient.Operation{}
 	cursor := ""
 	var hasMore bool
+	var nextCursor string
 	for {
 		page, err := client.Operations(ctx, token, vendor, name, version, o.revision, cursor, limit)
 		if err != nil {
@@ -508,6 +519,10 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 		}
 		ops = append(ops, page.Data...)
 		hasMore = page.HasMore
+		nextCursor = ""
+		if page.HasMore {
+			nextCursor = page.NextCursor
+		}
 		if !o.all || !page.HasMore || page.NextCursor == "" {
 			break
 		}
@@ -515,7 +530,7 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 	}
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{"data": ops})
+		return writeList(a.Out, ops, nextCursor, nil)
 	}
 	a.printOperations(ops, hasMore && !o.all)
 	return nil

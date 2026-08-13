@@ -215,7 +215,10 @@ func (a *app) providersList(cmd *cobra.Command, jsonFlag bool) error {
 		return err
 	}
 	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, map[string]any{"data": recs})
+		if recs == nil {
+			recs = []adminclient.ProviderConfig{}
+		}
+		return writeList(a.Out, recs, "", nil)
 	}
 	fmt.Fprintln(a.Out, theme.Heading.Render("Provider configs"))
 	if len(recs) == 0 {

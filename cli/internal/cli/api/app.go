@@ -18,10 +18,6 @@ type app struct {
 // Tree-local aliases so relocated api code keeps referencing the shared cmdcore
 // helpers by their original (unexported) spellings without per-call-site churn.
 
-// exitCodeError aliases the shared type so api code keeps constructing
-// &exitCodeError{Code: n}. Defined in cmdcore, so its field is exported (Code).
-type exitCodeError = cmdcore.ExitCodeError
-
 var (
 	dotOK        = cmdcore.DotOK
 	dotWarn      = cmdcore.DotWarn
@@ -41,6 +37,12 @@ var (
 // writeJSON mirrors cmdcore.WriteJSON so relocated api code keeps calling it
 // lower-cased with the same (writer, value) signature.
 func writeJSON(w io.Writer, v any) error { return cmdcore.WriteJSON(w, v) }
+
+// writeList mirrors cmdcore.WriteList: the canonical versioned list envelope
+// {schema_version, data, has_more, next_cursor[, meta]} every list command emits.
+func writeList(w io.Writer, data any, nextCursor string, meta map[string]any) error {
+	return cmdcore.WriteList(w, data, nextCursor, meta)
+}
 
 // Build-time version metadata, mirrored from cmdcore for symmetry with the ctl
 // tree. cmdcore is the ONE package the -ldflags stamp targets; the api tree

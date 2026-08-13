@@ -84,7 +84,10 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 	eps = filterEndpoints(eps, o.scope, o.actor)
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{"endpoints": eps})
+		if eps == nil {
+			eps = []endpoint{}
+		}
+		return writeList(a.Out, eps, "", nil)
 	}
 	a.printEndpoints(eps)
 	return nil

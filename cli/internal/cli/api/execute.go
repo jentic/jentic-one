@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -310,14 +311,50 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 				"status": 0,
 			})
 		}
-		return &ux.CodedError{
+		coded := &ux.CodedError{
 			Code: ux.CodeTransportError,
 			Msg:  fmt.Sprintf("transport error: %v", err),
 		}
+		// UX-4: the classic local papercut is an https default resolving against a
+		// plain-http local broker ("server gave HTTP response to HTTPS client").
+		// Attach the exact recovery when the signature matches a loopback broker,
+		// so the operator isn't left with a bare, unactionable transport error.
+		if brokerTLSMismatch(err, brokerURL) {
+			coded.Actionable = "The broker resolved to https but is serving http. Set the environment's broker_url " +
+				"(`jentic env add <env> --broker-url http://127.0.0.1:8100 --force`), or override this call with " +
+				"`--broker-scheme http --broker-host 127.0.0.1:8100`."
+		}
+		return coded
 	}
 	defer resp.Body.Close()
 
 	return a.executeOutput(cmd, opts, resp)
+}
+
+// brokerTLSMismatch reports whether err is the "https client hit an http server"
+// signature against a loopback broker — the local default-scheme papercut UX-4
+// makes actionable. Restricted to loopback so we never suggest downgrading a
+// remote broker to plaintext.
+func brokerTLSMismatch(err error, brokerURL string) bool {
+	if err == nil || !strings.Contains(err.Error(), "server gave HTTP response to HTTPS client") {
+		return false
+	}
+	u, perr := url.Parse(brokerURL)
+	if perr != nil {
+		return false
+	}
+	return isLoopbackHostname(u.Hostname())
+}
+
+// isLoopbackHostname reports whether host is "localhost" or a loopback IP.
+func isLoopbackHostname(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // executePlanPayload summarizes the resolved outbound request for --dry-run/

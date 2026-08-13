@@ -77,6 +77,17 @@ func (a *App) registerV2Setup(ctx context.Context, vals v2SetupValues, timeout t
 		}
 	}
 	vals.url = strings.TrimRight(vals.url, "/")
+	// UX-2/QA-9: rewrite a localhost control-plane URL to 127.0.0.1. The
+	// token-exchange audience is matched byte-for-byte against the backend's
+	// canonical_base_url, and a local backend canonicalises to 127.0.0.1 — so
+	// `--url http://localhost:8000` would sign an aud the server rejects with
+	// invalid_grant (mis-read as "pending approval"). Normalising here removes
+	// the papercut at the source and keeps the seeded broker_url on 127.0.0.1 too.
+	if norm, changed := normalizeLoopbackURL(vals.url); changed {
+		fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf(
+			"note: using %s (localhost is normalised to 127.0.0.1 so the token audience matches the local backend)", norm)))
+		vals.url = norm
+	}
 	if vals.name == "" {
 		vals.name = defaultIdentityName()
 	}
@@ -259,6 +270,19 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 		if errors.As(err, &p) {
 			return true, nil
 		}
+		// QA-9: an assertion-validation failure (usually an audience mismatch) is
+		// NOT pending — polling would hang forever. Stop with an actionable code
+		// so the operator fixes the URL/backend rather than waiting.
+		var ai *auth.AssertionInvalidError
+		if errors.As(err, &ai) {
+			return false, &ux.CodedError{
+				Code: ux.CodeNotAuthenticated,
+				Msg:  "the backend rejected the signed assertion: " + ai.Error(),
+				Actionable: "This is almost always an audience mismatch: the URL you registered with must exactly match " +
+					"the backend's canonical_base_url. For a local backend use http://127.0.0.1:8000 (not localhost), " +
+					"or align the backend's auth.canonical_base_url to the URL you used.",
+			}
+		}
 		return false, fmt.Errorf("mint token: %w", err)
 	}
 
@@ -354,8 +378,31 @@ func localBrokerURL(installURL string) string {
 	if !isLoopbackHost(host) {
 		return ""
 	}
+	// QA-9: canonicalise a "localhost" broker host to 127.0.0.1 too, so a seeded
+	// broker_url never carries the audience-mismatching name even if this is ever
+	// called with a non-normalised URL.
+	if host == "localhost" {
+		host = "127.0.0.1"
+	}
 	_, port, _ := strings.Cut(config.DefaultBrokerHost, ":")
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+// normalizeLoopbackURL rewrites a "localhost" host to "127.0.0.1", preserving
+// scheme, port, and path. It returns the (possibly unchanged) URL and whether a
+// rewrite happened. Non-localhost hosts (including 127.0.0.1 and remote hosts)
+// are returned verbatim. A malformed URL is returned unchanged.
+func normalizeLoopbackURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() != "localhost" {
+		return raw, false
+	}
+	if p := u.Port(); p != "" {
+		u.Host = net.JoinHostPort("127.0.0.1", p)
+	} else {
+		u.Host = "127.0.0.1"
+	}
+	return u.String(), true
 }
 
 // isLoopbackHost reports whether host is a loopback name/address ("localhost",
