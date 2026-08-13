@@ -209,7 +209,7 @@ jobs:
       # the ci.yml image-scan job — fixable HIGH/CRITICAL fail, overrides
       # live in .trivyignore (CVE id + justification + expiry).
       - name: Trivy image scan (release gate)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'image'
           image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}
