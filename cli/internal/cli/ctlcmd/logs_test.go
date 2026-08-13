@@ -143,23 +143,41 @@ func TestFollowFileStreamsAppends(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- followFile(ctx, sink, path) }()
 
-	// Append after follow has started and seeked to end.
-	time.Sleep(150 * time.Millisecond)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		t.Fatalf("open append: %v", err)
-	}
-	_, _ = f.WriteString("new line\n")
-	_ = f.Close()
+	// QA-10: no fixed pre-append sleep (that raced followFile's initial seek-to-end
+	// on a slow runner — if the append landed before the seek, the data was never
+	// streamed and the test flaked). Instead, append repeatedly until the follower
+	// has demonstrably picked it up. followFile is idempotent w.r.t. re-seeing the
+	// same bytes because we assert on substring presence, and duplicate appends of
+	// the SAME line don't change that assertion; the "old line" check below still
+	// guards that pre-existing content is never streamed.
+	appended := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-appended:
+				return
+			case <-tick.C:
+				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+				if err != nil {
+					continue
+				}
+				_, _ = f.WriteString("new line\n")
+				_ = f.Close()
+			}
+		}
+	}()
 
 	deadline := time.After(3 * time.Second)
 	for !strings.Contains(sink.String(), "new line") {
 		select {
 		case <-deadline:
 			t.Fatalf("follow did not stream appended data; got %q", sink.String())
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(20 * time.Millisecond):
 		}
 	}
+	close(appended)
 
 	cancel()
 	if err := <-done; err != nil {

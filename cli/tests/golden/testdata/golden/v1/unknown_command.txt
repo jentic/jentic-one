@@ -1,5 +1,0 @@
-exit: 1
---- stdout ---
-
---- stderr ---
-error: unknown command "definitely-not-a-command" for "jentic"

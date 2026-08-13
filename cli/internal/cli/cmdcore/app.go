@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
@@ -35,4 +36,12 @@ type App struct {
 	// latest is newer than installed.
 	NudgeLatestTag        func(ctx context.Context, repo, token string) (string, error)
 	NewerVersionAvailable func(installed, latest string) bool
+
+	// ProbeServer overrides the interactive help-header server-version probe
+	// (QA-4). nil means the real serverinfo.Probe. It is a seam so a test can
+	// assert the header path never blocks — and so a caller could disable the
+	// probe entirely — without reaching the network. The real probe is already
+	// bounded by serverinfo.DefaultTimeout; this makes that bound testable and
+	// overridable rather than implicit.
+	ProbeServer func(baseURL string) serverinfo.Info
 }

@@ -32,10 +32,21 @@ func (a *App) BrandHeader(baseURLFlag, cliVersion string) string {
 	} else if baseURLFlag != "" {
 		baseURL = baseURLFlag
 	}
-	info := serverinfo.Probe(baseURL, serverinfo.DefaultTimeout)
+	info := a.probeServer(baseURL)
 
 	panel := theme.VersionPanel(cliVersion, info.Version, info.Running)
 	return theme.LogoHeader(width, panel)
+}
+
+// probeServer resolves the interactive header's server-version probe through the
+// ProbeServer seam (QA-4), defaulting to the bounded serverinfo.Probe. Isolating
+// it here means the help header can be tested (and disabled) without a live
+// network dependency, and the DefaultTimeout bound is exercised via the seam.
+func (a *App) probeServer(baseURL string) serverinfo.Info {
+	if a.ProbeServer != nil {
+		return a.ProbeServer(baseURL)
+	}
+	return serverinfo.Probe(baseURL, serverinfo.DefaultTimeout)
 }
 
 // banner prints the jentic wordmark before a command runs, so the brand mark is
