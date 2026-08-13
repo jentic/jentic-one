@@ -111,6 +111,9 @@ jobs:
 
   lint:
     name: Lint & type-check
+    # `needs: changes` is layout-only (lint always runs): it aligns lint and
+    # both Security scans into the same wave of the workflow graph.
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -228,6 +231,9 @@ jobs:
 
   security:
     name: Security / source scan
+    # `needs: changes` is layout-only (this scan always runs): it aligns the
+    # two Security scans and lint into the same wave of the workflow graph.
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
