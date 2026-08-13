@@ -31,6 +31,23 @@ updates:
       python:
         patterns: ["*"]
 
+  # The Docker base images are digest-pinned (ARG defaults in
+  # deploy/docker/python-base.Dockerfile) for reproducible builds; this
+  # keeps those digests fresh so the published image doesn't accumulate
+  # already-patched base CVEs between manual bumps. The image-scan CI job
+  # (ci.yml) is the enforcement half: it fails on fixable HIGH/CRITICAL.
+  - package-ecosystem: "docker"
+    directory: "/deploy/docker"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    open-pull-requests-limit: 5
+    groups:
+      docker-bases:
+        patterns: ["*"]
+
   - package-ecosystem: "npm"
     directory: "/ui"
     schedule:
