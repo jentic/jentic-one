@@ -10,7 +10,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
@@ -40,9 +39,12 @@ const cancelGracePeriod = 5 * time.Second
 // process, which cancels ctx).
 func wireGracefulCancel(cmd *exec.Cmd) {
 	cmd.Cancel = func() error {
-		// Best-effort: if the process has already gone, Signal returns an error we
-		// deliberately ignore — WaitDelay/Wait handle the terminal state.
-		return cmd.Process.Signal(syscall.SIGTERM)
+		// Best-effort: if the process has already gone, the platform terminate
+		// returns an error we deliberately ignore — WaitDelay/Wait handle the
+		// terminal state. On Unix this sends a catchable SIGTERM so sudo/shells
+		// can relay it down the launch chain; on Windows there is no relayable
+		// termination signal, so it falls back to Kill (OPS-20).
+		return terminateForCancel(cmd.Process)
 	}
 	cmd.WaitDelay = cancelGracePeriod
 }

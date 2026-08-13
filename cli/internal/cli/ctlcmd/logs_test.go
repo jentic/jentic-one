@@ -82,8 +82,12 @@ func TestResolveLogPathJSONFromConfig(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	got := app.resolveLogPath(true)
-	if got != "/var/log/jentic/structured.jsonl" {
-		t.Errorf("resolveLogPath from config = %q", got)
+	// filepath.Join normalizes the configured POSIX path to the host separator,
+	// so compare against the OS-native form (backslashes on Windows) rather than
+	// a hard-coded forward-slash path.
+	want := filepath.FromSlash("/var/log/jentic/structured.jsonl")
+	if got != want {
+		t.Errorf("resolveLogPath from config = %q, want %q", got, want)
 	}
 }
 
