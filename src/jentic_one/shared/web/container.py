@@ -4,10 +4,11 @@ Carries the pluggable pieces a caller may swap (Broker, extra routers/
 installers/lifespans). The default container is constructed from a Context; a
 downstream package can build its own and pass it to the factories. Keeping this
 in ``shared/web`` (not a surface) mirrors ``wiring.py``'s role as the
-composition seam — it imports only ``shared/*`` + fastapi, so it introduces no
-surface-boundary violation (``Broker`` lives in ``shared/broker``;
-``DefaultBroker`` stays in ``broker/`` and is only referenced by the
-composition root, never by ``shared/``).
+composition seam — it imports only ``shared/*``, fastapi, and the composition
+layer ``integrations/`` (which itself imports only ``shared/*``), so it
+introduces no surface-boundary violation (``Broker`` lives in
+``shared/broker``; ``DefaultBroker`` stays in ``broker/`` and is only
+referenced by the composition root, never by ``shared/``).
 
 All fields default to the standard wiring, so passing only a Context reproduces
 today's behavior; existing callers that pass just ``ctx`` are unaffected.
@@ -21,6 +22,10 @@ from dataclasses import dataclass, field
 
 from fastapi import APIRouter, FastAPI
 
+from jentic_one.integrations.aws_marketplace.installer import (
+    entitlement_lifespan,
+    install_entitlement_gate,
+)
 from jentic_one.shared.broker.broker import Broker
 from jentic_one.shared.context import Context
 
@@ -69,9 +74,21 @@ class AppContainer:
 
     @classmethod
     def default(cls, ctx: Context) -> AppContainer:
-        """Default container (no extra injection).
+        """Default container (standard wiring; extras only when config asks).
 
         ``broker`` stays ``None`` → the broker surface builds a ``DefaultBroker``
         per request via its ``broker_factory`` (see ``broker/services/execution``).
+
+        When ``entitlement.enabled`` (AWS Marketplace deployments only; default
+        off) the container carries the entitlement gate's installer + lifespan,
+        so every process shape — combined, standalone surface, broker — gates
+        without per-callsite wiring. With the default config the returned
+        container is identical to before the gate existed.
         """
+        if ctx.config.entitlement.enabled:
+            return cls(
+                ctx=ctx,
+                extra_installers=(install_entitlement_gate,),
+                extra_lifespans=(entitlement_lifespan,),
+            )
         return cls(ctx=ctx)
