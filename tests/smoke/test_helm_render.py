@@ -17,6 +17,17 @@ import pytest
 CHART_DIR = Path(__file__).resolve().parents[2] / "deploy" / "helm" / "jentic-one"
 VALUES_DIR = CHART_DIR.parent / "values"
 
+DEV_PASSWORD_SETS = [
+    "--set",
+    "global.databases.registry.password=x",
+    "--set",
+    "global.databases.control.password=x",
+    "--set",
+    "global.databases.admin.password=x",
+    "--set",
+    "postgresql.auth.password=x",
+]
+
 
 def _helm_template(*args: str) -> subprocess.CompletedProcess[str]:
     if shutil.which("helm") is None:
@@ -45,3 +56,27 @@ def test_render_dev_values(values: str) -> None:
     """The committed dev values files carry their own (dev-only) passwords."""
     result = _helm_template("-f", str(VALUES_DIR / f"{values}.yaml"))
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.smoke
+def test_render_marketplace_images_all_ecr() -> None:
+    """Every image rendered with aws-marketplace.yaml comes from the ECR registry.
+
+    The Marketplace disallows docker.io/ghcr.io pulls at install time.
+    """
+    result = _helm_template(
+        "-f",
+        str(VALUES_DIR / "aws-marketplace.yaml"),
+        "--set",
+        "global.image.tag=0.0.0-test",
+        *DEV_PASSWORD_SETS,
+    )
+    assert result.returncode == 0, result.stderr
+    images = [
+        line.split("image:", 1)[1].strip().strip('"')
+        for line in result.stdout.splitlines()
+        if line.lstrip().startswith("image:")
+    ]
+    assert images, "no image references rendered"
+    for image in images:
+        assert image.startswith("709825985650.dkr.ecr."), f"non-ECR image rendered: {image}"
