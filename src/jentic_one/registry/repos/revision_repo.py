@@ -47,7 +47,7 @@ class ApiRevisionRepository:
         session: AsyncSession,
         *,
         api_id: uuid.UUID,
-        spec_digest: str,
+        spec_digest: str | None,
         source_type: ApiRevisionSourceType,
         source_url: str | None = None,
         source_filename: str | None = None,
@@ -76,7 +76,7 @@ class ApiRevisionRepository:
         *,
         api_id: uuid.UUID,
         origin: str,
-        spec_digest: str,
+        spec_digest: str | None,
         source_type: ApiRevisionSourceType,
         source_url: str | None = None,
         source_filename: str | None = None,
@@ -174,6 +174,10 @@ class ApiRevisionRepository:
     async def get_by_digest(
         session: AsyncSession, api_id: uuid.UUID, spec_digest: str
     ) -> ApiRevision | None:
+        # Precondition: spec_digest is a real (non-NULL) digest. A NULL digest can
+        # never match under `spec_digest == :value` (SQL `= NULL` is never true), so
+        # the sha-less case is handled upstream by skipping this lookup (#780) rather
+        # than being widened to str | None here.
         result = await session.execute(
             select(ApiRevision).where(
                 ApiRevision.api_id == api_id, ApiRevision.spec_digest == spec_digest
@@ -309,6 +313,10 @@ class ApiRevisionRepository:
         revisions are never touched — a live revision with the same content is a
         genuine conflict that must surface, not be silently overwritten. Child
         rows cascade via the ``ondelete="CASCADE"`` foreign keys.
+
+        Precondition: ``spec_digest`` is a real (non-NULL) digest. A NULL digest
+        can never match ``spec_digest == :value``, so the sha-less case is handled
+        upstream by skipping this call (#780) rather than being widened here.
         """
         result = cast(
             "CursorResult[Any]",

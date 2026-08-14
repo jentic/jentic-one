@@ -45,20 +45,35 @@ class CreateRevisionStage(BasePipelineStage):
     async def _run(self, ctx: PipelineContext) -> None:
         api_id = ctx.require("api_id", uuid.UUID)
         spec = ctx.specification
-        spec_digest = spec.sha or ""
-        # A prior import of identical content may have committed a revision that
-        # was later abandoned (e.g. a sibling source failed, or a subsequent
-        # stage crashed). Re-importing the same (api_id, spec_digest) would then
-        # collide with uq_api_revisions_api_id_spec_digest. Replace a leftover
-        # replaceable revision (draft/archived) so retries are idempotent.
-        await ApiRevisionRepository.delete_replaceable_by_digest(ctx.session, api_id, spec_digest)
-        # Anything still sharing the digest is an active (published/imported)
-        # revision — a genuine conflict. Surface it as a readable error before we
-        # attempt the insert, so callers see a clear message instead of a raw
-        # unique-constraint IntegrityError.
-        existing = await ApiRevisionRepository.get_by_digest(ctx.session, api_id, spec_digest)
-        if existing is not None:
-            raise DuplicateRevisionError()
+        # Domain invariant: every production IngestSpecification comes through
+        # load_specification, which digests the inline/URL bytes, so sha is
+        # always set. Assert it so a future sha-less producer fails loudly here
+        # rather than silently writing a NULL-digest revision that would confuse
+        # the Flow-3 update sweep (upstream != NULL is always "changed"). See #780.
+        assert spec.sha, "IngestSpecification reached CreateRevisionStage without a sha"
+        # An absent sha must stay NULL, never '' — the empty string is a *value*
+        # under uq_api_revisions_api_id_spec_digest, so two distinct sha-less
+        # specs would collide (and the replaceable-cleanup below would delete the
+        # OTHER spec's leftover rows). NULLs are distinct under the unique
+        # constraint on both Postgres and SQLite, so sha-less revisions coexist.
+        # See #780.
+        spec_digest = spec.sha or None
+        if spec_digest is not None:
+            # A prior import of identical content may have committed a revision that
+            # was later abandoned (e.g. a sibling source failed, or a subsequent
+            # stage crashed). Re-importing the same (api_id, spec_digest) would then
+            # collide with uq_api_revisions_api_id_spec_digest. Replace a leftover
+            # replaceable revision (draft/archived) so retries are idempotent.
+            await ApiRevisionRepository.delete_replaceable_by_digest(
+                ctx.session, api_id, spec_digest
+            )
+            # Anything still sharing the digest is an active (published/imported)
+            # revision — a genuine conflict. Surface it as a readable error before we
+            # attempt the insert, so callers see a clear message instead of a raw
+            # unique-constraint IntegrityError.
+            existing = await ApiRevisionRepository.get_by_digest(ctx.session, api_id, spec_digest)
+            if existing is not None:
+                raise DuplicateRevisionError()
         if spec.origin is not None:
             if spec.origin == ORIGIN_OVERLAY:
                 # A materialized overlay must supersede whatever revision is currently

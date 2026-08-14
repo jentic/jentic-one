@@ -16,8 +16,26 @@ _STRATEGIES: dict[tuple[str, str], type[SearchStrategy]] = {}
 
 
 def register_strategy[T: type[SearchStrategy]](cls: T) -> T:
-    """Class decorator that registers a SearchStrategy by (dialect, name)."""
+    """Class decorator that registers a SearchStrategy by (dialect, name).
+
+    Idempotent for an identical re-registration (same class — safe under double
+    import); raises ``ValueError`` when the key is already bound to a *different*
+    class, so an extension can't silently shadow a built-in strategy. Same
+    posture as the other registration seams: ``register_config``
+    (``shared/config.py``), ``register_telemetry_event``
+    (``shared/telemetry/events.py``), ``register_target``
+    (``migrations/targets.py``), and ``register_pipeline_stage``
+    (``registry/ingest/pipeline/stage_registry.py``).
+    """
     key = (cls.dialect, cls.name)
+    existing = _STRATEGIES.get(key)
+    if existing is not None and existing is not cls:
+        msg = (
+            f"Search strategy {key!r} is already registered by "
+            f"{existing.__module__}.{existing.__qualname__}; refusing to shadow it "
+            f"with {cls.__module__}.{cls.__qualname__}"
+        )
+        raise ValueError(msg)
     _STRATEGIES[key] = cls
     return cls
 
