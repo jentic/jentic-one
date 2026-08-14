@@ -13,6 +13,7 @@ import (
 func mockControl(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/search":
 			_, _ = w.Write([]byte(`{"data":[` +

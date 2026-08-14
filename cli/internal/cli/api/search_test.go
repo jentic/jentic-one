@@ -7,12 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/jentic/jentic-one/cli/internal/searchclient"
 )
 
 func TestSearchCmdJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/search":
 			_, _ = w.Write([]byte(`{
@@ -65,6 +64,7 @@ func TestSearchCmdEmptyResultsEmitEmptyArray(t *testing.T) {
 	// issue #671).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/search" {
+			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":[],"has_more":false,"next_cursor":null}`))
 			return
 		}
@@ -104,30 +104,30 @@ func TestSearchCmdEmptyResultsEmitEmptyArray(t *testing.T) {
 func TestInspectHint(t *testing.T) {
 	tests := []struct {
 		name string
-		hit  searchclient.SearchHit
+		hit  searchHit
 		want string
 	}{
 		{
 			name: "absolute url uses the resolvable METHOD-URL form",
-			hit: searchclient.SearchHit{
+			hit: searchHit{
 				OperationID: "op_abc",
-				Links:       searchclient.SearchLinks{Inspect: "/inspect?id=GET%20https://api.acme.com/v1/things"},
+				Links:       searchLinks{Inspect: "/inspect?id=GET%20https://api.acme.com/v1/things"},
 			},
 			want: "GET https://api.acme.com/v1/things",
 		},
 		{
 			name: "host-relative link falls back to the registry operation_id",
-			hit: searchclient.SearchHit{
+			hit: searchHit{
 				OperationID: "op_abc",
-				Links:       searchclient.SearchLinks{Inspect: "/inspect?id=GET%20/things"},
+				Links:       searchLinks{Inspect: "/inspect?id=GET%20/things"},
 			},
 			want: "op_abc",
 		},
 		{
 			name: "missing link falls back to the registry operation_id",
-			hit: searchclient.SearchHit{
+			hit: searchHit{
 				OperationID: "op_abc",
-				Links:       searchclient.SearchLinks{Inspect: ""},
+				Links:       searchLinks{Inspect: ""},
 			},
 			want: "op_abc",
 		},
@@ -148,6 +148,7 @@ func TestSearchCmdAutopagination(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		callCount++
 		if callCount == 1 {
 			_, _ = w.Write([]byte(`{

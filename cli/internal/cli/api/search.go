@@ -3,15 +3,22 @@ package api
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
-	"github.com/jentic/jentic-one/cli/internal/searchclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
 
 var errSearchQueryRequired = errors.New("a search query is required (positional arg or -q)")
+
+// errSearchUnsupported is returned when the server responds with HTTP 501,
+// indicating that search is not enabled on this deployment.
+var errSearchUnsupported = errors.New("search is not enabled on this deployment")
 
 type searchOptions struct {
 	query  string
@@ -59,17 +66,24 @@ func newSearchCmd(app *app) *cobra.Command {
 }
 
 func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	ctx := cmd.Context()
+	if _, err := a.requireState(ctx); err != nil {
+		return err
+	}
+	client, err := clictx.GetControlClient(ctx)
 	if err != nil {
 		return err
 	}
 
-	client := searchclient.New(baseURL)
-	req := searchclient.SearchRequest{
-		Query:  opts.query,
-		APIs:   opts.apis,
-		Limit:  opts.limit,
-		Cursor: opts.cursor,
+	body := control.SearchRequest{Query: opts.query}
+	if len(opts.apis) > 0 {
+		body.Apis = &opts.apis
+	}
+	if opts.limit != 0 {
+		body.Limit = &opts.limit
+	}
+	if opts.cursor != "" {
+		body.Cursor = &opts.cursor
 	}
 
 	const maxPages = 1000
@@ -77,28 +91,34 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 	// Non-nil so an empty result set serializes as `"data": []`, never `null` —
 	// clients (and the documented `jq '.data[]'` recipe) can read the envelope
 	// unconditionally. This mirrors the server's #671 guarantee on the CLI side.
-	allHits := []searchclient.SearchHit{}
+	allHits := []searchHit{}
 	var hasMore bool
 	var nextCursor string
 
 	for page := 0; ; page++ {
-		result, searchErr := client.Search(cmd.Context(), token, req)
-		if searchErr != nil {
-			if errors.Is(searchErr, searchclient.ErrSearchUnsupported) {
-				return searchclient.ErrSearchUnsupported
+		resp, searchErr := client.SearchOperationsWithResponse(ctx, body)
+		if err := apiErrorFor(resp, searchErr); err != nil {
+			// A 501 means search is not enabled on this deployment; map it to the
+			// friendly sentinel the command surfaces.
+			var ae *APIError
+			if errors.As(err, &ae) && ae.StatusCode == http.StatusNotImplemented {
+				return errSearchUnsupported
 			}
-			return searchErr
+			return err
 		}
-		allHits = append(allHits, result.Data...)
+		result := resp.JSON200
+		for _, h := range result.Data {
+			allHits = append(allHits, toSearchHit(h))
+		}
 		hasMore = result.HasMore
-		nextCursor = result.NextCursor
-		if !opts.all || !result.HasMore || result.NextCursor == "" {
+		nextCursor = deref(result.NextCursor)
+		if !opts.all || !result.HasMore || nextCursor == "" {
 			break
 		}
 		if page+1 >= maxPages {
 			break
 		}
-		req.Cursor = result.NextCursor
+		body.Cursor = &nextCursor
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
@@ -109,7 +129,79 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 	return nil
 }
 
-func (a *app) printSearchResults(hits []searchclient.SearchHit, hasMore bool) {
+// searchHit is the CLI-side projection of a generated OperationResultResponse.
+// It keeps the exact JSON shape the search command has always emitted (flat
+// strings, `relevance_score`, `_links.inspect`) so the agent-facing envelope and
+// the golden fixtures are unchanged, while the wire call goes through the
+// generated SDK.
+type searchHit struct {
+	Type        string      `json:"type"`
+	API         searchAPI   `json:"api"`
+	OperationID string      `json:"operation_id"`
+	Method      string      `json:"method"`
+	URL         string      `json:"url"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Score       float64     `json:"relevance_score"`
+	Links       searchLinks `json:"_links"`
+}
+
+// searchAPI is the API identity triple carried by each hit (vendor/name/version
+// plus derived host), mirroring the server's ApiReferenceResponse.
+type searchAPI struct {
+	Vendor  string `json:"vendor"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	Host    string `json:"host"`
+}
+
+// String renders the API reference as the canonical vendor/name/version slug.
+func (a searchAPI) String() string {
+	if a.Vendor == "" && a.Name == "" && a.Version == "" {
+		return ""
+	}
+	return a.Vendor + "/" + a.Name + "/" + a.Version
+}
+
+type searchLinks struct {
+	Inspect string `json:"inspect"`
+}
+
+// toSearchHit projects a generated OperationResultResponse onto the flat CLI
+// view. Optional (pointer) members collapse to their empty string, preserving
+// the pre-migration output where name/description/host were always present.
+func toSearchHit(h control.OperationResultResponse) searchHit {
+	var typ string
+	if h.Type != nil {
+		typ = string(*h.Type)
+	}
+	return searchHit{
+		Type:        typ,
+		API:         searchAPI{Vendor: h.Api.Vendor, Name: h.Api.Name, Version: h.Api.Version, Host: deref(h.Api.Host)},
+		OperationID: h.OperationId,
+		Method:      h.Method,
+		URL:         h.Url,
+		Name:        deref(h.Name),
+		Description: deref(h.Description),
+		Score:       float32ToFloat64(h.RelevanceScore),
+		Links:       searchLinks{Inspect: h.UnderscoreLinks.Inspect},
+	}
+}
+
+// float32ToFloat64 widens a float32 to float64 via its SHORTEST round-tripping
+// decimal, so a score the server sent as 0.8 (decoded by the generated SDK into
+// a float32) re-serializes as 0.8 rather than the 0.80000001192… artifact a
+// naive float64(f) conversion would surface. This keeps the search JSON
+// byte-identical to the pre-SDK output the golden fixtures pin.
+func float32ToFloat64(f float32) float64 {
+	v, err := strconv.ParseFloat(strconv.FormatFloat(float64(f), 'g', -1, 32), 64)
+	if err != nil {
+		return float64(f)
+	}
+	return v
+}
+
+func (a *app) printSearchResults(hits []searchHit, hasMore bool) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Search Results"))
 	if len(hits) == 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no operations match in the local registry"))
@@ -142,7 +234,7 @@ func (a *app) printSearchResults(hits []searchclient.SearchHit, hasMore bool) {
 // link (e.g. "GET /pets"), which inspect can't resolve. In that case (or when
 // the link is absent) it falls back to the registry operation_id, which the
 // inspect primary-key path always resolves.
-func inspectHint(h searchclient.SearchHit) string {
+func inspectHint(h searchHit) string {
 	if id := inspectIDFromLink(h.Links.Inspect); strings.Contains(id, "://") {
 		return id
 	}

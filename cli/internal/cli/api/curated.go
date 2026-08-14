@@ -82,6 +82,22 @@ func CuratedBindings() []CuratedBinding {
 			NotExposed: map[string]string{},
 		},
 		{
+			// search: the query is the positional arg (also settable via -q);
+			// --api/--limit/--cursor drive the rest of the body (ARCH-21 A2,
+			// migrated off internal/searchclient onto the generated SDK).
+			Command: "search",
+			Params:  control.SearchRequest{},
+			Bind: map[string]string{
+				"query":  PositionalArg,
+				"apis":   "api",
+				"limit":  "limit",
+				"cursor": "cursor",
+			},
+			NotExposed: map[string]string{
+				"revision_pins": "pin-to-revision is an operator/reproducibility concern; reachable via `jentic api SearchOperations`",
+			},
+		},
+		{
 			Command: "apis import",
 			Params:  control.ApiImportRequest{},
 			Bind: map[string]string{

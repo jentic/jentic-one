@@ -77,3 +77,16 @@ func apiErrorFor(resp httpResponse, transportErr error) error {
 	}
 	return &APIError{StatusCode: code, Body: strings.TrimSpace(string(resp.GetBody()))}
 }
+
+// deref returns the pointed-to value, or the zero value when the pointer is nil.
+// The generated SDK models optional/nullable members as pointers; call sites
+// that project them onto the CLI's flat views use this to collapse a missing
+// member to its zero value (the pre-SDK hand-written clients decoded the same
+// members as bare values defaulting to "").
+func deref[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
+}
