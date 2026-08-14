@@ -595,6 +595,9 @@ func (a *app) printSynthesizedDenialRecovery(status int) {
 		fmt.Fprintln(a.Err, "  The broker denied this call. Check what you can run and your setup.")
 		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access whoami"))
 	}
+	// Point at the read-only self-check as the catch-all when the specific hint
+	// above doesn't unblock (UX9).
+	fmt.Fprintln(a.Err, "  stuck? "+theme.Accent.Render("jentic doctor"))
 }
 
 // brokerDeniedErr is the typed denial every broker-denial exit shares (AGT-6):
@@ -723,6 +726,8 @@ func (a *app) printAgentDirective(d agentDirective) {
 			fmt.Fprintf(a.Err, "  retry after: %v\n", secs)
 		}
 	}
+	// Catch-all self-check for when the directive's step doesn't unblock (UX9).
+	fmt.Fprintln(a.Err, "  stuck? "+theme.Accent.Render("jentic doctor"))
 }
 
 func (a *app) executeJSONOutput(resp *http.Response, body []byte) error {

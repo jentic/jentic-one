@@ -571,6 +571,11 @@ func (a *App) printNextSteps() {
 		fmt.Fprintf(a.Out, "  %s\n    %s\n", theme.Dim.Render(s.desc), theme.Command.Render(s.cmd))
 	}
 	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("See all commands:"), theme.Command.Render("jentic --help"))
+	// Advertise doctor as the first thing to run when stuck (UX9): it is
+	// read-only and each of its warnings already carries the exact remediation,
+	// but it lives under "Local agent client" and isn't surfaced at the moments
+	// of confusion.
+	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Stuck? Check your setup:"), theme.Command.Render("jentic doctor"))
 }
 
 // saveRegState persists the (identity, environment) registration record.

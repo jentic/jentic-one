@@ -240,8 +240,9 @@ func TestExecuteCmdDirectivelessDenialExits2(t *testing.T) {
 	}
 	// UX7: a directive-less denial must still hand the user a synthesized
 	// next-step keyed off the 403 (whoami + access request), not a dead end.
+	// UX9: it also points at the read-only self-check.
 	errOut := app.Err.(*bytes.Buffer).String()
-	for _, want := range []string{"jentic access whoami", "jentic access request"} {
+	for _, want := range []string{"jentic access whoami", "jentic access request", "jentic doctor"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("synthesized 403 recovery missing %q; stderr:\n%s", want, errOut)
 		}

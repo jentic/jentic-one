@@ -21,7 +21,7 @@ import (
 func notRegisteredErr(identity, env string) *ux.CodedError {
 	return &ux.CodedError{
 		Code:       ux.CodeNotAuthenticated,
-		Msg:        fmt.Sprintf("identity %q is not registered with environment %q; run `jentic register` first", identity, env),
+		Msg:        fmt.Sprintf("identity %q is not registered with environment %q; run `jentic register` first (or `jentic doctor` to check your setup)", identity, env),
 		Actionable: "jentic register",
 	}
 }
@@ -185,7 +185,7 @@ func contextAuthErr(err error, st *clictx.ActiveState) error {
 	}
 	return &ux.CodedError{
 		Code: ux.CodeNotAuthenticated,
-		Msg: fmt.Sprintf("could not authenticate identity %q with environment %q: %v",
+		Msg: fmt.Sprintf("could not authenticate identity %q with environment %q: %v (run `jentic doctor` to check your setup)",
 			st.IdentityName, st.EnvironmentName, err),
 		Actionable: "jentic register",
 	}
