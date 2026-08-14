@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.0](https://github.com/jentic/jentic-one/compare/v0.30.3...v0.31.0) (2026-08-14)
+
+
+### Features
+
+* **auth:** add agent ownership-claim primitive ([#1042](https://github.com/jentic/jentic-one/issues/1042)) ([6b5337a](https://github.com/jentic/jentic-one/commit/6b5337a7749f78b5f84e11f21ff8277069ec1d06))
+* **helm:** AWS Marketplace values + required DB password guards ([#1039](https://github.com/jentic/jentic-one/issues/1039)) ([7e26cea](https://github.com/jentic/jentic-one/commit/7e26cea541ea9521a5b36d338a444b6c862806de))
+
 ## [0.30.3](https://github.com/jentic/jentic-one/compare/v0.30.2...v0.30.3) (2026-08-12)
 
 
