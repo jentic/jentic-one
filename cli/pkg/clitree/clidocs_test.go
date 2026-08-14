@@ -41,8 +41,7 @@ func TestCLIReferenceShape(t *testing.T) {
 	// (not a *CommandDoc guarded by t.Fatal) — staticcheck's SA5011 in CI
 	// doesn't always see t.Fatal as terminating and flags the derefs.
 	//
-	// Post-activation the V1 `profile` command is gone (replaced by alias shims
-	// that are not a real `profile` command in the tree); `context` is its
+	// Post-activation the `profile` command was removed; `context` is its
 	// successor and the surface this shape check now guards.
 	contextCmd, ok := findCommand(jentic.Commands, "context")
 	if !ok {
