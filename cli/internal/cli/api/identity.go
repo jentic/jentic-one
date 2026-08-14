@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -230,31 +231,31 @@ func (a *app) claimErr(err error, agentID string) error {
 		return err
 	}
 	switch he.StatusCode {
-	case 400, 422:
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		return &ux.CodedError{
 			Code:       ux.CodeMissingArgument,
 			Msg:        "the claim token was rejected: " + he.Detail(),
 			Actionable: "Claim tokens are single-use and short-lived. Re-run `jentic register` to mint a fresh one, then claim promptly.",
 		}
-	case 401:
+	case http.StatusUnauthorized:
 		return &ux.CodedError{
 			Code:       ux.CodeNotAuthenticated,
 			Msg:        "not authenticated to claim: " + he.Detail(),
 			Actionable: "Select a registered human context first (`jentic context use <name>`), then retry.",
 		}
-	case 403:
+	case http.StatusForbidden:
 		return &ux.CodedError{
 			Code:       ux.CodeFenced,
 			Msg:        "only a human (USER) may claim an agent: " + he.Detail(),
 			Actionable: "Run this from a human context — an agent cannot claim itself. Open the claim link from `jentic register` in a browser instead.",
 		}
-	case 404:
+	case http.StatusNotFound:
 		return &ux.CodedError{
 			Code:       ux.CodeResolveFailed,
 			Msg:        fmt.Sprintf("no agent %q found to claim: %s", agentID, he.Detail()),
 			Actionable: "Check the agent id printed at registration (`jentic register`).",
 		}
-	case 409:
+	case http.StatusConflict:
 		return &ux.CodedError{
 			Code:       ux.CodeResolveFailed,
 			Msg:        "this agent is already owned: " + he.Detail(),

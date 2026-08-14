@@ -1,3 +1,9 @@
+// Package api assembles and runs the `jentic` command tree — the API-spec
+// surface (register/identity, context/env, catalog, apis, search, inspect,
+// execute) for discovering, inspecting, and executing against the Jentic API
+// catalog. Data-plane commands speak to the control plane through the generated
+// SDK (client/generated/control); `jentic migrate` is the sole reader of the
+// legacy V1 store (see legacy_store.go).
 package api
 
 import (
@@ -11,7 +17,7 @@ import (
 )
 
 // newAPIRootCmd assembles the jentic command tree: the API-spec surface
-// (register, profile, logout, catalog, apis) for discovering, inspecting,
+// (register, identity, context, catalog, apis) for discovering, inspecting,
 // and executing against the Jentic API catalog.
 func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	app := &app{App: core}
