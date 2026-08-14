@@ -29,27 +29,33 @@ to external APIs and handles credentials for you.
 ## Prerequisites
 
 - The `jentic` CLI is installed and on PATH.
-- A reachable Jentic control plane (the base URL; defaults to the local
-  install). Override with `--base-url` or `config.yaml`.
+- A reachable Jentic control plane. The base URL comes from the active
+  context's environment — set it with `jentic env add <name> --url <URL>`
+  and select it with `jentic context use <name>` (inspect via
+  `jentic context view`). Onboard a fresh machine with `jentic register --url
+  <URL>`. There is no `--base-url` flag on data-plane commands.
 
 ## Procedure
 
 ### 1. Confirm you have a valid identity
 
 You normally don't set up your own identity — your human operator runs
-`jentic bootstrap` (or `jentic register`) out-of-band, which registers this
-agent, waits for a human to approve it, and writes this skill. First, check that
-you already have a usable token:
+`jentic register` (or `jentic bootstrap`) out-of-band, which connects this
+machine to a Jentic install, registers this agent, waits for a human to approve
+it, and (for bootstrap) writes this skill. First, check your setup:
 
 ```
-jentic profile list
+jentic doctor
 ```
 
-If the active profile shows a valid token, skip to step 2. If it does not (no
-token, or "not registered"), **stop and ask your operator** to run
-`jentic bootstrap` and approve the agent — that step blocks on a human and
-cannot be completed by an autonomous agent. Once approved, tokens are saved to
-the active profile and reused automatically; you never handle raw API
+If the Identity section passes (a registered identity and a usable token or API
+key), skip to step 2. If it does not (no context, "not registered", or
+"pending"), **stop and ask your operator** to run
+`jentic register --url <install URL>` and approve the agent — that step blocks
+on a human and cannot be completed by an autonomous agent. (For a local install
+the URL must be `http://127.0.0.1:8000`, not `localhost` — the token audience is
+matched exactly.) Once approved, a
+token is minted and reused automatically; you never handle raw API
 credentials — the CLI attaches the bearer token for you.
 
 ### 2. Check what you can do, and request access if needed
@@ -320,8 +326,8 @@ bound to a different one. Check the backend your base URL serves before
 diagnosing data loss:
 
 ```
-jentic profile list        # shows each profile's base_url
-curl -s "<base-url>/instance"   # e.g. http://127.0.0.1:8000/instance on a default local install
+jentic context view        # shows the active context's environment + base_url
+jentic api GET /instance   # reads the connected backend's identity (auth attached)
 ```
 
 The unauthenticated `/instance` response reports `backend` (`local` / `remote` —
@@ -366,15 +372,23 @@ error naming DNS, TLS, timeout, or connection refused is a **transport
 failure** — usually exit **1**, but exit **2** (`resolve … failed`) when the
 `operation_id` lookup hits an unreachable control plane — with two causes:
 
+> Exit **2** broadly means "this request cannot succeed **as asked**" — a
+> broker denial, a failed operation resolve, or missing local context (e.g. no
+> active context configured). Don't blind-retry an exit 2: change the ask, fix
+> the config, or request access. Exit **3** (still pending) and the transient
+> transport failures are the retryable ones.
+
 - **Wrong target (DNS or TLS error).** The broker target resolves as
-  built-in default (`https://127.0.0.1:8100`) < `~/.jentic/config.yaml`
-  (`broker.scheme` / `broker.host`, recorded by `jenticctl install`) <
-  flags. `lookup broker.jentic.ai: no such host` means the config points at
-  the hosted broker from a local install; a TLS error against a local
-  target usually means `broker.scheme` should be `http`. Fix the config, or
-  override per call:
+  built-in default (`https://127.0.0.1:8100`) < the active environment's
+  `broker_url` in `~/.config/jentic/config.yaml` < flags. `lookup
+  broker.jentic.ai: no such host` means the environment points at the hosted
+  broker from a local install; a TLS error like `server gave HTTP response to
+  HTTPS client` against a local target means the broker is plain http but the
+  target resolved to https. `jentic register` seeds `broker_url` for a loopback
+  install; otherwise set it on the environment, or override per call:
 
 ```
+jentic env add <env> --url http://127.0.0.1:8000 --broker-url http://127.0.0.1:8100 --force
 jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 ```
 
@@ -396,7 +410,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   (always current, works offline), or open the platform docs at `/app/docs` on
   the control plane (Reference → CLI) — the same reference rendered for humans,
   next to the HTTP API and Broker API references.
-- `jentic profile list` — see profiles and which is active (start here).
+- `jentic context view` — the active context (environment + identity + base_url); start here.
 - `jentic access whoami` — your identity, status, scopes, and toolkit bindings
   with the APIs each one **serves** (check this before executing or provisioning).
 - `jentic access request` — ask a human for access. `--provision <vendor/name>`
@@ -417,15 +431,45 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   forward proxy, not a path router).
 - `jentic register` / `jentic bootstrap` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
+- `jentic doctor` — read-only self-check of THIS agent's setup (config/state
+  dirs, resolvable identity, a usable token, control-plane reachability, clock
+  skew). Run it first when something is off but you're not sure what; it never
+  mints tokens or writes anything. `--json` for a parseable report. (This is the
+  agent-side sibling of `jenticctl doctor`, which needs operator tooling.)
+- `jentic api <METHOD> <path>` — a `gh api`-style authenticated passthrough to
+  the control plane for endpoints without a dedicated command. It self-describes:
+  `jentic api ops` lists available operations and `jentic api describe <METHOD>
+  <path>` prints one operation's parameters, so you can discover a new route and
+  its inputs without leaving the CLI. Pass a JSON body with `-d '<json>'`, `-d @file`,
+  or piped stdin.
+- `jentic history export --trace <trace_id>` — export the execution history of
+  one trace (JSON envelope with `schema_version`/`trace_id`), for auditing what
+  you have run. `--trace` is required; take the id from an `execute --json`
+  response or from `jentic events watch`.
+- `jentic events watch` — stream live execution/approval events for this
+  identity (long-running; Ctrl-C to stop).
+- `--dry-run` / `--export-plan` — on a mutating command (`execute`,
+  `apis import`), validate and print the request that WOULD be sent (a machine
+  plan with `--export-plan`) **without** sending it. Use it to preview a call —
+  including the exact broker URL and headers — before committing side effects.
 - `jenticctl status` / `jenticctl start` — health-check and restart the local
   deployment; check this first when a local target refuses connections.
-- Add `--json` to force machine-readable output on a terminal.
+- Add `--json` to force machine-readable output on a terminal (works on
+  `search`, `execute`, `inspect`, `apis`, `access`, `doctor`). `context view`
+  has no `--json` flag — it emits JSON automatically in agent/non-TTY mode.
+- **Correlation & retries**: export `JENTIC_SESSION_ID=<your session id>` and
+  every request carries it as `X-Jentic-Session-Id`, so operators can group all
+  of your calls in server logs; each `execute` also sends a fresh W3C
+  `traceparent`. When you must retry a mutating call (POST/PUT), pass
+  `--idempotency-key <uuid>` to `execute` — the server can then de-duplicate,
+  and the CLI treats the request as safe for its transport-level retries.
 
 ## Pitfalls
 
 - Calling `execute` before the agent is registered and approved fails — there is
-  no token. Check `jentic profile list`; if there's no valid token, ask your
-  operator to run `jentic bootstrap` / `jentic register` and approve you.
+  no token. Check `jentic doctor`; if the Identity section warns, ask your
+  operator to run `jentic register` (with `--url <install URL>` on a fresh
+  machine) and approve you.
 - `search` returning `{"data": []}` usually means **nothing is imported yet**,
   not that you lack access. Run `jentic catalog search` → `jentic catalog
   import`, then search again. Both reading the registry and importing a
@@ -441,9 +485,9 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   replied. The symptom is *silent wrong answers*, not errors: an API the user
   just imported "doesn't exist", credentials "disappeared", or operation ids
   from one surface don't resolve on the other. Before concluding anything is
-  missing or broken, check where each surface points — `jentic profile list`
-  shows this CLI's `base_url`, and `curl -s <base-url>/instance` reports
-  which backend serves it (see "confirm which backend you're on" in step 3);
+  missing or broken, check where each surface points — `jentic context view`
+  shows this CLI's active environment/`base_url`, and `jentic api GET /instance`
+  reports which backend serves it (see "confirm which backend you're on" in step 3);
   ask your operator which backend the MCP server was configured against —
   and stick to one surface for the whole task.
 - An `execute` failure is not always an access problem. A DNS or TLS error
@@ -485,7 +529,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
 
 ## Verification
 
-- `jentic profile list` shows your profile with a valid token.
+- `jentic doctor` shows a resolvable identity with a valid token.
 - After `jentic catalog import <vendor/name>`, `jentic search "<something in
   that API>"` returns at least one result.
 - A known-allowed `jentic execute …` (pointed at the right broker) returns a 2xx

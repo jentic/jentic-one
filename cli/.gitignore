@@ -1,6 +1,8 @@
 # Built binaries
 /jentic
 /jenticctl
+# Stray `go build ./tools/specgen` output (specgen is always run via `go run`).
+/specgen
 
 # Coverage output (make cov)
 /coverage.out

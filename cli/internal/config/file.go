@@ -28,8 +28,6 @@ type FileConfig struct {
 	// BaseURL is the Jentic control-plane (auth surface) base URL used for agent
 	// registration and token minting.
 	BaseURL string `yaml:"base_url"`
-	// DefaultProfile selects which profile commands act on when none is given.
-	DefaultProfile string `yaml:"default_profile"`
 	// Broker is the would-be forward target (logged only in this POC).
 	Broker BrokerConfig `yaml:"broker"`
 	// Telemetry holds the user's telemetry consent decision. HasConsented
@@ -112,14 +110,6 @@ func (c *FileConfig) ResolvedBaseURL() string {
 	return DefaultBaseURL
 }
 
-// ResolvedDefaultProfile returns the configured default profile or the default.
-func (c *FileConfig) ResolvedDefaultProfile() string {
-	if c.DefaultProfile != "" {
-		return c.DefaultProfile
-	}
-	return DefaultProfile
-}
-
 // The Resolved* helpers below implement the precedence defaults < config.yaml <
 // flag. flagChanged reports whether the caller's flag was explicitly set; when
 // true the flag wins outright, otherwise the file value is used if present,
@@ -161,19 +151,6 @@ func stripScheme(host string) string {
 		return host[i+len("://"):]
 	}
 	return host
-}
-
-// ResolvedProfileName resolves the profile to act on, in precedence order: the
-// flag if non-empty, else the JENTIC_PROFILE env var, else the configured
-// default profile (or the built-in default).
-func (c *FileConfig) ResolvedProfileName(flag string) string {
-	if flag != "" {
-		return flag
-	}
-	if env := os.Getenv(ProfileEnv); env != "" {
-		return env
-	}
-	return c.ResolvedDefaultProfile()
 }
 
 // ResolvedBaseURLOr resolves the control-plane base URL: the flag if non-empty,
@@ -299,16 +276,6 @@ func Mutate(paths Paths, fn func(*FileConfig) error) (*FileConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
-}
-
-// SetDefaultProfile loads config.yaml, sets default_profile to name, and saves.
-// It is the persisting half of `jentic profile use`.
-func SetDefaultProfile(paths Paths, name string) error {
-	_, err := Mutate(paths, func(cfg *FileConfig) error {
-		cfg.DefaultProfile = name
-		return nil
-	})
-	return err
 }
 
 // AgentAccount returns the configured agent account and whether one is recorded.

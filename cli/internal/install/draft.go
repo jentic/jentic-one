@@ -51,6 +51,13 @@ type Draft struct {
 	PGUser     string
 	PGPassword string
 
+	// PGExposeHostPort publishes the managed Postgres container's 5432 on the
+	// host (Docker path only). Off by default: the app and broker reach the
+	// database over the compose network, so a host publish is purely a
+	// debugging/tooling convenience — and it was one of #992's exposure
+	// surfaces. When enabled, PGPort is the published host port.
+	PGExposeHostPort bool
+
 	// SQLiteDir is the directory holding per-surface *.db files (BackendSQLite).
 	SQLiteDir string
 
@@ -156,13 +163,18 @@ type Draft struct {
 // defaults (mirroring config/local.yaml).
 func NewDraft() *Draft {
 	return &Draft{
-		RuntimePath:     RuntimeDocker,
-		DBBackend:       BackendPostgres,
-		PGHost:          "localhost",
-		PGPort:          "5432",
-		PGName:          "jentic",
-		PGUser:          "postgres",
-		PGPassword:      "postgres",
+		RuntimePath: RuntimeDocker,
+		DBBackend:   BackendPostgres,
+		PGHost:      "localhost",
+		PGPort:      "5432",
+		PGName:      "jentic",
+		PGUser:      "postgres",
+		// Deliberately empty: the Docker path's managed Postgres gets a
+		// generated random password from FillSecrets (#992 — the old
+		// "postgres" default was a guessable credential on a database that
+		// could end up internet-reachable). The local path prompts, since the
+		// user's own Postgres has whatever password it has.
+		PGPassword:      "",
 		SQLiteDir:       ".data",
 		Apps:            []string{"registry", "admin", "control", "auth"},
 		ServerHost:      "127.0.0.1",
@@ -183,6 +195,27 @@ func (d *Draft) IsPostgres() bool { return d.DBBackend == BackendPostgres }
 
 // IsDocker reports whether the containerized runtime path was chosen.
 func (d *Draft) IsDocker() bool { return d.RuntimePath == RuntimeDocker }
+
+// PublishHost is the host interface Docker publishes container ports on,
+// derived from the wizard's bind-host answer. It exists because the Docker
+// path has TWO distinct binds that must not be conflated: the in-container
+// process bind (always 0.0.0.0 so the published port is reachable — see
+// render.go toConfig) and the host-side publish address, which must honour
+// the user's choice. An unqualified compose port mapping publishes on all
+// interfaces, so omitting this prefix would silently expose a
+// loopback-intended install to the network (#992).
+//
+// localhost is normalized to 127.0.0.1 (Docker requires an IP for the
+// host prefix); empty defaults to loopback; 0.0.0.0 passes through as the
+// user's explicit choice to publish on all interfaces.
+func (d *Draft) PublishHost() string {
+	switch d.ServerHost {
+	case "", "localhost":
+		return "127.0.0.1"
+	default:
+		return d.ServerHost
+	}
+}
 
 // BaseURL is the canonical control-plane URL derived from the server binding.
 // A 0.0.0.0 bind is reported as 127.0.0.1 since that is the reachable address.

@@ -1,0 +1,1447 @@
+{
+  "$defs": {
+    "AccessRequestsConfig": {
+      "description": "Access requests subsystem configuration.",
+      "properties": {
+        "canonical_base_url": {
+          "default": "",
+          "title": "Canonical Base Url",
+          "type": "string"
+        },
+        "ttl_days": {
+          "default": 7,
+          "title": "Ttl Days",
+          "type": "integer"
+        }
+      },
+      "title": "AccessRequestsConfig",
+      "type": "object"
+    },
+    "AdminAuthConfig": {
+      "description": "Admin authentication settings.",
+      "properties": {
+        "failed_login_lockout_seconds": {
+          "default": 900,
+          "title": "Failed Login Lockout Seconds",
+          "type": "integer"
+        },
+        "failed_login_lockout_threshold": {
+          "default": 5,
+          "title": "Failed Login Lockout Threshold",
+          "type": "integer"
+        },
+        "jwt_secret": {
+          "default": "**********",
+          "format": "password",
+          "title": "Jwt Secret",
+          "type": "string",
+          "writeOnly": true
+        },
+        "jwt_ttl_seconds": {
+          "default": 3600,
+          "exclusiveMinimum": 0,
+          "title": "Jwt Ttl Seconds",
+          "type": "integer"
+        },
+        "session_ttl_seconds": {
+          "default": 43200,
+          "exclusiveMinimum": 0,
+          "title": "Session Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "AdminAuthConfig",
+      "type": "object"
+    },
+    "AdminConfig": {
+      "description": "Admin surface configuration.",
+      "properties": {
+        "auth": {
+          "$ref": "#/$defs/AdminAuthConfig"
+        },
+        "invite": {
+          "$ref": "#/$defs/AdminInviteConfig"
+        }
+      },
+      "title": "AdminConfig",
+      "type": "object"
+    },
+    "AdminInviteConfig": {
+      "description": "Admin invite token settings.",
+      "properties": {
+        "pepper": {
+          "default": "**********",
+          "format": "password",
+          "title": "Pepper",
+          "type": "string",
+          "writeOnly": true
+        },
+        "ttl_days": {
+          "default": 7,
+          "title": "Ttl Days",
+          "type": "integer"
+        }
+      },
+      "title": "AdminInviteConfig",
+      "type": "object"
+    },
+    "AuthConfig": {
+      "description": "Platform-actors OAuth surface configuration.",
+      "properties": {
+        "access_ttl_seconds": {
+          "default": 3600,
+          "title": "Access Ttl Seconds",
+          "type": "integer"
+        },
+        "assertion_max_ttl_seconds": {
+          "default": 300,
+          "title": "Assertion Max Ttl Seconds",
+          "type": "integer"
+        },
+        "auth_code_ttl_seconds": {
+          "default": 300,
+          "title": "Auth Code Ttl Seconds",
+          "type": "integer"
+        },
+        "canonical_base_url": {
+          "default": "",
+          "title": "Canonical Base Url",
+          "type": "string"
+        },
+        "claim_ttl_seconds": {
+          "default": 900,
+          "title": "Claim Ttl Seconds",
+          "type": "integer"
+        },
+        "id_signing": {
+          "items": {
+            "$ref": "#/$defs/SigningKeyConfig"
+          },
+          "title": "Id Signing",
+          "type": "array"
+        },
+        "idp": {
+          "$ref": "#/$defs/IdpConfig"
+        },
+        "rat_ttl_seconds": {
+          "default": 900,
+          "title": "Rat Ttl Seconds",
+          "type": "integer"
+        },
+        "refresh_ttl_seconds": {
+          "default": 604800,
+          "title": "Refresh Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "AuthConfig",
+      "type": "object"
+    },
+    "BackendKind": {
+      "description": "Which shared-state implementation to build.\n\nDefined here as the single source of truth; later PRs (resilience §05)\nimport it from this package rather than defining a second enum.",
+      "enum": [
+        "memory",
+        "redis"
+      ],
+      "title": "BackendKind",
+      "type": "string"
+    },
+    "BaseModel": {
+      "properties": {},
+      "title": "BaseModel",
+      "type": "object"
+    },
+    "BrokerConfig": {
+      "description": "Broker surface configuration.",
+      "properties": {
+        "account_linking_base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Account Linking Base Url"
+        },
+        "egress": {
+          "$ref": "#/$defs/EgressConfig"
+        },
+        "idempotency": {
+          "$ref": "#/$defs/IdempotencyConfig"
+        },
+        "jobs_api_base_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobs Api Base Url"
+        },
+        "jwt_secret": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jwt Secret"
+        },
+        "jwt_verification": {
+          "$ref": "#/$defs/JwtVerificationConfig"
+        },
+        "resilience": {
+          "$ref": "#/$defs/BrokerResilienceConfig"
+        },
+        "resolve_cache_ttl_seconds": {
+          "default": 3.0,
+          "title": "Resolve Cache Ttl Seconds",
+          "type": "number"
+        },
+        "rule_cache_ttl_s": {
+          "default": 3.0,
+          "title": "Rule Cache Ttl S",
+          "type": "number"
+        },
+        "toolkit_cache_ttl_s": {
+          "default": 3.0,
+          "title": "Toolkit Cache Ttl S",
+          "type": "number"
+        },
+        "upstream_timeout_s": {
+          "default": 30.0,
+          "title": "Upstream Timeout S",
+          "type": "number"
+        }
+      },
+      "title": "BrokerConfig",
+      "type": "object"
+    },
+    "BrokerResilienceConfig": {
+      "description": "Resilience envelope: admission (§04 R1) + rate limit / circuit (§05).\n\nThe shared-state ``backend`` selection drives *both* the rate limiter and\nthe circuit breaker (memory default; Redis is cluster-wide, §06). Queue\nbackpressure / async-credential / retention knobs land in a later §05 slice.",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/StateBackendConfig"
+        },
+        "circuit_breaker": {
+          "$ref": "#/$defs/CircuitBreakerConfig"
+        },
+        "max_in_flight": {
+          "default": 200,
+          "title": "Max In Flight",
+          "type": "integer"
+        },
+        "rate_limit": {
+          "$ref": "#/$defs/RateLimitConfig"
+        },
+        "readiness_saturation_threshold": {
+          "default": 0.9,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "title": "Readiness Saturation Threshold",
+          "type": "number"
+        },
+        "request_deadline_s": {
+          "default": 30.0,
+          "title": "Request Deadline S",
+          "type": "number"
+        },
+        "retry": {
+          "$ref": "#/$defs/RetryConfig"
+        },
+        "shed_retry_after_s": {
+          "default": 5,
+          "title": "Shed Retry After S",
+          "type": "integer"
+        },
+        "upstream": {
+          "$ref": "#/$defs/UpstreamClientConfig"
+        }
+      },
+      "title": "BrokerResilienceConfig",
+      "type": "object"
+    },
+    "CatalogConfig": {
+      "description": "Public API catalog settings (manifest source + staleness).",
+      "properties": {
+        "manifest_max_age_seconds": {
+          "default": 86400,
+          "title": "Manifest Max Age Seconds",
+          "type": "integer"
+        },
+        "manifest_url": {
+          "default": "https://raw.githubusercontent.com/jentic/jentic-public-apis/main/apis/openapi/apis.json",
+          "title": "Manifest Url",
+          "type": "string"
+        },
+        "update_check_interval_seconds": {
+          "default": 86400,
+          "title": "Update Check Interval Seconds",
+          "type": "integer"
+        },
+        "update_sweep_deadline_seconds": {
+          "default": 300,
+          "title": "Update Sweep Deadline Seconds",
+          "type": "integer"
+        },
+        "update_sweep_jitter_ratio": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Update Sweep Jitter Ratio",
+          "type": "number"
+        },
+        "update_sweep_max_concurrency": {
+          "default": 4,
+          "title": "Update Sweep Max Concurrency",
+          "type": "integer"
+        }
+      },
+      "title": "CatalogConfig",
+      "type": "object"
+    },
+    "CircuitBreakerConfig": {
+      "description": "Per-upstream circuit breaker (§05 R5.1).\n\nCounts failures/totals per rolling ``window_s`` on the shared-state\nbackend's atomic counters; when the failure ratio crosses\n``failure_ratio`` the circuit opens (a ``set_if_absent`` latch) and\nfast-fails for ``cooldown_s``. ``observation`` mode tracks + emits\n``would_block`` but still calls the upstream (safe-rollout dry run).",
+      "properties": {
+        "cooldown_s": {
+          "default": 15,
+          "title": "Cooldown S",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "enforcement_mode": {
+          "default": "blocking",
+          "enum": [
+            "blocking",
+            "observation"
+          ],
+          "title": "Enforcement Mode",
+          "type": "string"
+        },
+        "failure_ratio": {
+          "default": 0.5,
+          "title": "Failure Ratio",
+          "type": "number"
+        },
+        "min_calls": {
+          "default": 10,
+          "title": "Min Calls",
+          "type": "integer"
+        },
+        "window_s": {
+          "default": 30,
+          "title": "Window S",
+          "type": "integer"
+        }
+      },
+      "title": "CircuitBreakerConfig",
+      "type": "object"
+    },
+    "ConnectConfig": {
+      "description": "Configuration for the OAuth connect flow.",
+      "properties": {
+        "state_secret": {
+          "default": "**********",
+          "format": "password",
+          "title": "State Secret",
+          "type": "string",
+          "writeOnly": true
+        },
+        "state_ttl_seconds": {
+          "default": 600,
+          "title": "State Ttl Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "ConnectConfig",
+      "type": "object"
+    },
+    "ControlSurfaceConfig": {
+      "description": "Control surface configuration.",
+      "properties": {
+        "access_requests": {
+          "$ref": "#/$defs/AccessRequestsConfig"
+        }
+      },
+      "title": "ControlSurfaceConfig",
+      "type": "object"
+    },
+    "CredentialsConfig": {
+      "description": "Credentials subsystem configuration.",
+      "properties": {
+        "connect": {
+          "$ref": "#/$defs/ConnectConfig"
+        },
+        "encryption": {
+          "$ref": "#/$defs/EncryptionConfig"
+        },
+        "providers": {
+          "additionalProperties": {
+            "discriminator": {
+              "mapping": {
+                "direct_oauth2": "#/$defs/DirectOAuth2ProviderConfig",
+                "pipedream": "#/$defs/PipedreamProviderConfig"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/DirectOAuth2ProviderConfig"
+              },
+              {
+                "$ref": "#/$defs/PipedreamProviderConfig"
+              }
+            ]
+          },
+          "title": "Providers",
+          "type": "object"
+        }
+      },
+      "title": "CredentialsConfig",
+      "type": "object"
+    },
+    "DatabaseConfig": {
+      "description": "Connection parameters for a single database.\n\nSupports two backends:\n\n- ``postgres`` (default): uses host/port/user/password/name + schema_name.\n- ``sqlite``: uses ``path`` (a single-file database). The Postgres\n  connection fields are ignored.",
+      "properties": {
+        "backend": {
+          "default": "postgres",
+          "enum": [
+            "postgres",
+            "sqlite"
+          ],
+          "title": "Backend",
+          "type": "string"
+        },
+        "busy_timeout_ms": {
+          "default": 5000,
+          "title": "Busy Timeout Ms",
+          "type": "integer"
+        },
+        "host": {
+          "default": "localhost",
+          "title": "Host",
+          "type": "string"
+        },
+        "journal_mode": {
+          "default": "WAL",
+          "title": "Journal Mode",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "password": {
+          "default": "",
+          "format": "password",
+          "title": "Password",
+          "type": "string",
+          "writeOnly": true
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "pool_max": {
+          "default": 10,
+          "title": "Pool Max",
+          "type": "integer"
+        },
+        "port": {
+          "default": 5432,
+          "title": "Port",
+          "type": "integer"
+        },
+        "schema_name": {
+          "default": "public",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "title": "Schema Name",
+          "type": "string"
+        },
+        "user": {
+          "default": "postgres",
+          "title": "User",
+          "type": "string"
+        }
+      },
+      "title": "DatabaseConfig",
+      "type": "object"
+    },
+    "DatabasesConfig": {
+      "description": "Named database connections.",
+      "properties": {
+        "admin": {
+          "$ref": "#/$defs/DatabaseConfig"
+        },
+        "control": {
+          "$ref": "#/$defs/DatabaseConfig"
+        },
+        "registry": {
+          "$ref": "#/$defs/DatabaseConfig"
+        }
+      },
+      "required": [
+        "registry",
+        "admin",
+        "control"
+      ],
+      "title": "DatabasesConfig",
+      "type": "object"
+    },
+    "DirectOAuth2ProviderConfig": {
+      "description": "Configuration for a direct OAuth2 provider (full settings land in M5).",
+      "properties": {
+        "authorize_extra_params": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Authorize Extra Params",
+          "type": "object"
+        },
+        "default_scopes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Default Scopes",
+          "type": "array"
+        },
+        "expiry_skew_seconds": {
+          "default": 60,
+          "title": "Expiry Skew Seconds",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "direct_oauth2",
+          "default": "direct_oauth2",
+          "title": "Kind",
+          "type": "string"
+        },
+        "redirect_uri": {
+          "title": "Redirect Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "redirect_uri"
+      ],
+      "title": "DirectOAuth2ProviderConfig",
+      "type": "object"
+    },
+    "EgressConfig": {
+      "description": "Outbound SSRF/egress policy for upstream calls (§08 E2).\n\nDefaults are **strict** (both lists empty) — identical to the historical\nhard-coded behaviour: every private range and the cloud-metadata host are\nblocked. The two allowlists exist because the broker is frequently installed\n*inside* a corporate network to bridge to internal/legacy APIs, where the\ndefault block is a false positive. Both are opt-in, auditable operator\ndecisions; the cloud-metadata IP is a **hard, non-overridable** deny so a\ncredential-stealing SSRF can never be allowlisted by accident.",
+      "properties": {
+        "allowed_internal_domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Internal Domains",
+          "type": "array"
+        },
+        "allowed_private_subnets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Private Subnets",
+          "type": "array"
+        },
+        "dns_pinning_enabled": {
+          "default": true,
+          "title": "Dns Pinning Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "EgressConfig",
+      "type": "object"
+    },
+    "EncryptionConfig": {
+      "description": "Envelope-encryption keyset configuration.",
+      "properties": {
+        "active_id": {
+          "default": "v1",
+          "title": "Active Id",
+          "type": "string"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/EncryptionKey"
+          },
+          "title": "Entries",
+          "type": "array"
+        }
+      },
+      "title": "EncryptionConfig",
+      "type": "object"
+    },
+    "EncryptionKey": {
+      "description": "A single named encryption key.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "material": {
+          "format": "password",
+          "title": "Material",
+          "type": "string",
+          "writeOnly": true
+        }
+      },
+      "required": [
+        "id",
+        "material"
+      ],
+      "title": "EncryptionKey",
+      "type": "object"
+    },
+    "IdempotencyConfig": {
+      "description": "``Idempotency-Key`` replay store (§07, PR-E/1 slim).\n\nSync ``FULL``-mode replay over the shared-state ``AtomicStore`` (memory\ndefault; Redis ⇒ cross-instance). Two TTLs: a *short* ``pending_ttl_s`` claim\n(sized to the request deadline + buffer, so a crash mid-flight frees the key\nin seconds rather than the full replay window) promoted to the *long*\n``ttl_s`` only once the response is stored. Responses over\n``max_response_bytes`` are recorded without their body (replay still prevents\na duplicate side-effect; only byte-for-byte body replay is dropped).\n\nCompliance modes (``metadata_only`` / kill-switch), ``require_for_mutations``,\nasync same-``job_id`` replay, and at-rest encryption are later §07 slices.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_response_bytes": {
+          "default": 262144,
+          "title": "Max Response Bytes",
+          "type": "integer"
+        },
+        "pending_ttl_s": {
+          "default": 35.0,
+          "title": "Pending Ttl S",
+          "type": "number"
+        },
+        "ttl_s": {
+          "default": 86400.0,
+          "title": "Ttl S",
+          "type": "number"
+        }
+      },
+      "title": "IdempotencyConfig",
+      "type": "object"
+    },
+    "IdpConfig": {
+      "description": "External OIDC identity provider configuration.",
+      "properties": {
+        "authorization_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authorization Endpoint"
+        },
+        "client_id": {
+          "default": "",
+          "title": "Client Id",
+          "type": "string"
+        },
+        "client_secret": {
+          "default": "",
+          "format": "password",
+          "title": "Client Secret",
+          "type": "string",
+          "writeOnly": true
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "exchange_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exchange Endpoint"
+        },
+        "hosted_domain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hosted Domain"
+        },
+        "issuer": {
+          "default": "",
+          "title": "Issuer",
+          "type": "string"
+        },
+        "provider": {
+          "default": "oidc",
+          "title": "Provider",
+          "type": "string"
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
+        },
+        "userinfo_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Userinfo Endpoint"
+        }
+      },
+      "title": "IdpConfig",
+      "type": "object"
+    },
+    "IngestConfig": {
+      "description": "Spec ingestion settings (fetch limits, timeouts, egress policy).",
+      "properties": {
+        "egress": {
+          "$ref": "#/$defs/EgressConfig"
+        },
+        "fetch_timeout_s": {
+          "default": 30.0,
+          "title": "Fetch Timeout S",
+          "type": "number"
+        },
+        "max_redirects": {
+          "default": 5,
+          "title": "Max Redirects",
+          "type": "integer"
+        },
+        "max_spec_bytes": {
+          "default": 26214400,
+          "title": "Max Spec Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "IngestConfig",
+      "type": "object"
+    },
+    "JwtVerificationConfig": {
+      "description": "Hardened inbound-JWT verification for the broker edge (§08 E1).\n\nWhen ``trusted_issuers`` is non-empty the broker verifies self-contained JWTs\nagainst the issuers' published JWKS (asymmetric, key-rotation-aware) and\nenforces ``iss`` (trusted set), ``aud`` (``audience``), and ``exp``/``nbf``\nwith ``leeway_s`` clock-skew. Empty (the default) leaves the asymmetric path\noff — the legacy HS256 ``broker.jwt_secret`` path (dev/test) still applies.",
+      "properties": {
+        "audience": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audience"
+        },
+        "leeway_s": {
+          "default": 60.0,
+          "title": "Leeway S",
+          "type": "number"
+        },
+        "trusted_issuers": {
+          "items": {
+            "$ref": "#/$defs/TrustedIssuerConfig"
+          },
+          "title": "Trusted Issuers",
+          "type": "array"
+        }
+      },
+      "title": "JwtVerificationConfig",
+      "type": "object"
+    },
+    "LoggingConfig": {
+      "description": "File logging sink (in addition to stdout).",
+      "properties": {
+        "file_backup_count": {
+          "default": 5,
+          "title": "File Backup Count",
+          "type": "integer"
+        },
+        "file_dir": {
+          "default": ".jentic/logs",
+          "title": "File Dir",
+          "type": "string"
+        },
+        "file_enabled": {
+          "default": false,
+          "title": "File Enabled",
+          "type": "boolean"
+        },
+        "file_max_bytes": {
+          "default": 10485760,
+          "title": "File Max Bytes",
+          "type": "integer"
+        },
+        "file_name": {
+          "default": "app.log",
+          "title": "File Name",
+          "type": "string"
+        }
+      },
+      "title": "LoggingConfig",
+      "type": "object"
+    },
+    "MetricsConfig": {
+      "description": "Metrics exporter configuration.",
+      "properties": {
+        "export_interval_seconds": {
+          "default": 15,
+          "title": "Export Interval Seconds",
+          "type": "integer"
+        },
+        "exporter": {
+          "default": "otlp",
+          "enum": [
+            "otlp",
+            "prometheus",
+            "none"
+          ],
+          "title": "Exporter",
+          "type": "string"
+        }
+      },
+      "title": "MetricsConfig",
+      "type": "object"
+    },
+    "ObservabilityConfig": {
+      "description": "Observability settings (metrics, tracing knobs).",
+      "properties": {
+        "metrics": {
+          "$ref": "#/$defs/MetricsConfig"
+        },
+        "tracing": {
+          "$ref": "#/$defs/TracingConfig"
+        }
+      },
+      "title": "ObservabilityConfig",
+      "type": "object"
+    },
+    "PipedreamProviderConfig": {
+      "description": "Configuration for a Pipedream-hosted OAuth provider (full settings land in M6).",
+      "properties": {
+        "client_id": {
+          "title": "Client Id",
+          "type": "string"
+        },
+        "client_secret": {
+          "format": "password",
+          "title": "Client Secret",
+          "type": "string",
+          "writeOnly": true
+        },
+        "connect_base_url": {
+          "default": "https://api.pipedream.com/v1",
+          "title": "Connect Base Url",
+          "type": "string"
+        },
+        "environment": {
+          "default": "production",
+          "enum": [
+            "production",
+            "development"
+          ],
+          "title": "Environment",
+          "type": "string"
+        },
+        "expiry_skew_seconds": {
+          "default": 60,
+          "title": "Expiry Skew Seconds",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "pipedream",
+          "default": "pipedream",
+          "title": "Kind",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id",
+        "client_id",
+        "client_secret"
+      ],
+      "title": "PipedreamProviderConfig",
+      "type": "object"
+    },
+    "RateLimitConfig": {
+      "description": "Per-caller token-bucket rate limit (§05 R2).\n\nKeyed on the resolved ``actor_id`` and enforced in a post-auth dependency\n(the actor isn't known at admission time, so this can't be a plain\npre-auth middleware). The token bucket itself lives on the shared-state\nbackend (``RateLimitStore``); with the memory backend the limit is\nper-instance, with Redis (§06) it is cluster-wide — no call-site change.",
+      "properties": {
+        "burst": {
+          "default": 100,
+          "title": "Burst",
+          "type": "integer"
+        },
+        "default_rpm": {
+          "default": 600,
+          "title": "Default Rpm",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "RateLimitConfig",
+      "type": "object"
+    },
+    "ReleaseCheckConfig": {
+      "description": "\"Update available\" check for the running jentic-one build itself.\n\nPowers ``GET /system/version``: the backend asks GitHub for the newest\npublished release of ``repo`` and compares it against the running build so the\nweb console can surface an \"update available\" banner (and the user menu can\nalways show the current version). This is about *jentic-one's own* release —\ndistinct from ``CatalogConfig``, which tracks the public *API catalog*.\n\nRuns only on a ``local`` backend (a self-hosted install the operator can\nactually update); the hosted platform (``server.backend == \"remote\"``) skips\nit. The result is cached in-process for ``cache_ttl_seconds`` (fetch-on-read,\nno background job), so at most one GitHub request happens per TTL regardless\nof how many clients poll. Every failure degrades to \"latest unknown\" (no\nbanner) rather than erroring — the version probe must never break the app.",
+      "properties": {
+        "cache_ttl_seconds": {
+          "default": 21600,
+          "title": "Cache Ttl Seconds",
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "repo": {
+          "default": "jentic/jentic-one",
+          "title": "Repo",
+          "type": "string"
+        }
+      },
+      "title": "ReleaseCheckConfig",
+      "type": "object"
+    },
+    "RetryConfig": {
+      "description": "Idempotency-aware upstream retry (§09 E4.1).\n\nThe ``RetryRunner`` decorator retries a failed attempt **only** when it is\nsafe to do so: a connect-phase failure (no bytes on the wire) is retryable\nfor any method, while a post-send failure (read timeout, mirrored ``429``/\n``503``) is retried only for idempotent methods or when an\n``Idempotency-Key`` is present — a blind ``POST`` retry is a double-spend.\nEach attempt still flows through the circuit breaker (retry *outside*,\nbreaker *inside*); the whole loop is bounded by the request deadline.",
+      "properties": {
+        "base_backoff_s": {
+          "default": 0.2,
+          "title": "Base Backoff S",
+          "type": "number"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "default": 3,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "max_backoff_s": {
+          "default": 5.0,
+          "title": "Max Backoff S",
+          "type": "number"
+        },
+        "retry_statuses": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Retry Statuses",
+          "type": "array"
+        }
+      },
+      "title": "RetryConfig",
+      "type": "object"
+    },
+    "RuntimeConfig": {
+      "description": "Hot-reloadable runtime flags.",
+      "properties": {
+        "debug": {
+          "default": false,
+          "title": "Debug",
+          "type": "boolean"
+        },
+        "log_level": {
+          "default": "INFO",
+          "title": "Log Level",
+          "type": "string"
+        },
+        "maintenance_mode": {
+          "default": false,
+          "title": "Maintenance Mode",
+          "type": "boolean"
+        }
+      },
+      "title": "RuntimeConfig",
+      "type": "object"
+    },
+    "SearchConfig": {
+      "description": "Search configuration.\n\nThe built-in mode is \"lexical\" (BM25 on SQLite, native full-text on\nPostgreSQL). ``search_mode`` is validated against the registered\nSearchStrategy set at resolve time (``resolve_strategy``), so an unknown mode\nfails loudly with the available modes for the active dialect rather than at\nconfig load. Additional modes (e.g. \"semantic\", \"vector\") can be registered\nvia ``register_strategy`` without editing this schema.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "search_enabled": {
+          "default": true,
+          "title": "Search Enabled",
+          "type": "boolean"
+        },
+        "search_mode": {
+          "default": "lexical",
+          "title": "Search Mode",
+          "type": "string"
+        }
+      },
+      "title": "SearchConfig",
+      "type": "object"
+    },
+    "SecurityConfig": {
+      "description": "Platform security event thresholds.",
+      "properties": {
+        "auth_failure_event_threshold": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Auth Failure Event Threshold",
+          "type": "integer"
+        },
+        "credential_expiring_soon_window_h": {
+          "default": 72,
+          "minimum": 1,
+          "title": "Credential Expiring Soon Window H",
+          "type": "integer"
+        },
+        "credential_expiry_sweep_interval_ticks": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Credential Expiry Sweep Interval Ticks",
+          "type": "integer"
+        },
+        "execution_repeated_failure_critical_threshold": {
+          "default": 20,
+          "minimum": 1,
+          "title": "Execution Repeated Failure Critical Threshold",
+          "type": "integer"
+        },
+        "execution_repeated_failure_threshold": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Execution Repeated Failure Threshold",
+          "type": "integer"
+        },
+        "execution_repeated_failure_window_s": {
+          "default": 300,
+          "minimum": 1,
+          "title": "Execution Repeated Failure Window S",
+          "type": "integer"
+        }
+      },
+      "title": "SecurityConfig",
+      "type": "object"
+    },
+    "ServerConfig": {
+      "description": "HTTP server settings.",
+      "properties": {
+        "backend": {
+          "default": "local",
+          "enum": [
+            "local",
+            "remote"
+          ],
+          "title": "Backend",
+          "type": "string"
+        },
+        "host": {
+          "default": "0.0.0.0",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8000,
+          "title": "Port",
+          "type": "integer"
+        },
+        "reload": {
+          "default": false,
+          "title": "Reload",
+          "type": "boolean"
+        }
+      },
+      "title": "ServerConfig",
+      "type": "object"
+    },
+    "ServicesConfig": {
+      "description": "Service-level settings (immutable after boot).",
+      "properties": {
+        "request_timeout_s": {
+          "default": 30.0,
+          "title": "Request Timeout S",
+          "type": "number"
+        },
+        "retry_backoff_s": {
+          "default": 1.0,
+          "title": "Retry Backoff S",
+          "type": "number"
+        },
+        "retry_max": {
+          "default": 3,
+          "title": "Retry Max",
+          "type": "integer"
+        }
+      },
+      "title": "ServicesConfig",
+      "type": "object"
+    },
+    "SigningKeyConfig": {
+      "description": "A single ES256 signing key for ID token issuance.",
+      "properties": {
+        "kid": {
+          "title": "Kid",
+          "type": "string"
+        },
+        "private_key_pem": {
+          "format": "password",
+          "title": "Private Key Pem",
+          "type": "string",
+          "writeOnly": true
+        }
+      },
+      "required": [
+        "kid",
+        "private_key_pem"
+      ],
+      "title": "SigningKeyConfig",
+      "type": "object"
+    },
+    "StateBackendConfig": {
+      "description": "Configuration for :func:`build_state_backend`.",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/BackendKind",
+          "default": "memory"
+        },
+        "redis_key_prefix": {
+          "default": "jentic:broker:",
+          "title": "Redis Key Prefix",
+          "type": "string"
+        },
+        "redis_url": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redis Url"
+        }
+      },
+      "title": "StateBackendConfig",
+      "type": "object"
+    },
+    "TelemetryConfig": {
+      "description": "Anonymous product-telemetry settings (issue #446).\n\nDefaults to **OFF**: an instance whose config omits this block (non-onboarded\nor hand-rolled) sends nothing. The onboarding CLI writes ``enabled``\nexplicitly (a yes-default ``[Y]/n`` prompt) so the on-by-default UX lives in\nthe prompt, not the code default. ``instance_id`` seeds the durable admin-DB\nidentity row on first startup for opted-in instances.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "endpoint": {
+          "default": "https://api.jentic.com/api/v1",
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "flush_interval_s": {
+          "default": 30.0,
+          "title": "Flush Interval S",
+          "type": "number"
+        },
+        "instance_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance Id"
+        },
+        "max_batch": {
+          "default": 100,
+          "title": "Max Batch",
+          "type": "integer"
+        },
+        "queue_max": {
+          "default": 10000,
+          "title": "Queue Max",
+          "type": "integer"
+        },
+        "request_timeout_s": {
+          "default": 5.0,
+          "title": "Request Timeout S",
+          "type": "number"
+        }
+      },
+      "title": "TelemetryConfig",
+      "type": "object"
+    },
+    "TracingConfig": {
+      "description": "Tracing exporter configuration.",
+      "properties": {
+        "exporter": {
+          "default": "otlp",
+          "enum": [
+            "otlp",
+            "none"
+          ],
+          "title": "Exporter",
+          "type": "string"
+        }
+      },
+      "title": "TracingConfig",
+      "type": "object"
+    },
+    "TrustedIssuerConfig": {
+      "description": "A single trusted token issuer (IdP) and where to fetch its public keys.\n\nThe verifier holds one JWKS client per issuer; an unknown ``kid`` triggers a\nbounded re-fetch (key rotation picked up without a restart). ``algorithms``\nis the per-issuer asymmetric allowlist — HMAC/``none`` are rejected here so an\nissuer can't be downgraded to a symmetric/forgeable signature.",
+      "properties": {
+        "algorithms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Algorithms",
+          "type": "array"
+        },
+        "issuer": {
+          "title": "Issuer",
+          "type": "string"
+        },
+        "jwks_url": {
+          "title": "Jwks Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "jwks_url"
+      ],
+      "title": "TrustedIssuerConfig",
+      "type": "object"
+    },
+    "UpstreamClientConfig": {
+      "description": "Bounds for the single shared outbound ``httpx.AsyncClient`` (§04, PR-B).\n\nThe timeouts are httpx semantics: ``read_timeout_s`` is the *between-bytes*\ngap timeout (per read), **not** a whole-stream cap — a trickle that keeps\nsending under the limit can hold a pool slot open. The overall transfer\ndeadline is owned by the response-streaming guard (§08/E2.4), not here.",
+      "properties": {
+        "connect_timeout_s": {
+          "default": 5.0,
+          "title": "Connect Timeout S",
+          "type": "number"
+        },
+        "http2": {
+          "default": true,
+          "title": "Http2",
+          "type": "boolean"
+        },
+        "max_connections": {
+          "default": 200,
+          "title": "Max Connections",
+          "type": "integer"
+        },
+        "max_keepalive": {
+          "default": 50,
+          "title": "Max Keepalive",
+          "type": "integer"
+        },
+        "max_per_host": {
+          "default": 50,
+          "title": "Max Per Host",
+          "type": "integer"
+        },
+        "max_request_bytes": {
+          "default": 10485760,
+          "title": "Max Request Bytes",
+          "type": "integer"
+        },
+        "max_request_bytes_by_type": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Max Request Bytes By Type",
+          "type": "object"
+        },
+        "max_response_bytes": {
+          "default": 10485760,
+          "title": "Max Response Bytes",
+          "type": "integer"
+        },
+        "pool_timeout_s": {
+          "default": 2.0,
+          "title": "Pool Timeout S",
+          "type": "number"
+        },
+        "read_timeout_s": {
+          "default": 30.0,
+          "title": "Read Timeout S",
+          "type": "number"
+        },
+        "stream_passthrough_enabled": {
+          "default": true,
+          "title": "Stream Passthrough Enabled",
+          "type": "boolean"
+        },
+        "transfer_deadline_s": {
+          "default": 300.0,
+          "title": "Transfer Deadline S",
+          "type": "number"
+        },
+        "write_timeout_s": {
+          "default": 30.0,
+          "title": "Write Timeout S",
+          "type": "number"
+        }
+      },
+      "title": "UpstreamClientConfig",
+      "type": "object"
+    },
+    "WorkerConfig": {
+      "description": "Background job-worker durability knobs (§09 E4.2).\n\nThe worker claims a job, sets a **visibility deadline** (``visibility_timeout_s``\nfrom claim), and processes it. A job left ``RUNNING`` past that deadline by a\ncrashed worker/pod is reclaimed on a later poll. A handler failure requeues the\njob with capped exponential backoff up to ``max_attempts`` claims; beyond that\nit is dead-lettered (poison-message handling) rather than looped forever.",
+      "properties": {
+        "drain_timeout_s": {
+          "default": 25.0,
+          "title": "Drain Timeout S",
+          "type": "number"
+        },
+        "max_attempts": {
+          "default": 5,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "retry_backoff_base_s": {
+          "default": 2.0,
+          "title": "Retry Backoff Base S",
+          "type": "number"
+        },
+        "retry_backoff_max_s": {
+          "default": 60.0,
+          "title": "Retry Backoff Max S",
+          "type": "number"
+        },
+        "visibility_timeout_s": {
+          "default": 120.0,
+          "title": "Visibility Timeout S",
+          "type": "number"
+        }
+      },
+      "title": "WorkerConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top-level application configuration.",
+  "properties": {
+    "admin": {
+      "$ref": "#/$defs/AdminConfig"
+    },
+    "apps": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Apps",
+      "type": "array"
+    },
+    "auth": {
+      "$ref": "#/$defs/AuthConfig"
+    },
+    "broker": {
+      "$ref": "#/$defs/BrokerConfig"
+    },
+    "catalog": {
+      "$ref": "#/$defs/CatalogConfig"
+    },
+    "control": {
+      "$ref": "#/$defs/ControlSurfaceConfig"
+    },
+    "credentials": {
+      "$ref": "#/$defs/CredentialsConfig"
+    },
+    "databases": {
+      "$ref": "#/$defs/DatabasesConfig"
+    },
+    "ingest": {
+      "$ref": "#/$defs/IngestConfig"
+    },
+    "logging": {
+      "$ref": "#/$defs/LoggingConfig"
+    },
+    "observability": {
+      "$ref": "#/$defs/ObservabilityConfig"
+    },
+    "release_check": {
+      "$ref": "#/$defs/ReleaseCheckConfig"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeConfig"
+    },
+    "search": {
+      "$ref": "#/$defs/SearchConfig"
+    },
+    "security": {
+      "$ref": "#/$defs/SecurityConfig"
+    },
+    "server": {
+      "$ref": "#/$defs/ServerConfig"
+    },
+    "services": {
+      "$ref": "#/$defs/ServicesConfig"
+    },
+    "telemetry": {
+      "$ref": "#/$defs/TelemetryConfig"
+    },
+    "worker": {
+      "$ref": "#/$defs/WorkerConfig"
+    }
+  },
+  "required": [
+    "databases"
+  ],
+  "title": "AppConfig",
+  "type": "object"
+}

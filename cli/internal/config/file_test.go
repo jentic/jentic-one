@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -31,7 +33,6 @@ func TestLoadMissingFile(t *testing.T) {
 func TestLoadPresentFile(t *testing.T) {
 	paths := writeConfig(t, `
 base_url: http://example:9000
-default_profile: work
 broker:
   scheme: http
   host: localhost:4000
@@ -43,7 +44,7 @@ broker:
 	if !cfg.Loaded {
 		t.Fatalf("Loaded should be true")
 	}
-	if cfg.BaseURL != "http://example:9000" || cfg.DefaultProfile != "work" {
+	if cfg.BaseURL != "http://example:9000" {
 		t.Errorf("unexpected top-level: %+v", cfg)
 	}
 	if cfg.Broker.Scheme != "http" || cfg.Broker.Host != "localhost:4000" {
@@ -62,9 +63,6 @@ func TestResolvedDefaults(t *testing.T) {
 	cfg := &FileConfig{}
 	if got := cfg.ResolvedBaseURL(); got != DefaultBaseURL {
 		t.Errorf("ResolvedBaseURL = %q, want default", got)
-	}
-	if got := cfg.ResolvedDefaultProfile(); got != DefaultProfile {
-		t.Errorf("ResolvedDefaultProfile = %q, want default", got)
 	}
 }
 
@@ -118,53 +116,16 @@ func TestResolvedPrecedence(t *testing.T) {
 		t.Errorf("broker host flag should win: got %q", got)
 	}
 
-	if got := cfg.ResolvedProfileName("explicit"); got != "explicit" {
-		t.Errorf("profile flag should win: got %q", got)
-	}
 	if got := cfg.ResolvedBaseURLOr(""); got != DefaultBaseURL {
 		t.Errorf("base url empty flag -> default: got %q", got)
 	}
 }
 
-func TestResolvedProfilePrecedence(t *testing.T) {
-	cfg := &FileConfig{DefaultProfile: "cfg"}
-
-	t.Run("flag beats env and config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName("flagprof"); got != "flagprof" {
-			t.Errorf("flag should win: got %q", got)
-		}
-	})
-
-	t.Run("env beats config", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "envprof")
-		if got := cfg.ResolvedProfileName(""); got != "envprof" {
-			t.Errorf("env should win over config: got %q", got)
-		}
-	})
-
-	t.Run("config beats default when env unset", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		if got := cfg.ResolvedProfileName(""); got != "cfg" {
-			t.Errorf("config should win: got %q", got)
-		}
-	})
-
-	t.Run("built-in default when all empty", func(t *testing.T) {
-		t.Setenv(ProfileEnv, "")
-		empty := &FileConfig{}
-		if got := empty.ResolvedProfileName(""); got != DefaultProfile {
-			t.Errorf("default should win: got %q", got)
-		}
-	})
-}
-
 func TestSaveRoundTrip(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	cfg := &FileConfig{
-		BaseURL:        "http://example:9000",
-		DefaultProfile: "work",
-		Broker:         BrokerConfig{Scheme: "http", Host: "localhost:4000"},
+		BaseURL: "http://example:9000",
+		Broker:  BrokerConfig{Scheme: "http", Host: "localhost:4000"},
 	}
 	if err := cfg.Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -177,29 +138,11 @@ func TestSaveRoundTrip(t *testing.T) {
 	if !got.Loaded {
 		t.Fatalf("Loaded should be true after Save")
 	}
-	if got.BaseURL != cfg.BaseURL || got.DefaultProfile != cfg.DefaultProfile {
+	if got.BaseURL != cfg.BaseURL {
 		t.Errorf("top-level mismatch: %+v", got)
 	}
 	if got.Broker != cfg.Broker {
 		t.Errorf("nested mismatch: %+v", got)
-	}
-}
-
-func TestSetDefaultProfile(t *testing.T) {
-	paths := writeConfig(t, "base_url: http://example:9000\ndefault_profile: old\n")
-	if err := SetDefaultProfile(paths, "new"); err != nil {
-		t.Fatalf("SetDefaultProfile: %v", err)
-	}
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.DefaultProfile != "new" {
-		t.Errorf("DefaultProfile = %q, want new", got.DefaultProfile)
-	}
-	// Existing fields must survive the rewrite.
-	if got.BaseURL != "http://example:9000" {
-		t.Errorf("base_url not preserved: %q", got.BaseURL)
 	}
 }
 
@@ -299,20 +242,69 @@ func TestMutateReloadsBeforeApplying(t *testing.T) {
 	}
 }
 
+// TestMutateConcurrentContention exercises the advisory lock under REAL
+// contention (review gap: the lock had no contention test, and the Windows
+// LockFileEx path was never executed beyond smoke). N goroutines — separate
+// lock-file descriptors, exactly like N concurrent jentic processes — each
+// Mutate a distinct granted dir. The lock serialises the read-modify-write
+// cycles, so ALL N grants must survive; any lost update means two writers
+// interleaved inside their critical sections. Runs on every platform, so CI's
+// Windows job exercises lock_windows.go for real.
+func TestMutateConcurrentContention(t *testing.T) {
+	paths := Paths{Root: t.TempDir()}
+	base := &FileConfig{}
+	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
+	if err := base.Save(paths); err != nil {
+		t.Fatalf("seed save: %v", err)
+	}
+
+	const writers = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := Mutate(paths, func(c *FileConfig) error {
+				c.AddGrantedDir(fmt.Sprintf("/opt/a/dir-%02d", i))
+				return nil
+			})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Mutate: %v", err)
+		}
+	}
+
+	got, err := Load(paths)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	acct, _ := got.AgentAccount()
+	if len(acct.GrantedDirs) != writers {
+		t.Fatalf("lost update under contention: %d/%d grants survived: %v",
+			len(acct.GrantedDirs), writers, acct.GrantedDirs)
+	}
+}
+
 // TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
 // the on-disk config is unchanged when fn returns an error.
 func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
-	paths := writeConfig(t, "default_profile: keep\n")
+	paths := writeConfig(t, "base_url: keep\n")
 	_, err := Mutate(paths, func(c *FileConfig) error {
-		c.DefaultProfile = "clobbered"
+		c.BaseURL = "clobbered"
 		return os.ErrInvalid
 	})
 	if err == nil {
 		t.Fatal("expected Mutate to propagate the fn error")
 	}
 	got, _ := Load(paths)
-	if got.DefaultProfile != "keep" {
-		t.Errorf("failed Mutate must not persist changes, got %q", got.DefaultProfile)
+	if got.BaseURL != "keep" {
+		t.Errorf("failed Mutate must not persist changes, got %q", got.BaseURL)
 	}
 }
 
@@ -321,7 +313,7 @@ func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
 // no stray .config-*.tmp.
 func TestSaveLeavesNoTempFile(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
-	if err := (&FileConfig{DefaultProfile: "x"}).Save(paths); err != nil {
+	if err := (&FileConfig{BaseURL: "x"}).Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	entries, err := os.ReadDir(paths.Dir())

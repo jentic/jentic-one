@@ -527,7 +527,7 @@ installed_binary_path() { printf '%s/%s' "$JENTIC_INSTALL_DIR" "$1"; }
 
 build() {
   step "Building ${CTL_BINARY} + ${API_BINARY}"
-  local pkg="github.com/jentic/jentic-one/cli/internal/cmd"
+  local pkg="github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
   local date_now
   date_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 

@@ -33,6 +33,11 @@ Install `jenticctl` to deploy Jentic One locally or manage an existing environme
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
 
+> [!NOTE]
+> **Windows:** the installer is bash-only. Run it inside **WSL**, or install the
+> prebuilt binaries directly — the `jentic` agent CLI works natively on Windows.
+> See the [platform support matrix](cli/README.md#supported-platforms).
+
 ## What is Jentic One?
 
 AI agents increasingly need to call real third-party APIs — but handing an agent your raw API keys is a security problem. Jentic One is a **self-hosted gateway** that keeps that from happening: you register the APIs an agent may use, store the credentials once, and the agent calls out through the Broker. The Broker injects the right credential at execution time and forwards the request, so **secrets never leave your infrastructure** and never reach the agent. Every call is governed by fine-grained permissions and recorded in an append-only audit log.
@@ -79,6 +84,9 @@ Install the CLI and stand up a local stack with one command:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
 ```
+
+On **Windows**, run this inside WSL (or install the binaries directly — see
+[supported platforms](cli/README.md#supported-platforms)).
 
 Or work from source:
 

@@ -23,9 +23,9 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
   - id: jentic
     main: ./cmd/jentic
     binary: jentic
@@ -36,9 +36,9 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.version={{ .Version }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.commit={{ .Commit }}
-      - -X github.com/jentic/jentic-one/cli/internal/cmd.date={{ .Date }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.version={{ .Version }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.commit={{ .Commit }}
+      - -X github.com/jentic/jentic-one/cli/internal/cli/cmdcore.date={{ .Date }}
 
 archives:
   - id: default

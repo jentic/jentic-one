@@ -1,5 +1,13 @@
 # Switching to an agent-owned profile should run operations as the agent
 
+> **Status (V1 design history — superseded by the V2 context model).** This
+> document is written in V1 terms (`profile use`, `default_profile`,
+> `config.ResolvedProfileName`, `App.discoverProfiles`), none of which survive
+> the V2 activation: the flat `profile` surface was removed and replaced by the
+> context/identity model (a hidden deprecated `profile` shim maps to `context`).
+> Read it for the run-as design rationale, not as a description of the current
+> CLI. The original status note follows.
+>
 > **Status:** implemented, via a simpler approach than the re-exec design this
 > document originally proposed. Superseded by
 > [`single-agent-user-plan.md`](single-agent-user-plan.md) (Phase 5). See
