@@ -51,6 +51,8 @@ func (a *app) runCatalogBrowser(ctx context.Context) error {
 	m := &catalogBrowser{
 		ctx:        ctx,
 		client:     client,
+		st:         theme.StylesFromContext(ctx),
+		themeName:  theme.ThemeNameFromContext(ctx),
 		limit:      catalogBrowseLimit,
 		width:      90,
 		height:     24,
@@ -65,6 +67,12 @@ func (a *app) runCatalogBrowser(ctx context.Context) error {
 type catalogBrowser struct {
 	ctx    context.Context
 	client *catalogClient
+
+	// st is the palette-bound style set (resolved from ctx at construction);
+	// themeName the resolved theme name for the logo gradient, so the browser
+	// re-tints under --theme light/no-color like every other surface.
+	st        theme.Styles
+	themeName string
 
 	entries    []catalogEntry
 	cursor     int
@@ -231,13 +239,13 @@ func (m *catalogBrowser) onRefresh(msg catRefreshMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		var he *HTTPError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
-			m.status = theme.Warnf("refresh needs org:admin")
+			m.status = m.st.Warnf("refresh needs org:admin")
 			return m, nil
 		}
-		m.status = theme.Warnf("refresh failed: %v", msg.err)
+		m.status = m.st.Warnf("refresh failed: %v", msg.err)
 		return m, nil
 	}
-	m.status = theme.Successf("cache updated · %d entries", msg.count)
+	m.status = m.st.Successf("cache updated · %d entries", msg.count)
 	// Reload the list from the freshly-refreshed snapshot.
 	m.loading = true
 	return m, m.loadPage(true)
@@ -271,7 +279,7 @@ func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
 		m.importing = ""
 	}
 	if msg.err != nil {
-		m.status = theme.Warnf("import %s failed: %v", msg.apiID, msg.err)
+		m.status = m.st.Warnf("import %s failed: %v", msg.apiID, msg.err)
 		return m, nil
 	}
 	// Mark the entry as imported and bump the counter.
@@ -283,7 +291,7 @@ func (m *catalogBrowser) onImport(msg catImportMsg) (tea.Model, tea.Cmd) {
 			m.entries[i].Registered = true
 		}
 	}
-	m.status = theme.Successf("imported %s (%d revision(s))", msg.apiID, len(msg.result.Revisions))
+	m.status = m.st.Successf("imported %s (%d revision(s))", msg.apiID, len(msg.result.Revisions))
 	return m, nil
 }
 
@@ -327,7 +335,7 @@ func (m *catalogBrowser) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshing = true
-		m.status = theme.Dim.Render("refreshing cache …")
+		m.status = m.st.Dim.Render("refreshing cache …")
 		return m, m.refreshCache()
 	case "o", "enter":
 		return m, m.maybeLoadPreview()
@@ -420,7 +428,7 @@ func (m *catalogBrowser) maybeImport() tea.Cmd {
 		return nil
 	}
 	if e.Registered {
-		m.status = theme.Dim.Render(e.APIID + " is already imported")
+		m.status = m.st.Dim.Render(e.APIID + " is already imported")
 		return nil
 	}
 	m.importing = e.APIID
@@ -439,26 +447,26 @@ func (m *catalogBrowser) View() string {
 	// Brand the full-screen browser: Init clears the screen, wiping the global
 	// PersistentPreRun banner, so the logo is redrawn here (flush top, one blank
 	// line beneath — the spacing used by every other branded surface).
-	b.WriteString(theme.Logo())
+	b.WriteString(theme.LogoFor(m.themeName))
 	b.WriteByte('\n')
-	b.WriteString(theme.Heading.Render("Catalog"))
-	b.WriteString(theme.Dim.Render("  " + m.headerStatus()))
+	b.WriteString(m.st.Heading.Render("Catalog"))
+	b.WriteString(m.st.Dim.Render("  " + m.headerStatus()))
 	b.WriteByte('\n')
-	b.WriteString(theme.Dim.Render(m.filterLine()))
+	b.WriteString(m.st.Dim.Render(m.filterLine()))
 	b.WriteString("\n\n")
 
 	if m.err != "" {
-		b.WriteString(theme.Error.Render(m.err) + "\n\n")
+		b.WriteString(m.st.Error.Render(m.err) + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
 	if m.loading && len(m.entries) == 0 {
-		b.WriteString(theme.Dim.Render("loading …") + "\n\n")
+		b.WriteString(m.st.Dim.Render("loading …") + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
 	if len(m.entries) == 0 {
-		b.WriteString(theme.Dim.Render("no matching entries") + "\n\n")
+		b.WriteString(m.st.Dim.Render("no matching entries") + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
@@ -497,18 +505,18 @@ func (m *catalogBrowser) visibleRows() int {
 }
 
 func (m *catalogBrowser) listColumn() string {
-	return renderListColumn(m.cursor, &m.top, m.visibleRows(), len(m.entries), catalogListColumn, m.hasMore, m.listRow)
+	return renderListColumn(m.st, m.cursor, &m.top, m.visibleRows(), len(m.entries), catalogListColumn, m.hasMore, m.listRow)
 }
 
 func (m *catalogBrowser) listRow(i int) string {
 	e := m.entries[i]
-	glyph := theme.Dim.Render(theme.SelectOff)
+	glyph := m.st.Dim.Render(theme.SelectOff)
 	if e.Registered {
-		glyph = theme.Success.Render(theme.SelectOn)
+		glyph = m.st.Success.Render(theme.SelectOn)
 	}
 	name := truncate(e.APIID, catalogListColumn-3)
 	if i == m.cursor {
-		return glyph + " " + theme.Accent.Render(name)
+		return glyph + " " + m.st.Accent.Render(name)
 	}
 	return glyph + " " + lipgloss.NewStyle().Foreground(theme.White).Render(name)
 }
@@ -526,34 +534,34 @@ func (m *catalogBrowser) detailColumn() string {
 func (m *catalogBrowser) detailBody() string {
 	e, ok := m.current()
 	if !ok {
-		return theme.Dim.Render("no selection")
+		return m.st.Dim.Render("no selection")
 	}
 	var b strings.Builder
-	b.WriteString(theme.Heading.Render(e.APIID) + "\n")
+	b.WriteString(m.st.Heading.Render(e.APIID) + "\n")
 	if e.Vendor != "" && e.Vendor != e.APIID {
-		b.WriteString(theme.Field("vendor", e.Vendor) + "\n")
+		b.WriteString(m.st.Field("vendor", e.Vendor) + "\n")
 	}
-	status, dot := "not imported", cmdcore.DotDown()
+	status, dot := "not imported", m.st.DotDown()
 	if e.Registered {
-		status, dot = "imported", cmdcore.DotOK()
+		status, dot = "imported", m.st.DotOK()
 	}
-	b.WriteString(dot + " " + theme.Field("status", status) + "\n")
+	b.WriteString(dot + " " + m.st.Field("status", status) + "\n")
 	if e.SpecURL != "" {
-		b.WriteString(theme.Field("spec", truncate(e.SpecURL, m.detailWidth())) + "\n")
+		b.WriteString(m.st.Field("spec", truncate(e.SpecURL, m.detailWidth())) + "\n")
 	}
 
 	b.WriteString("\n")
 	switch {
 	case m.importing == e.APIID:
-		b.WriteString(theme.Infof("importing …"))
+		b.WriteString(m.st.Infof("importing …"))
 	case m.previewLoading == e.APIID:
-		b.WriteString(theme.Dim.Render("loading operations …"))
+		b.WriteString(m.st.Dim.Render("loading operations …"))
 	case m.previewErr[e.APIID] != "":
-		b.WriteString(theme.Warnf("preview unavailable: %s", m.previewErr[e.APIID]))
+		b.WriteString(m.st.Warnf("preview unavailable: %s", m.previewErr[e.APIID]))
 	case m.previews[e.APIID] != nil:
 		b.WriteString(m.previewBlock(m.previews[e.APIID]))
 	default:
-		b.WriteString(theme.Dim.Render("press o to preview operations · i to import"))
+		b.WriteString(m.st.Dim.Render("press o to preview operations · i to import"))
 	}
 	return b.String()
 }
@@ -572,14 +580,14 @@ func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
 	if p.Info.Version != "" {
 		title += " " + p.Info.Version
 	}
-	b.WriteString(theme.Step.Render(title) + "\n")
+	b.WriteString(m.st.Step.Render(title) + "\n")
 
 	descLines := 0
 	if desc := strings.TrimSpace(p.Info.Description); desc != "" {
 		wrapped := wrapLines(desc, m.detailWidth(), catalogPreviewDescLines)
 		descLines = len(wrapped) + 1 // wrapped rows + trailing blank line
 		for _, ln := range wrapped {
-			b.WriteString(theme.Dim.Render(ln) + "\n")
+			b.WriteString(m.st.Dim.Render(ln) + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -593,22 +601,22 @@ func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
 		if shown >= maxOps {
 			break
 		}
-		line := theme.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " +
-			theme.Command.Render(truncate(op.Path, m.detailWidth()-8))
+		line := m.st.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " +
+			m.st.Command.Render(truncate(op.Path, m.detailWidth()-8))
 		b.WriteString(line + "\n")
 		shown++
 	}
 	if shown < p.Total {
-		b.WriteString(theme.Dim.Render(fmt.Sprintf("… %d of %d operations", shown, p.Total)))
+		b.WriteString(m.st.Dim.Render(fmt.Sprintf("… %d of %d operations", shown, p.Total)))
 	}
 	return b.String()
 }
 
 func (m *catalogBrowser) hintLine() string {
 	if m.searching {
-		return theme.Dim.Render("type to search · enter apply · esc cancel")
+		return m.st.Dim.Render("type to search · enter apply · esc cancel")
 	}
-	return theme.Dim.Render("↑/↓ move · / search · f filter · r refresh · o preview · i import · b back · q quit")
+	return m.st.Dim.Render("↑/↓ move · / search · f filter · r refresh · o preview · i import · b back · q quit")
 }
 
 // wrapLines word-wraps s to width-rune lines, collapsing whitespace, and caps

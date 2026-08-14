@@ -1,6 +1,7 @@
 package cmdcore
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -16,29 +17,31 @@ import (
 // (CLI version + probed server version). The panel is only drawn for an
 // interactive terminal — we need its width and want to avoid a network probe
 // when output is piped — otherwise it falls back to the plain logo. baseURLFlag
-// overrides the configured control-plane URL for the server probe.
-func (a *App) BrandHeader(baseURLFlag, cliVersion string) string {
+// overrides the configured control-plane URL for the server probe. ctx carries
+// the resolved theme so the wordmark and panel re-tint under --theme light.
+func (a *App) BrandHeader(ctx context.Context, baseURLFlag, cliVersion string) string {
+	st := theme.StylesFromContext(ctx)
 	fd := os.Stdout.Fd()
 	if !term.IsTerminal(fd) {
-		return theme.Logo()
+		return theme.LogoForContext(ctx)
 	}
 	width, _, err := term.GetSize(fd)
 	if err != nil || width <= 0 {
-		return theme.Logo()
+		return theme.LogoForContext(ctx)
 	}
 
 	baseURL := headerProbeURL(a.Paths, baseURLFlag)
 	info := a.probeServer(baseURL)
 
-	panel := theme.VersionPanel(cliVersion, info.Version, info.Running)
-	header := theme.LogoHeader(width, panel)
+	panel := theme.VersionPanelFor(st, cliVersion, info.Version, info.Running)
+	header := theme.LogoHeaderForContext(ctx, width, panel)
 	// Surface the active context under the version panel so the persistent,
 	// always-on brand surface answers "who am I right now?" (UX5). Dim, like the
 	// rest of the panel, and only on an interactive terminal — this branch is
 	// already gated on a TTY, so it is suppressed for piped/machine output
 	// exactly like the version panel above it.
 	if name := activeContextName(); name != "" {
-		header += "\n" + theme.Dim.Render("context: "+name)
+		header += "\n" + st.Dim.Render("context: "+name)
 	}
 	return header
 }
@@ -109,7 +112,7 @@ func (a *App) banner(cmd *cobra.Command) {
 	if !term.IsTerminal(os.Stdout.Fd()) {
 		return
 	}
-	fmt.Fprint(a.Out, theme.Logo())
+	fmt.Fprint(a.Out, theme.LogoForContext(cmd.Context()))
 	fmt.Fprintln(a.Out)
 }
 

@@ -47,9 +47,10 @@ func (a *App) presentClaimAffordance(ctx context.Context, baseURL, agentID, clai
 	if claimToken == "" || isMachineCtx(ctx) {
 		return
 	}
-	fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Claim ownership of this agent (you, the human — an agent cannot claim itself):"))
-	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentClaimURL(baseURL, agentID, claimToken)))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    Open the link above, or run the command below with the one-time token:"))
-	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(fmt.Sprintf("jentic identity claim %s --token %s", agentID, claimToken)))
-	fmt.Fprintf(a.Out, "    %s\n", theme.Dimf("Token %s is single-use and short-lived — it is shown only once and is not saved.", claimToken))
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, "\n"+st.Heading.Render("Claim ownership of this agent (you, the human — an agent cannot claim itself):"))
+	fmt.Fprintf(a.Out, "    %s\n", st.Command.Render(agentClaimURL(baseURL, agentID, claimToken)))
+	fmt.Fprintln(a.Out, st.Dim.Render("    Open the link above, or run the command below with the one-time token:"))
+	fmt.Fprintf(a.Out, "    %s\n", st.Command.Render(fmt.Sprintf("jentic identity claim %s --token %s", agentID, claimToken)))
+	fmt.Fprintf(a.Out, "    %s\n", st.Dimf("Token %s is single-use and short-lived — it is shown only once and is not saved.", claimToken))
 }

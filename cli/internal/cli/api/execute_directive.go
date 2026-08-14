@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,26 +15,27 @@ import (
 // already returned (UX7). It mirrors printAgentDirective's shape (instruction +
 // `run:` command) so a directive-less denial reads the same as a directed one.
 // Unknown statuses fall back to the generic setup check.
-func (a *app) printSynthesizedDenialRecovery(status int) {
-	fmt.Fprintln(a.Err, theme.Warn.Render("Denied — recovery required:"))
+func (a *app) printSynthesizedDenialRecovery(ctx context.Context, status int) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Err, st.Warn.Render("Denied — recovery required:"))
 	switch status {
 	case http.StatusForbidden: // 403: have an identity, no access to this toolkit yet.
 		fmt.Fprintln(a.Err, "  This agent isn't bound to the toolkit you called. Check what you can run, then request access.")
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access whoami"))
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --wait"))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render("jentic access whoami"))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render("jentic access request --toolkit <vendor/name> --wait"))
 	case http.StatusFailedDependency: // 424: no credential provisioned for the call.
 		fmt.Fprintln(a.Err, "  No credential is provisioned for this call. Provision one, then retry.")
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
 	case http.StatusUnauthorized: // 401: credential expired / needs reconnecting.
 		fmt.Fprintln(a.Err, "  Your credential needs reconnecting. Re-run access to refresh it.")
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
 	default:
 		fmt.Fprintln(a.Err, "  The broker denied this call. Check what you can run and your setup.")
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access whoami"))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render("jentic access whoami"))
 	}
 	// Point at the read-only self-check as the catch-all when the specific hint
 	// above doesn't unblock (UX9).
-	fmt.Fprintln(a.Err, "  stuck? "+theme.Accent.Render("jentic doctor"))
+	fmt.Fprintln(a.Err, "  stuck? "+st.Accent.Render("jentic doctor"))
 }
 
 // agentDirective mirrors the broker's problem+json agent_directive extension
@@ -75,16 +77,17 @@ func parseAgentDirective(resp *http.Response, body []byte) (agentDirective, bool
 // printAgentDirective renders a recovery directive to stderr, lifting the
 // suggested_command / provisioning_url out of parameters so the agent (or its
 // operator) sees the exact next action without parsing JSON.
-func (a *app) printAgentDirective(d agentDirective) {
-	fmt.Fprintln(a.Err, theme.Warn.Render("Denied — recovery required:"))
+func (a *app) printAgentDirective(ctx context.Context, d agentDirective) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Err, st.Warn.Render("Denied — recovery required:"))
 	if d.Instruction != "" {
 		fmt.Fprintln(a.Err, "  "+d.Instruction)
 	}
 	if cmd, ok := d.Parameters["suggested_command"].(string); ok && cmd != "" {
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render(cmd))
+		fmt.Fprintln(a.Err, "  run: "+st.Accent.Render(cmd))
 	}
 	if u, ok := d.Parameters["provisioning_url"].(string); ok && u != "" {
-		fmt.Fprintln(a.Err, "  open: "+theme.Accent.Render(u))
+		fmt.Fprintln(a.Err, "  open: "+st.Accent.Render(u))
 	}
 	if cands, ok := d.Parameters["candidates"].([]any); ok && len(cands) > 0 {
 		parts := make([]string, 0, len(cands))
@@ -94,7 +97,7 @@ func (a *app) printAgentDirective(d agentDirective) {
 			}
 		}
 		if len(parts) > 0 {
-			fmt.Fprintln(a.Err, "  candidates: "+theme.Accent.Render(strings.Join(parts, ", ")))
+			fmt.Fprintln(a.Err, "  candidates: "+st.Accent.Render(strings.Join(parts, ", ")))
 		}
 	}
 	// A wait/retry directive carries a backoff hint the agent should honor before
@@ -105,5 +108,5 @@ func (a *app) printAgentDirective(d agentDirective) {
 		}
 	}
 	// Catch-all self-check for when the directive's step doesn't unblock (UX9).
-	fmt.Fprintln(a.Err, "  stuck? "+theme.Accent.Render("jentic doctor"))
+	fmt.Fprintln(a.Err, "  stuck? "+st.Accent.Render("jentic doctor"))
 }

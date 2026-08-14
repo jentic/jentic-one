@@ -2,11 +2,15 @@ package cmdcore
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
+	"github.com/jentic/jentic-one/cli/internal/theme"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +50,41 @@ func TestHelpOmitsExamplesWhenNone(t *testing.T) {
 	cmd := &cobra.Command{Use: "plain", Short: "no examples here"}
 	if out := renderHelp(t, cmd); strings.Contains(out, "EXAMPLES") {
 		t.Errorf("help should not render EXAMPLES for a command with no Example:\n%s", out)
+	}
+}
+
+// TestHelpReTintsForTheme is the end-to-end acceptance for the theme/light-mode
+// P0: the help renderer draws through the palette carried in the command
+// context, so `--theme dark` and `--theme light` produce DIFFERENT bytes. It
+// forces the lipgloss colour profile (a test binary has no TTY, so colour would
+// otherwise be stripped and both renders would collapse to identical plain
+// text) and asserts divergence — proving the interceptor→context→helpStyles
+// palette wiring is live, not just the pure Styles() unit test.
+func TestHelpReTintsForTheme(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	cmd := &cobra.Command{Use: "widget", Short: "manage widgets"}
+
+	render := func(themeName string) string {
+		var buf bytes.Buffer
+		c := &cobra.Command{Use: cmd.Use, Short: cmd.Short}
+		c.SetOut(&buf)
+		ctx := theme.WithContext(context.Background(), theme.Themes[themeName])
+		ctx = theme.WithThemeName(ctx, themeName)
+		c.SetContext(ctx)
+		testApp(t).helpFunc(c, nil)
+		return buf.String()
+	}
+
+	dark := render("dark")
+	light := render("light")
+	if dark == light {
+		t.Fatalf("help output did not re-tint between dark and light (palette not threaded through the help renderer)")
+	}
+	if !strings.Contains(dark, "\x1b[") || !strings.Contains(light, "\x1b[") {
+		t.Fatalf("expected ANSI colour in both renders under a forced TrueColor profile")
 	}
 }
 
@@ -107,7 +146,7 @@ func TestBrandHeaderNeverBlocksOffline(t *testing.T) {
 	app.ProbeServer = func(string) serverinfo.Info { return serverinfo.Info{Running: false} }
 	done := make(chan struct{})
 	go func() {
-		_ = app.BrandHeader("http://10.255.255.1:1/unreachable", "v-test")
+		_ = app.BrandHeader(context.Background(), "http://10.255.255.1:1/unreachable", "v-test")
 		close(done)
 	}()
 	select {
