@@ -71,6 +71,11 @@ class ApiRevision(AuditableMixin, RegistryBase):
     )
     state: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'draft'"))
     origin: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    #: sha256 of the spec content, or NULL when the source carried no sha. Must be
+    #: NULL — never '' — for sha-less specs: '' is a *value* under
+    #: uq_api_revisions_api_id_spec_digest and would collapse distinct sha-less
+    #: specs for the same api_id into one revision, whereas NULLs are distinct on
+    #: both Postgres and SQLite. Derivation lives in CreateRevisionStage (#780).
     spec_digest: Mapped[str | None] = mapped_column(String(100), nullable=True)
     #: For an overlay-origin revision: the ``spec_digest`` of the *base* revision this
     #: overlay was materialized on top of (the revision it superseded). Lets the Flow-3
