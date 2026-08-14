@@ -141,6 +141,27 @@ func TestInspectHint(t *testing.T) {
 	}
 }
 
+func TestColonizeInspectID(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"method-url space form becomes colon form", "GET https://api.acme.com/v1/things", "GET:https://api.acme.com/v1/things"},
+		{"lowercase method is preserved verbatim", "get https://api.acme.com/x", "get:https://api.acme.com/x"},
+		{"opaque operation_id is unchanged", "op_abc", "op_abc"},
+		{"host-relative space form (no scheme) is unchanged", "GET /things", "GET /things"},
+		{"non-http method token is unchanged", "SUBSCRIBE wss://api.acme.com/x", "SUBSCRIBE wss://api.acme.com/x"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := colonizeInspectID(tc.in); got != tc.want {
+				t.Errorf("colonizeInspectID(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSearchCmdAutopagination(t *testing.T) {
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

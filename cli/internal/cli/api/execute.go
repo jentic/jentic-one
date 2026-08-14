@@ -72,7 +72,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  1. METHOD:url — a discovered operation's full URL, the same form\n" +
 			"     `jentic search`/`jentic inspect` accept (e.g.\n" +
 			"     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n" +
-			"     routed through the broker.\n" +
+			"     routed through the broker. The space form (`GET <url>`) is also\n" +
+			"     accepted, but the colon form is canonical (it needs no shell quoting).\n" +
 			"  2. operation_id — resolve via inspect, then route through the broker.\n" +
 			"  3. METHOD:/path — a broker-relative path sent to --broker-host\n" +
 			"     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n" +

@@ -215,7 +215,7 @@ func (a *app) printSearchResults(hits []searchHit, hasMore bool) {
 		fmt.Fprintln(a.Out, "  "+line)
 		fmt.Fprintln(a.Out, "    "+theme.Dim.Render(fmt.Sprintf("api=%s  score=%.2f", h.API.String(), h.Score)))
 		if id := inspectHint(h); id != "" {
-			fmt.Fprintln(a.Out, "    "+theme.Dim.Render("inspect: jentic inspect '"+id+"'"))
+			fmt.Fprintln(a.Out, "    "+theme.Dim.Render("inspect: jentic inspect "+colonizeInspectID(id)))
 		}
 	}
 	if hasMore {
@@ -235,6 +235,25 @@ func inspectHint(h searchHit) string {
 		return id
 	}
 	return h.OperationID
+}
+
+// colonizeInspectID renders an inspect identifier in the canonical, shell-safe
+// colon form for display: the METHOD-URL space form the server emits ("GET
+// https://…") becomes "GET:https://…", matching what `inspect`/`execute` --help
+// and their examples show (and the only form the local execute METHOD:/path
+// parser understands directly). An opaque operation_id (no leading METHOD +
+// space) is returned unchanged.
+func colonizeInspectID(id string) string {
+	method, rest, ok := strings.Cut(id, " ")
+	if !ok || !strings.Contains(rest, "://") {
+		return id
+	}
+	switch strings.ToUpper(method) {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS":
+		return method + ":" + rest
+	default:
+		return id
+	}
 }
 
 // inspectIDFromLink extracts the inspect identifier from a hit's _links.inspect
