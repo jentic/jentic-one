@@ -277,10 +277,23 @@ class ApiRevisionRepository:
         return result.rowcount
 
     @staticmethod
-    async def restore_archived_to_imported(session: AsyncSession, revision_id: uuid.UUID) -> int:
-        """Un-archive a revision (ARCHIVED → IMPORTED), clearing ``archived_at``.
+    async def restore_archived(session: AsyncSession, revision_id: uuid.UUID) -> int:
+        """Un-archive a revision to its *true prior state*, clearing ``archived_at``.
 
         Rollback (A5b) restores the revision an overlay superseded so it can serve again.
+        The restored state must match what the revision was before materialization archived
+        it — an overlay base can be a manually-promoted ``PUBLISHED`` revision, not only an
+        ``IMPORTED`` one (see ``archive_all_active``), and always restoring to ``IMPORTED``
+        silently drops the ``published`` label (#939).
+
+        The prior state is derived from durable provenance rather than a captured column,
+        which survives archival: ``PUBLISHED`` is only ever produced by
+        ``RevisionService.promote`` (promoting a ``DRAFT``, which ``create_draft`` leaves
+        with ``origin IS NULL``); ``IMPORTED`` is only ever produced by ``create_imported``
+        (which always sets ``origin``). So ``origin IS NULL`` ⇒ restore to ``PUBLISHED``,
+        else ``IMPORTED``. The decision is a single SQL ``CASE`` so it stays one atomic
+        UPDATE (no read-then-write race).
+
         CAS on ``state == ARCHIVED`` so only a genuinely archived revision is restored
         (rowcount 0 otherwise). The caller archives the current overlay revision *first*
         in the same txn, so the one-active partial unique index is never transiently
@@ -294,7 +307,13 @@ class ApiRevisionRepository:
                     ApiRevision.id == revision_id,
                     ApiRevision.state == ApiRevisionState.ARCHIVED,
                 )
-                .values(state=ApiRevisionState.IMPORTED, archived_at=None)
+                .values(
+                    state=case(
+                        (ApiRevision.origin.is_(None), ApiRevisionState.PUBLISHED),
+                        else_=ApiRevisionState.IMPORTED,
+                    ),
+                    archived_at=None,
+                )
                 .execution_options(synchronize_session="fetch")
             ),
         )

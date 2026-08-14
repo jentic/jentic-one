@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from jentic_one.admin.core.permissions import (
+from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     ORG_ADMIN,
     compute_implies_transitive,
