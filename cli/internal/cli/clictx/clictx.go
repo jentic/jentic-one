@@ -51,6 +51,17 @@ type ActiveState struct {
 	ThemeName string
 }
 
+// IsMachine reports whether this is a fenced machine mode (agent or
+// service-account) rather than a human session — the single canonical
+// "is machine mode?" predicate the CLI keys off. Any non-human mode counts:
+// unknown modes fail closed to agent at Audience construction (root
+// interceptor), so treating "not human" as machine matches that fail-closed
+// posture. Output rendering (JSONOrPretty), progress-line suppression
+// (registerProgress), and broker-host pinning (SEC-21) all consult this.
+func (s *ActiveState) IsMachine() bool {
+	return s.Mode != ModeHuman
+}
+
 // ResolveActiveState loads state and layers the CLI mode/theme interpretation on
 // top. contextOverride is --context (may be ""); modeOverride is --mode (may be "").
 //

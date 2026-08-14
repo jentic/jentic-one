@@ -122,13 +122,6 @@ func newExecuteCmd(app *app) *cobra.Command {
 	return cmd
 }
 
-// isMachineMode reports whether a resolved mode is a fenced machine mode
-// (agent / service-account), used by SEC-21 to pin the broker host to the
-// environment's broker_url. Human mode keeps the --broker-host override.
-func isMachineMode(mode string) bool {
-	return mode == clictx.ModeAgent || mode == clictx.ModeServiceAccount
-}
-
 func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
 	_, token, err := a.agentSession(cmd.Context())
 	if err != nil {
@@ -149,7 +142,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 			// keeps the override (they own the machine and may be testing). The
 			// scheme may still be overridden (http↔https on the same host is the
 			// common local papercut, guarded separately by RequireSecureURL).
-			if isMachineMode(st.Mode) && flags.Changed("broker-host") && opts.brokerHost != u.Host {
+			if st.IsMachine() && flags.Changed("broker-host") && opts.brokerHost != u.Host {
 				return &ux.CodedError{
 					Code: ux.CodeResolveFailed,
 					Msg: fmt.Sprintf("--broker-host %q is not allowed in %s mode: the broker is pinned to the "+

@@ -117,10 +117,11 @@ func (a *App) registerProgress(ctx context.Context, line string) {
 // (agent/service-account) — the same test JSONOrPretty uses, but keyed off the
 // context so the register body can consult it without a *cobra.Command. A
 // missing state (register invoked outside the interceptor) fails OPEN to human
-// prose, matching the pre-AGT-21 behavior for non-agent callers.
+// prose, matching the pre-AGT-21 behavior for non-agent callers. It delegates to
+// the canonical clictx.ActiveState.IsMachine so there is one machine-mode rule.
 func isMachineCtx(ctx context.Context) bool {
 	if st := clictx.FromContext(ctx); st != nil {
-		return st.Mode != clictx.ModeHuman
+		return st.IsMachine()
 	}
 	return false
 }

@@ -48,7 +48,7 @@ func JSONOrPretty(cmd *cobra.Command, jsonFlag bool) bool {
 		return true
 	}
 	if state := clictx.FromContext(cmd.Context()); state != nil {
-		if state.Mode != clictx.ModeHuman {
+		if state.IsMachine() {
 			return true
 		}
 		if state.ModeExplicit {
