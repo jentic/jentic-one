@@ -174,6 +174,7 @@ class ImportHandler:
                     await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),
+                        superseding_revision=revisions[0],
                         actor_id=created_by,
                         actor_type=actor_type,
                     )
@@ -304,7 +305,13 @@ class ImportHandler:
             )
 
     async def _deprecate_superseded_overlay(
-        self, job_id: str, overlay_id: str, *, actor_id: str, actor_type: str | None
+        self,
+        job_id: str,
+        overlay_id: str,
+        *,
+        superseding_revision: dict[str, Any] | None = None,
+        actor_id: str,
+        actor_type: str | None,
     ) -> None:
         """Auto-deprecate an overlay superseded by an authorized catalog re-import (A4b).
 
@@ -315,6 +322,16 @@ class ImportHandler:
         re-ingest, so it is logged rather than raised (the served spec is already correct;
         only the overlay's status label lags and can be repaired).
 
+        Which overlay to deprecate: prefer the one that *actually backed the revision the
+        supersede just archived* (``superseding_revision["superseded_revision_id"]``),
+        re-resolved here rather than trusting the enqueue-time ``overlay_id``. A concurrent
+        confirm can make a *different* overlay live between the A4b authorization gate and
+        this worker; the ingest stage archives whatever is current *now*, so deprecating the
+        stale enqueue-time id would leave the actually-superseded overlay stuck CONFIRMED
+        over an archived revision (#940). Fall back to the enqueue-time ``overlay_id`` when
+        the archived revision or its backing overlay can't be re-resolved, so there is no
+        regression versus the prior behaviour.
+
         L2 (#921): on a successful demote we emit an attributed ``overlay.deprecated``
         event so the overlay is not *silently* flipped behind the audit log. ``actor_id``/
         ``actor_type`` are the authorizing operator (the job's ``created_by``); the event
@@ -323,11 +340,14 @@ class ImportHandler:
         (events live there), requires_action=False — a notification, not an inbox item.
         """
         try:
+            target_overlay_id = await self._resolve_superseded_overlay_id(
+                job_id, overlay_id, superseding_revision
+            )
             async with self._ctx.registry_db.transaction() as session:
-                overlay = await OverlayRepository.get_by_id(session, overlay_id)
+                overlay = await OverlayRepository.get_by_id(session, target_overlay_id)
                 demoted = await OverlayRepository.set_status(
                     session,
-                    overlay_id,
+                    target_overlay_id,
                     OverlayStatus.DEPRECATED,
                     deprecated_at=datetime.now(UTC),
                     deprecated_reason=OverlayDeprecationReason.SUPERSEDED_BY_REIMPORT,
@@ -337,14 +357,14 @@ class ImportHandler:
                 logger.warning(
                     "overlay_supersede_not_deprecated",
                     job_id=job_id,
-                    overlay_id=overlay_id,
+                    overlay_id=target_overlay_id,
                     reason="overlay_not_confirmed_or_missing",
                 )
                 return
             await self._emit_overlay_deprecated(
                 job_id=job_id,
                 overlay=overlay,
-                overlay_id=overlay_id,
+                overlay_id=target_overlay_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
             )
@@ -355,6 +375,57 @@ class ImportHandler:
                 job_id=job_id,
                 overlay_id=overlay_id,
             )
+
+    async def _resolve_superseded_overlay_id(
+        self,
+        job_id: str,
+        enqueue_overlay_id: str,
+        superseding_revision: dict[str, Any] | None,
+    ) -> str:
+        """Resolve the overlay that actually backed the supersede-archived revision (#940).
+
+        Returns the CONFIRMED overlay whose ``confirmed_revision_id`` is the revision the
+        worker just archived (captured pre-archive as
+        ``superseding_revision["superseded_revision_id"]``). Falls back to the enqueue-time
+        ``enqueue_overlay_id`` when the archived revision id or its backing overlay can't be
+        resolved. Logs when the re-resolved overlay differs from the enqueue-time one, so
+        the concurrent-confirm race is observable.
+        """
+        if superseding_revision is None:
+            return enqueue_overlay_id
+        archived_id_raw = superseding_revision.get("superseded_revision_id")
+        api = superseding_revision.get("api") or {}
+        if not archived_id_raw or not api:
+            return enqueue_overlay_id
+        try:
+            archived_revision_id = uuid.UUID(str(archived_id_raw))
+        except ValueError:
+            return enqueue_overlay_id
+
+        async with self._ctx.registry_db.session() as session:
+            api_row = await ApiRepository.get_by_identifier(
+                session, api["vendor"], api["name"], api["version"]
+            )
+            if api_row is None:
+                return enqueue_overlay_id
+            overlay = await OverlayRepository.get_live_confirmed_for_revision(
+                session, api_row.id, archived_revision_id
+            )
+        if overlay is None:
+            return enqueue_overlay_id
+        if overlay.id != enqueue_overlay_id:
+            logger.info(
+                "overlay_supersede_target_reresolved",
+                job_id=job_id,
+                enqueue_overlay_id=enqueue_overlay_id,
+                resolved_overlay_id=overlay.id,
+                archived_revision_id=str(archived_revision_id),
+                detail=(
+                    "a concurrent confirm changed the live overlay after enqueue; "
+                    "deprecating the overlay that backed the archived revision (#940)"
+                ),
+            )
+        return overlay.id
 
     async def _emit_overlay_deprecated(
         self,

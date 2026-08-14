@@ -140,6 +140,16 @@ class CreateRevisionStage(BasePipelineStage):
                     # therefore trusts the flag by construction. If a future route ever
                     # forwards a raw ``sources`` payload, that route MUST re-assert the
                     # scope before enqueue — the privilege boundary lives at enqueue time.
+                    #
+                    # Capture the revision that is current *right now*, before the archive,
+                    # so the handler can re-resolve and deprecate the overlay that actually
+                    # backed it — a concurrent confirm may have made a *different* overlay
+                    # live since this job was enqueued, so trusting the enqueue-time
+                    # supersede_overlay_id can deprecate the wrong overlay (#940). NULL when
+                    # the API has no current revision (nothing to supersede).
+                    api = await ApiRepository.get_by_id(ctx.session, api_id)
+                    if api is not None and api.current_revision_id is not None:
+                        ctx.produce("superseded_revision_id", api.current_revision_id, uuid.UUID)
                     await ApiRevisionRepository.archive_all_active(ctx.session, api_id)
                 else:
                     await ApiRevisionRepository.archive_active_imported(

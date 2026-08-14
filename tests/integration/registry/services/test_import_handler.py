@@ -1252,6 +1252,270 @@ async def test_authorized_supersede_reimport_deprecates_overlay(
         assert overlay_row.status == "deprecated"
 
 
+async def test_supersede_deprecates_overlay_backing_archived_revision(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#940: a concurrent confirm can make a *different* overlay live after enqueue.
+
+    The A4b authorization gate resolves the live overlay in a lock-free read and stamps
+    its id as ``supersede_overlay_id``. If a concurrent confirm makes overlay **B** live
+    (its ``confirmed_revision_id`` is the API's current revision) before the worker runs,
+    the worker archives whatever is current *now* — B's revision — but the stale
+    ``supersede_overlay_id`` still points at the previously-live overlay **A**. The worker
+    must re-resolve and deprecate **B** (the overlay that actually backed the archived
+    revision), leaving A untouched.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="race-vendor", name="race-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "race-vendor"))).scalar_one()
+        api_id = api.id
+        # Overlay A: the enqueue-time target. CONFIRMED but *not* backing the current
+        # revision — it points at some other (superseded) revision, exactly like a
+        # prior-live overlay that a concurrent confirm stacked over.
+        overlay_a = Overlay(
+            api_id=api_id,
+            document=_OVERLAY_DOC,
+            status="confirmed",
+            confirmed_revision_id=uuid.uuid4(),
+            created_by="usr_author_a",
+        )
+        # Overlay B: the concurrently-confirmed one whose materialized revision will be
+        # current when the worker runs.
+        overlay_b = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_author_b"
+        )
+        session.add_all([overlay_a, overlay_b])
+        await session.commit()
+        overlay_a_id = overlay_a.id
+        overlay_b_id = overlay_b.id
+
+    # Materialize overlay B so its revision is the live served revision, then flip it
+    # CONFIRMED and link confirmed_revision_id to the served revision (what confirm does).
+    materialize = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "RACE", "version": "1.0.0"},
+                            "servers": [{"url": "https://overlaid-b.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "race-vendor",
+                    "api_name": "race-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_b_id,
+        },
+        created_by="usr_test",
+    )
+    b_revision_id = uuid.UUID(materialize.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay_b_id)
+            .values(status="confirmed", confirmed_revision_id=b_revision_id)
+        )
+        await session.commit()
+
+    # The scope-checked enqueue path stamped the STALE overlay A (it was live when the
+    # gate ran); by worker time B is the live/current one.
+    fresh_upstream = json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "RACE", "version": "1.0.0"},
+            "servers": [{"url": "https://upstream-fresh.example.com"}],
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+    reimport = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": fresh_upstream,
+                    "filename": "openapi.json",
+                    "vendor": "race-vendor",
+                    "api_name": "race-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_a_id,
+        },
+        created_by="usr_operator",
+    )
+    new_revision_id = uuid.UUID(reimport.body["revisions"][0]["revision_id"])
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == new_revision_id
+        b_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == b_revision_id))
+        ).scalar_one()
+        assert b_rev.state == "archived"
+
+        overlay_a_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_a_id))
+        ).scalar_one()
+        overlay_b_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_b_id))
+        ).scalar_one()
+        # B backed the archived revision → B is deprecated; A (the stale enqueue target)
+        # is left untouched.
+        assert overlay_b_row.status == "deprecated"
+        assert overlay_b_row.deprecated_reason == "superseded_by_reimport"
+        assert overlay_a_row.status == "confirmed"
+        assert overlay_a_row.deprecated_at is None
+
+
+async def test_supersede_deprecates_target_when_no_race(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#940 regression: the common no-race case still deprecates the stamped overlay.
+
+    When the enqueue-time ``supersede_overlay_id`` *is* the overlay backing the current
+    revision (no concurrent confirm), re-resolution returns that same overlay and it is
+    deprecated — no behaviour change versus before the fix.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="norace-vendor", name="norace-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "norace-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    materialize = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "NORACE", "version": "1.0.0"},
+                            "servers": [{"url": "https://overlaid.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "norace-vendor",
+                    "api_name": "norace-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+    overlay_revision_id = uuid.UUID(materialize.body["revisions"][0]["revision_id"])
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay_id)
+            .values(status="confirmed", confirmed_revision_id=overlay_revision_id)
+        )
+        await session.commit()
+
+    fresh_upstream = json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "NORACE", "version": "1.0.0"},
+            "servers": [{"url": "https://upstream-fresh.example.com"}],
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+    await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": fresh_upstream,
+                    "filename": "openapi.json",
+                    "vendor": "norace-vendor",
+                    "api_name": "norace-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_id,
+        },
+        created_by="usr_operator",
+    )
+
+    async with registry_db.session() as session:
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert overlay_row.status == "deprecated"
+        assert overlay_row.deprecated_reason == "superseded_by_reimport"
+
+
 async def test_overlay_materialization_archives_active_revision_of_other_origin(
     integration_context: Context,
     registry_db: DatabaseSession,
