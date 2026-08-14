@@ -173,6 +173,94 @@ func CuratedBindings() []CuratedBinding {
 				"q":      "operation-level keyword filter is a `jentic api PreviewCatalogOperations` concern, not a show flag",
 			},
 		},
+		{
+			// apis list: page the local registry. --vendor/--limit drive the query;
+			// cursor is the internal keyset cursor the --all loop threads (ARCH-21
+			// A5, migrated off internal/apiclient onto the generated SDK).
+			Command: "apis list",
+			Params:  control.ListApisParams{},
+			Bind: map[string]string{
+				"vendor": "vendor",
+				"limit":  "limit",
+			},
+			NotExposed: map[string]string{
+				"cursor": "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+			},
+		},
+		{
+			// apis revisions: page an API's revisions. --state (repeatable)/--limit
+			// drive the query; cursor is the internal --all pagination cursor.
+			Command: "apis revisions",
+			Params:  control.ListApiRevisionsParams{},
+			Bind: map[string]string{
+				"state": "state",
+				"limit": "limit",
+			},
+			NotExposed: map[string]string{
+				"cursor": "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+			},
+		},
+		{
+			// apis operations (current revision): --limit pages; cursor is threaded
+			// by --all. --revision selects the by-revision params variant below.
+			Command: "apis operations",
+			Params:  control.ListApiOperationsParams{},
+			Bind: map[string]string{
+				"limit": "limit",
+			},
+			NotExposed: map[string]string{
+				"cursor": "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+			},
+		},
+		{
+			// apis operations (--revision path): same flag surface, different
+			// generated params struct (the by-revision route).
+			Command: "apis operations",
+			Params:  control.ListApiRevisionOperationsParams{},
+			Bind: map[string]string{
+				"limit": "limit",
+			},
+			NotExposed: map[string]string{
+				"cursor": "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+			},
+		},
+		{
+			// apis spec (current revision): only carries an `overlays` toggle, which
+			// the CLI does not surface (spec download is the plain document; overlay
+			// composition is reachable via `jentic api GetApiSpec`).
+			Command: "apis spec",
+			Params:  control.GetApiSpecParams{},
+			Bind:    map[string]string{},
+			NotExposed: map[string]string{
+				"overlays": "overlay composition is a `jentic api GetApiSpec` concern; spec download serves the plain document",
+			},
+		},
+		{
+			// apis spec (--revision path): same overlays-only params for the
+			// by-revision route.
+			Command: "apis spec",
+			Params:  control.GetApiRevisionSpecParams{},
+			Bind:    map[string]string{},
+			NotExposed: map[string]string{
+				"overlays": "overlay composition is a `jentic api GetApiRevisionSpec` concern; spec download serves the plain document",
+			},
+		},
+		{
+			// inspect: the target operation is the positional arg (sent as id= for a
+			// METHOD/URL pair, else operation_id=); --revision pins a revision. The
+			// `detail` enum (full/summary) is not exposed — inspect always fetches
+			// full detail (reachable via `jentic api InspectOperation`).
+			Command: "inspect",
+			Params:  control.InspectOperationParams{},
+			Bind: map[string]string{
+				"id":           PositionalArg,
+				"operation_id": PositionalArg,
+				"revision_id":  "revision",
+			},
+			NotExposed: map[string]string{
+				"detail": "inspect always fetches full detail; the summary/full toggle is reachable via `jentic api InspectOperation`",
+			},
+		},
 		// GEN-20: the request-body UNION MEMBERS `apis import` actually builds.
 		// Test1G reflects over ApiImportRequest above, but the wire payload is one
 		// of these union members — registering them here means a new optional field

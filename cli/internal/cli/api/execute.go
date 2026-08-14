@@ -18,7 +18,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	sdkclient "github.com/jentic/jentic-one/cli/client"
 	"github.com/jentic/jentic-one/cli/client/auth"
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
@@ -132,7 +131,7 @@ func isMachineMode(mode string) bool {
 }
 
 func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	_, token, err := a.agentSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -170,7 +169,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 
 	// Resolve phase: determine method and path either from METHOD:/path syntax
 	// or by inspecting an operation_id.
-	opInfo, err := a.resolveOperation(cmd, token, baseURL, opts, target)
+	opInfo, err := a.resolveOperation(cmd, opts, target)
 	if err != nil {
 		return err
 	}
@@ -477,7 +476,7 @@ func parseMethodPath(target string) (method, path string) {
 	}
 }
 
-func (a *app) resolveOperation(cmd *cobra.Command, token, baseURL string, opts *executeOptions, target string) (*operationInfo, error) {
+func (a *app) resolveOperation(cmd *cobra.Command, opts *executeOptions, target string) (*operationInfo, error) {
 	// METHOD:/path → broker-relative direct send (uses --broker-host/scheme).
 	if method, path := parseMethodPath(target); method != "" {
 		return &operationInfo{Method: method, Path: path}, nil
@@ -485,10 +484,13 @@ func (a *app) resolveOperation(cmd *cobra.Command, token, baseURL string, opts *
 
 	// METHOD URL / METHOD:URL (absolute) and opaque operation_id both resolve
 	// via inspect, which returns the absolute upstream URL to send to.
-	client := apiclient.New(baseURL)
-	inspectBody, err := client.Inspect(cmd.Context(), token, target, opts.revision, "json")
+	client, err := a.apisSession(cmd.Context())
 	if err != nil {
-		var he *apiclient.HTTPError
+		return nil, err
+	}
+	inspectBody, err := client.Inspect(cmd.Context(), target, opts.revision, "json")
+	if err != nil {
+		var he *APIError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			// AGT-23: single-source the failure on stderr (the coded envelope
 			// below). No unversioned {error,status:0} on stdout.

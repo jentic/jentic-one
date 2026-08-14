@@ -10,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -40,18 +39,17 @@ const (
 
 // runApisBrowser opens the interactive APIs browser.
 func (a *app) runApisBrowser(ctx context.Context) error {
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
 	m := &apisBrowser{
 		ctx:     ctx,
 		client:  client,
-		token:   token,
 		limit:   apisBrowseLimit,
 		width:   90,
 		height:  24,
-		ops:     map[string]*apiclient.OperationList{},
+		ops:     map[string]*operationListResult{},
 		opsErr:  map[string]string{},
 		loading: true,
 	}
@@ -61,13 +59,12 @@ func (a *app) runApisBrowser(ctx context.Context) error {
 
 type apisBrowser struct {
 	ctx    context.Context
-	client *apiclient.Client
-	token  string
+	client *apiClient
 
 	view apisView
 
 	// APIs list
-	apis       []apiclient.API
+	apis       []registeredAPI
 	cursor     int
 	top        int
 	nextCursor string
@@ -78,13 +75,13 @@ type apisBrowser struct {
 	searching   bool
 	searchInput string
 
-	ops        map[string]*apiclient.OperationList
+	ops        map[string]*operationListResult
 	opsErr     map[string]string
 	opsLoading string
 
 	// Revisions drilldown
-	revAPI     apiclient.APIRef
-	revs       []apiclient.Revision
+	revAPI     apiRef
+	revs       []apiRevision
 	revCursor  int
 	revTop     int
 	revLoading bool
@@ -107,19 +104,19 @@ type apisBrowser struct {
 // ── messages ─────────────────────────────────────────────────────────────────
 
 type apisPageMsg struct {
-	result *apiclient.APIList
+	result *apiListResult
 	reset  bool
 	err    error
 }
 
 type apisOpsMsg struct {
 	key string
-	ops *apiclient.OperationList
+	ops *operationListResult
 	err error
 }
 
 type apisRevsMsg struct {
-	result *apiclient.RevisionList
+	result *revisionListResult
 	err    error
 }
 
@@ -132,63 +129,63 @@ type apisActionMsg struct {
 // ── commands ─────────────────────────────────────────────────────────────────
 
 func (m *apisBrowser) loadPage(reset bool) tea.Cmd {
-	params := apiclient.ListParams{Vendor: m.vendor, Limit: m.limit}
+	params := apiListParams{Vendor: m.vendor, Limit: m.limit}
 	if !reset {
 		params.Cursor = m.nextCursor
 	}
-	ctx, client, token := m.ctx, m.client, m.token
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		res, err := client.List(ctx, token, params)
+		res, err := client.List(ctx, params)
 		return apisPageMsg{result: res, reset: reset, err: err}
 	}
 }
 
-func (m *apisBrowser) loadOps(ref apiclient.APIRef) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) loadOps(ref apiRef) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	key := apiRefLabel(ref)
 	return func() tea.Msg {
-		ops, err := client.Operations(ctx, token, ref.Vendor, ref.Name, ref.Version, "", "", apisPreviewOps)
+		ops, err := client.Operations(ctx, ref.Vendor, ref.Name, ref.Version, "", "", apisPreviewOps)
 		return apisOpsMsg{key: key, ops: ops, err: err}
 	}
 }
 
-func (m *apisBrowser) loadRevs(ref apiclient.APIRef) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) loadRevs(ref apiRef) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		res, err := client.Revisions(ctx, token, ref.Vendor, ref.Name, ref.Version,
-			apiclient.RevisionParams{Limit: apisRevisionPageLimit})
+		res, err := client.Revisions(ctx, ref.Vendor, ref.Name, ref.Version,
+			revisionParams{Limit: apisRevisionPageLimit})
 		return apisRevsMsg{result: res, err: err}
 	}
 }
 
-func (m *apisBrowser) promoteRev(ref apiclient.APIRef, revisionID string) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) promoteRev(ref apiRef, revisionID string) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		err := client.Promote(ctx, token, ref.Vendor, ref.Name, ref.Version, revisionID)
+		err := client.Promote(ctx, ref.Vendor, ref.Name, ref.Version, revisionID)
 		return apisActionMsg{verb: "promoted", err: err}
 	}
 }
 
-func (m *apisBrowser) archiveRev(ref apiclient.APIRef, revisionID string) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) archiveRev(ref apiRef, revisionID string) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		err := client.Archive(ctx, token, ref.Vendor, ref.Name, ref.Version, revisionID)
+		err := client.Archive(ctx, ref.Vendor, ref.Name, ref.Version, revisionID)
 		return apisActionMsg{verb: "archived", err: err}
 	}
 }
 
-func (m *apisBrowser) deleteRev(ref apiclient.APIRef, revisionID string) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) deleteRev(ref apiRef, revisionID string) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		err := client.DeleteRevision(ctx, token, ref.Vendor, ref.Name, ref.Version, revisionID)
+		err := client.DeleteRevision(ctx, ref.Vendor, ref.Name, ref.Version, revisionID)
 		return apisActionMsg{verb: "deleted revision", err: err}
 	}
 }
 
-func (m *apisBrowser) deleteAPI(ref apiclient.APIRef) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+func (m *apisBrowser) deleteAPI(ref apiRef) tea.Cmd {
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		err := client.DeleteAPI(ctx, token, ref.Vendor, ref.Name, ref.Version)
+		err := client.DeleteAPI(ctx, ref.Vendor, ref.Name, ref.Version)
 		return apisActionMsg{verb: "deleted API", err: err, back: true}
 	}
 }
@@ -264,7 +261,7 @@ func (m *apisBrowser) onRevs(msg apisRevsMsg) (tea.Model, tea.Cmd) {
 func (m *apisBrowser) onAction(msg apisActionMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	if msg.err != nil {
-		var he *apiclient.HTTPError
+		var he *APIError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
 			m.status = theme.Warnf("%s: not permitted (org policy)", msg.verb)
 			return m, nil
@@ -497,16 +494,16 @@ func (m *apisBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *apisBrowser) current() (apiclient.API, bool) {
+func (m *apisBrowser) current() (registeredAPI, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.apis) {
-		return apiclient.API{}, false
+		return registeredAPI{}, false
 	}
 	return m.apis[m.cursor], true
 }
 
-func (m *apisBrowser) currentRev() (apiclient.Revision, bool) {
+func (m *apisBrowser) currentRev() (apiRevision, bool) {
 	if m.revCursor < 0 || m.revCursor >= len(m.revs) {
-		return apiclient.Revision{}, false
+		return apiRevision{}, false
 	}
 	return m.revs[m.revCursor], true
 }
@@ -681,7 +678,7 @@ func (m *apisBrowser) detailWidth() int {
 	return w
 }
 
-func (m *apisBrowser) opsBlock(ops *apiclient.OperationList) string {
+func (m *apisBrowser) opsBlock(ops *operationListResult) string {
 	var b strings.Builder
 	b.WriteString(theme.Step.Render("Operations") + "\n")
 	if len(ops.Data) == 0 {

@@ -11,7 +11,6 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -240,16 +239,9 @@ const (
 )
 
 // ── auth ─────────────────────────────────────────────────────────────────────
-
-// apisSession resolves the active context's agent token and returns an apis
-// client bound to the control-plane base URL.
-func (a *app) apisSession(ctx context.Context) (*apiclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	return apiclient.New(baseURL), token, nil
-}
+//
+// apisSession lives in apisvc.go (ARCH-21 A5): it wraps the generated control
+// SDK in the CLI-owned apiClient view.
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
@@ -263,7 +255,7 @@ func (a *app) apisBrowse(ctx context.Context) error {
 // ── list ─────────────────────────────────────────────────────────────────────
 
 func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -271,12 +263,12 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	if limit <= 0 {
 		limit = 50
 	}
-	params := apiclient.ListParams{Vendor: o.vendor, Limit: limit}
+	params := apiListParams{Vendor: o.vendor, Limit: limit}
 
-	apis := []apiclient.API{}
+	apis := []registeredAPI{}
 	var nextCursor string
 	for {
-		page, err := client.List(ctx, token, params)
+		page, err := client.List(ctx, params)
 		if err != nil {
 			return apisListErr(err)
 		}
@@ -298,7 +290,7 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	return nil
 }
 
-func (a *app) printAPIList(apis []apiclient.API) {
+func (a *app) printAPIList(apis []registeredAPI) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("APIs"))
 	if len(apis) == 0 {
 		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no APIs imported yet — try `jentic catalog`"))
@@ -313,7 +305,7 @@ func (a *app) printAPIList(apis []apiclient.API) {
 
 // apiRow renders one API: a live/draft dot, the accent identity, and a dim
 // operation count.
-func apiRow(api apiclient.API) string {
+func apiRow(api registeredAPI) string {
 	dot := dotDown()
 	if api.CurrentRevisionID != "" {
 		dot = dotOK()
@@ -335,11 +327,11 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
-	api, err := client.Get(ctx, token, vendor, name, version)
+	api, err := client.Get(ctx, vendor, name, version)
 	if err != nil {
 		return apiNotFoundErr(err, ref)
 	}
@@ -347,7 +339,7 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 	if limit <= 0 {
 		limit = 50
 	}
-	ops, operr := client.Operations(ctx, token, vendor, name, version, "", "", limit)
+	ops, operr := client.Operations(ctx, vendor, name, version, "", "", limit)
 
 	if o.json {
 		out := map[string]any{"api": api}
@@ -366,7 +358,7 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 	return nil
 }
 
-func (a *app) printAPIDetail(api *apiclient.API) {
+func (a *app) printAPIDetail(api *registeredAPI) {
 	fmt.Fprintln(a.Out, theme.Heading.Render(apiRefLabel(api.API)))
 	if api.DisplayName != "" {
 		fmt.Fprintln(a.Out, "  "+theme.Field("name", api.DisplayName))
@@ -390,7 +382,7 @@ func (a *app) printAPIDetail(api *apiclient.API) {
 	}
 }
 
-func (a *app) printOperations(ops []apiclient.Operation, hasMore bool) {
+func (a *app) printOperations(ops []apiOperation, hasMore bool) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Heading.Render("Operations"))
 	if len(ops) == 0 {
@@ -406,7 +398,7 @@ func (a *app) printOperations(ops []apiclient.Operation, hasMore bool) {
 }
 
 // apiOpLine renders "METHOD  path  name" with the method tinted.
-func apiOpLine(op apiclient.Operation) string {
+func apiOpLine(op apiOperation) string {
 	line := theme.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " + theme.Command.Render(op.Path)
 	label := op.Name
 	if label == "" {
@@ -428,7 +420,7 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -436,12 +428,12 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	if limit <= 0 {
 		limit = 50
 	}
-	params := apiclient.RevisionParams{States: o.states, Limit: limit}
+	params := revisionParams{States: o.states, Limit: limit}
 
-	revs := []apiclient.Revision{}
+	revs := []apiRevision{}
 	var nextCursor string
 	for {
-		page, err := client.Revisions(ctx, token, vendor, name, version, params)
+		page, err := client.Revisions(ctx, vendor, name, version, params)
 		if err != nil {
 			return apiNotFoundErr(err, ref)
 		}
@@ -463,7 +455,7 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	return nil
 }
 
-func (a *app) printRevisions(ref string, revs []apiclient.Revision) {
+func (a *app) printRevisions(ref string, revs []apiRevision) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Revisions")+theme.Dim.Render("  "+ref))
 	if len(revs) == 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no revisions"))
@@ -474,7 +466,7 @@ func (a *app) printRevisions(ref string, revs []apiclient.Revision) {
 	}
 }
 
-func revisionLine(rev apiclient.Revision) string {
+func revisionLine(rev apiRevision) string {
 	dot := dotDown()
 	switch {
 	case rev.IsCurrent:
@@ -499,7 +491,7 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -508,12 +500,12 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 		limit = 50
 	}
 
-	ops := []apiclient.Operation{}
+	ops := []apiOperation{}
 	cursor := ""
 	var hasMore bool
 	var nextCursor string
 	for {
-		page, err := client.Operations(ctx, token, vendor, name, version, o.revision, cursor, limit)
+		page, err := client.Operations(ctx, vendor, name, version, o.revision, cursor, limit)
 		if err != nil {
 			return apiNotFoundErr(err, ref)
 		}
@@ -539,13 +531,13 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 // ── inspect ──────────────────────────────────────────────────────────────────
 
 func (a *app) apisInspect(ctx context.Context, o *apisInspectOptions, operationID string) error {
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
-	body, err := client.Inspect(ctx, token, operationID, o.revision, o.format)
+	body, err := client.Inspect(ctx, operationID, o.revision, o.format)
 	if err != nil {
-		var he *apiclient.HTTPError
+		var he *APIError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("operation %q not found", operationID)
 		}
@@ -563,18 +555,18 @@ func (a *app) apisLifecycle(ctx context.Context, ref, revisionID string, action 
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
 	switch action {
 	case lifecyclePromote:
-		if err := client.Promote(ctx, token, vendor, name, version, revisionID); err != nil {
+		if err := client.Promote(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Promoted %s revision %s to live", ref, revisionID))
 	case lifecycleArchive:
-		if err := client.Archive(ctx, token, vendor, name, version, revisionID); err != nil {
+		if err := client.Archive(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Archived %s revision %s", ref, revisionID))
@@ -608,18 +600,18 @@ func (a *app) apisRemove(ctx context.Context, o *apisRmOptions, ref, revisionID 
 		}
 	}
 
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
 	if revisionID != "" {
-		if err := client.DeleteRevision(ctx, token, vendor, name, version, revisionID); err != nil {
+		if err := client.DeleteRevision(ctx, vendor, name, version, revisionID); err != nil {
 			return apiActionErr(err, ref)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Deleted revision %s of %s", revisionID, ref))
 		return nil
 	}
-	if err := client.DeleteAPI(ctx, token, vendor, name, version); err != nil {
+	if err := client.DeleteAPI(ctx, vendor, name, version); err != nil {
 		return apiNotFoundErr(err, ref)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Deleted API %s", ref))
@@ -650,11 +642,11 @@ func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) erro
 	if err != nil {
 		return err
 	}
-	client, token, err := a.apisSession(ctx)
+	client, err := a.apisSession(ctx)
 	if err != nil {
 		return err
 	}
-	body, err := client.Spec(ctx, token, vendor, name, version, o.revision, o.yaml)
+	body, err := client.Spec(ctx, vendor, name, version, o.revision, o.yaml)
 	if err != nil {
 		return apiNotFoundErr(err, ref)
 	}
@@ -685,13 +677,13 @@ func parseAPIRef(ref string) (vendor, name, version string, err error) {
 	return parts[0], parts[1], parts[2], nil
 }
 
-func apiRefLabel(ref apiclient.APIRef) string {
+func apiRefLabel(ref apiRef) string {
 	return ref.Vendor + "/" + ref.Name + "/" + ref.Version
 }
 
 // apisListErr maps a missing route to a friendly "not available" message.
 func apisListErr(err error) error {
-	var he *apiclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) && (he.StatusCode == http.StatusNotFound || he.StatusCode == http.StatusNotImplemented) {
 		return fmt.Errorf("registry not available on this server (HTTP %d)", he.StatusCode)
 	}
@@ -700,7 +692,7 @@ func apisListErr(err error) error {
 
 // apiNotFoundErr maps a 404 to a clear "API not found" message.
 func apiNotFoundErr(err error, ref string) error {
-	var he *apiclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("API %q not found in the local registry", ref)
 	}
@@ -709,7 +701,7 @@ func apiNotFoundErr(err error, ref string) error {
 
 // apiActionErr maps a 403 to an org-permission hint, otherwise passes through.
 func apiActionErr(err error, ref string) error {
-	var he *apiclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
 		case http.StatusForbidden:

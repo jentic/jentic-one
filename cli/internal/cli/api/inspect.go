@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/spf13/cobra"
 )
@@ -47,7 +46,7 @@ func newInspectCmd(app *app) *cobra.Command {
 }
 
 func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID string) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	client, err := a.apisSession(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -64,10 +63,9 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 		}
 	}
 
-	client := apiclient.New(baseURL)
-	body, err := client.Inspect(cmd.Context(), token, operationID, opts.revision, format)
+	body, err := client.Inspect(cmd.Context(), operationID, opts.revision, format)
 	if err != nil {
-		var he *apiclient.HTTPError
+		var he *APIError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			// AGT-2: return a coded error (not a human string + bare exit-2) so an
 			// agent gets a machine error_code (RESOLVE_FAILED) identical to the

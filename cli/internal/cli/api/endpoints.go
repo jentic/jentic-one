@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -71,7 +70,11 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 		}
 	}
 	baseURL := st.BaseURL
-	client := apiclient.New(baseURL)
+	// endpoints reads the public /reference route (no token needed). Use a
+	// raw-only apiClient so we don't force the credential pre-flight that the
+	// authenticated apis commands do (an unregistered-but-configured context can
+	// still browse the reference).
+	client := &apiClient{}
 	body, err := client.Reference(ctx)
 	if err != nil {
 		return endpointsFetchErr(err, baseURL)
@@ -221,7 +224,7 @@ func contains(haystack []string, needle string) bool {
 
 // endpointsFetchErr maps a transport/HTTP failure to a friendly message.
 func endpointsFetchErr(err error, baseURL string) error {
-	var he *apiclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("server at %s does not expose /reference/endpoints.json", baseURL)
 	}

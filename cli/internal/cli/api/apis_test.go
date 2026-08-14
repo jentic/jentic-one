@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/jentic/jentic-one/cli/internal/apiclient"
 )
 
 // keyMsg builds a tea.KeyMsg for the given rune string (test helper).
@@ -18,6 +17,7 @@ func keyMsg(s string) tea.KeyMsg {
 
 func TestApisListRenders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[
 			{"api":{"vendor":"stripe.com","name":"api","version":"v1"},"current_revision_id":"r1","operation_count":12},
 			{"api":{"vendor":"slack.com","name":"web","version":"v2"},"operation_count":3}],
@@ -41,6 +41,7 @@ func TestApisListSendsVendor(t *testing.T) {
 	var gotVendor string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotVendor = r.URL.Query().Get("vendor")
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[],"has_more":false}`))
 	}))
 	defer srv.Close()
@@ -56,6 +57,7 @@ func TestApisListSendsVendor(t *testing.T) {
 
 func TestApisShowRendersDetailAndOps(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/operations") {
 			_, _ = w.Write([]byte(`{"data":[{"method":"GET","path":"/v1/charges","name":"List charges"}],"has_more":false}`))
 			return
@@ -170,8 +172,8 @@ func TestParseAPIRef(t *testing.T) {
 
 func TestApisBrowserOpenRevisionsSwitchesView(t *testing.T) {
 	m := &apisBrowser{
-		apis:   []apiclient.API{{API: apiclient.APIRef{Vendor: "v", Name: "n", Version: "1"}}},
-		ops:    map[string]*apiclient.OperationList{},
+		apis:   []registeredAPI{{API: apiRef{Vendor: "v", Name: "n", Version: "1"}}},
+		ops:    map[string]*operationListResult{},
 		opsErr: map[string]string{},
 	}
 	if _, cmd := m.openRevisions(); cmd == nil {
@@ -186,10 +188,10 @@ func TestApisBrowserOpenRevisionsSwitchesView(t *testing.T) {
 }
 
 func TestApisBrowserBackPeelsLevels(t *testing.T) {
-	ref := apiclient.APIRef{Vendor: "v", Name: "n", Version: "1"}
+	ref := apiRef{Vendor: "v", Name: "n", Version: "1"}
 	m := &apisBrowser{
-		apis:   []apiclient.API{{API: ref}},
-		ops:    map[string]*apiclient.OperationList{apiRefLabel(ref): {}},
+		apis:   []registeredAPI{{API: ref}},
+		ops:    map[string]*operationListResult{apiRefLabel(ref): {}},
 		opsErr: map[string]string{},
 		vendor: "v",
 	}
@@ -220,8 +222,8 @@ func TestApisBrowserBackPeelsLevels(t *testing.T) {
 func TestApisBrowserActOnRevisionGuardsState(t *testing.T) {
 	m := &apisBrowser{
 		view:   viewRevisions,
-		revAPI: apiclient.APIRef{Vendor: "v", Name: "n", Version: "1"},
-		revs:   []apiclient.Revision{{RevisionID: "r1", State: "published", IsCurrent: true}},
+		revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"},
+		revs:   []apiRevision{{RevisionID: "r1", State: "published", IsCurrent: true}},
 	}
 	// Promoting a non-draft must be a no-op with a status hint, not a command.
 	if _, cmd := m.actOnRevision("promote"); cmd != nil {
@@ -240,8 +242,8 @@ func TestApisBrowserActOnRevisionGuardsState(t *testing.T) {
 func TestApisBrowserDeleteRevisionConfirmFlow(t *testing.T) {
 	m := &apisBrowser{
 		view:   viewRevisions,
-		revAPI: apiclient.APIRef{Vendor: "v", Name: "n", Version: "1"},
-		revs:   []apiclient.Revision{{RevisionID: "r9", State: "archived"}},
+		revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"},
+		revs:   []apiRevision{{RevisionID: "r9", State: "archived"}},
 	}
 	m.actOnRevision("delete")
 	if m.confirm != confirmDeleteRevision {
@@ -255,8 +257,8 @@ func TestApisBrowserDeleteRevisionConfirmFlow(t *testing.T) {
 }
 
 func TestApisBrowserActionForbiddenHint(t *testing.T) {
-	m := &apisBrowser{revAPI: apiclient.APIRef{Vendor: "v", Name: "n", Version: "1"}}
-	m.onAction(apisActionMsg{verb: "promoted", err: &apiclient.HTTPError{StatusCode: 403, Body: "{}"}})
+	m := &apisBrowser{revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"}}
+	m.onAction(apisActionMsg{verb: "promoted", err: &APIError{StatusCode: 403, Body: "{}"}})
 	if !strings.Contains(m.status, "not permitted") {
 		t.Errorf("status should hint permission, got %q", m.status)
 	}
