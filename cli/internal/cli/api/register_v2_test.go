@@ -80,11 +80,11 @@ func TestRegister_FreshMachine_OneCommand(t *testing.T) {
 	if id, ok := cfg.Identities["crawler"]; !ok || id.Type != "agent" {
 		t.Errorf("identity crawler = %+v, want type agent", id)
 	}
-	if ctxCfg, ok := cfg.Contexts["qa"]; !ok || ctxCfg.Environment != "qa" || ctxCfg.Identity != "crawler" {
-		t.Errorf("context qa = %+v, want qa/crawler", ctxCfg)
+	if ctxCfg, ok := cfg.Contexts["qa-crawler"]; !ok || ctxCfg.Environment != "qa" || ctxCfg.Identity != "crawler" {
+		t.Errorf("context qa-crawler = %+v, want qa/crawler", ctxCfg)
 	}
-	if cfg.ActiveContext != "qa" {
-		t.Errorf("active context = %q, want qa", cfg.ActiveContext)
+	if cfg.ActiveContext != "qa-crawler" {
+		t.Errorf("active context = %q, want qa-crawler", cfg.ActiveContext)
 	}
 	assertRegApproved(t, "crawler", "qa")
 	if n := registers.Load(); n != 1 {
@@ -213,6 +213,46 @@ func TestRegister_ClaimPending_AssertionInvalidIsNotFatal(t *testing.T) {
 	}
 	if coded.Code != ux.CodeTimeoutPending {
 		t.Errorf("code = %q, want TIMEOUT_PENDING (the audience-mismatch hard-fail must be suppressed while claiming); err: %v", coded.Code, err)
+	}
+}
+
+// TestRegister_TwoAgentsSameEnv_DistinctContexts: registering a SECOND agent
+// name into an env that already has one must NOT hijack the first agent's
+// context. Each identity gets its own per-identity context (env "-" name); the
+// just-registered one becomes active, and the earlier binding is left intact so
+// you can switch back with `jentic context use`.
+func TestRegister_TwoAgentsSameEnv_DistinctContexts(t *testing.T) {
+	withXDG(t)
+	srv, _ := bootstrapServer(t, 0) // approved immediately
+
+	if err := runJentic(t, "register", "--url", srv.URL, "--name", "alpha", "--env", "qa", "--timeout", "5s"); err != nil {
+		t.Fatalf("register alpha: %v", err)
+	}
+	if err := runJentic(t, "register", "--url", srv.URL, "--name", "beta", "--env", "qa", "--timeout", "5s"); err != nil {
+		t.Fatalf("register beta: %v", err)
+	}
+
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both contexts exist, each bound to its own identity in the shared env.
+	if c, ok := cfg.Contexts["qa-alpha"]; !ok || c.Identity != "alpha" || c.Environment != "qa" {
+		t.Errorf("context qa-alpha = %+v, want qa/alpha (first agent must be untouched)", c)
+	}
+	if c, ok := cfg.Contexts["qa-beta"]; !ok || c.Identity != "beta" || c.Environment != "qa" {
+		t.Errorf("context qa-beta = %+v, want qa/beta", c)
+	}
+
+	// The just-registered identity is the active one — not the older alpha.
+	if cfg.ActiveContext != "qa-beta" {
+		t.Errorf("active context = %q, want qa-beta (newest register wins, no silent hijack)", cfg.ActiveContext)
+	}
+
+	// One shared environment, not two.
+	if _, ok := cfg.Environments["qa"]; !ok || len(cfg.Environments) != 1 {
+		t.Errorf("environments = %+v, want a single reused qa env", cfg.Environments)
 	}
 }
 

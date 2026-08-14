@@ -306,12 +306,14 @@ func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout tim
 		}
 	}
 
-	// Upsert the trio and activate it. Idempotent: an existing environment of
-	// the same name is REUSED only when it points at the same URL (silently
-	// re-pointing an env would hijack every context bound to it); identity and
-	// context are reused as-is.
+	// Upsert the trio and activate it. The context is named per-identity-per-env
+	// (env "-" name) so registering a SECOND agent into the same env gets its own
+	// switchable context instead of silently hijacking the first agent's binding
+	// (which used to leave you authenticated as the wrong, older identity). Env is
+	// still reused only when it points at the same URL (silently re-pointing an
+	// env would hijack every context bound to it); the identity is upserted.
 	envName := vals.Env
-	contextName := envName
+	contextName := sdkconfig.SanitizeName(envName + "-" + vals.Name)
 	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
 		if env, ok := cfg.Environments[envName]; ok && env.BaseURL != vals.URL {
 			return &ux.CodedError{
@@ -339,10 +341,12 @@ func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout tim
 		if _, ok := cfg.Identities[vals.Name]; !ok {
 			cfg.Identities[vals.Name] = sdkconfig.Identity{Type: "agent"}
 		}
-		if _, ok := cfg.Contexts[contextName]; !ok {
-			cfg.Contexts[contextName] = sdkconfig.Context{
-				Environment: envName, Identity: vals.Name, Mode: clictx.ModeHuman,
-			}
+		// (Re)bind unconditionally: the per-identity name is stable, so re-running
+		// for the SAME identity+env is idempotent, while a NEW identity gets its
+		// own context. Then activate it — register's contract is "when this
+		// returns, THIS identity is the live one".
+		cfg.Contexts[contextName] = sdkconfig.Context{
+			Environment: envName, Identity: vals.Name, Mode: clictx.ModeHuman,
 		}
 		cfg.ActiveContext = contextName
 		return nil
@@ -493,6 +497,14 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 		return nil
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Token minted for %s.", identity))
+	// Make the active identity unambiguous and switching obvious: register may
+	// have created a NEW per-identity context (env "-" identity), so spell out
+	// who you now are and how to move between agents. This is the same name
+	// RegisterV2Setup activated.
+	contextName := sdkconfig.SanitizeName(envName + "-" + identity)
+	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
+	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
+	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("See all:      "), theme.Command.Render("jentic context list"))
 	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Ready:"), theme.Command.Render("jentic catalog"))
 	return nil
 }

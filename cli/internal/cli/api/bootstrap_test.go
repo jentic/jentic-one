@@ -88,8 +88,8 @@ func TestBootstrapEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.ActiveContext != "qa" {
-		t.Errorf("active context = %q, want qa", cfg.ActiveContext)
+	if cfg.ActiveContext != "qa-demo" {
+		t.Errorf("active context = %q, want qa-demo", cfg.ActiveContext)
 	}
 	assertRegApproved(t, "demo", "qa")
 
