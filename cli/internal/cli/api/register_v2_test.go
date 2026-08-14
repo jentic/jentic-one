@@ -19,7 +19,7 @@ import (
 )
 
 // These tests pin `jentic register` as the single V2 onboarding front door
-// (register_v2.go): one command takes a fresh machine to a working, approved
+// (register.go): one command takes a fresh machine to a working, approved
 // context; an active context re-registers in place. The legacy --profile/
 // --base-url arm was REMOVED at the activation release (14 BC-1) — the flags
 // no longer exist.

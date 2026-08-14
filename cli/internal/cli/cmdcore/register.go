@@ -35,7 +35,7 @@ type registerOptions struct {
 }
 
 // NewRegisterCmd builds the `register` command — the single onboarding front
-// door (register_v2.go): with an active context it registers that context's
+// door (register.go): with an active context it registers that context's
 // identity; on a fresh machine --url (or the interactive prompt) creates the
 // environment + identity + context trio, activates it, and registers. Shared
 // by both trees via cmdcore.
