@@ -1516,6 +1516,269 @@ async def test_supersede_deprecates_target_when_no_race(
         assert overlay_row.deprecated_reason == "superseded_by_reimport"
 
 
+async def test_supersede_recovers_overlay_in_lazy_link_window(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#940 lazy-link: the live overlay is CONFIRMED but not yet linked (NULL link).
+
+    The confirm path makes an overlay's revision current *before* it stamps
+    ``confirmed_revision_id`` (separate best-effort txn). In that window the strict
+    revision-keyed re-resolution misses, so the worker must recover the live overlay via
+    the single NULL-linked CONFIRMED overlay for the API rather than falling back to the
+    stale enqueue-time id.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="lazy-vendor", name="lazy-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "lazy-vendor"))).scalar_one()
+        api_id = api.id
+        # Stale enqueue target A: CONFIRMED, linked to some other (superseded) revision.
+        overlay_a = Overlay(
+            api_id=api_id,
+            document=_OVERLAY_DOC,
+            status="confirmed",
+            confirmed_revision_id=uuid.uuid4(),
+            created_by="usr_author_a",
+        )
+        overlay_b = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_author_b"
+        )
+        session.add_all([overlay_a, overlay_b])
+        await session.commit()
+        overlay_a_id = overlay_a.id
+        overlay_b_id = overlay_b.id
+
+    materialize = await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "LAZY", "version": "1.0.0"},
+                            "servers": [{"url": "https://overlaid-b.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "lazy-vendor",
+                    "api_name": "lazy-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_b_id,
+        },
+        created_by="usr_test",
+    )
+    b_revision_id = uuid.UUID(materialize.body["revisions"][0]["revision_id"])
+    # Lazy-link window: B is CONFIRMED and its revision is current, but confirmed_revision_id
+    # is still NULL (the link txn hasn't landed / failed).
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay)
+            .where(Overlay.id == overlay_b_id)
+            .values(status="confirmed", confirmed_revision_id=None)
+        )
+        await session.commit()
+
+    fresh_upstream = json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "LAZY", "version": "1.0.0"},
+            "servers": [{"url": "https://upstream-fresh.example.com"}],
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+    await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": fresh_upstream,
+                    "filename": "openapi.json",
+                    "vendor": "lazy-vendor",
+                    "api_name": "lazy-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_a_id,
+        },
+        created_by="usr_operator",
+    )
+
+    async with registry_db.session() as session:
+        b_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == b_revision_id))
+        ).scalar_one()
+        assert b_rev.state == "archived"
+        overlay_a_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_a_id))
+        ).scalar_one()
+        overlay_b_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_b_id))
+        ).scalar_one()
+        # Recovered via the single NULL-linked CONFIRMED overlay → B deprecated, A untouched.
+        assert overlay_b_row.status == "deprecated"
+        assert overlay_b_row.deprecated_reason == "superseded_by_reimport"
+        assert overlay_a_row.status == "confirmed"
+        assert overlay_a_row.deprecated_at is None
+
+
+async def test_supersede_falls_back_to_enqueue_id_when_no_backing_overlay(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#940 fallback: a catalog-origin base (no overlay backs the archived revision).
+
+    When the archived revision was not overlay-origin, there is no overlay to re-resolve, so
+    the worker falls back to the enqueue-time id and deprecates it. This exercises the
+    strict-miss → not-overlay-origin → fallback branch.
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="fb-vendor", name="fb-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "fb-vendor"))).scalar_one()
+        api_id = api.id
+        # A CONFIRMED overlay stamped as the enqueue target, but the current revision is the
+        # catalog base (overlay never materialized), so nothing overlay-origin backs it.
+        overlay = Overlay(
+            api_id=api_id,
+            document=_OVERLAY_DOC,
+            status="confirmed",
+            confirmed_revision_id=uuid.uuid4(),
+            created_by="usr_author",
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    fresh_upstream = json.dumps(
+        {
+            "openapi": "3.1.0",
+            "info": {"title": "FB", "version": "1.0.0"},
+            "servers": [{"url": "https://upstream-fresh.example.com"}],
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "responses": {"200": {"description": "OK"}},
+                    }
+                }
+            },
+        }
+    )
+    await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": fresh_upstream,
+                    "filename": "openapi.json",
+                    "vendor": "fb-vendor",
+                    "api_name": "fb-api",
+                    "version": "1.0.0",
+                    "origin": "catalog",
+                    "source_url": "https://catalog.example.com/base.json",
+                    "supersede_active": "true",
+                }
+            ],
+            "supersede_overlay_id": overlay_id,
+        },
+        created_by="usr_operator",
+    )
+
+    async with registry_db.session() as session:
+        overlay_row = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        # Fallback to the enqueue-time id deprecated it (no regression vs pre-#940).
+        assert overlay_row.status == "deprecated"
+        assert overlay_row.deprecated_reason == "superseded_by_reimport"
+
+
+async def test_deprecate_superseded_overlay_is_idempotent_under_repeat(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#940: a second deprecate of the same target is a safe no-op (CAS on CONFIRMED).
+
+    Models two supersede handlers racing the demote (or a retry): the first flips the
+    overlay CONFIRMED → DEPRECATED; the second observes it is no longer CONFIRMED, logs
+    ``overlay_supersede_not_deprecated``, and changes nothing (no double-emit, no error).
+    """
+    handler = ImportHandler(integration_context)
+    await _import_base(
+        handler, vendor="idem-vendor", name="idem-api", version="1.0.0", origin="catalog"
+    )
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.vendor == "idem-vendor"))).scalar_one()
+        overlay = Overlay(
+            api_id=api.id, document=_OVERLAY_DOC, status="confirmed", created_by="usr_author"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    # First demote (no superseding_revision → uses the enqueue id directly).
+    await handler._deprecate_superseded_overlay(
+        "job-1", overlay_id, actor_id="usr_operator", actor_type="user"
+    )
+    async with registry_db.session() as session:
+        after_first = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert after_first.status == "deprecated"
+        first_deprecated_at = after_first.deprecated_at
+
+    # Second demote: CAS on CONFIRMED fails (already DEPRECATED) → no-op, no error.
+    await handler._deprecate_superseded_overlay(
+        "job-2", overlay_id, actor_id="usr_operator", actor_type="user"
+    )
+    async with registry_db.session() as session:
+        after_second = (
+            await session.execute(select(Overlay).where(Overlay.id == overlay_id))
+        ).scalar_one()
+        assert after_second.status == "deprecated"
+        # Unchanged — the second call did not re-demote/rewrite the timestamp.
+        assert after_second.deprecated_at == first_deprecated_at
+
+
 async def test_overlay_materialization_archives_active_revision_of_other_origin(
     integration_context: Context,
     registry_db: DatabaseSession,

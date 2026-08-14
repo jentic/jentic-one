@@ -534,13 +534,14 @@ async def test_import_handler_settle_reuses_session_no_self_deadlock(
 async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
     integration_context: Context, registered_api: Api
 ) -> None:
-    """#941: a crash between marking notified and emitting must NOT permanently suppress.
+    """#941: a *failed emit* must NOT advance the notify marker (no permanent suppression).
 
-    With emit-then-mark, the notify marker (``last_notified_digest`` /
-    ``last_notified_event_class``) is written only *after* a successful cross-DB emit. If
-    the emit fails (the process crashing mid-emit is modelled by the emit raising, which
-    the per-API guard swallows), the marker stays unadvanced so the *next* sweep re-emits
-    rather than silently deduping against a notification that was never delivered.
+    The change path uses the raising ``emit_event`` (not the swallowing best-effort
+    wrapper) exactly so a transient admin-DB emit failure propagates to the sweep's per-API
+    guard and the marker is left unadvanced. Patching ``emit_event`` here reproduces the
+    real production seam (a raising emit), unlike patching the best-effort wrapper — which
+    in production swallows and would let the marker advance. On the next healthy sweep the
+    change re-emits rather than being deduped against a notification that never landed.
     """
     integration_context.config.catalog.update_check_interval_seconds = 1
     changed = ConditionalFetch(
@@ -548,12 +549,12 @@ async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
     )
     svc = CatalogService(integration_context)
 
-    # First sweep: the emit fails. The per-API guard swallows it; the API must be left
-    # unmarked (no notified digest) so it is not deduped away.
+    # First sweep: the emit raises (transient admin-DB error). The per-API guard isolates
+    # it; the API must be left unmarked (no notified digest) so it is not deduped away.
     with (
         patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed),
         patch(
-            f"{_SWEEP}.emit_event_best_effort",
+            f"{_SWEEP}.emit_event",
             new_callable=AsyncMock,
             side_effect=RuntimeError("admin DB unavailable mid-emit"),
         ),
@@ -580,6 +581,56 @@ async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
 
     events = await _events(integration_context)
     assert len(events) == 1  # re-emitted, not permanently suppressed
+    async with integration_context.registry_db.session() as session:
+        check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+    assert check_after is not None
+    assert check_after.last_notified_digest == "sha256:upstream-new"
+
+
+async def test_sweep_crash_after_emit_before_mark_re_emits_at_most_once(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """#941: a crash *after* the emit commits but *before* the mark → duplicate, not loss.
+
+    This is the residual window emit-then-mark deliberately accepts. Faithfully model it by
+    letting the emit succeed (event committed to the admin DB) and raising inside the
+    *mark* seam. The per-API guard isolates the failure; because the marker never landed,
+    the next sweep re-emits — so the event fires a *second* time (at-most-once duplicate),
+    which is strictly better than the permanent suppression the old ordering caused.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+
+    with (
+        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed),
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("crash before mark commit"),
+        ),
+    ):
+        await svc._run_update_notify_sweep()
+
+    # The event WAS emitted (emit committed before the mark seam), but the marker did not
+    # land because mark_notified raised.
+    assert len(await _events(integration_context)) == 1
+    async with integration_context.registry_db.session() as session:
+        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+    assert check is not None
+    assert check.last_notified_digest is None  # marker not advanced
+
+    # Next healthy sweep re-emits (the accepted duplicate) and this time marks.
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        assert check is not None
+        check.last_checked_at = None
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+
+    assert len(await _events(integration_context)) == 2  # duplicate, not suppressed
     async with integration_context.registry_db.session() as session:
         check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
     assert check_after is not None

@@ -8,6 +8,7 @@ identity, excludes archived revisions, and de-duplicates per API.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -387,3 +388,49 @@ async def test_future_snooze_still_excludes_without_explicit_now(
     async with registry_db.session() as session:
         ids = await CatalogUpdateCheckRepository.outdated_api_ids(session)
         assert sample_api.id not in ids
+
+
+async def test_mark_notified_updates_existing_row(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """mark_notified advances last_notified_digest/class on an existing row (#941)."""
+    now = datetime.now(UTC)
+    async with registry_db.session() as session:
+        await CatalogUpdateCheckRepository.upsert(
+            session,
+            local_api_id=sample_api.id,
+            spec_url="https://example.com/openapi.json",
+            etag='"v1"',
+            digest="digest-up",
+            checked_at=now,
+        )
+        await session.commit()
+
+    async with registry_db.session() as session:
+        marked = await CatalogUpdateCheckRepository.mark_notified(
+            session,
+            local_api_id=sample_api.id,
+            notified_digest="digest-up",
+            notified_event_class="catalog.update_available",
+        )
+        await session.commit()
+    assert marked == 1
+
+    async with registry_db.session() as session:
+        row = await CatalogUpdateCheckRepository.get(session, sample_api.id)
+    assert row is not None
+    assert row.last_notified_digest == "digest-up"
+    assert row.last_notified_event_class == "catalog.update_available"
+
+
+async def test_mark_notified_missing_row_returns_zero(registry_db: DatabaseSession) -> None:
+    """mark_notified on an api_id with no check row returns 0 and raises nothing (#941)."""
+    async with registry_db.session() as session:
+        marked = await CatalogUpdateCheckRepository.mark_notified(
+            session,
+            local_api_id=uuid.uuid4(),
+            notified_digest="digest-x",
+            notified_event_class="catalog.update_available",
+        )
+        await session.commit()
+    assert marked == 0

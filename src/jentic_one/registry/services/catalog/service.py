@@ -52,7 +52,7 @@ from jentic_one.shared.auth.identity import Identity
 from jentic_one.shared.auth.permissions import has_effective_permission
 from jentic_one.shared.context import Context
 from jentic_one.shared.db.utils import utcnow
-from jentic_one.shared.events import emit_event_best_effort
+from jentic_one.shared.events import emit_event, emit_event_best_effort
 from jentic_one.shared.jobs.enqueue import enqueue_job
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.events import EventSeverity, EventType
@@ -501,8 +501,17 @@ class CatalogService:
                 )
             conflict_overlay_id = live_overlay.id if live_overlay is not None else None
 
+        # Emit-then-mark durability (#941) requires the *raising* emit here, NOT
+        # emit_event_best_effort: the marker below must only be written when the event
+        # actually landed. emit_event_best_effort swallows failures, so a transient
+        # admin-DB error would return normally and let mark_notified stamp the dedupe key
+        # for an event that was never delivered — permanently suppressing it. Letting
+        # emit_event raise rolls back this (empty) admin txn and propagates to the sweep's
+        # per-API guard (_guarded), which logs + isolates the failure and leaves the row
+        # unmarked, so the next sweep re-emits. Worst case is one duplicate on a crash
+        # *after* this commit but before the mark — the accepted trade-off.
         async with self._ctx.admin_db.transaction() as session:
-            await emit_event_best_effort(
+            await emit_event(
                 session,
                 type=event_class,
                 severity=EventSeverity.INFO,
@@ -560,11 +569,23 @@ class CatalogService:
         # this point re-emits next sweep (at worst one duplicate) rather than permanently
         # suppressing the notification.
         async with self._ctx.registry_db.transaction() as session:
-            await CatalogUpdateCheckRepository.mark_notified(
+            marked = await CatalogUpdateCheckRepository.mark_notified(
                 session,
                 local_api_id=spec.api_id,
                 notified_digest=upstream_digest,
                 notified_event_class=event_class,
+            )
+        if marked == 0:
+            # The observation upsert above committed a row, so a 0 here means it was
+            # concurrently deleted (operator action / a future concurrent sweep) between
+            # the upsert and this mark. The event was emitted but not deduped — it re-fires
+            # next sweep (safe direction). Surface it so an "emitted but unmarked" tick is
+            # observable rather than silent, mirroring overlay_supersede_not_deprecated.
+            logger.warning(
+                "catalog_update_marked_zero_rows",
+                api_id=str(spec.api_id),
+                upstream_digest=upstream_digest,
+                event_class=event_class,
             )
         record_update_notified(event_class)
 

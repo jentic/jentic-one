@@ -105,7 +105,7 @@ async def test_probe_skips_within_interval() -> None:
             return_value=_check(last_checked_at=recent, etag='"v1"', notified=None),
         ),
         patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock) as fetch,
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(), now=datetime.now(UTC), interval=86400)
         fetch.assert_not_called()
@@ -132,7 +132,7 @@ async def test_probe_at_interval_boundary_re_probes() -> None:
             ),
         ) as fetch,
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock),
     ):
         await svc._probe_one(_spec(), now=now, interval=100)
         fetch.assert_awaited_once()
@@ -153,7 +153,7 @@ async def test_probe_304_is_noop_but_records_check() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
@@ -181,7 +181,7 @@ async def test_probe_change_emits_event_once() -> None:
         patch(
             f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
         ) as mark_notified,
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_awaited_once()
@@ -213,7 +213,7 @@ async def test_probe_already_notified_digest_does_not_re_emit() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
@@ -235,7 +235,7 @@ async def test_probe_upstream_matches_registered_is_noop() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         emit.assert_not_called()
@@ -273,7 +273,7 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
             new_callable=AsyncMock,
             return_value=overlay,
         ),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         # Overlaid served digest is "overlaid"; the base it was built over is "base-old".
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
@@ -332,7 +332,7 @@ async def test_probe_suppresses_emit_when_snoozed() -> None:
         patch(
             f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
         ) as mark_notified,
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
         # Recorded the observation and marked notified inline (snooze read-surface keys on
@@ -360,7 +360,7 @@ async def test_probe_records_notify_metric() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock),
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock),
         patch(f"{_SWEEP}.record_update_notified") as metric,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
@@ -389,7 +389,7 @@ async def test_probe_overlay_upstream_matches_base_is_plain_noop() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
         await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
@@ -421,7 +421,7 @@ async def test_probe_overlay_unknown_base_falls_back_to_plain() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest=None)
         await svc._probe_one(spec, now=datetime.now(UTC), interval=86400)
@@ -468,7 +468,7 @@ async def test_probe_reclassified_digest_re_emits_once() -> None:
             new_callable=AsyncMock,
             return_value=None,
         ),
-        patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
+        patch(f"{_SWEEP}.emit_event", new_callable=AsyncMock) as emit,
     ):
         # Now overlay-origin with a base the upstream digest differs from → conflict class.
         spec = _spec(digest="overlaid", origin="overlay", overlay_base_digest="base-old")
@@ -539,7 +539,13 @@ async def test_sweep_skips_when_lock_already_held() -> None:
 
 @pytest.mark.asyncio
 async def test_sweep_swallows_emit_failure_per_api() -> None:
-    """A hard failure in a probe's emit path is isolated by the sweep, not propagated."""
+    """A failure in a probe's emit path is isolated by the sweep AND leaves the row unmarked.
+
+    #941: the change path now uses the raising ``emit_event`` (not the swallowing
+    best-effort wrapper) precisely so a failed emit propagates to the per-API guard and
+    the notify marker is NOT advanced — otherwise a swallowed emit failure would dedupe an
+    undelivered notification forever.
+    """
     svc = CatalogService(_make_ctx())
     with (
         patch(
@@ -559,13 +565,19 @@ async def test_sweep_swallows_emit_failure_per_api() -> None:
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
         patch(
-            f"{_SWEEP}.emit_event_best_effort",
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
+        ) as mark_notified,
+        patch(
+            f"{_SWEEP}.emit_event",
             new_callable=AsyncMock,
             side_effect=RuntimeError("emit boom"),
         ),
     ):
         # Must complete without raising — the sweep-level guard isolates the failure.
         await svc._run_update_notify_sweep()
+        # The emit failed → the marker must NOT have been advanced (else a next sweep would
+        # dedupe an event that was never delivered).
+        mark_notified.assert_not_awaited()
 
 
 @pytest.mark.asyncio
