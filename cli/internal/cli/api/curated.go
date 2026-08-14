@@ -298,5 +298,15 @@ func CuratedBindings() []CuratedBinding {
 				"type": "union discriminator; set to \"inline\" by buildImportSource, not a user flag",
 			},
 		},
+		{
+			// ARCH-21 Part B (B7): `jentic identity claim <id> --token <t>` builds
+			// the :claim request body. The agent id is the path parameter (not part
+			// of this struct); token is the single-use claim capability.
+			Command: "identity claim",
+			Params:  control.ClaimRequest{},
+			Bind: map[string]string{
+				"token": "token",
+			},
+		},
 	}
 }

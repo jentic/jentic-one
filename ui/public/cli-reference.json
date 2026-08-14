@@ -626,6 +626,35 @@
               ]
             },
             {
+              "name": "claim",
+              "path": "jentic identity claim",
+              "use": "claim \u003cagent-id\u003e",
+              "short": "Claim ownership of a self-registered agent with its one-time claim token",
+              "long": "claim binds a self-registered agent to you (the human) using the\nsingle-use token shown once at `jentic register` time. Present it with\n--token; an agent cannot claim itself. Requires an active human context\n(`jentic context use`).",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                },
+                {
+                  "name": "token",
+                  "type": "string",
+                  "usage": "The one-time claim token returned at registration (required)"
+                }
+              ]
+            },
+            {
               "name": "delete",
               "path": "jentic identity delete",
               "use": "delete \u003cname\u003e",

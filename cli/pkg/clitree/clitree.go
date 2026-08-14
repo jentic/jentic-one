@@ -62,5 +62,6 @@ var MustBeFenced = []string{
 	"env add",
 	"env delete",
 	"identity add",
+	"identity claim",
 	"identity delete",
 }
