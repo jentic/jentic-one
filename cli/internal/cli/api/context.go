@@ -29,11 +29,16 @@ func newContextCmd(app *app) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// The most common question a user asks here is "which context am I
-			// in?" (UX5), so answer it before the subcommand list: show the
-			// active context (like `context view`), then fall through to help.
-			// Best-effort — a missing/unreadable active context just skips
-			// straight to the subcommand list.
-			showActiveContext(cmd)
+			// in?" (UX5). On the bare invocation, answer that (active context +
+			// a one-line pointer to the subcommands) and stop — burying the
+			// 4-line state under the full logo/USAGE/COMMANDS help dump made it
+			// invisible. Reserve the full help for an explicit -h/--help, which
+			// short-circuits RunE before we get here.
+			if showActiveContext(cmd, true) {
+				return nil
+			}
+			// Nothing active (fresh machine / unreadable config): fall through to
+			// the subcommand list rather than a bare "no context" line.
 			return cmd.Help()
 		},
 	}
@@ -41,36 +46,45 @@ func newContextCmd(app *app) *cobra.Command {
 	cmd.AddCommand(fenced(newContextUseCmd(app)))
 	cmd.AddCommand(fenced(newContextListCmd(app))) // fenced: enumerates the operator's OTHER identities/contexts (impl/3.2 §2a)
 	cmd.AddCommand(newContextViewCmd(app))         // read-only (active only): not fenced
+	cmd.AddCommand(fenced(newContextRenameCmd(app)))
 	cmd.AddCommand(fenced(newContextDeleteCmd(app)))
 	return cmd
 }
 
 // showActiveContext prints the active context (the same Result `context view`
-// renders) as an ambient "you are here" before the subcommand list on bare
-// `jentic context`. It is best-effort: when nothing is active (or the config
-// can't be read) it prints nothing, so a fresh machine drops straight to help
-// instead of surfacing a scary "no active context" error where the user only
-// asked for the command list.
-func showActiveContext(cmd *cobra.Command) {
+// renders) as an ambient "you are here". It reports whether it rendered
+// anything: false when nothing is active (or the config can't be read), so a
+// fresh machine drops straight to help instead of surfacing a scary "no active
+// context" error where the user only asked for the command list. When withHint
+// is true the rendered Result carries a one-line pointer to the subcommands in
+// its Message field (a typed envelope field, so agent-mode JSON stays clean —
+// no naked stdout write).
+func showActiveContext(cmd *cobra.Command, withHint bool) bool {
 	cfg, err := config.Load()
 	if err != nil {
-		return
+		return false
 	}
 	active := cfg.ActiveContext
 	c, ok := cfg.Contexts[active]
 	if active == "" || !ok {
-		return
+		return false
+	}
+	var msg string
+	if withHint {
+		msg = "· run `jentic context --help` for subcommands (create, use, list, view, rename, delete)"
 	}
 	ux.FromContext(cmd.Context()).Render(ux.Result{
 		Status:   "active",
 		Resource: "context",
 		Name:     active,
+		Message:  msg,
 		Fields: map[string]any{
 			"environment": c.Environment,
 			"identity":    c.Identity,
 			"mode":        c.Mode,
 		},
 	})
+	return true
 }
 
 func newContextCreateCmd(_ *app) *cobra.Command {
@@ -263,6 +277,66 @@ func newContextViewCmd(_ *app) *cobra.Command {
 					"mode":        c.Mode,
 				},
 			})
+			return nil
+		},
+	}
+}
+
+// newContextRenameCmd renames a context (fenced: it mutates host config, same
+// class as create/use/delete). It moves the map key and, if the renamed context
+// is active, repoints active_context so the rename never orphans the selection.
+func newContextRenameCmd(_ *app) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <old> <new>",
+		Short: "Rename a context",
+		Long: "rename changes a context's name (e.g. an auto-derived `qa1-crawler` to\n" +
+			"something friendlier) without delete+recreate. If the renamed context is\n" +
+			"active, the active selection follows the new name.",
+		Example: "  jentic context rename qa1-crawler qa",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			oldName, newName := args[0], args[1]
+			aud := ux.FromContext(cmd.Context())
+			if err := config.MutateConfig(func(cfg *config.Config) error {
+				c, ok := cfg.Contexts[oldName]
+				if !ok {
+					return &ux.CodedError{
+						Code:       ux.CodeResolveFailed,
+						Msg:        fmt.Sprintf("context %q does not exist", oldName),
+						Actionable: "Run `jentic context list` to see options.",
+					}
+				}
+				if oldName == newName {
+					return &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        fmt.Sprintf("context is already named %q", newName),
+						Actionable: "Choose a different new name.",
+					}
+				}
+				if !config.ValidName(newName) {
+					return &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        fmt.Sprintf("invalid context name %q (allowed: ^[a-z0-9][a-z0-9-]{0,63}$)", newName),
+						Actionable: "Choose a name of lowercase letters, digits and hyphens.",
+					}
+				}
+				if _, exists := cfg.Contexts[newName]; exists {
+					return &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        fmt.Sprintf("context %q already exists", newName),
+						Actionable: "Choose a different new name, or delete the existing one first.",
+					}
+				}
+				cfg.Contexts[newName] = c
+				delete(cfg.Contexts, oldName)
+				if cfg.ActiveContext == oldName {
+					cfg.ActiveContext = newName
+				}
+				return nil
+			}); err != nil {
+				return reportCoded(aud, err)
+			}
+			aud.Render(ux.Result{Status: "renamed", Resource: "context", Name: newName})
 			return nil
 		},
 	}

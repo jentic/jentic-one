@@ -119,3 +119,31 @@ func TestIdentityClaim_ErrorMapping(t *testing.T) {
 		})
 	}
 }
+
+// TestIdentityClaim_403ActionableBlamesToken pins onboarding-review F3: the 403
+// Actionable must blame the AGENT TOKEN and point at the register claim link,
+// not tell the user to "use a human context" (which misfires when they already
+// are in a human-labelled context whose cached token is an agent token).
+func TestIdentityClaim_403ActionableBlamesToken(t *testing.T) {
+	withXDG(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"detail":"users only"}`))
+	}))
+	defer srv.Close()
+	setupContext(t, srv.URL)
+
+	err := runJentic(t, "identity", "claim", "agent_42", "--token", "clm_x")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("error is not a CodedError: %v", err)
+	}
+	act := strings.ToLower(coded.Actionable)
+	if !strings.Contains(act, "agent token") || !strings.Contains(act, "register") {
+		t.Errorf("actionable should blame the agent token and point at register: %q", coded.Actionable)
+	}
+	if strings.Contains(act, "human context") {
+		t.Errorf("actionable must not tell the user to switch to a human context: %q", coded.Actionable)
+	}
+}

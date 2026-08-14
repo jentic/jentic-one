@@ -330,6 +330,31 @@
               ]
             },
             {
+              "name": "rename",
+              "path": "jentic context rename",
+              "use": "rename \u003cold\u003e \u003cnew\u003e",
+              "short": "Rename a context",
+              "long": "rename changes a context's name (e.g. an auto-derived `qa1-crawler` to\nsomething friendlier) without delete+recreate. If the renamed context is\nactive, the active selection follows the new name.",
+              "example": "  jentic context rename qa1-crawler qa",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
               "name": "delete",
               "path": "jentic context delete",
               "use": "delete \u003cname\u003e",

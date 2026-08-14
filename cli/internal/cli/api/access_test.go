@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
@@ -46,5 +48,23 @@ func TestTerminalAccessError(t *testing.T) {
 	// so the command exits 0 and a scripted agent proceeds.
 	if err := terminalAccessError(&control.AccessRequestResponse{Id: "acr_2", Status: statusApproved}); err != nil {
 		t.Errorf("approved should be nil (exit 0), got %v", err)
+	}
+}
+
+// TestWhoamiFooterDropsContextView pins onboarding-review F2: the whoami footer
+// must not promise directories via `context view` (which shows only
+// environment/identity/mode). It now points at `jentic doctor` for local setup.
+func TestWhoamiFooterDropsContextView(t *testing.T) {
+	a := testApp(t)
+	a.printMe(&control.MeAgent{Id: "agnt_1", Status: "active"})
+	out := a.Out.(*bytes.Buffer).String()
+	if strings.Contains(out, "context view") {
+		t.Errorf("whoami footer must not reference `context view`:\n%s", out)
+	}
+	if strings.Contains(strings.ToLower(out), "directories you can access") {
+		t.Errorf("whoami footer must not promise directory access:\n%s", out)
+	}
+	if !strings.Contains(out, "jentic doctor") {
+		t.Errorf("whoami footer should point at `jentic doctor`:\n%s", out)
 	}
 }

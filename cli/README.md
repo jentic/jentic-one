@@ -93,6 +93,18 @@ jentic access request --toolkit <vendor/name> --wait  # ask a human to grant acc
 jentic execute <operation>
 ```
 
+> **Remote install:** a remote control plane's broker usually lives on a
+> different host, so `jentic register` does **not** guess a `broker_url` for it.
+> Set it before `jentic execute` can reach a 2xx (otherwise execute fail-closes
+> with `RESOLVE_FAILED` rather than dialing your local default):
+>
+> ```bash
+> jentic env add <env> --url https://jentic.example.com --broker-url https://broker.jentic.example --force
+> ```
+>
+> (`--url` is required on `env add`.) See [Local setup](#local-setup) for the
+> loopback case, where `register` seeds the broker automatically.
+
 ## Local setup
 
 Running against a **local** install (the stack `jenticctl install` stands up on

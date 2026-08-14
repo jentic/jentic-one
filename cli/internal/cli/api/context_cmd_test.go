@@ -230,3 +230,70 @@ func TestContextBare_ShowsActiveThenHelp(t *testing.T) {
 		t.Fatalf("bare context (active): %v", err)
 	}
 }
+
+// TestContextRename_MovesKey pins onboarding-review F5: renaming a non-active
+// context moves the map key (old gone, new present with the same binding).
+func TestContextRename_MovesKey(t *testing.T) {
+	withXDG(t)
+	seedContext(t) // active context "main"
+	// A second, non-active context to rename.
+	if err := runJentic(t, "context", "create", "spare", "--env", "prod", "--identity", "ci"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "context", "rename", "spare", "spare2"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Contexts["spare"]; ok {
+		t.Error("old context name still present after rename")
+	}
+	c, ok := cfg.Contexts["spare2"]
+	if !ok {
+		t.Fatal("new context name not present after rename")
+	}
+	if c.Environment != "prod" || c.Identity != "ci" {
+		t.Errorf("renamed context lost its binding: %+v", c)
+	}
+	if cfg.ActiveContext != "main" {
+		t.Errorf("active context should be unchanged (main), got %q", cfg.ActiveContext)
+	}
+}
+
+// TestContextRename_ActiveRepointsActiveContext pins F5: renaming the ACTIVE
+// context repoints active_context to the new name.
+func TestContextRename_ActiveRepointsActiveContext(t *testing.T) {
+	withXDG(t)
+	seedContext(t) // active context "main"
+	if err := runJentic(t, "context", "rename", "main", "primary"); err != nil {
+		t.Fatalf("rename active: %v", err)
+	}
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Contexts["primary"]; !ok {
+		t.Fatal("renamed active context missing")
+	}
+	if cfg.ActiveContext != "primary" {
+		t.Errorf("active_context = %q, want it repointed to %q", cfg.ActiveContext, "primary")
+	}
+}
+
+// TestContextRename_Errors pins F5's guards: rename of a missing context, or to
+// an existing name, both fail.
+func TestContextRename_Errors(t *testing.T) {
+	withXDG(t)
+	seedContext(t)
+	if err := runJentic(t, "context", "create", "spare", "--env", "prod", "--identity", "ci"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "context", "rename", "ghost", "whatever"); err == nil {
+		t.Error("rename of a missing context should fail")
+	}
+	if err := runJentic(t, "context", "rename", "spare", "main"); err == nil {
+		t.Error("rename to an existing context name should fail")
+	}
+}
