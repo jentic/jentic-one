@@ -581,6 +581,98 @@ async def test_overlay_rollback_restores_superseded_revision(
         assert overlay_row.deprecated_reason == "rollback"
 
 
+async def test_overlay_rollback_restores_published_base_as_published(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """A5b + #939: a manually-PUBLISHED base is restored to PUBLISHED, not IMPORTED.
+
+    An overlay's base can be a manually-promoted PUBLISHED revision (origin-less), not
+    only an imported one. Rollback must restore it to its true prior state. Mirrors
+    test_overlay_rollback_restores_superseded_revision but marks the base PUBLISHED +
+    origin-less (as promote() would leave it) before materializing.
+    """
+    handler = ImportHandler(integration_context)
+    base_revision_id = await _import_base(
+        handler, vendor="rbp-vendor", name="rbp-api", version="1.0.0", origin="catalog"
+    )
+
+    async with registry_db.session() as session:
+        # Make the base look like a manually-promoted PUBLISHED revision: PUBLISHED
+        # state with no origin (create_draft → promote never sets origin).
+        await session.execute(
+            update(ApiRevision)
+            .where(ApiRevision.id == base_revision_id)
+            .values(state="published", origin=None)
+        )
+        api = (await session.execute(select(Api).where(Api.vendor == "rbp-vendor"))).scalar_one()
+        api_id = api.id
+        overlay = Overlay(
+            api_id=api_id, document=_OVERLAY_DOC, status="pending", created_by="usr_test"
+        )
+        session.add(overlay)
+        await session.commit()
+        overlay_id = overlay.id
+
+    await handler.execute(
+        job_id=str(uuid.uuid4()),
+        session=None,
+        payload={
+            "sources": [
+                {
+                    "type": "inline",
+                    "content": json.dumps(
+                        {
+                            "openapi": "3.1.0",
+                            "info": {"title": "RBP", "version": "1.0.0"},
+                            "servers": [{"url": "https://new.example.com"}],
+                            "paths": {
+                                "/items": {
+                                    "get": {
+                                        "operationId": "listItems",
+                                        "responses": {"200": {"description": "OK"}},
+                                    }
+                                }
+                            },
+                        }
+                    ),
+                    "filename": "openapi.json",
+                    "vendor": "rbp-vendor",
+                    "api_name": "rbp-api",
+                    "version": "1.0.0",
+                    "origin": "overlay",
+                    "source_url": "https://catalog.example.com/base.json",
+                }
+            ],
+            "overlay_id": overlay_id,
+        },
+        created_by="usr_test",
+    )
+
+    async with registry_db.session() as session:
+        await session.execute(
+            update(Overlay).where(Overlay.id == overlay_id).values(status="confirmed")
+        )
+        await session.commit()
+
+    identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
+    await OverlayService(integration_context).rollback(
+        "rbp-vendor", "rbp-api", "1.0.0", overlay_id, identity=identity
+    )
+
+    async with registry_db.session() as session:
+        api = (await session.execute(select(Api).where(Api.id == api_id))).scalar_one()
+        assert api.current_revision_id == base_revision_id
+        base_rev = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        # The label is preserved through the archive→restore round-trip (#939): a
+        # PUBLISHED base comes back PUBLISHED, not silently demoted to IMPORTED.
+        assert base_rev.state == "published"
+        assert base_rev.archived_at is None
+
+
 async def test_overlay_rollback_conflict_when_not_live(
     integration_context: Context,
     registry_db: DatabaseSession,

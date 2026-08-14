@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jentic_one.registry.core.schema.api_revisions import ApiRevision
 from jentic_one.registry.core.schema.apis import Api
 from jentic_one.registry.repos.revision_repo import ApiRevisionRepository
 from jentic_one.shared.db.session import DatabaseSession
-from jentic_one.shared.models import ApiRevisionSourceType
+from jentic_one.shared.models import ApiRevisionSourceType, ApiRevisionState
 
 pytestmark = pytest.mark.integration
 
@@ -119,6 +122,104 @@ async def test_null_digests_do_not_collide(registry_db: DatabaseSession, sample_
         second_loaded = await session.get(ApiRevision, second.id)
         assert first_loaded is not None and first_loaded.spec_digest is None
         assert second_loaded is not None and second_loaded.spec_digest is None
+
+
+async def _archived_revision(
+    session: AsyncSession, api_id: uuid.UUID, *, origin: str | None
+) -> ApiRevision:
+    """Create a revision, drive it active then ARCHIVED, mirroring a superseded base.
+
+    ``origin=None`` stands in for a manually-promoted PUBLISHED base (``create_draft``
+    never sets origin); a non-None origin stands in for an IMPORTED/catalog base.
+    """
+    if origin is None:
+        rev = await ApiRevisionRepository.create_draft(
+            session,
+            api_id=api_id,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+    else:
+        rev = await ApiRevisionRepository.create_imported(
+            session,
+            api_id=api_id,
+            origin=origin,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+    await ApiRevisionRepository.set_state(session, rev.id, ApiRevisionState.ARCHIVED)
+    return rev
+
+
+async def test_restore_archived_published_base_stays_published(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A PUBLISHED (origin-less) base restores to PUBLISHED, not IMPORTED (#939)."""
+    async with registry_db.session() as session:
+        rev = await _archived_revision(session, sample_api.id, origin=None)
+        await session.commit()
+        rev_id = rev.id
+
+    async with registry_db.session() as session:
+        rowcount = await ApiRevisionRepository.restore_archived(session, rev_id)
+        await session.commit()
+
+    assert rowcount == 1
+    async with registry_db.session() as session:
+        loaded = await session.get(ApiRevision, rev_id)
+        assert loaded is not None
+        assert loaded.state == ApiRevisionState.PUBLISHED
+        assert loaded.archived_at is None
+
+
+async def test_restore_archived_imported_base_stays_imported(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """An IMPORTED (origin-bearing) base restores to IMPORTED (#939)."""
+    async with registry_db.session() as session:
+        rev = await _archived_revision(session, sample_api.id, origin="catalog")
+        await session.commit()
+        rev_id = rev.id
+
+    async with registry_db.session() as session:
+        rowcount = await ApiRevisionRepository.restore_archived(session, rev_id)
+        await session.commit()
+
+    assert rowcount == 1
+    async with registry_db.session() as session:
+        loaded = await session.get(ApiRevision, rev_id)
+        assert loaded is not None
+        assert loaded.state == ApiRevisionState.IMPORTED
+        assert loaded.archived_at is None
+
+
+async def test_restore_archived_non_archived_is_noop(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """CAS on state==ARCHIVED: a non-archived revision is left untouched (rowcount 0)."""
+    async with registry_db.session() as session:
+        rev = await ApiRevisionRepository.create_imported(
+            session,
+            api_id=sample_api.id,
+            origin="catalog",
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        await session.commit()
+        rev_id = rev.id
+
+    async with registry_db.session() as session:
+        rowcount = await ApiRevisionRepository.restore_archived(session, rev_id)
+        await session.commit()
+
+    assert rowcount == 0
+    async with registry_db.session() as session:
+        loaded = await session.get(ApiRevision, rev_id)
+        assert loaded is not None
+        assert loaded.state == ApiRevisionState.IMPORTED
 
 
 async def test_set_operation_count(
