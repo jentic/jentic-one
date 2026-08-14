@@ -309,6 +309,55 @@ rc=$?
 set -e
 assert_eq "highest_release_tag: empty input -> non-zero exit" "1" "$rc"
 
+# --- check_prereqs batches ALL missing tools (install P0-B) ------------------
+# A user missing two base tools should learn both in one failure, not discover
+# the second only after installing the first and re-running. Drive check_prereqs
+# with a minimal PATH that has bash+grep but omits git AND tar, and assert the
+# single die() names both.
+prereq_bindir="$(mktemp -d "${TMPDIR:-/tmp}/jentic-test-prereq.XXXXXX")"
+for t in bash cat mktemp rm grep curl uname; do
+  p="$(command -v "$t" 2>/dev/null || true)"
+  [ -n "$p" ] && [ -x "$p" ] && [ -f "$p" ] && ln -sf "$p" "$prereq_bindir/$t"
+done
+# git and tar are deliberately absent.
+set +e
+prereq_out="$(PATH="$prereq_bindir" bash -c ". '$INSTALL_SH'; check_prereqs" 2>&1)"
+set -e
+assert_contains "check_prereqs: reports missing git" "$prereq_out" "git"
+assert_contains "check_prereqs: reports missing tar in the SAME failure" "$prereq_out" "tar"
+rm -rf "$prereq_bindir"
+
+# --- chain_install non-interactive branch prints the headless next step ------
+# With no TTY (stdin+stdout both redirected) chain_install must NOT exec the
+# wizard; it prints the `install --defaults` command and the JENTIC_NO_INSTALL
+# opt-out, then returns non-zero so main() falls through to banner().
+set +e
+chain_out="$(CTL_BINARY=jenticctl API_BINARY=jentic \
+  bash -c ". '$INSTALL_SH'; chain_install </dev/null" 2>&1 >/dev/null)"
+chain_rc=$?
+set -e
+assert_eq "chain_install: non-interactive returns non-zero (no exec)" "1" "$chain_rc"
+assert_contains "chain_install: names the non-interactive install command" \
+  "$chain_out" "install --defaults"
+assert_contains "chain_install: surfaces the JENTIC_NO_INSTALL opt-out" \
+  "$chain_out" "JENTIC_NO_INSTALL=1"
+
+# JENTIC_NO_INSTALL=1 short-circuits before printing anything.
+set +e
+chain_out="$(CTL_BINARY=jenticctl API_BINARY=jentic JENTIC_NO_INSTALL=1 \
+  bash -c ". '$INSTALL_SH'; chain_install </dev/null" 2>&1)"
+chain_rc=$?
+set -e
+assert_eq "chain_install: JENTIC_NO_INSTALL=1 returns non-zero" "1" "$chain_rc"
+assert_not_contains "chain_install: JENTIC_NO_INSTALL=1 prints no wizard hint" \
+  "$chain_out" "install --defaults"
+
+# --- plan_summary prints the from-source plan preamble (install P0-B) --------
+plan_out="$(CTL_BINARY=jenticctl API_BINARY=jentic \
+  bash -c ". '$INSTALL_SH'; plan_summary" 2>&1)"
+assert_contains "plan_summary: states it builds from source" "$plan_out" "from source"
+assert_contains "plan_summary: names the install dir" "$plan_out" "$JENTIC_INSTALL_DIR"
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has
@@ -357,21 +406,21 @@ if [ -x /bin/sh ]; then
   out="$(run_installer_via /bin/sh || true)"
   assert_not_contains "curl|sh via /bin/sh: no bash syntax error" "$out" "syntax error"
   assert_not_contains "curl|sh via /bin/sh: no unexpected token '<'" "$out" "unexpected token"
-  assert_contains "curl|sh via /bin/sh: re-execs and reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via /bin/sh: re-execs and reaches prereq check" "$out" "not found: git"
 fi
 
 # Under dash, if available (Linux CI default /bin/sh).
 if command -v dash >/dev/null 2>&1; then
   out="$(run_installer_via "$(command -v dash)" || true)"
   assert_not_contains "curl|sh via dash: no bash syntax error" "$out" "syntax error"
-  assert_contains "curl|sh via dash: re-execs and reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via dash: re-execs and reaches prereq check" "$out" "not found: git"
 fi
 
 # Under bash directly — no re-exec, must still reach the prereq check.
 if command -v bash >/dev/null 2>&1; then
   out="$(run_installer_via "$(command -v bash)" || true)"
   assert_not_contains "curl|sh via bash: no bash syntax error" "$out" "syntax error"
-  assert_contains "curl|sh via bash: reaches prereq check" "$out" "required command not found: git"
+  assert_contains "curl|sh via bash: reaches prereq check" "$out" "not found: git"
 fi
 
 # --- re-fetch fallback: no JENTIC_INSTALL_SELF and no curl -> clean error ---
@@ -454,7 +503,7 @@ if [ -x /bin/sh ]; then
   set -e
   assert_eq "re-exec: SELF wins over SOURCE_URL (curl never called)" "" "$(cat "$curl_log")"
   assert_contains "re-exec: SELF wins over SOURCE_URL (reaches prereq check)" \
-    "$out" "required command not found: git"
+    "$out" "not found: git"
 
   # Override on github.com itself: the token IS attached (private-fork proxy).
   : > "$curl_log"

@@ -317,12 +317,34 @@ need() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+# check_prereqs probes ALL base tools and reports the full missing set in one
+# failure, rather than dying on the first (so a user with two missing tools
+# doesn't have to re-run to discover the second).
 check_prereqs() {
-  need git
-  need curl
-  need tar
-  need mktemp
-  need uname
+  local missing="" tool
+  for tool in git curl tar mktemp uname; do
+    command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+  done
+  if [ -n "$missing" ]; then
+    die "required command(s) not found:$missing"
+  fi
+}
+
+# plan_summary prints a short "here's what this will do" preamble before any
+# download or build, mirroring the RenderPreflight checklist `jenticctl install`
+# shows. It states the from-source reality and warns before the ~150 MB Go
+# toolchain fetch when no suitable `go` is present.
+plan_summary() {
+  printf '\n  %s%sInstall plan%s\n' "$C_BOLD" "$C_BRAND" "$C_RESET" >&2
+  printf '    %s•%s builds %s + %s from source into %s\n' \
+    "$C_DIM" "$C_RESET" "$CTL_BINARY" "$API_BINARY" "$JENTIC_INSTALL_DIR" >&2
+  printf '    %s•%s prerequisites checked: git curl tar mktemp uname%s\n' \
+    "$C_DIM" "$C_RESET" "" >&2
+  if ! go_is_recent_enough; then
+    printf '    %s•%s %sno suitable Go found — will download ~150 MB toolchain to %s%s\n' \
+      "$C_DIM" "$C_RESET" "$C_YELLOW" "$TOOLCHAIN_DIR" "$C_RESET" >&2
+  fi
+  printf '\n' >&2
 }
 
 # --- platform detection -----------------------------------------------------
@@ -812,6 +834,19 @@ chain_install() {
   elif [ -t 1 ] && [ -r /dev/tty ]; then
     stdin_src="/dev/tty"
   else
+    # No interactive terminal (CI, or `curl ... | sh` with stdout not a TTY).
+    # Do NOT block on a wizard that can't read input. Print the exact
+    # non-interactive next step and the opt-out so the run is actionable, then
+    # let main() fall through to banner(). The headless server command is
+    # `jenticctl install --defaults` (NOT --no-wizard: that flag only skips the
+    # post-install "continue to guided setup?" prompt, it does not make install
+    # itself non-interactive).
+    printf '\n  %s%s! No interactive terminal — skipping the guided stack setup.%s\n' \
+      "$C_BOLD" "$C_YELLOW" "$C_RESET" >&2
+    printf '  Configure the stack non-interactively with:\n\n' >&2
+    printf '    %s%s install --defaults%s\n\n' "$C_BOLD" "$CTL_BINARY" "$C_RESET" >&2
+    printf '  %s(or set JENTIC_NO_INSTALL=1 to stop after installing the binaries.)%s\n' \
+      "$C_DIM" "$C_RESET" >&2
     return 1
   fi
 
@@ -835,6 +870,7 @@ main() {
   STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install-state.XXXXXX")"
   STEP_LOG="$STATE_DIR/step.log"
   detect_platform
+  plan_summary
   ensure_go
   fetch_source
   build
