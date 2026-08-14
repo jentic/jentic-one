@@ -519,6 +519,8 @@ func (a *App) printNextSteps() {
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation", "jentic search \"send a slack message\""},
+		{"See what you can run right now", "jentic access whoami"},
+		{"A fresh agent is bound to no APIs — request access to one you found", "jentic access request --toolkit <vendor/name> --wait"},
 		{"Inspect a call", "jentic inspect GET:https://api.example.com/v1/things"},
 		{"Run one", "jentic execute POST:https://api.example.com/v1/things -d '{\"key\":\"value\"}'"},
 	}

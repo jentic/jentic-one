@@ -88,6 +88,8 @@ Notes:
 # Connect this machine to a Jentic install, browse the catalog, execute an operation.
 jentic register --url https://jentic.example.com
 jentic catalog
+jentic access whoami                                  # a fresh agent is bound to no APIs
+jentic access request --toolkit <vendor/name> --wait  # ask a human to grant access
 jentic execute <operation>
 ```
 
@@ -116,6 +118,8 @@ jentic register --url http://127.0.0.1:8000
 # Approve the agent in the console, then:
 jentic doctor                 # identity + reachability + clock-skew report
 jentic catalog                # browse APIs
+jentic access whoami          # a fresh agent starts bound to no APIs
+jentic access request --toolkit <vendor/name> --wait  # ask a human to grant access
 jentic execute listPets       # routed through http://127.0.0.1:8100 automatically
 ```
 
