@@ -1493,6 +1493,63 @@ type DecideRequest struct {
 	Items []DecideItemSchema `json:"items"`
 }
 
+// DuplicatePendingProblem RFC 9457 Problem Details for a 409 on “POST /access-requests“.
+//
+// Filing a request whose target already has a pending request is refused with
+// a 409 whose body carries two extension members on top of the standard
+// Problem Details shape, so a client can attach to the existing request rather
+// than re-file. These are emitted at runtime by the access-request error hook
+// (“control/web/errors.py“); this model documents them in the OpenAPI spec so
+// the generated SDK exposes a typed 409
+// (“FileAccessRequestHTTPResp.ApplicationproblemJSON409“) instead of forcing
+// callers to parse the raw body (ARCH-21 Step 0).
+//
+// Examples: {"detail":"The request body is missing one or more required fields.","errors":[{"detail":"Field 'name' is required.","pointer":"#/name"}],"instance":"/v2/capability-sets","status":400,"title":"Bad Request","type":"about:blank"}
+type DuplicatePendingProblem struct {
+	// ApproveUrl Console URL to review/approve the existing pending request.
+	//
+	// Examples: https://app.jentic.com/access-requests/acr_01HXXY...
+	ApproveUrl string `json:"approve_url"`
+
+	// Code An optional provider-specific code for internal error taxonomy and observability correlation.
+	//
+	// Examples: JENTIC-4001
+	Code *string `json:"code,omitempty"`
+
+	// Detail A human-readable explanation specific to this occurrence of the problem. MUST be present. Provide actionable information where possible.
+	//
+	// Examples: The request body is missing required field 'name'.
+	Detail string `json:"detail"`
+
+	// Errors An array of granular error details. Use when multiple validation errors or field-level problems need to be surfaced in a single response.
+	Errors *[]ErrorItem `json:"errors,omitempty"`
+
+	// ExistingRequestId The id of the pending access request that already covers the conflicting target.
+	//
+	// Examples: acr_01HXXY...
+	ExistingRequestId string `json:"existing_request_id"`
+
+	// Instance A URI reference identifying the specific occurrence of the problem. Typically the request path.
+	//
+	// Examples: /v2/capability-sets
+	Instance *string `json:"instance,omitempty"`
+
+	// Status The HTTP status code for this occurrence of the problem.
+	//
+	// Examples: 400
+	Status *int `json:"status,omitempty"`
+
+	// Title A short, human-readable summary of the problem type. Should not change between occurrences except for localisation purposes.
+	//
+	// Examples: Bad Request
+	Title *string `json:"title,omitempty"`
+
+	// Type A URI reference identifying the problem type. When set to 'about:blank', the title SHOULD be the standard HTTP status phrase. Use an IANA-registered type URI where one applies.
+	//
+	// Examples: about:blank
+	Type *string `json:"type,omitempty"`
+}
+
 // EffectivePermission A single effective permission with provenance.
 type EffectivePermission struct {
 	ImpliedBy *string `json:"implied_by,omitempty"`
@@ -19553,6 +19610,8 @@ type FileAccessRequestHTTPResp struct {
 	ApplicationproblemJSON401 *ProblemDetail
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *DuplicatePendingProblem
 	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
 	ApplicationproblemJSON422 *ProblemDetail
 	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
@@ -19579,6 +19638,11 @@ func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON401() *ProblemDetail
 // GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
 	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r FileAccessRequestHTTPResp) GetApplicationproblemJSON409() *DuplicatePendingProblem {
+	return r.ApplicationproblemJSON409
 }
 
 // GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
@@ -34990,6 +35054,13 @@ func ParseFileAccessRequestHTTPResp(rsp *http.Response) (*FileAccessRequestHTTPR
 			return nil, err
 		}
 		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest DuplicatePendingProblem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
 		var dest ProblemDetail

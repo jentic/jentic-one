@@ -97,8 +97,11 @@ func (CurrentUserResponse) RequiredFields() []string {
 func (DailyExecutionBucket) RequiredFields() []string {
 	return []string{"date", "failed", "success", "total"}
 }
-func (DecideItemSchema) RequiredFields() []string        { return []string{"decision", "item_id"} }
-func (DecideRequest) RequiredFields() []string           { return []string{"items"} }
+func (DecideItemSchema) RequiredFields() []string { return []string{"decision", "item_id"} }
+func (DecideRequest) RequiredFields() []string    { return []string{"items"} }
+func (DuplicatePendingProblem) RequiredFields() []string {
+	return []string{"approve_url", "detail", "existing_request_id"}
+}
 func (EffectivePermission) RequiredFields() []string     { return []string{"name"} }
 func (ErrorItem) RequiredFields() []string               { return []string{"detail"} }
 func (EvaluationCheckResponse) RequiredFields() []string { return []string{"check", "passed"} }
