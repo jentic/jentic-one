@@ -58,13 +58,14 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
 	// V2 context model: the Environment × Identity × Context surface plus the
 	// one-shot migrator. This IS the activation release — the V1 profile
-	// command is gone; `jentic profile <verb>` survives only as the hidden
-	// deprecation shim below (BC-2/BC-3), which delegates to these successors.
+	// command is gone. The hidden deprecation shim that briefly aliased
+	// `jentic profile <verb>` onto these successors was removed in ARCH-21
+	// Part B (BC — see 14_breaking_changes); `jentic profile` is now an
+	// unknown command.
 	cmdcore.AddGrouped(root, "identity", newContextCmd(app))
 	cmdcore.AddGrouped(root, "identity", newEnvCmd(app))
 	cmdcore.AddGrouped(root, "identity", newIdentityCmd(app))
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(newMigrateCmd(app))) // NOT fenced (BC-1); bootstrap-safe (runs with no XDG config)
-	registerProfileAliasShims(root, app)
 	cmdcore.AddGrouped(root, "apis", newCatalogCmd(app))
 	cmdcore.AddGrouped(root, "apis", newApisCmd(app))
 	cmdcore.AddGrouped(root, "apis", newEndpointsCmd(app))

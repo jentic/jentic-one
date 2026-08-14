@@ -38,7 +38,7 @@ func TestCtlRootListsLifecycleCommands(t *testing.T) {
 		}
 	}
 	// API-only commands must not be registered on the lifecycle CLI.
-	for _, name := range []string{"bootstrap", "register", "profile", "logout", "catalog", "apis", "search", "inspect", "execute"} {
+	for _, name := range []string{"bootstrap", "register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
 		if hasCommand(root, name) {
 			t.Errorf("jenticctl root unexpectedly registers %q", name)
 		}
@@ -55,7 +55,7 @@ func TestAPIRootListsAPICommands(t *testing.T) {
 		t.Fatalf("help: %v", err)
 	}
 	got := out.String()
-	for _, name := range []string{"bootstrap", "register", "profile", "logout", "catalog", "apis", "search", "inspect", "execute"} {
+	for _, name := range []string{"bootstrap", "register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
 		if !strings.Contains(got, name) {
 			t.Errorf("jentic help output missing command %q", name)
 		}
