@@ -59,7 +59,7 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 		if vals.Name == "" {
 			vals.Name = defaultIdentityName()
 		}
-		if err := promptOnboardingV2(&vals.URL, &vals.Name); err != nil {
+		if err := promptOnboarding(&vals.URL, &vals.Name); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
 				return vals, ErrOnboardCancelled
@@ -174,10 +174,10 @@ func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, client
 	return a.registerAndWait(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
 }
 
-// promptOnboardingV2 collects the two fresh-machine onboarding values, styled
+// promptOnboarding collects the two fresh-machine onboarding values, styled
 // like the legacy register wizard. Environment/context names are derived (and
 // overridable via flags), so the form stays two fields.
-func promptOnboardingV2(installURL, name *string) error {
+func promptOnboarding(installURL, name *string) error {
 	return prompt.NewForm(
 		huh.NewGroup(
 			prompt.Input().Title("Jentic install URL").
