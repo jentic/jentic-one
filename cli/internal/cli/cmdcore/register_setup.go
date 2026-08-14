@@ -110,6 +110,14 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 	// env would hijack every context bound to it); the identity is upserted.
 	envName := vals.Env
 	contextName := sdkconfig.SanitizeName(envName + "-" + vals.Name)
+	// brokerConfigured records whether the resolved environment ends up with a
+	// broker_url — seeded here for a loopback control plane, or already present
+	// on a pre-existing env. A remote env with no broker gets a next-step hint
+	// below (remote-cli-usage F1/Phase B): `jentic execute` fail-closes without
+	// one. Reading the resolved value (not re-deriving from the URL) avoids a
+	// false hint when re-registering an existing remote env that already has a
+	// manually-set broker_url.
+	brokerConfigured := false
 	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
 		if env, ok := cfg.Environments[envName]; ok && env.BaseURL != vals.URL {
 			return &ux.CodedError{
@@ -134,6 +142,7 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 			}
 			cfg.Environments[envName] = env
 		}
+		brokerConfigured = cfg.Environments[envName].BrokerURL != ""
 		if _, ok := cfg.Identities[vals.Name]; !ok {
 			cfg.Identities[vals.Name] = sdkconfig.Identity{Type: "agent"}
 		}
@@ -153,6 +162,17 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 	a.registerProgress(ctx, theme.Successf("Environment %q → %s", envName, vals.URL))
 	a.registerProgress(ctx, theme.Successf("Identity %q (agent)", vals.Name))
 	a.registerProgress(ctx, theme.Successf("Context %q (active)", contextName))
+
+	// Remote control plane with no broker → teach the mandatory next step now,
+	// at the moment it matters (remote-cli-usage F1/Phase B). `jentic execute`
+	// fail-closes when base_url is remote and broker_url is empty. Routed through
+	// registerProgress, so it goes to stderr and is suppressed in machine mode
+	// (never corrupts an agent's stdout stream).
+	if !brokerConfigured {
+		a.registerProgress(ctx, theme.Warnf("No broker_url set for remote environment %q. "+
+			"`jentic execute` needs one — set it with `jentic env add %s --url %s --broker-url https://<broker-host>:<port> --force` "+
+			"(ask your operator for the broker URL).", envName, envName, vals.URL))
+	}
 
 	return vals, a.registerAndWait(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
 }

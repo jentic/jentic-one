@@ -14,6 +14,7 @@ import (
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
+	"github.com/jentic/jentic-one/cli/internal/config"
 )
 
 // TestBadFlagKV pins ARCH-4: a malformed key=value flag (--path/--query/
@@ -987,5 +988,150 @@ func TestExecuteHumanModeBrokerHostAllowed(t *testing.T) {
 	// It will fail later (no server), but must NOT be the SEC-21 pin error.
 	if err != nil && strings.Contains(err.Error(), "not allowed in") {
 		t.Errorf("human mode must keep the --broker-host override, got SEC-21 pin error: %v", err)
+	}
+}
+
+// TestBrokerIsLoopbackDefault pins the fail-closed guard's loopback classifier
+// (remote-cli-usage F1): the built-in default host and every loopback form read
+// as loopback; a real remote broker does not. Empty/malformed fails closed to
+// loopback (it can only have come from the built-in default).
+func TestBrokerIsLoopbackDefault(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{config.DefaultBrokerHost, true}, // the built-in default 127.0.0.1:8100
+		{"127.0.0.1:8100", true},
+		{"localhost:8100", true},
+		{"[::1]:8100", true},
+		{"127.0.0.1", true},
+		{"", true}, // fail closed: can only be the built-in default
+		{"broker.example.com:8100", false},
+		{"broker.example.com", false},
+		{"10.0.0.5:8100", false},
+	} {
+		if got := brokerIsLoopbackDefault(tc.host); got != tc.want {
+			t.Errorf("brokerIsLoopbackDefault(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+// TestBaseURLIsRemote pins the guard's remote-install signal: a non-loopback
+// https host is remote; loopback/empty/malformed is not (so a local workflow
+// never trips the guard).
+func TestBaseURLIsRemote(t *testing.T) {
+	for _, tc := range []struct {
+		base string
+		want bool
+	}{
+		{"https://jentic.example.com", true},
+		{"https://ctl.example:8443", true},
+		{"http://127.0.0.1:8000", false},
+		{"http://localhost:8000", false},
+		{"https://[::1]:8000", false},
+		{"", false},
+		{"://malformed", false},
+	} {
+		if got := baseURLIsRemote(tc.base); got != tc.want {
+			t.Errorf("baseURLIsRemote(%q) = %v, want %v", tc.base, got, tc.want)
+		}
+	}
+}
+
+// TestExecuteRemoteBrokerGuardFiresWhenNoBroker pins the fail-closed guard
+// (remote-cli-usage F1): a remote control-plane base_url with no broker_url (so
+// the broker resolves to the built-in loopback default) refuses with a coded
+// RESOLVE_FAILED before dialing, instead of silently hitting 127.0.0.1:8100.
+func TestExecuteRemoteBrokerGuardFiresWhenNoBroker(t *testing.T) {
+	remoteCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "bot",
+			EnvironmentName:     "qa1",
+			BaseURL:             "https://jentic.example.com",
+			BrokerURL:           "", // remote env, broker not configured
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(remoteCtx)
+
+	// Default flag values (built-in loopback broker default).
+	err := app.executeE(cmd, &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+	}, "someOp")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("remote env with no broker returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
+	}
+	if !strings.Contains(coded.Actionable, "broker_url") || !strings.Contains(coded.Actionable, "JENTIC_BROKER_URL") {
+		t.Errorf("actionable should name broker_url/JENTIC_BROKER_URL: %q", coded.Actionable)
+	}
+	if !strings.Contains(coded.Msg, "qa1") {
+		t.Errorf("message should name the environment: %q", coded.Msg)
+	}
+}
+
+// TestExecuteRemoteBrokerGuardSilentWhenBrokerSet pins the guard's no-op path: a
+// remote env WITH a broker_url resolves that broker, so the guard does not fire
+// (any later error must not be the guard's RESOLVE_FAILED).
+func TestExecuteRemoteBrokerGuardSilentWhenBrokerSet(t *testing.T) {
+	remoteCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "bot",
+			EnvironmentName:     "qa1",
+			BaseURL:             "https://jentic.example.com",
+			BrokerURL:           "https://broker.example.com",
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(remoteCtx)
+
+	err := app.executeE(cmd, &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+	}, "someOp")
+	// Will fail later (no server / resolve), but must NOT be the guard error.
+	var coded *ux.CodedError
+	if errors.As(err, &coded) && coded.Code == ux.CodeResolveFailed &&
+		strings.Contains(coded.Msg, "no broker is configured") {
+		t.Errorf("guard must not fire when broker_url is set: %v", err)
+	}
+}
+
+// TestExecuteLocalWorkflowGuardSilent pins the local invariant: a loopback
+// base_url with the loopback default broker (the ordinary local install) never
+// trips the guard.
+func TestExecuteLocalWorkflowGuardSilent(t *testing.T) {
+	localCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "me",
+			EnvironmentName:     "local",
+			BaseURL:             "http://127.0.0.1:8000",
+			BrokerURL:           "", // seeded-or-default loopback broker
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(localCtx)
+
+	err := app.executeE(cmd, &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+	}, "someOp")
+	var coded *ux.CodedError
+	if errors.As(err, &coded) && coded.Code == ux.CodeResolveFailed &&
+		strings.Contains(coded.Msg, "no broker is configured") {
+		t.Errorf("local workflow must not trip the remote-broker guard: %v", err)
 	}
 }
