@@ -108,6 +108,11 @@
           "title": "Canonical Base Url",
           "type": "string"
         },
+        "claim_ttl_seconds": {
+          "default": 900,
+          "title": "Claim Ttl Seconds",
+          "type": "integer"
+        },
         "id_signing": {
           "items": {
             "$ref": "#/$defs/SigningKeyConfig"

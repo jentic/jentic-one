@@ -148,6 +148,9 @@ type AuthConfig struct {
 	// CanonicalBaseUrl corresponds to the JSON schema field "canonical_base_url".
 	CanonicalBaseUrl string `json:"canonical_base_url,omitempty,omitzero" yaml:"canonical_base_url,omitempty" mapstructure:"canonical_base_url,omitempty"`
 
+	// ClaimTtlSeconds corresponds to the JSON schema field "claim_ttl_seconds".
+	ClaimTtlSeconds int `json:"claim_ttl_seconds,omitempty,omitzero" yaml:"claim_ttl_seconds,omitempty" mapstructure:"claim_ttl_seconds,omitempty"`
+
 	// IdSigning corresponds to the JSON schema field "id_signing".
 	IdSigning []SigningKeyConfig `json:"id_signing,omitempty,omitzero" yaml:"id_signing,omitempty" mapstructure:"id_signing,omitempty"`
 
@@ -183,6 +186,9 @@ func (j *AuthConfig) UnmarshalJSON(value []byte) error {
 	}
 	if v, ok := raw["canonical_base_url"]; !ok || v == nil {
 		plain.CanonicalBaseUrl = ""
+	}
+	if v, ok := raw["claim_ttl_seconds"]; !ok || v == nil {
+		plain.ClaimTtlSeconds = 900
 	}
 	if v, ok := raw["rat_ttl_seconds"]; !ok || v == nil {
 		plain.RatTtlSeconds = 900

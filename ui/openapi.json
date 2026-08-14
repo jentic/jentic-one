@@ -2632,7 +2632,8 @@
             "maxLength": 512,
             "minLength": 1,
             "title": "Token",
-            "type": "string"
+            "type": "string",
+            "x-sensitive": true
           }
         },
         "required": [
@@ -6479,7 +6480,8 @@
                 "type": "null"
               }
             ],
-            "title": "Claim Token"
+            "title": "Claim Token",
+            "x-sensitive": true
           },
           "client_id": {
             "title": "Client Id",
