@@ -17,14 +17,6 @@ import (
 // command the user actually ran so the documented resume path is correct.
 const registerResumeHint = "Waiting for approval (Ctrl-C to stop and resume later with `jentic register`)..."
 
-// Poll cadence for the approval wait. Package-level so tests can shrink it to
-// keep the pending-path cases near-instant instead of real wall-clock seconds.
-var (
-	PollInitialDelay = 2 * time.Second
-	PollMaxDelay     = 10 * time.Second
-	PollDelayStep    = 1 * time.Second
-)
-
 // registerAndWait is the shared register-and-wait body: mint the env-scoped key
 // if absent, perform RFC 7591 DCR (reusing an existing registration so the
 // flow is resumable), persist client_id/status, then wait for operator
@@ -315,7 +307,8 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 	}
 
 	deadline := time.Now().Add(timeout)
-	delay := PollInitialDelay
+	pollInitial, pollMax, pollStep := a.PollCadence()
+	delay := pollInitial
 	for {
 		if time.Now().After(deadline) {
 			msg := fmt.Sprintf("timed out after %s waiting for approval; re-run once approved", timeout)
@@ -341,8 +334,8 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 			return ctx.Err()
 		case <-time.After(delay):
 		}
-		if delay < PollMaxDelay {
-			delay += PollDelayStep
+		if delay < pollMax {
+			delay += pollStep
 		}
 
 		if _, err := auth.BearerToken(creds); err == nil {

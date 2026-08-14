@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
@@ -15,13 +16,17 @@ import (
 
 // testApp builds an api-tree receiver backed by a throwaway cmdcore.App with a
 // temp-dir Paths and buffered streams, matching the pre-split white-box helper.
+// The approval-poll cadence is shrunk to milliseconds so pending-path register/
+// access tests don't burn real wall-clock seconds.
 func testApp(t *testing.T) *app {
 	t.Helper()
-	return &app{App: &cmdcore.App{
+	a := &app{App: &cmdcore.App{
 		Paths: config.Paths{Root: t.TempDir()},
 		Out:   new(bytes.Buffer),
 		Err:   new(bytes.Buffer),
 	}}
+	a.SetPollCadence(2*time.Millisecond, 5*time.Millisecond, time.Millisecond)
+	return a
 }
 
 // activeCtx returns a context carrying an active state pointed at baseURL with

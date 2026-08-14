@@ -26,14 +26,6 @@ var (
 	jsonOrPretty = cmdcore.JSONOrPretty
 )
 
-// Approval-poll cadence, mirrored from cmdcore so api access/refresh poll loops
-// use the exact same timing (and shrink together under tests).
-var (
-	pollInitialDelay = cmdcore.PollInitialDelay
-	pollMaxDelay     = cmdcore.PollMaxDelay
-	pollDelayStep    = cmdcore.PollDelayStep
-)
-
 // writeJSON mirrors cmdcore.WriteJSON so relocated api code keeps calling it
 // lower-cased with the same (writer, value) signature.
 func writeJSON(w io.Writer, v any) error { return cmdcore.WriteJSON(w, v) }

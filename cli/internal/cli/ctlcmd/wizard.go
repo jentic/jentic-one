@@ -213,7 +213,8 @@ func (a *app) wizardWaitForStack(ctx context.Context, baseURL string) bool {
 
 	fmt.Fprint(a.Out, theme.Dim.Render(fmt.Sprintf("Waiting for the Jentic stack to come up at %s ", baseURL)))
 	deadline := time.Now().Add(wizardStackReadyTimeout)
-	delay := pollInitialDelay
+	pollInitial, pollMax, pollStep := a.PollCadence()
+	delay := pollInitial
 	for {
 		if time.Now().After(deadline) {
 			fmt.Fprintln(a.Out)
@@ -225,8 +226,8 @@ func (a *app) wizardWaitForStack(ctx context.Context, baseURL string) bool {
 			return false
 		case <-time.After(delay):
 		}
-		if delay < pollMaxDelay {
-			delay += pollDelayStep
+		if delay < pollMax {
+			delay += pollStep
 		}
 		if a.wizardStackUp(baseURL) {
 			fmt.Fprintln(a.Out)
@@ -269,7 +270,8 @@ func (a *app) wizardWaitForAdmin(ctx context.Context, baseURL string, opts *wiza
 	fmt.Fprint(a.Out, theme.Dim.Render("Waiting for you to finish creating the account ..."))
 
 	deadline := time.Now().Add(opts.timeout)
-	delay := pollInitialDelay
+	pollInitial, pollMax, pollStep := a.PollCadence()
+	delay := pollInitial
 	for {
 		if time.Now().After(deadline) {
 			fmt.Fprintln(a.Out)
@@ -283,8 +285,8 @@ func (a *app) wizardWaitForAdmin(ctx context.Context, baseURL string, opts *wiza
 			return false
 		case <-time.After(delay):
 		}
-		if delay < pollMaxDelay {
-			delay += pollDelayStep
+		if delay < pollMax {
+			delay += pollStep
 		}
 
 		required, err := setupRequired(ctx, baseURL)

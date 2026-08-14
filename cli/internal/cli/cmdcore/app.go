@@ -44,4 +44,10 @@ type App struct {
 	// bounded by serverinfo.DefaultTimeout; this makes that bound testable and
 	// overridable rather than implicit.
 	ProbeServer func(baseURL string) serverinfo.Info
+
+	// poll is the approval/refresh poll-loop cadence (AR2-5). Kept unexported and
+	// accessed via PollCadence/SetPollCadence so a zero value resolves to the
+	// production defaults; threaded here rather than package globals so timing is
+	// per-App and tests shrink it without mutating shared state.
+	poll pollCadence
 }

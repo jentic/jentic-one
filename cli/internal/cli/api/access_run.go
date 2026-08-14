@@ -459,7 +459,8 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 func (a *app) pollAccessRequest(ctx context.Context, client *control.ClientWithResponses, id string, timeout time.Duration) (*control.AccessRequestResponse, error) {
 	fmt.Fprintln(a.Out, theme.Dimf("Waiting for a human to decide request %s (up to %s; Ctrl-C to stop) …", id, timeout))
 	deadline := time.Now().Add(timeout)
-	delay := pollInitialDelay
+	pollInitial, pollMax, pollStep := a.PollCadence()
+	delay := pollInitial
 	for {
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf("%w after %s (request %s)", errAccessWaitTimeout, timeout, id)
@@ -469,8 +470,8 @@ func (a *app) pollAccessRequest(ctx context.Context, client *control.ClientWithR
 			return nil, ctx.Err()
 		case <-time.After(delay):
 		}
-		if delay < pollMaxDelay {
-			delay += pollDelayStep
+		if delay < pollMax {
+			delay += pollStep
 		}
 		req, err := a.getAccessRequest(ctx, client, id)
 		if err != nil {

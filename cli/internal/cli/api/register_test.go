@@ -9,11 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
 )
@@ -23,19 +21,6 @@ import (
 // context; an active context re-registers in place. The legacy --profile/
 // --base-url arm was REMOVED at the activation release (14 BC-1) — the flags
 // no longer exist.
-
-// fastPollV2 shrinks the shared approval-poll cadence (cmdcore package vars)
-// for the duration of a test.
-func fastPollV2(t *testing.T) {
-	t.Helper()
-	oi, om, os := cmdcore.PollInitialDelay, cmdcore.PollMaxDelay, cmdcore.PollDelayStep
-	cmdcore.PollInitialDelay = 2 * time.Millisecond
-	cmdcore.PollMaxDelay = 5 * time.Millisecond
-	cmdcore.PollDelayStep = 1 * time.Millisecond
-	t.Cleanup(func() {
-		cmdcore.PollInitialDelay, cmdcore.PollMaxDelay, cmdcore.PollDelayStep = oi, om, os
-	})
-}
 
 // assertRegApproved asserts the (identity, env) registration record and the
 // cached XDG token the approval wait minted.
@@ -145,7 +130,6 @@ func TestRegister_ActiveContext_RegistersActivePair(t *testing.T) {
 // approval console link and keeps polling until the operator approves.
 func TestRegister_V2PendingThenApproved(t *testing.T) {
 	withXDG(t)
-	fastPollV2(t)
 	srv, _ := bootstrapServer(t, 2) // two pending polls before approval
 
 	out, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "30s")
@@ -170,7 +154,6 @@ func TestRegister_V2PendingThenApproved(t *testing.T) {
 // which used to abort the flow the instant it began.
 func TestRegister_ClaimPending_AssertionInvalidIsNotFatal(t *testing.T) {
 	withXDG(t)
-	fastPollV2(t)
 
 	const claimTok = "clm_once_abc"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

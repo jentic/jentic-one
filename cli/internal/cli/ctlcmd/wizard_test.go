@@ -153,13 +153,10 @@ func healthHandler(status int) http.HandlerFunc {
 	}
 }
 
-// withFastPolls shrinks the shared poll cadence so wait-loop tests don't sleep
-// for real, restoring it afterwards.
-func withFastPolls(t *testing.T) {
-	t.Helper()
-	oi, om, os := pollInitialDelay, pollMaxDelay, pollDelayStep
-	pollInitialDelay, pollMaxDelay, pollDelayStep = time.Millisecond, 2*time.Millisecond, time.Millisecond
-	t.Cleanup(func() { pollInitialDelay, pollMaxDelay, pollDelayStep = oi, om, os })
+// fastPolls shrinks an app's poll cadence so wait-loop tests don't sleep for
+// real (AR2-5: cadence is per-App, not a package global).
+func fastPolls(a *app) {
+	a.SetPollCadence(time.Millisecond, 2*time.Millisecond, time.Millisecond)
 }
 
 // An already-running stack is detected on the first probe, instantly, with no
@@ -178,8 +175,6 @@ func TestWizardWaitForStack_ImmediateUp(t *testing.T) {
 // instead of a single short probe — the stack is down for the first probes
 // (still booting after `compose up -d`) then becomes healthy.
 func TestWizardWaitForStack_WaitsOutColdStart(t *testing.T) {
-	withFastPolls(t)
-
 	var probes int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
@@ -197,6 +192,7 @@ func TestWizardWaitForStack_WaitsOutColdStart(t *testing.T) {
 	defer srv.Close()
 
 	app := &app{App: &cmdcore.App{Out: io.Discard}}
+	fastPolls(app)
 	if !app.wizardWaitForStack(context.Background(), srv.URL) {
 		t.Fatalf("wizardWaitForStack = false, want true once the stack finishes booting")
 	}
@@ -208,7 +204,6 @@ func TestWizardWaitForStack_WaitsOutColdStart(t *testing.T) {
 // When the stack never becomes ready, step 0 gives up at the deadline (false)
 // rather than blocking forever — the caller then prints the recovery guidance.
 func TestWizardWaitForStack_TimesOutWhenNeverReady(t *testing.T) {
-	withFastPolls(t)
 	orig := wizardStackReadyTimeout
 	wizardStackReadyTimeout = 15 * time.Millisecond
 	t.Cleanup(func() { wizardStackReadyTimeout = orig })
@@ -217,6 +212,7 @@ func TestWizardWaitForStack_TimesOutWhenNeverReady(t *testing.T) {
 	defer srv.Close()
 
 	app := &app{App: &cmdcore.App{Out: io.Discard}}
+	fastPolls(app)
 	if app.wizardWaitForStack(context.Background(), srv.URL) {
 		t.Fatalf("wizardWaitForStack = true, want false when the stack never becomes ready")
 	}
@@ -225,8 +221,6 @@ func TestWizardWaitForStack_TimesOutWhenNeverReady(t *testing.T) {
 // A cancelled context aborts the wait promptly (false), so Ctrl-C during the
 // install → wizard handoff doesn't hang.
 func TestWizardWaitForStack_ContextCancel(t *testing.T) {
-	withFastPolls(t)
-
 	srv := httptest.NewServer(healthHandler(http.StatusServiceUnavailable))
 	defer srv.Close()
 
@@ -234,6 +228,7 @@ func TestWizardWaitForStack_ContextCancel(t *testing.T) {
 	cancel()
 
 	app := &app{App: &cmdcore.App{Out: io.Discard}}
+	fastPolls(app)
 	if app.wizardWaitForStack(ctx, srv.URL) {
 		t.Fatalf("wizardWaitForStack = true, want false when the context is cancelled")
 	}
