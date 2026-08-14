@@ -126,8 +126,8 @@ class CatalogUpdateCheckRepository:
 
         Keys on ``last_notified_digest``, whereas the sweep-side emit suppression
         (``CatalogService._is_snoozed``) keys on the digest currently being *emitted*. Those
-        agree because the sweep upserts ``last_notified_digest = upstream_digest`` before the
-        suppression check runs; see that method for the shared invariant.
+        agree because a snoozed change marks ``last_notified_digest = upstream_digest``
+        inline before returning (it emits no event); see ``CatalogService._probe_one``.
         """
         if now is None:
             now = datetime.now(UTC)
@@ -313,3 +313,40 @@ class CatalogUpdateCheckRepository:
             row.last_checked_at = checked_at
         await session.flush()
         return row
+
+    @staticmethod
+    async def mark_notified(
+        session: AsyncSession,
+        *,
+        local_api_id: uuid.UUID,
+        notified_digest: str,
+        notified_event_class: str,
+    ) -> int:
+        """Record that an event was *successfully emitted* for ``notified_digest``.
+
+        Split out from :meth:`upsert` so the update-notify sweep can order the durable
+        "notified" marker **after** the cross-DB event emit (emit-then-mark). The upsert
+        commits the observation (etag/digest/last_checked_at) in the registry DB; the event
+        lands in the *admin* DB in a separate transaction, so there is no shared commit. If
+        the process crashed between marking notified and emitting, dedupe — which keys on
+        ``(last_notified_digest, last_notified_event_class)`` — would suppress the
+        notification permanently until upstream changed again (#941). Marking only after a
+        successful emit means a crash re-emits on the next sweep (at worst one duplicate the
+        next successful mark dedupes) instead of silently swallowing the notification.
+
+        Returns the number of rows updated (0 if the check row is missing — the observation
+        upsert always runs first in the sweep, so in practice this is 1).
+        """
+        result = cast(
+            "CursorResult[Any]",
+            await session.execute(
+                update(CatalogUpdateCheck)
+                .where(CatalogUpdateCheck.local_api_id == local_api_id)
+                .values(
+                    last_notified_digest=notified_digest,
+                    last_notified_event_class=notified_event_class,
+                )
+            ),
+        )
+        await session.flush()
+        return result.rowcount or 0

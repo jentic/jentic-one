@@ -526,3 +526,87 @@ async def test_import_handler_settle_reuses_session_no_self_deadlock(
         ).scalar_one()
     assert event.acknowledged is True
     assert event.acknowledged_by == "usr_reimport"
+
+
+# ── #941: emit-then-mark durability ──────────────────────────────────────────
+
+
+async def test_sweep_emit_failure_leaves_unmarked_so_next_sweep_re_emits(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """#941: a crash between marking notified and emitting must NOT permanently suppress.
+
+    With emit-then-mark, the notify marker (``last_notified_digest`` /
+    ``last_notified_event_class``) is written only *after* a successful cross-DB emit. If
+    the emit fails (the process crashing mid-emit is modelled by the emit raising, which
+    the per-API guard swallows), the marker stays unadvanced so the *next* sweep re-emits
+    rather than silently deduping against a notification that was never delivered.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+
+    # First sweep: the emit fails. The per-API guard swallows it; the API must be left
+    # unmarked (no notified digest) so it is not deduped away.
+    with (
+        patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed),
+        patch(
+            f"{_SWEEP}.emit_event_best_effort",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("admin DB unavailable mid-emit"),
+        ),
+    ):
+        await svc._run_update_notify_sweep()
+
+    assert await _events(integration_context) == []  # nothing emitted
+    async with integration_context.registry_db.session() as session:
+        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+    assert check is not None
+    # Observation persisted (we did fetch), but the notify marker was NOT advanced —
+    # so the change is still outstanding and will re-emit.
+    assert check.last_seen_digest == "sha256:upstream-new"
+    assert check.last_notified_digest is None
+    assert check.last_notified_event_class is None
+
+    # Second sweep with a healthy emit: it re-emits (the bug would have suppressed it).
+    async with integration_context.registry_db.transaction() as session:
+        check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+        assert check is not None
+        check.last_checked_at = None  # reopen the per-API interval gate
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+
+    events = await _events(integration_context)
+    assert len(events) == 1  # re-emitted, not permanently suppressed
+    async with integration_context.registry_db.session() as session:
+        check_after = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+    assert check_after is not None
+    assert check_after.last_notified_digest == "sha256:upstream-new"
+
+
+async def test_sweep_marks_notified_after_successful_emit_and_dedupes(
+    integration_context: Context, registered_api: Api
+) -> None:
+    """#941 happy path: a successful emit advances the notify marker and the next sweep dedupes.
+
+    Confirms emit-then-mark does not double-notify on the success path: the marker is
+    written after the emit, so a second sweep observing the same digest is deduped.
+    """
+    integration_context.config.catalog.update_check_interval_seconds = 1
+    changed = ConditionalFetch(
+        not_modified=False, etag='"v2"', content=b"{}", digest="sha256:upstream-new"
+    )
+    svc = CatalogService(integration_context)
+    with patch(f"{_SWEEP}.fetch_bytes_conditional", new_callable=AsyncMock, return_value=changed):
+        await svc._run_update_notify_sweep()
+        async with integration_context.registry_db.transaction() as session:
+            check = await CatalogUpdateCheckRepository.get(session, registered_api.id)
+            assert check is not None
+            assert check.last_notified_digest == "sha256:upstream-new"
+            assert check.last_notified_event_class == EventType.CATALOG_UPDATE_AVAILABLE
+            check.last_checked_at = None  # reopen the gate for a second pass
+        await svc._run_update_notify_sweep()
+
+    assert len(await _events(integration_context)) == 1  # deduped, not re-emitted

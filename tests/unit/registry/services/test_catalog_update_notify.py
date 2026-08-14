@@ -177,7 +177,10 @@ async def test_probe_change_emits_event_once() -> None:
                 not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
             ),
         ),
-        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
+        ) as mark_notified,
         patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
@@ -186,8 +189,10 @@ async def test_probe_change_emits_event_once() -> None:
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_AVAILABLE
         assert emit_kwargs["requires_action"] is True
         assert emit_kwargs["data"]["upstream_digest"] == "upstream-new"
-        upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
-        assert upsert_kwargs["notified_digest"] == "upstream-new"
+        # #941: the notify marker is written *after* the emit (emit-then-mark).
+        mark_notified.assert_awaited_once()
+        mark_kwargs = mark_notified.await_args.kwargs if mark_notified.await_args else {}
+        assert mark_kwargs["notified_digest"] == "upstream-new"
 
 
 @pytest.mark.asyncio
@@ -259,7 +264,10 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
                 not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
             ),
         ),
-        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
+        ) as mark_notified,
         patch(
             f"{_SWEEP}.OverlayRepository.get_live_confirmed_for_api",
             new_callable=AsyncMock,
@@ -285,16 +293,19 @@ async def test_probe_overlay_conflict_emits_conflict_class() -> None:
             "served_digest": "overlaid",
             "upstream_digest": "upstream-new",
         }
-        upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
-        assert upsert_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        mark_kwargs = mark_notified.await_args.kwargs if mark_notified.await_args else {}
+        assert mark_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
 
 
 @pytest.mark.asyncio
 async def test_probe_suppresses_emit_when_snoozed() -> None:
     """C1: an active snooze on the observed upstream digest suppresses the emit.
 
-    The sweep still runs the upsert (so dedupe stays consistent + the outdated-set
-    exclusion applies) but skips creating a new inbox/rail item.
+    The sweep still marks the notify digest inline (so dedupe stays consistent + the
+    outdated-set snooze exclusion, which keys on last_notified_digest, applies) but skips
+    creating a new inbox/rail item. Unlike the emit path, the snooze path emits no event,
+    so marking inline is safe (#941 emit-then-mark only defers the marker to guard a
+    cross-DB emit).
     """
     svc = CatalogService(_make_ctx())
     snoozed_check = _check(
@@ -318,11 +329,18 @@ async def test_probe_suppresses_emit_when_snoozed() -> None:
             ),
         ),
         patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
+        ) as mark_notified,
         patch(f"{_SWEEP}.emit_event_best_effort", new_callable=AsyncMock) as emit,
     ):
         await svc._probe_one(_spec(digest="local-digest"), now=datetime.now(UTC), interval=86400)
-        # Still recorded the observation, but did NOT emit.
+        # Recorded the observation and marked notified inline (snooze read-surface keys on
+        # last_notified_digest), but did NOT emit.
         upsert.assert_awaited()
+        mark_notified.assert_awaited_once()
+        mark_kwargs = mark_notified.await_args.kwargs if mark_notified.await_args else {}
+        assert mark_kwargs["notified_digest"] == "upstream-new"
         emit.assert_not_awaited()
 
 
@@ -441,7 +459,10 @@ async def test_probe_reclassified_digest_re_emits_once() -> None:
                 not_modified=False, etag='"v2"', content=b"{}", digest="upstream-new"
             ),
         ),
-        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock) as upsert,
+        patch(f"{_SWEEP}.CatalogUpdateCheckRepository.upsert", new_callable=AsyncMock),
+        patch(
+            f"{_SWEEP}.CatalogUpdateCheckRepository.mark_notified", new_callable=AsyncMock
+        ) as mark_notified,
         patch(
             f"{_SWEEP}.OverlayRepository.get_live_confirmed_for_api",
             new_callable=AsyncMock,
@@ -455,8 +476,8 @@ async def test_probe_reclassified_digest_re_emits_once() -> None:
         emit.assert_awaited_once()
         emit_kwargs = emit.await_args.kwargs if emit.await_args else {}
         assert emit_kwargs["type"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
-        upsert_kwargs = upsert.await_args.kwargs if upsert.await_args else {}
-        assert upsert_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
+        mark_kwargs = mark_notified.await_args.kwargs if mark_notified.await_args else {}
+        assert mark_kwargs["notified_event_class"] == EventType.CATALOG_UPDATE_CONFLICTS_OVERLAY
 
 
 @pytest.mark.asyncio

@@ -367,10 +367,11 @@ class CatalogService:
 
         Keyed on ``upstream_digest`` (the digest the sweep is *emitting* for), whereas the
         repo-side outdated-set exclusion (:meth:`CatalogUpdateCheckRepository._not_snoozed`)
-        keys on ``last_notified_digest``. Those agree because the sweep's emit path upserts
-        ``last_notified_digest = upstream_digest`` *before* this suppression check runs
-        (see :meth:`run_update_sweep`), so at decision time the two columns hold the same
-        value. Keep that upsert-before-check ordering if either predicate is edited.
+        keys on ``last_notified_digest``. Those agree because a snoozed change marks
+        ``last_notified_digest = upstream_digest`` (inline, since it emits no event) before it
+        returns — see the snooze branch in :meth:`_probe_one`. The *emitting* (non-snoozed)
+        path marks after a successful emit (emit-then-mark, #941), which does not affect this
+        predicate because a snoozed row never reaches the emit path.
         """
         snoozed_digest = getattr(check, "snoozed_digest", None)
         if snoozed_digest is None or snoozed_digest != upstream_digest:
@@ -435,8 +436,6 @@ class CatalogService:
             last_notified_class,
         )
 
-        notified_digest = upstream_digest if changed else None
-        notified_event_class = event_class if changed else None
         async with self._ctx.registry_db.transaction() as session:
             await CatalogUpdateCheckRepository.upsert(
                 session,
@@ -445,13 +444,18 @@ class CatalogService:
                 etag=result.etag,
                 digest=upstream_digest,
                 checked_at=now,
-                notified_digest=notified_digest,
-                notified_event_class=notified_event_class,
-                # Upstream matches the served revision again (e.g. a bad publish was
-                # reverted): pin last_notified_digest to it so the outdated read surface
-                # clears. Otherwise a revert leaves the badge stuck lit with no operator
-                # action able to resolve it. Dedupe is preserved — a later genuinely
-                # different upstream digest still re-fires exactly once.
+                # Deliberately NOT stamping notified_digest/class here: the event is
+                # emitted below in a *separate* (admin-DB) transaction, so marking notified
+                # before the emit could permanently suppress the notification if the process
+                # crashes in between (#941). We mark via mark_notified only *after* a
+                # successful emit — emit-then-mark.
+                #
+                # sync_notified is the one exception: when upstream matches the served
+                # revision again (e.g. a bad publish was reverted) it fires *no* event, so
+                # pinning last_notified_digest to it here is safe and clears the outdated
+                # read surface. Otherwise a revert leaves the badge stuck lit with no
+                # operator action able to resolve it. Dedupe is preserved — a later
+                # genuinely different upstream digest still re-fires exactly once.
                 sync_notified=in_sync,
             )
 
@@ -459,13 +463,23 @@ class CatalogService:
             return
 
         # Snooze/mute (C1, #925): an operator accepted this exact upstream digest without
-        # adopting it, so suppress the *notification* while the snooze is active. We still ran
-        # the upsert above (recording last_notified_digest/class), so dedupe stays consistent
-        # and the badge stays suppressed via the shared outdated-set exclusion; we simply skip
-        # the emit here so no new inbox/rail item is created. A genuinely newer upstream digest
-        # won't match ``snoozed_digest`` and will emit normally. ``snoozed_until`` in the past
-        # means the snooze lapsed → emit again.
+        # adopting it, so suppress the *notification* while the snooze is active. This path
+        # emits no event, so we mark notified inline (emit-then-mark only defers the marker
+        # to guard the cross-DB emit; there is nothing to guard here). Marking is required:
+        # the read-surface snooze exclusion keys on ``snoozed_digest == last_notified_digest``
+        # (see :meth:`CatalogUpdateCheckRepository._not_snoozed`), so without advancing
+        # ``last_notified_digest`` to the snoozed digest the badge would wrongly re-light
+        # despite the active snooze. We skip the emit so no new inbox/rail item is created. A
+        # genuinely newer upstream digest won't match ``snoozed_digest`` and will emit
+        # normally. ``snoozed_until`` in the past means the snooze lapsed → emit again.
         if check is not None and self._is_snoozed(check, upstream_digest, now):
+            async with self._ctx.registry_db.transaction() as session:
+                await CatalogUpdateCheckRepository.mark_notified(
+                    session,
+                    local_api_id=spec.api_id,
+                    notified_digest=upstream_digest,
+                    notified_event_class=event_class,
+                )
             logger.info(
                 "catalog_update_notify_snoozed",
                 api_id=str(spec.api_id),
@@ -540,6 +554,17 @@ class CatalogService:
                         else None
                     ),
                 },
+            )
+        # Emit committed above (admin DB). Now durably record that we notified for this
+        # (digest, class) so the next sweep dedupes — emit-then-mark (#941). A crash before
+        # this point re-emits next sweep (at worst one duplicate) rather than permanently
+        # suppressing the notification.
+        async with self._ctx.registry_db.transaction() as session:
+            await CatalogUpdateCheckRepository.mark_notified(
+                session,
+                local_api_id=spec.api_id,
+                notified_digest=upstream_digest,
+                notified_event_class=event_class,
             )
         record_update_notified(event_class)
 
