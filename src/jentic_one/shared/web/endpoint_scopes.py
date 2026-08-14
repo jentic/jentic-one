@@ -47,7 +47,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from jentic_one.admin.core.permissions import compute_implies_transitive
+from jentic_one.shared.auth.permission_catalog import compute_implies_transitive
 from jentic_one.shared.models.actors import ActorType
 from jentic_one.shared.scopes import AGENTS_WRITE, DEFAULT_AGENT_SCOPES
 

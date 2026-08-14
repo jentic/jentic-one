@@ -1017,10 +1017,9 @@ class OverlayService:
                 raise OverlayStateConflictError(
                     overlay_id, overlay.status, [OverlayStatus.CONFIRMED], "rollback"
                 )
-            # 2. Restore the superseded revision (must still be archived).
-            restored = await ApiRevisionRepository.restore_archived_to_imported(
-                session, superseded_id
-            )
+            # 2. Restore the superseded revision to its true prior state (PUBLISHED vs
+            # IMPORTED, derived from provenance; #939) — must still be archived.
+            restored = await ApiRevisionRepository.restore_archived(session, superseded_id)
             if restored == 0:
                 raise OverlayRollbackTargetMissingError(
                     overlay_id,

@@ -8,8 +8,8 @@ from typing import Any
 from fastapi import Depends, Request
 from jentic.problem_details import Forbidden, Unauthorized
 
-from jentic_one.admin.core.permissions import compute_effective
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.auth.permission_catalog import compute_effective
 from jentic_one.shared.context import Context
 from jentic_one.shared.models import ActorType
 from jentic_one.shared.models.actors import Origin
