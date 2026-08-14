@@ -518,11 +518,11 @@ func (a *App) printNextSteps() {
 	fmt.Fprintf(a.Out, "\n%s\n", theme.Heading.Render("Next steps"))
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
-		{"Find an operation", "jentic search \"send a slack message\""},
+		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
 		{"See what you can run right now", "jentic access whoami"},
 		{"A fresh agent is bound to no APIs — request access to one you found", "jentic access request --toolkit <vendor/name> --wait"},
-		{"Inspect a call", "jentic inspect GET:https://api.example.com/v1/things"},
-		{"Run one", "jentic execute POST:https://api.example.com/v1/things -d '{\"key\":\"value\"}'"},
+		{"Inspect that operation (paste the target search printed)", "jentic inspect <METHOD:url from search>"},
+		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
 	}
 	for _, s := range steps {
 		fmt.Fprintf(a.Out, "  %s\n    %s\n", theme.Dim.Render(s.desc), theme.Command.Render(s.cmd))
