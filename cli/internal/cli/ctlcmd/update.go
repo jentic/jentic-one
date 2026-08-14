@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -315,7 +316,10 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 	// both in JENTIC_INSTALL_DIR).
 	installDir := filepath.Dir(ctlTarget)
 
-	staged, cleanup, err := a.stageCLIBuild(ctx, repo, ref)
+	// Prefer a DOWNLOAD-AND-SWAP when `ref` resolves to a real published release
+	// (no compiler, no clone). Fall back to the from-source rebuild for forks /
+	// dev refs / a tag without published assets — unchanged behaviour.
+	staged, cleanup, fromDownload, err := a.acquireCLIBinaries(ctx, repo, ref)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -336,6 +340,17 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 	}
 
 	fmt.Fprintln(a.Out)
+	// Track (target, backup) so a mid-loop failure (e.g. the second binary) can
+	// roll BOTH back from their .bak, never leaving a half-swapped pair.
+	type swap struct{ target, backup string }
+	var done []swap
+	restore := func() {
+		for _, s := range done {
+			if s.backup != "" {
+				_ = update.RestoreBinary(s.target, s.backup)
+			}
+		}
+	}
 	var swapped []string
 	for _, name := range []string{ctlBinaryName, apiBinaryName} {
 		src, ok := staged[name]
@@ -345,8 +360,10 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 		target := targets[name]
 		backup, err := update.ReplaceBinary(target, src)
 		if err != nil {
+			restore()
 			return fmt.Errorf("replace %s: %w", name, err)
 		}
+		done = append(done, swap{target: target, backup: backup})
 		swapped = append(swapped, name)
 		fmt.Fprintln(a.Out, theme.Field(name, target))
 		if backup != "" {
@@ -356,8 +373,90 @@ func (a *app) updateCLI(ctx context.Context, repo, ref, ctlTarget string) error 
 
 	a.refreshManifestBinaryPath(ctlTarget)
 
-	fmt.Fprintln(a.Out, theme.Successf("Updated %s -> %s", strings.Join(swapped, " + "), strings.TrimSpace(newVersion)))
+	how := "built"
+	if fromDownload {
+		how = "downloaded"
+	}
+	fmt.Fprintln(a.Out, theme.Successf("Updated %s -> %s (%s)", strings.Join(swapped, " + "), strings.TrimSpace(newVersion), how))
 	return nil
+}
+
+// acquireCLIBinaries stages the two CLI binaries for `ref`, preferring a
+// verified release download and falling back to a from-source build. It returns
+// the staged paths, a cleanup func, and whether the download path was taken.
+func (a *app) acquireCLIBinaries(ctx context.Context, repo, ref string) (map[string]string, func(), bool, error) {
+	if tag := resolvedReleaseTag(ref); tag != "" {
+		staged, cleanup, err := a.downloadCLIBinaries(ctx, repo, tag)
+		if err == nil {
+			return staged, cleanup, true, nil
+		}
+		// A download failure that is a fail-closed VERIFICATION error must NOT
+		// silently fall back to building unverified — surface it. Any other
+		// failure (asset missing for this platform, transport) drops to source.
+		if isVerificationError(err) {
+			if cleanup != nil {
+				cleanup()
+			}
+			return nil, nil, false, err
+		}
+		fmt.Fprintln(a.Out, theme.Dimf("  no usable release download (%v); building from source", err))
+		if cleanup != nil {
+			cleanup()
+		}
+	}
+	staged, cleanup, err := a.stageCLIBuild(ctx, repo, ref)
+	return staged, cleanup, false, err
+}
+
+// downloadCLIBinaries downloads + verifies both binaries for tag into a staging
+// dir, returning their paths and a cleanup func. Any verification failure is
+// returned as a verificationError so the caller refuses to fall back to an
+// unverified source build.
+func (a *app) downloadCLIBinaries(ctx context.Context, repo, tag string) (map[string]string, func(), error) {
+	stage, err := os.MkdirTemp("", "jentic-cli-download-*")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(stage) }
+	token := os.Getenv("GITHUB_TOKEN")
+	staged := map[string]string{}
+	for _, name := range []string{ctlBinaryName, apiBinaryName} {
+		res, derr := update.DownloadAndVerify(ctx, repo, tag, name, runtime.GOOS, runtime.GOARCH, token, stage)
+		if derr != nil {
+			cleanup()
+			if update.IsVerificationError(derr) {
+				return nil, nil, verificationError{derr}
+			}
+			return nil, nil, derr
+		}
+		if res.Warning != "" {
+			fmt.Fprintln(a.Out, theme.Warnf("%s", res.Warning))
+		}
+		staged[name] = res.BinaryPath
+	}
+	return staged, cleanup, nil
+}
+
+// verificationError marks a fail-closed download failure (bad checksum/sig) so
+// the updater refuses to fall back to an unverified from-source build.
+type verificationError struct{ err error }
+
+func (e verificationError) Error() string { return e.err.Error() }
+func (e verificationError) Unwrap() error { return e.err }
+
+func isVerificationError(err error) bool {
+	var ve verificationError
+	return errors.As(err, &ve)
+}
+
+// resolvedReleaseTag returns ref if it is a canonical published-release tag
+// (so download-and-swap can engage), else "". A non-release ref (branch, SHA,
+// dev) has no published assets and must build from source.
+func resolvedReleaseTag(ref string) string {
+	if update.IsReleaseTag(ref) {
+		return ref
+	}
+	return ""
 }
 
 // ctlBinaryName and apiBinaryName are the two binaries this CLI ships as.

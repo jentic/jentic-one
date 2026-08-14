@@ -17,6 +17,7 @@ import (
 func wire(core *cmdcore.App) *app {
 	core.NudgeLatestTag = update.LatestReleaseTag
 	core.NewerVersionAvailable = update.NewerAvailable
+	core.NudgeCommand = "jenticctl update"
 	return &app{App: core}
 }
 

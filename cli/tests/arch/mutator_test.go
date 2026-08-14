@@ -35,6 +35,7 @@ var configWriterAllowlist = map[string]bool{
 	"internal/agentkey/key.go":            true, // Ed25519 key material (0600)
 	"internal/skillgen/apply.go":          true, // rendered skill files (atomic)
 	"internal/update/update.go":           true, // self-update binary swap (atomic)
+	"internal/update/download.go":         true, // extracts a verified release binary into the update stage dir (STATE, not config.yaml; sha256/cosign-verified before write)
 	"internal/install/start.go":           true, // pid file
 	"internal/install/compose.go":         true, // compose/init-schemas artifacts
 	"internal/install/build.go":           true, // build output tree

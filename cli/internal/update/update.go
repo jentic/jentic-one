@@ -84,6 +84,13 @@ func ReplaceBinary(target, staged string) (string, error) {
 	return backup, nil
 }
 
+// RestoreBinary copies a .bak backup produced by ReplaceBinary back over the
+// target, undoing a swap. Used to roll back a multi-binary update when a later
+// binary in the set fails to swap, so a half-updated pair can't persist.
+func RestoreBinary(target, backup string) error {
+	return copyFile(backup, target, 0o755)
+}
+
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src) //nolint:gosec // paths are CLI-internal (staged build artifact / install location).
 	if err != nil {
