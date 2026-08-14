@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
-	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -109,10 +108,7 @@ func newProvidersListCmd(app *app) *cobra.Command {
 // (ARCH-21: auth/session/retry are baked into the SDK transport, so there is no
 // base-URL/token to thread through the admin calls).
 func (a *app) adminClient(ctx context.Context) (*control.ClientWithResponses, error) {
-	if _, err := a.requireState(ctx); err != nil {
-		return nil, err
-	}
-	return clictx.GetControlClient(ctx)
+	return a.controlClient(ctx)
 }
 
 // ── set ──────────────────────────────────────────────────────────────────────

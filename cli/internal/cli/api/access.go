@@ -11,12 +11,53 @@ import (
 	"time"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
-	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
+
+// Access-request lifecycle status values. The generated SDK models item/request
+// status as a plain string, so the CLI keeps its own named constants (moved off
+// the deleted internal/accessclient in ARCH-21 A3).
+const (
+	statusPending           = "pending"
+	statusApproved          = "approved"
+	statusPartiallyApproved = "partially_approved"
+	statusDenied            = "denied"
+	statusWithdrawn         = "withdrawn"
+	statusExpired           = "expired"
+)
+
+// requestIsTerminal reports whether an access request has left the pending
+// state (replaces the deleted accessclient.Request.IsTerminal()).
+func requestIsTerminal(r *control.AccessRequestResponse) bool {
+	return r.Status != statusPending
+}
+
+// staleScopes returns the scopes the agent has been granted that the presented
+// token does not yet carry — grants that landed after the token was minted and
+// won't take effect until it is refreshed (`jentic access refresh`, issue #673).
+// A nil token-scope list means the server did not report token scopes at all
+// (staleness is then unknowable), so we report none rather than nagging; an
+// explicitly empty list is honored. Replaces accessclient.Me.StaleScopes().
+func staleScopes(scopes, tokenScopes []string) []string {
+	if tokenScopes == nil {
+		return nil
+	}
+	inToken := make(map[string]struct{}, len(tokenScopes))
+	for _, s := range tokenScopes {
+		inToken[s] = struct{}{}
+	}
+	var stale []string
+	for _, s := range scopes {
+		if _, ok := inToken[s]; !ok {
+			stale = append(stale, s)
+		}
+	}
+	return stale
+}
 
 var (
 	errAccessTargetRequired = errors.New("specify what to request: --toolkit <vendor/name>, --toolkit-id <tk_…>, --scope <scope>, or --provision <vendor/name> (repeat and combine to compose one request)")
@@ -217,7 +258,7 @@ func (o *accessRequestOptions) targetCount() int {
 // Targets are validated as a set — duplicates and a --toolkit/--provision pair
 // naming the same API are rejected, since they would file conflicting or
 // redundant intents the approving human then has to untangle.
-func (o *accessRequestOptions) compose() ([]accessclient.Item, error) {
+func (o *accessRequestOptions) compose() ([]control.AccessRequestItemRequest, error) {
 	provisions := cleanValues(o.provisions)
 	toolkits := cleanValues(o.toolkits)
 	toolkitIDs := cleanValues(o.toolkitIDs)
@@ -265,7 +306,7 @@ func (o *accessRequestOptions) compose() ([]accessclient.Item, error) {
 		return nil, err
 	}
 
-	var items []accessclient.Item
+	var items []control.AccessRequestItemRequest
 	for i, p := range provisions {
 		chain, planErr := buildProvisionPlan(p, auths[provKeys[i]], rulesJSONs[provKeys[i]])
 		if planErr != nil {
@@ -278,13 +319,19 @@ func (o *accessRequestOptions) compose() ([]accessclient.Item, error) {
 		if refErr != nil {
 			return nil, refErr
 		}
-		items = append(items, accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceReference: ref})
+		items = append(items, control.AccessRequestItemRequest{
+			ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceReference: &ref,
+		})
 	}
 	for _, id := range toolkitIDs {
-		items = append(items, accessclient.Item{ResourceType: "toolkit", Action: "bind", ResourceID: id})
+		items = append(items, control.AccessRequestItemRequest{
+			ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceId: ptr(id),
+		})
 	}
 	for _, s := range scopes {
-		items = append(items, accessclient.Item{ResourceType: "scope", Action: "grant", ResourceID: s})
+		items = append(items, control.AccessRequestItemRequest{
+			ResourceType: control.AccessRequestItemRequestResourceTypeScope, Action: control.Grant, ResourceId: ptr(s),
+		})
 	}
 	return items, nil
 }
@@ -435,7 +482,7 @@ var validAuthTypes = map[string]bool{
 // bind it with proposed rules, bind the agent); a human fulfils the
 // create/provision steps via the dashboard, which writes the resulting ids back
 // onto the bind items before approving. Returns the items in fulfilment order.
-func buildProvisionPlan(provision, auth, rulesJSON string) ([]accessclient.Item, error) {
+func buildProvisionPlan(provision, auth, rulesJSON string) ([]control.AccessRequestItemRequest, error) {
 	ref, err := parseToolkitRef(provision)
 	if err != nil {
 		return nil, err
@@ -463,10 +510,10 @@ func buildProvisionPlan(provision, auth, rulesJSON string) ([]accessclient.Item,
 
 	// The plan is a fixed 4-item chain (toolkit:create, credential:provision,
 	// credential:bind, toolkit:bind); preallocate to that capacity.
-	items := make([]accessclient.Item, 0, 4)
+	items := make([]control.AccessRequestItemRequest, 0, 4)
 	// Step 1: create a toolkit that will serve this API.
-	items = append(items, accessclient.Item{
-		ResourceType: "toolkit", Action: "create", ResourceReference: ref,
+	items = append(items, control.AccessRequestItemRequest{
+		ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Create, ResourceReference: &ref,
 	})
 	// Step 2: provision a credential for this API. security_scheme carries the
 	// agent-detected auth type so the operator's credential form can pre-select
@@ -482,8 +529,8 @@ func buildProvisionPlan(provision, auth, rulesJSON string) ([]accessclient.Item,
 		provRef[k] = v
 	}
 	provRef["security_scheme"] = authScheme
-	items = append(items, accessclient.Item{
-		ResourceType: "credential", Action: "provision", ResourceReference: provRef,
+	items = append(items, control.AccessRequestItemRequest{
+		ResourceType: control.AccessRequestItemRequestResourceTypeCredential, Action: control.Provision, ResourceReference: &provRef,
 	})
 	// Step 3: bind the (to-be-created) credential to the (to-be-created)
 	// toolkit, carrying the agent's proposed first-pass rules. The operator
@@ -494,29 +541,30 @@ func buildProvisionPlan(provision, auth, rulesJSON string) ([]accessclient.Item,
 	// keeps pending-dedup from colliding two different plans' bind items). The
 	// server ignores the reference for credential:bind — only the amended ids
 	// wire the effect.
-	items = append(items, accessclient.Item{
-		ResourceType: "credential", Action: "bind", ResourceReference: ref, Rules: rules,
+	items = append(items, control.AccessRequestItemRequest{
+		ResourceType: control.AccessRequestItemRequestResourceTypeCredential, Action: control.Bind, ResourceReference: &ref, Rules: rules,
 	})
 	// Step 4: bind the agent to the toolkit, named by the same API reference.
-	items = append(items, accessclient.Item{
-		ResourceType: "toolkit", Action: "bind", ResourceReference: ref,
+	items = append(items, control.AccessRequestItemRequest{
+		ResourceType: control.AccessRequestItemRequestResourceTypeToolkit, Action: control.Bind, ResourceReference: &ref,
 	})
 	return items, nil
 }
 
 // parseProposedRules decodes the agent's proposed permission rules from a JSON
 // array (--rules-json). Empty input yields no rules (the server substitutes a
-// read-only default on the credential:bind item).
-func parseProposedRules(raw string) ([]accessclient.Rule, error) {
+// read-only default on the credential:bind item). Returns nil (not an empty
+// pointer) when absent, so the item's `rules` stays omitted on the wire.
+func parseProposedRules(raw string) (*[]control.JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	var rules []accessclient.Rule
+	var rules []control.JenticOneControlWebSchemasAccessRequestsPermissionRuleSchema
 	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
 		return nil, fmt.Errorf("--rules-json must be a JSON array of rules: %w", err)
 	}
-	return rules, nil
+	return &rules, nil
 }
 
 // parseToolkitRef splits "vendor/name[/version]" into a resource_reference. The
@@ -543,11 +591,8 @@ type accessListOptions struct {
 }
 
 func (a *app) accessWhoamiE(cmd *cobra.Command, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
-	if err != nil {
-		return err
-	}
-	me, err := accessclient.New(baseURL).Me(cmd.Context(), token)
+	ctx := cmd.Context()
+	me, err := a.getMe(ctx)
 	if err != nil {
 		return err
 	}
@@ -558,27 +603,74 @@ func (a *app) accessWhoamiE(cmd *cobra.Command, jsonFlag bool) error {
 	return nil
 }
 
+// getMe fetches the caller's identity via GET /me and returns the AGENT variant.
+//
+// GET /me returns a discriminated union (MeUser | MeAgent | MeServiceAccount)
+// keyed on `type`. The generated AsMeAgent() does NOT validate the discriminator
+// — it would happily decode a user/service-account body into an agent-shaped
+// value with empty bindings, which reads as an approved agent bound to nothing.
+// So we probe the raw body's `type` first and reject a non-agent token, matching
+// the guard the deleted accessclient.Me() enforced.
+func (a *app) getMe(ctx context.Context) (*control.MeAgent, error) {
+	client, err := a.controlClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.GetMeWithResponse(ctx)
+	if err := apiErrorFor(resp, err); err != nil {
+		return nil, err
+	}
+	// Decode straight from the raw body rather than resp.JSON200: /me is a
+	// discriminated union and we need the `type` discriminator to reject a
+	// non-agent token (AsMeAgent does not validate it — it would decode a
+	// user/service-account into an empty-bindings agent). Reading resp.Body also
+	// avoids depending on the response Content-Type (the generated typed field
+	// is only populated for an application/json content type).
+	var probe struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(resp.Body, &probe); err != nil {
+		return nil, fmt.Errorf("decode /me response: %w", err)
+	}
+	if probe.Type != "" && probe.Type != "agent" {
+		return nil, fmt.Errorf("this token belongs to a %q, not an agent; agent commands require an agent token", probe.Type)
+	}
+	var agent control.MeAgent
+	if err := json.Unmarshal(resp.Body, &agent); err != nil {
+		return nil, fmt.Errorf("decode /me response: %w", err)
+	}
+	return &agent, nil
+}
+
 func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) error {
 	items, err := opts.compose()
 	if err != nil {
 		return err
 	}
 
-	baseURL, token, err := a.agentSession(cmd.Context())
+	ctx := cmd.Context()
+	st, err := a.requireState(ctx)
 	if err != nil {
 		return err
 	}
-	client := accessclient.New(baseURL)
+	client, err := a.controlClient(ctx)
+	if err != nil {
+		return err
+	}
 
-	req, err := client.File(cmd.Context(), token, accessclient.FileRequest{
-		Reason: opts.reason,
+	fileResp, err := client.FileAccessRequestWithResponse(ctx, control.AccessRequestFileRequest{
+		Reason: strEmptyToNil(opts.reason),
 		Items:  items,
 	})
 	if err != nil {
-		var dup *accessclient.DuplicatePendingError
-		if !errors.As(err, &dup) {
-			return err
-		}
+		return err
+	}
+	var req *control.AccessRequestResponse
+	switch {
+	case fileResp.JSON202 != nil:
+		req = fileResp.JSON202
+	case fileResp.ApplicationproblemJSON409 != nil:
+		dup := fileResp.ApplicationproblemJSON409
 		// Filing is all-or-nothing, so a 409 on a composite means one of its
 		// targets is already pending and NOTHING was filed. Attaching would
 		// silently swap the composite for the older, smaller request — the
@@ -589,18 +681,24 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 			return fmt.Errorf("nothing was filed: one of the requested targets already has a pending request (%s); "+
 				"inspect it with `jentic access status %s`, then either drop that target from this request "+
 				"or withdraw the pending one (`jentic access withdraw %s`) and re-file",
-				dup.ExistingRequestID, dup.ExistingRequestID, dup.ExistingRequestID)
+				dup.ExistingRequestId, dup.ExistingRequestId, dup.ExistingRequestId)
 		}
-		fmt.Fprintln(a.Out, theme.Warnf("A pending request already exists (%s); attaching to it.", dup.ExistingRequestID))
-		req, err = client.Get(cmd.Context(), token, dup.ExistingRequestID)
+		fmt.Fprintln(a.Out, theme.Warnf("A pending request already exists (%s); attaching to it.", dup.ExistingRequestId))
+		req, err = a.getAccessRequest(ctx, client, dup.ExistingRequestId)
 		if err != nil {
 			return err
 		}
+	default:
+		// A non-2xx, non-409 response: surface it through the shared adapter.
+		if aerr := apiErrorFor(fileResp, nil); aerr != nil {
+			return aerr
+		}
+		return fmt.Errorf("unexpected backend response (status %d)", fileResp.StatusCode())
 	}
 
 	timedOut := false
-	if opts.wait && !req.IsTerminal() {
-		waited, waitErr := a.pollAccessRequest(cmd.Context(), client, token, req.ID, opts.timeout)
+	if opts.wait && !requestIsTerminal(req) {
+		waited, waitErr := a.pollAccessRequest(ctx, client, req.Id, opts.timeout)
 		if waitErr != nil {
 			if errors.Is(waitErr, errAccessWaitTimeout) {
 				// Print the (still-pending) request so the agent has the id and
@@ -615,12 +713,12 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
-		absolutizeApproveURL(baseURL, req)
+		absolutizeApproveURL(st.BaseURL, req)
 		if err := writeJSON(a.Out, req); err != nil {
 			return err
 		}
 	} else {
-		absolutizeApproveURL(baseURL, req)
+		absolutizeApproveURL(st.BaseURL, req)
 		a.printRequest(req, true)
 	}
 
@@ -632,9 +730,9 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 		return &ux.CodedError{
 			Code:       ux.CodeTimeoutPending,
 			Msg:        fmt.Sprintf("still pending after %s", opts.timeout),
-			Actionable: "jentic access status " + req.ID,
+			Actionable: "jentic access status " + req.Id,
 		}
-	case req.Status == accessclient.StatusPartiallyApproved:
+	case req.Status == statusPartiallyApproved:
 		// A newly-granted scope only takes effect once re-minted into the token;
 		// do it for the agent so it needn't run a separate `access refresh`.
 		a.refreshIfScopeGranted(cmd, req)
@@ -664,25 +762,25 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 // Pure and status-only so the exit-code contract can be tested without a live
 // backend (QA-20). The caller handles timeout (TIMEOUT_PENDING) and the re-mint
 // side effect before calling this.
-func terminalAccessError(req *accessclient.Request) error {
+func terminalAccessError(req *control.AccessRequestResponse) error {
 	switch req.Status {
-	case accessclient.StatusDenied:
+	case statusDenied:
 		return &ux.CodedError{
 			Code:       ux.CodeBrokerDenied,
-			Msg:        fmt.Sprintf("access request %s was denied", req.ID),
-			Actionable: "jentic access status " + req.ID,
+			Msg:        fmt.Sprintf("access request %s was denied", req.Id),
+			Actionable: "jentic access status " + req.Id,
 		}
-	case accessclient.StatusExpired, accessclient.StatusWithdrawn:
+	case statusExpired, statusWithdrawn:
 		return &ux.CodedError{
 			Code:       ux.CodeBrokerDenied,
-			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.ID, req.Status),
-			Actionable: "jentic access status " + req.ID,
+			Msg:        fmt.Sprintf("request %s is %s, not approved; nothing was granted", req.Id, req.Status),
+			Actionable: "jentic access status " + req.Id,
 		}
-	case accessclient.StatusPartiallyApproved:
+	case statusPartiallyApproved:
 		return &ux.CodedError{
 			Code:       ux.CodePartialApproval,
 			Msg:        "partially approved — not all requested items were granted",
-			Actionable: "jentic access status " + req.ID,
+			Actionable: "jentic access status " + req.Id,
 		}
 	}
 	return nil
@@ -695,7 +793,7 @@ func terminalAccessError(req *accessclient.Request) error {
 // needs no re-mint; re-minting anyway would be a wasted round-trip. Best-effort:
 // a mint failure is non-fatal (the agent can still run `jentic access refresh`),
 // and static credentials (injected token, API key) are skipped.
-func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *accessclient.Request) {
+func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *control.AccessRequestResponse) {
 	if !requestGrantedScope(req) {
 		return
 	}
@@ -721,7 +819,7 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *accessclient.Reques
 // item — the only grant that bakes into the token and so needs a re-mint.
 // Toolkit/credential binds are resolved live by the broker, so a binding-only
 // plan returns false (no re-mint needed).
-func requestGrantedScope(req *accessclient.Request) bool {
+func requestGrantedScope(req *control.AccessRequestResponse) bool {
 	for _, it := range req.Items {
 		if it.ResourceType == "scope" && it.Action == "grant" && it.Status == "approved" {
 			return true
@@ -731,33 +829,47 @@ func requestGrantedScope(req *accessclient.Request) bool {
 }
 
 func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	ctx := cmd.Context()
+	client, err := a.controlClient(ctx)
 	if err != nil {
 		return err
 	}
-	client := accessclient.New(baseURL)
 
 	const maxPages = 1000
-	var all []accessclient.Request
+	var all []control.AccessRequestResponse
 	var hasMore bool
 	var nextCursor string
 	cursor := opts.cursor
 
 	for page := 0; ; page++ {
-		res, listErr := client.List(cmd.Context(), token, opts.status, cursor, opts.limit)
-		if listErr != nil {
-			return listErr
+		params := &control.ListAccessRequestsParams{}
+		if opts.status != "" {
+			params.Status = ptr(opts.status)
 		}
+		if cursor != "" {
+			params.Cursor = ptr(cursor)
+		}
+		if opts.limit > 0 {
+			params.Limit = ptr(opts.limit)
+		}
+		resp, listErr := client.ListAccessRequestsWithResponse(ctx, params)
+		if err := apiErrorFor(resp, listErr); err != nil {
+			return err
+		}
+		if resp.JSON200 == nil {
+			return fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
+		}
+		res := resp.JSON200
 		all = append(all, res.Data...)
 		hasMore = res.HasMore
-		nextCursor = res.NextCursor
-		if !opts.all || !res.HasMore || res.NextCursor == "" {
+		nextCursor = deref(res.NextCursor)
+		if !opts.all || !res.HasMore || nextCursor == "" {
 			break
 		}
 		if page+1 >= maxPages {
 			break
 		}
-		cursor = res.NextCursor
+		cursor = nextCursor
 	}
 
 	if jsonOrPretty(cmd, opts.json) {
@@ -768,15 +880,20 @@ func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
 }
 
 func (a *app) accessStatusE(cmd *cobra.Command, id string, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	ctx := cmd.Context()
+	st, err := a.requireState(ctx)
 	if err != nil {
 		return err
 	}
-	req, err := accessclient.New(baseURL).Get(cmd.Context(), token, id)
+	client, err := a.controlClient(ctx)
 	if err != nil {
 		return err
 	}
-	absolutizeApproveURL(baseURL, req)
+	req, err := a.getAccessRequest(ctx, client, id)
+	if err != nil {
+		return err
+	}
+	absolutizeApproveURL(st.BaseURL, req)
 	if jsonOrPretty(cmd, jsonFlag) {
 		return writeJSON(a.Out, req)
 	}
@@ -785,20 +902,38 @@ func (a *app) accessStatusE(cmd *cobra.Command, id string, jsonFlag bool) error 
 }
 
 func (a *app) accessWithdrawE(cmd *cobra.Command, id string, jsonFlag bool) error {
-	baseURL, token, err := a.agentSession(cmd.Context())
+	ctx := cmd.Context()
+	client, err := a.controlClient(ctx)
 	if err != nil {
 		return err
 	}
-	req, err := accessclient.New(baseURL).Withdraw(cmd.Context(), token, id)
-	if err != nil {
+	resp, err := client.WithdrawAccessRequestWithResponse(ctx, id)
+	if err := apiErrorFor(resp, err); err != nil {
 		return err
 	}
+	if resp.JSON200 == nil {
+		return fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
+	}
+	req := resp.JSON200
 	if jsonOrPretty(cmd, jsonFlag) {
 		return writeJSON(a.Out, req)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Withdrew access request %s.", req.ID))
+	fmt.Fprintln(a.Out, theme.Successf("Withdrew access request %s.", req.Id))
 	a.printRequest(req, false)
 	return nil
+}
+
+// getAccessRequest fetches a single access request by id via GET
+// /access-requests/{id}, mapping non-2xx through the shared adapter.
+func (a *app) getAccessRequest(ctx context.Context, client *control.ClientWithResponses, id string) (*control.AccessRequestResponse, error) {
+	resp, err := client.GetAccessRequestWithResponse(ctx, id)
+	if err := apiErrorFor(resp, err); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
+	}
+	return resp.JSON200, nil
 }
 
 func (a *app) accessRefreshE(cmd *cobra.Command, jsonFlag bool) error {
@@ -830,18 +965,20 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 			Actionable: "Set it with `jentic env add` / edit the environment.",
 		}
 	}
-	token, err := auth.RefreshBearerToken(creds)
-	if err != nil {
+	// Force a fresh assertion exchange so the re-minted token carries the
+	// current scope grants (invalidate + re-mint); the SDK client getMe uses
+	// then resolves that freshly-cached token. Issue #673.
+	if _, err := auth.RefreshBearerToken(creds); err != nil {
 		return asCoded(err)
 	}
-	me, err := accessclient.New(st.BaseURL).Me(cmd.Context(), token)
+	me, err := a.getMe(cmd.Context())
 	if err != nil {
 		return err
 	}
 	if jsonOrPretty(cmd, jsonFlag) {
 		return writeJSON(a.Out, me)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.ID))
+	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.Id))
 	a.printMe(me)
 	return nil
 }
@@ -849,7 +986,7 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 // pollAccessRequest loops Get until the request leaves the pending state, the
 // timeout elapses, or the context is cancelled. It reuses the register poll
 // cadence so the wait backs off the same way.
-func (a *app) pollAccessRequest(ctx context.Context, client *accessclient.Client, token, id string, timeout time.Duration) (*accessclient.Request, error) {
+func (a *app) pollAccessRequest(ctx context.Context, client *control.ClientWithResponses, id string, timeout time.Duration) (*control.AccessRequestResponse, error) {
 	fmt.Fprintln(a.Out, theme.Dimf("Waiting for a human to decide request %s (up to %s; Ctrl-C to stop) …", id, timeout))
 	deadline := time.Now().Add(timeout)
 	delay := pollInitialDelay
@@ -865,19 +1002,19 @@ func (a *app) pollAccessRequest(ctx context.Context, client *accessclient.Client
 		if delay < pollMaxDelay {
 			delay += pollDelayStep
 		}
-		req, err := client.Get(ctx, token, id)
+		req, err := a.getAccessRequest(ctx, client, id)
 		if err != nil {
 			return nil, err
 		}
-		if req.IsTerminal() {
+		if requestIsTerminal(req) {
 			return req, nil
 		}
 	}
 }
 
-func (a *app) printMe(me *accessclient.Me) {
+func (a *app) printMe(me *control.MeAgent) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Identity"))
-	fmt.Fprintln(a.Out, "  "+theme.Field("agent", me.ID))
+	fmt.Fprintln(a.Out, "  "+theme.Field("agent", me.Id))
 	if me.Name != "" {
 		fmt.Fprintln(a.Out, "  "+theme.Field("name", me.Name))
 	}
@@ -887,7 +1024,7 @@ func (a *app) printMe(me *accessclient.Me) {
 		scopes = strings.Join(me.Scopes, ", ")
 	}
 	fmt.Fprintln(a.Out, "  "+theme.Field("scopes", scopes))
-	if stale := me.StaleScopes(); len(stale) > 0 {
+	if stale := staleScopes(me.Scopes, me.TokenScopes); len(stale) > 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Warnf("granted but not yet on your token: %s", strings.Join(stale, ", ")))
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("run `jentic access refresh` to pick them up"))
 	}
@@ -897,10 +1034,10 @@ func (a *app) printMe(me *accessclient.Me) {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("none — you cannot execute yet; run `jentic access request --toolkit <vendor/name>`"))
 	} else {
 		for _, b := range me.ToolkitBindings {
-			if b.Name != "" {
-				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.Name)+"  "+theme.Dim.Render(b.ToolkitID))
+			if name := deref(b.Name); name != "" {
+				fmt.Fprintln(a.Out, "  "+theme.Command.Render(name)+"  "+theme.Dim.Render(b.ToolkitId))
 			} else {
-				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitID))
+				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitId))
 			}
 		}
 	}
@@ -913,7 +1050,7 @@ func (a *app) printMe(me *accessclient.Me) {
 	fmt.Fprintln(a.Out, theme.Dim.Render("To see which directories you can access, run `jentic context view`."))
 }
 
-func (a *app) printRequestList(reqs []accessclient.Request, hasMore bool) {
+func (a *app) printRequestList(reqs []control.AccessRequestResponse, hasMore bool) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Access Requests"))
 	if len(reqs) == 0 {
 		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no requests"))
@@ -921,7 +1058,7 @@ func (a *app) printRequestList(reqs []accessclient.Request, hasMore bool) {
 	}
 	for i := range reqs {
 		r := &reqs[i]
-		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.ID)+"  "+statusStyle(r.Status))
+		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.Id)+"  "+statusStyle(r.Status))
 		for j := range r.Items {
 			fmt.Fprintln(a.Out, "    "+theme.Dim.Render(itemSummary(&r.Items[j])))
 		}
@@ -931,12 +1068,12 @@ func (a *app) printRequestList(reqs []accessclient.Request, hasMore bool) {
 	}
 }
 
-func (a *app) printRequest(r *accessclient.Request, showApprove bool) {
+func (a *app) printRequest(r *control.AccessRequestResponse, showApprove bool) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Access Request"))
-	fmt.Fprintln(a.Out, "  "+theme.Field("id", r.ID))
+	fmt.Fprintln(a.Out, "  "+theme.Field("id", r.Id))
 	fmt.Fprintln(a.Out, "  "+theme.Dim.Render(fmt.Sprintf("%-9s ", "status:"))+statusStyle(r.Status))
-	if r.Reason != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("reason", r.Reason))
+	if reason := deref(r.Reason); reason != "" {
+		fmt.Fprintln(a.Out, "  "+theme.Field("reason", reason))
 	}
 	for i := range r.Items {
 		it := &r.Items[i]
@@ -945,21 +1082,22 @@ func (a *app) printRequest(r *accessclient.Request, showApprove bool) {
 		// toolkit serves API …; provision and bind a credential for it first").
 		// Surface it so the agent/operator learns what to fix; JSON output
 		// already includes decision_reason.
-		if it.DecisionReason != "" {
-			fmt.Fprintln(a.Out, "    "+theme.Warn.Render(it.DecisionReason))
+		if reason := deref(it.DecisionReason); reason != "" {
+			fmt.Fprintln(a.Out, "    "+theme.Warn.Render(reason))
 		}
 	}
-	if showApprove && r.Status == accessclient.StatusPending && r.ApproveURL != "" {
+	if showApprove && r.Status == statusPending && r.ApproveUrl != "" {
 		fmt.Fprintln(a.Out, "\n  "+theme.Info.Render("Share this with your operator to approve:"))
-		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.ApproveURL))
+		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.ApproveUrl))
 	}
 }
 
-func itemSummary(it *accessclient.ItemResponse) string {
-	target := it.ResourceID
+func itemSummary(it *control.AccessRequestItemResponse) string {
+	target := deref(it.ResourceId)
 	if target == "" && it.ResourceReference != nil {
-		vendor, _ := it.ResourceReference["vendor"].(string)
-		name, _ := it.ResourceReference["name"].(string)
+		ref := *it.ResourceReference
+		vendor, _ := ref["vendor"].(string)
+		name, _ := ref["name"].(string)
 		target = strings.Trim(vendor+"/"+name, "/")
 	}
 	return fmt.Sprintf("%s:%s %s", it.ResourceType, it.Action, target)
@@ -969,29 +1107,29 @@ func itemSummary(it *accessclient.ItemResponse) string {
 // URL so the value the CLI prints (or emits as JSON) is directly openable, rather
 // than a path fragment the operator has to guess a host for (impl/5.0 §6b,
 // jentic-one#777). An already-absolute URL and an empty value are left untouched.
-func absolutizeApproveURL(baseURL string, r *accessclient.Request) {
-	if r == nil || r.ApproveURL == "" {
+func absolutizeApproveURL(baseURL string, r *control.AccessRequestResponse) {
+	if r == nil || r.ApproveUrl == "" {
 		return
 	}
-	if u, err := url.Parse(r.ApproveURL); err == nil && u.IsAbs() {
+	if u, err := url.Parse(r.ApproveUrl); err == nil && u.IsAbs() {
 		return
 	}
 	base, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return
 	}
-	ref, err := url.Parse(r.ApproveURL)
+	ref, err := url.Parse(r.ApproveUrl)
 	if err != nil {
 		return
 	}
-	r.ApproveURL = base.ResolveReference(ref).String()
+	r.ApproveUrl = base.ResolveReference(ref).String()
 }
 
 func statusStyle(status string) string {
 	switch status {
-	case accessclient.StatusApproved:
+	case statusApproved:
 		return theme.Success.Render(status)
-	case accessclient.StatusDenied, accessclient.StatusExpired, accessclient.StatusWithdrawn:
+	case statusDenied, statusExpired, statusWithdrawn:
 		return theme.Warn.Render(status)
 	default:
 		return theme.Accent.Render(status)

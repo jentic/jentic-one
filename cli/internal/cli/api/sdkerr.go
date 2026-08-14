@@ -90,3 +90,18 @@ func deref[T any](p *T) T {
 	}
 	return *p
 }
+
+// ptr returns a pointer to v. The generated SDK models optional request-body
+// members as pointers; call sites use this to set them from a bare value while
+// keeping omitempty semantics (a nil pointer stays off the wire).
+func ptr[T any](v T) *T { return &v }
+
+// strEmptyToNil returns nil for an empty string, else a pointer to s. Used for
+// optional `*string` request-body members so an unset value stays omitted on
+// the wire (omitempty) rather than serializing as "".
+func strEmptyToNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}

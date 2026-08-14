@@ -98,6 +98,36 @@ func CuratedBindings() []CuratedBinding {
 			},
 		},
 		{
+			// access request: the file body is the composed access request. `items`
+			// is built from the target-flag FAMILY (--toolkit/--toolkit-id/--scope/
+			// --provision, plus --auth/--rules-json shaping the provision chain), so
+			// it is bound to the primary --toolkit flag as a representative; --reason
+			// carries the free-text justification (ARCH-21 A3, off internal/accessclient).
+			Command: "access request",
+			Params:  control.AccessRequestFileRequest{},
+			Bind: map[string]string{
+				"items":  "toolkit",
+				"reason": "reason",
+			},
+			NotExposed: map[string]string{},
+		},
+		{
+			// access list: page the caller's own requests. --status/--limit/--cursor
+			// drive the query; actor_id is not exposed (an agent's list is already
+			// scoped to itself; cross-actor queries are an operator task via
+			// `jentic api ListAccessRequests`).
+			Command: "access list",
+			Params:  control.ListAccessRequestsParams{},
+			Bind: map[string]string{
+				"status": "status",
+				"limit":  "limit",
+				"cursor": "cursor",
+			},
+			NotExposed: map[string]string{
+				"actor_id": "an agent's request list is already scoped to itself; cross-actor queries are an operator task",
+			},
+		},
+		{
 			Command: "apis import",
 			Params:  control.ApiImportRequest{},
 			Bind: map[string]string{

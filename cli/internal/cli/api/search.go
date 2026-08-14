@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
-	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -67,10 +66,7 @@ func newSearchCmd(app *app) *cobra.Command {
 
 func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 	ctx := cmd.Context()
-	if _, err := a.requireState(ctx); err != nil {
-		return err
-	}
-	client, err := clictx.GetControlClient(ctx)
+	client, err := a.controlClient(ctx)
 	if err != nil {
 		return err
 	}

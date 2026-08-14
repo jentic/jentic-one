@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
 func TestPlanBuildsFullProvisioningChain(t *testing.T) {
@@ -27,7 +27,7 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 		{"toolkit", "bind"},
 	}
 	for i, w := range want {
-		if items[i].ResourceType != w.rt || items[i].Action != w.action {
+		if string(items[i].ResourceType) != w.rt || string(items[i].Action) != w.action {
 			t.Errorf("item[%d] = %s:%s, want %s:%s", i, items[i].ResourceType, items[i].Action, w.rt, w.action)
 		}
 	}
@@ -35,19 +35,21 @@ func TestPlanBuildsFullProvisioningChain(t *testing.T) {
 	// The credential:bind item carries the proposed rules AND the API
 	// reference: item order is not guaranteed server-side, so the reference is
 	// what ties the bind to its chain in a composite request.
-	if len(items[2].Rules) != 1 || items[2].Rules[0].Effect != "allow" {
+	if items[2].Rules == nil || len(*items[2].Rules) != 1 || string((*items[2].Rules)[0].Effect) != "allow" {
 		t.Errorf("credential:bind should carry the proposed allow rule, got %+v", items[2].Rules)
 	}
-	if items[2].ResourceReference["vendor"] != "posthog.com" || items[2].ResourceReference["name"] != "posthog-api" {
-		t.Errorf("credential:bind should carry the api reference, got %v", items[2].ResourceReference)
+	bindRef := deref(items[2].ResourceReference)
+	if bindRef["vendor"] != "posthog.com" || bindRef["name"] != "posthog-api" {
+		t.Errorf("credential:bind should carry the api reference, got %v", bindRef)
 	}
 
 	// The provision item carries the detected auth type and the API reference.
-	if items[1].ResourceReference["security_scheme"] != "bearer" {
-		t.Errorf("credential:provision should carry security_scheme=bearer, got %v", items[1].ResourceReference)
+	provRef := deref(items[1].ResourceReference)
+	if provRef["security_scheme"] != "bearer" {
+		t.Errorf("credential:provision should carry security_scheme=bearer, got %v", provRef)
 	}
-	if items[1].ResourceReference["vendor"] != "posthog.com" {
-		t.Errorf("credential:provision should carry the api vendor, got %v", items[1].ResourceReference)
+	if provRef["vendor"] != "posthog.com" {
+		t.Errorf("credential:provision should carry the api vendor, got %v", provRef)
 	}
 }
 
@@ -64,13 +66,14 @@ func TestPlanNoAuthProvisionsNoAuthCredential(t *testing.T) {
 		t.Fatalf("expected 4 items for no-auth plan, got %d: %+v", len(items), items)
 	}
 	prov := items[1]
-	if prov.ResourceType != "credential" || prov.Action != "provision" {
+	if string(prov.ResourceType) != "credential" || string(prov.Action) != "provision" {
 		t.Fatalf("item[1] should be credential:provision, got %s:%s", prov.ResourceType, prov.Action)
 	}
-	if prov.ResourceReference["security_scheme"] != "no_auth" {
+	provRef := deref(prov.ResourceReference)
+	if provRef["security_scheme"] != "no_auth" {
 		t.Errorf(
 			"no-auth provision should carry security_scheme=no_auth, got %v",
-			prov.ResourceReference["security_scheme"],
+			provRef["security_scheme"],
 		)
 	}
 }
@@ -89,7 +92,7 @@ func TestPlanRejectsBadRulesJSON(t *testing.T) {
 
 func TestRequestGrantedScope(t *testing.T) {
 	// A scope:grant that was approved → needs a token re-mint.
-	scopePlan := &accessclient.Request{Items: []accessclient.ItemResponse{
+	scopePlan := &control.AccessRequestResponse{Items: []control.AccessRequestItemResponse{
 		{ResourceType: "scope", Action: "grant", Status: "approved"},
 	}}
 	if !requestGrantedScope(scopePlan) {
@@ -97,7 +100,7 @@ func TestRequestGrantedScope(t *testing.T) {
 	}
 
 	// A binding-only provisioning plan (no scope) → no re-mint; bindings are live.
-	bindingPlan := &accessclient.Request{Items: []accessclient.ItemResponse{
+	bindingPlan := &control.AccessRequestResponse{Items: []control.AccessRequestItemResponse{
 		{ResourceType: "toolkit", Action: "create", Status: "approved"},
 		{ResourceType: "credential", Action: "provision", Status: "approved"},
 		{ResourceType: "credential", Action: "bind", Status: "approved"},
@@ -108,7 +111,7 @@ func TestRequestGrantedScope(t *testing.T) {
 	}
 
 	// A scope:grant that was NOT approved (denied) → no re-mint.
-	deniedScope := &accessclient.Request{Items: []accessclient.ItemResponse{
+	deniedScope := &control.AccessRequestResponse{Items: []control.AccessRequestItemResponse{
 		{ResourceType: "scope", Action: "grant", Status: "denied"},
 	}}
 	if requestGrantedScope(deniedScope) {

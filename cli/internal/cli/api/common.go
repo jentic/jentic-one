@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
@@ -88,6 +89,25 @@ func (a *app) requireState(ctx context.Context) (*clictx.ActiveState, error) {
 		return st, nil
 	}
 	return nil, noContextErr()
+}
+
+// controlClient resolves the generated control client for the active context,
+// surfacing the canonical CODED credential error first. GetControlClient defers
+// auth to the SDK transport, whose raw ErrNotRegistered/pending errors would
+// bypass the AGT-3/AGT-6 coded remediation (`jentic register`, right exit code)
+// the data-plane commands promise. So we pre-flight contextSession, which maps
+// a credential-resolution failure to that coded error, then hand back the SDK
+// client (which re-resolves the now-cached credential). This is the single
+// entry point the migrated data-plane commands use (ARCH-21).
+func (a *app) controlClient(ctx context.Context) (*control.ClientWithResponses, error) {
+	st, err := a.requireState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := a.contextSession(st); err != nil {
+		return nil, err
+	}
+	return clictx.GetControlClient(ctx)
 }
 
 // noContextErr is the canonical RESOLVE_FAILED error for "nothing to act as".

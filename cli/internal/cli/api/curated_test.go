@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 )
 
 func TestCredentialsList_WalksPages(t *testing.T) {
@@ -87,21 +87,21 @@ func TestApisImport_DryRunDoesNotCallServer(t *testing.T) {
 
 func TestAbsolutizeApproveURL(t *testing.T) {
 	// Relative path is joined onto the base URL.
-	r := &accessclient.Request{ApproveURL: "/approve/arq_1"}
+	r := &control.AccessRequestResponse{ApproveUrl: "/approve/arq_1"}
 	absolutizeApproveURL("https://api.example.com/", r)
-	if r.ApproveURL != "https://api.example.com/approve/arq_1" {
-		t.Errorf("relative approve_url = %q", r.ApproveURL)
+	if r.ApproveUrl != "https://api.example.com/approve/arq_1" {
+		t.Errorf("relative approve_url = %q", r.ApproveUrl)
 	}
 	// Already-absolute is left untouched.
-	r = &accessclient.Request{ApproveURL: "https://other.example/approve/x"}
+	r = &control.AccessRequestResponse{ApproveUrl: "https://other.example/approve/x"}
 	absolutizeApproveURL("https://api.example.com", r)
-	if r.ApproveURL != "https://other.example/approve/x" {
-		t.Errorf("absolute approve_url should be untouched, got %q", r.ApproveURL)
+	if r.ApproveUrl != "https://other.example/approve/x" {
+		t.Errorf("absolute approve_url should be untouched, got %q", r.ApproveUrl)
 	}
 	// Empty stays empty (nil-safe).
-	r = &accessclient.Request{}
+	r = &control.AccessRequestResponse{}
 	absolutizeApproveURL("https://api.example.com", r)
-	if r.ApproveURL != "" {
-		t.Errorf("empty approve_url should stay empty, got %q", r.ApproveURL)
+	if r.ApproveUrl != "" {
+		t.Errorf("empty approve_url should stay empty, got %q", r.ApproveUrl)
 	}
 }

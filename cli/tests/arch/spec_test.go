@@ -362,6 +362,13 @@ var curatedMigrationAllowlist = map[string]string{
 	// command builds Config from named flags (--project-id/--client-id/…) plus a
 	// prompted client_secret (ARCH-21 A1, migrated off internal/adminclient).
 	"control.SetProviderConfigJSONRequestBody": "free-form Config map, no reflectable scalar fields; built from named admin-provider flags",
+	// access request items: AccessRequestItemRequest is a NESTED builder inside
+	// AccessRequestFileRequest (registered as a CuratedBinding) — its fields are
+	// access-plan mechanics (resource_type/action enums, resource_reference,
+	// rules) synthesised by compose()/buildProvisionPlan() from the request
+	// command's target flags, not 1:1 CLI flags. The file-request binding already
+	// gives 1G a reflectable surface (ARCH-21 A3, off internal/accessclient).
+	"control.AccessRequestItemRequest": "nested plan-item builder under the access-request file body; fields synthesised from request-command flags, not 1:1 flags",
 }
 
 // TestCuratedRegistryCoversGeneratedStructs is the QA-3/GEN-4 meta-test: it

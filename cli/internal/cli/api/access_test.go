@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jentic/jentic-one/cli/internal/accessclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
@@ -17,14 +17,14 @@ func TestTerminalAccessError(t *testing.T) {
 		wantCode string
 		wantExit int
 	}{
-		{accessclient.StatusPartiallyApproved, ux.CodePartialApproval, ux.ExitPartial},
-		{accessclient.StatusDenied, ux.CodeBrokerDenied, ux.ExitDenied},
-		{accessclient.StatusExpired, ux.CodeBrokerDenied, ux.ExitDenied},
-		{accessclient.StatusWithdrawn, ux.CodeBrokerDenied, ux.ExitDenied},
+		{statusPartiallyApproved, ux.CodePartialApproval, ux.ExitPartial},
+		{statusDenied, ux.CodeBrokerDenied, ux.ExitDenied},
+		{statusExpired, ux.CodeBrokerDenied, ux.ExitDenied},
+		{statusWithdrawn, ux.CodeBrokerDenied, ux.ExitDenied},
 	}
 	for _, tc := range cases {
 		t.Run(tc.status, func(t *testing.T) {
-			req := &accessclient.Request{ID: "acr_1", Status: tc.status}
+			req := &control.AccessRequestResponse{Id: "acr_1", Status: tc.status}
 			err := terminalAccessError(req)
 			var ce *ux.CodedError
 			if !errors.As(err, &ce) {
@@ -44,7 +44,7 @@ func TestTerminalAccessError(t *testing.T) {
 
 	// Fully approved (and any non-terminal-failure status) is success: no error,
 	// so the command exits 0 and a scripted agent proceeds.
-	if err := terminalAccessError(&accessclient.Request{ID: "acr_2", Status: accessclient.StatusApproved}); err != nil {
+	if err := terminalAccessError(&control.AccessRequestResponse{Id: "acr_2", Status: statusApproved}); err != nil {
 		t.Errorf("approved should be nil (exit 0), got %v", err)
 	}
 }
