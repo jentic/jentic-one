@@ -224,7 +224,7 @@ func contains(haystack []string, needle string) bool {
 
 // endpointsFetchErr maps a transport/HTTP failure to a friendly message.
 func endpointsFetchErr(err error, baseURL string) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("server at %s does not expose /reference/endpoints.json", baseURL)
 	}

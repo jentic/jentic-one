@@ -16,8 +16,8 @@ type fakeResp struct {
 func (r fakeResp) StatusCode() int { return r.code }
 func (r fakeResp) GetBody() []byte { return r.body }
 
-// TestAPIErrorForSuccess: a 2xx response is not an error.
-func TestAPIErrorForSuccess(t *testing.T) {
+// TestHTTPErrorForSuccess: a 2xx response is not an error.
+func TestHTTPErrorForSuccess(t *testing.T) {
 	for _, code := range []int{200, 201, 202, 204} {
 		if err := apiErrorFor(fakeResp{code: code}, nil); err != nil {
 			t.Errorf("status %d should be nil, got %v", code, err)
@@ -25,23 +25,23 @@ func TestAPIErrorForSuccess(t *testing.T) {
 	}
 }
 
-// TestAPIErrorForTransport: a transport error is returned verbatim, ahead of
+// TestHTTPErrorForTransport: a transport error is returned verbatim, ahead of
 // any status inspection.
-func TestAPIErrorForTransport(t *testing.T) {
+func TestHTTPErrorForTransport(t *testing.T) {
 	sentinel := errors.New("dial tcp: connection refused")
 	if err := apiErrorFor(fakeResp{code: 200}, sentinel); !errors.Is(err, sentinel) {
 		t.Errorf("transport error should pass through, got %v", err)
 	}
 }
 
-// TestAPIErrorForNon2xx: a non-2xx yields a typed *APIError whose StatusCode and
+// TestHTTPErrorForNon2xx: a non-2xx yields a typed *HTTPError whose StatusCode and
 // Detail() (problem-details precedence) match the old httpx.HTTPError contract.
-func TestAPIErrorForNon2xx(t *testing.T) {
+func TestHTTPErrorForNon2xx(t *testing.T) {
 	body := `{"type":"forbidden","title":"Forbidden","detail":"needs org:admin","status":403}`
 	err := apiErrorFor(fakeResp{code: http.StatusForbidden, body: []byte(body)}, nil)
-	var ae *APIError
+	var ae *HTTPError
 	if !errors.As(err, &ae) {
-		t.Fatalf("want *APIError, got %v", err)
+		t.Fatalf("want *HTTPError, got %v", err)
 	}
 	if ae.StatusCode != http.StatusForbidden {
 		t.Errorf("StatusCode = %d, want 403", ae.StatusCode)
@@ -54,10 +54,10 @@ func TestAPIErrorForNon2xx(t *testing.T) {
 	}
 }
 
-// TestAPIErrorDetailFallback: with no problem-details keys, Detail() falls back
+// TestHTTPErrorDetailFallback: with no problem-details keys, Detail() falls back
 // to the raw body (matching httpx.HTTPError.Detail).
-func TestAPIErrorDetailFallback(t *testing.T) {
-	ae := &APIError{StatusCode: 500, Body: "upstream boom"}
+func TestHTTPErrorDetailFallback(t *testing.T) {
+	ae := &HTTPError{StatusCode: 500, Body: "upstream boom"}
 	if ae.Detail() != "upstream boom" {
 		t.Errorf("Detail() = %q, want the raw body", ae.Detail())
 	}

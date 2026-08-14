@@ -228,7 +228,7 @@ func (m *catalogBrowser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *catalogBrowser) onRefresh(msg catRefreshMsg) (tea.Model, tea.Cmd) {
 	m.refreshing = false
 	if msg.err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
 			m.status = theme.Warnf("refresh needs org:admin")
 			return m, nil

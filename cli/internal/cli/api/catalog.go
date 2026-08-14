@@ -532,7 +532,7 @@ func (a *app) catalogRefresh(ctx context.Context) error {
 	}
 	count, err := client.Refresh(ctx)
 	if err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
 			return fmt.Errorf("refresh requires org:admin: %s", he.Detail())
 		}
@@ -546,7 +546,7 @@ func (a *app) catalogRefresh(ctx context.Context) error {
 
 // catalogListErr maps a missing route to a friendly "not available" message.
 func catalogListErr(err error) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) && (he.StatusCode == http.StatusNotFound || he.StatusCode == http.StatusNotImplemented) {
 		return fmt.Errorf("catalog not available on this server (HTTP %d)", he.StatusCode)
 	}
@@ -555,7 +555,7 @@ func catalogListErr(err error) error {
 
 // catalogEntryErr maps a 404 to a clear "entry not found" message.
 func catalogEntryErr(err error, apiID string) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("catalog entry %q not found", apiID)
 	}

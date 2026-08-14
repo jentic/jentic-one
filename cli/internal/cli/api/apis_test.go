@@ -258,7 +258,7 @@ func TestApisBrowserDeleteRevisionConfirmFlow(t *testing.T) {
 
 func TestApisBrowserActionForbiddenHint(t *testing.T) {
 	m := &apisBrowser{revAPI: apiRef{Vendor: "v", Name: "n", Version: "1"}}
-	m.onAction(apisActionMsg{verb: "promoted", err: &APIError{StatusCode: 403, Body: "{}"}})
+	m.onAction(apisActionMsg{verb: "promoted", err: &HTTPError{StatusCode: 403, Body: "{}"}})
 	if !strings.Contains(m.status, "not permitted") {
 		t.Errorf("status should hint permission, got %q", m.status)
 	}

@@ -490,7 +490,7 @@ func (a *app) resolveOperation(cmd *cobra.Command, opts *executeOptions, target 
 	}
 	inspectBody, err := client.Inspect(cmd.Context(), target, opts.revision, "json")
 	if err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			// AGT-23: single-source the failure on stderr (the coded envelope
 			// below). No unversioned {error,status:0} on stdout.

@@ -442,7 +442,7 @@ func TestCatalogBrowserRefreshSuccess(t *testing.T) {
 
 func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 	m := &catalogBrowser{refreshing: true}
-	m.onRefresh(catRefreshMsg{err: &APIError{StatusCode: 403, Body: "{}"}})
+	m.onRefresh(catRefreshMsg{err: &HTTPError{StatusCode: 403, Body: "{}"}})
 	if m.refreshing {
 		t.Error("refreshing flag not cleared")
 	}

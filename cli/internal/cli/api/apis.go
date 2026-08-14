@@ -537,7 +537,7 @@ func (a *app) apisInspect(ctx context.Context, o *apisInspectOptions, operationI
 	}
 	body, err := client.Inspect(ctx, operationID, o.revision, o.format)
 	if err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			return fmt.Errorf("operation %q not found", operationID)
 		}
@@ -683,7 +683,7 @@ func apiRefLabel(ref apiRef) string {
 
 // apisListErr maps a missing route to a friendly "not available" message.
 func apisListErr(err error) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) && (he.StatusCode == http.StatusNotFound || he.StatusCode == http.StatusNotImplemented) {
 		return fmt.Errorf("registry not available on this server (HTTP %d)", he.StatusCode)
 	}
@@ -692,7 +692,7 @@ func apisListErr(err error) error {
 
 // apiNotFoundErr maps a 404 to a clear "API not found" message.
 func apiNotFoundErr(err error, ref string) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("API %q not found in the local registry", ref)
 	}
@@ -701,7 +701,7 @@ func apiNotFoundErr(err error, ref string) error {
 
 // apiActionErr maps a 403 to an org-permission hint, otherwise passes through.
 func apiActionErr(err error, ref string) error {
-	var he *APIError
+	var he *HTTPError
 	if errors.As(err, &he) {
 		switch he.StatusCode {
 		case http.StatusForbidden:

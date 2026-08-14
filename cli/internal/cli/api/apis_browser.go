@@ -261,7 +261,7 @@ func (m *apisBrowser) onRevs(msg apisRevsMsg) (tea.Model, tea.Cmd) {
 func (m *apisBrowser) onAction(msg apisActionMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	if msg.err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
 			m.status = theme.Warnf("%s: not permitted (org policy)", msg.verb)
 			return m, nil

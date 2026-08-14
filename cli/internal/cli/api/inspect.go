@@ -65,7 +65,7 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 
 	body, err := client.Inspect(cmd.Context(), operationID, opts.revision, format)
 	if err != nil {
-		var he *APIError
+		var he *HTTPError
 		if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 			// AGT-2: return a coded error (not a human string + bare exit-2) so an
 			// agent gets a machine error_code (RESOLVE_FAILED) identical to the

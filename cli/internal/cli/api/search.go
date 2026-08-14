@@ -96,7 +96,7 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 		if err := apiErrorFor(resp, searchErr); err != nil {
 			// A 501 means search is not enabled on this deployment; map it to the
 			// friendly sentinel the command surfaces.
-			var ae *APIError
+			var ae *HTTPError
 			if errors.As(err, &ae) && ae.StatusCode == http.StatusNotImplemented {
 				return errSearchUnsupported
 			}

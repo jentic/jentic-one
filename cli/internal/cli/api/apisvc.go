@@ -349,7 +349,7 @@ func (c *apiClient) Reference(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("read reference: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	return body, nil
 }
