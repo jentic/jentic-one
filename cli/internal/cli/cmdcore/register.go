@@ -185,16 +185,17 @@ func agentConsoleURL(baseURL, agentID string) string {
 
 // agentClaimURL builds the human-facing UI link for CLAIMING ownership of a
 // self-registered agent, carrying the single-use claim token so the console can
-// pre-fill it. It is constructed by convention ({baseURL}/app/agents/{id}/claim
-// with ?claim_token=…) — the backend does not (yet) hand back a ready-made claim
-// URL, and the page may not exist on every deployment, so the raw token + the
+// pre-fill it. The console claim page lives at {baseURL}/app/agents/{id}/claim
+// and reads the token from the `token` query param (enterprise AgentClaimPage:
+// searchParams.get("token")). The backend does not hand back a ready-made claim
+// URL and the page may not exist on every deployment, so the raw token + the
 // `jentic identity claim` command are always shown alongside as the reliable
 // fallback (an agent cannot claim itself; a human must). The token is a
 // short-lived bearer capability shown once — never persisted, never logged.
 func agentClaimURL(baseURL, agentID, claimToken string) string {
 	u := config.AppURL(baseURL, "agents/"+agentID+"/claim")
 	if claimToken != "" {
-		u += "?claim_token=" + url.QueryEscape(claimToken)
+		u += "?token=" + url.QueryEscape(claimToken)
 	}
 	return u
 }
@@ -453,12 +454,14 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 
 	// If claiming is enabled, guide the HUMAN to take ownership. This is shown
 	// once (the token is single-use, short-lived, never persisted) and before
-	// the approval wait, since claim and operator-approval are independent and
-	// the human is present now. No-op on the OSS default (empty token).
+	// the approval wait, since the human is present now. On a claim-enabled
+	// backend the console claim page does claim (sets owner_id) AND approve
+	// (pending -> active) — both are required before this agent can mint a
+	// token. No-op on the OSS default (empty token).
 	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
 
 	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
-	if err := a.waitForApprovalV2(ctx, creds, clientID, timeout); err != nil {
+	if err := a.waitForApprovalV2(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
 		return err
 	}
 	if err := saveRegState(identity, envName, clientID, "approved"); err != nil {
@@ -512,7 +515,16 @@ func saveRegState(identity, envName, clientID, status string) error {
 // data command uses). A pending registration prints the operator console link
 // and polls on the shared cadence; the timeout returns TIMEOUT_PENDING (exit 3)
 // because re-running after approval resumes cleanly (AGT-4 semantics).
-func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration) error {
+//
+// claimPending is true when registration returned a claim token: the human must
+// still claim + approve in the console before the agent can mint. In that state
+// the backend rejects the token exchange with an ambiguous 400 invalid_grant
+// "Assertion is invalid" — the SAME string it uses for a real audience mismatch
+// (the approval-status gate is checked before signature/audience). So while a
+// claim is outstanding we treat that as PENDING (keep waiting / exit clean)
+// rather than the hard audience-mismatch failure, which would abort the flow the
+// moment it started.
+func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration, claimPending bool) error {
 	// Force a FRESH mint even if a (stale-scoped or old-client) token is
 	// cached: register's contract is "when this returns, the server accepts
 	// this identity as of NOW".
@@ -523,9 +535,15 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 		}
 		// QA-9: an assertion-validation failure (usually an audience mismatch) is
 		// NOT pending — polling would hang forever. Stop with an actionable code
-		// so the operator fixes the URL/backend rather than waiting.
+		// so the operator fixes the URL/backend rather than waiting. EXCEPTION:
+		// when a claim is still outstanding, the backend returns this same string
+		// for a not-yet-claimed/approved agent, so treat it as pending instead of
+		// aborting (the human is being pointed at the claim console right now).
 		var ai *auth.AssertionInvalidError
 		if errors.As(err, &ai) {
+			if claimPending {
+				return true, nil
+			}
 			return false, &ux.CodedError{
 				Code: ux.CodeNotAuthenticated,
 				Msg:  "the backend rejected the signed assertion: " + ai.Error(),
@@ -545,14 +563,23 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 		return cerr
 	}
 
-	// Pending: point the operator (human) at the console, or (machine) surface
-	// the approve URL as a stderr diagnostic — never on stdout, which is reserved
-	// for the terminal JSON Result. The TIMEOUT_PENDING envelope also carries
-	// approve_url in details, so an agent that times out still gets it machine-
-	// readably (AGT-21/AGT-4).
-	if isMachineCtx(ctx) {
+	// Pending: point the human at the right console action, or (machine) surface
+	// the URL as a stderr diagnostic — never on stdout, which is reserved for the
+	// terminal JSON Result. When a claim is outstanding the claim affordance was
+	// already printed above (it claims AND approves), so we don't repeat the
+	// approve-console block; we just note we're waiting. Otherwise point at the
+	// approve console. The TIMEOUT_PENDING envelope also carries the URL in
+	// details, so an agent that times out still gets it machine-readably
+	// (AGT-21/AGT-4).
+	switch {
+	case isMachineCtx(ctx) && claimPending:
+		fmt.Fprintf(a.Err, "waiting for claim + approval: %s\n", agentClaimURL(creds.BaseURL, clientID, ""))
+	case isMachineCtx(ctx):
 		fmt.Fprintf(a.Err, "waiting for approval: %s\n", agentConsoleURL(creds.BaseURL, clientID))
-	} else {
+	case claimPending:
+		fmt.Fprintln(a.Out, "\n"+theme.Dim.Render("Waiting for you to claim + approve this agent in the console (see the link above)..."))
+		fmt.Fprintln(a.Out, theme.Dim.Render(registerResumeHint))
+	default:
 		fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Approve this agent in the Jentic console:"))
 		fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
 		fmt.Fprintf(a.Out, "    %s\n\n", theme.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
@@ -563,14 +590,22 @@ func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, cli
 	delay := PollInitialDelay
 	for {
 		if time.Now().After(deadline) {
+			msg := fmt.Sprintf("timed out after %s waiting for approval; re-run once approved", timeout)
+			actionable := "have an operator approve the agent, then re-run the same command"
+			details := map[string]any{
+				"agent_id":    clientID,
+				"approve_url": agentConsoleURL(creds.BaseURL, clientID),
+			}
+			if claimPending {
+				msg = fmt.Sprintf("timed out after %s waiting for the claim + approval; re-run once you've claimed and approved it", timeout)
+				actionable = "open the claim link printed above (it claims and approves this agent), then re-run the same command"
+				details["claim_url"] = agentClaimURL(creds.BaseURL, clientID, "")
+			}
 			return &ux.CodedError{
 				Code:       ux.CodeTimeoutPending,
-				Msg:        fmt.Sprintf("timed out after %s waiting for approval; re-run once approved", timeout),
-				Actionable: "have an operator approve the agent, then re-run the same command",
-				Details: map[string]any{
-					"agent_id":    clientID,
-					"approve_url": agentConsoleURL(creds.BaseURL, clientID),
-				},
+				Msg:        msg,
+				Actionable: actionable,
+				Details:    details,
 			}
 		}
 		select {

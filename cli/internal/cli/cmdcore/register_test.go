@@ -178,15 +178,16 @@ func TestNormalizeLoopbackURL(t *testing.T) {
 	}
 }
 
-// TestAgentClaimURL pins the by-convention claim link: the SPA agent-claim page
-// under /app carrying the single-use token as a query param (url-escaped), and
-// no ?claim_token= when the token is empty.
+// TestAgentClaimURL pins the claim link the enterprise console expects: the SPA
+// agent-claim page under /app with the single-use token in the `token` query
+// param (url-escaped) — AgentClaimPage reads searchParams.get("token") — and no
+// query string when the token is empty.
 func TestAgentClaimURL(t *testing.T) {
 	const base = "https://jentic.example.com"
 	const id = "cid-123"
 
 	got := agentClaimURL(base, id, "tok en/with+special")
-	const want = "https://jentic.example.com/app/agents/cid-123/claim?claim_token=tok+en%2Fwith%2Bspecial"
+	const want = "https://jentic.example.com/app/agents/cid-123/claim?token=tok+en%2Fwith%2Bspecial"
 	if got != want {
 		t.Errorf("agentClaimURL with token = %q, want %q", got, want)
 	}

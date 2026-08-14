@@ -2,6 +2,9 @@ package api
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	legacyconfig "github.com/jentic/jentic-one/cli/internal/config"
 )
 
@@ -154,6 +158,62 @@ func TestRegister_V2PendingThenApproved(t *testing.T) {
 		}
 	}
 	assertRegApproved(t, "crawler", "qa")
+}
+
+// TestRegister_ClaimPending_AssertionInvalidIsNotFatal reproduces the enterprise
+// claim flow: /register hands back a claim_token, and until the human claims +
+// approves in the console, /oauth/token rejects the assertion with the ambiguous
+// 400 invalid_grant "Assertion is invalid" — the SAME string the backend uses
+// for a real audience mismatch. With a claim outstanding the CLI must treat that
+// as PENDING (print the claim link with ?token=, keep waiting, and exit cleanly
+// as TIMEOUT_PENDING) rather than hard-failing with the audience-mismatch hint,
+// which used to abort the flow the instant it began.
+func TestRegister_ClaimPending_AssertionInvalidIsNotFatal(t *testing.T) {
+	withXDG(t)
+	fastPollV2(t)
+
+	const claimTok = "clm_once_abc"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/register":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending","claim_token":"` + claimTok + `"}`))
+		case "/oauth/token":
+			// Not-yet-claimed/approved agent: the backend's approval gate fires
+			// before signature/audience validation and returns this exact string.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"Assertion is invalid","instance":"/oauth/token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "20ms")
+
+	// The claim affordance must have been shown, pointing at the console page
+	// with the token in the `token` query param the page reads.
+	if !strings.Contains(out, "Claim ownership of this agent") {
+		t.Errorf("claim affordance not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "/app/agents/agnt_boot/claim?token="+claimTok) {
+		t.Errorf("claim link missing or wrong query param (want ?token=):\n%s", out)
+	}
+
+	// It must NOT hard-fail on the ambiguous assertion error; it should time out
+	// as pending so re-running after the human claims + approves resumes.
+	if err == nil {
+		t.Fatal("expected a pending timeout, got success (agent was never approved)")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("error is not coded: %v", err)
+	}
+	if coded.Code != ux.CodeTimeoutPending {
+		t.Errorf("code = %q, want TIMEOUT_PENDING (the audience-mismatch hard-fail must be suppressed while claiming); err: %v", coded.Code, err)
+	}
 }
 
 // TestRegister_LegacyFlagsRemoved: the V1 --profile/--base-url arm is gone
