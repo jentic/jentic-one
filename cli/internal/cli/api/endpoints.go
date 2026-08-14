@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -90,7 +91,7 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 		if eps == nil {
 			eps = []endpoint{}
 		}
-		return writeList(a.Out, eps, "", nil)
+		return cmdcore.WriteList(a.Out, eps, "", nil)
 	}
 	a.printEndpoints(eps)
 	return nil

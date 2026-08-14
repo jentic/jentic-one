@@ -5,13 +5,13 @@
       "name": "jentic",
       "tagline": "discover, inspect, and run against the Jentic API catalog",
       "short": "jentic: discover, inspect, and run against the Jentic API catalog",
-      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic bootstrap`\nto create one (isolated account + registration + skills). If you're an agent\nwithout an identity yet, run `jentic register`. Then browse the catalog with\n`jentic apis`. To install and operate jentic-one locally, use the `jenticctl`\nCLI (e.g. `jenticctl install`). Use `jentic \u003ccommand\u003e --help` for details.",
+      "long": "jentic is the command-line companion for working with the Jentic API\ncatalog. Register and switch agent identities, browse and import APIs from\nthe public catalog into your local registry, inspect operations, and execute\nagainst them.\n\nNew here? If you're a person setting up a local agent, run `jentic bootstrap`\nto set one up end to end (identity + skills + isolation). If you're an agent\nthat just needs tokens for an existing identity, run `jentic register`. Then\nbrowse the public catalog with `jentic catalog`. To install and operate\njentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n`jentic \u003ccommand\u003e --help` for details.",
       "commands": [
         {
           "name": "bootstrap",
           "path": "jentic bootstrap",
           "use": "bootstrap",
-          "short": "Register an agent, wait for approval, and prime your operator — in one step",
+          "short": "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
           "long": "bootstrap takes a fresh machine from nothing to ready: it connects this\nmachine to a Jentic install (creating the environment, identity and context\nif needed), registers the agent (Dynamic Client Registration), prints an\napproval link and waits for a human to approve it, mints and saves tokens,\nand generates the Jentic CLI-usage skill into your agent runtime's native\nlayout. It also offers to isolate the coding agent behind its own Unix user.\n\nIt is a thin orchestration of `jentic register` and `jentic skill`: nothing\nhere you can't do by hand, just sequenced so you can start playing right\naway. Re-running refreshes everything idempotently.",
           "example": "  jentic bootstrap\n  jentic bootstrap --url https://jentic.example.com --operator claude --yes\n  jentic bootstrap --skip-skill   # identity only\n  jentic bootstrap --dry-run",
           "group_title": "Identity \u0026 access",
@@ -100,7 +100,7 @@
           "name": "register",
           "path": "jentic register",
           "use": "register",
-          "short": "Register this machine as an agent and obtain tokens",
+          "short": "Obtain tokens for an existing agent identity (identity only, no skills) — agents run this",
           "long": "register connects this machine to a Jentic install: it generates an\nEd25519 keypair (if absent), performs Dynamic Client Registration, waits\nfor an operator to approve the agent, then mints and saves tokens.\n\nWith an active context (`jentic context use`), it registers that context's\nidentity with its environment. On a fresh machine, pass --url (or answer\nthe prompt) and register creates the environment, identity and context in\none step, activates them, and registers.\n\nLocal install: use http://127.0.0.1:8000 (NOT http://localhost:8000) — the\ntoken-exchange audience is matched exactly against the backend's\ncanonical_base_url, and a local backend uses 127.0.0.1. For a loopback URL,\nregister also seeds the environment's broker_url (http://127.0.0.1:8100) so\n`jentic execute` works without extra flags.",
           "example": "  jentic register --url http://127.0.0.1:8000   # local install (use 127.0.0.1, not localhost)\n  jentic register --url https://jentic.example.com\n  jentic register --url https://jentic.example.com --name crawler --env prod\n  jentic register                      # active context (or interactive setup)\n  jentic register --force              # re-register the active identity",
           "group_title": "Identity \u0026 access",
@@ -185,7 +185,7 @@
           "path": "jentic context",
           "use": "context",
           "short": "Manage and switch contexts (environment + identity + mode)",
-          "long": "context binds an Environment, an Identity, and an interaction mode into a\nnamed context, and switches which one commands act on. It is the V2\nsuccessor to `jentic profile` (see `jentic migrate`).",
+          "long": "context binds an Environment, an Identity, and an interaction mode into a\nnamed context, and switches which one commands act on. It is the\nsuccessor to the old `jentic profile` (see `jentic migrate`).",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -334,7 +334,7 @@
               "path": "jentic context delete",
               "use": "delete \u003cname\u003e",
               "short": "Delete a context",
-              "long": "delete removes a context (the V2 equivalent of removing a V1 profile).\nIt refuses to delete the ACTIVE context\n(switch first) to avoid a dangling active_context. With --identity it also\nremoves the referenced identity iff no other context uses it.",
+              "long": "delete removes a context (the equivalent of removing a legacy profile).\nIt refuses to delete the ACTIVE context\n(switch first) to avoid a dangling active_context. With --identity it also\nremoves the referenced identity iff no other context uses it.",
               "aliases": [
                 "rm"
               ],
@@ -530,7 +530,7 @@
               "path": "jentic identity add",
               "use": "add \u003cname\u003e",
               "short": "Add an identity (optionally with a jak_* API key credential)",
-              "long": "add records an identity in the config. With --api-key it stores a jak_*\ncredential for the given --env (the V2 successor to `jentic profile\nadd-key`). Agent identities obtain tokens later via `jentic register`.",
+              "long": "add records an identity in the config. With --api-key it stores a jak_*\ncredential for the given --env (the successor to the old `jentic profile\nadd-key`). Agent identities obtain tokens later via `jentic register`.",
               "flags": [
                 {
                   "name": "api-key",
@@ -601,7 +601,7 @@
               "path": "jentic identity register",
               "use": "register",
               "short": "Register the active identity's key with the active environment",
-              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the V2 successor to the\nlegacy `jentic register` and operates on the resolved active context.",
+              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the successor to the\nlegacy `jentic register` and operates on the resolved active context.",
               "flags": [
                 {
                   "name": "context",
@@ -1625,7 +1625,7 @@
           "path": "jentic inspect",
           "use": "inspect \u003cMETHOD:url | operation_id\u003e",
           "short": "Inspect an operation's contract (schema, parameters, examples)",
-          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
+          "long": "inspect resolves an operation to its full structural detail: HTTP\nmethod, URL, parameters, request/response schemas, and examples. The\ntarget may be a discovered operation's METHOD:url (the same form\n`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\nan opaque operation_id. The output format is negotiated with the\nserver: JSON for machine consumption, Markdown for human reading.\n\nThe space form (`GET \u003curl\u003e`) is also accepted, but the colon form is\ncanonical (it needs no shell quoting).\n\nDefault format: JSON when stdout is not a TTY, Markdown when it is.",
           "example": "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n  jentic inspect createUser --format markdown\n  jentic search \"list users\" --json | jq -r '.data[0].operation_id' | xargs jentic inspect",
           "group_title": "Find and run operations",
           "flags": [
@@ -1667,7 +1667,7 @@
           "path": "jentic execute",
           "use": "execute \u003cMETHOD:url | METHOD:/path | operation_id\u003e",
           "short": "Execute an operation through the Jentic broker",
-          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker.\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http.",
+          "long": "execute sends an HTTP request through the Jentic broker. The broker\nauthenticates the caller with their agent token and injects the stored\nupstream credential, so the agent token is never sent to the upstream\nAPI directly. The target can be specified in three ways:\n\n  1. METHOD:url — a discovered operation's full URL, the same form\n     `jentic search`/`jentic inspect` accept (e.g.\n     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n     routed through the broker. The space form (`GET \u003curl\u003e`) is also\n     accepted, but the colon form is canonical (it needs no shell quoting).\n  2. operation_id — resolve via inspect, then route through the broker.\n  3. METHOD:/path — a broker-relative path sent to --broker-host\n     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\nPath parameters, query parameters, headers, and a request body can be\nsupplied via flags.\n\nWhen the broker denies the call (e.g. you are not bound to a toolkit\nfor the API, or no credential is provisioned), it returns an\nagent_directive describing how to recover. execute surfaces that\ndirective on stderr and exits 2 so a script can branch on the denial.\n\nExit codes:\n  0 — broker returned a non-denial HTTP response (incl. 2xx and upstream errors)\n  1 — local/transport failure (DNS, TLS, timeout, connection refused)\n  2 — denied by the broker (carries an agent_directive) or resolve failure\n      (inspect error, e.g. unknown operation_id)\n\nBroker target: resolved as built-in default (https://127.0.0.1:8100) \u003c\nthe active environment's broker_url \u003c --broker-scheme/--broker-host. A\nlocal install serves the broker over plain HTTP, so `jentic register`\nseeds broker_url=http://127.0.0.1:8100 for a loopback environment. A TLS\nerror like \"server gave HTTP response to HTTPS client\" means the target\nresolved to https against a local http broker — set the environment's\nbroker_url (`jentic env add \u003cenv\u003e --broker-url http://127.0.0.1:8100\n--force`) or override per call with --broker-scheme http.",
           "example": "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n  jentic execute listPets --query limit=10 --json\n  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n  echo '{\"name\":\"Bob\"}' | jentic execute POST:/v1/users --json\n  # Local broker over http, one-off (usually unnecessary — register seeds broker_url):\n  jentic execute listPets --broker-scheme http --broker-host 127.0.0.1:8100",
           "group_title": "Find and run operations",
           "flags": [
@@ -2668,7 +2668,7 @@
           "path": "jentic reset",
           "use": "reset",
           "short": "Tear down the agent account and wipe this machine's jentic identity state",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the V2 store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
           "example": "  jentic reset                              # full clean slate: the account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
@@ -3161,7 +3161,7 @@
           "path": "jenticctl status",
           "use": "status",
           "short": "Show install, server, and identity health",
-          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the active V2 context's identity/token\nstate. It degrades gracefully: missing pieces are reported, not fatal.",
+          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the active context's identity/token\nstate. It degrades gracefully: missing pieces are reported, not fatal.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {

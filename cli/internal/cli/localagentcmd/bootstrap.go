@@ -78,7 +78,7 @@ func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
-		Short: "Register an agent, wait for approval, and prime your operator — in one step",
+		Short: "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
 		Long: "bootstrap takes a fresh machine from nothing to ready: it connects this\n" +
 			"machine to a Jentic install (creating the environment, identity and context\n" +
 			"if needed), registers the agent (Dynamic Client Registration), prints an\n" +
@@ -128,7 +128,7 @@ func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	// Which arm? An explicit --url always connects to THAT install; otherwise
 	// an active context registers in place, and a fresh machine gets the
 	// one-command setup (interactive prompt or MISSING_ARGUMENT).
-	st := clictx.ActiveV2(ctx)
+	st := clictx.ActiveContext(ctx)
 	if opts.url != "" {
 		st = nil // --url pins the setup arm even when a context is active
 	}
@@ -210,11 +210,11 @@ func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		if identity == "" {
 			identity = st.IdentityName
 		}
-		if err := a.RegisterV2Active(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
+		if err := a.RegisterActive(ctx, st, opts.name, opts.timeout, opts.force); err != nil {
 			return err
 		}
 	} else {
-		vals, err := a.RegisterV2Setup(ctx,
+		vals, err := a.RegisterSetup(ctx,
 			cmdcore.SetupValues{URL: opts.url, Env: opts.env, Name: opts.name},
 			opts.timeout, opts.force, opts.interactive)
 		if errors.Is(err, cmdcore.ErrOnboardCancelled) {

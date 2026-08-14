@@ -51,6 +51,17 @@ type ActiveState struct {
 	ThemeName string
 }
 
+// IsMachine reports whether this is a fenced machine mode (agent or
+// service-account) rather than a human session — the single canonical
+// "is machine mode?" predicate the CLI keys off. Any non-human mode counts:
+// unknown modes fail closed to agent at Audience construction (root
+// interceptor), so treating "not human" as machine matches that fail-closed
+// posture. Output rendering (JSONOrPretty), progress-line suppression
+// (registerProgress), and broker-host pinning (SEC-21) all consult this.
+func (s *ActiveState) IsMachine() bool {
+	return s.Mode != ModeHuman
+}
+
 // ResolveActiveState loads state and layers the CLI mode/theme interpretation on
 // top. contextOverride is --context (may be ""); modeOverride is --mode (may be "").
 //
@@ -124,13 +135,13 @@ func FromContext(ctx context.Context) *ActiveState {
 	return s
 }
 
-// ActiveV2 returns the resolved state from ctx only when it represents a real
-// V2 context — an XDG-store (or file-less) resolution with a concrete
+// ActiveContext returns the resolved state from ctx only when it represents a real
+// context — an XDG-store (or file-less) resolution with a concrete
 // environment. It returns nil when no state was injected or when resolution
 // degraded (no config anywhere: the interceptor injects a default state with
 // an empty EnvironmentName so fencing still works). This is THE shared
 // resolution check for every command that needs a context to act.
-func ActiveV2(ctx context.Context) *ActiveState {
+func ActiveContext(ctx context.Context) *ActiveState {
 	st := FromContext(ctx)
 	if st == nil || st.ResolvedState == nil {
 		return nil

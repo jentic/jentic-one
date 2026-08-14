@@ -24,10 +24,18 @@ func newContextCmd(app *app) *cobra.Command {
 		Use:   "context",
 		Short: "Manage and switch contexts (environment + identity + mode)",
 		Long: "context binds an Environment, an Identity, and an interaction mode into a\n" +
-			"named context, and switches which one commands act on. It is the V2\n" +
-			"successor to `jentic profile` (see `jentic migrate`).",
+			"named context, and switches which one commands act on. It is the\n" +
+			"successor to the old `jentic profile` (see `jentic migrate`).",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// The most common question a user asks here is "which context am I
+			// in?" (UX5), so answer it before the subcommand list: show the
+			// active context (like `context view`), then fall through to help.
+			// Best-effort — a missing/unreadable active context just skips
+			// straight to the subcommand list.
+			showActiveContext(cmd)
+			return cmd.Help()
+		},
 	}
 	cmd.AddCommand(fenced(newContextCreateCmd(app)))
 	cmd.AddCommand(fenced(newContextUseCmd(app)))
@@ -35,6 +43,34 @@ func newContextCmd(app *app) *cobra.Command {
 	cmd.AddCommand(newContextViewCmd(app))         // read-only (active only): not fenced
 	cmd.AddCommand(fenced(newContextDeleteCmd(app)))
 	return cmd
+}
+
+// showActiveContext prints the active context (the same Result `context view`
+// renders) as an ambient "you are here" before the subcommand list on bare
+// `jentic context`. It is best-effort: when nothing is active (or the config
+// can't be read) it prints nothing, so a fresh machine drops straight to help
+// instead of surfacing a scary "no active context" error where the user only
+// asked for the command list.
+func showActiveContext(cmd *cobra.Command) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	active := cfg.ActiveContext
+	c, ok := cfg.Contexts[active]
+	if active == "" || !ok {
+		return
+	}
+	ux.FromContext(cmd.Context()).Render(ux.Result{
+		Status:   "active",
+		Resource: "context",
+		Name:     active,
+		Fields: map[string]any{
+			"environment": c.Environment,
+			"identity":    c.Identity,
+			"mode":        c.Mode,
+		},
+	})
 }
 
 func newContextCreateCmd(_ *app) *cobra.Command {
@@ -238,7 +274,7 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 		Use:     "delete <name>",
 		Aliases: []string{"rm"},
 		Short:   "Delete a context",
-		Long: "delete removes a context (the V2 equivalent of removing a V1 profile).\n" +
+		Long: "delete removes a context (the equivalent of removing a legacy profile).\n" +
 			"It refuses to delete the ACTIVE context\n" +
 			"(switch first) to avoid a dangling active_context. With --identity it also\n" +
 			"removes the referenced identity iff no other context uses it.",

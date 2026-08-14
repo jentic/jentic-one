@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +29,8 @@ func newInspectCmd(app *app) *cobra.Command {
 			"`jentic search` prints, e.g. GET:https://rest.coincap.io/v3/markets) or\n" +
 			"an opaque operation_id. The output format is negotiated with the\n" +
 			"server: JSON for machine consumption, Markdown for human reading.\n\n" +
+			"The space form (`GET <url>`) is also accepted, but the colon form is\n" +
+			"canonical (it needs no shell quoting).\n\n" +
 			"Default format: JSON when stdout is not a TTY, Markdown when it is.",
 		Example: "  jentic inspect GET:https://rest.coincap.io/v3/markets --format json | jq .method\n" +
 			"  jentic inspect createUser --format markdown\n" +
@@ -56,7 +59,7 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 		format = "json"
 	}
 	if format == "" {
-		if jsonOrPretty(cmd, false) {
+		if cmdcore.JSONOrPretty(cmd, false) {
 			format = "json"
 		} else {
 			format = "markdown"
@@ -75,8 +78,8 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 				Code: ux.CodeResolveFailed,
 				Msg:  fmt.Sprintf("operation %q not found", operationID),
 				Actionable: "inspect accepts the registry operation id (from `jentic search` _links.inspect / " +
-					"`jentic apis operations`), a \"METHOD URL\" pair (e.g. " +
-					"jentic inspect 'GET https://api.example.com/v1/things'), or the spec operationId " +
+					"`jentic apis operations`), a METHOD:url pair (e.g. " +
+					"jentic inspect GET:https://api.example.com/v1/things), or the spec operationId " +
 					"shown by `jentic catalog show` when it's unique across imported APIs. " +
 					"If a spec operationId is ambiguous, use the registry operation id from `jentic search`.",
 			}

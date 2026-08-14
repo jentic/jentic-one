@@ -196,3 +196,31 @@ func TestClassifyTokenError_AssertionInvalid(t *testing.T) {
 		t.Errorf("pending detail must not be AssertionInvalidError")
 	}
 }
+
+// TestClassifyTokenExchange pins the shared claim-vs-audience disambiguation
+// (AR2-9): a pending error is always pending; an assertion-invalid error is a
+// hard failure UNLESS a claim is still outstanding, in which case the identical
+// backend string means "not claimed/approved yet" and must be treated as pending
+// so the register wait loop keeps polling instead of aborting.
+func TestClassifyTokenExchange(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		cc   ClaimContext
+		want TokenExchangeOutcome
+	}{
+		{"nil", nil, ClaimContext{}, OutcomeOther},
+		{"pending", &PendingError{Detail: "pending"}, ClaimContext{}, OutcomePending},
+		{"pending with claim", &PendingError{}, ClaimContext{ClaimOutstanding: true}, OutcomePending},
+		{"assertion invalid, no claim", &AssertionInvalidError{Detail: "Assertion is invalid"}, ClaimContext{}, OutcomeAssertionInvalid},
+		{"assertion invalid, claim outstanding", &AssertionInvalidError{Detail: "Assertion is invalid"}, ClaimContext{ClaimOutstanding: true}, OutcomePending},
+		{"other", errors.New("network down"), ClaimContext{}, OutcomeOther},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ClassifyTokenExchange(c.err, c.cc); got != c.want {
+				t.Errorf("ClassifyTokenExchange = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

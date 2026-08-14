@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,7 +20,6 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/config"
-	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
 
@@ -72,7 +70,8 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"  1. METHOD:url — a discovered operation's full URL, the same form\n" +
 			"     `jentic search`/`jentic inspect` accept (e.g.\n" +
 			"     GET:https://rest.coincap.io/v3/markets). Resolved via inspect, then\n" +
-			"     routed through the broker.\n" +
+			"     routed through the broker. The space form (`GET <url>`) is also\n" +
+			"     accepted, but the colon form is canonical (it needs no shell quoting).\n" +
 			"  2. operation_id — resolve via inspect, then route through the broker.\n" +
 			"  3. METHOD:/path — a broker-relative path sent to --broker-host\n" +
 			"     verbatim (e.g. GET:/v1/pets); the caller supplies the broker path.\n\n" +
@@ -123,13 +122,6 @@ func newExecuteCmd(app *app) *cobra.Command {
 	return cmd
 }
 
-// isMachineMode reports whether a resolved mode is a fenced machine mode
-// (agent / service-account), used by SEC-21 to pin the broker host to the
-// environment's broker_url. Human mode keeps the --broker-host override.
-func isMachineMode(mode string) bool {
-	return mode == clictx.ModeAgent || mode == clictx.ModeServiceAccount
-}
-
 func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) error {
 	_, token, err := a.agentSession(cmd.Context())
 	if err != nil {
@@ -141,7 +133,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// routes through THAT broker — without it, pointing a context at a remote
 	// install would still execute against the built-in local default.
 	flags := cmd.Flags()
-	if st := clictx.ActiveV2(cmd.Context()); st != nil && st.BrokerURL != "" {
+	if st := clictx.ActiveContext(cmd.Context()); st != nil && st.BrokerURL != "" {
 		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
 			// SEC-21: in a machine mode (agent/service-account) the broker host is
 			// pinned to the environment's configured broker_url. An agent must not
@@ -150,7 +142,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 			// keeps the override (they own the machine and may be testing). The
 			// scheme may still be overridden (http↔https on the same host is the
 			// common local papercut, guarded separately by RequireSecureURL).
-			if isMachineMode(st.Mode) && flags.Changed("broker-host") && opts.brokerHost != u.Host {
+			if st.IsMachine() && flags.Changed("broker-host") && opts.brokerHost != u.Host {
 				return &ux.CodedError{
 					Code: ux.CodeResolveFailed,
 					Msg: fmt.Sprintf("--broker-host %q is not allowed in %s mode: the broker is pinned to the "+
@@ -358,32 +350,6 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	return a.executeOutput(cmd, opts, resp)
 }
 
-// brokerTLSMismatch reports whether err is the "https client hit an http server"
-// signature against a loopback broker — the local default-scheme papercut UX-4
-// makes actionable. Restricted to loopback so we never suggest downgrading a
-// remote broker to plaintext.
-func brokerTLSMismatch(err error, brokerURL string) bool {
-	if err == nil || !strings.Contains(err.Error(), "server gave HTTP response to HTTPS client") {
-		return false
-	}
-	u, perr := url.Parse(brokerURL)
-	if perr != nil {
-		return false
-	}
-	return isLoopbackHostname(u.Hostname())
-}
-
-// isLoopbackHostname reports whether host is "localhost" or a loopback IP.
-func isLoopbackHostname(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
-}
-
 // badFlagKV builds the coded error for a malformed key=value flag (ARCH-4). A
 // bad --path/--query/--header value is agent-causable INPUT, so it must surface
 // a machine error_code (MISSING_ARGUMENT) with an actionable hint — not a bare
@@ -516,239 +482,4 @@ func (a *app) resolveOperation(cmd *cobra.Command, opts *executeOptions, target 
 		return nil, errInspectMissingFields
 	}
 	return &opInfo, nil
-}
-
-func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http.Response) error {
-	if opts.raw {
-		// Read (bounded by the broker transport's cap) then redact before
-		// streaming, so --raw matches the redaction guarantee of the JSON and
-		// `jentic api` paths (SEC-2). A secret in an upstream body must not leak
-		// just because the caller asked for raw output.
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("read response: %w", err)
-		}
-		if _, err := a.Out.Write(ux.RedactBytes(body)); err != nil {
-			return err
-		}
-		if isBrokerDenial(resp) {
-			return brokerDeniedErr(resp)
-		}
-		return nil
-	}
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-
-	if jsonOrPretty(cmd, opts.json) {
-		if err := a.executeJSONOutput(resp, respBody); err != nil {
-			return err
-		}
-	} else {
-		a.executePrettyOutput(resp, respBody)
-	}
-
-	// A broker denial (403/409/424/401) means the call did not run; exit 2 so a
-	// scripted agent can branch on the denial instead of mistaking the 4xx body
-	// for success. The exit code keys off the *status*, not the presence of an
-	// agent_directive: some denials (e.g. action_denied from a permission rule)
-	// carry no directive, and gating exit 2 on a parsed directive would let those
-	// silently exit 0 — the exact regression this surfacing is meant to remove.
-	// When a directive *is* present it enriches the message with recovery steps.
-	if isBrokerDenial(resp) {
-		if directive, ok := parseAgentDirective(resp, respBody); ok {
-			a.printAgentDirective(directive)
-		}
-		return brokerDeniedErr(resp)
-	}
-	return nil
-}
-
-// brokerDeniedErr is the typed denial every broker-denial exit shares (AGT-6):
-// BROKER_DENIED (exit 2) with the denying HTTP status in Details, so the agent
-// envelope and the exit code come from the same table. The response body /
-// directive recovery text is printed by the caller before this is returned.
-func brokerDeniedErr(resp *http.Response) *ux.CodedError {
-	return &ux.CodedError{
-		Code:    ux.CodeBrokerDenied,
-		Msg:     "the broker denied this call before it reached the upstream API",
-		Details: map[string]any{"http_status": resp.StatusCode},
-	}
-}
-
-// isBrokerDenial reports whether a response is one the broker itself emitted to
-// deny a call the agent can recover from: missing toolkit binding → 403,
-// ambiguous toolkit → 409, credential needs reconnect → 401, no credential →
-// 424. Each carries an agent_directive (see broker/web/errors.STATUS_BY_ERROR).
-//
-// Status alone is NOT sufficient: the broker is a transparent forward proxy, so
-// an *upstream* API can return these same 4xx codes on a call the broker
-// successfully proxied (the upstream auth failed, the resource is forbidden,
-// etc.). Treating those as broker denials would exit 2 and print a misleading
-// "recovery required" for a call that actually ran. The broker disambiguates
-// with the Jentic-Error-Origin response header (broker/core/headers): it stamps
-// "broker" on its own errors and "upstream" on mirrored pass-through 4xx/5xx
-// (broker/services/execution/pipeline.enrich_error_origin). So a denial-class
-// status is a broker denial only when the origin is not "upstream" (a missing
-// header is treated as broker, since the loopback broker always sets it on its
-// own errors and only a non-conformant proxy would omit it).
-func isBrokerDenial(resp *http.Response) bool {
-	if resp == nil {
-		return false
-	}
-	if errorOrigin(resp) == errorOriginUpstream {
-		return false
-	}
-	switch resp.StatusCode {
-	case http.StatusUnauthorized,
-		http.StatusForbidden,
-		http.StatusConflict,
-		http.StatusFailedDependency:
-		return true
-	default:
-		return false
-	}
-}
-
-// errorOriginUpstream is the Jentic-Error-Origin value the broker stamps on a
-// mirrored upstream response (broker ErrorOrigin.UPSTREAM). The matching header
-// name mirrors broker/core/headers.JenticHeader.ERROR_ORIGIN.
-const errorOriginUpstream = "upstream"
-
-func errorOrigin(resp *http.Response) string {
-	if resp == nil {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(resp.Header.Get("Jentic-Error-Origin")))
-}
-
-// agentDirective mirrors the broker's problem+json agent_directive extension
-// member (broker/core/exceptions.py AgentDirective). The strategy vocabulary
-// below mirrors broker AgentStrategy; until the contract is a shared OpenAPI
-// schema, the Python test test_directive_factories_emit_known_strategies and
-// this list must be kept in lock-step (review P1-1).
-type agentDirective struct {
-	Strategy    string         `json:"strategy"`
-	Parameters  map[string]any `json:"parameters"`
-	Instruction string         `json:"human_readable_instruction"`
-}
-
-// Recovery strategies the broker may emit in an agent_directive (mirrors
-// broker AgentStrategy): wait, retry, modify_headers, prompt_human,
-// switch_toolkit, fatal. Only the ones this CLI branches on are named here.
-const (
-	directiveWait  = "wait"
-	directiveRetry = "retry"
-)
-
-// parseAgentDirective extracts an agent_directive from a denial response body.
-// It only treats recoverable broker-denial responses as directives so a normal
-// 4xx (including an upstream pass-through with an incidental
-// "agent_directive"-shaped body) can't trip the exit code.
-func parseAgentDirective(resp *http.Response, body []byte) (agentDirective, bool) {
-	if !isBrokerDenial(resp) {
-		return agentDirective{}, false
-	}
-	var envelope struct {
-		Directive *agentDirective `json:"agent_directive"`
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Directive == nil {
-		return agentDirective{}, false
-	}
-	return *envelope.Directive, true
-}
-
-// printAgentDirective renders a recovery directive to stderr, lifting the
-// suggested_command / provisioning_url out of parameters so the agent (or its
-// operator) sees the exact next action without parsing JSON.
-func (a *app) printAgentDirective(d agentDirective) {
-	fmt.Fprintln(a.Err, theme.Warn.Render("Denied — recovery required:"))
-	if d.Instruction != "" {
-		fmt.Fprintln(a.Err, "  "+d.Instruction)
-	}
-	if cmd, ok := d.Parameters["suggested_command"].(string); ok && cmd != "" {
-		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render(cmd))
-	}
-	if u, ok := d.Parameters["provisioning_url"].(string); ok && u != "" {
-		fmt.Fprintln(a.Err, "  open: "+theme.Accent.Render(u))
-	}
-	if cands, ok := d.Parameters["candidates"].([]any); ok && len(cands) > 0 {
-		parts := make([]string, 0, len(cands))
-		for _, c := range cands {
-			if s, isStr := c.(string); isStr {
-				parts = append(parts, s)
-			}
-		}
-		if len(parts) > 0 {
-			fmt.Fprintln(a.Err, "  candidates: "+theme.Accent.Render(strings.Join(parts, ", ")))
-		}
-	}
-	// A wait/retry directive carries a backoff hint the agent should honor before
-	// retrying; surface it so the recovery loop doesn't hot-spin.
-	if d.Strategy == directiveWait || d.Strategy == directiveRetry {
-		if secs, ok := d.Parameters["retry_after_seconds"]; ok {
-			fmt.Fprintf(a.Err, "  retry after: %v\n", secs)
-		}
-	}
-}
-
-func (a *app) executeJSONOutput(resp *http.Response, body []byte) error {
-	headers := make(map[string]string)
-	for k := range resp.Header {
-		headers[k] = resp.Header.Get(k)
-	}
-
-	var parsedBody any
-	if err := json.Unmarshal(body, &parsedBody); err != nil {
-		parsedBody = string(body)
-	}
-
-	envelope := map[string]any{
-		// AGT-23: stamp the machine-contract schema_version like every sanctioned
-		// wrapper (ux.List/Page/Result/Export), so an agent can branch on the
-		// envelope shape. execute builds an ad-hoc map (not a ux type) because its
-		// body is the arbitrary upstream response, so the version is set here.
-		"schema_version": apiEnvelopeSchemaVersion,
-		"status":         resp.StatusCode,
-		"headers":        headers,
-		"body":           parsedBody,
-	}
-	if execID := resp.Header.Get("Jentic-Execution-Id"); execID != "" {
-		envelope["execution_id"] = execID
-	}
-
-	return writeJSON(a.Out, envelope)
-}
-
-func (a *app) executePrettyOutput(resp *http.Response, body []byte) {
-	statusLine := fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
-	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		fmt.Fprintln(a.Out, theme.Success.Render(statusLine))
-	case resp.StatusCode >= 400:
-		fmt.Fprintln(a.Out, theme.Warn.Render(statusLine))
-	default:
-		fmt.Fprintln(a.Out, statusLine)
-	}
-
-	for k, vs := range resp.Header {
-		if strings.HasPrefix(k, "Jentic-") {
-			fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("  %s: %s", k, strings.Join(vs, ", "))))
-		}
-	}
-
-	fmt.Fprintln(a.Out)
-	if len(body) > 0 {
-		// Redact the upstream body before display (SEC-2): the pretty path is
-		// human-facing but can still carry secrets echoed by an upstream API.
-		var pretty bytes.Buffer
-		if err := json.Indent(&pretty, body, "", "  "); err == nil {
-			_, _ = a.Out.Write(ux.RedactBytes(pretty.Bytes()))
-		} else {
-			_, _ = a.Out.Write(ux.RedactBytes(body))
-		}
-		fmt.Fprintln(a.Out)
-	}
 }

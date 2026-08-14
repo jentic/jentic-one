@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-
-	"github.com/spf13/cobra"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
@@ -21,46 +18,8 @@ import (
 func notRegisteredErr(identity, env string) *ux.CodedError {
 	return &ux.CodedError{
 		Code:       ux.CodeNotAuthenticated,
-		Msg:        fmt.Sprintf("identity %q is not registered with environment %q; run `jentic register` first", identity, env),
+		Msg:        fmt.Sprintf("identity %q is not registered with environment %q; run `jentic register` first (or `jentic doctor` to check your setup)", identity, env),
 		Actionable: "jentic register",
-	}
-}
-
-// exactNamedArgs is a cobra Args validator that requires exactly the named
-// positional arguments and, on a miscount, returns a coded MISSING_ARGUMENT that
-// NAMES the expected arguments plus the corrected invocation (UX-22 / AGT-20) —
-// instead of cobra's bare "accepts 1 arg(s), received 0". `use` is the command's
-// canonical usage string (e.g. "execute <operation-id | METHOD url>"). The error
-// is coded so an agent gets a closed error_code + exit 1 and a human gets a
-// styled, actionable line (decorateCodedErrors renders it through the Audience).
-func exactNamedArgs(use string, names ...string) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if len(args) == len(names) {
-			return nil
-		}
-		return &ux.CodedError{
-			Code: ux.CodeMissingArgument,
-			Msg: fmt.Sprintf("%s expects %d argument(s) (%s) but got %d",
-				cmd.CommandPath(), len(names), strings.Join(names, ", "), len(args)),
-			Actionable: fmt.Sprintf("Usage: %s %s", cmd.CommandPath(), use),
-		}
-	}
-}
-
-// rangeNamedArgs is exactNamedArgs for a variable count: it requires min..max
-// positional args and, on a miscount, names them + the usage line as a coded
-// MISSING_ARGUMENT. Used by `apis rm` (1–2 args: name, optional version).
-func rangeNamedArgs(minArgs, maxArgs int, use string, names ...string) cobra.PositionalArgs {
-	return func(cmd *cobra.Command, args []string) error {
-		if len(args) >= minArgs && len(args) <= maxArgs {
-			return nil
-		}
-		return &ux.CodedError{
-			Code: ux.CodeMissingArgument,
-			Msg: fmt.Sprintf("%s expects %d–%d argument(s) (%s) but got %d",
-				cmd.CommandPath(), minArgs, maxArgs, strings.Join(names, ", "), len(args)),
-			Actionable: fmt.Sprintf("Usage: %s %s", cmd.CommandPath(), use),
-		}
 	}
 }
 
@@ -81,11 +40,11 @@ func (a *app) agentSession(ctx context.Context) (baseURL, token string, err erro
 	return a.contextSession(st)
 }
 
-// requireState returns the active V2 state or the canonical "no active
+// requireState returns the active state or the canonical "no active
 // context" coded error. It is the single entry every data-plane command goes
 // through, so the remediation string cannot drift between commands.
 func (a *app) requireState(ctx context.Context) (*clictx.ActiveState, error) {
-	if st := clictx.ActiveV2(ctx); st != nil {
+	if st := clictx.ActiveContext(ctx); st != nil {
 		return st, nil
 	}
 	return nil, noContextErr()
@@ -119,7 +78,7 @@ func noContextErr() *ux.CodedError {
 	}
 }
 
-// contextSession obtains (baseURL, bearer) for an active V2 context via the
+// contextSession obtains (baseURL, bearer) for an active context via the
 // SDK's credential-resolution order (injected token > jak_* API key > cached/
 // exchanged token) — byte-for-byte the credential the SDK request editor would
 // attach, so hand-rolled clients and generated clients can never disagree.
@@ -158,22 +117,23 @@ func contextAuthErr(err error, st *clictx.ActiveState) error {
 	if errors.Is(err, auth.ErrNotRegistered) {
 		return notRegisteredErr(st.IdentityName, st.EnvironmentName)
 	}
-	var pending *auth.PendingError
-	if errors.As(err, &pending) {
+	// A data-plane command never has a claim outstanding, so the claim-vs-audience
+	// ambiguity resolves the same way ClassifyTokenExchange does for the register
+	// wait loop (QA-9/QA-24): one shared rule in client/auth, two remediations.
+	switch auth.ClassifyTokenExchange(err, auth.ClaimContext{}) {
+	case auth.OutcomePending:
 		return &ux.CodedError{
 			Code: ux.CodePendingApproval,
 			Msg: fmt.Sprintf("identity %q is not active yet on %q (%v); wait for approval, then retry",
 				st.IdentityName, st.EnvironmentName, err),
 			Actionable: "have an operator approve the agent, then re-run the command (`jentic register` resumes the wait)",
 		}
-	}
-	// QA-24: an assertion-validation failure on a data-plane command is the same
-	// audience-mismatch papercut the register poll path (QA-9) already special-
-	// cases — surface the URL/canonical_base_url hint here too, rather than the
-	// generic "run register" below (correct exit code, but a weaker remediation
-	// that sends the agent in a loop).
-	var ai *auth.AssertionInvalidError
-	if errors.As(err, &ai) {
+	case auth.OutcomeAssertionInvalid:
+		// QA-24: an assertion-validation failure on a data-plane command is the same
+		// audience-mismatch papercut the register poll path (QA-9) already special-
+		// cases — surface the URL/canonical_base_url hint here too, rather than the
+		// generic "run register" below (correct exit code, but a weaker remediation
+		// that sends the agent in a loop).
 		return &ux.CodedError{
 			Code: ux.CodeNotAuthenticated,
 			Msg: fmt.Sprintf("the backend rejected the signed assertion for identity %q on %q: %v",
@@ -185,7 +145,7 @@ func contextAuthErr(err error, st *clictx.ActiveState) error {
 	}
 	return &ux.CodedError{
 		Code: ux.CodeNotAuthenticated,
-		Msg: fmt.Sprintf("could not authenticate identity %q with environment %q: %v",
+		Msg: fmt.Sprintf("could not authenticate identity %q with environment %q: %v (run `jentic doctor` to check your setup)",
 			st.IdentityName, st.EnvironmentName, err),
 		Actionable: "jentic register",
 	}

@@ -54,11 +54,3 @@ var _ = date
 func wantsInteractive(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 	return cmdcore.WantsInteractive(cmd, yes, fieldFlags...)
 }
-
-// Approval-poll cadence, mirrored from cmdcore so the wizard's own poll loops
-// use the exact same timing (and shrink together under tests).
-var (
-	pollInitialDelay = cmdcore.PollInitialDelay
-	pollMaxDelay     = cmdcore.PollMaxDelay
-	pollDelayStep    = cmdcore.PollDelayStep
-)

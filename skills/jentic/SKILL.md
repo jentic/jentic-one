@@ -58,6 +58,11 @@ matched exactly.) Once approved, a
 token is minted and reused automatically; you never handle raw API
 credentials — the CLI attaches the bearer token for you.
 
+If your operator self-registered this agent and handed you a one-time claim
+token, bind it to a human identity with `jentic identity claim <agent-id>
+--token <token>` (an agent cannot claim itself; requires an active human
+context).
+
 ### 2. Check what you can do, and request access if needed
 
 See your own identity, status, scopes, and which toolkits you're bound to:
@@ -289,6 +294,11 @@ jentic access refresh
 jentic catalog import googleapis.com/sheets
 ```
 
+   To register an API that is **not** in the catalog, upload its OpenAPI spec
+   directly with `jentic apis import <file|url> --vendor <vendor> --name <name>
+   --version <version>` (reads a local file inline or fetches a URL; async, prints
+   a job id). This needs `apis:write` rather than `catalog:import`.
+
 3. Now search the local registry, or list an API's operations directly:
 
 ```
@@ -315,7 +325,9 @@ access request for a made-up "catalog read" scope.
 import (also surfaced by `jenticctl status`). Re-importing promotes the new spec
 to **live**, changing behavior, so this is an **operator** decision: **suggest**
 the re-import (`jentic catalog import <vendor/name>`) to the operator and let them
-run it — never silently re-import on your own.
+run it — never silently re-import on your own. (`jentic catalog refresh` rebuilds
+the catalog manifest from upstream but requires `org:admin`, so it too is an
+operator action.)
 
 **Before concluding "the data is gone", confirm which backend you're on.** If
 APIs, credentials, or toolkits you *know* existed appear missing — or IDs look

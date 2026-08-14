@@ -213,3 +213,20 @@ func seedContext(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestContextBare_ShowsActiveThenHelp checks that bare `jentic context` (UX5)
+// runs cleanly whether or not a context is active: it renders the active
+// context view followed by the subcommand list, and drops straight to help when
+// nothing is active — never erroring in either case.
+func TestContextBare_ShowsActiveThenHelp(t *testing.T) {
+	withXDG(t)
+	// No active context yet: must not error (just shows help).
+	if err := runJentic(t, "context"); err != nil {
+		t.Fatalf("bare context (no active): %v", err)
+	}
+	// With an active context: must not error (shows view + help).
+	seedContext(t)
+	if err := runJentic(t, "context"); err != nil {
+		t.Fatalf("bare context (active): %v", err)
+	}
+}

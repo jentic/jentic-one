@@ -40,7 +40,7 @@ func TestDoctorReportsReachableIdentity(t *testing.T) {
 
 	// The doctor inspects the ACTIVE context from the command context.
 	cmd := newDoctorCmd(app)
-	cmd.SetContext(v2Ctx(srv.URL))
+	cmd.SetContext(activeCtx(srv.URL))
 	_ = cmd.Flags().Set("json", "true")
 	if err := cmd.RunE(cmd, nil); err != nil {
 		t.Fatalf("doctor: %v", err)

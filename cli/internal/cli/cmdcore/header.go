@@ -31,14 +31,34 @@ func (a *App) BrandHeader(baseURLFlag, cliVersion string) string {
 	info := a.probeServer(baseURL)
 
 	panel := theme.VersionPanel(cliVersion, info.Version, info.Running)
-	return theme.LogoHeader(width, panel)
+	header := theme.LogoHeader(width, panel)
+	// Surface the active context under the version panel so the persistent,
+	// always-on brand surface answers "who am I right now?" (UX5). Dim, like the
+	// rest of the panel, and only on an interactive terminal — this branch is
+	// already gated on a TTY, so it is suppressed for piped/machine output
+	// exactly like the version panel above it.
+	if name := activeContextName(); name != "" {
+		header += "\n" + theme.Dim.Render("context: "+name)
+	}
+	return header
+}
+
+// activeContextName returns the name of the active context, or "" when none is
+// set or the config can't be read. Best-effort and non-fatal: the header is
+// cosmetic, so any resolution failure just omits the line.
+func activeContextName() string {
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.ActiveContext
 }
 
 // headerProbeURL resolves the control-plane URL the help header probes for a
-// server version, with precedence: an explicit --base-url flag > the active V2
+// server version, with precedence: an explicit --base-url flag > the active
 // context's environment base_url > the legacy config's base_url > the built-in
 // default (UX-25). Before this the header only consulted the legacy
-// internal/config store, so a V2-only machine pointed at a remote install
+// internal/config store, so a context-only machine pointed at a remote install
 // still probed the local default (127.0.0.1:8000) in its banner. Every branch
 // is best-effort and non-fatal — the header is cosmetic, so any resolution
 // failure just falls through to the next source.
@@ -46,7 +66,7 @@ func headerProbeURL(paths config.Paths, baseURLFlag string) string {
 	if baseURLFlag != "" {
 		return baseURLFlag
 	}
-	// V2 first: the active context's environment base_url is what data-plane
+	// The active context's environment base_url is what data-plane
 	// commands actually use, so the header should reflect the same target.
 	if st, err := sdkconfig.LoadState(""); err == nil && st != nil && st.BaseURL != "" {
 		return st.BaseURL

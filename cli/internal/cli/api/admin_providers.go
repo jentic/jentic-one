@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -140,10 +141,10 @@ func (a *app) providersSet(cmd *cobra.Command, opts *providerSetOptions, name st
 	}
 	rec := resp.JSON200
 
-	if jsonOrPretty(cmd, opts.json) {
-		return writeJSON(a.Out, rec)
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
+		return cmdcore.WriteJSON(a.Out, rec)
 	}
-	fmt.Fprintln(a.Out, dotOK()+" "+theme.Accent.Render(rec.Name)+" "+theme.Dim.Render("configured"))
+	fmt.Fprintln(a.Out, cmdcore.DotOK()+" "+theme.Accent.Render(rec.Name)+" "+theme.Dim.Render("configured"))
 	a.printProviderDetail(rec)
 	return nil
 }
@@ -197,8 +198,8 @@ func (a *app) providersGet(cmd *cobra.Command, jsonFlag bool, name string) error
 		return err
 	}
 	rec := resp.JSON200
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, rec)
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
+		return cmdcore.WriteJSON(a.Out, rec)
 	}
 	a.printProviderDetail(rec)
 	return nil
@@ -217,19 +218,19 @@ func (a *app) providersList(cmd *cobra.Command, jsonFlag bool) error {
 		return err
 	}
 	recs := resp.JSON200.Data
-	if jsonOrPretty(cmd, jsonFlag) {
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		if recs == nil {
 			recs = []control.ProviderConfigResponse{}
 		}
-		return writeList(a.Out, recs, "", nil)
+		return cmdcore.WriteList(a.Out, recs, "", nil)
 	}
 	fmt.Fprintln(a.Out, theme.Heading.Render("Provider configs"))
 	if len(recs) == 0 {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("none configured"))
+		fmt.Fprintln(a.Out, cmdcore.DotDown()+" "+theme.Dim.Render("none configured"))
 		return nil
 	}
 	for _, rec := range recs {
-		fmt.Fprintln(a.Out, dotOK()+" "+theme.Accent.Render(rec.Name))
+		fmt.Fprintln(a.Out, cmdcore.DotOK()+" "+theme.Accent.Render(rec.Name))
 	}
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("%d provider(s)", len(recs))))

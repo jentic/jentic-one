@@ -128,7 +128,6 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	fastPollV2(t)
 	srv, _ := bootstrapServer(t, 2) // two pending polls before approval
 
 	app := testApp(t)

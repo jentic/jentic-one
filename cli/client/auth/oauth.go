@@ -61,6 +61,60 @@ func (e *AssertionInvalidError) Error() string {
 	return e.Detail
 }
 
+// ClaimContext carries the caller-side facts the token-exchange classifier needs
+// beyond the error itself. ClaimOutstanding is true while a claim token has been
+// issued but the human has not yet claimed+approved the agent in the console: in
+// that window the backend rejects the exchange with the SAME ambiguous 400
+// invalid_grant "Assertion is invalid" string it uses for a real audience
+// mismatch (the approval-status gate runs before signature/audience). Callers
+// that know a claim is outstanding pass true so the classifier treats that as
+// pending rather than a hard failure.
+type ClaimContext struct {
+	ClaimOutstanding bool
+}
+
+// TokenExchangeOutcome is the classified meaning of a token-exchange failure,
+// with the claim-vs-audience ambiguity already resolved.
+type TokenExchangeOutcome int
+
+const (
+	// OutcomeOther is any failure that is neither pending nor a rejected
+	// assertion (network, unexpected status, decode error, …).
+	OutcomeOther TokenExchangeOutcome = iota
+	// OutcomePending means the identity is registered but not active yet —
+	// keep waiting / exit 3 with --wait.
+	OutcomePending
+	// OutcomeAssertionInvalid means the signed assertion was rejected (usually
+	// an audience mismatch) — polling will never clear it, so stop with an
+	// actionable fix.
+	OutcomeAssertionInvalid
+)
+
+// ClassifyTokenExchange resolves a token-exchange error into one of the three
+// caller-facing outcomes, folding in the claim-outstanding disambiguation so
+// the register wait loop and the data-plane session path share ONE rule (QA-9/
+// QA-24). A *PendingError is pending. A *AssertionInvalidError is a hard
+// assertion failure UNLESS a claim is still outstanding, in which case the
+// identical backend string means "not claimed/approved yet" and we treat it as
+// pending. Anything else is OutcomeOther.
+func ClassifyTokenExchange(err error, cc ClaimContext) TokenExchangeOutcome {
+	if err == nil {
+		return OutcomeOther
+	}
+	var pending *PendingError
+	if errors.As(err, &pending) {
+		return OutcomePending
+	}
+	var ai *AssertionInvalidError
+	if errors.As(err, &ai) {
+		if cc.ClaimOutstanding {
+			return OutcomePending
+		}
+		return OutcomeAssertionInvalid
+	}
+	return OutcomeOther
+}
+
 // ErrNotRegistered indicates the identity has no client-id registration in the
 // active environment — the exchange cannot even be attempted. Exposed as a
 // sentinel so CLI layers can map it to the NOT_AUTHENTICATED error code rather

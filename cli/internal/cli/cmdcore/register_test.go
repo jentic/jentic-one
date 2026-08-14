@@ -3,11 +3,13 @@ package cmdcore
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 )
 
@@ -241,4 +243,38 @@ func TestPresentClaimAffordance(t *testing.T) {
 			t.Errorf("empty-token claim affordance must be silent, got: %q", got)
 		}
 	})
+}
+
+// TestSiblingContextInEnv proves the multi-agent "why a new context" pointer
+// (UX5) fires only when a SECOND agent joins an env that already had one: it
+// finds the pre-existing sibling context (same env, different context) and is
+// silent (returns "") for the common single-agent case.
+func TestSiblingContextInEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+
+	// First agent in env "qa1": no sibling yet.
+	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
+		cfg.Contexts["qa1-bot"] = sdkconfig.Context{Environment: "qa1", Identity: "bot"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := siblingContextInEnv("qa1", "qa1-bot"); got != "" {
+		t.Errorf("single agent in env should have no sibling, got %q", got)
+	}
+
+	// Second agent joins env "qa1": the first context is the sibling. A context
+	// in a DIFFERENT env must be ignored.
+	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
+		cfg.Contexts["qa1-bot5"] = sdkconfig.Context{Environment: "qa1", Identity: "bot5"}
+		cfg.Contexts["prod-bot"] = sdkconfig.Context{Environment: "prod", Identity: "bot"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := siblingContextInEnv("qa1", "qa1-bot5"); got != "qa1-bot" {
+		t.Errorf("sibling in same env = %q, want %q", got, "qa1-bot")
+	}
 }

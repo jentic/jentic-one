@@ -1,6 +1,6 @@
 package localagentcmd
 
-// context_export.go hands the operator's ACTIVE V2 context to the shared agent
+// context_export.go hands the operator's ACTIVE context to the shared agent
 // account at launch time. The identity's home store stays the OPERATOR's XDG
 // tree (registration/approval are operator ceremonies); what the agent gets is
 // a fresh export of exactly the material its session needs — a minimal
@@ -31,7 +31,7 @@ import (
 
 // exportContextToAgent writes the active context's config + credentials into
 // the agent home's XDG store (<home>/.config/jentic, <home>/.local/state/
-// jentic) and chowns them to the agent user. When there is no active V2
+// jentic) and chowns them to the agent user. When there is no active
 // context (or the session is file-less) it is a reported no-op — the session
 // then simply has no identity until the operator registers one.
 //
@@ -39,7 +39,7 @@ import (
 // session the actor IS an agent, so fencing must hold there regardless of the
 // operator-side mode.
 func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
-	st := clictx.ActiveV2(ctx)
+	st := clictx.ActiveContext(ctx)
 	if st == nil {
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"No active context to hand to the agent — its session starts without an identity "+

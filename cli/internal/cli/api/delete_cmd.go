@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -9,78 +8,8 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
-
-// reportCoded is the error path for the V2 context/env/identity/migrate commands:
-// it routes the failure through the Audience (structured AgentError JSON on
-// stderr for agents, a styled line for humans) and returns a *ux.CodedError so
-// core.Run mirrors the exit code from the taxonomy AND suppresses its own generic
-// "error:" line (a *ux.CodedError satisfies core.ExitCoder, so Run does not print
-// it — avoiding a double report). Non-coded errors are wrapped as INTERNAL_ERROR.
-//
-// This is the sanctioned command-side error contract for the new surface: never
-// fmt.Fprintln to stderr directly, never return a bare error (which would print
-// unstructured text and skip the envelope in agent mode).
-func reportCoded(aud ux.Audience, err error) error {
-	if err == nil {
-		return nil
-	}
-	coded := asCoded(err)
-	aud.ReportError(coded, coded.Actionable)
-	return coded
-}
-
-// asCoded coerces any error into a *ux.CodedError, preserving one that is already
-// coded (so the taxonomy exit code and actionable step survive), mapping the
-// SDK's typed auth failures to their taxonomy codes (AGT-7: a token-mint
-// failure inside a data command must surface as NOT_AUTHENTICATED /
-// PENDING_APPROVAL, not INTERNAL_ERROR), and wrapping everything else as
-// INTERNAL_ERROR (exit 1) — the fail-toward-generic rule from 13 §6.
-func asCoded(err error) *ux.CodedError {
-	var coded *ux.CodedError
-	if errors.As(err, &coded) {
-		return coded
-	}
-	if errors.Is(err, auth.ErrNotRegistered) {
-		return &ux.CodedError{
-			Code:       ux.CodeNotAuthenticated,
-			Msg:        err.Error(),
-			Actionable: "jentic identity register",
-		}
-	}
-	var pending *auth.PendingError
-	if errors.As(err, &pending) {
-		return &ux.CodedError{
-			Code:       ux.CodePendingApproval,
-			Msg:        err.Error(),
-			Actionable: "wait for an operator to approve this identity, then retry",
-		}
-	}
-	// AGT-22: an unconfigured machine (no XDG context / no plane URL) is a
-	// recoverable RESOLVE_FAILED (exit 2, "change the ask, don't retry the same
-	// call"), NOT INTERNAL_ERROR. The client constructors return the typed
-	// clictx.ErrNoConfig sentinel for exactly this; give an agent the recovery
-	// command instead of the terse "internal error" a bare wrap would produce.
-	if errors.Is(err, clictx.ErrNoConfig) {
-		return &ux.CodedError{
-			Code:       ux.CodeResolveFailed,
-			Msg:        err.Error(),
-			Actionable: "jentic register --url <control-plane URL>",
-		}
-	}
-	return &ux.CodedError{Code: ux.CodeInternalError, Msg: err.Error()}
-}
-
-// mustMarkRequired marks a flag required, panicking on the only failure mode
-// (the flag does not exist) — a wiring bug we want surfaced loudly at startup,
-// not silently ignored (impl/1.3 §3 lint policy: pick one policy, apply it).
-func mustMarkRequired(cmd *cobra.Command, name string) {
-	if err := cmd.MarkFlagRequired(name); err != nil {
-		panic("mustMarkRequired: " + err.Error())
-	}
-}
 
 // deleteSpec parameterizes the shared delete flow for a top-level config resource
 // (environment/identity). The env and identity delete commands differ only in the

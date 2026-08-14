@@ -18,7 +18,7 @@ import (
 // URL is sent as a fetchable source; a local file is read and sent inline. Import
 // is asynchronous — the command reports the returned job id/status.
 //
-// This subcommand is the V2-SDK path; the sibling `apis` subcommands remain on
+// This subcommand is the SDK path; the sibling `apis` subcommands remain on
 // the shipped internal/apiclient path until the broader re-plumb.
 func newApisImportCmd(_ *app) *cobra.Command {
 	var vendor, name, version, submittedBy string

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestMutateConfigConcurrentContention is the V2 (client/config) port of the
+// TestMutateConfigConcurrentContention is the (client/config) port of the
 // legacy 16-writer contention test (QA-6). MutateConfig does a read-modify-write
 // under an advisory flock; without the lock, concurrent writers each adding a
 // distinct environment would clobber one another's additions (lost update). We
@@ -55,7 +55,7 @@ func TestMutateConfigConcurrentContention(t *testing.T) {
 	}
 }
 
-// TestLoadStateRejectsCorruptConfig proves the V2 resolver fails CLOSED on a
+// TestLoadStateRejectsCorruptConfig proves the resolver fails CLOSED on a
 // malformed config.yaml (QA-7): a truncated / non-YAML / wrong-typed document
 // must surface a parse error rather than panicking or silently resolving to an
 // empty (and thus misleadingly "unconfigured") state. Each case writes a broken

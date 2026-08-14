@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -637,9 +638,9 @@ func (m *apisBrowser) detailBody() string {
 	if api.DisplayName != "" {
 		b.WriteString(theme.Field("name", api.DisplayName) + "\n")
 	}
-	state, dot := "no live revision", dotDown()
+	state, dot := "no live revision", cmdcore.DotDown()
 	if api.CurrentRevisionID != "" {
-		state, dot = "live", dotOK()
+		state, dot = "live", cmdcore.DotOK()
 	}
 	b.WriteString(dot + " " + theme.Field("status", state) + "\n")
 	b.WriteString(theme.Field("revisions", strconv.Itoa(api.RevisionCount)) + "  " +

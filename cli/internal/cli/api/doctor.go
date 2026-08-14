@@ -105,7 +105,7 @@ func (a *app) doctorE(cmd *cobra.Command, jsonFlag bool) error {
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
 
-	if jsonOrPretty(cmd, jsonFlag) {
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return d.renderJSON()
 	}
 	return d.render()
@@ -158,7 +158,7 @@ func (d *agentDoctor) checkPaths() {
 // token ("" if none), which the reachability and skew checks reuse.
 func (d *agentDoctor) checkIdentity(ctx context.Context) (baseURL, token string) {
 	const section = "Identity"
-	st := clictx.ActiveV2(ctx)
+	st := clictx.ActiveContext(ctx)
 	if st == nil {
 		d.add(section, "session", agentWarn, "no active context",
 			"run `jentic register --url <install URL>` to onboard, or `jentic context use <name>`")
@@ -167,7 +167,7 @@ func (d *agentDoctor) checkIdentity(ctx context.Context) (baseURL, token string)
 	return d.checkContextIdentity(st)
 }
 
-// checkContextIdentity is the V2-context arm of checkIdentity: it inspects the
+// checkContextIdentity is the context arm of checkIdentity: it inspects the
 // XDG store for the active (identity, environment) pair — registration state
 // from config.yaml, credential files from the state dir — reporting each
 // missing piece read-only, exactly like the legacy arm.
@@ -205,7 +205,7 @@ func (d *agentDoctor) checkContextIdentity(st *clictx.ActiveState) (baseURL, tok
 		return st.BaseURL, ""
 	case reg.Status != "approved":
 		d.add(section, "session", agentWarn,
-			fmt.Sprintf("%s is registered but %s", pair, valueOr(reg.Status, "pending")),
+			fmt.Sprintf("%s is registered but %s", pair, cmdcore.ValueOr(reg.Status, "pending")),
 			"wait for an operator to approve it")
 	}
 
@@ -332,7 +332,7 @@ func (d *agentDoctor) renderJSON() error {
 	}
 	out.Checks = d.checks
 	out.Summary.Passed, out.Summary.Warnings, out.Summary.Failed = d.counts()
-	if err := writeJSON(d.app.Out, out); err != nil {
+	if err := cmdcore.WriteJSON(d.app.Out, out); err != nil {
 		return err
 	}
 	if out.Summary.Failed > 0 {
