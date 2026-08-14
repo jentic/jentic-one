@@ -12,7 +12,8 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
-	"github.com/jentic/jentic-one/cli/internal/adminclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -104,12 +105,14 @@ func newProvidersListCmd(app *app) *cobra.Command {
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-func (a *app) adminSession(ctx context.Context) (*adminclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx)
-	if err != nil {
-		return nil, "", err
+// adminClient resolves the generated control client for the active context
+// (ARCH-21: auth/session/retry are baked into the SDK transport, so there is no
+// base-URL/token to thread through the admin calls).
+func (a *app) adminClient(ctx context.Context) (*control.ClientWithResponses, error) {
+	if _, err := a.requireState(ctx); err != nil {
+		return nil, err
 	}
-	return adminclient.New(baseURL), token, nil
+	return clictx.GetControlClient(ctx)
 }
 
 // ── set ──────────────────────────────────────────────────────────────────────
@@ -130,14 +133,16 @@ func (a *app) providersSet(cmd *cobra.Command, opts *providerSetOptions, name st
 		config["client_secret"] = secret
 	}
 
-	client, token, err := a.adminSession(ctx)
+	client, err := a.adminClient(ctx)
 	if err != nil {
 		return err
 	}
-	rec, err := client.SetProvider(ctx, token, name, config)
-	if err != nil {
+	resp, err := client.SetProviderConfigWithResponse(ctx, name,
+		control.SetProviderConfigJSONRequestBody{Config: config})
+	if err := apiErrorFor(resp, err); err != nil {
 		return err
 	}
+	rec := resp.JSON200
 
 	if jsonOrPretty(cmd, opts.json) {
 		return writeJSON(a.Out, rec)
@@ -187,14 +192,15 @@ func (a *app) readProviderSecret(fromStdin bool) (string, error) {
 
 func (a *app) providersGet(cmd *cobra.Command, jsonFlag bool, name string) error {
 	ctx := cmd.Context()
-	client, token, err := a.adminSession(ctx)
+	client, err := a.adminClient(ctx)
 	if err != nil {
 		return err
 	}
-	rec, err := client.GetProvider(ctx, token, name)
-	if err != nil {
+	resp, err := client.GetProviderConfigWithResponse(ctx, name)
+	if err := apiErrorFor(resp, err); err != nil {
 		return err
 	}
+	rec := resp.JSON200
 	if jsonOrPretty(cmd, jsonFlag) {
 		return writeJSON(a.Out, rec)
 	}
@@ -206,17 +212,18 @@ func (a *app) providersGet(cmd *cobra.Command, jsonFlag bool, name string) error
 
 func (a *app) providersList(cmd *cobra.Command, jsonFlag bool) error {
 	ctx := cmd.Context()
-	client, token, err := a.adminSession(ctx)
+	client, err := a.adminClient(ctx)
 	if err != nil {
 		return err
 	}
-	recs, err := client.ListProviders(ctx, token)
-	if err != nil {
+	resp, err := client.ListProviderConfigsWithResponse(ctx)
+	if err := apiErrorFor(resp, err); err != nil {
 		return err
 	}
+	recs := resp.JSON200.Data
 	if jsonOrPretty(cmd, jsonFlag) {
 		if recs == nil {
-			recs = []adminclient.ProviderConfig{}
+			recs = []control.ProviderConfigResponse{}
 		}
 		return writeList(a.Out, recs, "", nil)
 	}
@@ -235,7 +242,7 @@ func (a *app) providersList(cmd *cobra.Command, jsonFlag bool) error {
 
 // ── render ───────────────────────────────────────────────────────────────────
 
-func (a *app) printProviderDetail(rec *adminclient.ProviderConfig) {
+func (a *app) printProviderDetail(rec *control.ProviderConfigResponse) {
 	fmt.Fprintln(a.Out, theme.Heading.Render(rec.Name))
 	keys := make([]string, 0, len(rec.Config))
 	for k := range rec.Config {

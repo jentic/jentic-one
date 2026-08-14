@@ -355,7 +355,14 @@ func TestSensitiveTablesRegistered(t *testing.T) {
 // Currently EMPTY: every generated request struct constructed in the command
 // package is registered in CuratedBindings(). A new one must be registered
 // (preferred) or added here with a reason.
-var curatedMigrationAllowlist = map[string]string{}
+var curatedMigrationAllowlist = map[string]string{
+	// admin config providers set: the body's only field is Config (a free-form
+	// map[string]any validated server-side by provider name), not spec-derived
+	// scalar fields — so binder flag-coverage parity (Test1G) does not apply. The
+	// command builds Config from named flags (--project-id/--client-id/…) plus a
+	// prompted client_secret (ARCH-21 A1, migrated off internal/adminclient).
+	"control.SetProviderConfigJSONRequestBody": "free-form Config map, no reflectable scalar fields; built from named admin-provider flags",
+}
 
 // TestCuratedRegistryCoversGeneratedStructs is the QA-3/GEN-4 meta-test: it
 // AST-scans the shipped command package (internal/cli/api) for every
