@@ -11,6 +11,7 @@ import type { AgentScopesResponse } from '../models/AgentScopesResponse';
 import type { ApiKeyHistoryResponse } from '../models/ApiKeyHistoryResponse';
 import type { ApiKeyInfoResponse } from '../models/ApiKeyInfoResponse';
 import type { ApiKeyResponse } from '../models/ApiKeyResponse';
+import type { ClaimRequest } from '../models/ClaimRequest';
 import type { jentic_one__auth__web__schemas__agents__DenyRequest } from '../models/jentic_one__auth__web__schemas__agents__DenyRequest';
 import type { ToolkitBindingListResponse } from '../models/ToolkitBindingListResponse';
 import type { ToolkitBindingResponse } from '../models/ToolkitBindingResponse';
@@ -380,6 +381,53 @@ export class AgentsService {
             path: {
                 'agent_id': agentId,
             },
+            errors: {
+                400: `Bad Request`,
+                401: `Unauthorized`,
+                403: `Forbidden`,
+                422: `Unprocessable Entity`,
+                500: `Internal Server Error`,
+                503: `Service Unavailable`,
+            },
+        });
+    }
+    /**
+     * Claim Agent
+     * Claim ownership of a self-registered agent using its claim token.
+     *
+     * Authenticated by the platform bearer token but requires **no** agent
+     * permission — the single-use claim token minted at ``/register`` is the proof,
+     * so the registering human (even a plain member) can take ownership. Sets
+     * ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+     *
+     * Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+     * only a human can own an agent. The ``require_actor_type`` gate rejects a
+     * non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+     * ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+     *
+     * ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+     * claiming is an onboarding step a brand-new user may hit before they have
+     * rotated a temporary password, so a must-change-password state must not block
+     * it. The claim only sets ownership — it grants no scopes and cannot act as the
+     * agent — so allowing it under an expired password is low-risk.
+     * @returns AgentResponse Successful Response
+     * @throws ApiError
+     */
+    public static claimAgent({
+        agentId,
+        requestBody,
+    }: {
+        agentId: string,
+        requestBody: ClaimRequest,
+    }): CancelablePromise<AgentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/agents/{agent_id}:claim',
+            path: {
+                'agent_id': agentId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 400: `Bad Request`,
                 401: `Unauthorized`,

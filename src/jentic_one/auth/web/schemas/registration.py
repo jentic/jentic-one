@@ -50,6 +50,11 @@ class RegisterResponse(BaseModel):
     status: str
     grant_types: list[str] = ["urn:ietf:params:oauth:grant-type:jwt-bearer"]
     token_endpoint_auth_method: str = "private_key_jwt"
+    # Opaque, single-use ownership-claim token. Present only when the deployment
+    # installs a claim-token minter (multi-user deployments); the registering
+    # human presents it to POST /agents/{id}:claim to take ownership. Omitted on
+    # the OSS single-user default (no minter → no claim flow).
+    claim_token: str | None = None
 
 
 class RegistrationStatusResponse(BaseModel):

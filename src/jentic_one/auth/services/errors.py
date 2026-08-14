@@ -105,3 +105,33 @@ class InvalidOwnerError(AuthServiceError):
     def __init__(self, owner_id: str) -> None:
         super().__init__(f"User '{owner_id}' does not exist")
         self.owner_id = owner_id
+
+
+class ClaimTokenInvalidError(AuthServiceError):
+    """Raised when an agent-ownership claim token is missing, wrong, or expired."""
+
+    def __init__(self, reason: str = "invalid_claim_token") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class AgentAlreadyOwnedError(AuthServiceError):
+    """Raised when claiming an agent that already has an owner."""
+
+    def __init__(self, agent_id: str) -> None:
+        super().__init__(f"Agent '{agent_id}' already has an owner")
+        self.agent_id = agent_id
+
+
+class ClaimActorNotAllowedError(AuthServiceError):
+    """Raised when a non-user actor tries to claim agent ownership.
+
+    ``Agent.owner_id`` is a FK to ``users.id``, so only a human user can own an
+    agent. An authenticated agent/service-account/toolkit presenting the claim
+    token is rejected here rather than being allowed to write a non-user id into
+    the users-FK column (which would fail as an unhandled integrity error).
+    """
+
+    def __init__(self, actor_type: str) -> None:
+        super().__init__(f"Actor type '{actor_type}' cannot claim agent ownership")
+        self.actor_type = actor_type

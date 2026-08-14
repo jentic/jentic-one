@@ -47,6 +47,7 @@ async def register_endpoint(
         registration_access_token=result.registration_access_token,
         registration_client_uri=result.registration_client_uri,
         status=result.status,
+        claim_token=result.claim_token,
     )
 
 

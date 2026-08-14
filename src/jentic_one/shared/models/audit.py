@@ -26,6 +26,7 @@ class AuditAction(StrEnum):
     CONFIRM = "confirm"
     DEPRECATE = "deprecate"
     REGISTER = "register"
+    CLAIM = "claim"
 
 
 class AuditReason(StrEnum):

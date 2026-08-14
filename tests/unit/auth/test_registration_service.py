@@ -29,6 +29,7 @@ def _make_ctx() -> MagicMock:
 
     ctx.admin_db.run_in_transaction = AsyncMock(side_effect=_run_in_transaction)
     ctx.config.auth.rat_ttl_seconds = 900
+    ctx.config.auth.claim_ttl_seconds = 900
     ctx.config.auth.canonical_base_url = "https://auth.example.com"
     return ctx
 
@@ -149,6 +150,47 @@ async def test_dcr_agent_remains_pending(mock_repo: MagicMock) -> None:
     assert result.status == "pending"
     assert agent.approved_by is None
     assert agent.approved_at is None
+
+
+@patch("jentic_one.auth.services.registration_service.AgentRepository")
+async def test_register_no_claim_token_by_default(mock_repo: MagicMock) -> None:
+    """OSS default: no claim-token minter installed → response carries no token
+    and no claim columns are set on the agent."""
+    ctx = _make_ctx()
+    agent = MagicMock()
+    agent.id = "agnt_test123"
+    agent.status = "pending"
+    agent.claim_token_hash = None
+    mock_repo.create_dcr = AsyncMock(return_value=agent)
+
+    svc = RegistrationService(ctx)
+    result = await svc.register("my-agent", _valid_jwks())
+
+    assert result.claim_token is None
+
+
+@patch("jentic_one.auth.services.registration_service.get_claim_token_minter")
+@patch("jentic_one.auth.services.registration_service.AgentRepository")
+async def test_register_mints_claim_token_when_minter_installed(
+    mock_repo: MagicMock, mock_get_minter: MagicMock
+) -> None:
+    """With a minter installed, the plaintext is returned once and only its hash
+    is stored on the agent row."""
+    ctx = _make_ctx()
+    agent = MagicMock()
+    agent.id = "agnt_test123"
+    agent.status = "pending"
+    mock_repo.create_dcr = AsyncMock(return_value=agent)
+    mock_get_minter.return_value = lambda _agent_id: "claim-secret-xyz"
+
+    svc = RegistrationService(ctx)
+    result = await svc.register("my-agent", _valid_jwks())
+
+    assert result.claim_token == "claim-secret-xyz"
+    # Only the hash lands on the row — never the plaintext.
+    assert agent.claim_token_hash == _hash_rat("claim-secret-xyz")
+    assert agent.claim_token_hash != "claim-secret-xyz"
+    assert agent.claim_expires_at is not None
 
 
 @patch("jentic_one.auth.services.registration_service.AgentRepository")
