@@ -539,6 +539,28 @@ def test_claim_agent_wrong_token(member_client: TestClient, claimable_agent_id: 
     assert resp.json()["type"] == "invalid_claim_token"
 
 
+def test_claim_agent_non_user_actor_forbidden(
+    web_context: Context, claimable_agent_id: str
+) -> None:
+    """A non-user actor (agent) with a valid token is refused (403) — owner_id is
+    a FK to users.id, so only a human user can own an agent. Guards against a
+    self-registered agent claiming itself into an integrity error / 500."""
+    config = web_context.config.admin.auth
+    claims = {
+        "sub": "agnt_selfclaimer",
+        "email": "",
+        "actor_type": "agent",
+        "permissions": [],
+        "must_change_password": False,
+    }
+    token = issue_jwt(claims, config.jwt_secret.get_secret_value(), config.jwt_ttl_seconds)
+    app = _build_app(web_context)
+    with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as tc:
+        resp = tc.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
+    assert resp.status_code == 403
+    assert resp.json()["type"] == "claim_actor_not_allowed"
+
+
 def test_claim_agent_unauthenticated(unauthed_client: TestClient, claimable_agent_id: str) -> None:
     resp = unauthed_client.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
     assert resp.status_code == 401

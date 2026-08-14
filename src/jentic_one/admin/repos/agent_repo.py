@@ -112,7 +112,14 @@ class AgentRepository:
 
     @staticmethod
     async def set_approval(session: AsyncSession, agent_id: str, *, approved_by: str) -> Agent:
-        agent = await session.get(Agent, agent_id)
+        # Lock the row: approval sets owner_id only when still unowned, and a
+        # concurrent `:claim` (which locks + commits owner_id) can interleave
+        # under READ COMMITTED. Taking the same row lock serializes the two, so
+        # the `owner_id is None` check below sees a just-committed claim and does
+        # not overwrite the claimant — the exact "operator silently becomes
+        # owner" outcome the claim flow exists to prevent.
+        stmt = select(Agent).where(Agent.id == agent_id).with_for_update()
+        agent = (await session.execute(stmt)).scalar_one_or_none()
         if agent is None:
             raise AgentNotFoundError(agent_id)
         agent.status = ActorStatus.ACTIVE

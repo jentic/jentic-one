@@ -12,9 +12,11 @@ from jentic_one.auth.services.agent_service import AgentService
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
+    ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.models import ActorType
 
 _TOKEN = "claim-secret-xyz"
 _TOKEN_HASH = hashlib.sha256(_TOKEN.encode()).hexdigest()
@@ -154,3 +156,28 @@ async def test_claim_archived_agent_raises(mock_repo: MagicMock) -> None:
 
     with pytest.raises(ActorNotFoundError):
         await svc.claim("agnt_test123", token=_TOKEN, identity=_member_identity())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "actor_type",
+    [ActorType.AGENT, ActorType.SERVICE_ACCOUNT, ActorType.TOOLKIT],
+)
+@patch("jentic_one.auth.services.agent_service.AgentRepository")
+async def test_claim_non_user_actor_rejected(mock_repo: MagicMock, actor_type: ActorType) -> None:
+    """Only human users can own agents (owner_id FK → users.id).
+
+    A non-user actor presenting the token is rejected up front (403) — before any
+    DB read — so it can never write a non-user id into the users-FK column (which
+    would be an unhandled integrity error / 500).
+    """
+    ctx = _make_ctx()
+    svc = AgentService(ctx)
+    mock_repo.get_by_id_for_update = AsyncMock()
+    identity = Identity(sub="agnt_bot", email="", permissions=[], actor_type=actor_type)
+
+    with pytest.raises(ClaimActorNotAllowedError):
+        await svc.claim("agnt_test123", token=_TOKEN, identity=identity)
+
+    # Guard fires before any repo access — no row is ever locked/read.
+    mock_repo.get_by_id_for_update.assert_not_awaited()

@@ -399,6 +399,12 @@ export class AgentsService {
      * permission — the single-use claim token minted at ``/register`` is the proof,
      * so the registering human (even a plain member) can take ownership. Sets
      * ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+     *
+     * ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+     * claiming is an onboarding step a brand-new user may hit before they have
+     * rotated a temporary password, so a must-change-password state must not block
+     * it. The claim only sets ownership — it grants no scopes and cannot act as the
+     * agent — so allowing it under an expired password is low-risk.
      * @returns AgentResponse Successful Response
      * @throws ApiError
      */

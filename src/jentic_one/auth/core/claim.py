@@ -33,7 +33,16 @@ class ClaimTokenMinter(Protocol):
 
     def __call__(self, agent_id: str) -> str | None:
         """Return an opaque, single-use claim token for the freshly-created agent,
-        or ``None`` to mint no token (the OSS default — no claim flow)."""
+        or ``None`` to mint no token (the OSS default — no claim flow).
+
+        ``agent_id`` is the id of the row being created. It is provided for
+        context (logging, per-agent policy) but should be treated as **advisory**:
+        OSS retries the registration transaction on transient write contention,
+        and each attempt creates a new agent id, so a minter that *embeds* the id
+        in the token (e.g. a signed token) could bake in a stale one. OSS re-mints
+        per attempt and always returns the token whose hash was stored on the row
+        that committed, so a stateless random token is unaffected either way.
+        """
         ...
 
 

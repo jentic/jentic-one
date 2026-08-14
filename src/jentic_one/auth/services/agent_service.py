@@ -22,6 +22,7 @@ from jentic_one.auth.repos import ToolkitNameRepository
 from jentic_one.auth.services.errors import (
     ActorNotFoundError,
     AgentAlreadyOwnedError,
+    ClaimActorNotAllowedError,
     ClaimTokenInvalidError,
     InvalidOwnerError,
     InvalidTransitionError,
@@ -247,17 +248,33 @@ class AgentService:
         """Assign ownership of a self-registered agent to the claiming caller.
 
         The registering human presents the single-use claim token that was minted
-        at ``/register`` (see ``auth/core/claim.py``). Any *authenticated* caller
-        may claim — the token is the proof, not a role — so a plain member can
-        take ownership of the agent they registered. Once owned, the agent shows
-        under the caller via the normal scoping filter and the existing approve
-        path applies (an admin approving later no longer steals ownership, because
-        ``owner_id`` is already set).
+        at ``/register`` (see ``auth/core/claim.py``). Any *authenticated human
+        user* may claim — the token is the proof, not a role — so a plain member
+        can take ownership of the agent they registered. Once owned, the agent
+        shows under the caller via the normal scoping filter and the existing
+        approve path applies (an admin approving later no longer steals ownership,
+        because ``owner_id`` is already set).
 
-        Raises ``ActorNotFoundError`` (unknown/archived agent),
+        Only ``USER`` actors may claim: ``Agent.owner_id`` is a FK to ``users.id``,
+        so a non-user actor (agent/service-account/toolkit) is rejected up front
+        with ``ClaimActorNotAllowedError`` rather than being allowed to write a
+        non-user id into the users-FK column.
+
+        Ordering note: existence (404) and ownership (409) are checked *before*
+        the token, so an authenticated caller who already knows an agent id can
+        learn whether it is unclaimed without holding a token. This is a
+        deliberate trade-off — it keeps the single-use replay semantics clean, and
+        agent ids are unguessable KSUIDs — not the stronger "never reveal which
+        agents are claimable" property (which holds only for the no-token-issued
+        case, treated as a plain mismatch below).
+
+        Raises ``ClaimActorNotAllowedError`` (non-user actor),
+        ``ActorNotFoundError`` (unknown/archived agent),
         ``AgentAlreadyOwnedError`` (already claimed/owned), or
         ``ClaimTokenInvalidError`` (no token issued, mismatch, or expired).
         """
+        if identity.actor_type != ActorType.USER:
+            raise ClaimActorNotAllowedError(identity.actor_type.value)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         async with self._ctx.admin_db.transaction() as session:
             agent = await AgentRepository.get_by_id_for_update(session, agent_id)
@@ -283,6 +300,7 @@ class AgentService:
                 target_id=agent_id,
                 actor_type=identity.actor_type,
                 actor_id=identity.sub,
+                before={"owner_id": None},
                 after={"owner_id": identity.sub},
                 reason="agent_ownership_claim",
                 origin=identity.origin.value,

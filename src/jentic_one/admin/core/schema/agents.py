@@ -63,5 +63,5 @@ class Agent(AuditableMixin, AdminBase):
     # SEPARATE from the RAT columns above on purpose: the RAT backs the RFC 7592
     # management flow and is nulled by set_approval, so reusing it would drop the
     # claim token exactly when the agent is approved.
-    claim_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    claim_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     claim_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)

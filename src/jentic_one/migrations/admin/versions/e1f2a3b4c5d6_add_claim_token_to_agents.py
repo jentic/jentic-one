@@ -31,10 +31,8 @@ def upgrade() -> None:
     op.add_column(
         "agents", sa.Column("claim_expires_at", sa.DateTime(timezone=True), nullable=True)
     )
-    op.create_index("ix_agents_claim_token_hash", "agents", ["claim_token_hash"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_agents_claim_token_hash", table_name="agents")
     op.drop_column("agents", "claim_expires_at")
     op.drop_column("agents", "claim_token_hash")

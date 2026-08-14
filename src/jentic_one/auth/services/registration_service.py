@@ -108,9 +108,12 @@ class RegistrationService:
 
         claim_ttl = self._ctx.config.auth.claim_ttl_seconds
         claim_minter = get_claim_token_minter()
-        # Minted lazily inside _write (needs the agent id) but cached so a
-        # transaction retry reuses the same plaintext — otherwise the token
-        # returned to the caller wouldn't match the stored hash. OSS default
+        # Minted lazily inside _write (needs the agent id). A transaction retry
+        # creates a NEW agent id (create_dcr generates a fresh KSUID each attempt),
+        # so we cache the plaintext per-agent-id and re-mint for a new id: the
+        # token returned to the caller is always the one whose hash was stored on
+        # the row that actually committed, and a minter that *encodes* the id (per
+        # the ClaimTokenMinter contract) never embeds a stale one. OSS default
         # minter returns None → no claim token, response identical to today.
         minted: dict[str, str | None] = {}
 
@@ -122,9 +125,9 @@ class RegistrationService:
                 rat_hash=rat_hash,
                 rat_expires_at=rat_expires_at,
             )
-            if "claim_token" not in minted:
-                minted["claim_token"] = claim_minter(agent.id)
-            claim_plain = minted["claim_token"]
+            if agent.id not in minted:
+                minted[agent.id] = claim_minter(agent.id)
+            claim_plain = minted[agent.id]
             if claim_plain is not None:
                 agent.claim_token_hash = _hash_rat(claim_plain)
                 agent.claim_expires_at = datetime.now(UTC) + timedelta(seconds=claim_ttl)
@@ -180,7 +183,7 @@ class RegistrationService:
             registration_access_token=rat_plain,
             registration_client_uri=f"{base_url}/register/{agent.id}",
             status=agent.status,
-            claim_token=minted.get("claim_token"),
+            claim_token=minted.get(agent.id),
         )
 
     async def poll_status(self, agent_id: str, rat: str) -> PollResult:
