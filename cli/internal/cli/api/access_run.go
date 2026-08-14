@@ -267,7 +267,7 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *control.AccessReque
 	if !requestGrantedScope(req) {
 		return
 	}
-	st := clictx.ActiveV2(cmd.Context())
+	st := clictx.ActiveContext(cmd.Context())
 	if st == nil {
 		return
 	}

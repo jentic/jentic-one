@@ -47,12 +47,12 @@ type SetupValues struct {
 // stop their remaining steps without inventing a fake success.
 var ErrOnboardCancelled = errors.New("onboarding cancelled")
 
-// RegisterV2Setup is the fresh-machine onboarding: create the environment +
+// RegisterSetup is the fresh-machine onboarding: create the environment +
 // identity + context trio (idempotently — re-running reuses what exists),
 // activate it, then fall into the shared register-and-wait flow. It returns
 // the resolved values so composed flows (bootstrap) can reuse them (e.g. the
 // install URL for skill templating).
-func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout time.Duration, force, interactive bool) (SetupValues, error) {
+func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.Duration, force, interactive bool) (SetupValues, error) {
 	if interactive && vals.URL == "" {
 		fmt.Fprintln(a.Out, theme.Headingf("Agent onboarding"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("Connect this machine to a Jentic install; an operator approves it, then tokens mint."))
@@ -154,13 +154,13 @@ func (a *App) RegisterV2Setup(ctx context.Context, vals SetupValues, timeout tim
 	a.registerProgress(ctx, theme.Successf("Identity %q (agent)", vals.Name))
 	a.registerProgress(ctx, theme.Successf("Context %q (active)", contextName))
 
-	return vals, a.registerV2(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
+	return vals, a.registerAndWait(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
 }
 
-// RegisterV2Active registers the ACTIVE context's identity with its
+// RegisterActive registers the ACTIVE context's identity with its
 // environment — the same store `jentic identity register` writes, plus the
 // human-facing approval wait.
-func (a *App) RegisterV2Active(ctx context.Context, st *clictx.ActiveState, clientName string, timeout time.Duration, force bool) error {
+func (a *App) RegisterActive(ctx context.Context, st *clictx.ActiveState, clientName string, timeout time.Duration, force bool) error {
 	if st.BaseURL == "" {
 		return &ux.CodedError{
 			Code:       ux.CodeResolveFailed,
@@ -171,7 +171,7 @@ func (a *App) RegisterV2Active(ctx context.Context, st *clictx.ActiveState, clie
 	if clientName == "" {
 		clientName = st.IdentityName
 	}
-	return a.registerV2(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
+	return a.registerAndWait(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
 }
 
 // promptOnboardingV2 collects the two fresh-machine onboarding values, styled

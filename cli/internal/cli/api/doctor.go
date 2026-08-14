@@ -158,7 +158,7 @@ func (d *agentDoctor) checkPaths() {
 // token ("" if none), which the reachability and skew checks reuse.
 func (d *agentDoctor) checkIdentity(ctx context.Context) (baseURL, token string) {
 	const section = "Identity"
-	st := clictx.ActiveV2(ctx)
+	st := clictx.ActiveContext(ctx)
 	if st == nil {
 		d.add(section, "session", agentWarn, "no active context",
 			"run `jentic register --url <install URL>` to onboard, or `jentic context use <name>`")

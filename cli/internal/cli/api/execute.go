@@ -140,7 +140,7 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// routes through THAT broker — without it, pointing a context at a remote
 	// install would still execute against the built-in local default.
 	flags := cmd.Flags()
-	if st := clictx.ActiveV2(cmd.Context()); st != nil && st.BrokerURL != "" {
+	if st := clictx.ActiveContext(cmd.Context()); st != nil && st.BrokerURL != "" {
 		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
 			// SEC-21: in a machine mode (agent/service-account) the broker host is
 			// pinned to the environment's configured broker_url. An agent must not

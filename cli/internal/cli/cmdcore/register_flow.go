@@ -25,12 +25,12 @@ var (
 	PollDelayStep    = 1 * time.Second
 )
 
-// registerV2 is the shared register-and-wait body: mint the env-scoped key
+// registerAndWait is the shared register-and-wait body: mint the env-scoped key
 // if absent, perform RFC 7591 DCR (reusing an existing registration so the
 // flow is resumable), persist client_id/status, then wait for operator
 // approval by attempting the token exchange — exactly the credential every
 // data command will use, so success here IS end-to-end proof.
-func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, clientName string, timeout time.Duration, force bool) error {
+func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, clientName string, timeout time.Duration, force bool) error {
 	ref := auth.IdentityRef{Identity: identity, Environment: envName}
 
 	// A jak_* API-key identity has nothing to register: the key IS the
@@ -112,7 +112,7 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
 
 	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
-	if err := a.waitForApprovalV2(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
+	if err := a.waitForApproval(ctx, creds, clientID, timeout, claimToken != ""); err != nil {
 		return err
 	}
 	if err := saveRegState(identity, envName, clientID, "approved"); err != nil {
@@ -147,7 +147,7 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	// Make the active identity unambiguous and switching obvious: register may
 	// have created a NEW per-identity context (env "-" identity), so spell out
 	// who you now are and how to move between agents. This is the same name
-	// RegisterV2Setup activated.
+	// RegisterSetup activated.
 	contextName := sdkconfig.SanitizeName(envName + "-" + identity)
 	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
@@ -162,7 +162,7 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 		theme.Command.Render("jentic bootstrap"),
 		theme.Dim.Render(" also installs the agent skill and can isolate the agent — run it if you're setting up a coding agent."))
 	// Multi-agent case: registering a SECOND agent into an env creates its own
-	// per-identity context and silently makes it active (RegisterV2Setup). Spell
+	// per-identity context and silently makes it active (RegisterSetup). Spell
 	// out WHY a new context appeared and how to get back, so a user who now sees
 	// an unfamiliar active context isn't left wondering what happened to their
 	// first agent (UX5).
@@ -238,11 +238,11 @@ func saveRegState(identity, envName, clientID, status string) error {
 	})
 }
 
-// waitForApprovalV2 is the XDG-store sibling of waitForApproval: it proves
-// approval by forcing a fresh token exchange (the exact credential path every
-// data command uses). A pending registration prints the operator console link
-// and polls on the shared cadence; the timeout returns TIMEOUT_PENDING (exit 3)
-// because re-running after approval resumes cleanly (AGT-4 semantics).
+// waitForApproval proves approval by forcing a fresh token exchange (the exact
+// credential path every data command uses). A pending registration prints the
+// operator console link and polls on the shared cadence; the timeout returns
+// TIMEOUT_PENDING (exit 3) because re-running after approval resumes cleanly
+// (AGT-4 semantics).
 //
 // claimPending is true when registration returned a claim token: the human must
 // still claim + approve in the console before the agent can mint. In that state
@@ -252,7 +252,7 @@ func saveRegState(identity, envName, clientID, status string) error {
 // claim is outstanding we treat that as PENDING (keep waiting / exit clean)
 // rather than the hard audience-mismatch failure, which would abort the flow the
 // moment it started.
-func (a *App) waitForApprovalV2(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration, claimPending bool) error {
+func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration, claimPending bool) error {
 	// Force a FRESH mint even if a (stale-scoped or old-client) token is
 	// cached: register's contract is "when this returns, the server accepts
 	// this identity as of NOW".

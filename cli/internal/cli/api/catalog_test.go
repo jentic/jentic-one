@@ -25,7 +25,7 @@ import (
 func TestAgentSessionResolvesFromContext(t *testing.T) {
 	app := testApp(t)
 
-	baseURL, token, err := app.agentSession(v2Ctx("http://ctrl:9000"))
+	baseURL, token, err := app.agentSession(activeCtx("http://ctrl:9000"))
 	if err != nil {
 		t.Fatalf("agentSession: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestCatalogListRendersAndStatus(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50}, ""); err != nil {
+	if err := app.catalogList(activeCtx(srv.URL), &catalogListOptions{limit: 50}, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -75,7 +75,7 @@ func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
+	if err := app.catalogList(activeCtx(srv.URL), &catalogListOptions{limit: 50, outdated: true}, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if !strings.Contains(gotQuery, "outdated_only=true") {
@@ -107,7 +107,7 @@ func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
 
 	app := testApp(t)
 	opts := &catalogListOptions{limit: 50, outdated: true, includeSnoozed: true}
-	if err := app.catalogList(v2Ctx(srv.URL), opts, ""); err != nil {
+	if err := app.catalogList(activeCtx(srv.URL), opts, ""); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if !strings.Contains(gotQuery, "include_snoozed=true") {
@@ -128,7 +128,7 @@ func TestCatalogSearchPassesQuery(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{limit: 50}, "payments"); err != nil {
+	if err := app.catalogList(activeCtx(srv.URL), &catalogListOptions{limit: 50}, "payments"); err != nil {
 		t.Fatalf("catalogList: %v", err)
 	}
 	if gotQuery != "payments" {
@@ -150,7 +150,7 @@ func TestCatalogShowPreview(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.catalogShow(v2Ctx(srv.URL), &catalogShowOptions{}, "stripe.com"); err != nil {
+	if err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "stripe.com"); err != nil {
 		t.Fatalf("catalogShow: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -184,7 +184,7 @@ func TestCatalogImportAutoPromotes(t *testing.T) {
 
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 5 * time.Second}
-	if err := app.catalogImport(v2Ctx(srv.URL), opts, "stripe.com"); err != nil {
+	if err := app.catalogImport(activeCtx(srv.URL), opts, "stripe.com"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoted != "/apis/stripe.com/main/2024/revisions/rev_1:promote" {
@@ -222,7 +222,7 @@ func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 30 * time.Second}
 	start := time.Now()
-	err := app.catalogImport(v2Ctx(srv.URL), opts, "stripe.com")
+	err := app.catalogImport(activeCtx(srv.URL), opts, "stripe.com")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -262,7 +262,7 @@ func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 
 	app := testApp(t)
 	opts := &catalogImportOptions{timeout: 5 * time.Second, noPromote: true}
-	if err := app.catalogImport(v2Ctx(srv.URL), opts, "v/n"); err != nil {
+	if err := app.catalogImport(activeCtx(srv.URL), opts, "v/n"); err != nil {
 		t.Fatalf("catalogImport: %v", err)
 	}
 	if promoteCalled {
@@ -298,7 +298,7 @@ func TestCatalogListNotAvailable(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	err := app.catalogList(v2Ctx(srv.URL), &catalogListOptions{}, "")
+	err := app.catalogList(activeCtx(srv.URL), &catalogListOptions{}, "")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("expected not-available error, got %v", err)
 	}
@@ -312,7 +312,7 @@ func TestCatalogShowEntryNotFound(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	err := app.catalogShow(v2Ctx(srv.URL), &catalogShowOptions{}, "ghost.com")
+	err := app.catalogShow(activeCtx(srv.URL), &catalogShowOptions{}, "ghost.com")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected not-found error, got %v", err)
 	}

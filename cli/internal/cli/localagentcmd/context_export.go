@@ -39,7 +39,7 @@ import (
 // session the actor IS an agent, so fencing must hold there regardless of the
 // operator-side mode.
 func (a *Cmd) exportContextToAgent(ctx context.Context, acct config.AgentAccount) error {
-	st := clictx.ActiveV2(ctx)
+	st := clictx.ActiveContext(ctx)
 	if st == nil {
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"No active context to hand to the agent — its session starts without an identity "+

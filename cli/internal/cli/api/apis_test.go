@@ -26,7 +26,7 @@ func TestApisListRenders(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisList(v2Ctx(srv.URL), &apisListOptions{limit: 50}); err != nil {
+	if err := app.apisList(activeCtx(srv.URL), &apisListOptions{limit: 50}); err != nil {
 		t.Fatalf("apisList: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -47,7 +47,7 @@ func TestApisListSendsVendor(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisList(v2Ctx(srv.URL), &apisListOptions{vendor: "stripe.com", limit: 50}); err != nil {
+	if err := app.apisList(activeCtx(srv.URL), &apisListOptions{vendor: "stripe.com", limit: 50}); err != nil {
 		t.Fatalf("apisList: %v", err)
 	}
 	if gotVendor != "stripe.com" {
@@ -69,7 +69,7 @@ func TestApisShowRendersDetailAndOps(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisShow(v2Ctx(srv.URL), &apisShowOptions{}, "stripe.com/api/v1"); err != nil {
+	if err := app.apisShow(activeCtx(srv.URL), &apisShowOptions{}, "stripe.com/api/v1"); err != nil {
 		t.Fatalf("apisShow: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -90,7 +90,7 @@ func TestApisRevisionsRenders(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisRevisions(v2Ctx(srv.URL), &apisRevisionsOptions{limit: 50}, "stripe.com/api/v1"); err != nil {
+	if err := app.apisRevisions(activeCtx(srv.URL), &apisRevisionsOptions{limit: 50}, "stripe.com/api/v1"); err != nil {
 		t.Fatalf("apisRevisions: %v", err)
 	}
 	got := app.Out.(*bytes.Buffer).String()
@@ -111,7 +111,7 @@ func TestApisPromoteHitsEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisLifecycle(v2Ctx(srv.URL), "stripe.com/api/v1", "r2", lifecyclePromote); err != nil {
+	if err := app.apisLifecycle(activeCtx(srv.URL), "stripe.com/api/v1", "r2", lifecyclePromote); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	if method != http.MethodPost || !strings.HasSuffix(path, "/revisions/r2:promote") {
@@ -131,7 +131,7 @@ func TestApisRemoveWithYesDeletesAPI(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	if err := app.apisRemove(v2Ctx(srv.URL), &apisRmOptions{yes: true}, "stripe.com/api/v1", ""); err != nil {
+	if err := app.apisRemove(activeCtx(srv.URL), &apisRmOptions{yes: true}, "stripe.com/api/v1", ""); err != nil {
 		t.Fatalf("rm: %v", err)
 	}
 	if method != http.MethodDelete || !strings.HasSuffix(path, "/apis/stripe.com/api/v1") {
@@ -150,7 +150,7 @@ func TestApisShowNotFound(t *testing.T) {
 	defer srv.Close()
 
 	app := testApp(t)
-	err := app.apisShow(v2Ctx(srv.URL), &apisShowOptions{}, "ghost.com/x/v1")
+	err := app.apisShow(activeCtx(srv.URL), &apisShowOptions{}, "ghost.com/x/v1")
 	if err == nil || !strings.Contains(err.Error(), "not found in the local registry") {
 		t.Errorf("want friendly not-found, got %v", err)
 	}

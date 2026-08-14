@@ -44,7 +44,7 @@ func (a *app) agentSession(ctx context.Context) (baseURL, token string, err erro
 // context" coded error. It is the single entry every data-plane command goes
 // through, so the remediation string cannot drift between commands.
 func (a *app) requireState(ctx context.Context) (*clictx.ActiveState, error) {
-	if st := clictx.ActiveV2(ctx); st != nil {
+	if st := clictx.ActiveContext(ctx); st != nil {
 		return st, nil
 	}
 	return nil, noContextErr()

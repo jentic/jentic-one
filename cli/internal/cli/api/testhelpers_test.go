@@ -24,11 +24,11 @@ func testApp(t *testing.T) *app {
 	}}
 }
 
-// v2Ctx returns a context carrying an active state pointed at baseURL with
+// activeCtx returns a context carrying an active state pointed at baseURL with
 // an injected bearer token, so direct command-method calls resolve a session
 // without any disk config or network token exchange — the white-box equivalent
 // of the file-less env override.
-func v2Ctx(baseURL string) context.Context {
+func activeCtx(baseURL string) context.Context {
 	return clictx.WithActiveState(context.Background(), &clictx.ActiveState{
 		ResolvedState: &sdkconfig.ResolvedState{
 			IdentityName:        "test-agent",

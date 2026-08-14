@@ -131,12 +131,12 @@ func (a *App) registerE(ctx context.Context, opts *registerOptions) error {
 	// matching environment and switching to it — never silently registering
 	// with whatever happened to be active.
 	if opts.url == "" {
-		if st := clictx.ActiveV2(ctx); st != nil {
-			return a.RegisterV2Active(ctx, st, opts.name, opts.timeout, opts.force)
+		if st := clictx.ActiveContext(ctx); st != nil {
+			return a.RegisterActive(ctx, st, opts.name, opts.timeout, opts.force)
 		}
 	}
 	vals := SetupValues{URL: opts.url, Env: opts.env, Name: opts.name}
-	_, err := a.RegisterV2Setup(ctx, vals, opts.timeout, opts.force, opts.interactive)
+	_, err := a.RegisterSetup(ctx, vals, opts.timeout, opts.force, opts.interactive)
 	if errors.Is(err, ErrOnboardCancelled) {
 		return nil
 	}
