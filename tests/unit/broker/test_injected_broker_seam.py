@@ -119,6 +119,7 @@ def test_container_stashes_injected_broker_on_surface_app(ctx: Context) -> None:
         ctx,
         title="test-surface",
         routers=[],
+        enabled_apps={"broker"},
         container=container,
     )
     assert app.state.broker is broker

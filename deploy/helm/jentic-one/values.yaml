@@ -117,32 +117,31 @@ global:
   # different registry/image can leave this off.
   security:
     allowInsecureImages: true
-  # WARNING: dev-only credential pattern.
-  # In production, do NOT set `password` here. Replace `common.db-env` in your
-  # subchart deployments with a Secret-backed `valueFrom: secretKeyRef:` block,
-  # or pass an `existingSecret` reference. See deploy/README.md
-  # "Production secrets" for the recipe.
+  # Database credentials. `password` has NO default — the chart refuses to
+  # render without one (see common.db-env), so every deployment states its
+  # credentials explicitly. Dev/kind values live in
+  # deploy/helm/values/local-*.yaml. In production, do NOT put real passwords
+  # in a values file: replace `common.db-env` in your subchart deployments
+  # with a Secret-backed `valueFrom: secretKeyRef:` block, or pass an
+  # `existingSecret` reference. See deploy/README.md "Production secrets".
   databases:
     registry:
       host: ""
       port: 5432
       name: jentic
       user: registry_user
-      password: registry_pass
       schema: registry
     control:
       host: ""
       port: 5432
       name: jentic
       user: control_user
-      password: control_pass
       schema: control
     admin:
       host: ""
       port: 5432
       name: jentic
       user: admin_user
-      password: admin_pass
       schema: admin
 
 postgresql:
@@ -158,7 +157,10 @@ postgresql:
     tag: 17.2.0-debian-12-r6
   auth:
     username: postgres
-    password: postgres
+    # No default password — set one in your values file (dev files:
+    # deploy/helm/values/local-*.yaml). Left unset, the Bitnami chart
+    # generates a random one, which breaks the pg-init scripts that the
+    # local deploys rely on.
     database: jentic
   primary:
     initdb:

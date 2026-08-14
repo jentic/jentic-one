@@ -159,19 +159,14 @@ jobs:
       # disk (it could push — and with this job's id-token grant, even sign —
       # a malicious image as this repo's release identity). Post-hooks run in
       # reverse order, so login-action's logout also fires before the
-      # installers' post-steps.
+      # installers' post-steps. The Trivy scan below also installs a binary,
+      # which is why the login happens after build+scan, immediately before
+      # the first push.
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
       - name: Install syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
@@ -193,8 +188,8 @@ jobs:
       # are floating, so the digest is the only true pin — deploy/README.md
       # "Reproducibility" tells self-hosters to pin to it. RepoDigests is
       # filtered by our image name rather than blindly taking index 0.
-      - name: Build and push the app image (version + SHA tags)
-        id: push
+      - name: Build the app image (version + SHA tags)
+        id: build
         run: |
           set -euo pipefail
           OWNER="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
@@ -205,6 +200,42 @@ jobs:
           docker build -f deploy/docker/app.Dockerfile \
             -t "${IMAGE}:${VERSION}" \
             -t "${IMAGE}:${SHA}" .
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      # CVE gate before anything is pushed: a release must not publish an
+      # image a registry scanner (e.g. AWS ECR) would flag. Same policy as
+      # the ci.yml image-scan job — fixable HIGH/CRITICAL fail, overrides
+      # live in .trivyignore (CVE id + justification + expiry).
+      - name: Trivy image scan (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      # Login deliberately AFTER build + scan (see the installer-ordering
+      # comment above): no third-party tool runs with the registry
+      # credential on disk.
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the app image (version + SHA tags)
+        id: push
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+          SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          set -euo pipefail
           docker push "${IMAGE}:${VERSION}"
           docker push "${IMAGE}:${SHA}"
           DIGEST="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE}:${VERSION}" \

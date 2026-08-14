@@ -262,7 +262,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -287,6 +287,29 @@ jobs:
           uv sync --frozen
           uv run --with pip-licenses pip-licenses \
             --fail-on="GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later"
+
+      # The fs scan above checks the source tree; the steps below scan the
+      # BUILT app image (base-image OS packages included) — the same class of
+      # finding AWS ECR / registry scanners reject on, so we fail here before
+      # a registry does. Same recipe as the release publish job (release.yml):
+      # base stages first, then the app image that FROMs python-base by tag.
+      # `ignore-unfixed` keeps the gate actionable: Debian-slim always carries
+      # unfixed low-priority CVEs, and a permanently red gate gets ignored.
+      # Overrides go in .trivyignore (CVE id + justification + expiry).
+      - name: Build the app image
+        run: |
+          make build-base
+          docker build -f deploy/docker/app.Dockerfile -t jentic-one/app:scan .
+
+      - name: Trivy image scan (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: jentic-one/app:scan
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
 
   test-unit:
     name: Unit tests

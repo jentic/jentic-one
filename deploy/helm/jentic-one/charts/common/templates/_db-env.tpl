@@ -27,7 +27,7 @@ See deploy/README.md "Production secrets" for the migration recipe.
 - name: JENTIC__DATABASES__{{ upper $surface }}__USER
   value: {{ $db.user | quote }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__PASSWORD
-  value: {{ $db.password | quote }}
+  value: {{ required (printf "global.databases.%s.password is required — set it in your values file (dev files: deploy/helm/values/local-*.yaml)" $surface) $db.password | quote }}
 - name: JENTIC__DATABASES__{{ upper $surface }}__SCHEMA_NAME
   value: {{ $db.schema_name | default $db.schema | quote }}
 {{- end }}

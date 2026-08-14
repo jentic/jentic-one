@@ -89,6 +89,38 @@ async def test_digest_uniqueness_constraint(registry_db: DatabaseSession, sample
             await session.commit()
 
 
+async def test_null_digests_do_not_collide(registry_db: DatabaseSession, sample_api: Api) -> None:
+    """Two sha-less revisions (spec_digest=NULL) coexist under the unique constraint (#780).
+
+    NULLs are distinct under uq_api_revisions_api_id_spec_digest on both Postgres
+    and SQLite — unlike '' (a value), which would collapse distinct sha-less specs
+    into one revision.
+    """
+    async with registry_db.session() as session:
+        first = await ApiRevisionRepository.create_draft(
+            session,
+            api_id=sample_api.id,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        second = await ApiRevisionRepository.create_draft(
+            session,
+            api_id=sample_api.id,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        await session.commit()
+
+    assert first.id != second.id
+    async with registry_db.session() as session:
+        first_loaded = await session.get(ApiRevision, first.id)
+        second_loaded = await session.get(ApiRevision, second.id)
+        assert first_loaded is not None and first_loaded.spec_digest is None
+        assert second_loaded is not None and second_loaded.spec_digest is None
+
+
 async def test_set_operation_count(
     registry_db: DatabaseSession, sample_revision: tuple[Api, ApiRevision]
 ) -> None:

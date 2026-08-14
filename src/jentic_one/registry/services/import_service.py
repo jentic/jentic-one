@@ -41,18 +41,28 @@ logger = structlog.get_logger(__name__)
 
 _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
 
-# The unique constraint that guards one revision per (api_id, spec_digest).
+# The unique constraints whose violation means "this revision already exists".
+# Both surface as a raw IntegrityError; translate either to the readable
+# duplicate message rather than leaking a truncated SQL string.
+#   - uq_api_revisions_api_id_spec_digest: identical content re-imported.
+#   - ix_api_revisions_one_active: a concurrent import raced to become the single
+#     active (published/imported) revision for the API and lost — the digest guard
+#     can't catch this (it's keyed on api_id alone, independent of spec_digest).
 _DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
+_ONE_ACTIVE_CONSTRAINT = "ix_api_revisions_one_active"
 
 
 def _readable_source_error(exc: Exception) -> str:
     """Map a source-level ingest failure to a message safe to show a user.
 
     Raw ``IntegrityError`` strings leak SQL and get truncated mid-word in the
-    job record; translate the duplicate-digest collision to a clear message and
-    keep other failures as their (domain) exception text.
+    job record; translate a duplicate-revision collision (same digest, or a lost
+    race for the one-active slot) to a clear message and keep other failures as
+    their (domain) exception text.
     """
-    if isinstance(exc, DatabaseIntegrityError) and _DIGEST_CONSTRAINT in exc.detail:
+    if isinstance(exc, DatabaseIntegrityError) and (
+        _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail
+    ):
         return DuplicateRevisionError().message
     return str(exc)
 
