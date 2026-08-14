@@ -123,13 +123,16 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 			return err
 		}
 	} else if opts.purge || opts.keepData {
-		// --purge/--keep-data only govern the Docker named volume; a local
-		// (non-Docker) install keeps its database under ~/.jentic/data, which
-		// the Phase 2 wipe below deletes unconditionally. Warn so --keep-data
-		// isn't a silent footgun that destroys the data it names. Mirrors the
-		// "--volumes has no effect" warning in stop.go.
-		fmt.Fprintln(a.Out, theme.Warnf("--purge/--keep-data only apply to a Docker install; "+
-			"this is a local install, so the database under %s will be deleted.", a.Paths.DataDir()))
+		// --purge/--keep-data primarily govern the Docker named volume. On a
+		// local (non-Docker) install the database lives under ~/.jentic/data,
+		// which the Phase 2 wipe deletes. --keep-data now ACTUALLY preserves it
+		// (see the preserved set below); only --purge on a local install has no
+		// extra effect (the wipe already removes everything), so warn just for
+		// that case rather than mislead a --keep-data operator (P2-F).
+		if opts.purge {
+			fmt.Fprintln(a.Out, theme.Warnf("--purge is a no-op on a local install; the database under %s "+
+				"is removed by the normal teardown (pass --keep-data to preserve it).", a.Paths.DataDir()))
+		}
 	}
 
 	// Stop any local background app/broker before deleting their files. The
@@ -178,6 +181,15 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 	// Resolve the real profiles dir name from Paths so a rename of the constant
 	// can't silently un-preserve it.
 	preserved[filepath.Base(a.Paths.ProfilesDir())] = true
+	// P2-F: --keep-data on a LOCAL install must actually preserve the SQLite
+	// data dir, not just warn. Add its basename to the name-based skip set
+	// (matching the existing preserve pattern) so the Phase 2 wipe leaves it.
+	// (On a Docker install the data is a named volume handled by uninstallDocker,
+	// so this local-only branch never reached here.)
+	keptData := false
+	if opts.keepData {
+		preserved[filepath.Base(a.Paths.DataDir())] = true
+	}
 	skippedIdentity := false
 	for _, e := range entries {
 		name := e.Name()
@@ -186,11 +198,17 @@ func (a *app) uninstallE(opts *uninstallOptions) error {
 		}
 		if preserved[name] {
 			skippedIdentity = true
+			if opts.keepData && name == filepath.Base(a.Paths.DataDir()) {
+				keptData = true
+			}
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
 			return fmt.Errorf("remove %s: %w", name, err)
 		}
+	}
+	if keptData {
+		fmt.Fprintln(a.Out, theme.Dimf("kept the database under %s (--keep-data)", a.Paths.DataDir()))
 	}
 
 	fmt.Fprintln(a.Out, theme.Successf("Removed jentic-one state under %s (config backed up).", dir))

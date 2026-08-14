@@ -18,6 +18,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
+	"github.com/jentic/jentic-one/cli/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,7 @@ type installOptions struct {
 	noStart      bool
 	noWizard     bool
 	freshSecrets bool
+	freshVenv    bool
 	// preset selects an embedded config preset (impl/6.0 §3.5); empty means none
 	// (schema defaults + the wizard/flags stand). The schema-driven --section-field
 	// flags are bound onto the command from the generated BackendConfig and, together
@@ -83,6 +85,9 @@ func newInstallCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.freshSecrets, "fresh-secrets", false,
 		"rotate every generated secret instead of reusing an existing config's "+
 			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
+	cmd.Flags().BoolVar(&opts.freshVenv, "fresh-venv", false,
+		"wipe any existing local venv before building (recovers a wedged/half-populated "+
+			"~/.jentic/venv from a prior failed install; local path only)")
 	cmd.Flags().StringVar(&opts.preset, "preset", "",
 		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
 	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
@@ -275,7 +280,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// venv (from the local checkout if we're inside the repo, otherwise clone
 	// from GitHub first) and apply migrations.
 	if local {
-		if err := installLocal(cmd.Context(), a, draft, out); err != nil {
+		if err := installLocal(cmd.Context(), a, draft, out, opts.freshVenv); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -693,9 +698,19 @@ func (a *app) startAppBackground(draft *install.Draft, configPath, logsDir strin
 	fmt.Fprintln(a.Out, theme.Successf("  Broker started (pid %d, port %s)", brokerPID, draft.BrokerPort))
 }
 
-func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string) error {
+func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string, freshVenv bool) error {
 	venvDir := a.Paths.VenvPath()
 	srcDir := a.Paths.SrcPath()
+
+	// --fresh-venv: wipe a wedged/half-populated venv from a prior failed
+	// install so this build starts clean, rather than reusing a partial one
+	// (P1-E). Explicit, never implicit — a normal reinstall reuses the venv.
+	if freshVenv {
+		if err := os.RemoveAll(venvDir); err != nil {
+			return fmt.Errorf("wipe existing venv for --fresh-venv: %w", err)
+		}
+		fmt.Fprintln(a.Out, theme.Dim.Render("  wiped existing venv (--fresh-venv)"))
+	}
 
 	// uv drives the local build; bootstrap it when missing so onboarding does
 	// not dead-end on a tool the installer can provide itself.
@@ -714,21 +729,39 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 	fmt.Fprint(a.Out, plan.RenderHeader())
 
 	if err := plan.Execute(a.Out); err != nil {
+		// A failed build can leave a half-populated venv the next run would
+		// reuse as-is. Point at the explicit clean-rebuild rather than silently
+		// deleting (P1-E) — mirrors the Docker fresh-volume recovery hint.
+		fmt.Fprintln(a.Out, theme.Warnf("if the venv is wedged, re-run with --fresh-venv to rebuild it clean"))
 		return fmt.Errorf("build failed: %w", err)
 	}
 	draft.VenvPython = plan.VenvPython()
 
-	// Apply migrations for real.
+	// Apply migrations for real. On the SQLite path wrap them in the shared
+	// snapshot/rollback net so a failed first-install migration restores the
+	// pre-migration bytes instead of stranding a half-applied schema (P1-E) —
+	// the same helper `update` uses. Postgres stays the non-fatal keep-install
+	// path (the DB may simply not be up yet), so it does not go through the net.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
-	if err := install.RunMigrations(a.Out, draft.VenvPython, configPath); err != nil {
-		// Postgres may simply not be running yet — keep the install (config + venv
-		// are valid) and leave the migrate command in the printed next steps.
-		if draft.IsPostgres() {
+	if draft.IsPostgres() {
+		if err := install.RunMigrations(a.Out, draft.VenvPython, configPath); err != nil {
 			fmt.Fprintln(a.Out, install.RenderMigrateWarning(err))
 			return nil
 		}
-		return fmt.Errorf("migrations failed: %w", err)
+		draft.MigrationsDone = true
+		return nil
+	}
+	if err := update.MigrateWithRollback(
+		a.Paths.DataDir(),
+		true, // local install is SQLite here (Postgres handled above)
+		func() error { return install.RunMigrations(a.Out, draft.VenvPython, configPath) },
+		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
+		func() {
+			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-install state"))
+		},
+	); err != nil {
+		return err
 	}
 	draft.MigrationsDone = true
 	return nil

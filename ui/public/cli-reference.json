@@ -3014,6 +3014,12 @@
               "usage": "rotate every generated secret instead of reusing an existing config's (default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)"
             },
             {
+              "name": "fresh-venv",
+              "type": "bool",
+              "default": "false",
+              "usage": "wipe any existing local venv before building (recovers a wedged/half-populated ~/.jentic/venv from a prior failed install; local path only)"
+            },
+            {
               "name": "no-start",
               "type": "bool",
               "default": "false",

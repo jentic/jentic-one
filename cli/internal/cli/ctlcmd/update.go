@@ -487,33 +487,20 @@ func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool)
 	// rolls back to the pre-migration state rather than stranding a half-applied
 	// schema. The build above is a pure code swap (no DB writes), so taking the
 	// snapshot here — just before RunMigrations — captures the exact bytes the
-	// migration is about to touch.
-	var backup *update.SQLiteBackup
-	if db == install.BackendSQLite {
-		b, err := update.BackupSQLite(a.Paths.DataDir())
-		if err != nil {
-			return fmt.Errorf("back up database before migration: %w", err)
-		}
-		backup = b
-		if !backup.Empty() {
-			fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback"))
-		}
-	}
-
+	// migration is about to touch. Shared with first-`install` via
+	// MigrateWithRollback so the two rollback paths cannot drift (P1-E).
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
-	if err := install.RunMigrations(a.Out, plan.VenvPython(), configPath); err != nil {
-		if backup != nil && !backup.Empty() {
-			if rerr := backup.Restore(); rerr != nil {
-				//nolint:errorlint // primary %w is the migration failure; rerr is contextual detail (fmt.Errorf allows one %w).
-				return fmt.Errorf("migrations failed: %w; ALSO failed to roll back the database: %v — restore from a backup", err, rerr)
-			}
+	if err := update.MigrateWithRollback(
+		a.Paths.DataDir(),
+		db == install.BackendSQLite,
+		func() error { return install.RunMigrations(a.Out, plan.VenvPython(), configPath) },
+		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
+		func() {
 			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-update state"))
-		}
-		return fmt.Errorf("migrations failed: %w", err)
-	}
-	if backup != nil {
-		backup.Discard()
+		},
+	); err != nil {
+		return err
 	}
 
 	a.restartLocalIfRunning(ctx)
