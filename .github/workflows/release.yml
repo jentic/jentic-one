@@ -302,6 +302,14 @@ jobs:
         uses: sigstore/cosign-installer@v3
       - name: Install syft (SBOMs)
         uses: anchore/sbom-action/download-syft@v0
+      # Pipeline review F1/B3: re-assert source↔vendored spec byte-identity at
+      # release time, before GoReleaser builds anything. `check-cli-gen` is
+      # branch-CI path-gated, so a hotfix tag cut from a commit with a stale
+      # vendored client would otherwise embed a stale spec in the shipped
+      # binaries. This pure `diff` closes that hole unconditionally.
+      - name: Vendored specs match source (release gate)
+        run: make check-vendored-specs
+        working-directory: cli
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -314,6 +322,20 @@ jobs:
           # can be pushed cross-repo (GITHUB_TOKEN is scoped to THIS repo only).
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           COSIGN_YES: "true"
+      # Pipeline review F4/E1: the app image already asserts /health .version ==
+      # tag (gate job); mirror that for the CLI binaries so a bad ldflag stamp
+      # can't ship a binary whose `--version` disagrees with the tag. GoReleaser
+      # writes the amd64 linux binary under cli/dist/jentic_linux_amd64_v1/.
+      - name: Binary version matches tag
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          bin="$(find dist -type f -name jentic -path '*linux_amd64*' | head -n1)"
+          test -n "${bin}" || { echo "::error::could not locate built jentic binary under cli/dist"; ls -R dist || true; exit 1; }
+          got="$("${bin}" --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          echo "tag=${want} binary=${got}"
+          test "${got}" = "${want}" || { echo "::error::jentic --version (${got}) != tag (${want})"; exit 1; }
+        working-directory: cli
       # Mirror the app release tag onto the CLI's Go module path. The CLI lives in
       # a subdirectory (module github.com/jentic/jentic-one/cli), so `go get
       # .../cli@vX.Y.Z` only resolves if a `cli/vX.Y.Z` git tag exists. We point it

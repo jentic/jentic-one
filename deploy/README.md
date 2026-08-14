@@ -88,6 +88,12 @@ VM (or any container host) against a **managed/external PostgreSQL**, injecting
 secrets from your own secrets manager. It's the smallest real deployment that
 is still production-shaped.
 
+> **The container image is the only supported backend distribution.** There is
+> no `pip install jentic-one`: the Python wheel is built in CI purely as a
+> packaging test (that the UI bundle force-includes correctly) and is never
+> published. Consume `ghcr.io/jentic/jentic-one-app` (pinned to a digest for
+> prod — see below), or build it locally from a checkout.
+
 > **Public Beta.** The same caveat as the repo front page applies: we don't
 > recommend production use yet. "Production-shaped" here means the topology
 > and secret handling are the real thing — not that the product is done.
@@ -1011,7 +1017,11 @@ and will be filled when the answers exist:
 - **Multi-arch builds** — the published `app` image is single-arch (amd64)
   today, which excludes arm64 hosts (Graviton/Ampere/Apple Silicon); switch
   the `publish-image` job / `make release-image` to
-  `docker buildx build --platform linux/amd64,linux/arm64` when needed.
+  `docker buildx build --platform linux/amd64,linux/arm64` when needed. **Note:**
+  `jenticctl install` now *pulls* this image by default (`ResolveAppImage` →
+  `ghcr.io/jentic/jentic-one-app:<version>`), so until multi-arch lands, arm64
+  users should install with `--build-local` (auto-selected inside a source
+  checkout / `$JENTIC_SRC`) to build a native image.
 - **Helm chart publishing** — chart is built locally; no OCI-registry push
   yet.
 - **Real Terraform env values** — cluster/namespace/ingress are TODO

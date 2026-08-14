@@ -157,7 +157,7 @@ migrate-sqlite: ## Apply all migrations to the local SQLite databases (config/lo
 start-app-sqlite: migrate-sqlite ## Start combined app on local SQLite (ingest only; search disabled)
 	JENTIC_CONFIG_FILE=config/local-sqlite.yaml uv run python -m jentic_one
 
-build-wheel: ## Build Python wheel
+build-wheel: ## Build Python wheel (packaging TEST ONLY — never published; the container image is the canonical backend distribution)
 	uv build --wheel
 
 # ─── UI (frontend) ───────────────────────────────────────────────────────

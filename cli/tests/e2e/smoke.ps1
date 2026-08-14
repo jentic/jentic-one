@@ -118,7 +118,13 @@ try {
   $env:JENTIC_MODE = 'agent'
   if ($rc -eq 0) { Fail "jentic run claude exit=0 offline, want a graceful non-zero`n$r" }
   if ($r -match 'panic') { Fail "jentic run claude crashed (panic)`n$r" }
-  Pass "jentic run claude degrades cleanly (exit $rc, no crash)"
+  # WIN-3: the failure must be the WSL-only confinement guard (fail-closed), not
+  # some incidental error — assert the message names it so a future change that
+  # silently degrades to an UNCONFINED session on Windows is caught here.
+  if ($r -notmatch 'CONFINEMENT_UNAVAILABLE|not supported on windows|isn''t available on this machine') {
+    Fail "jentic run claude did not surface the confinement guard message`n$r"
+  }
+  Pass "jentic run claude degrades cleanly via the confinement guard (exit $rc, no crash)"
 
   # 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
   #     report "nothing to stop" and exit 0 — the assertion OPS-20 would have
