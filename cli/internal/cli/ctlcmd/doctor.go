@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
-	"strconv"
 	"strings"
 	"time"
 
@@ -376,16 +375,23 @@ func (d *doctor) checkLocalAgent(cfg *config.FileConfig) {
 		return
 	}
 	// A provisioned account whose OS user cannot be resolved, or which resolves
-	// to the operator's own uid, means an agent launched here would share the
-	// operator's disk view — the isolation is nominal, not real.
-	if agentUser, err := user.Lookup(acct.User); err != nil {
+	// to the operator's own account, means an agent launched here would share the
+	// operator's disk view — the isolation is nominal, not real. We compare
+	// against the CURRENT user's Uid rather than os.Getuid(): user.User.Uid is a
+	// numeric uid on Unix and a SID on Windows, and comparing like-for-like works
+	// on both (os.Getuid() returns -1 on Windows, so the old comparison could
+	// never fire there — the same-principal case would go unwarned).
+	agentUser, err := user.Lookup(acct.User)
+	me, meErr := user.Current()
+	switch {
+	case err != nil:
 		d.add(section, "account", statusWarn, fmt.Sprintf("account %q not found on this host: %v", acct.User, err),
 			"run `jentic bootstrap` on the agent host, or `jentic reset` to clear the stale record")
-	} else if agentUser.Uid == strconv.Itoa(os.Getuid()) {
+	case meErr == nil && agentUser.Uid == me.Uid:
 		d.add(section, "account uid", statusWarn,
-			fmt.Sprintf("agent account %q shares this operator's uid (%s)", acct.User, agentUser.Uid),
+			fmt.Sprintf("agent account %q shares this operator's identity (%s)", acct.User, agentUser.Uid),
 			"the agent would run unconfined against your files; re-provision a dedicated account with `jentic bootstrap`")
-	} else {
+	default:
 		d.add(section, "account", statusPass, fmt.Sprintf("%s (uid %s)", acct.User, agentUser.Uid), "")
 	}
 }
