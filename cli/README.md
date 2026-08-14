@@ -38,7 +38,34 @@ setting up a local agent, run `jentic bootstrap` to create one (isolated account
 registration + skills); if you're an agent that doesn't have a profile yet, run
 `jentic register`.
 
-## Build
+## Install
+
+Install the `jentic` + `jenticctl` CLIs on this machine with the one-liner:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+```
+
+This **builds from source today**: it fetches a Go toolchain (~150 MB) if no
+suitable `go` is already on your `PATH`, sparse-clones `cli/`, compiles both
+binaries into `~/.jentic/bin`, and then chains into `jenticctl install` to
+configure the stack. (Prebuilt, downloadable binaries — no toolchain, no
+compile — are coming; see the CLI binary-distribution plan in `jentic-one-plans`.)
+
+Environment knobs:
+
+- `JENTIC_NO_INSTALL=1` — install the binaries only; **skip** the
+  `jenticctl install` stack wizard (useful in CI or when you only want the CLI).
+- `GITHUB_TOKEN=ghp_xxx` — clone a **private** fork (token needs `repo` read
+  scope); also used to build the server image from source.
+- `JENTIC_REF=v0.31.0` — pin the ref (tag / branch / commit) to build instead of
+  the default branch.
+
+On a machine with **no interactive terminal** (piped `curl … | sh` in CI), the
+installer builds the binaries and then prints the exact non-interactive
+follow-up (`jenticctl install --defaults`) instead of blocking on a wizard.
+
+## Build from a checkout (developers)
 
 ```bash
 cd cli
