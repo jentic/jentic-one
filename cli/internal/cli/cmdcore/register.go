@@ -505,8 +505,27 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("See all:      "), theme.Command.Render("jentic context list"))
-	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("Ready:"), theme.Command.Render("jentic catalog"))
+	a.printNextSteps()
 	return nil
+}
+
+// printNextSteps teaches the core discover -> inspect -> execute workflow after a
+// successful register. Bare `jentic register` on an already-configured machine
+// used to (in V1) reopen onboarding; now it just re-mints, so this block is what
+// makes "what do I do now?" obvious — a few copy-pasteable examples plus the
+// pointer to full help, in place of a bare "Ready:" line.
+func (a *App) printNextSteps() {
+	fmt.Fprintf(a.Out, "\n%s\n", theme.Heading.Render("Next steps"))
+	steps := []struct{ desc, cmd string }{
+		{"Browse the API catalog", "jentic catalog"},
+		{"Find an operation", "jentic search \"send a slack message\""},
+		{"Inspect an operation", "jentic inspect <api-id>"},
+		{"Run one", "jentic execute <operation-id> -d '{\"key\":\"value\"}'"},
+	}
+	for _, s := range steps {
+		fmt.Fprintf(a.Out, "  %s\n    %s\n", theme.Dim.Render(s.desc), theme.Command.Render(s.cmd))
+	}
+	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("See all commands:"), theme.Command.Render("jentic --help"))
 }
 
 // saveRegState persists the (identity, environment) registration record.
