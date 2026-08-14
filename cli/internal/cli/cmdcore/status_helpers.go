@@ -14,7 +14,7 @@ import (
 // IdentityOptions carries the --base-url override shared by the jenticctl
 // install-facing commands (status/doctor): it points their server probes at a
 // non-default control plane. Identity selection is NOT a flag anymore — the
-// jentic tree acts on the active V2 context, and the ctl tree only reads the
+// jentic tree acts on the active context, and the ctl tree only reads the
 // context read-only for display.
 type IdentityOptions struct {
 	BaseURL string
@@ -25,7 +25,7 @@ func (o *IdentityOptions) Bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.BaseURL, "base-url", "", "Jentic control-plane base URL")
 }
 
-// TokenStatus summarizes a cached V2 token as a human label plus a status dot.
+// TokenStatus summarizes a cached token as a human label plus a status dot.
 func TokenStatus(t *auth.TokenSet) (label, dot string) {
 	switch {
 	case t == nil || t.AccessToken == "":

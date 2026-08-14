@@ -167,7 +167,7 @@ func (d *agentDoctor) checkIdentity(ctx context.Context) (baseURL, token string)
 	return d.checkContextIdentity(st)
 }
 
-// checkContextIdentity is the V2-context arm of checkIdentity: it inspects the
+// checkContextIdentity is the context arm of checkIdentity: it inspects the
 // XDG store for the active (identity, environment) pair — registration state
 // from config.yaml, credential files from the state dir — reporting each
 // missing piece read-only, exactly like the legacy arm.

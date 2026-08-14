@@ -252,7 +252,7 @@ func TestResetRunsAsOperator(t *testing.T) {
 	}
 }
 
-// seedIdentityState creates a V2 XDG config tree, V2 state tree, and a legacy
+// seedIdentityState creates an XDG config tree, state tree, and a legacy
 // V1 profiles dir (plus MIGRATED marker), so a full reset has identity state to
 // wipe in all three places.
 func seedIdentityState(t *testing.T, app *app) (configDir, stateDir, legacyProfiles string) {
@@ -284,7 +284,7 @@ func seedIdentityState(t *testing.T, app *app) (configDir, stateDir, legacyProfi
 }
 
 // TestResetFullWipesIdentityState confirms a bare `jentic reset --force` (no
-// account) is a clean slate: it removes the V2 config/state trees, the legacy
+// account) is a clean slate: it removes the config/state trees, the legacy
 // profiles dir, and the MIGRATED marker.
 func TestResetFullWipesIdentityState(t *testing.T) {
 	withXDG(t)

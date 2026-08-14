@@ -42,7 +42,7 @@ func mockControl(t *testing.T) *httptest.Server {
 // suppressed for good measure.
 var agentEnv = map[string]string{"JENTIC_MODE": "agent", "NO_COLOR": "1"}
 
-// TestGolden_AgentContract freezes the observable V2 contract of the core
+// TestGolden_AgentContract freezes the observable contract of the core
 // agent-facing commands (impl/0.0 §2a scope, post-activation). Human-mode ANSI
 // is deliberately out of scope; we assert the structural JSON/exit/stderr
 // contract that agents parse.

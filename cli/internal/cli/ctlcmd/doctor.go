@@ -314,7 +314,7 @@ func (d *doctor) checkExposure(section, composePath, psOut string) {
 	d.add(section, "exposure", statusPass, "published ports are bound to specific interfaces", "")
 }
 
-// checkAgent reports the ACTIVE V2 context's identity and token state, read-only
+// checkAgent reports the ACTIVE context's identity and token state, read-only
 // from the XDG store. Like status, it never mints or refreshes a token: the /me
 // probe (deep credential check) is `jentic doctor`'s job — this operator-side
 // row only reflects what is on disk.

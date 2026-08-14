@@ -24,7 +24,7 @@ func newStatusCmd(app *app) *cobra.Command {
 		Short: "Show install, server, and identity health",
 		Long: "status is a health dashboard for the local jentic setup. It reports the\n" +
 			"recorded install (mode/db/source), whether the control-plane server is\n" +
-			"reachable and its version, and the active V2 context's identity/token\n" +
+			"reachable and its version, and the active context's identity/token\n" +
 			"state. It degrades gracefully: missing pieces are reported, not fatal.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -144,7 +144,7 @@ func (a *app) statusBroker() {
 	}
 }
 
-// statusIdentity reports the ACTIVE V2 context's identity and token state,
+// statusIdentity reports the ACTIVE context's identity and token state,
 // read-only from the XDG store (it never mints or refreshes a token; the /me
 // probe runs only with an already-valid cached token).
 func (a *app) statusIdentity(ctx context.Context) {

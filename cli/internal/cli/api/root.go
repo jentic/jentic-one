@@ -63,7 +63,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(localagentcmd.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
-	// V2 context model: the Environment × Identity × Context surface plus the
+	// The context model: the Environment × Identity × Context surface plus the
 	// one-shot migrator. This IS the activation release — the V1 profile
 	// command is gone. The hidden deprecation shim that briefly aliased
 	// `jentic profile <verb>` onto these successors was removed in ARCH-21
@@ -81,7 +81,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	cmdcore.AddGrouped(root, "agent", newInspectCmd(app))
 	cmdcore.AddGrouped(root, "agent", newExecuteCmd(app))
 	cmdcore.AddGrouped(root, "agent", newAccessCmd(app))
-	// Execution history + live events over the V2 SDK (Phase 5 items 3-4).
+	// Execution history + live events over the SDK (Phase 5 items 3-4).
 	cmdcore.AddGrouped(root, "agent", newHistoryCmd(app))
 	cmdcore.AddGrouped(root, "agent", newEventsCmd(app))
 	// gh-api-style authenticated passthrough to the control plane, with

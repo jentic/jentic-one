@@ -43,7 +43,7 @@ func newResetCmd(app *app) *cobra.Command {
 			"It tears down the agent account — the dedicated Unix user, the named-user\n" +
 			"ACLs stamped across your home (both the leaf read/write grants and the\n" +
 			"execute-only ancestor traverse grants), and the passwordless-launch sudoers\n" +
-			"drop-in — and then also wipes your OWN jentic identity state: the V2 store\n" +
+			"drop-in — and then also wipes your OWN jentic identity state: the store\n" +
 			"(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n" +
 			"~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\n" +
 			"account's home is PRESERVED by default (re-owned to you); deleting it takes\n" +
@@ -88,7 +88,7 @@ func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 
 // resetAll is the full clean slate: it tears down the shared agent account (Unix
 // user, ACLs, sudoers, home disposition) and then wipes the operator's OWN
-// jentic identity state — the V2 XDG store and any legacy V1 tree. Everything is
+// jentic identity state — the XDG store and any legacy V1 tree. Everything is
 // previewed first, then a single "reset" confirmation authorises the lot.
 func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetOptions, interactive bool, operator, operatorHome string) error {
 	acct, hasAcct := cfg.AgentAccount()
@@ -158,12 +158,12 @@ func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetO
 }
 
 // identityWipe is the resolved plan for wiping the operator's own jentic
-// identity state: the V2 XDG trees and (if still present) the legacy V1 tree.
+// identity state: the XDG trees and (if still present) the legacy V1 tree.
 // Directories are recorded only when they exist, so the plan is truthful.
 type identityWipe struct {
-	// configDir is the V2 config tree (~/.config/jentic): config.yaml + keys/.
+	// configDir is the config tree (~/.config/jentic): config.yaml + keys/.
 	configDir string
-	// stateDir is the V2 state tree (~/.local/state/jentic): tokens + API keys.
+	// stateDir is the state tree (~/.local/state/jentic): tokens + API keys.
 	stateDir string
 	// legacyRoot is the V1 ~/.jentic profile tree (profiles/ + MIGRATED marker).
 	// Only the identity material is wiped — the rest of ~/.jentic is jenticctl's
@@ -241,9 +241,9 @@ func (a *app) printIdentityWipePlan(w identityWipe) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Identity state to delete (contexts, environments, identities, keys, tokens):"))
 	for _, line := range []struct{ label, dir string }{
-		{"V2 config ", w.configDir},
-		{"V2 state  ", w.stateDir},
-		{"V1 legacy ", w.legacyProfilesDir},
+		{"config ", w.configDir},
+		{"state  ", w.stateDir},
+		{"legacy ", w.legacyProfilesDir},
 	} {
 		if line.dir == "" {
 			continue

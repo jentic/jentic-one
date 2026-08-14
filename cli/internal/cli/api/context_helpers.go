@@ -13,7 +13,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 )
 
-// reportCoded is the error path for the V2 context/env/identity/migrate commands:
+// reportCoded is the error path for the context/env/identity/migrate commands:
 // it routes the failure through the Audience (structured AgentError JSON on
 // stderr for agents, a styled line for humans) and returns a *ux.CodedError so
 // core.Run mirrors the exit code from the taxonomy AND suppresses its own generic

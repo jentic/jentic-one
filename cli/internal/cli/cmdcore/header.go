@@ -55,10 +55,10 @@ func activeContextName() string {
 }
 
 // headerProbeURL resolves the control-plane URL the help header probes for a
-// server version, with precedence: an explicit --base-url flag > the active V2
+// server version, with precedence: an explicit --base-url flag > the active
 // context's environment base_url > the legacy config's base_url > the built-in
 // default (UX-25). Before this the header only consulted the legacy
-// internal/config store, so a V2-only machine pointed at a remote install
+// internal/config store, so a context-only machine pointed at a remote install
 // still probed the local default (127.0.0.1:8000) in its banner. Every branch
 // is best-effort and non-fatal — the header is cosmetic, so any resolution
 // failure just falls through to the next source.
@@ -66,7 +66,7 @@ func headerProbeURL(paths config.Paths, baseURLFlag string) string {
 	if baseURLFlag != "" {
 		return baseURLFlag
 	}
-	// V2 first: the active context's environment base_url is what data-plane
+	// The active context's environment base_url is what data-plane
 	// commands actually use, so the header should reflect the same target.
 	if st, err := sdkconfig.LoadState(""); err == nil && st != nil && st.BaseURL != "" {
 		return st.BaseURL

@@ -378,7 +378,7 @@ func (a *App) RegisterV2Active(ctx context.Context, st *clictx.ActiveState, clie
 	return a.registerV2(ctx, st.IdentityName, st.EnvironmentName, st.BaseURL, clientName, timeout, force)
 }
 
-// registerV2 is the shared V2 register-and-wait body: mint the env-scoped key
+// registerV2 is the shared register-and-wait body: mint the env-scoped key
 // if absent, perform RFC 7591 DCR (reusing an existing registration so the
 // flow is resumable), persist client_id/status, then wait for operator
 // approval by attempting the token exchange — exactly the credential every

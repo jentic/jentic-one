@@ -64,7 +64,7 @@ func newIdentityRegisterCmd(_ *app) *cobra.Command {
 		Long: "register generates an environment-scoped Ed25519 key (if absent),\n" +
 			"performs RFC 7591 Dynamic Client Registration, and records the returned\n" +
 			"client_id + status. The agent is 'pending' until an operator approves it;\n" +
-			"token exchange then succeeds automatically. This is the V2 successor to the\n" +
+			"token exchange then succeeds automatically. This is the successor to the\n" +
 			"legacy `jentic register` and operates on the resolved active context.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -277,7 +277,7 @@ func newIdentityAddCmd(_ *app) *cobra.Command {
 		Use:   "add <name>",
 		Short: "Add an identity (optionally with a jak_* API key credential)",
 		Long: "add records an identity in the config. With --api-key it stores a jak_*\n" +
-			"credential for the given --env (the V2 successor to `jentic profile\n" +
+			"credential for the given --env (the successor to the old `jentic profile\n" +
 			"add-key`). Agent identities obtain tokens later via `jentic register`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

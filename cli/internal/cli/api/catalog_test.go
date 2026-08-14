@@ -19,7 +19,7 @@ import (
 )
 
 // TestAgentSessionResolvesFromContext proves the context-only session: the
-// base URL and bearer come from the ACTIVE V2 state in the context — there is
+// base URL and bearer come from the ACTIVE state in the context — there is
 // no profile store, no flag override, and no fallback to read from anywhere
 // else on disk.
 func TestAgentSessionResolvesFromContext(t *testing.T) {
@@ -275,7 +275,7 @@ func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 
 func TestCatalogNoContextErrors(t *testing.T) {
 	app := testApp(t)
-	// A bare context (no active V2 state) must fail with the canonical
+	// A bare context (no active state) must fail with the canonical
 	// no-context resolve error, not attempt any legacy fallback.
 	err := app.catalogList(context.Background(), &catalogListOptions{}, "")
 	if err == nil || !strings.Contains(err.Error(), "no active context") {

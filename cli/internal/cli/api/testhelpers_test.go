@@ -24,7 +24,7 @@ func testApp(t *testing.T) *app {
 	}}
 }
 
-// v2Ctx returns a context carrying an active V2 state pointed at baseURL with
+// v2Ctx returns a context carrying an active state pointed at baseURL with
 // an injected bearer token, so direct command-method calls resolve a session
 // without any disk config or network token exchange — the white-box equivalent
 // of the file-less env override.
@@ -42,7 +42,7 @@ func v2Ctx(baseURL string) context.Context {
 
 // seedRegistered points full-tree executions (root.Execute) at baseURL via the
 // file-less env override (JENTIC_BASE_URL + JENTIC_BEARER_TOKEN), so the root
-// interceptor resolves an authenticated V2 state without disk config. The app
+// interceptor resolves an authenticated state without disk config. The app
 // arg is kept for call-site compatibility with the old profile-store seeder.
 func seedRegistered(t *testing.T, _ *app, _ string, baseURL string) {
 	t.Helper()

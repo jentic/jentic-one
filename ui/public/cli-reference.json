@@ -185,7 +185,7 @@
           "path": "jentic context",
           "use": "context",
           "short": "Manage and switch contexts (environment + identity + mode)",
-          "long": "context binds an Environment, an Identity, and an interaction mode into a\nnamed context, and switches which one commands act on. It is the V2\nsuccessor to `jentic profile` (see `jentic migrate`).",
+          "long": "context binds an Environment, an Identity, and an interaction mode into a\nnamed context, and switches which one commands act on. It is the\nsuccessor to the old `jentic profile` (see `jentic migrate`).",
           "group_title": "Identity \u0026 access",
           "flags": [
             {
@@ -334,7 +334,7 @@
               "path": "jentic context delete",
               "use": "delete \u003cname\u003e",
               "short": "Delete a context",
-              "long": "delete removes a context (the V2 equivalent of removing a V1 profile).\nIt refuses to delete the ACTIVE context\n(switch first) to avoid a dangling active_context. With --identity it also\nremoves the referenced identity iff no other context uses it.",
+              "long": "delete removes a context (the equivalent of removing a legacy profile).\nIt refuses to delete the ACTIVE context\n(switch first) to avoid a dangling active_context. With --identity it also\nremoves the referenced identity iff no other context uses it.",
               "aliases": [
                 "rm"
               ],
@@ -530,7 +530,7 @@
               "path": "jentic identity add",
               "use": "add \u003cname\u003e",
               "short": "Add an identity (optionally with a jak_* API key credential)",
-              "long": "add records an identity in the config. With --api-key it stores a jak_*\ncredential for the given --env (the V2 successor to `jentic profile\nadd-key`). Agent identities obtain tokens later via `jentic register`.",
+              "long": "add records an identity in the config. With --api-key it stores a jak_*\ncredential for the given --env (the successor to the old `jentic profile\nadd-key`). Agent identities obtain tokens later via `jentic register`.",
               "flags": [
                 {
                   "name": "api-key",
@@ -601,7 +601,7 @@
               "path": "jentic identity register",
               "use": "register",
               "short": "Register the active identity's key with the active environment",
-              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the V2 successor to the\nlegacy `jentic register` and operates on the resolved active context.",
+              "long": "register generates an environment-scoped Ed25519 key (if absent),\nperforms RFC 7591 Dynamic Client Registration, and records the returned\nclient_id + status. The agent is 'pending' until an operator approves it;\ntoken exchange then succeeds automatically. This is the successor to the\nlegacy `jentic register` and operates on the resolved active context.",
               "flags": [
                 {
                   "name": "context",
@@ -2668,7 +2668,7 @@
           "path": "jentic reset",
           "use": "reset",
           "short": "Tear down the agent account and wipe this machine's jentic identity state",
-          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the V2 store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
+          "long": "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\nand the clean-slate hatch for this machine's jentic identity state.\n\nIt tears down the agent account — the dedicated Unix user, the named-user\nACLs stamped across your home (both the leaf read/write grants and the\nexecute-only ancestor traverse grants), and the passwordless-launch sudoers\ndrop-in — and then also wipes your OWN jentic identity state: the store\n(contexts, environments, identities, keys, tokens under ~/.config/jentic and\n~/.local/state/jentic) and any legacy V1 profile tree under ~/.jentic. The\naccount's home is PRESERVED by default (re-owned to you); deleting it takes\na separate, explicit confirmation.\n\nTo remove a single context/identity instead of everything, use\n`jentic context delete` / `jentic identity delete`.\n\nDeleting the account and stripping ACLs are privileged, so reset requires\nsudo to complete: run it as yourself and you'll be prompted for your\npassword when it reaches the privileged steps. It shows the full plan before\ntouching anything. It only ever removes the agent's own named-user ACLs and\nnever touches another user's files.",
           "example": "  jentic reset                              # full clean slate: the account + your identity state\n  jentic reset --force                      # non-interactive; keeps the home\n  jentic reset --force --delete-home        # non-interactive; deletes the home",
           "group_title": "Local agent client",
           "flags": [
@@ -3161,7 +3161,7 @@
           "path": "jenticctl status",
           "use": "status",
           "short": "Show install, server, and identity health",
-          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the active V2 context's identity/token\nstate. It degrades gracefully: missing pieces are reported, not fatal.",
+          "long": "status is a health dashboard for the local jentic setup. It reports the\nrecorded install (mode/db/source), whether the control-plane server is\nreachable and its version, and the active context's identity/token\nstate. It degrades gracefully: missing pieces are reported, not fatal.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {

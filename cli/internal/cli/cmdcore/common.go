@@ -24,7 +24,7 @@ func NewExitCodeError(code int) *ExitCodeError { return &ExitCodeError{Code: cod
 // the default. It reads the INSTALL record (~/.jentic/config.yaml base_url —
 // where `jenticctl install` recorded the local deployment), not the identity
 // store: the ctl tree's status/doctor probes target the local install, while
-// identity resolution is the V2 context's job.
+// identity resolution is the context's job.
 func (a *App) ResolveBaseURL(baseURLFlag string) (string, error) {
 	cfg, err := config.Load(a.Paths)
 	if err != nil {

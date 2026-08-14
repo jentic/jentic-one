@@ -944,7 +944,7 @@ func (a *app) accessRefreshE(cmd *cobra.Command, jsonFlag bool) error {
 	return a.accessRefreshContextE(cmd, st, jsonFlag)
 }
 
-// accessRefreshContextE is the V2-context arm of `jentic access refresh`: force
+// accessRefreshContextE is the context arm of `jentic access refresh`: force
 // a fresh assertion exchange for the active (identity, environment) so the new
 // token carries the current scope grants, then confirm with /me. Same
 // fresh-mint-not-refresh-token semantics as the legacy arm (issue #673).

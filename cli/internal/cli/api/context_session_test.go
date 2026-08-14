@@ -12,7 +12,7 @@ import (
 )
 
 // These tests pin the CONTEXT-FIRST resolution of the data-plane command family
-// (agentSession and friends): with an active V2 context, commands like `access
+// (agentSession and friends): with an active context, commands like `access
 // whoami`/`logout` must authenticate from the XDG store — the environment URL
 // and (identity, environment)-scoped credential — and never consult the legacy
 // ~/.jentic profile store or its localhost default. This is the split-brain the
@@ -65,7 +65,7 @@ func TestDataPlane_ContextFirst_UsesEnvURLAndStoredCredential(t *testing.T) {
 }
 
 // TestDataPlane_ContextUnregistered_FailsActionable: a context whose identity
-// holds no credential (no API key, never registered) must fail with the V2
+// holds no credential (no API key, never registered) must fail with the
 // remediation — `jentic identity register` — not fall back to a legacy profile
 // or a localhost default.
 func TestDataPlane_ContextUnregistered_FailsActionable(t *testing.T) {
@@ -98,7 +98,7 @@ func TestDataPlane_ContextUnregistered_FailsActionable(t *testing.T) {
 	}
 }
 
-// TestLogout_ContextClearsXDGTokens: with a V2 context active, logout must
+// TestLogout_ContextClearsXDGTokens: with a context active, logout must
 // revoke and drop the XDG-stored token for the active (identity, environment) —
 // not touch (or invent) a legacy profile.
 func TestLogout_ContextClearsXDGTokens(t *testing.T) {

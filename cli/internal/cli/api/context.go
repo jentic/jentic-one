@@ -24,8 +24,8 @@ func newContextCmd(app *app) *cobra.Command {
 		Use:   "context",
 		Short: "Manage and switch contexts (environment + identity + mode)",
 		Long: "context binds an Environment, an Identity, and an interaction mode into a\n" +
-			"named context, and switches which one commands act on. It is the V2\n" +
-			"successor to `jentic profile` (see `jentic migrate`).",
+			"named context, and switches which one commands act on. It is the\n" +
+			"successor to the old `jentic profile` (see `jentic migrate`).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// The most common question a user asks here is "which context am I
@@ -274,7 +274,7 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 		Use:     "delete <name>",
 		Aliases: []string{"rm"},
 		Short:   "Delete a context",
-		Long: "delete removes a context (the V2 equivalent of removing a V1 profile).\n" +
+		Long: "delete removes a context (the equivalent of removing a legacy profile).\n" +
 			"It refuses to delete the ACTIVE context\n" +
 			"(switch first) to avoid a dangling active_context. With --identity it also\n" +
 			"removes the referenced identity iff no other context uses it.",

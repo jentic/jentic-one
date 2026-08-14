@@ -125,7 +125,7 @@ func FromContext(ctx context.Context) *ActiveState {
 }
 
 // ActiveV2 returns the resolved state from ctx only when it represents a real
-// V2 context — an XDG-store (or file-less) resolution with a concrete
+// context — an XDG-store (or file-less) resolution with a concrete
 // environment. It returns nil when no state was injected or when resolution
 // degraded (no config anywhere: the interceptor injects a default state with
 // an empty EnvironmentName so fencing still works). This is THE shared

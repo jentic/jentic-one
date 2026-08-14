@@ -81,7 +81,7 @@ func (a *app) agentSession(ctx context.Context) (baseURL, token string, err erro
 	return a.contextSession(st)
 }
 
-// requireState returns the active V2 state or the canonical "no active
+// requireState returns the active state or the canonical "no active
 // context" coded error. It is the single entry every data-plane command goes
 // through, so the remediation string cannot drift between commands.
 func (a *app) requireState(ctx context.Context) (*clictx.ActiveState, error) {
@@ -119,7 +119,7 @@ func noContextErr() *ux.CodedError {
 	}
 }
 
-// contextSession obtains (baseURL, bearer) for an active V2 context via the
+// contextSession obtains (baseURL, bearer) for an active context via the
 // SDK's credential-resolution order (injected token > jak_* API key > cached/
 // exchanged token) — byte-for-byte the credential the SDK request editor would
 // attach, so hand-rolled clients and generated clients can never disagree.

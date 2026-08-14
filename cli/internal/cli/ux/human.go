@@ -88,7 +88,7 @@ func (h *HumanUX) Render(data any) {
 	if page, ok := data.(Page); ok {
 		// Config-list commands (context/env/identity list) pass []map[string]any
 		// rows; give humans the styled list treatment (UX-4) instead of the raw
-		// JSON dump their V1 predecessors already improved on. API-payload pages
+		// JSON dump the earlier commands already improved on. API-payload pages
 		// (typed slices) keep the JSON rendering — that data is the payload.
 		if rows, isRows := page.Items.([]map[string]any); isRows {
 			h.renderMapList(rows)
