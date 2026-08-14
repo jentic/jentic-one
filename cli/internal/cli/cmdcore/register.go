@@ -183,6 +183,42 @@ func agentConsoleURL(baseURL, agentID string) string {
 	return config.AppURL(baseURL, "agents/"+agentID)
 }
 
+// agentClaimURL builds the human-facing UI link for CLAIMING ownership of a
+// self-registered agent, carrying the single-use claim token so the console can
+// pre-fill it. It is constructed by convention ({baseURL}/app/agents/{id}/claim
+// with ?claim_token=…) — the backend does not (yet) hand back a ready-made claim
+// URL, and the page may not exist on every deployment, so the raw token + the
+// `jentic identity claim` command are always shown alongside as the reliable
+// fallback (an agent cannot claim itself; a human must). The token is a
+// short-lived bearer capability shown once — never persisted, never logged.
+func agentClaimURL(baseURL, agentID, claimToken string) string {
+	u := config.AppURL(baseURL, "agents/"+agentID+"/claim")
+	if claimToken != "" {
+		u += "?claim_token=" + url.QueryEscape(claimToken)
+	}
+	return u
+}
+
+// presentClaimAffordance guides the HUMAN to take ownership of a just-registered
+// agent when the backend enabled claiming (non-empty claimToken). It is a no-op
+// when claiming is off (OSS default) — so the OSS onboarding output is unchanged
+// — and in machine mode, where the terminal ux.Result.Fields carry the
+// machine-actionable signal instead (an agent cannot claim itself). Shown once:
+// the token is single-use, short-lived, and deliberately never persisted, so we
+// surface it exactly like the backend's "returned once" contract. Both a
+// console link (by convention; the page may not exist everywhere) AND the raw
+// token + exact command are printed, so the human always has a reliable path.
+func (a *App) presentClaimAffordance(ctx context.Context, baseURL, agentID, claimToken string) {
+	if claimToken == "" || isMachineCtx(ctx) {
+		return
+	}
+	fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Claim ownership of this agent (you, the human — an agent cannot claim itself):"))
+	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentClaimURL(baseURL, agentID, claimToken)))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    Open the link above, or run the command below with the one-time token:"))
+	fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(fmt.Sprintf("jentic identity claim %s --token %s", agentID, claimToken)))
+	fmt.Fprintf(a.Out, "    %s\n", theme.Dimf("Token %s is single-use and short-lived — it is shown only once and is not saved.", claimToken))
+}
+
 // --- onboarding body -------------------------------------------------------
 //
 // The rest of this file implements `jentic register` / `jentic bootstrap`
@@ -382,6 +418,7 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	}
 
 	clientID := reg.ClientID
+	claimToken := ""
 	if clientID == "" {
 		a.registerProgress(ctx, theme.Infof("Registering agent %q with %s ...", clientName, baseURL))
 		r, rerr := auth.Register(baseURL, clientName, auth.PublicKeyToJWKS(pub))
@@ -398,6 +435,10 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 			}
 		}
 		clientID = r.ClientID
+		// The claim token is minted ONCE, here at registration; a later re-run
+		// (existing clientID) never sees it again — matching the backend's
+		// "returned once" contract. Empty on the OSS default (no minter).
+		claimToken = r.ClaimToken
 		status := r.Status
 		if status == "" {
 			status = "pending"
@@ -410,6 +451,12 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 		a.registerProgress(ctx, theme.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
 	}
 
+	// If claiming is enabled, guide the HUMAN to take ownership. This is shown
+	// once (the token is single-use, short-lived, never persisted) and before
+	// the approval wait, since claim and operator-approval are independent and
+	// the human is present now. No-op on the OSS default (empty token).
+	a.presentClaimAffordance(ctx, baseURL, clientID, claimToken)
+
 	creds := auth.Credentials{BaseURL: baseURL, IdentityName: identity, EnvironmentName: envName}
 	if err := a.waitForApprovalV2(ctx, creds, clientID, timeout); err != nil {
 		return err
@@ -421,11 +468,25 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	if isMachineCtx(ctx) {
 		// Machine mode: one JSON Result on stdout is the terminal success signal,
 		// replacing the human "Token minted" / "Ready:" prose (which stays
-		// suppressed by registerProgress).
-		ux.FromContext(ctx).Render(ux.Result{
+		// suppressed by registerProgress). If claiming is enabled, surface the
+		// fact machine-readably (never the token in prose) so an automated caller
+		// can route a human to complete the claim — an agent cannot claim itself.
+		res := ux.Result{
 			Status: ux.StatusRegistered, Resource: "identity", Name: identity, ID: clientID,
 			Message: "approved; token minted",
-		})
+		}
+		if claimToken != "" {
+			// A claim needs a HUMAN (an agent cannot claim itself), so the machine
+			// signal is the fact + where a human goes — not the raw token, which
+			// the key-based redactor would mask anyway and which the agent cannot
+			// action. The human-readable token is shown once via presentClaimAffordance.
+			res.Fields = map[string]any{
+				"claim_required": true,
+				"claim_url":      agentClaimURL(baseURL, clientID, ""),
+				"claim_command":  fmt.Sprintf("jentic identity claim %s --token <claim_token>", clientID),
+			}
+		}
+		ux.FromContext(ctx).Render(res)
 		return nil
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Token minted for %s.", identity))

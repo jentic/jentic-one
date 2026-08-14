@@ -177,3 +177,67 @@ func TestNormalizeLoopbackURL(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentClaimURL pins the by-convention claim link: the SPA agent-claim page
+// under /app carrying the single-use token as a query param (url-escaped), and
+// no ?claim_token= when the token is empty.
+func TestAgentClaimURL(t *testing.T) {
+	const base = "https://jentic.example.com"
+	const id = "cid-123"
+
+	got := agentClaimURL(base, id, "tok en/with+special")
+	const want = "https://jentic.example.com/app/agents/cid-123/claim?claim_token=tok+en%2Fwith%2Bspecial"
+	if got != want {
+		t.Errorf("agentClaimURL with token = %q, want %q", got, want)
+	}
+
+	if got := agentClaimURL(base, id, ""); got != base+"/app/agents/"+id+"/claim" {
+		t.Errorf("agentClaimURL empty token = %q, want no query string", got)
+	}
+}
+
+// TestPresentClaimAffordance proves the human claim guidance appears once (link +
+// raw token + the exact `jentic identity claim` command) when a claim token is
+// present in human mode, is suppressed in machine mode (the ux.Result carries the
+// machine signal instead), and is byte-for-byte silent on the OSS default (empty
+// token) so onboarding output is unchanged there.
+func TestPresentClaimAffordance(t *testing.T) {
+	const base = "http://127.0.0.1:8000"
+	const id = "cid-abc"
+	const tok = "clm_secret_once"
+
+	t.Run("human with token shows link + token + command", func(t *testing.T) {
+		app := testApp(t)
+		ctx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{Mode: clictx.ModeHuman})
+		app.presentClaimAffordance(ctx, base, id, tok)
+		out := app.Out.(*bytes.Buffer).String()
+		for _, want := range []string{
+			agentClaimURL(base, id, tok), // clickable link
+			tok,                          // raw one-time token
+			"jentic identity claim " + id + " --token " + tok, // exact command
+			"an agent cannot claim itself",                    // human-only framing
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("human claim affordance missing %q in:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("machine mode suppresses prose", func(t *testing.T) {
+		app := testApp(t)
+		ctx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{Mode: clictx.ModeAgent})
+		app.presentClaimAffordance(ctx, base, id, tok)
+		if got := app.Out.(*bytes.Buffer).String(); got != "" {
+			t.Errorf("machine-mode claim prose leaked to stdout: %q", got)
+		}
+	})
+
+	t.Run("OSS default (no token) is silent", func(t *testing.T) {
+		app := testApp(t)
+		ctx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{Mode: clictx.ModeHuman})
+		app.presentClaimAffordance(ctx, base, id, "")
+		if got := app.Out.(*bytes.Buffer).String(); got != "" {
+			t.Errorf("empty-token claim affordance must be silent, got: %q", got)
+		}
+	})
+}

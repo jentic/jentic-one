@@ -18,6 +18,14 @@ import (
 type RegistrationResult struct {
 	ClientID string `json:"client_id"`
 	Status   string `json:"status"`
+	// ClaimToken is the single-use ownership-claim token the control plane
+	// returns *once* on registration when claiming is enabled (jentic-one #1042).
+	// It is empty on the OSS default (no minter configured). We READ it here (a
+	// field the backend already returns) but never PERSIST it — it is a
+	// short-lived bearer capability, shown once, exactly like the RAT posture
+	// above. A human presents it to `jentic identity claim` to take ownership of
+	// this self-registered agent; an agent cannot claim itself.
+	ClaimToken string `json:"claim_token"`
 }
 
 // Register performs RFC 7591 Dynamic Client Registration against the control
