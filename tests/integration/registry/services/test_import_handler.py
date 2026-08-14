@@ -656,6 +656,16 @@ async def test_overlay_rollback_restores_published_base_as_published(
         )
         await session.commit()
 
+    # Precondition the assertion depends on: materialization must have actually archived
+    # the base. Without this, the final state=="published" check would also pass if the
+    # base were never archived/restored at all (it started PUBLISHED) — masking a broken
+    # archive→restore round-trip. See #939.
+    async with registry_db.session() as session:
+        base_rev_mid = (
+            await session.execute(select(ApiRevision).where(ApiRevision.id == base_revision_id))
+        ).scalar_one()
+        assert base_rev_mid.state == "archived"
+
     identity = Identity(sub="usr_operator", email="op@test.local", permissions=["overlays:confirm"])
     await OverlayService(integration_context).rollback(
         "rbp-vendor", "rbp-api", "1.0.0", overlay_id, identity=identity

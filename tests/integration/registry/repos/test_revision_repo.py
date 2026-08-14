@@ -222,6 +222,99 @@ async def test_restore_archived_non_archived_is_noop(
         assert loaded.state == ApiRevisionState.IMPORTED
 
 
+async def test_restore_archived_draft_is_noop(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A DRAFT (origin-less, non-archived) row is left untouched — not flipped to PUBLISHED.
+
+    The dangerous branch for the state CASE: a DRAFT is ``origin IS NULL``, so if the CAS
+    on ``state == ARCHIVED`` were ever weakened, restore would wrongly promote it to
+    PUBLISHED. Pin the CAS specifically against the origin-less branch (#939).
+    """
+    async with registry_db.session() as session:
+        rev = await ApiRevisionRepository.create_draft(
+            session,
+            api_id=sample_api.id,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        await session.commit()
+        rev_id = rev.id
+
+    async with registry_db.session() as session:
+        rowcount = await ApiRevisionRepository.restore_archived(session, rev_id)
+        await session.commit()
+
+    assert rowcount == 0
+    async with registry_db.session() as session:
+        loaded = await session.get(ApiRevision, rev_id)
+        assert loaded is not None
+        assert loaded.state == ApiRevisionState.DRAFT
+
+
+async def test_restore_archived_missing_revision_returns_zero(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """A missing revision id yields rowcount 0 — the contract rollback maps to
+    OverlayRollbackTargetMissingError (#939)."""
+    async with registry_db.session() as session:
+        rowcount = await ApiRevisionRepository.restore_archived(session, uuid.uuid4())
+        await session.commit()
+    assert rowcount == 0
+
+
+async def test_state_origin_invariant_holds_for_producers(
+    registry_db: DatabaseSession, sample_api: Api
+) -> None:
+    """Guard the load-bearing invariant `restore_archived` relies on (#939).
+
+    The state CASE reconstructs prior state from `origin` (NULL ⇒ PUBLISHED, else
+    IMPORTED). That is only valid because the two revision producers correlate state and
+    origin: create_draft (the sole origin-less creator; DRAFT→PUBLISHED via promote) never
+    sets origin, and create_imported (the sole IMPORTED producer) always sets one. If a
+    future producer breaks this (e.g. an origin-less IMPORTED, or an origin-bearing row
+    that later becomes PUBLISHED), rollback would silently mis-restore. Fail loudly here.
+    """
+    async with registry_db.session() as session:
+        draft = await ApiRevisionRepository.create_draft(
+            session,
+            api_id=sample_api.id,
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        # A DRAFT promoted to PUBLISHED keeps origin NULL (promote never sets origin).
+        await ApiRevisionRepository.set_state(session, draft.id, ApiRevisionState.PUBLISHED)
+        await session.commit()
+        published_id = draft.id
+
+    async with registry_db.session() as session:
+        published = await session.get(ApiRevision, published_id)
+        assert published is not None and published.state == ApiRevisionState.PUBLISHED
+        assert published.origin is None, "PUBLISHED revision must have origin IS NULL (#939)"
+        # Archive it before adding an IMPORTED row: the one-active partial unique index
+        # forbids two active (published/imported) revisions for the same api_id.
+        await ApiRevisionRepository.set_state(session, published_id, ApiRevisionState.ARCHIVED)
+        imported = await ApiRevisionRepository.create_imported(
+            session,
+            api_id=sample_api.id,
+            origin="catalog",
+            spec_digest=None,
+            source_type=ApiRevisionSourceType.INLINE,
+            created_by="usr_test",
+        )
+        await session.commit()
+        imported_id = imported.id
+
+    async with registry_db.session() as session:
+        imported_row = await session.get(ApiRevision, imported_id)
+        assert imported_row is not None and imported_row.state == ApiRevisionState.IMPORTED
+        assert imported_row.origin is not None, (
+            "IMPORTED revision must have a non-NULL origin (#939)"
+        )
+
+
 async def test_set_operation_count(
     registry_db: DatabaseSession, sample_revision: tuple[Api, ApiRevision]
 ) -> None:

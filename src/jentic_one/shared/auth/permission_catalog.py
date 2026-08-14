@@ -13,7 +13,7 @@ rather than reaching up into the admin tier (#938).
 so existing ``from jentic_one.admin.core.permissions import …`` call sites keep
 working unchanged; admin stays the documented home for permission *concepts*, the
 data just lives in shared. This module depends only on ``shared/scopes.py`` — no
-admin-tier import — which is what lets the ``test_shared_does_not_import_admin``
+admin-tier import — which is what lets the ``test_shared_does_not_import_admin_permissions``
 arch guard pass unconditionally.
 """
 
@@ -268,3 +268,41 @@ def compute_effective(grants: set[str]) -> set[str]:
                 effective.add(p)
                 frontier.append(p)
     return effective
+
+
+#: Public surface re-exported verbatim by the ``admin.core.permissions`` shim. The
+#: ``OWNER_*`` scope constants are intentionally excluded — their canonical home is
+#: ``shared.scopes`` and callers import them from there, not via this catalogue. Kept
+#: in sync with the shim's ``__all__`` (asserted by test_permission_catalog).
+__all__ = [
+    "AGENTS_READ",
+    "AGENTS_WRITE",
+    "ALL_PERMISSIONS",
+    "APIS_READ",
+    "APIS_WRITE",
+    "AUDIT_READ",
+    "CAPABILITIES_EXECUTE",
+    "CAPABILITIES_READ",
+    "CATALOG_IMPORT",
+    "CONFIG_READ",
+    "CONFIG_WRITE",
+    "CREDENTIALS_READ",
+    "CREDENTIALS_WRITE",
+    "EVENTS_READ",
+    "EVENTS_WRITE",
+    "EXECUTIONS_READ",
+    "IMPLICATION_MAP",
+    "JOBS_READ",
+    "JOBS_WRITE",
+    "ORG_ADMIN",
+    "OVERLAYS_CONFIRM",
+    "SERVICE_ACCOUNTS_READ",
+    "SERVICE_ACCOUNTS_WRITE",
+    "TOOLKITS_READ",
+    "TOOLKITS_WRITE",
+    "USERS_READ",
+    "USERS_WRITE",
+    "Permission",
+    "compute_effective",
+    "compute_implies_transitive",
+]

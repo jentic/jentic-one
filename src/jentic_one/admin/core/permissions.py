@@ -7,7 +7,7 @@ re-exports it unchanged so existing ``from jentic_one.admin.core.permissions
 import …`` call sites keep working, and admin remains the documented home for
 permission concepts. Import new admin-tier code from here as before; ``shared``
 code must import from ``shared.auth.permission_catalog`` directly (enforced by the
-``test_shared_does_not_import_admin`` arch guard).
+``test_shared_does_not_import_admin_permissions`` arch guard).
 """
 
 from __future__ import annotations

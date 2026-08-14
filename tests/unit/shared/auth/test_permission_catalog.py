@@ -8,6 +8,8 @@ does not route through admin.
 
 from __future__ import annotations
 
+from jentic_one.admin.core import permissions as admin_perms
+from jentic_one.shared.auth import permission_catalog
 from jentic_one.shared.auth.permission_catalog import (
     ALL_PERMISSIONS,
     APIS_READ,
@@ -47,10 +49,11 @@ def test_all_permissions_is_the_shared_catalogue() -> None:
     assert ALL_PERMISSIONS[ORG_ADMIN].name == ORG_ADMIN
 
 
-def test_admin_shim_re_exports_the_same_objects() -> None:
-    # admin.core.permissions must re-export the *same* objects (identity), proving the
-    # shim is transparent for existing call sites.
-    from jentic_one.admin.core import permissions as admin_perms
-
-    assert admin_perms.ALL_PERMISSIONS is ALL_PERMISSIONS
-    assert admin_perms.compute_effective is compute_effective
+def test_admin_shim_re_exports_the_entire_public_surface() -> None:
+    # The shim's whole job is a complete, identity-preserving re-export. Assert the
+    # public surface matches AND every symbol is the *same object*, so a future dropped
+    # or diverged re-export (e.g. the unused-by-callers Permission dataclass) is caught
+    # in one place rather than only when some call site happens to break.
+    assert set(admin_perms.__all__) == set(permission_catalog.__all__)
+    for name in permission_catalog.__all__:
+        assert getattr(admin_perms, name) is getattr(permission_catalog, name), name
