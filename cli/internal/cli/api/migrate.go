@@ -140,7 +140,10 @@ func runMigrate(app *app, purgeLegacy bool) (migrateResult, error) {
 		sources = append(sources, legacyconfig.Paths{Root: acct.ConfigDir})
 	}
 
-	defaultProfile := cfg.ResolvedDefaultProfile()
+	defaultProfile, err := legacyDefaultProfile(app.Paths)
+	if err != nil {
+		return res, fmt.Errorf("reading legacy default profile: %w", err)
+	}
 	broker := brokerURLFromLegacy(cfg)
 
 	// Accumulate the mutations, then apply them in a single MutateConfig so a

@@ -33,7 +33,6 @@ func TestLoadMissingFile(t *testing.T) {
 func TestLoadPresentFile(t *testing.T) {
 	paths := writeConfig(t, `
 base_url: http://example:9000
-default_profile: work
 broker:
   scheme: http
   host: localhost:4000
@@ -45,7 +44,7 @@ broker:
 	if !cfg.Loaded {
 		t.Fatalf("Loaded should be true")
 	}
-	if cfg.BaseURL != "http://example:9000" || cfg.DefaultProfile != "work" {
+	if cfg.BaseURL != "http://example:9000" {
 		t.Errorf("unexpected top-level: %+v", cfg)
 	}
 	if cfg.Broker.Scheme != "http" || cfg.Broker.Host != "localhost:4000" {
@@ -64,9 +63,6 @@ func TestResolvedDefaults(t *testing.T) {
 	cfg := &FileConfig{}
 	if got := cfg.ResolvedBaseURL(); got != DefaultBaseURL {
 		t.Errorf("ResolvedBaseURL = %q, want default", got)
-	}
-	if got := cfg.ResolvedDefaultProfile(); got != DefaultProfile {
-		t.Errorf("ResolvedDefaultProfile = %q, want default", got)
 	}
 }
 
@@ -128,9 +124,8 @@ func TestResolvedPrecedence(t *testing.T) {
 func TestSaveRoundTrip(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
 	cfg := &FileConfig{
-		BaseURL:        "http://example:9000",
-		DefaultProfile: "work",
-		Broker:         BrokerConfig{Scheme: "http", Host: "localhost:4000"},
+		BaseURL: "http://example:9000",
+		Broker:  BrokerConfig{Scheme: "http", Host: "localhost:4000"},
 	}
 	if err := cfg.Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -143,7 +138,7 @@ func TestSaveRoundTrip(t *testing.T) {
 	if !got.Loaded {
 		t.Fatalf("Loaded should be true after Save")
 	}
-	if got.BaseURL != cfg.BaseURL || got.DefaultProfile != cfg.DefaultProfile {
+	if got.BaseURL != cfg.BaseURL {
 		t.Errorf("top-level mismatch: %+v", got)
 	}
 	if got.Broker != cfg.Broker {
@@ -299,17 +294,17 @@ func TestMutateConcurrentContention(t *testing.T) {
 // TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
 // the on-disk config is unchanged when fn returns an error.
 func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
-	paths := writeConfig(t, "default_profile: keep\n")
+	paths := writeConfig(t, "base_url: keep\n")
 	_, err := Mutate(paths, func(c *FileConfig) error {
-		c.DefaultProfile = "clobbered"
+		c.BaseURL = "clobbered"
 		return os.ErrInvalid
 	})
 	if err == nil {
 		t.Fatal("expected Mutate to propagate the fn error")
 	}
 	got, _ := Load(paths)
-	if got.DefaultProfile != "keep" {
-		t.Errorf("failed Mutate must not persist changes, got %q", got.DefaultProfile)
+	if got.BaseURL != "keep" {
+		t.Errorf("failed Mutate must not persist changes, got %q", got.BaseURL)
 	}
 }
 
@@ -318,7 +313,7 @@ func TestMutateErrorLeavesConfigUntouched(t *testing.T) {
 // no stray .config-*.tmp.
 func TestSaveLeavesNoTempFile(t *testing.T) {
 	paths := Paths{Root: t.TempDir()}
-	if err := (&FileConfig{DefaultProfile: "x"}).Save(paths); err != nil {
+	if err := (&FileConfig{BaseURL: "x"}).Save(paths); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	entries, err := os.ReadDir(paths.Dir())

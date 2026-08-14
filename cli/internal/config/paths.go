@@ -26,9 +26,6 @@ const (
 	// client/config (ARCH-3).
 	DefaultBaseURL = sdkconfig.DefaultBaseURL
 
-	// DefaultProfile is the profile name used when none is specified.
-	DefaultProfile = "default"
-
 	// SPAMountPath is the URL prefix the web console (SPA) is served under. The
 	// server mounts the React app at /app (see shared/web/static.py), so every
 	// client-side route (/login, /setup, /agents, …) lives under this prefix in

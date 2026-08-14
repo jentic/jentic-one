@@ -28,8 +28,6 @@ type FileConfig struct {
 	// BaseURL is the Jentic control-plane (auth surface) base URL used for agent
 	// registration and token minting.
 	BaseURL string `yaml:"base_url"`
-	// DefaultProfile selects which profile commands act on when none is given.
-	DefaultProfile string `yaml:"default_profile"`
 	// Broker is the would-be forward target (logged only in this POC).
 	Broker BrokerConfig `yaml:"broker"`
 	// Telemetry holds the user's telemetry consent decision. HasConsented
@@ -110,14 +108,6 @@ func (c *FileConfig) ResolvedBaseURL() string {
 		return c.BaseURL
 	}
 	return DefaultBaseURL
-}
-
-// ResolvedDefaultProfile returns the configured default profile or the default.
-func (c *FileConfig) ResolvedDefaultProfile() string {
-	if c.DefaultProfile != "" {
-		return c.DefaultProfile
-	}
-	return DefaultProfile
 }
 
 // The Resolved* helpers below implement the precedence defaults < config.yaml <

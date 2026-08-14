@@ -77,12 +77,10 @@ func TestMigrate_CopiesProfilesToXDG(t *testing.T) {
 	// Seed two legacy profiles and mark one the default.
 	seedLegacyDCRProfile(t, legacyPaths, "work", "https://api.jentic.com")
 	seedLegacyDCRProfile(t, legacyPaths, "staging", "https://staging.jentic.com:8443")
-	lcfg, err := legacyconfig.Load(legacyPaths)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lcfg.DefaultProfile = "work"
-	if err := lcfg.Save(legacyPaths); err != nil {
+	// default_profile is a V1-only field read solely by migrate (via
+	// legacy_store.legacyDefaultProfile); write it straight into the legacy
+	// config.yaml since the live FileConfig no longer carries it (ARCH-21 B2).
+	if err := os.WriteFile(legacyPaths.ConfigPath(), []byte("default_profile: work\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

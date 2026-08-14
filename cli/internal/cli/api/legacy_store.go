@@ -132,3 +132,34 @@ func (p *legacyProfile) loadAPIKey() (string, error) {
 	}
 	return strings.TrimSpace(string(data)), nil
 }
+
+// legacyDefaultProfileName is the V1 fallback profile name — the profile V1
+// commands acted on when none was named. It lives here (not in internal/config)
+// because default_profile is a V1 concept only `migrate` reads; keeping it in the
+// legacy substrate is what lets the V1-containment gate hold (ARCH-21 Part B).
+const legacyDefaultProfileName = "default"
+
+// legacyDefaultProfile reads the V1 `default_profile` from the legacy
+// ~/.jentic/config.yaml. It is the ONLY reader of that field: `migrate` uses it
+// to decide which migrated context becomes active. An absent file or empty value
+// falls back to legacyDefaultProfileName. Kept off internal/config.FileConfig so
+// no live loader carries a V1-only field (ARCH-21 Part B).
+func legacyDefaultProfile(paths config.Paths) (string, error) {
+	var doc struct {
+		DefaultProfile string `yaml:"default_profile"`
+	}
+	data, err := os.ReadFile(paths.ConfigPath())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return legacyDefaultProfileName, nil
+		}
+		return "", err
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return "", fmt.Errorf("parse %s: %w", config.ConfigName, err)
+	}
+	if doc.DefaultProfile == "" {
+		return legacyDefaultProfileName, nil
+	}
+	return doc.DefaultProfile, nil
+}
