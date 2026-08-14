@@ -1371,6 +1371,11 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// ClaimRequest Request body for claiming ownership of a self-registered agent.
+type ClaimRequest struct {
+	Token string `json:"token"`
+}
+
 // ConnectChallengeResponse Response from a connect initiation.
 type ConnectChallengeResponse struct {
 	AuthorizeUrl string `json:"authorize_url"`
@@ -2349,6 +2354,7 @@ type RegisterRequest struct {
 
 // RegisterResponse POST /register 201 response.
 type RegisterResponse struct {
+	ClaimToken              *string   `json:"claim_token,omitempty"`
 	ClientId                string    `json:"client_id"`
 	GrantTypes              *[]string `json:"grant_types,omitempty"`
 	RegistrationAccessToken string    `json:"registration_access_token"`
@@ -3214,6 +3220,9 @@ type ReplaceAgentScopesJSONRequestBody = AgentScopesRequest
 
 // BindToolkitJSONRequestBody defines body for BindToolkit for application/json ContentType.
 type BindToolkitJSONRequestBody = ToolkitBindRequest
+
+// ClaimAgentJSONRequestBody defines body for ClaimAgent for application/json ContentType.
+type ClaimAgentJSONRequestBody = ClaimRequest
 
 // DenyAgentJSONRequestBody defines body for DenyAgent for application/json ContentType.
 type DenyAgentJSONRequestBody = JenticOneAuthWebSchemasAgentsDenyRequest
@@ -4371,6 +4380,56 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimAgentWithBody Claim Agent
+	//
+	// Claim ownership of a self-registered agent using its claim token.
+	//
+	// Authenticated by the platform bearer token but requires **no** agent
+	// permission — the single-use claim token minted at ``/register`` is the proof,
+	// so the registering human (even a plain member) can take ownership. Sets
+	// ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+	//
+	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+	// only a human can own an agent. The ``require_actor_type`` gate rejects a
+	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+	//
+	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+	// claiming is an onboarding step a brand-new user may hit before they have
+	// rotated a temporary password, so a must-change-password state must not block
+	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// agent — so allowing it under an expired password is low-risk.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+	ClaimAgentWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimAgent Claim Agent
+	//
+	// Claim ownership of a self-registered agent using its claim token.
+	//
+	// Authenticated by the platform bearer token but requires **no** agent
+	// permission — the single-use claim token minted at ``/register`` is the proof,
+	// so the registering human (even a plain member) can take ownership. Sets
+	// ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+	//
+	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+	// only a human can own an agent. The ``require_actor_type`` gate rejects a
+	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+	//
+	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+	// claiming is an onboarding step a brand-new user may hit before they have
+	// rotated a temporary password, so a must-change-password state must not block
+	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// agent — so allowing it under an expired password is low-risk.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+	ClaimAgent(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DenyAgentWithBody Deny Agent
 	//
@@ -6451,6 +6510,76 @@ func (c *Client) UnbindToolkit(ctx context.Context, agentId string, toolkitId st
 // Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 func (c *Client) ApproveAgent(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewApproveAgentRequest(c.Server, agentId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimAgentWithBody Claim Agent
+//
+// Claim ownership of a self-registered agent using its claim token.
+//
+// Authenticated by the platform bearer token but requires **no** agent
+// permission — the single-use claim token minted at “/register“ is the proof,
+// so the registering human (even a plain member) can take ownership. Sets
+// “owner_id“ to the caller; the existing scoping + approve paths then apply.
+//
+// Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
+// only a human can own an agent. The “require_actor_type“ gate rejects a
+// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// “AgentService.claim“ re-checks the same invariant as defense-in-depth.
+//
+// “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
+// claiming is an onboarding step a brand-new user may hit before they have
+// rotated a temporary password, so a must-change-password state must not block
+// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// agent — so allowing it under an expired password is low-risk.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+func (c *Client) ClaimAgentWithBody(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimAgentRequestWithBody(c.Server, agentId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimAgent Claim Agent
+//
+// Claim ownership of a self-registered agent using its claim token.
+//
+// Authenticated by the platform bearer token but requires **no** agent
+// permission — the single-use claim token minted at “/register“ is the proof,
+// so the registering human (even a plain member) can take ownership. Sets
+// “owner_id“ to the caller; the existing scoping + approve paths then apply.
+//
+// Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
+// only a human can own an agent. The “require_actor_type“ gate rejects a
+// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// “AgentService.claim“ re-checks the same invariant as defense-in-depth.
+//
+// “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
+// claiming is an onboarding step a brand-new user may hit before they have
+// rotated a temporary password, so a must-change-password state must not block
+// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// agent — so allowing it under an expired password is low-risk.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+func (c *Client) ClaimAgent(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimAgentRequest(c.Server, agentId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10640,6 +10769,53 @@ func NewApproveAgentRequest(server string, agentId string) (*http.Request, error
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewClaimAgentRequest calls the generic ClaimAgent builder with application/json body
+func NewClaimAgentRequest(server string, agentId string, body ClaimAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimAgentRequestWithBody(server, agentId, "application/json", bodyReader)
+}
+
+// NewClaimAgentRequestWithBody constructs an http.Request for the ClaimAgent method, with any body, and a specified content type
+func NewClaimAgentRequestWithBody(server string, agentId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "agent_id", agentId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/agents/%s:claim", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -17731,6 +17907,56 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /agents/{agent_id}:approve (the `ApproveAgent` operationId).
 	ApproveAgentWithResponse(ctx context.Context, agentId string, reqEditors ...RequestEditorFn) (*ApproveAgentHTTPResp, error)
 
+	// ClaimAgentWithBodyWithResponse Claim Agent
+	//
+	// Claim ownership of a self-registered agent using its claim token.
+	//
+	// Authenticated by the platform bearer token but requires **no** agent
+	// permission — the single-use claim token minted at ``/register`` is the proof,
+	// so the registering human (even a plain member) can take ownership. Sets
+	// ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+	//
+	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+	// only a human can own an agent. The ``require_actor_type`` gate rejects a
+	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+	//
+	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+	// claiming is an onboarding step a brand-new user may hit before they have
+	// rotated a temporary password, so a must-change-password state must not block
+	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// agent — so allowing it under an expired password is low-risk.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+	ClaimAgentWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error)
+
+	// ClaimAgentWithResponse Claim Agent
+	//
+	// Claim ownership of a self-registered agent using its claim token.
+	//
+	// Authenticated by the platform bearer token but requires **no** agent
+	// permission — the single-use claim token minted at ``/register`` is the proof,
+	// so the registering human (even a plain member) can take ownership. Sets
+	// ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+	//
+	// Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+	// only a human can own an agent. The ``require_actor_type`` gate rejects a
+	// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+	// ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
+	//
+	// ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
+	// claiming is an onboarding step a brand-new user may hit before they have
+	// rotated a temporary password, so a must-change-password state must not block
+	// it. The claim only sets ownership — it grants no scopes and cannot act as the
+	// agent — so allowing it under an expired password is low-risk.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+	ClaimAgentWithResponse(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error)
+
 	// DenyAgentWithBodyWithResponse Deny Agent
 	//
 	// Deny a pending agent.
@@ -21516,6 +21742,89 @@ func (r ApproveAgentHTTPResp) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ApproveAgentHTTPResp) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ClaimAgentHTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *ProblemDetail
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *ProblemDetail
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *ProblemDetail
+	// ApplicationproblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationproblemJSON422 *ProblemDetail
+	// ApplicationproblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationproblemJSON500 *ProblemDetail
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *ProblemDetail
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimAgentHTTPResp) GetJSON200() *AgentResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON400() *ProblemDetail {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON401() *ProblemDetail {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON403() *ProblemDetail {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON422() *ProblemDetail {
+	return r.ApplicationproblemJSON422
+}
+
+// GetApplicationproblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON500() *ProblemDetail {
+	return r.ApplicationproblemJSON500
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ClaimAgentHTTPResp) GetApplicationproblemJSON503() *ProblemDetail {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimAgentHTTPResp) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimAgentHTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimAgentHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimAgentHTTPResp) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -32213,6 +32522,68 @@ func (c *ClientWithResponses) ApproveAgentWithResponse(ctx context.Context, agen
 	return ParseApproveAgentHTTPResp(rsp)
 }
 
+// ClaimAgentWithBodyWithResponse Claim Agent
+//
+// Claim ownership of a self-registered agent using its claim token.
+//
+// Authenticated by the platform bearer token but requires **no** agent
+// permission — the single-use claim token minted at “/register“ is the proof,
+// so the registering human (even a plain member) can take ownership. Sets
+// “owner_id“ to the caller; the existing scoping + approve paths then apply.
+//
+// Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
+// only a human can own an agent. The “require_actor_type“ gate rejects a
+// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// “AgentService.claim“ re-checks the same invariant as defense-in-depth.
+//
+// “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
+// claiming is an onboarding step a brand-new user may hit before they have
+// rotated a temporary password, so a must-change-password state must not block
+// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// agent — so allowing it under an expired password is low-risk.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context, agentId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error) {
+	rsp, err := c.ClaimAgentWithBody(ctx, agentId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimAgentHTTPResp(rsp)
+}
+
+// ClaimAgentWithResponse Claim Agent
+//
+// Claim ownership of a self-registered agent using its claim token.
+//
+// Authenticated by the platform bearer token but requires **no** agent
+// permission — the single-use claim token minted at “/register“ is the proof,
+// so the registering human (even a plain member) can take ownership. Sets
+// “owner_id“ to the caller; the existing scoping + approve paths then apply.
+//
+// Restricted to “USER“ actors: “Agent.owner_id“ is a FK to “users.id“, so
+// only a human can own an agent. The “require_actor_type“ gate rejects a
+// non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+// “AgentService.claim“ re-checks the same invariant as defense-in-depth.
+//
+// “allow_expired_password=True“ is intentional (matching “GET /agents/{id}“):
+// claiming is an onboarding step a brand-new user may hit before they have
+// rotated a temporary password, so a must-change-password state must not block
+// it. The claim only sets ownership — it grants no scopes and cannot act as the
+// agent — so allowing it under an expired password is low-risk.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /agents/{agent_id}:claim (the `ClaimAgent` operationId).
+func (c *ClientWithResponses) ClaimAgentWithResponse(ctx context.Context, agentId string, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimAgentHTTPResp, error) {
+	rsp, err := c.ClaimAgent(ctx, agentId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimAgentHTTPResp(rsp)
+}
+
 // DenyAgentWithBodyWithResponse Deny Agent
 //
 // Deny a pending agent.
@@ -36538,6 +36909,74 @@ func ParseApproveAgentHTTPResp(rsp *http.Response) (*ApproveAgentHTTPResp, error
 	}
 
 	response := &ApproveAgentHTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ProblemDetail
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseClaimAgentHTTPResp parses an HTTP response from a ClaimAgentWithResponse call
+func ParseClaimAgentHTTPResp(rsp *http.Response) (*ClaimAgentHTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimAgentHTTPResp{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
