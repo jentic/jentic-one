@@ -143,6 +143,36 @@ class OverlayRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def list_confirmed_unlinked_for_api(
+        session: AsyncSession, api_id: uuid.UUID
+    ) -> list[Overlay]:
+        """CONFIRMED overlays for *api_id* with a NULL ``confirmed_revision_id``.
+
+        The lazy-link corner (#940): the materialize/confirm path flips an overlay to
+        CONFIRMED and promotes its revision to *current* inside the ingest transaction, then
+        stamps ``confirmed_revision_id`` in a *separate* follow-up transaction. Between those
+        commits — or durably, if the best-effort link write failed (the documented
+        CONFIRMED-but-unmaterialized recovery state) — the live overlay is CONFIRMED backing
+        the current revision with a NULL link. A strict revision-keyed lookup
+        (:meth:`get_live_confirmed_for_revision`) then can't find it.
+
+        This surfaces those NULL-linked CONFIRMED overlays so a caller resolving "which
+        overlay backed the just-archived revision" can recover the target when the strict
+        lookup misses. Ordered newest-confirmed first. Returns 0..N; the caller must decide
+        what an ambiguous (>1) result means for its context.
+        """
+        result = await session.execute(
+            select(Overlay)
+            .where(
+                Overlay.api_id == api_id,
+                Overlay.status == OverlayStatus.CONFIRMED,
+                Overlay.confirmed_revision_id.is_(None),
+            )
+            .order_by(Overlay.confirmed_at.desc().nulls_last(), Overlay.id.desc())
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_page(
         session: AsyncSession,
         *,
