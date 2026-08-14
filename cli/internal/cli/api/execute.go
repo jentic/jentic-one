@@ -561,10 +561,40 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 	if isBrokerDenial(resp) {
 		if directive, ok := parseAgentDirective(resp, respBody); ok {
 			a.printAgentDirective(directive)
+		} else {
+			// No agent_directive on the body (UX7): a first-timer who most needs the
+			// pointer would otherwise get only the generic "broker denied" line and
+			// a dead end. Synthesize a default next-step from the HTTP status the
+			// broker already returned so no denial is a dead end.
+			a.printSynthesizedDenialRecovery(resp.StatusCode)
 		}
 		return brokerDeniedErr(resp)
 	}
 	return nil
+}
+
+// printSynthesizedDenialRecovery prints a best-effort recovery hint for a broker
+// denial that carried no agent_directive, keyed off the HTTP status the broker
+// already returned (UX7). It mirrors printAgentDirective's shape (instruction +
+// `run:` command) so a directive-less denial reads the same as a directed one.
+// Unknown statuses fall back to the generic setup check.
+func (a *app) printSynthesizedDenialRecovery(status int) {
+	fmt.Fprintln(a.Err, theme.Warn.Render("Denied — recovery required:"))
+	switch status {
+	case http.StatusForbidden: // 403: have an identity, no access to this toolkit yet.
+		fmt.Fprintln(a.Err, "  This agent isn't bound to the toolkit you called. Check what you can run, then request access.")
+		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access whoami"))
+		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --wait"))
+	case http.StatusFailedDependency: // 424: no credential provisioned for the call.
+		fmt.Fprintln(a.Err, "  No credential is provisioned for this call. Provision one, then retry.")
+		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
+	case http.StatusUnauthorized: // 401: credential expired / needs reconnecting.
+		fmt.Fprintln(a.Err, "  Your credential needs reconnecting. Re-run access to refresh it.")
+		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access request --toolkit <vendor/name> --provision --wait"))
+	default:
+		fmt.Fprintln(a.Err, "  The broker denied this call. Check what you can run and your setup.")
+		fmt.Fprintln(a.Err, "  run: "+theme.Accent.Render("jentic access whoami"))
+	}
 }
 
 // brokerDeniedErr is the typed denial every broker-denial exit shares (AGT-6):
