@@ -36,10 +36,11 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 		"the public catalog into your local registry, inspect operations, and execute\n" +
 		"against them.\n\n" +
 		"New here? If you're a person setting up a local agent, run `jentic bootstrap`\n" +
-		"to create one (isolated account + registration + skills). If you're an agent\n" +
-		"without an identity yet, run `jentic register`. Then browse the public catalog\n" +
-		"with `jentic catalog`. To install and operate jentic-one locally, use the\n" +
-		"`jenticctl` CLI (e.g. `jenticctl install`). Use `jentic <command> --help` for details."
+		"to set one up end to end (identity + skills + isolation). If you're an agent\n" +
+		"that just needs tokens for an existing identity, run `jentic register`. Then\n" +
+		"browse the public catalog with `jentic catalog`. To install and operate\n" +
+		"jentic-one locally, use the `jenticctl` CLI (e.g. `jenticctl install`). Use\n" +
+		"`jentic <command> --help` for details."
 
 	root.AddGroup(
 		&cobra.Group{ID: "identity", Title: "Identity & access"},

@@ -78,7 +78,7 @@ func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "bootstrap",
-		Short: "Register an agent, wait for approval, and prime your operator — in one step",
+		Short: "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
 		Long: "bootstrap takes a fresh machine from nothing to ready: it connects this\n" +
 			"machine to a Jentic install (creating the environment, identity and context\n" +
 			"if needed), registers the agent (Dynamic Client Registration), prints an\n" +

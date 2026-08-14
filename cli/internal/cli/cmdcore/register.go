@@ -44,7 +44,7 @@ func NewRegisterCmd(app *App) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "register",
-		Short: "Register this machine as an agent and obtain tokens",
+		Short: "Obtain tokens for an existing agent identity (identity only, no skills) — agents run this",
 		Long: "register connects this machine to a Jentic install: it generates an\n" +
 			"Ed25519 keypair (if absent), performs Dynamic Client Registration, waits\n" +
 			"for an operator to approve the agent, then mints and saves tokens.\n\n" +
@@ -505,6 +505,15 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("See all:      "), theme.Command.Render("jentic context list"))
+	// Human-context nudge (UX6): `register` mints tokens only — it silently skips
+	// the agent skill + isolation that `bootstrap` adds. A person who reached here
+	// by hand may have wanted the full setup, so point them at it. This whole
+	// success block is human-only (machine mode returned above), so no TTY guard
+	// is needed.
+	fmt.Fprintf(a.Out, "\n%s %s%s\n",
+		theme.Dim.Render("Tip:"),
+		theme.Command.Render("jentic bootstrap"),
+		theme.Dim.Render(" also installs the agent skill and can isolate the agent — run it if you're setting up a coding agent."))
 	// Multi-agent case: registering a SECOND agent into an env creates its own
 	// per-identity context and silently makes it active (RegisterV2Setup). Spell
 	// out WHY a new context appeared and how to get back, so a user who now sees
