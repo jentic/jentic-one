@@ -25,7 +25,7 @@ var defaultPollCadence = pollCadence{
 // PollCadence returns the App's approval-poll cadence, falling back to the
 // production defaults for any field left zero. Exported so sibling command
 // packages (api, ctlcmd) that embed App can share the exact same schedule.
-func (a *App) PollCadence() (initial, max, step time.Duration) {
+func (a *App) PollCadence() (initial, maxDelay, step time.Duration) {
 	c := a.poll
 	if c.initial == 0 {
 		c.initial = defaultPollCadence.initial
@@ -42,6 +42,6 @@ func (a *App) PollCadence() (initial, max, step time.Duration) {
 // SetPollCadence overrides the approval-poll schedule (tests use it to make the
 // pending-path cases near-instant). Any zero argument keeps the default for
 // that field.
-func (a *App) SetPollCadence(initial, max, step time.Duration) {
-	a.poll = pollCadence{initial: initial, max: max, step: step}
+func (a *App) SetPollCadence(initial, maxDelay, step time.Duration) {
+	a.poll = pollCadence{initial: initial, max: maxDelay, step: step}
 }
