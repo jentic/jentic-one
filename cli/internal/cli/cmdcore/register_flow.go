@@ -249,21 +249,21 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 	// cached: register's contract is "when this returns, the server accepts
 	// this identity as of NOW".
 	classify := func(err error) (pending bool, out error) {
-		var p *auth.PendingError
-		if errors.As(err, &p) {
-			return true, nil
-		}
 		// QA-9: an assertion-validation failure (usually an audience mismatch) is
 		// NOT pending — polling would hang forever. Stop with an actionable code
 		// so the operator fixes the URL/backend rather than waiting. EXCEPTION:
 		// when a claim is still outstanding, the backend returns this same string
 		// for a not-yet-claimed/approved agent, so treat it as pending instead of
 		// aborting (the human is being pointed at the claim console right now).
-		var ai *auth.AssertionInvalidError
-		if errors.As(err, &ai) {
-			if claimPending {
-				return true, nil
-			}
+		// The claim-vs-audience disambiguation lives in client/auth
+		// (ClassifyTokenExchange) so this path and the data-plane session path
+		// share one rule.
+		switch auth.ClassifyTokenExchange(err, auth.ClaimContext{ClaimOutstanding: claimPending}) {
+		case auth.OutcomePending:
+			return true, nil
+		case auth.OutcomeAssertionInvalid:
+			var ai *auth.AssertionInvalidError
+			_ = errors.As(err, &ai)
 			return false, &ux.CodedError{
 				Code: ux.CodeNotAuthenticated,
 				Msg:  "the backend rejected the signed assertion: " + ai.Error(),
@@ -271,8 +271,9 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 					"the backend's canonical_base_url. For a local backend use http://127.0.0.1:8000 (not localhost), " +
 					"or align the backend's auth.canonical_base_url to the URL you used.",
 			}
+		default:
+			return false, fmt.Errorf("mint token: %w", err)
 		}
-		return false, fmt.Errorf("mint token: %w", err)
 	}
 
 	_, err := auth.RefreshBearerToken(creds)

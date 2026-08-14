@@ -117,22 +117,23 @@ func contextAuthErr(err error, st *clictx.ActiveState) error {
 	if errors.Is(err, auth.ErrNotRegistered) {
 		return notRegisteredErr(st.IdentityName, st.EnvironmentName)
 	}
-	var pending *auth.PendingError
-	if errors.As(err, &pending) {
+	// A data-plane command never has a claim outstanding, so the claim-vs-audience
+	// ambiguity resolves the same way ClassifyTokenExchange does for the register
+	// wait loop (QA-9/QA-24): one shared rule in client/auth, two remediations.
+	switch auth.ClassifyTokenExchange(err, auth.ClaimContext{}) {
+	case auth.OutcomePending:
 		return &ux.CodedError{
 			Code: ux.CodePendingApproval,
 			Msg: fmt.Sprintf("identity %q is not active yet on %q (%v); wait for approval, then retry",
 				st.IdentityName, st.EnvironmentName, err),
 			Actionable: "have an operator approve the agent, then re-run the command (`jentic register` resumes the wait)",
 		}
-	}
-	// QA-24: an assertion-validation failure on a data-plane command is the same
-	// audience-mismatch papercut the register poll path (QA-9) already special-
-	// cases — surface the URL/canonical_base_url hint here too, rather than the
-	// generic "run register" below (correct exit code, but a weaker remediation
-	// that sends the agent in a loop).
-	var ai *auth.AssertionInvalidError
-	if errors.As(err, &ai) {
+	case auth.OutcomeAssertionInvalid:
+		// QA-24: an assertion-validation failure on a data-plane command is the same
+		// audience-mismatch papercut the register poll path (QA-9) already special-
+		// cases — surface the URL/canonical_base_url hint here too, rather than the
+		// generic "run register" below (correct exit code, but a weaker remediation
+		// that sends the agent in a loop).
 		return &ux.CodedError{
 			Code: ux.CodeNotAuthenticated,
 			Msg: fmt.Sprintf("the backend rejected the signed assertion for identity %q on %q: %v",
