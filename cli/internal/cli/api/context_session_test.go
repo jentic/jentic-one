@@ -64,31 +64,6 @@ func TestDataPlane_ContextFirst_UsesEnvURLAndStoredCredential(t *testing.T) {
 	}
 }
 
-// TestDataPlane_ProfileFlagPinsLegacyStore: --profile is the explicit V1 escape
-// hatch. Even with a V2 context active, it must address the legacy store — and
-// with no such profile configured, fail rather than silently answer from the
-// context (which would make the flag a lie).
-func TestDataPlane_ProfileFlagPinsLegacyStore(t *testing.T) {
-	withXDG(t)
-
-	requests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	setupContext(t, srv.URL)
-
-	err := runJentic(t, "access", "whoami", "--profile", "no-such-profile")
-	if err == nil {
-		t.Fatal("expected --profile against an empty legacy store to fail")
-	}
-	if requests != 0 {
-		t.Errorf("context env URL received %d request(s); --profile must pin the legacy store", requests)
-	}
-}
-
 // TestDataPlane_ContextUnregistered_FailsActionable: a context whose identity
 // holds no credential (no API key, never registered) must fail with the V2
 // remediation — `jentic identity register` — not fall back to a legacy profile

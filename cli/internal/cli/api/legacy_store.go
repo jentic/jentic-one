@@ -1,14 +1,19 @@
 package api
 
-// legacy_store.go is the LAST reader of the V1 ~/.jentic/profiles layout.
-// After the activation release removed the profile-based runtime (commands are
-// context-only, enforced by the migrate gate), the only code allowed to touch
-// the legacy tree is `jentic migrate` — and it must keep working even though
-// the old internal/profile package is gone. This file carries the minimal
-// READ-ONLY subset migrate needs: enumerate profile dirs and read their
-// profile.yaml / tokens.json / apikey / agent.key. It never creates or writes
-// anything under the legacy root (migration is copy-out, and the gate marker
-// is written by migrate itself).
+// legacy_store.go is the SINGLE SANCTIONED V1 read surface — the last reader of
+// the V1 ~/.jentic/{config.yaml,profiles} layout. After the activation release
+// removed the profile-based runtime (commands are context-only, enforced by the
+// migrate gate), the only code allowed to READ the legacy tree is `jentic
+// migrate` (via this file). The remove-only paths in reset.go / uninstall.go may
+// reference the legacy *paths* to delete them, but never read the store. This
+// containment is enforced by tests/arch/v1_containment_test.go (ARCH-21 Part B),
+// so the day `migrate` retires, deleting this file + migrate.go is a clean cut.
+//
+// This file carries the minimal READ-ONLY subset migrate needs: enumerate
+// profile dirs, read their profile.yaml / tokens.json / apikey / agent.key, and
+// read the legacy default_profile. It never creates or writes anything under the
+// legacy root (migration is copy-out, and the gate marker is written by migrate
+// itself).
 
 import (
 	"encoding/json"

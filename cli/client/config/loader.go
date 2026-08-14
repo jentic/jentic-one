@@ -73,11 +73,12 @@ func LoadState(cmdContextOverride string) (*ResolvedState, error) {
 	data, err := os.ReadFile(file) //nolint:gosec // path is ConfigDir()/config.yaml, CLI-managed, not user input.
 	if err != nil {
 		if os.IsNotExist(err) {
-			// PRE-ACTIVATION COMPAT (Phase 2): released binaries must not hard-fail
-			// for users who haven't migrated. Phase 2's legacy-read adapter (plan.md
-			// Phase 2 item 1, 16 §2) will fall back to the legacy ~/.jentic profile
-			// store here, read-only, until `jentic migrate`'s end-of-life (14 BC-1).
-			// Until that adapter lands, no XDG config means no configuration.
+			// No XDG config means no configuration. The activation release made
+			// data-plane resolution XDG-only — there is deliberately NO live
+			// fallback into the legacy ~/.jentic profile store here. The one and
+			// only reader of the legacy tree is `jentic migrate` (via the
+			// internal/cli/api legacy_store), which copies it into the XDG model;
+			// see ARCH-21 Part B and 14 BC-1.
 			return nil, errors.New("no configuration found. Run 'jentic register --url <control-plane URL>' to onboard, or set JENTIC_BASE_URL and JENTIC_BEARER_TOKEN")
 		}
 		return nil, fmt.Errorf("reading %s: %w", file, err)
