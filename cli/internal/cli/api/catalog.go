@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
-	"github.com/jentic/jentic-one/cli/internal/catalogclient"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -173,16 +172,9 @@ type catalogImportOptions struct {
 }
 
 // ── auth ─────────────────────────────────────────────────────────────────────
-
-// catalogSession resolves the active context's agent token and returns a
-// catalog client bound to the control-plane base URL.
-func (a *app) catalogSession(ctx context.Context) (*catalogclient.Client, string, error) {
-	baseURL, token, err := a.agentSession(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	return catalogclient.New(baseURL), token, nil
-}
+//
+// catalogSession lives in catalogsvc.go (ARCH-21 A4): it wraps the generated
+// control SDK in the CLI-owned catalogClient view.
 
 // ── browse (bare) ────────────────────────────────────────────────────────────
 
@@ -196,7 +188,7 @@ func (a *app) catalogBrowse(ctx context.Context) error {
 // ── list / search ────────────────────────────────────────────────────────────
 
 func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query string) error {
-	client, token, err := a.catalogSession(ctx)
+	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -204,7 +196,7 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 	if limit <= 0 {
 		limit = 50
 	}
-	params := catalogclient.ListParams{
+	params := catalogListParams{
 		Q:              query,
 		Registered:     o.registered,
 		Unregistered:   o.unregistered,
@@ -213,11 +205,11 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 		Limit:          limit,
 	}
 
-	entries := []catalogclient.Entry{}
-	var first *catalogclient.ListResult
+	entries := []catalogEntry{}
+	var first *catalogListResult
 	var nextCursor string
 	for {
-		page, err := client.List(ctx, token, params)
+		page, err := client.List(ctx, params)
 		if err != nil {
 			return catalogListErr(err)
 		}
@@ -247,7 +239,7 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 	return nil
 }
 
-func (a *app) printCatalogList(entries []catalogclient.Entry, meta *catalogclient.ListResult) {
+func (a *app) printCatalogList(entries []catalogEntry, meta *catalogListResult) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Catalog"))
 	if len(entries) == 0 {
 		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no matching entries"))
@@ -263,7 +255,7 @@ func (a *app) printCatalogList(entries []catalogclient.Entry, meta *catalogclien
 // catalogRow renders one entry: a filled ring (registered) or hollow ring, the
 // accent api_id, a dim vendor when it differs, and an "UPDATE AVAILABLE" marker
 // when the entry's upstream spec has changed since import.
-func catalogRow(e catalogclient.Entry) string {
+func catalogRow(e catalogEntry) string {
 	glyph := theme.Dim.Render(theme.SelectOff)
 	if e.Registered {
 		glyph = theme.Success.Render(theme.SelectOn)
@@ -278,7 +270,7 @@ func catalogRow(e catalogclient.Entry) string {
 	return row
 }
 
-func catalogStatusLine(m *catalogclient.ListResult) string {
+func catalogStatusLine(m *catalogListResult) string {
 	age := "age unknown"
 	if m.ManifestAgeSeconds != nil {
 		age = "cache " + humanizeAge(*m.ManifestAgeSeconds)
@@ -293,11 +285,11 @@ func catalogStatusLine(m *catalogclient.ListResult) string {
 // ── show ─────────────────────────────────────────────────────────────────────
 
 func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID string) error {
-	client, token, err := a.catalogSession(ctx)
+	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
-	entry, err := client.Get(ctx, token, apiID)
+	entry, err := client.Get(ctx, apiID)
 	if err != nil {
 		return catalogEntryErr(err, apiID)
 	}
@@ -305,7 +297,7 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 	if limit <= 0 {
 		limit = 200
 	}
-	preview, perr := client.Preview(ctx, token, apiID, 0, limit, o.tag)
+	preview, perr := client.Preview(ctx, apiID, 0, limit, o.tag)
 
 	if o.json {
 		out := map[string]any{"entry": entry}
@@ -324,7 +316,7 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 	return nil
 }
 
-func (a *app) printCatalogEntry(e *catalogclient.Entry) {
+func (a *app) printCatalogEntry(e *catalogEntry) {
 	fmt.Fprintln(a.Out, theme.Heading.Render(e.APIID))
 	if e.Vendor != "" {
 		fmt.Fprintln(a.Out, "  "+theme.Field("vendor", e.Vendor))
@@ -341,7 +333,7 @@ func (a *app) printCatalogEntry(e *catalogclient.Entry) {
 	}
 }
 
-func (a *app) printCatalogPreview(p *catalogclient.Preview) {
+func (a *app) printCatalogPreview(p *catalogPreview) {
 	fmt.Fprintln(a.Out)
 	title := valueOr(p.Info.Title, "(untitled)")
 	if p.Info.Version != "" {
@@ -362,7 +354,7 @@ func (a *app) printCatalogPreview(p *catalogclient.Preview) {
 }
 
 // catalogOpLine renders "METHOD  path  summary" with the method tinted.
-func catalogOpLine(op catalogclient.PreviewOp) string {
+func catalogOpLine(op catalogPreviewOp) string {
 	method := theme.Accent.Render(fmt.Sprintf("%-6s", op.Method))
 	line := method + " " + theme.Command.Render(op.Path)
 	if op.Summary != "" {
@@ -374,11 +366,11 @@ func catalogOpLine(op catalogclient.PreviewOp) string {
 // ── import ───────────────────────────────────────────────────────────────────
 
 func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID string) error {
-	client, token, err := a.catalogSession(ctx)
+	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
-	jobID, err := client.Import(ctx, token, apiID)
+	jobID, err := client.Import(ctx, apiID)
 	if err != nil {
 		return catalogEntryErr(err, apiID)
 	}
@@ -397,22 +389,22 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 	if !o.json {
 		fmt.Fprintln(a.Out, theme.Infof("Importing %s …", apiID))
 	}
-	job, err := a.pollImportJob(ctx, client, token, jobID, o.timeout)
+	job, err := a.pollImportJob(ctx, client, jobID, o.timeout)
 	if err != nil {
 		return err
 	}
-	if job.Status != catalogclient.JobCompleted {
+	if job.Status != catJobCompleted {
 		return fmt.Errorf("import %s: %s", job.Status, valueOr(job.Error, "no detail"))
 	}
 
-	result, err := client.JobResult(ctx, token, jobID)
+	result, err := client.JobResult(ctx, jobID)
 	if err != nil {
 		return err
 	}
 
 	promoted := map[string]string{}
 	if !o.noPromote {
-		promoted = a.promoteRevisions(ctx, client, token, result)
+		promoted = a.promoteRevisions(ctx, client, result)
 	}
 
 	if o.json {
@@ -436,9 +428,9 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 // slow import look stuck and get killed. Heartbeats go to stderr so they never
 // corrupt the JSON stdout the agent parses.
 func (a *app) pollImportJob(
-	ctx context.Context, client *catalogclient.Client, token, jobID string, timeout time.Duration,
-) (*catalogclient.Job, error) {
-	return pollImportJobProgress(ctx, client, token, jobID, timeout, a.Err)
+	ctx context.Context, client *catalogClient, jobID string, timeout time.Duration,
+) (*catalogJob, error) {
+	return pollImportJobProgress(ctx, client, jobID, timeout, a.Err)
 }
 
 // pollImportJobProgress polls with an optional progress sink. When `progress` is
@@ -446,11 +438,11 @@ func (a *app) pollImportJob(
 // seconds; pass nil for a silent poll (the TUI browser, which owns the screen).
 func pollImportJobProgress(
 	ctx context.Context,
-	client *catalogclient.Client,
-	token, jobID string,
+	client *catalogClient,
+	jobID string,
 	timeout time.Duration,
 	progress io.Writer,
-) (*catalogclient.Job, error) {
+) (*catalogJob, error) {
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
@@ -460,13 +452,12 @@ func pollImportJobProgress(
 	const heartbeatAfter = 2 * time.Second
 	nextHeartbeat := start.Add(heartbeatAfter)
 	for {
-		job, err := client.Job(ctx, token, jobID)
+		job, err := client.Job(ctx, jobID)
 		if err != nil {
 			return nil, err
 		}
 		switch job.Status {
-		case catalogclient.JobCompleted, catalogclient.JobFailed,
-			catalogclient.JobCancelled, catalogclient.JobDeadLetter:
+		case catJobCompleted, catJobFailed, catJobCancelled, catJobDeadLetter:
 			return job, nil
 		}
 		if time.Now().After(deadline) {
@@ -489,14 +480,14 @@ func pollImportJobProgress(
 
 // promoteRevisions promotes each draft revision to live, returning a map of
 // revision_id -> outcome ("live" or an error string) for reporting.
-func (a *app) promoteRevisions(ctx context.Context, client *catalogclient.Client, token string, result *catalogclient.ImportResult) map[string]string {
+func (a *app) promoteRevisions(ctx context.Context, client *catalogClient, result *catalogImportResult) map[string]string {
 	out := map[string]string{}
 	for _, rev := range result.Revisions {
 		if rev.State != "draft" {
 			out[rev.RevisionID] = rev.State
 			continue
 		}
-		if err := client.Promote(ctx, token, rev.API.Vendor, rev.API.Name, rev.API.Version, rev.RevisionID); err != nil {
+		if err := client.Promote(ctx, rev.API.Vendor, rev.API.Name, rev.API.Version, rev.RevisionID); err != nil {
 			out[rev.RevisionID] = "promote failed: " + err.Error()
 			continue
 		}
@@ -505,7 +496,7 @@ func (a *app) promoteRevisions(ctx context.Context, client *catalogclient.Client
 	return out
 }
 
-func (a *app) printImportResult(result *catalogclient.ImportResult, promoted map[string]string, noPromote bool) {
+func (a *app) printImportResult(result *catalogImportResult, promoted map[string]string, noPromote bool) {
 	if len(result.Revisions) == 0 {
 		fmt.Fprintln(a.Out, theme.Warnf("Import completed but produced no revisions."))
 		return
@@ -535,13 +526,13 @@ func (a *app) printImportResult(result *catalogclient.ImportResult, promoted map
 // ── refresh ──────────────────────────────────────────────────────────────────
 
 func (a *app) catalogRefresh(ctx context.Context) error {
-	client, token, err := a.catalogSession(ctx)
+	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
-	count, err := client.Refresh(ctx, token)
+	count, err := client.Refresh(ctx)
 	if err != nil {
-		var he *catalogclient.HTTPError
+		var he *APIError
 		if errors.As(err, &he) && he.StatusCode == http.StatusForbidden {
 			return fmt.Errorf("refresh requires org:admin: %s", he.Detail())
 		}
@@ -555,7 +546,7 @@ func (a *app) catalogRefresh(ctx context.Context) error {
 
 // catalogListErr maps a missing route to a friendly "not available" message.
 func catalogListErr(err error) error {
-	var he *catalogclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) && (he.StatusCode == http.StatusNotFound || he.StatusCode == http.StatusNotImplemented) {
 		return fmt.Errorf("catalog not available on this server (HTTP %d)", he.StatusCode)
 	}
@@ -564,7 +555,7 @@ func catalogListErr(err error) error {
 
 // catalogEntryErr maps a 404 to a clear "entry not found" message.
 func catalogEntryErr(err error, apiID string) error {
-	var he *catalogclient.HTTPError
+	var he *APIError
 	if errors.As(err, &he) && he.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("catalog entry %q not found", apiID)
 	}

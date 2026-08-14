@@ -137,6 +137,42 @@ func CuratedBindings() []CuratedBinding {
 			},
 			NotExposed: map[string]string{},
 		},
+		{
+			// catalog list: browse/filter catalog entries. --registered/
+			// --unregistered/--limit drive the query; q + outdated_only +
+			// include_snoozed are reached by the sibling `catalog search` (positional
+			// query) and `catalog outdated` (--include-snoozed) commands, and cursor
+			// is internal keyset pagination the --all loop threads (ARCH-21 A4,
+			// migrated off internal/catalogclient onto the generated SDK).
+			Command: "catalog list",
+			Params:  control.ListCatalogParams{},
+			Bind: map[string]string{
+				"registered_only":   "registered",
+				"unregistered_only": "unregistered",
+				"limit":             "limit",
+			},
+			NotExposed: map[string]string{
+				"q":               "keyword search is the sibling `catalog search <query>` positional; reachable via `jentic api ListCatalog`",
+				"outdated_only":   "set by the sibling `catalog outdated` command, not a `catalog list` flag",
+				"include_snoozed": "exposed as --include-snoozed on the sibling `catalog outdated` command",
+				"cursor":          "internal keyset cursor threaded by the --all pagination loop, not a user flag",
+			},
+		},
+		{
+			// catalog show: preview an entry's operations. --tag/--limit page the
+			// preview; offset is the internal preview cursor and q is unused by the
+			// show path (full operation search is a `jentic api` concern).
+			Command: "catalog show",
+			Params:  control.PreviewCatalogOperationsParams{},
+			Bind: map[string]string{
+				"tag":   "tag",
+				"limit": "limit",
+			},
+			NotExposed: map[string]string{
+				"offset": "internal preview offset (show fetches from 0); reachable via `jentic api PreviewCatalogOperations`",
+				"q":      "operation-level keyword filter is a `jentic api PreviewCatalogOperations` concern, not a show flag",
+			},
+		},
 		// GEN-20: the request-body UNION MEMBERS `apis import` actually builds.
 		// Test1G reflects over ApiImportRequest above, but the wire payload is one
 		// of these union members — registering them here means a new optional field

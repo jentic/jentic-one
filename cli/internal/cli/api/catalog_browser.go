@@ -10,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jentic/jentic-one/cli/internal/catalogclient"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -44,18 +43,17 @@ func (f catalogFilter) next() catalogFilter { return (f + 1) % 3 }
 
 // runCatalogBrowser opens the interactive two-column catalog browser.
 func (a *app) runCatalogBrowser(ctx context.Context) error {
-	client, token, err := a.catalogSession(ctx)
+	client, err := a.catalogSession(ctx)
 	if err != nil {
 		return err
 	}
 	m := &catalogBrowser{
 		ctx:        ctx,
 		client:     client,
-		token:      token,
 		limit:      catalogBrowseLimit,
 		width:      90,
 		height:     24,
-		previews:   map[string]*catalogclient.Preview{},
+		previews:   map[string]*catalogPreview{},
 		previewErr: map[string]string{},
 		loading:    true,
 	}
@@ -65,10 +63,9 @@ func (a *app) runCatalogBrowser(ctx context.Context) error {
 
 type catalogBrowser struct {
 	ctx    context.Context
-	client *catalogclient.Client
-	token  string
+	client *catalogClient
 
-	entries    []catalogclient.Entry
+	entries    []catalogEntry
 	cursor     int
 	top        int
 	nextCursor string
@@ -85,7 +82,7 @@ type catalogBrowser struct {
 	searching   bool
 	searchInput string
 
-	previews       map[string]*catalogclient.Preview
+	previews       map[string]*catalogPreview
 	previewErr     map[string]string
 	previewLoading string
 
@@ -103,20 +100,20 @@ type catalogBrowser struct {
 // ── messages ─────────────────────────────────────────────────────────────────
 
 type catPageMsg struct {
-	result *catalogclient.ListResult
+	result *catalogListResult
 	reset  bool
 	err    error
 }
 
 type catPreviewMsg struct {
 	apiID   string
-	preview *catalogclient.Preview
+	preview *catalogPreview
 	err     error
 }
 
 type catImportMsg struct {
 	apiID    string
-	result   *catalogclient.ImportResult
+	result   *catalogImportResult
 	promoted map[string]string
 	err      error
 }
@@ -129,7 +126,7 @@ type catRefreshMsg struct {
 // ── commands ─────────────────────────────────────────────────────────────────
 
 func (m *catalogBrowser) loadPage(reset bool) tea.Cmd {
-	params := catalogclient.ListParams{
+	params := catalogListParams{
 		Q:            m.query,
 		Limit:        m.limit,
 		Registered:   m.filter == filterRegistered,
@@ -138,44 +135,44 @@ func (m *catalogBrowser) loadPage(reset bool) tea.Cmd {
 	if !reset {
 		params.Cursor = m.nextCursor
 	}
-	ctx, client, token := m.ctx, m.client, m.token
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		res, err := client.List(ctx, token, params)
+		res, err := client.List(ctx, params)
 		return catPageMsg{result: res, reset: reset, err: err}
 	}
 }
 
 func (m *catalogBrowser) refreshCache() tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		count, err := client.Refresh(ctx, token)
+		count, err := client.Refresh(ctx)
 		return catRefreshMsg{count: count, err: err}
 	}
 }
 
 func (m *catalogBrowser) loadPreview(apiID string) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		p, err := client.Preview(ctx, token, apiID, 0, catalogPreviewOps, "")
+		p, err := client.Preview(ctx, apiID, 0, catalogPreviewOps, "")
 		return catPreviewMsg{apiID: apiID, preview: p, err: err}
 	}
 }
 
 func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
-	ctx, client, token := m.ctx, m.client, m.token
+	ctx, client := m.ctx, m.client
 	return func() tea.Msg {
-		jobID, err := client.Import(ctx, token, apiID)
+		jobID, err := client.Import(ctx, apiID)
 		if err != nil {
 			return catImportMsg{apiID: apiID, err: err}
 		}
-		job, err := pollImportJobProgress(ctx, client, token, jobID, 2*time.Minute, nil)
+		job, err := pollImportJobProgress(ctx, client, jobID, 2*time.Minute, nil)
 		if err != nil {
 			return catImportMsg{apiID: apiID, err: err}
 		}
-		if job.Status != catalogclient.JobCompleted {
+		if job.Status != catJobCompleted {
 			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, valueOr(job.Error, "no detail"))}
 		}
-		result, err := client.JobResult(ctx, token, jobID)
+		result, err := client.JobResult(ctx, jobID)
 		if err != nil {
 			return catImportMsg{apiID: apiID, err: err}
 		}
@@ -185,7 +182,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 				promoted[rev.RevisionID] = rev.State
 				continue
 			}
-			if e := client.Promote(ctx, token, rev.API.Vendor, rev.API.Name, rev.API.Version, rev.RevisionID); e != nil {
+			if e := client.Promote(ctx, rev.API.Vendor, rev.API.Name, rev.API.Version, rev.RevisionID); e != nil {
 				promoted[rev.RevisionID] = "promote failed"
 				continue
 			}
@@ -231,7 +228,7 @@ func (m *catalogBrowser) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *catalogBrowser) onRefresh(msg catRefreshMsg) (tea.Model, tea.Cmd) {
 	m.refreshing = false
 	if msg.err != nil {
-		var he *catalogclient.HTTPError
+		var he *APIError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
 			m.status = theme.Warnf("refresh needs org:admin")
 			return m, nil
@@ -393,9 +390,9 @@ func (m *catalogBrowser) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *catalogBrowser) current() (catalogclient.Entry, bool) {
+func (m *catalogBrowser) current() (catalogEntry, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.entries) {
-		return catalogclient.Entry{}, false
+		return catalogEntry{}, false
 	}
 	return m.entries[m.cursor], true
 }
@@ -568,7 +565,7 @@ func (m *catalogBrowser) detailWidth() int {
 	return w
 }
 
-func (m *catalogBrowser) previewBlock(p *catalogclient.Preview) string {
+func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
 	var b strings.Builder
 	title := valueOr(p.Info.Title, "(untitled)")
 	if p.Info.Version != "" {

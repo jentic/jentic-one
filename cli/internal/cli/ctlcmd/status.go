@@ -9,7 +9,8 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	"github.com/jentic/jentic-one/cli/internal/catalogclient"
+	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/proc"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
@@ -179,7 +180,7 @@ func (a *app) statusIdentity(ctx context.Context) {
 	fmt.Fprintln(a.Out, "  "+theme.Field("token", state))
 
 	if tokens != nil && tokens.AccessToken != "" && time.Now().Before(tokens.ExpiresAt) {
-		a.statusCatalogUpdates(ctx, st.BaseURL, tokens.AccessToken)
+		a.statusCatalogUpdates(ctx)
 	}
 }
 
@@ -188,13 +189,25 @@ func (a *app) statusIdentity(ctx context.Context) {
 // valid cached token, uses a tiny page (the count is whole-manifest, page-stable),
 // and degrades silently — a missing token, offline server, or old backend without
 // the field simply prints nothing (never errors out `status`).
-func (a *app) statusCatalogUpdates(ctx context.Context, baseURL, token string) {
-	res, err := catalogclient.New(baseURL).List(ctx, token, catalogclient.ListParams{Outdated: true, Limit: 1})
+func (a *app) statusCatalogUpdates(ctx context.Context) {
+	client, err := clictx.GetControlClient(ctx)
 	if err != nil {
 		return
 	}
-	if res.OutdatedCount > 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Field("updates", fmt.Sprintf("%d available (run `jentic catalog outdated`)", res.OutdatedCount)))
+	yes, one := true, 1
+	resp, err := client.ListCatalogWithResponse(ctx, &control.ListCatalogParams{
+		OutdatedOnly: &yes,
+		Limit:        &one,
+	})
+	if err != nil || resp.JSON200 == nil {
+		return
+	}
+	outdated := 0
+	if resp.JSON200.OutdatedCount != nil {
+		outdated = *resp.JSON200.OutdatedCount
+	}
+	if outdated > 0 {
+		fmt.Fprintln(a.Out, "  "+theme.Field("updates", fmt.Sprintf("%d available (run `jentic catalog outdated`)", outdated)))
 	} else {
 		fmt.Fprintln(a.Out, "  "+theme.Field("updates", "none"))
 	}

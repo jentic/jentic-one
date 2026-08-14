@@ -13,7 +13,6 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
-	"github.com/jentic/jentic-one/cli/internal/catalogclient"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
@@ -40,6 +39,7 @@ func TestAgentSessionResolvesFromContext(t *testing.T) {
 
 func TestCatalogListRendersAndStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[
 				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"_links":{}},
@@ -65,6 +65,7 @@ func TestCatalogOutdatedFiltersAndMarks(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[
 				{"api_id":"stripe.com","vendor":"stripe.com","registered":true,"update_available":true,"_links":{}}],
@@ -97,6 +98,7 @@ func TestCatalogOutdatedIncludeSnoozedThreadsQuery(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[],"catalog_total":0,"registered_count":0,"outdated_count":0,
 			"manifest_age_seconds":0,"has_more":false,"next_cursor":""}`))
@@ -120,6 +122,7 @@ func TestCatalogSearchPassesQuery(t *testing.T) {
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[],"catalog_total":0,"registered_count":0,"has_more":false}`))
 	}))
 	defer srv.Close()
@@ -135,6 +138,7 @@ func TestCatalogSearchPassesQuery(t *testing.T) {
 
 func TestCatalogShowPreview(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/operations"):
 			_, _ = w.Write([]byte(`{"data":[{"method":"GET","path":"/v1/charges","summary":"List charges"}],
@@ -160,6 +164,7 @@ func TestCatalogShowPreview(t *testing.T) {
 func TestCatalogImportAutoPromotes(t *testing.T) {
 	var promoted string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":import"):
 			w.WriteHeader(http.StatusAccepted)
@@ -200,6 +205,7 @@ func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
 	// the first poll, so the call must return well before it.
 	var jobPolls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, ":import"):
 			w.WriteHeader(http.StatusAccepted)
@@ -238,6 +244,7 @@ func TestCatalogImportDeadLetterFailsFast(t *testing.T) {
 func TestCatalogImportNoPromoteLeavesDraft(t *testing.T) {
 	var promoteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, ":import"):
 			w.WriteHeader(http.StatusAccepted)
@@ -394,7 +401,7 @@ func TestCatalogFilterCycle(t *testing.T) {
 
 func TestCatalogBrowserListRow(t *testing.T) {
 	m := &catalogBrowser{
-		entries: []catalogclient.Entry{
+		entries: []catalogEntry{
 			{APIID: "stripe.com", Registered: true},
 			{APIID: "slack.com", Registered: false},
 		},
@@ -435,7 +442,7 @@ func TestCatalogBrowserRefreshSuccess(t *testing.T) {
 
 func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 	m := &catalogBrowser{refreshing: true}
-	m.onRefresh(catRefreshMsg{err: &catalogclient.HTTPError{StatusCode: 403, Body: "{}"}})
+	m.onRefresh(catRefreshMsg{err: &APIError{StatusCode: 403, Body: "{}"}})
 	if m.refreshing {
 		t.Error("refreshing flag not cleared")
 	}
@@ -446,8 +453,8 @@ func TestCatalogBrowserRefreshForbidden(t *testing.T) {
 
 func TestCatalogBrowserBackPeelsLevels(t *testing.T) {
 	m := &catalogBrowser{
-		entries:    []catalogclient.Entry{{APIID: "acme.com"}},
-		previews:   map[string]*catalogclient.Preview{"acme.com": {}},
+		entries:    []catalogEntry{{APIID: "acme.com"}},
+		previews:   map[string]*catalogPreview{"acme.com": {}},
 		previewErr: map[string]string{},
 		query:      "pay",
 		filter:     filterRegistered,
