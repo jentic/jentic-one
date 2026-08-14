@@ -31,7 +31,27 @@ func (a *App) BrandHeader(baseURLFlag, cliVersion string) string {
 	info := a.probeServer(baseURL)
 
 	panel := theme.VersionPanel(cliVersion, info.Version, info.Running)
-	return theme.LogoHeader(width, panel)
+	header := theme.LogoHeader(width, panel)
+	// Surface the active context under the version panel so the persistent,
+	// always-on brand surface answers "who am I right now?" (UX5). Dim, like the
+	// rest of the panel, and only on an interactive terminal — this branch is
+	// already gated on a TTY, so it is suppressed for piped/machine output
+	// exactly like the version panel above it.
+	if name := activeContextName(); name != "" {
+		header += "\n" + theme.Dim.Render("context: "+name)
+	}
+	return header
+}
+
+// activeContextName returns the name of the active context, or "" when none is
+// set or the config can't be read. Best-effort and non-fatal: the header is
+// cosmetic, so any resolution failure just omits the line.
+func activeContextName() string {
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		return ""
+	}
+	return cfg.ActiveContext
 }
 
 // headerProbeURL resolves the control-plane URL the help header probes for a

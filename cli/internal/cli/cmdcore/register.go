@@ -505,8 +505,42 @@ func (a *App) registerV2(ctx context.Context, identity, envName, baseURL, client
 	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
 	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("See all:      "), theme.Command.Render("jentic context list"))
+	// Multi-agent case: registering a SECOND agent into an env creates its own
+	// per-identity context and silently makes it active (RegisterV2Setup). Spell
+	// out WHY a new context appeared and how to get back, so a user who now sees
+	// an unfamiliar active context isn't left wondering what happened to their
+	// first agent (UX5).
+	if prev := siblingContextInEnv(envName, contextName); prev != "" {
+		fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf(
+			"Created a new context %q (another agent in env %q); your previous context %q is unchanged.",
+			contextName, envName, prev))
+		fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch back:  "), theme.Command.Render("jentic context use "+prev))
+	}
 	a.printNextSteps()
 	return nil
+}
+
+// siblingContextInEnv returns the name of an existing context bound to the same
+// environment as (but a different context than) the one just registered — the
+// signal that this register minted a SECOND agent into an env that already had
+// one. Returns "" when there is no such sibling (the common single-agent case)
+// or the config can't be read. Deterministic (lowest name) so the "switch back"
+// pointer is stable.
+func siblingContextInEnv(envName, currentContext string) string {
+	cfg, err := sdkconfig.Load()
+	if err != nil {
+		return ""
+	}
+	prev := ""
+	for name, c := range cfg.Contexts {
+		if name == currentContext || c.Environment != envName {
+			continue
+		}
+		if prev == "" || name < prev {
+			prev = name
+		}
+	}
+	return prev
 }
 
 // printNextSteps teaches the core discover -> inspect -> execute workflow after a
