@@ -1646,6 +1646,7 @@ components:
           minLength: 1
           title: Token
           type: string
+          x-sensitive: true
       required:
       - token
       title: ClaimRequest
@@ -4154,6 +4155,7 @@ components:
           - type: string
           - type: 'null'
           title: Claim Token
+          x-sensitive: true
         client_id:
           title: Client Id
           type: string
