@@ -69,6 +69,7 @@ export type { CurrentUserResponse } from './models/CurrentUserResponse';
 export type { DailyExecutionBucket } from './models/DailyExecutionBucket';
 export { DecideItemSchema } from './models/DecideItemSchema';
 export type { DecideRequest } from './models/DecideRequest';
+export type { DuplicatePendingProblem } from './models/DuplicatePendingProblem';
 export type { EffectivePermission } from './models/EffectivePermission';
 export type { ErrorItem } from './models/ErrorItem';
 export type { EvaluationCheckResponse } from './models/EvaluationCheckResponse';
