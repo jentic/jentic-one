@@ -87,7 +87,7 @@ Notes:
 ```bash
 # Connect this machine to a Jentic install, browse the catalog, execute an operation.
 jentic register --url https://jentic.example.com
-jentic apis
+jentic catalog
 jentic execute <operation>
 ```
 
