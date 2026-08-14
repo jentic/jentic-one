@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -228,7 +229,7 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 	}
 
 	if o.json {
-		return writeList(a.Out, entries, nextCursor, map[string]any{
+		return cmdcore.WriteList(a.Out, entries, nextCursor, map[string]any{
 			"catalog_total":        first.CatalogTotal,
 			"registered_count":     first.RegisteredCount,
 			"outdated_count":       first.OutdatedCount,
@@ -261,12 +262,12 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 		if perr == nil {
 			out["preview"] = preview
 		}
-		return writeJSON(a.Out, out)
+		return cmdcore.WriteJSON(a.Out, out)
 	}
 
 	a.printCatalogEntry(entry)
 	if perr != nil {
-		fmt.Fprintln(a.Out, dotWarn()+" "+theme.Warnf("operations preview unavailable: %v", perr))
+		fmt.Fprintln(a.Out, cmdcore.DotWarn()+" "+theme.Warnf("operations preview unavailable: %v", perr))
 		return nil
 	}
 	a.printCatalogPreview(preview)
@@ -289,7 +290,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 		if o.json {
 			// AGT-23: stamp schema_version on the ad-hoc import envelope like the
 			// sanctioned ux wrappers, so an agent can branch on the shape.
-			return writeJSON(a.Out, map[string]any{"schema_version": apiEnvelopeSchemaVersion, "job_id": jobID, "status": "queued"})
+			return cmdcore.WriteJSON(a.Out, map[string]any{"schema_version": apiEnvelopeSchemaVersion, "job_id": jobID, "status": "queued"})
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Import queued: job %s", jobID))
 		fmt.Fprintln(a.Out, theme.Dim.Render("Re-run without --no-wait to track it to completion."))
@@ -304,7 +305,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 		return err
 	}
 	if job.Status != catJobCompleted {
-		return fmt.Errorf("import %s: %s", job.Status, valueOr(job.Error, "no detail"))
+		return fmt.Errorf("import %s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))
 	}
 
 	result, err := client.JobResult(ctx, jobID)
@@ -318,7 +319,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 	}
 
 	if o.json {
-		return writeJSON(a.Out, map[string]any{
+		return cmdcore.WriteJSON(a.Out, map[string]any{
 			"schema_version": apiEnvelopeSchemaVersion,
 			"job_id":         jobID,
 			"status":         job.Status,
@@ -444,5 +445,3 @@ func catalogEntryErr(err error, apiID string) error {
 	}
 	return err
 }
-
-// writeJSON now lives in cmdcore (WriteJSON); api aliases it — see api/aliases.go.

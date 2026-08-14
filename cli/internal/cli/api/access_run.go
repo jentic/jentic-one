@@ -12,6 +12,7 @@ import (
 	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/client/generated/control"
 	"github.com/jentic/jentic-one/cli/internal/cli/clictx"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -66,8 +67,8 @@ func (a *app) accessWhoamiE(cmd *cobra.Command, jsonFlag bool) error {
 	if err != nil {
 		return err
 	}
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, me)
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
+		return cmdcore.WriteJSON(a.Out, me)
 	}
 	a.printMe(me)
 	return nil
@@ -182,9 +183,9 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 		}
 	}
 
-	if jsonOrPretty(cmd, opts.json) {
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
 		absolutizeApproveURL(st.BaseURL, req)
-		if err := writeJSON(a.Out, req); err != nil {
+		if err := cmdcore.WriteJSON(a.Out, req); err != nil {
 			return err
 		}
 	} else {
@@ -342,8 +343,8 @@ func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
 		cursor = nextCursor
 	}
 
-	if jsonOrPretty(cmd, opts.json) {
-		return writeList(a.Out, all, nextCursor, nil)
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
+		return cmdcore.WriteList(a.Out, all, nextCursor, nil)
 	}
 	a.printRequestList(all, hasMore)
 	return nil
@@ -364,8 +365,8 @@ func (a *app) accessStatusE(cmd *cobra.Command, id string, jsonFlag bool) error 
 		return err
 	}
 	absolutizeApproveURL(st.BaseURL, req)
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, req)
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
+		return cmdcore.WriteJSON(a.Out, req)
 	}
 	a.printRequest(req, true)
 	return nil
@@ -385,8 +386,8 @@ func (a *app) accessWithdrawE(cmd *cobra.Command, id string, jsonFlag bool) erro
 		return fmt.Errorf("unexpected backend response (status %d)", resp.StatusCode())
 	}
 	req := resp.JSON200
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, req)
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
+		return cmdcore.WriteJSON(a.Out, req)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Withdrew access request %s.", req.Id))
 	a.printRequest(req, false)
@@ -445,8 +446,8 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 	if err != nil {
 		return err
 	}
-	if jsonOrPretty(cmd, jsonFlag) {
-		return writeJSON(a.Out, me)
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
+		return cmdcore.WriteJSON(a.Out, me)
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.Id))
 	a.printMe(me)

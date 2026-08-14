@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/x/term"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -283,7 +284,7 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	}
 
 	if o.json {
-		return writeList(a.Out, apis, nextCursor, nil)
+		return cmdcore.WriteList(a.Out, apis, nextCursor, nil)
 	}
 	a.printAPIList(apis)
 	return nil
@@ -315,12 +316,12 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 		if operr == nil {
 			out["operations"] = ops.Data
 		}
-		return writeJSON(a.Out, out)
+		return cmdcore.WriteJSON(a.Out, out)
 	}
 
 	a.printAPIDetail(api)
 	if operr != nil {
-		fmt.Fprintln(a.Out, dotWarn()+" "+theme.Warnf("operations unavailable: %v", operr))
+		fmt.Fprintln(a.Out, cmdcore.DotWarn()+" "+theme.Warnf("operations unavailable: %v", operr))
 		return nil
 	}
 	a.printOperations(ops.Data, ops.HasMore)
@@ -363,7 +364,7 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	}
 
 	if o.json {
-		return writeList(a.Out, revs, nextCursor, nil)
+		return cmdcore.WriteList(a.Out, revs, nextCursor, nil)
 	}
 	a.printRevisions(ref, revs)
 	return nil
@@ -407,7 +408,7 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 	}
 
 	if o.json {
-		return writeList(a.Out, ops, nextCursor, nil)
+		return cmdcore.WriteList(a.Out, ops, nextCursor, nil)
 	}
 	a.printOperations(ops, hasMore && !o.all)
 	return nil

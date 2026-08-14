@@ -105,7 +105,7 @@ func (a *app) doctorE(cmd *cobra.Command, jsonFlag bool) error {
 	d.checkClockSkew(token)
 	d.checkReachability(ctx, baseURL, token)
 
-	if jsonOrPretty(cmd, jsonFlag) {
+	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return d.renderJSON()
 	}
 	return d.render()
@@ -205,7 +205,7 @@ func (d *agentDoctor) checkContextIdentity(st *clictx.ActiveState) (baseURL, tok
 		return st.BaseURL, ""
 	case reg.Status != "approved":
 		d.add(section, "session", agentWarn,
-			fmt.Sprintf("%s is registered but %s", pair, valueOr(reg.Status, "pending")),
+			fmt.Sprintf("%s is registered but %s", pair, cmdcore.ValueOr(reg.Status, "pending")),
 			"wait for an operator to approve it")
 	}
 
@@ -332,7 +332,7 @@ func (d *agentDoctor) renderJSON() error {
 	}
 	out.Checks = d.checks
 	out.Summary.Passed, out.Summary.Warnings, out.Summary.Failed = d.counts()
-	if err := writeJSON(d.app.Out, out); err != nil {
+	if err := cmdcore.WriteJSON(d.app.Out, out); err != nil {
 		return err
 	}
 	if out.Summary.Failed > 0 {

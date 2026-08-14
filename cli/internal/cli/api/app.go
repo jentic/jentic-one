@@ -1,8 +1,6 @@
 package api
 
 import (
-	"io"
-
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 )
 
@@ -13,27 +11,6 @@ import (
 // builder constructs &app{core} from the shared *cmdcore.App.
 type app struct {
 	*cmdcore.App
-}
-
-// Tree-local aliases so relocated api code keeps referencing the shared cmdcore
-// helpers by their original (unexported) spellings without per-call-site churn.
-
-var (
-	dotOK        = cmdcore.DotOK
-	dotWarn      = cmdcore.DotWarn
-	dotDown      = cmdcore.DotDown
-	valueOr      = cmdcore.ValueOr
-	jsonOrPretty = cmdcore.JSONOrPretty
-)
-
-// writeJSON mirrors cmdcore.WriteJSON so relocated api code keeps calling it
-// lower-cased with the same (writer, value) signature.
-func writeJSON(w io.Writer, v any) error { return cmdcore.WriteJSON(w, v) }
-
-// writeList mirrors cmdcore.WriteList: the canonical versioned list envelope
-// {schema_version, data, has_more, next_cursor[, meta]} every list command emits.
-func writeList(w io.Writer, data any, nextCursor string, meta map[string]any) error {
-	return cmdcore.WriteList(w, data, nextCursor, meta)
 }
 
 // Build-time version metadata, mirrored from cmdcore for symmetry with the ctl

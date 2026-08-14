@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
@@ -37,7 +38,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 		return fmt.Errorf("read response: %w", err)
 	}
 
-	if jsonOrPretty(cmd, opts.json) {
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
 		if err := a.executeJSONOutput(resp, respBody); err != nil {
 			return err
 		}
@@ -92,7 +93,7 @@ func (a *app) executeJSONOutput(resp *http.Response, body []byte) error {
 		envelope["execution_id"] = execID
 	}
 
-	return writeJSON(a.Out, envelope)
+	return cmdcore.WriteJSON(a.Out, envelope)
 }
 
 func (a *app) executePrettyOutput(resp *http.Response, body []byte) {

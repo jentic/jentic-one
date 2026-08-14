@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -170,7 +171,7 @@ func (m *catalogBrowser) importEntry(apiID string) tea.Cmd {
 			return catImportMsg{apiID: apiID, err: err}
 		}
 		if job.Status != catJobCompleted {
-			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, valueOr(job.Error, "no detail"))}
+			return catImportMsg{apiID: apiID, err: fmt.Errorf("%s: %s", job.Status, cmdcore.ValueOr(job.Error, "no detail"))}
 		}
 		result, err := client.JobResult(ctx, jobID)
 		if err != nil {
@@ -532,9 +533,9 @@ func (m *catalogBrowser) detailBody() string {
 	if e.Vendor != "" && e.Vendor != e.APIID {
 		b.WriteString(theme.Field("vendor", e.Vendor) + "\n")
 	}
-	status, dot := "not imported", dotDown()
+	status, dot := "not imported", cmdcore.DotDown()
 	if e.Registered {
-		status, dot = "imported", dotOK()
+		status, dot = "imported", cmdcore.DotOK()
 	}
 	b.WriteString(dot + " " + theme.Field("status", status) + "\n")
 	if e.SpecURL != "" {
@@ -567,7 +568,7 @@ func (m *catalogBrowser) detailWidth() int {
 
 func (m *catalogBrowser) previewBlock(p *catalogPreview) string {
 	var b strings.Builder
-	title := valueOr(p.Info.Title, "(untitled)")
+	title := cmdcore.ValueOr(p.Info.Title, "(untitled)")
 	if p.Info.Version != "" {
 		title += " " + p.Info.Version
 	}

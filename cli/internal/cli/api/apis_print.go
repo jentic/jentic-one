@@ -5,13 +5,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
 func (a *app) printAPIList(apis []registeredAPI) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("APIs"))
 	if len(apis) == 0 {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no APIs imported yet — try `jentic catalog`"))
+		fmt.Fprintln(a.Out, cmdcore.DotDown()+" "+theme.Dim.Render("no APIs imported yet — try `jentic catalog`"))
 		return
 	}
 	for _, api := range apis {
@@ -24,9 +25,9 @@ func (a *app) printAPIList(apis []registeredAPI) {
 // apiRow renders one API: a live/draft dot, the accent identity, and a dim
 // operation count.
 func apiRow(api registeredAPI) string {
-	dot := dotDown()
+	dot := cmdcore.DotDown()
 	if api.CurrentRevisionID != "" {
-		dot = dotOK()
+		dot = cmdcore.DotOK()
 	}
 	row := dot + " " + theme.Accent.Render(apiRefLabel(api.API))
 	if api.OperationCount > 0 {
@@ -50,9 +51,9 @@ func (a *app) printAPIDetail(api *registeredAPI) {
 		fmt.Fprintln(a.Out, "  "+theme.Field("host", api.API.Host))
 	}
 	state := "no live revision"
-	dot := dotDown()
+	dot := cmdcore.DotDown()
 	if api.CurrentRevisionID != "" {
-		state, dot = "live: "+api.CurrentRevisionID, dotOK()
+		state, dot = "live: "+api.CurrentRevisionID, cmdcore.DotOK()
 	}
 	fmt.Fprintln(a.Out, "  "+dot+" "+theme.Field("current", state))
 	fmt.Fprintln(a.Out, "  "+theme.Field("revisions", strconv.Itoa(api.RevisionCount)))
@@ -105,12 +106,12 @@ func (a *app) printRevisions(ref string, revs []apiRevision) {
 }
 
 func revisionLine(rev apiRevision) string {
-	dot := dotDown()
+	dot := cmdcore.DotDown()
 	switch {
 	case rev.IsCurrent:
-		dot = dotOK()
+		dot = cmdcore.DotOK()
 	case rev.State == "draft":
-		dot = dotWarn()
+		dot = cmdcore.DotWarn()
 	}
 	line := dot + " " + theme.Accent.Render(rev.RevisionID) + "  " + theme.Field("state", rev.State)
 	if rev.IsCurrent {

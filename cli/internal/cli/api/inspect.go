@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/spf13/cobra"
 )
@@ -58,7 +59,7 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 		format = "json"
 	}
 	if format == "" {
-		if jsonOrPretty(cmd, false) {
+		if cmdcore.JSONOrPretty(cmd, false) {
 			format = "json"
 		} else {
 			format = "markdown"

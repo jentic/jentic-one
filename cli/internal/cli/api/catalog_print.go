@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
 func (a *app) printCatalogList(entries []catalogEntry, meta *catalogListResult) {
 	fmt.Fprintln(a.Out, theme.Heading.Render("Catalog"))
 	if len(entries) == 0 {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no matching entries"))
+		fmt.Fprintln(a.Out, cmdcore.DotDown()+" "+theme.Dim.Render("no matching entries"))
 		return
 	}
 	for _, e := range entries {
@@ -56,12 +57,12 @@ func (a *app) printCatalogEntry(e *catalogEntry) {
 		fmt.Fprintln(a.Out, "  "+theme.Field("vendor", e.Vendor))
 	}
 	status := "not imported"
-	dot := dotDown()
+	dot := cmdcore.DotDown()
 	if e.Registered {
-		status, dot = "imported", dotOK()
+		status, dot = "imported", cmdcore.DotOK()
 	}
 	fmt.Fprintln(a.Out, "  "+dot+" "+theme.Field("status", status))
-	fmt.Fprintln(a.Out, "  "+theme.Field("spec_url", valueOr(e.SpecURL, "-")))
+	fmt.Fprintln(a.Out, "  "+theme.Field("spec_url", cmdcore.ValueOr(e.SpecURL, "-")))
 	if e.Links.Github != "" {
 		fmt.Fprintln(a.Out, "  "+theme.Field("github", e.Links.Github))
 	}
@@ -69,7 +70,7 @@ func (a *app) printCatalogEntry(e *catalogEntry) {
 
 func (a *app) printCatalogPreview(p *catalogPreview) {
 	fmt.Fprintln(a.Out)
-	title := valueOr(p.Info.Title, "(untitled)")
+	title := cmdcore.ValueOr(p.Info.Title, "(untitled)")
 	if p.Info.Version != "" {
 		title += " " + p.Info.Version
 	}
@@ -106,7 +107,7 @@ func (a *app) printImportResult(result *catalogImportResult, promoted map[string
 	for _, rev := range result.Revisions {
 		ref := fmt.Sprintf("%s/%s/%s", rev.API.Vendor, rev.API.Name, rev.API.Version)
 		state := rev.State
-		dot := dotOK()
+		dot := cmdcore.DotOK()
 		if outcome, ok := promoted[rev.RevisionID]; ok {
 			switch outcome {
 			case "live":
@@ -115,7 +116,7 @@ func (a *app) printImportResult(result *catalogImportResult, promoted map[string
 				// unchanged (already non-draft)
 			default:
 				state = outcome
-				dot = dotWarn()
+				dot = cmdcore.DotWarn()
 			}
 		} else if noPromote {
 			state = rev.State + " (not promoted)"

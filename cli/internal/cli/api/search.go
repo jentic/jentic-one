@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jentic/jentic-one/cli/client/generated/control"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -117,8 +118,8 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 		body.Cursor = &nextCursor
 	}
 
-	if jsonOrPretty(cmd, opts.json) {
-		return writeList(a.Out, allHits, nextCursor, nil)
+	if cmdcore.JSONOrPretty(cmd, opts.json) {
+		return cmdcore.WriteList(a.Out, allHits, nextCursor, nil)
 	}
 
 	a.printSearchResults(allHits, hasMore)
