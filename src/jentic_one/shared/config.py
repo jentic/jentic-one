@@ -267,6 +267,10 @@ class AuthConfig(BaseModel):
     access_ttl_seconds: int = 3600
     refresh_ttl_seconds: int = 604800
     rat_ttl_seconds: int = 900
+    # TTL for the agent-ownership claim token minted at /register (see
+    # auth/core/claim.py). Only meaningful when a claim-token minter is installed;
+    # OSS default mints no token so this is inert.
+    claim_ttl_seconds: int = 900
     assertion_max_ttl_seconds: int = 300
     auth_code_ttl_seconds: int = 300
     id_signing: list[SigningKeyConfig] = Field(default_factory=list)

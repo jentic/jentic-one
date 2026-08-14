@@ -57,6 +57,7 @@ export type { CatalogListResponse } from './models/CatalogListResponse';
 export type { CatalogRefreshResponse } from './models/CatalogRefreshResponse';
 export type { CatalogSnoozeRequest } from './models/CatalogSnoozeRequest';
 export type { ChangePasswordRequest } from './models/ChangePasswordRequest';
+export type { ClaimRequest } from './models/ClaimRequest';
 export type { ConnectChallengeResponse } from './models/ConnectChallengeResponse';
 export type { ConnectRequestBody } from './models/ConnectRequestBody';
 export type { CreateAdminRequest } from './models/CreateAdminRequest';
