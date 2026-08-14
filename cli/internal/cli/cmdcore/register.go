@@ -519,8 +519,8 @@ func (a *App) printNextSteps() {
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation", "jentic search \"send a slack message\""},
-		{"Inspect an operation", "jentic inspect <api-id>"},
-		{"Run one", "jentic execute <operation-id> -d '{\"key\":\"value\"}'"},
+		{"Inspect a call", "jentic inspect GET:https://api.example.com/v1/things"},
+		{"Run one", "jentic execute POST:https://api.example.com/v1/things -d '{\"key\":\"value\"}'"},
 	}
 	for _, s := range steps {
 		fmt.Fprintf(a.Out, "  %s\n    %s\n", theme.Dim.Render(s.desc), theme.Command.Render(s.cmd))
