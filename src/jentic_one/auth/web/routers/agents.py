@@ -31,6 +31,7 @@ from jentic_one.auth.web.schemas.agents import (
     ToolkitBindRequest,
 )
 from jentic_one.shared.auth.identity import Identity
+from jentic_one.shared.models import ActorType
 from jentic_one.shared.web import get_current_identity
 
 router = APIRouter()
@@ -139,7 +140,9 @@ async def approve_agent(
 async def claim_agent(
     agent_id: str,
     body: ClaimRequest,
-    identity: Identity = get_current_identity(allow_expired_password=True),
+    identity: Identity = get_current_identity(
+        allow_expired_password=True, require_actor_type=ActorType.USER
+    ),
     agent_svc: AgentService = Depends(get_agent_service),
 ) -> AgentResponse:
     """Claim ownership of a self-registered agent using its claim token.
@@ -148,6 +151,11 @@ async def claim_agent(
     permission — the single-use claim token minted at ``/register`` is the proof,
     so the registering human (even a plain member) can take ownership. Sets
     ``owner_id`` to the caller; the existing scoping + approve paths then apply.
+
+    Restricted to ``USER`` actors: ``Agent.owner_id`` is a FK to ``users.id``, so
+    only a human can own an agent. The ``require_actor_type`` gate rejects a
+    non-user actor (agent/service-account/toolkit) at the boundary with a 403;
+    ``AgentService.claim`` re-checks the same invariant as defense-in-depth.
 
     ``allow_expired_password=True`` is intentional (matching ``GET /agents/{id}``):
     claiming is an onboarding step a brand-new user may hit before they have

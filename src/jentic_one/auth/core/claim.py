@@ -21,6 +21,17 @@ installs its own minter via :func:`set_claim_token_minter`.
 Same process-global registry posture as ``set_admission_policy`` in
 ``auth/core/idp/provisioning.py``: a module-level default, replaceable at import
 time.
+
+Threat model: the claim token is a bearer capability — whoever presents a valid,
+unexpired token can set ``owner_id`` to *themselves* (any authenticated user).
+The mitigations that keep that acceptable are: the token is single-use (consumed
+on the first successful claim), short-lived (``auth.claim_ttl_seconds``, 15m by
+default), high-entropy (see the minter contract below), and grants *only*
+ownership — it confers no scopes and cannot act as the agent — and ownership
+stays re-assignable by an operator via approve. A leaked token therefore lets an
+attacker mis-attribute a *pending, unapproved* agent to themselves; an operator
+can still re-approve to the correct human. Minters must not log or persist the
+plaintext token.
 """
 
 from __future__ import annotations
@@ -34,6 +45,13 @@ class ClaimTokenMinter(Protocol):
     def __call__(self, agent_id: str) -> str | None:
         """Return an opaque, single-use claim token for the freshly-created agent,
         or ``None`` to mint no token (the OSS default — no claim flow).
+
+        The token **must be cryptographically random with at least 128 bits of
+        entropy** (e.g. ``secrets.token_urlsafe(32)``). OSS stores only an
+        unsalted SHA-256 of the token and compares in constant time; a
+        low-entropy or guessable token would be brute-forceable offline if the
+        hash ever leaked, letting an attacker claim the agent. Entropy is the
+        minter's responsibility — OSS does not stretch or salt it.
 
         ``agent_id`` is the id of the row being created. It is provided for
         context (logging, per-agent policy) but should be treated as **advisory**:

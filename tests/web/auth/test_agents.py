@@ -543,8 +543,11 @@ def test_claim_agent_non_user_actor_forbidden(
     web_context: Context, claimable_agent_id: str
 ) -> None:
     """A non-user actor (agent) with a valid token is refused (403) — owner_id is
-    a FK to users.id, so only a human user can own an agent. Guards against a
-    self-registered agent claiming itself into an integrity error / 500."""
+    a FK to users.id, so only a human user can own an agent. The ``:claim``
+    endpoint's ``require_actor_type=USER`` gate rejects it at the boundary (type
+    ``forbidden``) before the service runs; the service re-checks as
+    defense-in-depth. Guards against a self-registered agent claiming itself into
+    an integrity error / 500."""
     config = web_context.config.admin.auth
     claims = {
         "sub": "agnt_selfclaimer",
@@ -558,7 +561,7 @@ def test_claim_agent_non_user_actor_forbidden(
     with TestClient(app, headers={"Authorization": f"Bearer {token}"}) as tc:
         resp = tc.post(f"/agents/{claimable_agent_id}:claim", json={"token": _CLAIM_TOKEN})
     assert resp.status_code == 403
-    assert resp.json()["type"] == "claim_actor_not_allowed"
+    assert resp.json()["type"] == "forbidden"
 
 
 def test_claim_agent_unauthenticated(unauthed_client: TestClient, claimable_agent_id: str) -> None:

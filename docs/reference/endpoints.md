@@ -109,7 +109,7 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | POST | `/search` | `apis:read` | agent | Search operations |
 
-## Operator-facing (typically a human operator / admin) (48)
+## Operator-facing (typically a human operator / admin) (49)
 
 
 ### `access-requests`
@@ -139,6 +139,7 @@ _Total endpoints: **159**._
 | POST | `/agents/{agent_id}/toolkits` | `agents:write` | operator | Bind Toolkit |
 | DELETE | `/agents/{agent_id}/toolkits/{toolkit_id}` | `agents:write` | operator | Unbind Toolkit |
 | POST | `/agents/{agent_id}:approve` | `agents:write` | operator | Approve Agent |
+| POST | `/agents/{agent_id}:claim` | _any authenticated_ | operator | Claim Agent |
 | POST | `/agents/{agent_id}:deny` | `agents:write` | operator | Deny Agent |
 | POST | `/agents/{agent_id}:disable` | `agents:write` | operator | Disable Agent |
 | POST | `/agents/{agent_id}:enable` | `agents:write` | operator | Enable Agent |
@@ -220,7 +221,7 @@ _Total endpoints: **159**._
 | POST | `/users/{user_id}:enable` | `users:write` | operator | Enable User |
 | POST | `/users/{user_id}:reissue-invite` | `users:write` | operator | Reissue Invite |
 
-## Any authenticated actor (61)
+## Any authenticated actor (60)
 
 
 ### `access-requests`
@@ -247,7 +248,6 @@ _Total endpoints: **159**._
 |---|---|---|---|---|
 | GET | `/agents/{agent_id}` | _any authenticated_ | any | Get Agent |
 | GET | `/agents/{agent_id}/toolkits` | _any authenticated_ | any | List Toolkits |
-| POST | `/agents/{agent_id}:claim` | _any authenticated_ | any | Claim Agent |
 
 ### `apis`
 

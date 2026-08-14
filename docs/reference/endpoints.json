@@ -590,14 +590,11 @@
     },
     {
       "actor_types": [
-        "user",
-        "agent",
-        "service_account",
-        "toolkit"
+        "user"
       ],
       "auth_note": null,
       "authenticated": true,
-      "group": "Any authenticated actor",
+      "group": "Operator-facing (typically a human operator / admin)",
       "implied_scopes": {},
       "method": "POST",
       "operation_id": "claimAgent",
@@ -606,7 +603,7 @@
       "required_scopes": [],
       "summary": "Claim Agent",
       "surface": "agents",
-      "typical_caller": "any"
+      "typical_caller": "operator"
     },
     {
       "actor_types": [

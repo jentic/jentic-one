@@ -276,35 +276,43 @@ class AgentService:
         if identity.actor_type != ActorType.USER:
             raise ClaimActorNotAllowedError(identity.actor_type.value)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        async with self._ctx.admin_db.transaction() as session:
-            agent = await AgentRepository.get_by_id_for_update(session, agent_id)
-            if agent is None or agent.status == ActorStatus.ARCHIVED:
-                raise ActorNotFoundError(agent_id)
-            if agent.owner_id is not None:
-                raise AgentAlreadyOwnedError(agent_id)
-            # Constant-time compare, and treat "no token was ever issued" the same
-            # as a mismatch so we never leak which agents are claimable.
-            if not agent.claim_token_hash or not hmac.compare_digest(
-                agent.claim_token_hash, token_hash
-            ):
-                raise ClaimTokenInvalidError()
-            if agent.claim_expires_at is not None and agent.claim_expires_at < datetime.now(UTC):
-                raise ClaimTokenInvalidError("claim_token_expired")
-            agent = await AgentRepository.set_owner_from_claim(
-                session, agent, owner_id=identity.sub
-            )
-            await record_audit(
-                session,
-                action=AuditAction.CLAIM,
-                target_type=AuditTargetType.AGENT,
-                target_id=agent_id,
-                actor_type=identity.actor_type,
-                actor_id=identity.sub,
-                before={"owner_id": None},
-                after={"owner_id": identity.sub},
-                reason="agent_ownership_claim",
-                origin=identity.origin.value,
-            )
+        try:
+            async with self._ctx.admin_db.transaction() as session:
+                agent = await AgentRepository.get_by_id_for_update(session, agent_id)
+                if agent is None or agent.status == ActorStatus.ARCHIVED:
+                    raise ActorNotFoundError(agent_id)
+                if agent.owner_id is not None:
+                    raise AgentAlreadyOwnedError(agent_id)
+                # Constant-time compare, and treat "no token was ever issued" the
+                # same as a mismatch so we never leak which agents are claimable.
+                if not agent.claim_token_hash or not hmac.compare_digest(
+                    agent.claim_token_hash, token_hash
+                ):
+                    raise ClaimTokenInvalidError()
+                if agent.claim_expires_at is not None and agent.claim_expires_at < datetime.now(
+                    UTC
+                ):
+                    raise ClaimTokenInvalidError("claim_token_expired")
+                agent = await AgentRepository.set_owner_from_claim(
+                    session, agent, owner_id=identity.sub
+                )
+                await record_audit(
+                    session,
+                    action=AuditAction.CLAIM,
+                    target_type=AuditTargetType.AGENT,
+                    target_id=agent_id,
+                    actor_type=identity.actor_type,
+                    actor_id=identity.sub,
+                    before={"owner_id": None},
+                    after={"owner_id": identity.sub},
+                    reason="agent_ownership_claim",
+                    origin=identity.origin.value,
+                )
+        except DatabaseIntegrityError:
+            # owner_id is a FK to users.id. The actor-type guard above should make
+            # this unreachable, but if the caller's sub is ever a non-user id that
+            # slips the guard, surface a clean 403 rather than a raw 500.
+            raise ClaimActorNotAllowedError(identity.actor_type.value) from None
         return AgentView.model_validate(agent)
 
     async def deny(self, agent_id: str, *, reason: str, identity: Identity) -> AgentView:
