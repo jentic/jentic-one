@@ -82,9 +82,9 @@ func requireSecureHost(u *url.URL) error {
 
 // RequireSecureURL is the exported transport guard: it parses rawurl and applies
 // the same https-or-loopback invariant the SDK enforces before attaching a
-// bearer (requireSecureHost). It exists so the hand-rolled control-plane clients
-// (internal/httpx) and the broker POST in `jentic execute` hold the agent token
-// to the same rule — the token must never traverse plaintext http to a
+// bearer (requireSecureHost). It exists so callers that hold the agent token
+// outside the generated SDK transport — the broker POST in `jentic execute` —
+// obey the same rule: the token must never traverse plaintext http to a
 // non-loopback host (SEC-1). A malformed URL is rejected fail-closed.
 func RequireSecureURL(rawurl string) error {
 	u, err := url.Parse(rawurl)
