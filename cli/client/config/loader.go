@@ -55,7 +55,7 @@ func LoadState(cmdContextOverride string) (*ResolvedState, error) {
 
 	if envBaseURL != "" && envToken != "" {
 		state.BaseURL = envBaseURL
-		state.BrokerURL = os.Getenv("JENTIC_BROKER_URL") // required before any broker call (NewBroker errors without it)
+		state.BrokerURL = os.Getenv("JENTIC_BROKER_URL") // consumed by `jentic execute`; empty is allowed (the remote-broker guard fires only for a remote base_url)
 		state.InjectedBearerToken = envToken
 		state.PersistedMode = "agent"     // file-less defaults to agent
 		state.PersistedTheme = "no-color" // file-less defaults to no-color

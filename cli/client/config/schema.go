@@ -40,7 +40,9 @@ type Context struct {
 type Env struct {
 	BaseURL string `yaml:"base_url"` // Control Plane (registry, auth, executions)
 	// BrokerURL is the Data Plane endpoint used by execute/history (Phase 5).
-	// Optional here; NewBroker errors when a broker call is attempted without it.
+	// Optional here; when unset for a REMOTE control plane, `jentic execute`
+	// fail-closes with a recovery directive rather than silently dialing the
+	// local default (see the remote-broker guard in api/execute.go).
 	BrokerURL string `yaml:"broker_url,omitempty"`
 	// CACertPath optionally points at a custom CA bundle for verifying TLS to
 	// self-hosted deployments behind a private CA. It never mutates the OS trust
