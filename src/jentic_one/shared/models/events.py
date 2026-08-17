@@ -23,6 +23,13 @@ class EventType:
     CREDENTIAL_EXPIRING_SOON = "credential.expiring_soon"
     CREDENTIAL_EXPIRED = "credential.expired"
     CREDENTIAL_ACCESSED = "credential.accessed"
+    # A credential was created whose API scope covers no imported registry API
+    # identity — the create succeeds (importing the API later is a legitimate
+    # order of operations), but every execute through it would 403 with
+    # ``no_toolkit_binding`` until the identity matches (#1020). Advisory,
+    # warning severity; the summary carries a nearest-identity hint when the
+    # vendor has other imported APIs.
+    CREDENTIAL_UNMATCHED_API = "credential.unmatched_api"
     ACCESS_REQUEST_FILED = "access_request.filed"
     ACCESS_REQUEST_APPROVED = "access_request.approved"
     ACCESS_REQUEST_DENIED = "access_request.denied"
@@ -100,6 +107,7 @@ class EventType:
             CREDENTIAL_EXPIRING_SOON,
             CREDENTIAL_EXPIRED,
             CREDENTIAL_ACCESSED,
+            CREDENTIAL_UNMATCHED_API,
             ACCESS_REQUEST_FILED,
             ACCESS_REQUEST_APPROVED,
             ACCESS_REQUEST_DENIED,

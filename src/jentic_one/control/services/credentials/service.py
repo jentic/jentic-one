@@ -17,6 +17,7 @@ from jentic_one.control.repos import (
     TokenValueCredentialRepository,
 )
 from jentic_one.control.repos.prerequisite_repo import PrerequisiteRepository
+from jentic_one.control.repos.registry_api_lookup_repo import RegistryApiLookupRepository
 from jentic_one.control.scoping.filters import build_access_filters
 from jentic_one.control.services.credentials.errors import (
     CredentialNotFoundError,
@@ -126,6 +127,10 @@ class CredentialService:
         # identity at execute time (#775), and stores github.com as github-com
         # rather than a dead-on-arrival identity (#746).
         api_scope = self._canonical_api_scope(payload.api)
+        # Advisory pre-check (#1020): a scope that covers no imported API is
+        # legal (the API may be imported later) but every execute through it
+        # would 403 — surface the mismatch now instead of at execute time.
+        warnings = await self._unmatched_scope_warnings(api_scope)
 
         stored_type = to_stored(payload.type, grant_type=payload.grant_type)
         encryption = self._ctx.encryption
@@ -288,6 +293,7 @@ class CredentialService:
                 created_at=credential.created_at,
                 server_variables=credential.server_variables,
                 secret=secret,
+                warnings=warnings or None,
             )
 
         await record_audit_best_effort(
@@ -316,6 +322,16 @@ class CredentialService:
                     actor_id=identity.sub,
                     actor_type=identity.actor_type.value,
                 )
+                for warning in warnings:
+                    await emit_event_best_effort(
+                        session,
+                        type=EventType.CREDENTIAL_UNMATCHED_API,
+                        severity=EventSeverity.WARNING,
+                        summary=f"Credential {view.credential_id}: {warning}",
+                        created_by=identity.sub,
+                        actor_id=identity.sub,
+                        actor_type=identity.actor_type.value,
+                    )
         except Exception:
             logger.warning(
                 "telemetry_emit_failed", event_type=EventType.CREDENTIAL_STORED, exc_info=True
@@ -726,3 +742,43 @@ class CredentialService:
                     f"api.{axis} '{value}' is not an identity — it looks like a spec path"
                 )
         return canonical_credential_scope(vendor=api.vendor, name=api.name, version=api.version)
+
+    async def _unmatched_scope_warnings(self, scope: CredentialScope) -> list[str]:
+        """Advisory check: does the canonical scope cover any imported API? (#1020)
+
+        Creating a credential before importing its API is a legitimate order of
+        operations (and standalone control deployments have no registry DB at
+        all), so this never blocks or fails the create — best-effort only. When
+        the scope covers nothing, the warning names the vendor's imported
+        identities so a near-miss (e.g. a #1020 vendor-doubled workspace name)
+        is visible at create time rather than as an execute-time 403.
+        """
+        if not self._ctx.is_db_allowed("registry"):
+            return []
+        try:
+            async with self._ctx.registry_db.session() as session:
+                if await RegistryApiLookupRepository.scope_covers_any(session, scope):
+                    return []
+                siblings = await RegistryApiLookupRepository.identities_for_vendor(
+                    session, scope.vendor
+                )
+        except Exception:
+            logger.warning(
+                "credential_api_match_check_failed", api_vendor=scope.vendor, exc_info=True
+            )
+            return []
+        reference = "/".join(axis for axis in (scope.vendor, scope.name, scope.version) if axis)
+        message = (
+            f"API scope '{reference}' matches no imported API — execution through this "
+            "credential will fail until a matching API is imported"
+        )
+        if siblings:
+            listed = ", ".join(f"{scope.vendor}/{name} ({version})" for name, version in siblings)
+            message += f"; imported APIs for this vendor: {listed}"
+        logger.warning(
+            "credential_api_unmatched",
+            api_vendor=scope.vendor,
+            api_name=scope.name,
+            api_version=scope.version,
+        )
+        return [message]

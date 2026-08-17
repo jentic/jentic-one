@@ -1710,6 +1710,14 @@ components:
           additionalProperties: true
           title: Secret
           type: object
+        warnings:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          description: Advisory warnings from create — e.g. the credential's API scope matches no imported API identity, so execution through it would fail until a matching API is imported. The credential is created regardless; null when there is nothing to flag.
+          title: Warnings
       required:
       - credential
       - secret

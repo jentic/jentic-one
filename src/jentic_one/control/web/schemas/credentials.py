@@ -398,6 +398,15 @@ class CredentialCreateResponse(BaseModel):
 
     credential: CredentialRedactedResponse
     secret: dict[str, Any]
+    warnings: list[str] | None = Field(
+        default=None,
+        description=(
+            "Advisory warnings from create — e.g. the credential's API scope "
+            "matches no imported API identity, so execution through it would "
+            "fail until a matching API is imported. The credential is created "
+            "regardless; null when there is nothing to flag."
+        ),
+    )
 
 
 class CredentialListResponse(BaseModel):
