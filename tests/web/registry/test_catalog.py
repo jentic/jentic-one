@@ -546,25 +546,28 @@ def test_to_import_source_threads_catalog_vendor_and_api_name(web_context: Conte
     }
 
 
-def test_to_import_source_threads_api_name_with_slash(web_context: Context) -> None:
-    """A slash-containing api_id (e.g. slack.com/api) threads the full value as api_name."""
+def test_to_import_source_derives_api_name_from_sub_segment(web_context: Context) -> None:
+    """A `domain/sub` api_id seeds only the sub segment as api_name (#1020): slugifying
+    the full id would fuse the vendor into the name and produce a vendor-doubled
+    identity (`posthog-com/posthog-com-posthog-api`) that credential bindings then
+    silently miss."""
     view = CatalogEntryView(
-        api_id="slack.com/api",
-        vendor="slack.com",
-        path="apis/openapi/slack.com/api",
-        spec_url="https://example.test/slack/openapi.json",
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path="apis/openapi/posthog.com/posthog-api",
+        spec_url="https://example.test/posthog/openapi.json",
         github_url=None,
         registered=False,
     )
     result = CatalogService(web_context)._to_import_source(
         view, Identity(sub="usr_importer", email="u@test.local", permissions=[])
     )
-    assert result["api_name"] == "slack.com/api"
-    assert result["vendor"] == "slack.com"
+    assert result["api_name"] == "posthog-api"
+    assert result["vendor"] == "posthog.com"
     assert result["origin"] == "catalog"
-    # The separable slug is also carried verbatim — `api_name` above gets
+    # The separable slug is still carried verbatim — `api_name` above gets
     # slugified during identity resolution, this copy is persisted as-is.
-    assert result["catalog_api_id"] == "slack.com/api"
+    assert result["catalog_api_id"] == "posthog.com/posthog-api"
 
 
 def test_to_import_source_omits_absent_vendor(web_context: Context) -> None:

@@ -781,6 +781,16 @@ class CatalogService:
         re-import dedup) deterministic from the catalog id rather than dependent on
         the upstream spec's info.
 
+        The ``api_name`` override is the catalog id's **sub segment** (``domain/sub``
+        → ``sub``): the vendor half of the id is already carried separately, so
+        slugifying the full id would fuse it into the name and produce a
+        vendor-doubled identity like ``posthog-com/posthog-com-posthog-api`` that no
+        other surface (catalog path, repo layout, broker upstream registration)
+        agrees with — and that credential bindings then silently miss (#1020). A
+        bare-domain id has no sub segment, so the full id stays the name there
+        (e.g. ``coincap.io`` → name ``coincap-io``, the established identity for
+        domain-only entries).
+
         ``submitted_by`` attributes the resulting revision to the principal who
         triggered the (re-)import — same policy as ``POST /apis``.
         """
@@ -796,11 +806,12 @@ class CatalogService:
         if entry.vendor:
             source["vendor"] = entry.vendor
         if entry.api_id:
-            source["api_name"] = entry.api_id
-            # Also carried verbatim: `api_name` above only seeds the slugified
-            # vendor/name identity (the separable `domain/sub` structure is
-            # destroyed by slugification), while this copy is persisted as-is
-            # on the Api row for friendly-title derivation.
+            _, _, sub = entry.api_id.partition("/")
+            source["api_name"] = sub or entry.api_id
+            # The full id is also carried verbatim: `api_name` above only seeds
+            # the slugified vendor/name identity (the separable `domain/sub`
+            # structure is destroyed by slugification), while this copy is
+            # persisted as-is on the Api row for friendly-title derivation.
             source["catalog_api_id"] = entry.api_id
         return source
 
