@@ -1042,14 +1042,16 @@ func accountHomes(ctx context.Context) map[string]string {
 			return nil
 		}
 		// Each line is "<name><spaces><home>"; the home may itself contain
-		// spaces, so split off the first field and take the trimmed remainder.
+		// spaces, so split off the FIRST field as the name and rejoin the rest
+		// as the home. This is robust to variable dscl column spacing and to a
+		// name that happens to be a prefix of its home path (a plain TrimPrefix
+		// would mangle those).
 		for _, line := range strings.Split(string(data), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) < 2 {
 				continue
 			}
-			name := fields[0]
-			out[name] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), name))
+			out[fields[0]] = strings.Join(fields[1:], " ")
 		}
 		return out
 	}
