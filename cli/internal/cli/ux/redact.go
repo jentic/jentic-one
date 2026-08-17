@@ -274,12 +274,54 @@ func redactSensitive(data []byte) []byte {
 func redactString(s string) string { return string(redactSensitive([]byte(s))) }
 
 // RedactBytes is the exported byte-level backstop for command code that emits a
-// raw upstream/API body (e.g. the `jentic api` passthrough, `execute --raw`)
-// rather than a marshaled envelope. It applies the SAME free-form-string scrub as
-// every other output path so a secret in an API response can't leak to a machine
-// parser. It does NOT reshape or re-marshal the payload — the body stays the
-// API's own JSON.
-func RedactBytes(data []byte) []byte { return redactSensitive(data) }
+// raw upstream/API body (e.g. the `jentic api` passthrough, `execute --raw`,
+// `inspect`, `apis spec`) rather than a marshaled envelope. It applies the SAME
+// redaction guarantee as every other output path so a secret in an API response
+// can't leak to a machine parser.
+//
+// When data is valid JSON it is parsed and run through the STRUCTURED key pass
+// (redactValue), which redacts a sensitive key regardless of its value's JSON
+// type — so a secret carried as a number, object, array, or bool is caught, not
+// just a `"key":"string"` pair (the reKV byte regex alone matched string values
+// only; review round-3 P0). The structured pass never reshapes non-sensitive
+// data: keys, ordering within objects is not guaranteed by encoding/json but the
+// document is semantically identical, and only sensitive subtrees change. The
+// byte backstop then still runs over the re-marshaled bytes to catch secrets
+// embedded in free-form string values (bearer tokens, PEM blocks) that carry no
+// sensitive key.
+//
+// When data is NOT valid JSON (e.g. a Markdown inspect body, a YAML spec, a
+// plain-text error) it falls back to the byte backstop alone — the same
+// behaviour as before — because there is no structure to walk.
+func RedactBytes(data []byte) []byte {
+	if trimmed := bytesTrimSpace(data); len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		var v any
+		if err := json.Unmarshal(data, &v); err == nil {
+			// Structured pass first: catches sensitive keys with non-string
+			// values. Re-marshal, then let the byte backstop scrub embedded
+			// free-form secrets in the (now-redacted) JSON.
+			if out, merr := json.Marshal(redactValue(v)); merr == nil {
+				return redactSensitive(out)
+			}
+		}
+	}
+	return redactSensitive(data)
+}
+
+// bytesTrimSpace is a tiny leading/trailing ASCII-space trim used only to peek at
+// the first non-space byte for the JSON sniff above (avoids pulling in bytes just
+// for TrimSpace and avoids allocating a trimmed copy of a large body).
+func bytesTrimSpace(b []byte) []byte {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\t' || b[i] == '\n' || b[i] == '\r') {
+		i++
+	}
+	j := len(b)
+	for j > i && (b[j-1] == ' ' || b[j-1] == '\t' || b[j-1] == '\n' || b[j-1] == '\r') {
+		j--
+	}
+	return b[i:j]
+}
 
 // safeMarshal / safeMarshalIndent are the single funnel every Render path uses.
 // They redact by struct tag (typed reflection), by field name (key heuristics),

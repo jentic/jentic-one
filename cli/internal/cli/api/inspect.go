@@ -87,7 +87,11 @@ func (a *app) inspectE(cmd *cobra.Command, opts *inspectOptions, operationID str
 		return err
 	}
 
-	out := strings.TrimRight(string(body), "\n")
+	// SEC (review round-3 P0): redact before writing the upstream body. inspect
+	// emits the API's own contract (JSON/Markdown/OpenAPI), which can carry
+	// example secrets or auth blocks — it must match the redaction guarantee of
+	// execute/api, not leak just because the output is a raw body.
+	out := strings.TrimRight(string(ux.RedactBytes(body)), "\n")
 	fmt.Fprintln(a.Out, out)
 	return nil
 }

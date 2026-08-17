@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -13,15 +12,19 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
+
+	sdkclient "github.com/jentic/jentic-one/cli/client"
 )
 
 func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http.Response) error {
 	if opts.raw {
-		// Read (bounded by the broker transport's cap) then redact before
-		// streaming, so --raw matches the redaction guarantee of the JSON and
-		// `jentic api` paths (SEC-2). A secret in an upstream body must not leak
-		// just because the caller asked for raw output.
-		body, err := io.ReadAll(resp.Body)
+		// Read the body bounded (review round-3 P0 / theme 2: the old comment
+		// claimed a broker-transport cap that does not exist — the response read
+		// was unbounded), then redact before streaming, so --raw matches the
+		// redaction guarantee of the JSON and `jentic api` paths (SEC-2). A secret
+		// in an upstream body must not leak just because the caller asked for raw
+		// output.
+		body, err := sdkclient.ReadAllBounded(resp.Body, sdkclient.MaxBodyBytes)
 		if err != nil {
 			return fmt.Errorf("read response: %w", err)
 		}
@@ -34,7 +37,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 		return nil
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := sdkclient.ReadAllBounded(resp.Body, sdkclient.MaxBodyBytes)
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}

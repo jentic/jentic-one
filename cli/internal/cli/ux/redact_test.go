@@ -204,3 +204,86 @@ func TestRegisteredSensitiveNameRedactedInBytesAndValue(t *testing.T) {
 		t.Errorf("value pass over-redacted a non-sensitive field: %v", red)
 	}
 }
+
+// TestRedactBytesRedactsNonStringValues pins the round-3 P0 hardening: the byte
+// backstop's reKV regex matched `"key":"string"` pairs ONLY, so a secret carried
+// as a JSON number, object, array, or bool reached stdout untouched on the raw
+// path (execute --raw, inspect, apis spec, api passthrough). RedactBytes now
+// parses valid JSON and runs the structured key pass, which redacts a sensitive
+// key regardless of its value's JSON type.
+func TestRedactBytesRedactsNonStringValues(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		mustGone   string // substring that must NOT survive
+		mustRedact string // json fragment that must appear
+	}{
+		{
+			name:       "number token",
+			body:       `{"token":1234567890,"page":2}`,
+			mustGone:   "1234567890",
+			mustRedact: `"token":"[REDACTED]"`,
+		},
+		{
+			name:       "object secret",
+			body:       `{"credentials":{"access_key":"AKIA123","region":"eu"},"ok":true}`,
+			mustGone:   "AKIA123",
+			mustRedact: `"credentials":"[REDACTED]"`,
+		},
+		{
+			name:       "array api_key",
+			body:       `{"api_key":["k1","k2"],"count":2}`,
+			mustGone:   "k1",
+			mustRedact: `"api_key":"[REDACTED]"`,
+		},
+		{
+			name:       "bool password",
+			body:       `{"password":false}`,
+			mustGone:   "false",
+			mustRedact: `"password":"[REDACTED]"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(RedactBytes([]byte(tc.body)))
+			if strings.Contains(got, tc.mustGone) {
+				t.Errorf("non-string secret leaked through RedactBytes: %s", got)
+			}
+			if !strings.Contains(got, tc.mustRedact) {
+				t.Errorf("expected %q in redacted output, got: %s", tc.mustRedact, got)
+			}
+		})
+	}
+}
+
+// TestRedactBytesPreservesNonSensitiveNonString ensures the structured pass does
+// NOT clobber legitimate non-string values on non-sensitive keys — a redactor
+// that corrupts pagination cursors/counts is as bad as one that leaks.
+func TestRedactBytesPreservesNonSensitiveNonString(t *testing.T) {
+	body := `{"next_token":"cursor-abc","count":42,"items":[{"id":1}],"ok":true}`
+	got := string(RedactBytes([]byte(body)))
+	// next_token is an allowlisted pagination cursor — must survive verbatim.
+	if !strings.Contains(got, `"next_token":"cursor-abc"`) {
+		t.Errorf("allowlisted next_token was clobbered: %s", got)
+	}
+	for _, want := range []string{`"count":42`, `"id":1`, `"ok":true`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("non-sensitive value corrupted, missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestRedactBytesNonJSONFallsBackToByteBackstop ensures a non-JSON body (e.g. a
+// Markdown inspect body or a YAML spec) is still scrubbed by the byte backstop
+// and is not mangled by a failed JSON parse.
+func TestRedactBytesNonJSONFallsBackToByteBackstop(t *testing.T) {
+	// Markdown with an embedded bearer token in a code fence.
+	body := "# Operation\n\nAuthorization: Bearer sk-live-SECRET123\n\nSee docs."
+	got := string(RedactBytes([]byte(body)))
+	if strings.Contains(got, "sk-live-SECRET123") {
+		t.Errorf("bearer token leaked through non-JSON path: %s", got)
+	}
+	if !strings.Contains(got, "# Operation") {
+		t.Errorf("non-JSON body was mangled: %s", got)
+	}
+}
