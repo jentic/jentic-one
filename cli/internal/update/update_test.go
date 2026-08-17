@@ -101,6 +101,93 @@ func TestBackupSQLite_RestoresAfterFailedMigration(t *testing.T) {
 	}
 }
 
+// TestBackupSQLite_CapturesAndRestoresWALSidecars pins the F1 (round-3 #7) fix:
+// a live WAL-mode DB has -wal/-shm sidecars carrying uncheckpointed pages, so a
+// backup that snapshots only the .db can restore an inconsistent database.
+// BackupSQLite must capture all three and Restore must reinstate them.
+func TestBackupSQLite_CapturesAndRestoresWALSidecars(t *testing.T) {
+	data := t.TempDir()
+	dbPath := filepath.Join(data, "control.db")
+	walPath := dbPath + "-wal"
+	shmPath := dbPath + "-shm"
+	for path, content := range map[string]string{
+		dbPath:  "MAIN-PRE",
+		walPath: "WAL-PRE",
+		shmPath: "SHM-PRE",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	b, err := BackupSQLite(data)
+	if err != nil {
+		t.Fatalf("BackupSQLite: %v", err)
+	}
+	if len(b.files) != 3 {
+		t.Fatalf("expected .db + -wal + -shm captured (3 files), got %d: %v", len(b.files), b.files)
+	}
+
+	// Simulate a migration mutating all three, then roll back.
+	for _, path := range []string{dbPath, walPath, shmPath} {
+		if err := os.WriteFile(path, []byte("MUTATED"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	for path, want := range map[string]string{
+		dbPath:  "MAIN-PRE",
+		walPath: "WAL-PRE",
+		shmPath: "SHM-PRE",
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("after rollback %s = %q, want %q", filepath.Base(path), got, want)
+		}
+	}
+}
+
+// TestBackupSQLite_RestoreDropsUncapturedSidecar pins the second half of F1: a
+// migration that STARTS a fresh WAL (no -wal existed at snapshot time) must not
+// leave that stale sidecar behind on rollback, where it could replay stale frames
+// onto the restored .db.
+func TestBackupSQLite_RestoreDropsUncapturedSidecar(t *testing.T) {
+	data := t.TempDir()
+	dbPath := filepath.Join(data, "control.db")
+	if err := os.WriteFile(dbPath, []byte("MAIN-PRE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := BackupSQLite(data) // only .db exists → only .db captured
+	if err != nil {
+		t.Fatalf("BackupSQLite: %v", err)
+	}
+
+	// Migration begins a WAL and mutates the main file, then fails.
+	walPath := dbPath + "-wal"
+	if err := os.WriteFile(walPath, []byte("STALE-WAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath, []byte("MUTATED"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if got, _ := os.ReadFile(dbPath); string(got) != "MAIN-PRE" {
+		t.Errorf("main db not restored: %q", got)
+	}
+	if _, err := os.Stat(walPath); !os.IsNotExist(err) {
+		t.Errorf("stale -wal sidecar should have been removed on rollback, stat err = %v", err)
+	}
+}
+
 func TestBackupSQLite_DiscardRemovesSnapshot(t *testing.T) {
 	data := t.TempDir()
 	if err := os.WriteFile(filepath.Join(data, "x.db"), []byte("x"), 0o600); err != nil {

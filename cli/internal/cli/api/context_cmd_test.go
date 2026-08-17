@@ -94,6 +94,63 @@ func TestEnvDelete_RefusesWhenReferenced(t *testing.T) {
 	}
 }
 
+// TestEnvDelete_SucceedsWhenUnreferenced confirms the F1 fix (re-checking
+// existence/references INSIDE the MutateConfig lock) doesn't break the happy
+// path: an env no context points at deletes cleanly.
+func TestEnvDelete_SucceedsWhenUnreferenced(t *testing.T) {
+	withXDG(t)
+	if err := runJentic(t, "env", "add", "prod", "--url", "https://api.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "env", "add", "spare", "--url", "https://spare.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "env", "delete", "spare", "--yes"); err != nil {
+		t.Fatalf("env delete of an unreferenced env should succeed: %v", err)
+	}
+	cfg, _ := sdkconfig.Load()
+	if _, ok := cfg.Environments["spare"]; ok {
+		t.Error("spare env should be deleted")
+	}
+	if _, ok := cfg.Environments["prod"]; !ok {
+		t.Error("prod env must be untouched")
+	}
+}
+
+// TestContextDeleteWithIdentity_GCsUnreferencedIdentity pins the F1 fix for the
+// --identity GC path: the "is this identity still referenced?" check now runs
+// INSIDE the lock, AFTER the context is deleted, against the mutator's own cfg.
+// So deleting the last context that binds an identity garbage-collects it, while
+// an identity still bound by another context is preserved.
+func TestContextDeleteWithIdentity_GCsUnreferencedIdentity(t *testing.T) {
+	withXDG(t)
+	seedContext(t) // env prod, identity ci, active context main(prod, ci)
+
+	// Add a second context on a different identity so we can switch off "main"
+	// (can't delete the active context).
+	if err := runJentic(t, "identity", "add", "ci2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runJentic(t, "context", "create", "other", "--env", "prod", "--identity", "ci2", "--use"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleting "main" with --identity should GC "ci" (no other context binds it).
+	if err := runJentic(t, "context", "delete", "main", "--identity", "--yes"); err != nil {
+		t.Fatalf("context delete --identity: %v", err)
+	}
+	cfg, _ := sdkconfig.Load()
+	if _, ok := cfg.Contexts["main"]; ok {
+		t.Error("context main should be deleted")
+	}
+	if _, ok := cfg.Identities["ci"]; ok {
+		t.Error("identity ci should be garbage-collected (no context references it after delete)")
+	}
+	if _, ok := cfg.Identities["ci2"]; !ok {
+		t.Error("identity ci2 must be preserved (still bound by context other)")
+	}
+}
+
 func TestIdentityAdd_WritesIdentityAndAPIKey(t *testing.T) {
 	withXDG(t)
 	if err := runJentic(t, "env", "add", "prod", "--url", "https://a"); err != nil {

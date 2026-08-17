@@ -361,8 +361,10 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 			if err != nil {
 				return reportCoded(aud, err)
 			}
-			target, ok := cfg.Contexts[name]
-			if !ok {
+			// Fast-fail preflight on the unlocked snapshot for good UX (don't prompt
+			// to delete something that doesn't exist / is active). This is advisory;
+			// the AUTHORITATIVE check runs inside the lock below (F1).
+			if _, ok := cfg.Contexts[name]; !ok {
 				return reportCoded(aud, &ux.CodedError{
 					Code: ux.CodeResolveFailed,
 					Msg:  fmt.Sprintf("context %q does not exist", name),
@@ -384,22 +386,44 @@ func newContextDeleteCmd(_ *app) *cobra.Command {
 				return nil
 			}
 
-			// If --identity may GC the referenced identity, capture its orphan-able
-			// secret refs BEFORE the mutate removes it (F8-34). We only purge if the
-			// identity is actually removed below.
+			// Capture the identity that MIGHT be GC'd (with --identity) so we can
+			// purge its orphaned secret files after a successful mutate. Whether it
+			// is actually removed is decided INSIDE the lock, after the context is
+			// deleted, against the mutator's own cfg — see below.
 			var purgeIdentity string
 			var toPurge []auth.IdentityRef
-			if withIdentity && target.Identity != "" && !identityStillReferenced(cfg, target.Identity) {
-				purgeIdentity = target.Identity
-				toPurge = identityMaterialRefs(cfg, target.Identity)
-			}
 
 			if err := config.MutateConfig(func(cfg *config.Config) error {
+				// Re-validate INSIDE the lock (F1, review round-3 #4): existence and
+				// active-context status were checked on an unlocked snapshot before a
+				// confirmation prompt that can block indefinitely. Re-check against
+				// the mutator's fresh cfg so a concurrent `context use`/`context
+				// rename`/delete can't make us delete the (now-)active context or a
+				// context that already vanished.
+				target, ok := cfg.Contexts[name]
+				if !ok {
+					return &ux.CodedError{
+						Code: ux.CodeResolveFailed,
+						Msg:  fmt.Sprintf("context %q does not exist", name),
+					}
+				}
+				if cfg.ActiveContext == name {
+					return &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        fmt.Sprintf("cannot delete the active context %q", name),
+						Actionable: "Switch to another context first with `jentic context use <other>`.",
+					}
+				}
 				delete(cfg.Contexts, name)
-				// --identity: GC the referenced identity iff no other context
-				// still uses it (never implicit — identities/envs are not
-				// garbage-collected without the flag, impl/1.3 §4a).
+				// --identity: GC the referenced identity iff NO OTHER context still
+				// uses it (never implicit — identities/envs are not garbage-collected
+				// without the flag, impl/1.3 §4a). The check runs AFTER the delete so
+				// identityStillReferenced reflects the remaining contexts, and against
+				// the mutator's cfg (not a stale outer snapshot) so a concurrently
+				// created context that binds the identity keeps it alive.
 				if withIdentity && target.Identity != "" && !identityStillReferenced(cfg, target.Identity) {
+					purgeIdentity = target.Identity
+					toPurge = identityMaterialRefs(cfg, target.Identity)
 					delete(cfg.Identities, target.Identity)
 				}
 				return nil

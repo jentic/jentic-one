@@ -93,7 +93,7 @@ func SaveTokens(ref IdentityRef, tokens *TokenSet) error {
 	if err != nil {
 		return fmt.Errorf("encoding token state: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeFileAtomic(path, data); err != nil {
 		return fmt.Errorf("writing token state %s: %w", path, err)
 	}
 	return nil

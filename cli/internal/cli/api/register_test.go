@@ -239,6 +239,72 @@ func TestRegister_TwoAgentsSameEnv_DistinctContexts(t *testing.T) {
 	}
 }
 
+// TestRegister_ContextNameCollisionRefusedWithoutForce pins F2 (round-3 #4):
+// SanitizeName(env + "-" + name) is many-to-one (it clamps to 64 chars), so two
+// DIFFERENT identities whose derived context name collapses to the same string
+// must NOT silently repoint the context. The second register (a different
+// identity, same derived context) is refused without --force.
+func TestRegister_ContextNameCollisionRefusedWithoutForce(t *testing.T) {
+	withXDG(t)
+	srv, _ := bootstrapServer(t, 0)
+
+	// env "qa" → context = "qa-" + name, clamped to 64 chars. Two names sharing
+	// the first 61 chars (so "qa-"+prefix hits the 64-char clamp identically) but
+	// differing afterwards derive the SAME context name.
+	prefix := strings.Repeat("a", 61)
+	nameA := prefix + "x" // 62 chars, valid
+	nameB := prefix + "y" // 62 chars, valid, same 64-char clamp of "qa-"+name
+
+	if err := runJentic(t, "register", "--url", srv.URL, "--name", nameA, "--env", "qa", "--timeout", "5s"); err != nil {
+		t.Fatalf("register A: %v", err)
+	}
+
+	err := runJentic(t, "register", "--url", srv.URL, "--name", nameB, "--env", "qa", "--timeout", "5s")
+	if err == nil {
+		t.Fatal("expected the colliding second register to be refused without --force")
+	}
+	if !strings.Contains(err.Error(), "already binds identity") {
+		t.Errorf("error = %v, want a context-collision refusal", err)
+	}
+
+	// The first agent's binding must be intact (no silent hijack).
+	cfg, lerr := sdkconfig.Load()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	ctxName := sdkconfig.SanitizeName("qa-" + nameA)
+	if c, ok := cfg.Contexts[ctxName]; !ok || c.Identity != nameA {
+		t.Errorf("context %q = %+v, want it still bound to the first identity %q", ctxName, c, nameA)
+	}
+}
+
+// TestRegister_ContextNameCollisionForceRepoints confirms --force still lets the
+// operator deliberately repoint a colliding context.
+func TestRegister_ContextNameCollisionForceRepoints(t *testing.T) {
+	withXDG(t)
+	srv, _ := bootstrapServer(t, 0)
+
+	prefix := strings.Repeat("a", 61)
+	nameA := prefix + "x"
+	nameB := prefix + "y"
+
+	if err := runJentic(t, "register", "--url", srv.URL, "--name", nameA, "--env", "qa", "--timeout", "5s"); err != nil {
+		t.Fatalf("register A: %v", err)
+	}
+	if err := runJentic(t, "register", "--url", srv.URL, "--name", nameB, "--env", "qa", "--timeout", "5s", "--force"); err != nil {
+		t.Fatalf("register B --force: %v", err)
+	}
+
+	cfg, lerr := sdkconfig.Load()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	ctxName := sdkconfig.SanitizeName("qa-" + nameB)
+	if c := cfg.Contexts[ctxName]; c.Identity != nameB {
+		t.Errorf("with --force, context %q should repoint to %q, got %+v", ctxName, nameB, c)
+	}
+}
+
 // TestRegister_LegacyFlagsRemoved: the V1 --profile/--base-url arm is gone
 // (14 BC-1). The flags must fail as unknown — nothing may silently fall back
 // to the legacy store.

@@ -47,7 +47,7 @@ func SaveAPIKey(ref IdentityRef, key string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(key), 0o600); err != nil {
+	if err := writeFileAtomic(path, []byte(key)); err != nil {
 		return fmt.Errorf("writing API key %s: %w", path, err)
 	}
 	return nil

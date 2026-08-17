@@ -137,7 +137,7 @@ func GetOrGenerateKey(ref IdentityRef) (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("marshaling key: %w", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	if err := os.WriteFile(keyPath, pemBytes, 0o600); err != nil {
+	if err := writeFileAtomic(keyPath, pemBytes); err != nil {
 		return nil, fmt.Errorf("writing key %s: %w", keyPath, err)
 	}
 	return priv, nil

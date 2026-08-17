@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // authArgs returns the `git -c http.extraheader=...` prefix carrying a Basic
@@ -126,12 +127,19 @@ type SQLiteBackup struct {
 	dir   string
 }
 
-// BackupSQLite snapshots every *.db file directly under dataDir into a temp
-// directory, returning a handle that can Restore them if the migration fails or
-// be Discarded on success. A dataDir with no *.db files (a fresh install whose
-// migration will create them) yields an empty, harmless backup. The snapshot is
-// a plain file copy: SQLite is quiescent here because the local app/broker are
-// bounced around the migration, so no writer is mid-transaction.
+// BackupSQLite snapshots every SQLite file directly under dataDir — the main
+// *.db AND its WAL sidecars (*.db-wal, *.db-shm) — into a temp directory,
+// returning a handle that can Restore them if the migration fails or be
+// Discarded on success. A dataDir with no SQLite files (a fresh install whose
+// migration will create them) yields an empty, harmless backup.
+//
+// The WAL sidecars matter (F1, review round-3 #7): a live WAL-mode database keeps
+// uncheckpointed committed pages in the -wal file, so snapshotting only the .db
+// would restore a main file whose committed state lived partly in a WAL that is
+// then stale or gone — an inconsistent restore presented as a successful
+// rollback. Capturing all three keeps the restore self-consistent. Callers MUST
+// still stop the app before snapshotting (see MigrateWithRollback callers) so
+// nothing is mid-transaction; the file copy is otherwise a crash-consistency bet.
 func BackupSQLite(dataDir string) (*SQLiteBackup, error) {
 	entries, err := os.ReadDir(dataDir)
 	if err != nil {
@@ -146,7 +154,7 @@ func BackupSQLite(dataDir string) (*SQLiteBackup, error) {
 	}
 	b := &SQLiteBackup{files: map[string]string{}, dir: tmp}
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".db" {
+		if e.IsDir() || !isSQLiteFile(e.Name()) {
 			continue
 		}
 		src := filepath.Join(dataDir, e.Name())
@@ -160,9 +168,30 @@ func BackupSQLite(dataDir string) (*SQLiteBackup, error) {
 	return b, nil
 }
 
+// isSQLiteFile reports whether name is a SQLite database or one of its WAL/SHM
+// sidecars using the default SQLite naming (`<db>`, `<db>-wal`, `<db>-shm` where
+// <db> ends in .db). We match the sidecars by suffix so a checkpointed DB with no
+// live WAL (only the .db present) and a live WAL-mode DB (all three present) are
+// both captured whole.
+func isSQLiteFile(name string) bool {
+	switch {
+	case filepath.Ext(name) == ".db":
+		return true
+	case strings.HasSuffix(name, ".db-wal"), strings.HasSuffix(name, ".db-shm"):
+		return true
+	}
+	return false
+}
+
 // Restore copies each snapshot back over its live file, undoing a failed
 // migration. It restores as many files as it can and joins any errors so one
 // bad file does not silently strand the rest half-rolled-back.
+//
+// It also removes any live WAL/SHM sidecar that was NOT part of the snapshot
+// (F1, review round-3 #7): a failed migration may have started a fresh WAL that
+// didn't exist when we snapshotted; leaving it in place could replay stale frames
+// on top of the restored .db. Deleting the un-snapshotted sidecars forces SQLite
+// to treat the restored .db as authoritative on next open.
 func (b *SQLiteBackup) Restore() error {
 	if b == nil {
 		return nil
@@ -171,6 +200,23 @@ func (b *SQLiteBackup) Restore() error {
 	for live, snap := range b.files {
 		if err := copyFile(snap, live, 0o600); err != nil {
 			errs = append(errs, fmt.Errorf("restore %s: %w", filepath.Base(live), err))
+		}
+	}
+	// For every restored main .db, drop a live sidecar we did not capture.
+	for live := range b.files {
+		if filepath.Ext(live) != ".db" {
+			continue
+		}
+		for _, suffix := range []string{"-wal", "-shm"} {
+			sidecar := live + suffix
+			if _, backedUp := b.files[sidecar]; backedUp {
+				continue // this sidecar was snapshotted and already restored above
+			}
+			if _, err := os.Stat(sidecar); err == nil {
+				if rmErr := os.Remove(sidecar); rmErr != nil && !os.IsNotExist(rmErr) {
+					errs = append(errs, fmt.Errorf("remove stale sidecar %s: %w", filepath.Base(sidecar), rmErr))
+				}
+			}
 		}
 	}
 	return errors.Join(errs...)

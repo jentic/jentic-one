@@ -582,18 +582,25 @@ func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool)
 		return fmt.Errorf("rebuild failed: %w", err)
 	}
 
+	// Stop the app BEFORE snapshotting + migrating (F1, review round-3 #7). A
+	// forward-only Alembic migration against a live, WAL-mode SQLite DB — with a
+	// backup that couldn't cleanly capture the in-flight WAL — is the inconsistent
+	// half-state the rollback net exists to prevent. Stopping first makes the
+	// snapshot self-contained and the migration the sole writer. Restart happens
+	// after a successful migration (or is left stopped on failure, having rolled
+	// back). If it wasn't running, we don't start it — matching prior behaviour.
+	wasRunning := a.stopLocalIfRunning(ctx)
+
 	// Snapshot the SQLite files before the forward-only migration so a failure
 	// rolls back to the pre-migration state rather than stranding a half-applied
-	// schema. The build above is a pure code swap (no DB writes), so taking the
-	// snapshot here — just before RunMigrations — captures the exact bytes the
-	// migration is about to touch. Shared with first-`install` via
-	// MigrateWithRollback so the two rollback paths cannot drift (P1-E).
+	// schema. Shared with first-`install` via MigrateWithRollback so the two
+	// rollback paths cannot drift (P1-E).
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	if err := update.MigrateWithRollback(
 		a.Paths.DataDir(),
 		db == install.BackendSQLite,
-		func() error { return install.RunMigrations(a.Out, plan.VenvPython(), configPath) },
+		func() error { return install.RunMigrations(ctx, a.Out, plan.VenvPython(), configPath) },
 		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
 		func() {
 			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-update state"))
@@ -602,7 +609,11 @@ func (a *app) updateStackLocal(ctx context.Context, db, ref string, pinned bool)
 		return err
 	}
 
-	a.restartLocalIfRunning(ctx)
+	if wasRunning {
+		a.startLocalAfterStop(ctx)
+	} else {
+		fmt.Fprintln(a.Out, theme.Dim.Render("  app not running — start it with `jenticctl start`"))
+	}
 	fmt.Fprintln(a.Out, theme.Successf("Stack updated (local)."))
 	return nil
 }
@@ -652,17 +663,28 @@ func (a *app) updateStackDocker(ctx context.Context, ref string, pinned, daemonC
 	return nil
 }
 
-// restartLocalIfRunning bounces the background app so the rebuilt code takes
-// effect, but only when it was already running; otherwise it leaves it stopped.
-func (a *app) restartLocalIfRunning(ctx context.Context) {
+// stopLocalIfRunning stops the local app if it is running and reports whether it
+// was. Split out of the old restartLocalIfRunning (F1, review round-3 #7) so the
+// update flow can stop the app BEFORE snapshotting + migrating the SQLite
+// database — migrating a live, WAL-mode DB and then trying to roll back a .db
+// whose committed pages still live in an uncheckpointed WAL is exactly the
+// inconsistent half-state the rollback net is meant to prevent.
+func (a *app) stopLocalIfRunning(ctx context.Context) bool {
 	_, running, _ := proc.LivePID(a.Paths.AppPIDPath())
 	if !running {
-		fmt.Fprintln(a.Out, theme.Dim.Render("  app not running — start it with `jenticctl start`"))
-		return
+		return false
 	}
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Infof("Restarting app ..."))
+	fmt.Fprintln(a.Out, theme.Infof("Stopping app before migration ..."))
 	_ = a.stopE(ctx, &stopOptions{timeout: 10 * time.Second})
+	return true
+}
+
+// startLocalAfterStop restarts the local app after an update, used when
+// stopLocalIfRunning reported it was running before the update began.
+func (a *app) startLocalAfterStop(ctx context.Context) {
+	fmt.Fprintln(a.Out)
+	fmt.Fprintln(a.Out, theme.Infof("Restarting app ..."))
 	_ = a.startE(ctx, &startOptions{})
 }
 

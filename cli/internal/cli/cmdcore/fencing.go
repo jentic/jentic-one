@@ -1,7 +1,9 @@
 package cmdcore
 
 import (
+	"context"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +24,25 @@ import (
 // failures are non-fatal for everything except an explicit fenced-in-agent-mode
 // block, so V1 behavior is preserved on un-migrated machines.
 func installInterceptor(app *App, root *cobra.Command) {
+	// agentTimeout bounds a single control-plane call in non-interactive mode so a
+	// wedged server can't hang an agent forever (F3, review round-3 #7 /
+	// cli-conventions §"Context timeouts"). Human mode is left undeadlined so
+	// interactive prompts and paginators aren't aborted mid-flow.
+	const agentTimeout = 60 * time.Second
+	// cancelTimeout holds the current invocation's timeout cancel (if any) so the
+	// PersistentPostRunE below can release it — avoids a leaked context timer
+	// without threading the cancel through the whole command tree. Safe as a
+	// captured single value: one cobra invocation runs one command to completion.
+	var cancelTimeout context.CancelFunc
+
+	root.PersistentPostRunE = func(_ *cobra.Command, _ []string) error {
+		if cancelTimeout != nil {
+			cancelTimeout()
+			cancelTimeout = nil
+		}
+		return nil
+	}
+
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		// Preserve the shipped banner + update nudge (previously PersistentPreRun).
 		app.banner(cmd)
@@ -115,6 +136,19 @@ func installInterceptor(app *App, root *cobra.Command) {
 		ctx = clictx.WithActiveState(ctx, state)
 		ctx = theme.WithContext(ctx, palette)
 		ctx = theme.WithThemeName(ctx, themeName)
+
+		// Non-interactive modes get a wall-clock deadline (F3, review round-3 #7):
+		// an agent/service-account orchestrating jentic against an unresponsive
+		// Control Plane would otherwise hang forever (the shared control client
+		// leaves http.Client.Timeout zero, deferring to per-call contexts that
+		// today carry no deadline). Human mode stays undeadlined so interactive
+		// prompts/paginators aren't cut off. The cancel is released in
+		// PersistentPostRunE above.
+		if state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount {
+			//nolint:gosec // G118: the cancel is stored in cancelTimeout and invoked in the root PersistentPostRunE above (one invocation runs one command to completion); a leaked timer would in any case be reclaimed at process exit.
+			ctx, cancelTimeout = context.WithTimeout(ctx, agentTimeout)
+		}
+
 		cmd.SetContext(ctx)
 		return nil
 	}

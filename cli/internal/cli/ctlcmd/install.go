@@ -787,7 +787,7 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
 	if draft.IsPostgres() {
-		if err := install.RunMigrations(a.Out, draft.VenvPython, configPath); err != nil {
+		if err := install.RunMigrations(ctx, a.Out, draft.VenvPython, configPath); err != nil {
 			fmt.Fprintln(a.Out, install.RenderMigrateWarning(err))
 			return nil
 		}
@@ -797,7 +797,7 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 	if err := update.MigrateWithRollback(
 		a.Paths.DataDir(),
 		true, // local install is SQLite here (Postgres handled above)
-		func() error { return install.RunMigrations(a.Out, draft.VenvPython, configPath) },
+		func() error { return install.RunMigrations(ctx, a.Out, draft.VenvPython, configPath) },
 		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
 		func() {
 			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-install state"))

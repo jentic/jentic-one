@@ -79,6 +79,27 @@ func newResourceDeleteCmd(spec deleteSpec) *cobra.Command {
 			}
 
 			if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
+				// Re-validate existence AND references INSIDE the lock (F1, review
+				// round-3 #4): the checks above ran on an unlocked snapshot, and the
+				// confirmation prompt can block for a long time. A concurrent
+				// `context create` binding this env/identity — or another delete of
+				// the same name — could have changed the world since. Re-checking
+				// here, against the mutator's own freshly-loaded cfg, closes the
+				// TOCTOU that could otherwise strand a live context on a just-deleted
+				// env/identity.
+				if !spec.exists(cfg, name) {
+					return &ux.CodedError{
+						Code: ux.CodeResolveFailed,
+						Msg:  fmt.Sprintf("%s %q does not exist", spec.resource, name),
+					}
+				}
+				if refs := spec.references(cfg, name); len(refs) > 0 {
+					return &ux.CodedError{
+						Code:       ux.CodeMissingArgument,
+						Msg:        fmt.Sprintf("%s %q is still referenced by context(s): %v", spec.resource, name, refs),
+						Actionable: "Delete or re-point those contexts first.",
+					}
+				}
 				spec.remove(cfg, name)
 				return nil
 			}); err != nil {
