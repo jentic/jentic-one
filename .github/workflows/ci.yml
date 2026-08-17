@@ -718,8 +718,20 @@ jobs:
       - name: Assert windows zip contains jentic.exe only
         run: |
           set -euo pipefail
-          zip="$(ls cli/dist/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
-          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la cli/dist || true; exit 1; }
+          # This job sets defaults.run.working-directory: cli, and the
+          # goreleaser step above runs with workdir: cli too, so goreleaser
+          # writes to cli/dist — which from THIS step's cwd (also cli) is just
+          # ./dist. (The old `cli/dist` here resolved to cli/cli/dist and always
+          # missed.) Fall back to cli/dist in case a future default change moves
+          # this step's cwd back to the repo root.
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; pwd; ls -la . || true; exit 1; }
+          echo "artifact dir: ${dist}"
+          zip="$(ls "${dist}"/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
+          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la "${dist}" || true; exit 1; }
           echo "found windows archive: ${zip}"
           contents="$(unzip -Z1 "${zip}")"
           echo "${contents}"
@@ -728,7 +740,7 @@ jobs:
             echo "::error::windows zip must NOT ship jenticctl (WIN-6)"; exit 1
           fi
           # linux/darwin tarballs must still be produced (byte-shape invariant).
-          ls cli/dist/jentic_*_linux_amd64.tar.gz cli/dist/jenticctl_*_linux_amd64.tar.gz >/dev/null
+          ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9
