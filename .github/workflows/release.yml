@@ -168,27 +168,33 @@ jobs:
       - name: Install syft (SBOM)
         uses: anchore/sbom-action/download-syft@v0
 
+      # Multi-arch (linux/amd64 + linux/arm64) needs QEMU (to emulate the
+      # non-native arch during the python-base build/uv steps) and a buildx
+      # builder. Set up BEFORE `docker login` so no third-party setup action
+      # runs with the registry credential on disk (same ordering rationale as
+      # the cosign/syft installers above).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       # One `app` image serves every surface — the surface set is chosen at
       # runtime via JENTIC__APPS (registry,admin,control,auth vs the sole broker;
       # see deploy/README.md "Self-hosted"). A single published `app` image
       # therefore covers the whole self-hosted app + broker topology.
       #
-      # We build the same way `make build-app` does (build-base first, then the
-      # app image that FROMs the python-base:runtime / :builder stages by tag),
-      # then push to GHCR. github.repository_owner preserves case but GHCR repos
-      # must be lower-case, so lower-case the owner for the image name.
-      # Single-arch (amd64) for now; multi-arch is a documented follow-up
-      # (deploy/README.md "What's deferred").
+      # MULTI-ARCH: we build from deploy/docker/app.multiarch.Dockerfile (a
+      # self-contained inlining of the python-base stages — buildx can't resolve
+      # the bare `python-base:runtime` local tag per-arch that the single-arch
+      # app.Dockerfile uses). github.repository_owner preserves case but GHCR
+      # repos must be lower-case, so lower-case the owner for the image name.
       #
-      # Only the version + SHA tags push here — :latest waits until AFTER the
-      # digest is signed (next steps), so a cosign/syft failure can never
-      # strand the floating tag on an unsigned image.
-      #
-      # The pushed digest is echoed (and is the thing that gets signed): tags
-      # are floating, so the digest is the only true pin — deploy/README.md
-      # "Reproducibility" tells self-hosters to pin to it. RepoDigests is
-      # filtered by our image name rather than blindly taking index 0.
-      - name: Build the app image (version + SHA tags)
+      # Trivy gates BEFORE any push: because a multi-arch index can't be
+      # `--load`ed into the local daemon, we first build each arch as a
+      # single-platform image loaded locally and scan EACH — dropping arm64 from
+      # the scan would silently ship an unscanned arch. buildx caches those
+      # layers, so the final multi-arch `--push` build below is nearly free.
+      - name: Resolve image name/version
         id: build
         run: |
           set -euo pipefail
@@ -196,23 +202,41 @@ jobs:
           IMAGE="ghcr.io/${OWNER}/jentic-one-app"
           VERSION="${GITHUB_REF_NAME#v}"
           SHA="$(git rev-parse --short HEAD)"
-          make build-base
-          docker build -f deploy/docker/app.Dockerfile \
-            -t "${IMAGE}:${VERSION}" \
-            -t "${IMAGE}:${SHA}" .
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
-      # CVE gate before anything is pushed: a release must not publish an
-      # image a registry scanner (e.g. AWS ECR) would flag. Same policy as
-      # the ci.yml image-scan job — fixable HIGH/CRITICAL fail, overrides
-      # live in .trivyignore (CVE id + justification + expiry).
-      - name: Trivy image scan (release gate)
+      - name: Build per-arch images for scanning (loaded locally)
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+              --platform "linux/${arch}" \
+              -t "${IMAGE}:${VERSION}-${arch}" \
+              --load .
+          done
+
+      # CVE gate before anything is pushed — for EVERY shipped arch, not just
+      # amd64 (an index scan doesn't reliably cover each arch). Same policy as
+      # the ci.yml image-scan job: fixable HIGH/CRITICAL fail, overrides live in
+      # .trivyignore (CVE id + justification + expiry).
+      - name: Trivy image scan — amd64 (release gate)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: 'image'
-          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-amd64
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: .trivyignore
+      - name: Trivy image scan — arm64 (release gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ steps.build.outputs.image }}:${{ steps.build.outputs.version }}-arm64
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
           exit-code: '1'
@@ -228,7 +252,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push the app image (version + SHA tags)
+      # Build+push the MULTI-ARCH index in one step (buildx `--push` builds and
+      # pushes the OCI index atomically; a two-arch index cannot be `--load`ed).
+      # The layers were populated by the per-arch scan builds above, so this is a
+      # cache hit. The pushed INDEX digest (read from --metadata-file's
+      # containerimage.digest — `docker inspect RepoDigests` can't see an index
+      # that was never loaded locally) is the immutable pin cosign signs; tags
+      # float, deploy/README.md "Reproducibility" tells self-hosters to pin it.
+      - name: Build + push multi-arch index (version + SHA tags)
         id: push
         env:
           IMAGE: ${{ steps.build.outputs.image }}
@@ -236,12 +267,15 @@ jobs:
           SHA: ${{ steps.build.outputs.sha }}
         run: |
           set -euo pipefail
-          docker push "${IMAGE}:${VERSION}"
-          docker push "${IMAGE}:${SHA}"
-          DIGEST="$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "${IMAGE}:${VERSION}" \
-            | grep "^${IMAGE}@" | head -n1 | cut -d@ -f2)"
-          test -n "${DIGEST}"
-          echo "Image digest: ${DIGEST}"
+          docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+            --platform linux/amd64,linux/arm64 \
+            -t "${IMAGE}:${VERSION}" \
+            -t "${IMAGE}:${SHA}" \
+            --metadata-file /tmp/bake-metadata.json \
+            --push .
+          DIGEST="$(jq -r '."containerimage.digest"' /tmp/bake-metadata.json)"
+          test -n "${DIGEST}" && [ "${DIGEST}" != "null" ]
+          echo "Image index digest: ${DIGEST}"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
@@ -251,6 +285,11 @@ jobs:
       # syft SBOM). Both target the immutable digest, never a floating tag.
       # Self-hosters verify with `cosign verify` (deploy/README.md "Verify the
       # image signature").
+      # Sign the image and attach an SBOM attestation, mirroring what GoReleaser
+      # does for the CLI binaries (cosign keyless via the job's OIDC identity +
+      # syft SBOM). Both target the immutable INDEX digest, never a floating tag
+      # — cosign signing an OCI index covers every arch under it. Self-hosters
+      # verify with `cosign verify` (deploy/README.md "Verify the image signature").
       - name: Sign the image and attest its SBOM (cosign keyless + syft)
         env:
           COSIGN_YES: "true"
@@ -265,17 +304,19 @@ jobs:
       # :latest moves LAST, only on stable releases (vX.Y.Z exactly, so a
       # prerelease tag like v1.2.3-rc.1 can never hijack the tag self-hosters
       # float on), and only after the digest above was signed — a red run
-      # anywhere earlier leaves :latest untouched.
+      # anywhere earlier leaves :latest untouched. The multi-arch index was
+      # pushed by buildx and is NOT in the local daemon, so we retag it
+      # registry-side with `buildx imagetools create` (a manifest copy, no
+      # re-pull/re-push of layers) pointing :latest at the exact signed digest.
       - name: Move :latest (stable releases only, after signing)
         env:
           IMAGE: ${{ steps.push.outputs.image }}
-          VERSION: ${{ steps.push.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            docker tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
-            docker push "${IMAGE}:latest"
-            echo "Moved ${IMAGE}:latest to ${VERSION}"
+            docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}@${DIGEST}"
+            echo "Moved ${IMAGE}:latest to ${IMAGE}@${DIGEST}"
           else
             echo "Prerelease tag — not moving :latest"
           fi

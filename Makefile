@@ -223,32 +223,34 @@ images: ## List locally built jentic-one images
 #
 #   make release-image REGISTRY=ghcr.io/jentic
 #
-# builds deploy/docker/app.Dockerfile and pushes it to
-# $(REGISTRY)/jentic-one-app tagged with the pyproject version and the short
-# git SHA. `latest` only moves when the version is a stable X.Y.Z (no
-# prerelease suffix), mirroring CI's guard so a dev/rc push can never hijack
-# the tag self-hosters float on. Requires `docker login <registry>` first. CI
-# does this automatically on a vX.Y.Z tag (see .github/workflows/release.yml)
-# with its own inline script rather than this target: CI must interleave
-# signing between the version and :latest pushes (and lower-case the GHCR
-# owner), which this all-in-one target can't express.
+# builds deploy/docker/app.multiarch.Dockerfile for linux/amd64 + linux/arm64
+# with `docker buildx` and pushes the OCI index to $(REGISTRY)/jentic-one-app
+# tagged with the pyproject version and the short git SHA. `latest` only moves
+# when the version is a stable X.Y.Z (no prerelease suffix), mirroring CI's
+# guard so a dev/rc push can never hijack the tag self-hosters float on.
+# Requires `docker login <registry>` first AND a buildx builder that can build
+# both arches (`docker buildx create --use` + QEMU for the non-native leg). CI
+# does this on a vX.Y.Z tag (see .github/workflows/release.yml) with its own
+# inline script rather than this target: CI must scan each arch, interleave
+# cosign signing between the version and :latest tags, and lower-case the GHCR
+# owner — which this all-in-one target can't express.
 REGISTRY ?=
 RELEASE_IMAGE := $(REGISTRY)/jentic-one-app
+RELEASE_PLATFORMS ?= linux/amd64,linux/arm64
 
-release-image: build-base ## Build + push the app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
+release-image: ## Build + push the multi-arch app image to REGISTRY (e.g. REGISTRY=ghcr.io/jentic)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "ERROR: set REGISTRY, e.g. make release-image REGISTRY=ghcr.io/jentic"; exit 1; \
 	fi
-	docker build -f deploy/docker/app.Dockerfile \
+	docker buildx build -f deploy/docker/app.multiarch.Dockerfile \
+		--platform $(RELEASE_PLATFORMS) \
 		-t $(RELEASE_IMAGE):$(VERSION) \
-		-t $(RELEASE_IMAGE):$(GIT_SHA) .
-	docker push $(RELEASE_IMAGE):$(VERSION)
-	docker push $(RELEASE_IMAGE):$(GIT_SHA)
+		-t $(RELEASE_IMAGE):$(GIT_SHA) \
+		--push .
 	@if echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$'; then \
-		docker tag $(RELEASE_IMAGE):$(VERSION) $(RELEASE_IMAGE):latest; \
-		docker push $(RELEASE_IMAGE):latest; \
-		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest)"; \
+		docker buildx imagetools create -t $(RELEASE_IMAGE):latest $(RELEASE_IMAGE):$(VERSION); \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA), latest) [$(RELEASE_PLATFORMS)]"; \
 	else \
 		echo "Prerelease version — not moving :latest"; \
-		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA))"; \
+		echo "Pushed $(RELEASE_IMAGE) ($(VERSION), $(GIT_SHA)) [$(RELEASE_PLATFORMS)]"; \
 	fi

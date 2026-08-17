@@ -18,7 +18,8 @@ that install the charts. The whole thing is designed so that:
 deploy/
 ├── docker/                          # One Dockerfile per deployable
 │   ├── python-base.Dockerfile       # Shared multi-stage base (wheel build + runtime)
-│   ├── app.Dockerfile               # Combined image (registry+admin+control+auth)
+│   ├── app.Dockerfile               # Combined image (registry+admin+control+auth), single-arch local build
+│   ├── app.multiarch.Dockerfile     # Self-contained multi-arch (amd64+arm64) app image — the release/buildx path
 │   ├── registry.Dockerfile          # Registry surface only
 │   ├── admin.Dockerfile             # Admin surface only
 │   ├── control.Dockerfile           # Control surface only
@@ -179,10 +180,12 @@ docker login ghcr.io                                   # or your registry
 make release-image REGISTRY=ghcr.io/<your-org>         # builds + pushes app image
 ```
 
-`make release-image` builds `deploy/docker/app.Dockerfile` and pushes
-`<REGISTRY>/jentic-one-app` tagged with the pyproject version and the short
-git SHA; `latest` only moves when the version is a stable `X.Y.Z` (same guard
-as CI).
+`make release-image` builds `deploy/docker/app.multiarch.Dockerfile` for
+`linux/amd64` + `linux/arm64` with `docker buildx` and pushes the multi-arch
+OCI index to `<REGISTRY>/jentic-one-app` tagged with the pyproject version and
+the short git SHA; `latest` only moves when the version is a stable `X.Y.Z`
+(same guard as CI). Requires a buildx builder (`docker buildx create --use`)
+and QEMU for the non-native arch leg.
 
 ### The three databases (one instance, three schemas)
 
@@ -1014,14 +1017,6 @@ and will be filled when the answers exist:
   and full re-runs strand untagged manifests; nothing prunes them yet. A
   scheduled `actions/delete-package-versions` for untagged + aged SHA tags
   is the likely shape.
-- **Multi-arch builds** — the published `app` image is single-arch (amd64)
-  today, which excludes arm64 hosts (Graviton/Ampere/Apple Silicon); switch
-  the `publish-image` job / `make release-image` to
-  `docker buildx build --platform linux/amd64,linux/arm64` when needed. **Note:**
-  `jenticctl install` now *pulls* this image by default (`ResolveAppImage` →
-  `ghcr.io/jentic/jentic-one-app:<version>`), so until multi-arch lands, arm64
-  users should install with `--build-local` (auto-selected inside a source
-  checkout / `$JENTIC_SRC`) to build a native image.
 - **Helm chart publishing** — chart is built locally; no OCI-registry push
   yet.
 - **Real Terraform env values** — cluster/namespace/ingress are TODO
