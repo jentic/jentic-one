@@ -144,13 +144,31 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 			cfg.Environments[envName] = env
 		}
 		brokerConfigured = cfg.Environments[envName].BrokerURL != ""
+		// (Re)bind and activate the context. The context name is derived by
+		// SanitizeName(env + "-" + name); that primitive is many-to-one (charset
+		// collapse + 64-char clamp), so two DIFFERENT (env, identity) pairs can
+		// derive the SAME contextName — e.g. two long identity names sharing a
+		// 64-char prefix. Overwriting unconditionally would then silently repoint
+		// the context onto a different identity (F2, review round-3 #4): the exact
+		// "authenticated as the wrong identity" failure the per-identity naming is
+		// meant to prevent. Guard it: if the derived context already exists and
+		// binds a DIFFERENT identity or environment, refuse without --force rather
+		// than hijack it. Re-registering the SAME identity+env stays idempotent.
+		if existing, ok := cfg.Contexts[contextName]; ok &&
+			(existing.Identity != vals.Name || existing.Environment != envName) && !force {
+			return &ux.CodedError{
+				Code: ux.CodeMissingArgument,
+				Msg: fmt.Sprintf("context %q already binds identity %q on environment %q; "+
+					"registering %q on %q would overwrite it (their names collapse to the same context name)",
+					contextName, existing.Identity, existing.Environment, vals.Name, envName),
+				Actionable: "Use a shorter/distinct --name, or pass --force to repoint this context.",
+			}
+		}
 		if _, ok := cfg.Identities[vals.Name]; !ok {
 			cfg.Identities[vals.Name] = sdkconfig.Identity{Type: "agent"}
 		}
-		// (Re)bind unconditionally: the per-identity name is stable, so re-running
-		// for the SAME identity+env is idempotent, while a NEW identity gets its
-		// own context. Then activate it — register's contract is "when this
-		// returns, THIS identity is the live one".
+		// Then activate it — register's contract is "when this returns, THIS
+		// identity is the live one".
 		cfg.Contexts[contextName] = sdkconfig.Context{
 			Environment: envName, Identity: vals.Name, Mode: clictx.ModeHuman,
 		}

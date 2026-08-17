@@ -20,6 +20,7 @@ var configWriterAllowlist = map[string]bool{
 	"client/auth/tokens.go":   true,
 	"client/auth/keys.go":     true,
 	"client/auth/apikey.go":   true, // API-key credential (0600 secret under XDG state; sibling of tokens.go)
+	"client/auth/atomic.go":   true, // shared atomic writer (temp+fsync+rename) for the 0600 credential files above (F6, review round-3 #7)
 
 	// Phase 3 migration writer: copies validated legacy key material into the XDG
 	// layout and drops the MIGRATED marker. It writes SECRET/STATE material (0600
