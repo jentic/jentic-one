@@ -37,6 +37,12 @@ type App struct {
 	NudgeLatestTag        func(ctx context.Context, repo, token string) (string, error)
 	NewerVersionAvailable func(installed, latest string) bool
 
+	// NudgeCommand is the recovery command the update nudge tells the user to
+	// run. The ctl tree sets `jenticctl update`; the api (`jentic`) tree sets a
+	// jentic-appropriate command (a `jentic`-only user may not have jenticctl).
+	// Empty falls back to `jenticctl update` for backward compatibility.
+	NudgeCommand string
+
 	// ProbeServer overrides the interactive help-header server-version probe
 	// (QA-4). nil means the real serverinfo.Probe. It is a seam so a test can
 	// assert the header path never blocks — and so a caller could disable the

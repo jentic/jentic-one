@@ -12,12 +12,14 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/google/uuid"
 	"github.com/jentic/jentic-one/cli/internal/cli/binder"
+	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/ctl"
 	"github.com/jentic/jentic-one/cli/internal/cli/ctl/generated"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
 	"github.com/jentic/jentic-one/cli/internal/serverinfo"
 	"github.com/jentic/jentic-one/cli/internal/theme"
+	"github.com/jentic/jentic-one/cli/internal/update"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +29,7 @@ type installOptions struct {
 	noStart      bool
 	noWizard     bool
 	freshSecrets bool
+	freshVenv    bool
 	// preset selects an embedded config preset (impl/6.0 §3.5); empty means none
 	// (schema defaults + the wizard/flags stand). The schema-driven --section-field
 	// flags are bound onto the command from the generated BackendConfig and, together
@@ -46,6 +49,14 @@ type installOptions struct {
 	// runs install.ValidateDraft (the same field rules the wizard enforces).
 	defaults    bool
 	answersFile string
+	// buildLocal forces the Docker path to build the app image from a local
+	// checkout instead of pulling the published image (the default). It is
+	// auto-selected when a source checkout / $JENTIC_SRC / --ref is present.
+	buildLocal bool
+	// imageTag pins the app image the Docker path pulls: a bare tag, an
+	// @sha256: digest, or a full ghcr.io/…@sha256:… reference (overrides the
+	// CLI-version → tag mapping). Ignored under --build-local.
+	imageTag string
 }
 
 // installSetupProbeTimeout bounds the post-start /health probe that resolves
@@ -64,6 +75,11 @@ func newInstallCmd(app *app) *cobra.Command {
 			"then builds the stack (local venv or Docker image), applies migrations, and\n" +
 			"starts the app. Use --skip-build to only generate the config, or --no-start\n" +
 			"to build without launching.\n\n" +
+			"Docker path: by default this PULLS the published, signed app image\n" +
+			"(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\n" +
+			"Use --build-local to build from a checkout instead (auto-selected inside a\n" +
+			"jentic-one source tree or with $JENTIC_SRC), or --image-tag to pin a specific\n" +
+			"tag or @sha256: digest.\n\n" +
 			"Advanced: --preset and the generated --<section>-<field> flags (e.g.\n" +
 			"--server-public-base-url, --logging-file-enabled) overlay schema-driven\n" +
 			"configuration onto the generated jentic-one.yaml, on top of the wizard.",
@@ -83,6 +99,9 @@ func newInstallCmd(app *app) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.freshSecrets, "fresh-secrets", false,
 		"rotate every generated secret instead of reusing an existing config's "+
 			"(default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)")
+	cmd.Flags().BoolVar(&opts.freshVenv, "fresh-venv", false,
+		"wipe any existing local venv before building (recovers a wedged/half-populated "+
+			"~/.jentic/venv from a prior failed install; local path only)")
 	cmd.Flags().StringVar(&opts.preset, "preset", "",
 		"apply an embedded config preset over schema defaults ("+strings.Join(ctl.Presets(), ", ")+"); empty means none")
 	cmd.Flags().BoolVar(&opts.configForm, "config-form", false,
@@ -91,6 +110,12 @@ func newInstallCmd(app *app) *cobra.Command {
 		"non-interactive: skip the wizard and take its defaults (Docker + Postgres, loopback) as-is")
 	cmd.Flags().StringVar(&opts.answersFile, "answers", "",
 		"non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)")
+	cmd.Flags().BoolVar(&opts.buildLocal, "build-local", false,
+		"Docker path: build the app image from a local checkout instead of pulling the "+
+			"published image (auto-selected inside a jentic-one checkout, with $JENTIC_SRC, or --ref)")
+	cmd.Flags().StringVar(&opts.imageTag, "image-tag", "",
+		"Docker path: pull this app image tag or @sha256: digest (or a full ghcr.io/…@sha256 ref) "+
+			"instead of the version-matched tag; ignored with --build-local")
 
 	// Schema-driven --<section>-<field> flags, generated from the backend config
 	// schema (impl/6.0 §3). Additive: unset flags contribute nothing, so a plain
@@ -275,7 +300,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// venv (from the local checkout if we're inside the repo, otherwise clone
 	// from GitHub first) and apply migrations.
 	if local {
-		if err := installLocal(cmd.Context(), a, draft, out); err != nil {
+		if err := installLocal(cmd.Context(), a, draft, out, opts.freshVenv); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -293,7 +318,7 @@ func (a *app) finishInstall(cmd *cobra.Command, opts *installOptions, draft *ins
 	// installDocker records the true outcome on draft.AppStarted (a failed
 	// `compose up` is non-fatal and leaves it false).
 	if docker {
-		if err := a.installDocker(cmd.Context(), draft, out, logsDir, opts.noStart); err != nil {
+		if err := a.installDocker(cmd.Context(), draft, out, logsDir, opts); err != nil {
 			banner.Stop()
 			return err
 		}
@@ -555,35 +580,57 @@ func (a *app) writeCLIConfig(draft *install.Draft) {
 	fmt.Fprintln(a.Out, theme.Dimf("Pointed the jentic CLI at the local broker (%s://%s).", cfg.Broker.Scheme, cfg.Broker.Host))
 }
 
-// installDocker performs the real containerized install under ~/.jentic: build
-// the combined app image (from the local checkout or a fresh clone), write the
-// generated docker-compose stack, apply migrations in a one-shot container, and
-// optionally bring the stack up. Mirrors installLocal for the Docker path.
-func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPath, logsDir string, noStart bool) error {
+// installDocker performs the real containerized install under ~/.jentic. By
+// default it PULLS the published, signed app image
+// (ghcr.io/jentic/jentic-one-app:<version>) and threads that ref into the
+// generated compose stack; --build-local (or running inside a source checkout /
+// $JENTIC_SRC) builds the image locally instead. It then writes the compose
+// stack, applies migrations in a one-shot container, and (unless --no-start)
+// brings the stack up. Mirrors installLocal for the Docker path.
+func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPath, logsDir string, opts *installOptions) error {
 	results := install.Preflight(ctx, draft)
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderPreflight(results))
 	if missing := install.Missing(results); len(missing) > 0 {
 		return install.MissingError(missing)
 	}
-	// The docker binary is present but the build path also needs a live daemon;
-	// fail fast here with a "start Docker" message rather than crashing mid-build
-	// (#653).
+	// The docker binary is present but both paths also need a live daemon; fail
+	// fast here with a "start Docker" message rather than crashing mid-build or
+	// mid-pull (#653).
 	if check, down := install.UnhealthyDaemon(results); down {
 		return install.DaemonError(check)
 	}
 
-	plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
-	fmt.Fprintln(a.Out)
-	fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
-	if err := plan.BuildImages(a.Out); err != nil {
-		return fmt.Errorf("image build failed: %w", err)
+	// Build locally when explicitly asked, or when a source checkout is in play
+	// (cwd repo-root walk / $JENTIC_SRC) — a contributor iterating on local
+	// changes should not silently run a published image. Otherwise pull the
+	// signed release image and thread it into compose.
+	_, haveSrc := install.RepoRoot()
+	buildLocal := opts.buildLocal || haveSrc
+
+	var appImage string
+	if buildLocal {
+		plan := install.PlanLocalBuild(a.Paths.VenvPath(), a.Paths.SrcPath())
+		fmt.Fprintln(a.Out)
+		fmt.Fprint(a.Out, plan.RenderDockerBuildHeader())
+		if err := plan.BuildImages(a.Out); err != nil {
+			return fmt.Errorf("image build failed: %w", err)
+		}
+	} else {
+		appImage = install.ResolveAppImage(cmdcore.Version(), opts.imageTag)
+		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.Out, theme.Headingf("Pull app image"))
+		fmt.Fprintln(a.Out, theme.Dimf("  image: %s", appImage))
+		if err := install.PullAppImage(a.Out, appImage); err != nil {
+			return err
+		}
 	}
 
 	cfg := install.ComposeConfig{
 		ComposePath:    a.Paths.ComposePath(),
 		ConfigHostPath: configPath,
 		LogsHostDir:    logsDir,
+		AppImage:       appImage,
 	}
 	if err := install.WriteComposeArtifacts(draft, cfg); err != nil {
 		return err
@@ -616,7 +663,7 @@ func (a *app) installDocker(ctx context.Context, draft *install.Draft, configPat
 	}
 	draft.MigrationsDone = true
 
-	if noStart {
+	if opts.noStart {
 		return nil
 	}
 	fmt.Fprintln(a.Out)
@@ -693,9 +740,19 @@ func (a *app) startAppBackground(draft *install.Draft, configPath, logsDir strin
 	fmt.Fprintln(a.Out, theme.Successf("  Broker started (pid %d, port %s)", brokerPID, draft.BrokerPort))
 }
 
-func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string) error {
+func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath string, freshVenv bool) error {
 	venvDir := a.Paths.VenvPath()
 	srcDir := a.Paths.SrcPath()
+
+	// --fresh-venv: wipe a wedged/half-populated venv from a prior failed
+	// install so this build starts clean, rather than reusing a partial one
+	// (P1-E). Explicit, never implicit — a normal reinstall reuses the venv.
+	if freshVenv {
+		if err := os.RemoveAll(venvDir); err != nil {
+			return fmt.Errorf("wipe existing venv for --fresh-venv: %w", err)
+		}
+		fmt.Fprintln(a.Out, theme.Dim.Render("  wiped existing venv (--fresh-venv)"))
+	}
 
 	// uv drives the local build; bootstrap it when missing so onboarding does
 	// not dead-end on a tool the installer can provide itself.
@@ -714,21 +771,39 @@ func installLocal(ctx context.Context, a *app, draft *install.Draft, configPath 
 	fmt.Fprint(a.Out, plan.RenderHeader())
 
 	if err := plan.Execute(a.Out); err != nil {
+		// A failed build can leave a half-populated venv the next run would
+		// reuse as-is. Point at the explicit clean-rebuild rather than silently
+		// deleting (P1-E) — mirrors the Docker fresh-volume recovery hint.
+		fmt.Fprintln(a.Out, theme.Warnf("if the venv is wedged, re-run with --fresh-venv to rebuild it clean"))
 		return fmt.Errorf("build failed: %w", err)
 	}
 	draft.VenvPython = plan.VenvPython()
 
-	// Apply migrations for real.
+	// Apply migrations for real. On the SQLite path wrap them in the shared
+	// snapshot/rollback net so a failed first-install migration restores the
+	// pre-migration bytes instead of stranding a half-applied schema (P1-E) —
+	// the same helper `update` uses. Postgres stays the non-fatal keep-install
+	// path (the DB may simply not be up yet), so it does not go through the net.
 	fmt.Fprintln(a.Out)
 	fmt.Fprint(a.Out, install.RenderMigrateHeader(configPath))
-	if err := install.RunMigrations(a.Out, draft.VenvPython, configPath); err != nil {
-		// Postgres may simply not be running yet — keep the install (config + venv
-		// are valid) and leave the migrate command in the printed next steps.
-		if draft.IsPostgres() {
+	if draft.IsPostgres() {
+		if err := install.RunMigrations(a.Out, draft.VenvPython, configPath); err != nil {
 			fmt.Fprintln(a.Out, install.RenderMigrateWarning(err))
 			return nil
 		}
-		return fmt.Errorf("migrations failed: %w", err)
+		draft.MigrationsDone = true
+		return nil
+	}
+	if err := update.MigrateWithRollback(
+		a.Paths.DataDir(),
+		true, // local install is SQLite here (Postgres handled above)
+		func() error { return install.RunMigrations(a.Out, draft.VenvPython, configPath) },
+		func() { fmt.Fprintln(a.Out, theme.Dim.Render("  snapshotted SQLite data for rollback")) },
+		func() {
+			fmt.Fprintln(a.Out, theme.Warnf("migrations failed; rolled the SQLite database back to its pre-install state"))
+		},
+	); err != nil {
+		return err
 	}
 	draft.MigrationsDone = true
 	return nil

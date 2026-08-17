@@ -330,21 +330,36 @@ func TestUninstall_DockerPurgeRemovesVolumeByNameWhenDownVIsNoop(t *testing.T) {
 	}
 }
 
-// On a local (non-Docker) install --keep-data can't preserve anything: the
-// database lives under ~/.jentic/data, which the filesystem wipe deletes
-// unconditionally. uninstall must warn rather than silently destroy the data
-// the flag names. Mirrors stop.go's "--volumes has no effect" precedent.
-func TestUninstall_KeepDataWarnsOnLocalInstall(t *testing.T) {
+// P2-F: --keep-data on a LOCAL install now ACTUALLY preserves the SQLite data
+// dir under ~/.jentic/data, rather than only warning while deleting it. Without
+// the flag the data dir is removed as before.
+func TestUninstall_KeepDataPreservesLocalDataDir(t *testing.T) {
 	app, out := newTestApp(t)
+	dataFile := filepath.Join(app.Paths.DataDir(), "control.db")
+	writeFile(t, dataFile, "sqlite-bytes")
 	writeFile(t, filepath.Join(app.Paths.Dir(), "app.log"), "log")
 
 	if err := app.uninstallE(&uninstallOptions{yes: true, keepData: true}); err != nil {
+		t.Fatalf("uninstall --keep-data: %v", err)
+	}
+	if _, err := os.Stat(dataFile); err != nil {
+		t.Errorf("--keep-data should preserve %s, but it is gone: %v", dataFile, err)
+	}
+	if s := out.String(); !strings.Contains(s, "kept the database") {
+		t.Errorf("expected a 'kept the database' confirmation, got:\n%s", s)
+	}
+}
+
+func TestUninstall_LocalDataRemovedWithoutKeepData(t *testing.T) {
+	app, _ := newTestApp(t)
+	dataFile := filepath.Join(app.Paths.DataDir(), "control.db")
+	writeFile(t, dataFile, "sqlite-bytes")
+
+	if err := app.uninstallE(&uninstallOptions{yes: true}); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
-
-	s := out.String()
-	if !strings.Contains(s, "only apply to a Docker install") {
-		t.Errorf("expected a local-install footgun warning for --keep-data, got:\n%s", s)
+	if _, err := os.Stat(dataFile); !os.IsNotExist(err) {
+		t.Errorf("without --keep-data the local data dir should be removed, stat err = %v", err)
 	}
 }
 

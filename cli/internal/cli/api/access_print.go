@@ -40,12 +40,12 @@ func (a *app) printMe(ctx context.Context, me *control.MeAgent) {
 		}
 	}
 
-	// whoami answers "what can I do?" for the control-plane (scopes, toolkits); the
-	// filesystem side of that answer lives in `context view`, which maps every
-	// directory the agent can reach. Point at it so an agent has one place to learn
-	// its full access surface.
+	// whoami is the control-plane view of "what can I do?" (scopes + toolkit
+	// bindings above). There is no per-directory access surface for a plain
+	// agent — `context view` shows only environment/identity/mode — so point at
+	// doctor for local-setup health rather than a command that surfaces nothing.
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, st.Dim.Render("To see which directories you can access, run `jentic context view`."))
+	fmt.Fprintln(a.Out, st.Dim.Render("Toolkit bindings above are your control-plane access. Run `jentic doctor` to check your local setup."))
 }
 
 func (a *app) printRequestList(ctx context.Context, reqs []control.AccessRequestResponse, hasMore bool) {

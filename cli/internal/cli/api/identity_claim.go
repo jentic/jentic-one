@@ -105,7 +105,7 @@ func (a *app) claimErr(err error, agentID string) error {
 		return &ux.CodedError{
 			Code:       ux.CodeFenced,
 			Msg:        "only a human (USER) may claim an agent: " + he.Detail(),
-			Actionable: "Run this from a human context — an agent cannot claim itself. Open the claim link from `jentic register` in a browser instead.",
+			Actionable: "Claiming is done by a person in a browser, not by an agent. This context authenticates as an agent, so open the claim link from `jentic register` and approve it there — an agent token can't claim.",
 		}
 	case http.StatusNotFound:
 		return &ux.CodedError{

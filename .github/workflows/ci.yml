@@ -468,6 +468,10 @@ jobs:
     # SPA is served and API 404s preserved. DB-free, so it's cheap.
     # Later: when real UI flows exist (login, lists), graduate to a true e2e
     # job (Playwright + Postgres) and keep this as the fast packaging gate.
+    #
+    # NOTE (pipeline review F2/A1): this wheel is a PACKAGING TEST ONLY — it is
+    # never published. The container image (release.yml `publish-image`) is the
+    # sole supported backend distribution; there is no `pip install jentic-one`.
     if: needs.changes.outputs.packaging == 'true' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -684,6 +688,59 @@ jobs:
         run: |
           GOOS=windows GOARCH=amd64 go build ./...
           GOOS=darwin  GOARCH=arm64 go build ./...
+
+      # Pipeline review F3/C1: lint the GoReleaser config on the PR, not at tag
+      # time. A malformed archive/ldflag/cask stanza otherwise stays invisible
+      # until a real release. Pure config check, no build.
+      - name: GoReleaser config valid
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+          workdir: cli
+
+      # WIN-4 (cli-review2 windows-build): guard the *published artifact shape*,
+      # not just `go build` — and doubles as pipeline review F3/C2 (a full
+      # GoReleaser snapshot build dry-run on the PR). A broken archive stanza (e.g. dropping `windows`
+      # from goos, or mis-formatting the zip override) compiles fine but only
+      # surfaces at tag time. Run a snapshot goreleaser build (no sign/sbom/
+      # publish) and assert the windows `.zip` exists and contains `jentic.exe`
+      # (and only jentic — jenticctl is not shipped for Windows, WIN-6). Scoped
+      # to the same cli/** path filter as this job, so docs-only PRs skip it.
+      - name: GoReleaser artifact smoke (windows .zip shape)
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=sign,sbom,publish
+          workdir: cli
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Assert windows zip contains jentic.exe only
+        run: |
+          set -euo pipefail
+          # This job sets defaults.run.working-directory: cli, and the
+          # goreleaser step above runs with workdir: cli too, so goreleaser
+          # writes to cli/dist — which from THIS step's cwd (also cli) is just
+          # ./dist. (The old `cli/dist` here resolved to cli/cli/dist and always
+          # missed.) Fall back to cli/dist in case a future default change moves
+          # this step's cwd back to the repo root.
+          dist=""
+          for d in dist cli/dist; do
+            [ -d "$d" ] && { dist="$d"; break; }
+          done
+          test -n "${dist}" || { echo "::error::goreleaser produced no dist dir"; pwd; ls -la . || true; exit 1; }
+          echo "artifact dir: ${dist}"
+          zip="$(ls "${dist}"/jentic_*_windows_amd64.zip 2>/dev/null | head -n1 || true)"
+          test -n "${zip}" || { echo "::error::no windows amd64 zip emitted by goreleaser"; ls -la "${dist}" || true; exit 1; }
+          echo "found windows archive: ${zip}"
+          contents="$(unzip -Z1 "${zip}")"
+          echo "${contents}"
+          echo "${contents}" | grep -qx 'jentic.exe' || { echo "::error::windows zip is missing jentic.exe"; exit 1; }
+          if echo "${contents}" | grep -qi 'jenticctl'; then
+            echo "::error::windows zip must NOT ship jenticctl (WIN-6)"; exit 1
+          fi
+          # linux/darwin tarballs must still be produced (byte-shape invariant).
+          ls "${dist}"/jentic_*_linux_amd64.tar.gz "${dist}"/jenticctl_*_linux_amd64.tar.gz >/dev/null
 
       - name: Lint
         uses: golangci/golangci-lint-action@v9

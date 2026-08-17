@@ -32,7 +32,6 @@ const (
 	// AppImageTag is the fixed local tag the CLI builds the combined app image
 	// with and the generated compose file references.
 	AppImageTag = "jentic-one/app:jentic-cli"
-
 	// postgresImage is the managed Postgres image (matches docker/local-setup).
 	postgresImage = "postgres:16"
 
@@ -99,6 +98,12 @@ type ComposeConfig struct {
 	ConfigHostPath string
 	// LogsHostDir is bind-mounted at containerLogsDir for the file log sink.
 	LogsHostDir string
+	// AppImage is the app/broker container image reference the generated
+	// compose file uses. Empty means "local build": RenderCompose falls back to
+	// AppImageTag (the tag the from-source path builds). A pull-by-default
+	// install sets it to the resolved published ref
+	// (ghcr.io/jentic/jentic-one-app:<ver>) via ResolveAppImage.
+	AppImage string
 }
 
 // legacyInitSchemasPath returns where older installs wrote the Postgres
@@ -253,6 +258,16 @@ func validatePGIdentifier(field, value string) error {
 	return nil
 }
 
+// appImageOrDefault returns the resolved app image reference, or the local
+// build tag when empty. The empty case is the from-source install: compose then
+// references the tag `BuildImages` produced locally.
+func appImageOrDefault(ref string) string {
+	if strings.TrimSpace(ref) == "" {
+		return AppImageTag
+	}
+	return ref
+}
+
 // RenderCompose returns the docker-compose.yaml bytes for the draft, wiring the
 // host paths in cfg into the app (and managed Postgres) containers.
 func RenderCompose(d *Draft, cfg ComposeConfig) ([]byte, error) {
@@ -276,7 +291,7 @@ func RenderCompose(d *Draft, cfg ComposeConfig) ([]byte, error) {
 	params := composeParams{
 		Postgres:            d.IsPostgres(),
 		ProjectName:         composeProjectName,
-		AppImage:            AppImageTag,
+		AppImage:            appImageOrDefault(cfg.AppImage),
 		Apps:                strings.Join(d.Apps, ","),
 		ConfigHostPath:      cfg.ConfigHostPath,
 		ContainerConfigPath: containerConfigPath,

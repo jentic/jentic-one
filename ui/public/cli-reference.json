@@ -330,6 +330,31 @@
               ]
             },
             {
+              "name": "rename",
+              "path": "jentic context rename",
+              "use": "rename \u003cold\u003e \u003cnew\u003e",
+              "short": "Rename a context",
+              "long": "rename changes a context's name (e.g. an auto-derived `qa1-crawler` to\nsomething friendlier) without delete+recreate. If the renamed context is\nactive, the active selection follows the new name.",
+              "example": "  jentic context rename qa1-crawler qa",
+              "flags": [
+                {
+                  "name": "context",
+                  "type": "string",
+                  "usage": "Context to act on (overrides the active context; $JENTIC_CONTEXT)"
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "usage": "Interaction mode: human|agent|service-account ($JENTIC_MODE)"
+                },
+                {
+                  "name": "theme",
+                  "type": "string",
+                  "usage": "Color theme: dark|light|no-color ($JENTIC_THEME)"
+                }
+              ]
+            },
+            {
               "name": "delete",
               "path": "jentic context delete",
               "use": "delete \u003cname\u003e",
@@ -2962,13 +2987,19 @@
           "path": "jenticctl install",
           "use": "install",
           "short": "Interactive wizard to configure and onboard jentic-one",
-          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.\n\nAdvanced: --preset and the generated --\u003csection\u003e-\u003cfield\u003e flags (e.g.\n--server-public-base-url, --logging-file-enabled) overlay schema-driven\nconfiguration onto the generated jentic-one.yaml, on top of the wizard.",
+          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.\n\nDocker path: by default this PULLS the published, signed app image\n(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\nUse --build-local to build from a checkout instead (auto-selected inside a\njentic-one source tree or with $JENTIC_SRC), or --image-tag to pin a specific\ntag or @sha256: digest.\n\nAdvanced: --preset and the generated --\u003csection\u003e-\u003cfield\u003e flags (e.g.\n--server-public-base-url, --logging-file-enabled) overlay schema-driven\nconfiguration onto the generated jentic-one.yaml, on top of the wizard.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
               "name": "answers",
               "type": "string",
               "usage": "non-interactive: skip the wizard and take answers from a YAML file (unlisted fields keep the wizard defaults; implies --defaults for the rest)"
+            },
+            {
+              "name": "build-local",
+              "type": "bool",
+              "default": "false",
+              "usage": "Docker path: build the app image from a local checkout instead of pulling the published image (auto-selected inside a jentic-one checkout, with $JENTIC_SRC, or --ref)"
             },
             {
               "name": "config-form",
@@ -2987,6 +3018,17 @@
               "type": "bool",
               "default": "false",
               "usage": "rotate every generated secret instead of reusing an existing config's (default: reuse from jentic-one.yaml or jentic-one-old.yaml so encrypted data stays readable)"
+            },
+            {
+              "name": "fresh-venv",
+              "type": "bool",
+              "default": "false",
+              "usage": "wipe any existing local venv before building (recovers a wedged/half-populated ~/.jentic/venv from a prior failed install; local path only)"
+            },
+            {
+              "name": "image-tag",
+              "type": "string",
+              "usage": "Docker path: pull this app image tag or @sha256: digest (or a full ghcr.io/…@sha256 ref) instead of the version-matched tag; ignored with --build-local"
             },
             {
               "name": "no-start",

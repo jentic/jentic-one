@@ -1,6 +1,7 @@
 package update
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,65 @@ func TestBackupSQLite_DiscardRemovesSnapshot(t *testing.T) {
 	b.Discard()
 	if _, err := os.Stat(b.dir); !os.IsNotExist(err) {
 		t.Errorf("snapshot dir should be gone after Discard, stat err = %v", err)
+	}
+}
+
+// TestMigrateWithRollback_RestoresOnFailure pins install-flow P1-E: the shared
+// helper backs up SQLite, and when the migrate func fails it restores the
+// pre-migration bytes and returns a wrapped "migrations failed" error.
+func TestMigrateWithRollback_RestoresOnFailure(t *testing.T) {
+	data := t.TempDir()
+	dbPath := filepath.Join(data, "control.db")
+	if err := os.WriteFile(dbPath, []byte("PRE-MIGRATION"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var rolledBack bool
+	err := MigrateWithRollback(data, true, func() error {
+		// Simulate a migration that corrupts the DB then fails.
+		_ = os.WriteFile(dbPath, []byte("HALF-MIGRATED-GARBAGE"), 0o600)
+		return errors.New("boom")
+	}, nil, func() { rolledBack = true })
+	if err == nil || !strings.Contains(err.Error(), "migrations failed") {
+		t.Fatalf("want a wrapped migration failure, got %v", err)
+	}
+	if !rolledBack {
+		t.Error("onRollback hook should have fired")
+	}
+	got, _ := os.ReadFile(dbPath)
+	if string(got) != "PRE-MIGRATION" {
+		t.Errorf("after rollback control.db = %q, want the pre-migration bytes", got)
+	}
+}
+
+// TestMigrateWithRollback_DiscardsOnSuccess pins P1-E: a successful migration
+// discards the snapshot (no leftover temp dir) and returns nil.
+func TestMigrateWithRollback_DiscardsOnSuccess(t *testing.T) {
+	data := t.TempDir()
+	if err := os.WriteFile(filepath.Join(data, "control.db"), []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshotted := false
+	err := MigrateWithRollback(data, true, func() error {
+		return nil // success
+	}, func() { snapshotted = true }, nil)
+	if err != nil {
+		t.Fatalf("successful migration should not error: %v", err)
+	}
+	if !snapshotted {
+		t.Error("onSnapshot hook should have fired for a non-empty data dir")
+	}
+}
+
+// TestMigrateWithRollback_NonSQLiteSkipsBackup pins P1-E: with sqlite=false the
+// helper just runs migrate and never takes a backup (Postgres is out of scope).
+func TestMigrateWithRollback_NonSQLiteSkipsBackup(t *testing.T) {
+	var snapshotted bool
+	if err := MigrateWithRollback(t.TempDir(), false, func() error { return nil },
+		func() { snapshotted = true }, nil); err != nil {
+		t.Fatalf("non-sqlite success should not error: %v", err)
+	}
+	if snapshotted {
+		t.Error("non-sqlite path must not snapshot")
 	}
 }
 

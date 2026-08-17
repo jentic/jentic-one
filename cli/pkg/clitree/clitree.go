@@ -57,6 +57,7 @@ var MustBeFenced = []string{
 	"bootstrap",
 	"context create",
 	"context use",
+	"context rename",
 	"context delete",
 	"context list",
 	"env add",

@@ -79,9 +79,13 @@ func (a *App) maybeNudgeUpdate(cmd *cobra.Command) {
 	if !a.NewerVersionAvailable(cliVersion, tag) {
 		return
 	}
+	nudgeCmd := a.NudgeCommand
+	if nudgeCmd == "" {
+		nudgeCmd = "jenticctl update"
+	}
 	st := theme.StylesFromContext(cmd.Context())
 	fmt.Fprintln(a.Err, st.Accent.Render(
-		fmt.Sprintf("Update available: %s → %s — run `jenticctl update`", cliVersion, tag),
+		fmt.Sprintf("Update available: %s → %s — run `%s`", cliVersion, tag, nudgeCmd),
 	))
 }
 

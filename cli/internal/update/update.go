@@ -84,6 +84,13 @@ func ReplaceBinary(target, staged string) (string, error) {
 	return backup, nil
 }
 
+// RestoreBinary copies a .bak backup produced by ReplaceBinary back over the
+// target, undoing a swap. Used to roll back a multi-binary update when a later
+// binary in the set fails to swap, so a half-updated pair can't persist.
+func RestoreBinary(target, backup string) error {
+	return copyFile(backup, target, 0o755)
+}
+
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src) //nolint:gosec // paths are CLI-internal (staged build artifact / install location).
 	if err != nil {
@@ -180,3 +187,42 @@ func (b *SQLiteBackup) Discard() {
 
 // Empty reports whether the backup captured no files (nothing to roll back to).
 func (b *SQLiteBackup) Empty() bool { return b == nil || len(b.files) == 0 }
+
+// MigrateWithRollback runs a forward-only SQLite migration inside a
+// snapshot/restore net: it backs up the *.db files under dataDir, runs migrate,
+// and on failure rolls the database back to its pre-migration bytes before
+// returning the (wrapped) migration error. On success the snapshot is discarded.
+// It is the single source of truth shared by both first-`install` and `update`
+// so the two can never drift (install-flow review P1-E). onSnapshot/onRollback
+// are optional progress hooks (nil-safe) so callers can print their own status
+// lines. For a non-SQLite backend it just runs migrate (Postgres backup/restore
+// is out of scope — see the SQLiteBackup doc), so callers pass sqlite=false.
+func MigrateWithRollback(dataDir string, sqlite bool, migrate func() error, onSnapshot, onRollback func()) error {
+	var backup *SQLiteBackup
+	if sqlite {
+		b, err := BackupSQLite(dataDir)
+		if err != nil {
+			return fmt.Errorf("back up database before migration: %w", err)
+		}
+		backup = b
+		if !backup.Empty() && onSnapshot != nil {
+			onSnapshot()
+		}
+	}
+	if err := migrate(); err != nil {
+		if backup != nil && !backup.Empty() {
+			if rerr := backup.Restore(); rerr != nil {
+				//nolint:errorlint // primary %w is the migration failure; rerr is contextual detail (fmt.Errorf allows one %w).
+				return fmt.Errorf("migrations failed: %w; ALSO failed to roll back the database: %v — restore from a backup", err, rerr)
+			}
+			if onRollback != nil {
+				onRollback()
+			}
+		}
+		return fmt.Errorf("migrations failed: %w", err)
+	}
+	if backup != nil {
+		backup.Discard()
+	}
+	return nil
+}

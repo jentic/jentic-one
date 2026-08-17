@@ -33,7 +33,7 @@ OAPI_CODEGEN := go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@
 # the repo moved to omissis/go-jsonschema but kept the old import path (impl/6.0 §2).
 GO_JSONSCHEMA := go run github.com/atombender/go-jsonschema@v0.23.0
 
-.PHONY: help build build-ctl build-api test test-race test-arch test-golden test-sdk-consumer golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen generate-config check-ctl-gen
+.PHONY: help build build-ctl build-api test test-race test-arch test-golden test-sdk-consumer golden-update cov fmt vet lint lint-fix tools tidy check clean generate-api check-cli-gen check-vendored-specs generate-config check-ctl-gen
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -105,11 +105,33 @@ generate-api: ## Regenerate the typed OpenAPI clients (+ spec companions) from t
 check-cli-gen: generate-api ## CI drift gate: fail if generated code is stale vs. the specs
 	@# git status --porcelain (not diff --exit-code): diff misses UNTRACKED files,
 	@# so a newly emitted companion or a delete-then-regen artifact would pass (GEN-5).
+	@# NOTE: source↔vendored spec identity is now ALSO enforced by
+	@# check-vendored-specs (in `make check`) and release-side (release.yml), so
+	@# branch-CI path-gating of this job is no longer the sole guard against a
+	@# stale vendored spec shipping (pipeline review F1/B4).
 	@if [ -n "$$(git status --porcelain -- client/generated/)" ]; then \
 		git status --porcelain -- client/generated/; \
 		echo "check-cli-gen: client/generated/ is stale or has untracked artifacts — run 'make generate-api' and commit." >&2; \
 		exit 1; \
 	fi
+
+check-vendored-specs: ## Fail if the vendored client specs drift from the source openapi/ specs (byte-identity)
+	@# The vendored copies (client/generated/*/spec.yaml) are a straight `cp` of
+	@# the source specs (go:embed can't cross module roots — see generate-api).
+	@# This is a pure `diff` (no toolchain) so it can run unconditionally at
+	@# release time and in `make check`, killing the "stale vendored spec shipped
+	@# because the drift job was path-gated / force-merged" hole (pipeline F1).
+	@fail=0; \
+	for pair in \
+		"../openapi/control/control.openapi.yaml client/generated/control/spec.yaml" \
+		"../openapi/broker/broker.openapi.yaml client/generated/broker/spec.yaml"; do \
+		set -- $$pair; \
+		if ! diff -q "$$1" "$$2" >/dev/null; then \
+			echo "check-vendored-specs: $$2 differs from source $$1 — run 'make generate-api' and commit." >&2; \
+			fail=1; \
+		fi; \
+	done; \
+	[ "$$fail" = 0 ]
 
 generate-config: ## Regenerate the backend config struct from the vendored config schema (impl/6.0 §2)
 	@echo "Vendoring the config schema into the module (go:embed cannot cross module roots, impl/6.0 §1)..."
@@ -125,7 +147,7 @@ check-ctl-gen: generate-config ## CI drift gate: fail if the generated config st
 		exit 1; \
 	fi
 
-check: lint vet test-race ## Lint, vet, and race-test everything (test-race covers tests/arch + tests/golden)
+check: lint vet test-race check-vendored-specs ## Lint, vet, race-test, and assert vendored specs match source (test-race covers tests/arch + tests/golden)
 
 clean: ## Remove build and coverage artifacts
 	rm -f $(BINARY_CTL) $(BINARY_API) coverage.out

@@ -38,7 +38,103 @@ setting up a local agent, run `jentic bootstrap` to create one (isolated account
 registration + skills); if you're an agent that doesn't have a profile yet, run
 `jentic register`.
 
-## Build
+## Install
+
+Fastest first. `jentic` (agent) and `jenticctl` (installer/server) are **separate
+downloads** — most users only need `jentic`, unless you're standing up the stack
+locally.
+
+### 1. Homebrew (macOS / Linux) — both binaries
+
+```bash
+brew install jentic/tap/jentic
+```
+
+The cask installs both `jentic` and `jenticctl`.
+
+### 2. One-line download (verified binary, no compiler)
+
+```bash
+# jentic only (default) — for talking to a remote jentic server:
+JENTIC_INSTALL_METHOD=binary \
+  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+
+# both binaries (also install jenticctl to run the stack locally):
+JENTIC_INSTALL_METHOD=binary JENTIC_INSTALL_BINARIES=both \
+  curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+```
+
+This downloads the released archive for your OS/arch from the GitHub Releases
+page, **verifies its `sha256`** against `checksums.txt` (fail-closed — a
+mismatch aborts and installs nothing), and — when `cosign` is on your `PATH` —
+**verifies the release signature** too (absent `cosign` is a loud warning, never
+a silent skip). No Go toolchain, no clone, no compile.
+
+The default method is `auto`: it prefers this verified download when a matching
+release asset exists and **falls back to building from source** otherwise (forks,
+dev refs, or a ref with no published assets).
+
+Environment knobs:
+
+- `JENTIC_INSTALL_METHOD` — `auto` (default) · `binary` (force download; errors
+  if no asset) · `source` (force the from-source build).
+- `JENTIC_INSTALL_BINARIES` — `jentic` (default for downloads) · `both`.
+- `JENTIC_NO_INSTALL=1` — install the binaries only; **skip** the
+  `jenticctl install` stack wizard (useful in CI or when you only want the CLI).
+- `GITHUB_TOKEN=ghp_xxx` — download/clone from a **private** fork (token needs
+  `repo` read scope); also used to build the server image from source.
+- `JENTIC_REF=v0.31.0` — pin the release tag to install (download mode) or the
+  ref (tag / branch / commit) to build (source mode).
+
+On a machine with **no interactive terminal** (piped `curl … | sh` in CI), the
+installer installs the binaries and then prints the exact non-interactive
+follow-up (`jenticctl install --defaults`) instead of blocking on a wizard.
+
+### 3. Manual download + verify
+
+Grab the archive for your platform from the
+[Releases page](https://github.com/jentic/jentic-one/releases), then verify and
+install it yourself:
+
+```bash
+VER=0.31.0; OS=linux; ARCH=amd64            # adjust for your platform (darwin/arm64, …)
+BASE="https://github.com/jentic/jentic-one/releases/download/v${VER}"
+curl -fsSLO "${BASE}/jentic_${VER}_${OS}_${ARCH}.tar.gz"
+curl -fsSLO "${BASE}/checksums.txt"
+curl -fsSLO "${BASE}/checksums.txt.sig"
+curl -fsSLO "${BASE}/checksums.txt.pem"
+
+# Verify the signature over the checksum file (keyless / Fulcio identity):
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/jentic/jentic-one/.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  checksums.txt
+
+# Verify the archive's checksum, then install:
+sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 -c …
+tar xzf "jentic_${VER}_${OS}_${ARCH}.tar.gz"
+sudo install jentic /usr/local/bin/
+```
+
+`jenticctl` ships as its own archive (`jenticctl_${VER}_${OS}_${ARCH}.tar.gz`) —
+download and install it the same way if you need the local stack.
+
+**Windows.** `jentic` ships a Windows build as
+`jentic_${VER}_windows_amd64.zip` (and `_arm64`). Download it from the
+[Releases page](https://github.com/jentic/jentic-one/releases), unzip it, put
+`jentic.exe` on your `PATH`, and run `jentic doctor`. Note: `jenticctl` is **not**
+shipped natively for Windows, and `jentic run` (the local-agent sandbox) is
+**unsupported on native Windows** — use **WSL** for agent-sandbox and local-stack
+workflows.
+
+### 4. From source (contributors / advanced)
+
+Build from a checkout with `make build` (below), or force the installer's
+from-source path with `JENTIC_INSTALL_METHOD=source`.
+
+## Build from a checkout (developers)
 
 ```bash
 cd cli
@@ -92,6 +188,18 @@ jentic access whoami                                  # a fresh agent is bound t
 jentic access request --toolkit <vendor/name> --wait  # ask a human to grant access
 jentic execute <operation>
 ```
+
+> **Remote install:** a remote control plane's broker usually lives on a
+> different host, so `jentic register` does **not** guess a `broker_url` for it.
+> Set it before `jentic execute` can reach a 2xx (otherwise execute fail-closes
+> with `RESOLVE_FAILED` rather than dialing your local default):
+>
+> ```bash
+> jentic env add <env> --url https://jentic.example.com --broker-url https://broker.jentic.example --force
+> ```
+>
+> (`--url` is required on `env add`.) See [Local setup](#local-setup) for the
+> loopback case, where `register` seeds the broker automatically.
 
 ## Local setup
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,6 +20,26 @@ type Requirement struct {
 	Why string
 	// URL is an install hint shown when the tool is missing.
 	URL string
+	// Soft marks a requirement whose absence is a warning, not a failure:
+	// RenderPreflight still shows it, but Missing() excludes it from the set
+	// that fails the install (e.g. npm — the UI build is skipped, not fatal).
+	Soft bool
+	// Probe, when set, replaces the default exec.LookPath check with custom
+	// logic (returns found, an optional path/version detail, and an optional
+	// override for the "why it's missing" hint). Used for checks that aren't a
+	// bare "is this binary on PATH" — e.g. "can uv resolve a Python 3.12
+	// interpreter" or "is a source checkout / token available for the clone".
+	Probe func() ProbeResult
+}
+
+// ProbeResult is what a custom Requirement.Probe returns.
+type ProbeResult struct {
+	Found bool
+	// Detail is shown next to an OK row (a version/path); optional.
+	Detail string
+	// MissingWhy overrides Req.Why in the MISSING row when non-empty, so a
+	// custom probe can give a more precise recovery hint than the static Why.
+	MissingWhy string
 }
 
 // CheckResult is the outcome of probing a single Requirement.
@@ -26,6 +48,9 @@ type CheckResult struct {
 	Found   bool
 	Path    string
 	Version string
+	// MissingWhy, when set by a custom probe, overrides Req.Why in the rendered
+	// MISSING row (a probe-specific recovery hint).
+	MissingWhy string
 	// DaemonChecked is true when this requirement carries a daemon-health probe
 	// (only `docker`). Healthy/DaemonDetail are meaningful only when true.
 	DaemonChecked bool
@@ -58,14 +83,82 @@ func requirementsFor(d *Draft) []Requirement {
 	reqs := []Requirement{
 		{Name: "uv", Why: "creates the venv and installs from source", URL: "https://docs.astral.sh/uv/"},
 	}
+	// Python 3.12 is pinned by `uv venv --python 3.12` (build.go). Probe it now
+	// (via uv, falling back to a python3.12 on PATH) so uv doesn't surprise-fetch
+	// an interpreter or fail mid-build. Hard row.
+	reqs = append(reqs, Requirement{
+		Name:  "python3.12",
+		Why:   "the venv is pinned to Python 3.12",
+		URL:   "https://www.python.org/downloads/",
+		Probe: probePython312,
+	})
+	// npm is only needed to build the SPA, and its absence is non-fatal — the
+	// build logs "skipping UI build" and proceeds. Surface it as a SOFT row when
+	// a UI tree is present, so the "SPA will not be available" consequence is
+	// visible at preflight rather than scrolled past mid-build.
+	if root, inRepo := RepoRoot(); inRepo {
+		if _, err := os.Stat(filepath.Join(root, "ui", "package.json")); err == nil {
+			reqs = append(reqs, Requirement{
+				Name: "npm",
+				Why:  "builds the UI (SPA); optional — the install proceeds without it",
+				URL:  "https://nodejs.org/",
+				Soft: true,
+			})
+		}
+	}
 	if _, inRepo := RepoRoot(); !inRepo {
 		reqs = append(reqs, Requirement{
 			Name: "git",
 			Why:  "clones the source from GitHub",
 			URL:  "https://git-scm.com/downloads",
 		})
+		// Cloning the (private) source needs either a local checkout via
+		// $JENTIC_SRC or a GITHUB_TOKEN. Without either, the clone dead-ends
+		// mid-build; fail at preflight instead, reusing the clone-failure
+		// recovery wording so the guidance is identical.
+		reqs = append(reqs, Requirement{
+			Name:  "source-access",
+			Why:   "cloning the private source needs a token or a local checkout",
+			Probe: probeSourceAccess,
+		})
 	}
 	return reqs
+}
+
+// probePython312 reports whether a Python 3.12 interpreter is resolvable for the
+// pinned `uv venv --python 3.12` step: preferring uv's own resolver (which is
+// what the build uses), then a bare `python3.12` on PATH. It never triggers a
+// download — `uv python find` only reports an already-available interpreter.
+func probePython312() ProbeResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := exec.LookPath("uv"); err == nil {
+		out, err := exec.CommandContext(ctx, "uv", "python", "find", "3.12").CombinedOutput()
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			return ProbeResult{Found: true, Detail: "via uv: " + firstLine(string(out))}
+		}
+	}
+	if path, err := exec.LookPath("python3.12"); err == nil {
+		return ProbeResult{Found: true, Detail: path}
+	}
+	return ProbeResult{
+		Found:      false,
+		MissingWhy: "no Python 3.12 found; `uv venv --python 3.12` would try to fetch one mid-build",
+	}
+}
+
+// probeSourceAccess reports whether the private-source clone will be able to
+// authenticate before the build starts. Mirrors the clone-failure recovery text
+// in build.go so the pre-build message reads identically.
+func probeSourceAccess() ProbeResult {
+	if os.Getenv(SrcEnv) != "" || os.Getenv("GITHUB_TOKEN") != "" {
+		return ProbeResult{Found: true, Detail: "token or local checkout available"}
+	}
+	return ProbeResult{
+		Found: false,
+		MissingWhy: "set " + SrcEnv + "=/path/to/jentic-one to build from a local checkout, " +
+			"or GITHUB_TOKEN=ghp_xxx (repo read scope) to clone",
+	}
 }
 
 // Preflight probes every Requirement for the chosen path. ctx bounds the Docker
@@ -75,6 +168,16 @@ func Preflight(ctx context.Context, d *Draft) []CheckResult {
 	results := make([]CheckResult, 0, len(reqs))
 	for _, req := range reqs {
 		res := CheckResult{Req: req}
+		// A custom probe replaces the LookPath check (e.g. Python-3.12
+		// resolution, source-access). Otherwise fall back to the binary lookup.
+		if req.Probe != nil {
+			pr := req.Probe()
+			res.Found = pr.Found
+			res.Version = pr.Detail
+			res.MissingWhy = pr.MissingWhy
+			results = append(results, res)
+			continue
+		}
 		if path, err := exec.LookPath(req.Name); err == nil {
 			res.Found = true
 			res.Path = path
@@ -101,6 +204,11 @@ func Preflight(ctx context.Context, d *Draft) []CheckResult {
 func Missing(results []CheckResult) []CheckResult {
 	var missing []CheckResult
 	for _, r := range results {
+		// A soft requirement never fails the install — it's rendered as a
+		// warning but excluded from the blocking set.
+		if r.Req.Soft {
+			continue
+		}
 		// A check is missing if the tool itself is absent, OR if it has a daemon
 		// requirement that failed (i.e. the docker daemon is not responding).
 		if !r.Found || (r.DaemonChecked && !r.Healthy) {
@@ -372,8 +480,24 @@ func RenderPreflight(results []CheckResult) string {
 				}
 			}
 		} else {
-			b.WriteString("  " + errorStyle.Render("MISSING") + " " +
-				r.Req.Name + "  " + mutedStyle.Render(r.Req.Why+" -> "+r.Req.URL) + "\n")
+			// A soft requirement absent is a warning (the install proceeds),
+			// not a MISSING failure. Prefer a probe-supplied MissingWhy over the
+			// static Why for the recovery hint.
+			why := r.Req.Why
+			if r.MissingWhy != "" {
+				why = r.MissingWhy
+			}
+			detail := why
+			if r.Req.URL != "" {
+				detail = why + " -> " + r.Req.URL
+			}
+			if r.Req.Soft {
+				b.WriteString("  " + warnStyle.Render("SKIP") + "    " +
+					r.Req.Name + "  " + mutedStyle.Render(detail) + "\n")
+			} else {
+				b.WriteString("  " + errorStyle.Render("MISSING") + " " +
+					r.Req.Name + "  " + mutedStyle.Render(detail) + "\n")
+			}
 		}
 	}
 	return b.String()
@@ -386,7 +510,14 @@ func MissingError(missing []CheckResult) error {
 	for _, r := range missing {
 		names = append(names, r.Req.Name)
 		if !r.Found {
-			fmt.Fprintf(&hints, "\n  %s: %s", r.Req.Name, r.Req.URL)
+			hint := r.Req.URL
+			if hint == "" {
+				hint = r.MissingWhy
+			}
+			if r.MissingWhy != "" && r.Req.URL != "" {
+				hint = r.MissingWhy + " (" + r.Req.URL + ")"
+			}
+			fmt.Fprintf(&hints, "\n  %s: %s", r.Req.Name, hint)
 		} else if r.DaemonChecked && !r.Healthy {
 			detail := r.DaemonDetail
 			if detail == "" {
