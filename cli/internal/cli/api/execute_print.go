@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 			return err
 		}
 	} else {
-		a.executePrettyOutput(resp, respBody)
+		a.executePrettyOutput(cmd.Context(), resp, respBody)
 	}
 
 	// A broker denial (403/409/424/401) means the call did not run; exit 2 so a
@@ -55,13 +56,13 @@ func (a *app) executeOutput(cmd *cobra.Command, opts *executeOptions, resp *http
 	// When a directive *is* present it enriches the message with recovery steps.
 	if isBrokerDenial(resp) {
 		if directive, ok := parseAgentDirective(resp, respBody); ok {
-			a.printAgentDirective(directive)
+			a.printAgentDirective(cmd.Context(), directive)
 		} else {
 			// No agent_directive on the body (UX7): a first-timer who most needs the
 			// pointer would otherwise get only the generic "broker denied" line and
 			// a dead end. Synthesize a default next-step from the HTTP status the
 			// broker already returned so no denial is a dead end.
-			a.printSynthesizedDenialRecovery(resp.StatusCode)
+			a.printSynthesizedDenialRecovery(cmd.Context(), resp.StatusCode)
 		}
 		return brokerDeniedErr(resp)
 	}
@@ -96,20 +97,21 @@ func (a *app) executeJSONOutput(resp *http.Response, body []byte) error {
 	return cmdcore.WriteJSON(a.Out, envelope)
 }
 
-func (a *app) executePrettyOutput(resp *http.Response, body []byte) {
+func (a *app) executePrettyOutput(ctx context.Context, resp *http.Response, body []byte) {
+	st := theme.StylesFromContext(ctx)
 	statusLine := fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		fmt.Fprintln(a.Out, theme.Success.Render(statusLine))
+		fmt.Fprintln(a.Out, st.Success.Render(statusLine))
 	case resp.StatusCode >= 400:
-		fmt.Fprintln(a.Out, theme.Warn.Render(statusLine))
+		fmt.Fprintln(a.Out, st.Warn.Render(statusLine))
 	default:
 		fmt.Fprintln(a.Out, statusLine)
 	}
 
 	for k, vs := range resp.Header {
 		if strings.HasPrefix(k, "Jentic-") {
-			fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("  %s: %s", k, strings.Join(vs, ", "))))
+			fmt.Fprintln(a.Out, st.Dim.Render(fmt.Sprintf("  %s: %s", k, strings.Join(vs, ", "))))
 		}
 	}
 

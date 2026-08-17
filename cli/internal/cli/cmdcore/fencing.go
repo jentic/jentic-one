@@ -61,10 +61,11 @@ func installInterceptor(app *App, root *cobra.Command) {
 		// no-color, beating --theme/JENTIC_THEME/NO_COLOR/config so machine output is
 		// never corrupted by ANSI. Human falls through to the normal ladder.
 		var palette ux.Palette
+		var themeName string
 		if state.Mode == clictx.ModeAgent || state.Mode == clictx.ModeServiceAccount {
-			palette = theme.Themes["no-color"]
+			palette, themeName = theme.Themes["no-color"], "no-color"
 		} else {
-			palette = theme.ResolveTheme(flagValue(cmd, "theme"), state.ThemeName)
+			palette, themeName = theme.ResolveThemeWithName(flagValue(cmd, "theme"), state.ThemeName)
 		}
 
 		// 3. Construct the Audience. FAIL CLOSED on an unknown mode (typo'd
@@ -108,10 +109,12 @@ func installInterceptor(app *App, root *cobra.Command) {
 			return gerr
 		}
 
-		// 5. Inject Audience + ActiveState (and mirror the palette for theme.FromContext).
+		// 5. Inject Audience + ActiveState (and mirror the palette + resolved theme
+		// name for theme.FromContext / logo-gradient lookup).
 		ctx := ux.WithAudience(cmd.Context(), audience)
 		ctx = clictx.WithActiveState(ctx, state)
 		ctx = theme.WithContext(ctx, palette)
+		ctx = theme.WithThemeName(ctx, themeName)
 		cmd.SetContext(ctx)
 		return nil
 	}

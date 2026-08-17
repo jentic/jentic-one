@@ -41,32 +41,33 @@ func (a *app) statusE(ctx context.Context, opts *identityOptions) error {
 		return err
 	}
 
-	a.statusInstall()
+	st := theme.StylesFromContext(ctx)
+	a.statusInstall(st)
 	fmt.Fprintln(a.Out)
-	a.statusServer(baseURL)
+	a.statusServer(st, baseURL)
 	fmt.Fprintln(a.Out)
-	a.statusBroker()
+	a.statusBroker(st)
 	fmt.Fprintln(a.Out)
-	a.statusIdentity(ctx)
+	a.statusIdentity(ctx, st)
 	return nil
 }
 
 // statusInstall reports what the install manifest recorded (mode, db, source).
-func (a *app) statusInstall() {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Install"))
+func (a *app) statusInstall(st theme.Styles) {
+	fmt.Fprintln(a.Out, st.Heading.Render("Install"))
 
 	m, found, err := config.LoadManifest(a.Paths)
 	if err != nil {
-		fmt.Fprintln(a.Out, dotWarn()+" "+theme.Warnf("manifest unreadable: %v", err))
+		fmt.Fprintln(a.Out, st.DotWarn()+" "+st.Warnf("manifest unreadable: %v", err))
 		return
 	}
 	if !found {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no install manifest — run `jenticctl install`"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Dim.Render("no install manifest — run `jenticctl install`"))
 		return
 	}
 
-	fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("mode", valueOr(m.Mode, "unknown")))
-	fmt.Fprintln(a.Out, "  "+theme.Field("database", valueOr(m.DB, "-")))
+	fmt.Fprintln(a.Out, st.DotOK()+" "+st.Field("mode", valueOr(m.Mode, "unknown")))
+	fmt.Fprintln(a.Out, "  "+st.Field("database", valueOr(m.DB, "-")))
 
 	source := m.ResolvedRepo()
 	if m.Ref != "" {
@@ -75,37 +76,37 @@ func (a *app) statusInstall() {
 	if m.Commit != "" {
 		source += " (" + m.Commit + ")"
 	}
-	fmt.Fprintln(a.Out, "  "+theme.Field("source", source))
-	fmt.Fprintln(a.Out, "  "+theme.Field("cli", valueOr(m.CLIVersion, version)))
+	fmt.Fprintln(a.Out, "  "+st.Field("source", source))
+	fmt.Fprintln(a.Out, "  "+st.Field("cli", valueOr(m.CLIVersion, version)))
 	if m.InstalledAt != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("installed", m.InstalledAt))
+		fmt.Fprintln(a.Out, "  "+st.Field("installed", m.InstalledAt))
 	}
 	if cfgPath := a.Paths.InstallConfigPath(); proc.FileExists(cfgPath) {
-		fmt.Fprintln(a.Out, "  "+theme.Field("config", cfgPath))
+		fmt.Fprintln(a.Out, "  "+st.Field("config", cfgPath))
 	}
 }
 
 // statusServer probes the control-plane health route and reports the local
 // deploy (Docker stack vs background process) backing it.
-func (a *app) statusServer(baseURL string) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Server"))
+func (a *app) statusServer(st theme.Styles, baseURL string) {
+	fmt.Fprintln(a.Out, st.Heading.Render("Server"))
 
 	info := serverinfo.Probe(baseURL, serverinfo.DefaultTimeout)
 	if info.Running {
-		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("control", baseURL))
-		fmt.Fprintln(a.Out, "  "+theme.Field("version", valueOr(info.Version, "running")))
+		fmt.Fprintln(a.Out, st.DotOK()+" "+st.Field("control", baseURL))
+		fmt.Fprintln(a.Out, "  "+st.Field("version", valueOr(info.Version, "running")))
 	} else {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Field("control", baseURL))
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("offline"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Field("control", baseURL))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("offline"))
 	}
-	a.statusDeploy()
+	a.statusDeploy(st)
 }
 
 // statusDeploy reports how the app is run locally: a generated compose file
 // marks a Docker install; otherwise it inspects the background-process PID file.
-func (a *app) statusDeploy() {
+func (a *app) statusDeploy(st theme.Styles) {
 	if proc.FileExists(a.Paths.ComposePath()) {
-		fmt.Fprintln(a.Out, "  "+theme.Field("deploy", "docker compose"))
+		fmt.Fprintln(a.Out, "  "+st.Field("deploy", "docker compose"))
 		return
 	}
 	pid, alive, err := proc.LivePID(a.Paths.AppPIDPath())
@@ -113,9 +114,9 @@ func (a *app) statusDeploy() {
 		return
 	}
 	if alive {
-		fmt.Fprintln(a.Out, "  "+theme.Field("process", fmt.Sprintf("running (pid %d)", pid)))
+		fmt.Fprintln(a.Out, "  "+st.Field("process", fmt.Sprintf("running (pid %d)", pid)))
 	} else {
-		fmt.Fprintln(a.Out, "  "+theme.Field("process", "stale pid file (not running)"))
+		fmt.Fprintln(a.Out, "  "+st.Field("process", "stale pid file (not running)"))
 	}
 }
 
@@ -123,8 +124,8 @@ func (a *app) statusDeploy() {
 // endpoint. The target follows the same precedence as `run`/`execute`:
 // defaults < config.yaml broker.{scheme,host}. status takes no broker flags, so
 // only the file/default values are consulted here.
-func (a *app) statusBroker() {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Broker"))
+func (a *app) statusBroker(st theme.Styles) {
+	fmt.Fprintln(a.Out, st.Heading.Render("Broker"))
 
 	scheme := config.DefaultBrokerScheme
 	host := config.DefaultBrokerHost
@@ -136,51 +137,51 @@ func (a *app) statusBroker() {
 
 	info := serverinfo.Probe(baseURL, serverinfo.DefaultTimeout)
 	if info.Running {
-		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("target", baseURL))
-		fmt.Fprintln(a.Out, "  "+theme.Field("version", valueOr(info.Version, "running")))
+		fmt.Fprintln(a.Out, st.DotOK()+" "+st.Field("target", baseURL))
+		fmt.Fprintln(a.Out, "  "+st.Field("version", valueOr(info.Version, "running")))
 	} else {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Field("target", baseURL))
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("offline"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Field("target", baseURL))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("offline"))
 	}
 }
 
 // statusIdentity reports the ACTIVE context's identity and token state,
 // read-only from the XDG store (it never mints or refreshes a token; the /me
 // probe runs only with an already-valid cached token).
-func (a *app) statusIdentity(ctx context.Context) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Identity"))
+func (a *app) statusIdentity(ctx context.Context, st theme.Styles) {
+	fmt.Fprintln(a.Out, st.Heading.Render("Identity"))
 
-	st, err := sdkconfig.LoadState("")
+	state, err := sdkconfig.LoadState("")
 	if err != nil {
-		fmt.Fprintln(a.Out, dotDown()+" "+theme.Dim.Render("no active context — run `jentic register` (or `jentic migrate` on an upgraded machine)"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Dim.Render("no active context — run `jentic register` (or `jentic migrate` on an upgraded machine)"))
 		return
 	}
-	if st.InjectedBearerToken != "" {
-		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("session", "file-less ($JENTIC_BEARER_TOKEN)"))
-		fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
+	if state.InjectedBearerToken != "" {
+		fmt.Fprintln(a.Out, st.DotOK()+" "+st.Field("session", "file-less ($JENTIC_BEARER_TOKEN)"))
+		fmt.Fprintln(a.Out, "  "+st.Field("base_url", state.BaseURL))
 		return
 	}
 
-	ref := auth.IdentityRef{Identity: st.IdentityName, Environment: st.EnvironmentName}
+	ref := auth.IdentityRef{Identity: state.IdentityName, Environment: state.EnvironmentName}
 
 	// API-key credential (user identity): present == usable, no expiry to show.
 	if key, kerr := auth.ReadAPIKey(ref); kerr == nil && key != "" {
-		fmt.Fprintln(a.Out, dotOK()+" "+theme.Field("identity", st.IdentityName))
-		fmt.Fprintln(a.Out, "  "+theme.Field("environment", st.EnvironmentName))
-		fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
-		fmt.Fprintln(a.Out, "  "+theme.Field("auth", "api-key"))
+		fmt.Fprintln(a.Out, st.DotOK()+" "+st.Field("identity", state.IdentityName))
+		fmt.Fprintln(a.Out, "  "+st.Field("environment", state.EnvironmentName))
+		fmt.Fprintln(a.Out, "  "+st.Field("base_url", state.BaseURL))
+		fmt.Fprintln(a.Out, "  "+st.Field("auth", "api-key"))
 		return
 	}
 
 	tokens, _ := auth.ReadTokens(ref)
-	state, dot := tokenStatus(tokens)
-	fmt.Fprintln(a.Out, dot+" "+theme.Field("identity", st.IdentityName))
-	fmt.Fprintln(a.Out, "  "+theme.Field("environment", st.EnvironmentName))
-	fmt.Fprintln(a.Out, "  "+theme.Field("base_url", st.BaseURL))
-	fmt.Fprintln(a.Out, "  "+theme.Field("token", state))
+	tokenState, dot := tokenStatus(st, tokens)
+	fmt.Fprintln(a.Out, dot+" "+st.Field("identity", state.IdentityName))
+	fmt.Fprintln(a.Out, "  "+st.Field("environment", state.EnvironmentName))
+	fmt.Fprintln(a.Out, "  "+st.Field("base_url", state.BaseURL))
+	fmt.Fprintln(a.Out, "  "+st.Field("token", tokenState))
 
 	if tokens != nil && tokens.AccessToken != "" && time.Now().Before(tokens.ExpiresAt) {
-		a.statusCatalogUpdates(ctx)
+		a.statusCatalogUpdates(ctx, st)
 	}
 }
 
@@ -189,7 +190,7 @@ func (a *app) statusIdentity(ctx context.Context) {
 // valid cached token, uses a tiny page (the count is whole-manifest, page-stable),
 // and degrades silently — a missing token, offline server, or old backend without
 // the field simply prints nothing (never errors out `status`).
-func (a *app) statusCatalogUpdates(ctx context.Context) {
+func (a *app) statusCatalogUpdates(ctx context.Context, st theme.Styles) {
 	client, err := clictx.GetControlClient(ctx)
 	if err != nil {
 		return
@@ -207,8 +208,8 @@ func (a *app) statusCatalogUpdates(ctx context.Context) {
 		outdated = *resp.JSON200.OutdatedCount
 	}
 	if outdated > 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Field("updates", fmt.Sprintf("%d available (run `jentic catalog outdated`)", outdated)))
+		fmt.Fprintln(a.Out, "  "+st.Field("updates", fmt.Sprintf("%d available (run `jentic catalog outdated`)", outdated)))
 	} else {
-		fmt.Fprintln(a.Out, "  "+theme.Field("updates", "none"))
+		fmt.Fprintln(a.Out, "  "+st.Field("updates", "none"))
 	}
 }

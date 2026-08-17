@@ -25,17 +25,18 @@ func (o *IdentityOptions) Bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&o.BaseURL, "base-url", "", "Jentic control-plane base URL")
 }
 
-// TokenStatus summarizes a cached token as a human label plus a status dot.
-func TokenStatus(t *auth.TokenSet) (label, dot string) {
+// TokenStatus summarizes a cached token as a human label plus a status dot,
+// tinted from the resolved Styles.
+func TokenStatus(st theme.Styles, t *auth.TokenSet) (label, dot string) {
 	switch {
 	case t == nil || t.AccessToken == "":
-		return "none", DotWarn()
+		return "none", st.DotWarn()
 	case t.ExpiresAt.IsZero():
-		return "valid", DotOK()
+		return "valid", st.DotOK()
 	case time.Now().After(t.ExpiresAt):
-		return "expired", DotWarn()
+		return "expired", st.DotWarn()
 	default:
-		return fmt.Sprintf("valid (%s left)", time.Until(t.ExpiresAt).Round(time.Minute)), DotOK()
+		return fmt.Sprintf("valid (%s left)", time.Until(t.ExpiresAt).Round(time.Minute)), st.DotOK()
 	}
 }
 

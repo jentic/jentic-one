@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,32 +9,33 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-func (a *app) printMe(me *control.MeAgent) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Identity"))
-	fmt.Fprintln(a.Out, "  "+theme.Field("agent", me.Id))
+func (a *app) printMe(ctx context.Context, me *control.MeAgent) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Identity"))
+	fmt.Fprintln(a.Out, "  "+st.Field("agent", me.Id))
 	if me.Name != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("name", me.Name))
+		fmt.Fprintln(a.Out, "  "+st.Field("name", me.Name))
 	}
-	fmt.Fprintln(a.Out, "  "+theme.Field("status", me.Status))
+	fmt.Fprintln(a.Out, "  "+st.Field("status", me.Status))
 	scopes := "none"
 	if len(me.Scopes) > 0 {
 		scopes = strings.Join(me.Scopes, ", ")
 	}
-	fmt.Fprintln(a.Out, "  "+theme.Field("scopes", scopes))
+	fmt.Fprintln(a.Out, "  "+st.Field("scopes", scopes))
 	if stale := staleScopes(me.Scopes, me.TokenScopes); len(stale) > 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Warnf("granted but not yet on your token: %s", strings.Join(stale, ", ")))
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("run `jentic access refresh` to pick them up"))
+		fmt.Fprintln(a.Out, "  "+st.Warnf("granted but not yet on your token: %s", strings.Join(stale, ", ")))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("run `jentic access refresh` to pick them up"))
 	}
 
-	fmt.Fprintln(a.Out, theme.Heading.Render("Toolkit bindings"))
+	fmt.Fprintln(a.Out, st.Heading.Render("Toolkit bindings"))
 	if len(me.ToolkitBindings) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("none — you cannot execute yet; run `jentic access request --toolkit <vendor/name>`"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("none — you cannot execute yet; run `jentic access request --toolkit <vendor/name>`"))
 	} else {
 		for _, b := range me.ToolkitBindings {
 			if name := deref(b.Name); name != "" {
-				fmt.Fprintln(a.Out, "  "+theme.Command.Render(name)+"  "+theme.Dim.Render(b.ToolkitId))
+				fmt.Fprintln(a.Out, "  "+st.Command.Render(name)+"  "+st.Dim.Render(b.ToolkitId))
 			} else {
-				fmt.Fprintln(a.Out, "  "+theme.Command.Render(b.ToolkitId))
+				fmt.Fprintln(a.Out, "  "+st.Command.Render(b.ToolkitId))
 			}
 		}
 	}
@@ -43,48 +45,50 @@ func (a *app) printMe(me *control.MeAgent) {
 	// directory the agent can reach. Point at it so an agent has one place to learn
 	// its full access surface.
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("To see which directories you can access, run `jentic context view`."))
+	fmt.Fprintln(a.Out, st.Dim.Render("To see which directories you can access, run `jentic context view`."))
 }
 
-func (a *app) printRequestList(reqs []control.AccessRequestResponse, hasMore bool) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Access Requests"))
+func (a *app) printRequestList(ctx context.Context, reqs []control.AccessRequestResponse, hasMore bool) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Access Requests"))
 	if len(reqs) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no requests"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no requests"))
 		return
 	}
 	for i := range reqs {
 		r := &reqs[i]
-		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.Id)+"  "+statusStyle(r.Status))
+		fmt.Fprintln(a.Out, "  "+st.Command.Render(r.Id)+"  "+statusStyle(st, r.Status))
 		for j := range r.Items {
-			fmt.Fprintln(a.Out, "    "+theme.Dim.Render(itemSummary(&r.Items[j])))
+			fmt.Fprintln(a.Out, "    "+st.Dim.Render(itemSummary(&r.Items[j])))
 		}
 	}
 	if hasMore {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("… more available (use --all or --cursor)"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("… more available (use --all or --cursor)"))
 	}
 }
 
-func (a *app) printRequest(r *control.AccessRequestResponse, showApprove bool) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Access Request"))
-	fmt.Fprintln(a.Out, "  "+theme.Field("id", r.Id))
-	fmt.Fprintln(a.Out, "  "+theme.Dim.Render(fmt.Sprintf("%-9s ", "status:"))+statusStyle(r.Status))
+func (a *app) printRequest(ctx context.Context, r *control.AccessRequestResponse, showApprove bool) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Access Request"))
+	fmt.Fprintln(a.Out, "  "+st.Field("id", r.Id))
+	fmt.Fprintln(a.Out, "  "+st.Dim.Render(fmt.Sprintf("%-9s ", "status:"))+statusStyle(st, r.Status))
 	if reason := deref(r.Reason); reason != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("reason", reason))
+		fmt.Fprintln(a.Out, "  "+st.Field("reason", reason))
 	}
 	for i := range r.Items {
 		it := &r.Items[i]
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render(itemSummary(it))+"  "+statusStyle(it.Status))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render(itemSummary(it))+"  "+statusStyle(st, it.Status))
 		// A denied item carries the reason it couldn't be granted (e.g. "No
 		// toolkit serves API …; provision and bind a credential for it first").
 		// Surface it so the agent/operator learns what to fix; JSON output
 		// already includes decision_reason.
 		if reason := deref(it.DecisionReason); reason != "" {
-			fmt.Fprintln(a.Out, "    "+theme.Warn.Render(reason))
+			fmt.Fprintln(a.Out, "    "+st.Warn.Render(reason))
 		}
 	}
 	if showApprove && r.Status == statusPending && r.ApproveUrl != "" {
-		fmt.Fprintln(a.Out, "\n  "+theme.Info.Render("Share this with your operator to approve:"))
-		fmt.Fprintln(a.Out, "  "+theme.Command.Render(r.ApproveUrl))
+		fmt.Fprintln(a.Out, "\n  "+st.Info.Render("Share this with your operator to approve:"))
+		fmt.Fprintln(a.Out, "  "+st.Command.Render(r.ApproveUrl))
 	}
 }
 
@@ -99,13 +103,13 @@ func itemSummary(it *control.AccessRequestItemResponse) string {
 	return fmt.Sprintf("%s:%s %s", it.ResourceType, it.Action, target)
 }
 
-func statusStyle(status string) string {
+func statusStyle(st theme.Styles, status string) string {
 	switch status {
 	case statusApproved:
-		return theme.Success.Render(status)
+		return st.Success.Render(status)
 	case statusDenied, statusExpired, statusWithdrawn:
-		return theme.Warn.Render(status)
+		return st.Warn.Render(status)
 	default:
-		return theme.Accent.Render(status)
+		return st.Accent.Render(status)
 	}
 }

@@ -1,124 +1,128 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-func (a *app) printAPIList(apis []registeredAPI) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("APIs"))
+func (a *app) printAPIList(ctx context.Context, apis []registeredAPI) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("APIs"))
 	if len(apis) == 0 {
-		fmt.Fprintln(a.Out, cmdcore.DotDown()+" "+theme.Dim.Render("no APIs imported yet — try `jentic catalog`"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Dim.Render("no APIs imported yet — try `jentic catalog`"))
 		return
 	}
 	for _, api := range apis {
-		fmt.Fprintln(a.Out, apiRow(api))
+		fmt.Fprintln(a.Out, apiRow(st, api))
 	}
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("%d API(s)", len(apis))))
+	fmt.Fprintln(a.Out, st.Dim.Render(fmt.Sprintf("%d API(s)", len(apis))))
 }
 
 // apiRow renders one API: a live/draft dot, the accent identity, and a dim
 // operation count.
-func apiRow(api registeredAPI) string {
-	dot := cmdcore.DotDown()
+func apiRow(st theme.Styles, api registeredAPI) string {
+	dot := st.DotDown()
 	if api.CurrentRevisionID != "" {
-		dot = cmdcore.DotOK()
+		dot = st.DotOK()
 	}
-	row := dot + " " + theme.Accent.Render(apiRefLabel(api.API))
+	row := dot + " " + st.Accent.Render(apiRefLabel(api.API))
 	if api.OperationCount > 0 {
-		row += "  " + theme.Dim.Render(fmt.Sprintf("%d ops", api.OperationCount))
+		row += "  " + st.Dim.Render(fmt.Sprintf("%d ops", api.OperationCount))
 	}
 	if api.DisplayName != "" {
-		row += "  " + theme.Dim.Render(api.DisplayName)
+		row += "  " + st.Dim.Render(api.DisplayName)
 	}
 	return row
 }
 
-func (a *app) printAPIDetail(api *registeredAPI) {
-	fmt.Fprintln(a.Out, theme.Heading.Render(apiRefLabel(api.API)))
+func (a *app) printAPIDetail(ctx context.Context, api *registeredAPI) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render(apiRefLabel(api.API)))
 	if api.DisplayName != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("name", api.DisplayName))
+		fmt.Fprintln(a.Out, "  "+st.Field("name", api.DisplayName))
 	}
 	if api.Description != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("description", api.Description))
+		fmt.Fprintln(a.Out, "  "+st.Field("description", api.Description))
 	}
 	if api.API.Host != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("host", api.API.Host))
+		fmt.Fprintln(a.Out, "  "+st.Field("host", api.API.Host))
 	}
 	state := "no live revision"
-	dot := cmdcore.DotDown()
+	dot := st.DotDown()
 	if api.CurrentRevisionID != "" {
-		state, dot = "live: "+api.CurrentRevisionID, cmdcore.DotOK()
+		state, dot = "live: "+api.CurrentRevisionID, st.DotOK()
 	}
-	fmt.Fprintln(a.Out, "  "+dot+" "+theme.Field("current", state))
-	fmt.Fprintln(a.Out, "  "+theme.Field("revisions", strconv.Itoa(api.RevisionCount)))
-	fmt.Fprintln(a.Out, "  "+theme.Field("operations", strconv.Itoa(api.OperationCount)))
+	fmt.Fprintln(a.Out, "  "+dot+" "+st.Field("current", state))
+	fmt.Fprintln(a.Out, "  "+st.Field("revisions", strconv.Itoa(api.RevisionCount)))
+	fmt.Fprintln(a.Out, "  "+st.Field("operations", strconv.Itoa(api.OperationCount)))
 	if len(api.SecuritySchemes) > 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Field("auth", strings.Join(api.SecuritySchemes, ", ")))
+		fmt.Fprintln(a.Out, "  "+st.Field("auth", strings.Join(api.SecuritySchemes, ", ")))
 	}
 }
 
-func (a *app) printOperations(ops []apiOperation, hasMore bool) {
+func (a *app) printOperations(ctx context.Context, ops []apiOperation, hasMore bool) {
+	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Heading.Render("Operations"))
+	fmt.Fprintln(a.Out, st.Heading.Render("Operations"))
 	if len(ops) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no operations"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no operations"))
 		return
 	}
 	for _, op := range ops {
-		fmt.Fprintln(a.Out, "  "+apiOpLine(op))
+		fmt.Fprintln(a.Out, "  "+apiOpLine(st, op))
 	}
 	if hasMore {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("… more (use --limit or operations --all)"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("… more (use --limit or operations --all)"))
 	}
 }
 
 // apiOpLine renders "METHOD  path  name" with the method tinted.
-func apiOpLine(op apiOperation) string {
-	line := theme.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " + theme.Command.Render(op.Path)
+func apiOpLine(st theme.Styles, op apiOperation) string {
+	line := st.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " + st.Command.Render(op.Path)
 	label := op.Name
 	if label == "" {
 		label = op.Description
 	}
 	if label != "" {
-		line += "  " + theme.Dim.Render(label)
+		line += "  " + st.Dim.Render(label)
 	}
 	if op.Deprecated {
-		line += "  " + theme.Warnf("(deprecated)")
+		line += "  " + st.Warnf("(deprecated)")
 	}
 	return line
 }
 
-func (a *app) printRevisions(ref string, revs []apiRevision) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Revisions")+theme.Dim.Render("  "+ref))
+func (a *app) printRevisions(ctx context.Context, ref string, revs []apiRevision) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Revisions")+st.Dim.Render("  "+ref))
 	if len(revs) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no revisions"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no revisions"))
 		return
 	}
 	for _, rev := range revs {
-		fmt.Fprintln(a.Out, "  "+revisionLine(rev))
+		fmt.Fprintln(a.Out, "  "+revisionLine(st, rev))
 	}
 }
 
-func revisionLine(rev apiRevision) string {
-	dot := cmdcore.DotDown()
+func revisionLine(st theme.Styles, rev apiRevision) string {
+	dot := st.DotDown()
 	switch {
 	case rev.IsCurrent:
-		dot = cmdcore.DotOK()
+		dot = st.DotOK()
 	case rev.State == "draft":
-		dot = cmdcore.DotWarn()
+		dot = st.DotWarn()
 	}
-	line := dot + " " + theme.Accent.Render(rev.RevisionID) + "  " + theme.Field("state", rev.State)
+	line := dot + " " + st.Accent.Render(rev.RevisionID) + "  " + st.Field("state", rev.State)
 	if rev.IsCurrent {
-		line += "  " + theme.Success.Render("(current)")
+		line += "  " + st.Success.Render("(current)")
 	}
 	if rev.OperationCount > 0 {
-		line += "  " + theme.Dim.Render(fmt.Sprintf("%d ops", rev.OperationCount))
+		line += "  " + st.Dim.Render(fmt.Sprintf("%d ops", rev.OperationCount))
 	}
 	return line
 }

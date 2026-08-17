@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -122,7 +123,7 @@ func (a *app) searchE(cmd *cobra.Command, opts *searchOptions) error {
 		return cmdcore.WriteList(a.Out, allHits, nextCursor, nil)
 	}
 
-	a.printSearchResults(allHits, hasMore)
+	a.printSearchResults(cmd.Context(), allHits, hasMore)
 	return nil
 }
 
@@ -198,29 +199,30 @@ func float32ToFloat64(f float32) float64 {
 	return v
 }
 
-func (a *app) printSearchResults(hits []searchHit, hasMore bool) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Search Results"))
+func (a *app) printSearchResults(ctx context.Context, hits []searchHit, hasMore bool) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Search Results"))
 	if len(hits) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no operations match in the local registry"))
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("nothing imported yet? browse and import the public catalog first:"))
-		fmt.Fprintln(a.Out, "    "+theme.Command.Render("jentic catalog search <query>")+theme.Dim.Render("   # find an importable API"))
-		fmt.Fprintln(a.Out, "    "+theme.Command.Render("jentic catalog import <vendor/name>")+theme.Dim.Render(" # import it, then search again"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no operations match in the local registry"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("nothing imported yet? browse and import the public catalog first:"))
+		fmt.Fprintln(a.Out, "    "+st.Command.Render("jentic catalog search <query>")+st.Dim.Render("   # find an importable API"))
+		fmt.Fprintln(a.Out, "    "+st.Command.Render("jentic catalog import <vendor/name>")+st.Dim.Render(" # import it, then search again"))
 		return
 	}
 	for _, h := range hits {
-		line := theme.Accent.Render(fmt.Sprintf("%-6s", h.Method)) + " " +
-			theme.Command.Render(h.URL)
+		line := st.Accent.Render(fmt.Sprintf("%-6s", h.Method)) + " " +
+			st.Command.Render(h.URL)
 		if h.Name != "" {
-			line += "  " + theme.Dim.Render(h.Name)
+			line += "  " + st.Dim.Render(h.Name)
 		}
 		fmt.Fprintln(a.Out, "  "+line)
-		fmt.Fprintln(a.Out, "    "+theme.Dim.Render(fmt.Sprintf("api=%s  score=%.2f", h.API.String(), h.Score)))
+		fmt.Fprintln(a.Out, "    "+st.Dim.Render(fmt.Sprintf("api=%s  score=%.2f", h.API.String(), h.Score)))
 		if id := inspectHint(h); id != "" {
-			fmt.Fprintln(a.Out, "    "+theme.Dim.Render("inspect: jentic inspect "+colonizeInspectID(id)))
+			fmt.Fprintln(a.Out, "    "+st.Dim.Render("inspect: jentic inspect "+colonizeInspectID(id)))
 		}
 	}
 	if hasMore {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("… more results available (use --all or --cursor)"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("… more results available (use --all or --cursor)"))
 	}
 }
 

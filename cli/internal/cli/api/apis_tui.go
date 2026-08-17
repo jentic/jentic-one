@@ -10,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
@@ -45,14 +44,16 @@ func (a *app) runApisBrowser(ctx context.Context) error {
 		return err
 	}
 	m := &apisBrowser{
-		ctx:     ctx,
-		client:  client,
-		limit:   apisBrowseLimit,
-		width:   90,
-		height:  24,
-		ops:     map[string]*operationListResult{},
-		opsErr:  map[string]string{},
-		loading: true,
+		ctx:       ctx,
+		client:    client,
+		st:        theme.StylesFromContext(ctx),
+		themeName: theme.ThemeNameFromContext(ctx),
+		limit:     apisBrowseLimit,
+		width:     90,
+		height:    24,
+		ops:       map[string]*operationListResult{},
+		opsErr:    map[string]string{},
+		loading:   true,
 	}
 	_, err = tea.NewProgram(m).Run()
 	return err
@@ -61,6 +62,12 @@ func (a *app) runApisBrowser(ctx context.Context) error {
 type apisBrowser struct {
 	ctx    context.Context
 	client *apiClient
+
+	// st is the palette-bound style set (resolved from ctx at construction) and
+	// themeName the resolved theme name for the logo gradient, so the browser
+	// re-tints under --theme light/no-color.
+	st        theme.Styles
+	themeName string
 
 	view apisView
 
@@ -264,13 +271,13 @@ func (m *apisBrowser) onAction(msg apisActionMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		var he *HTTPError
 		if errors.As(msg.err, &he) && he.StatusCode == http.StatusForbidden {
-			m.status = theme.Warnf("%s: not permitted (org policy)", msg.verb)
+			m.status = m.st.Warnf("%s: not permitted (org policy)", msg.verb)
 			return m, nil
 		}
-		m.status = theme.Warnf("%s failed: %v", msg.verb, msg.err)
+		m.status = m.st.Warnf("%s failed: %v", msg.verb, msg.err)
 		return m, nil
 	}
-	m.status = theme.Successf("%s", msg.verb)
+	m.status = m.st.Successf("%s", msg.verb)
 	if msg.back {
 		// The whole API is gone — drop back to a freshly reloaded list.
 		m.view = viewAPIs
@@ -390,7 +397,7 @@ func (m *apisBrowser) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		m.confirm = confirmNone
-		m.status = theme.Dim.Render("cancelled")
+		m.status = m.st.Dim.Render("cancelled")
 		return m, nil
 	}
 }
@@ -405,23 +412,23 @@ func (m *apisBrowser) actOnRevision(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case "promote":
 		if rev.State != "draft" {
-			m.status = theme.Dim.Render("only draft revisions can be promoted")
+			m.status = m.st.Dim.Render("only draft revisions can be promoted")
 			return m, nil
 		}
 		m.busy = true
-		m.status = theme.Dim.Render("promoting …")
+		m.status = m.st.Dim.Render("promoting …")
 		return m, m.promoteRev(m.revAPI, rev.RevisionID)
 	case "archive":
 		if rev.State != "draft" {
-			m.status = theme.Dim.Render("only draft revisions can be archived")
+			m.status = m.st.Dim.Render("only draft revisions can be archived")
 			return m, nil
 		}
 		m.busy = true
-		m.status = theme.Dim.Render("archiving …")
+		m.status = m.st.Dim.Render("archiving …")
 		return m, m.archiveRev(m.revAPI, rev.RevisionID)
 	case "delete":
 		if rev.State != "archived" {
-			m.status = theme.Dim.Render("only archived revisions can be deleted")
+			m.status = m.st.Dim.Render("only archived revisions can be deleted")
 			return m, nil
 		}
 		m.confirm = confirmDeleteRevision
@@ -533,31 +540,31 @@ func (m *apisBrowser) View() string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(theme.Logo())
+	b.WriteString(theme.LogoFor(m.themeName))
 	b.WriteByte('\n')
 
 	if m.view == viewRevisions {
 		return m.revisionsView(&b)
 	}
 
-	b.WriteString(theme.Heading.Render("APIs"))
-	b.WriteString(theme.Dim.Render("  " + m.headerStatus()))
+	b.WriteString(m.st.Heading.Render("APIs"))
+	b.WriteString(m.st.Dim.Render("  " + m.headerStatus()))
 	b.WriteByte('\n')
-	b.WriteString(theme.Dim.Render(m.filterLine()))
+	b.WriteString(m.st.Dim.Render(m.filterLine()))
 	b.WriteString("\n\n")
 
 	if m.err != "" {
-		b.WriteString(theme.Error.Render(m.err) + "\n\n")
+		b.WriteString(m.st.Error.Render(m.err) + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
 	if m.loading && len(m.apis) == 0 {
-		b.WriteString(theme.Dim.Render("loading …") + "\n\n")
+		b.WriteString(m.st.Dim.Render("loading …") + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
 	if len(m.apis) == 0 {
-		b.WriteString(theme.Dim.Render("no APIs imported yet — try `jentic catalog`") + "\n\n")
+		b.WriteString(m.st.Dim.Render("no APIs imported yet — try `jentic catalog`") + "\n\n")
 		b.WriteString(m.hintLine())
 		return b.String()
 	}
@@ -572,7 +579,7 @@ func (m *apisBrowser) View() string {
 func (m *apisBrowser) footer() string {
 	var b strings.Builder
 	if m.confirm != confirmNone {
-		b.WriteString(theme.Warnf("Delete %s? (y/n)", m.confirmTarget) + "\n")
+		b.WriteString(m.st.Warnf("Delete %s? (y/n)", m.confirmTarget) + "\n")
 	} else if m.status != "" {
 		b.WriteString(m.status + "\n")
 	}
@@ -603,18 +610,18 @@ func (m *apisBrowser) visibleRows() int {
 }
 
 func (m *apisBrowser) listColumn() string {
-	return renderListColumn(m.cursor, &m.top, m.visibleRows(), len(m.apis), apisListColumn, m.hasMore, m.listRow)
+	return renderListColumn(m.st, m.cursor, &m.top, m.visibleRows(), len(m.apis), apisListColumn, m.hasMore, m.listRow)
 }
 
 func (m *apisBrowser) listRow(i int) string {
 	api := m.apis[i]
-	glyph := theme.Dim.Render(theme.SelectOff)
+	glyph := m.st.Dim.Render(theme.SelectOff)
 	if api.CurrentRevisionID != "" {
-		glyph = theme.Success.Render(theme.SelectOn)
+		glyph = m.st.Success.Render(theme.SelectOn)
 	}
 	name := truncate(apiRefLabel(api.API), apisListColumn-3)
 	if i == m.cursor {
-		return glyph + " " + theme.Accent.Render(name)
+		return glyph + " " + m.st.Accent.Render(name)
 	}
 	return glyph + " " + lipgloss.NewStyle().Foreground(theme.White).Render(name)
 }
@@ -631,28 +638,28 @@ func (m *apisBrowser) detailColumn() string {
 func (m *apisBrowser) detailBody() string {
 	api, ok := m.current()
 	if !ok {
-		return theme.Dim.Render("no selection")
+		return m.st.Dim.Render("no selection")
 	}
 	var b strings.Builder
-	b.WriteString(theme.Heading.Render(apiRefLabel(api.API)) + "\n")
+	b.WriteString(m.st.Heading.Render(apiRefLabel(api.API)) + "\n")
 	if api.DisplayName != "" {
-		b.WriteString(theme.Field("name", api.DisplayName) + "\n")
+		b.WriteString(m.st.Field("name", api.DisplayName) + "\n")
 	}
-	state, dot := "no live revision", cmdcore.DotDown()
+	state, dot := "no live revision", m.st.DotDown()
 	if api.CurrentRevisionID != "" {
-		state, dot = "live", cmdcore.DotOK()
+		state, dot = "live", m.st.DotOK()
 	}
-	b.WriteString(dot + " " + theme.Field("status", state) + "\n")
-	b.WriteString(theme.Field("revisions", strconv.Itoa(api.RevisionCount)) + "  " +
-		theme.Field("operations", strconv.Itoa(api.OperationCount)) + "\n")
+	b.WriteString(dot + " " + m.st.Field("status", state) + "\n")
+	b.WriteString(m.st.Field("revisions", strconv.Itoa(api.RevisionCount)) + "  " +
+		m.st.Field("operations", strconv.Itoa(api.OperationCount)) + "\n")
 	if len(api.SecuritySchemes) > 0 {
-		b.WriteString(theme.Field("auth", truncate(strings.Join(api.SecuritySchemes, ", "), m.detailWidth())) + "\n")
+		b.WriteString(m.st.Field("auth", truncate(strings.Join(api.SecuritySchemes, ", "), m.detailWidth())) + "\n")
 	}
 
 	if desc := strings.TrimSpace(api.Description); desc != "" {
 		b.WriteString("\n")
 		for _, ln := range wrapLines(desc, m.detailWidth(), apisPreviewDescLines) {
-			b.WriteString(theme.Dim.Render(ln) + "\n")
+			b.WriteString(m.st.Dim.Render(ln) + "\n")
 		}
 	}
 
@@ -660,13 +667,13 @@ func (m *apisBrowser) detailBody() string {
 	key := apiRefLabel(api.API)
 	switch {
 	case m.opsLoading == key:
-		b.WriteString(theme.Dim.Render("loading operations …"))
+		b.WriteString(m.st.Dim.Render("loading operations …"))
 	case m.opsErr[key] != "":
-		b.WriteString(theme.Warnf("operations unavailable: %s", m.opsErr[key]))
+		b.WriteString(m.st.Warnf("operations unavailable: %s", m.opsErr[key]))
 	case m.ops[key] != nil:
 		b.WriteString(m.opsBlock(m.ops[key]))
 	default:
-		b.WriteString(theme.Dim.Render("press o to preview operations · enter to manage revisions"))
+		b.WriteString(m.st.Dim.Render("press o to preview operations · enter to manage revisions"))
 	}
 	return b.String()
 }
@@ -681,9 +688,9 @@ func (m *apisBrowser) detailWidth() int {
 
 func (m *apisBrowser) opsBlock(ops *operationListResult) string {
 	var b strings.Builder
-	b.WriteString(theme.Step.Render("Operations") + "\n")
+	b.WriteString(m.st.Step.Render("Operations") + "\n")
 	if len(ops.Data) == 0 {
-		b.WriteString(theme.Dim.Render("no operations"))
+		b.WriteString(m.st.Dim.Render("no operations"))
 		return b.String()
 	}
 	maxOps := m.visibleRows() - 6
@@ -695,12 +702,12 @@ func (m *apisBrowser) opsBlock(ops *operationListResult) string {
 		if shown >= maxOps {
 			break
 		}
-		b.WriteString(theme.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " +
-			theme.Command.Render(truncate(op.Path, m.detailWidth()-8)) + "\n")
+		b.WriteString(m.st.Accent.Render(fmt.Sprintf("%-6s", op.Method)) + " " +
+			m.st.Command.Render(truncate(op.Path, m.detailWidth()-8)) + "\n")
 		shown++
 	}
 	if shown < len(ops.Data) || ops.HasMore {
-		b.WriteString(theme.Dim.Render(fmt.Sprintf("… %d shown", shown)))
+		b.WriteString(m.st.Dim.Render(fmt.Sprintf("… %d shown", shown)))
 	}
 	return b.String()
 }
@@ -708,17 +715,17 @@ func (m *apisBrowser) opsBlock(ops *operationListResult) string {
 // ── revisions view ───────────────────────────────────────────────────────────
 
 func (m *apisBrowser) revisionsView(b *strings.Builder) string {
-	b.WriteString(theme.Heading.Render("Revisions"))
-	b.WriteString(theme.Dim.Render("  " + apiRefLabel(m.revAPI)))
+	b.WriteString(m.st.Heading.Render("Revisions"))
+	b.WriteString(m.st.Dim.Render("  " + apiRefLabel(m.revAPI)))
 	b.WriteString("\n\n")
 
 	switch {
 	case m.revErr != "":
-		b.WriteString(theme.Error.Render(m.revErr) + "\n\n")
+		b.WriteString(m.st.Error.Render(m.revErr) + "\n\n")
 	case m.revLoading && len(m.revs) == 0:
-		b.WriteString(theme.Dim.Render("loading …") + "\n\n")
+		b.WriteString(m.st.Dim.Render("loading …") + "\n\n")
 	case len(m.revs) == 0:
-		b.WriteString(theme.Dim.Render("no revisions") + "\n\n")
+		b.WriteString(m.st.Dim.Render("no revisions") + "\n\n")
 	default:
 		rows := m.visibleRows()
 		if m.revCursor < m.revTop {
@@ -734,9 +741,9 @@ func (m *apisBrowser) revisionsView(b *strings.Builder) string {
 		for i := m.revTop; i < end; i++ {
 			cursor := "  "
 			if i == m.revCursor {
-				cursor = theme.Accent.Render("› ")
+				cursor = m.st.Accent.Render("› ")
 			}
-			b.WriteString(cursor + revisionLine(m.revs[i]) + "\n")
+			b.WriteString(cursor + revisionLine(m.st, m.revs[i]) + "\n")
 		}
 		b.WriteString("\n")
 	}
@@ -747,13 +754,13 @@ func (m *apisBrowser) revisionsView(b *strings.Builder) string {
 
 func (m *apisBrowser) hintLine() string {
 	if m.confirm != confirmNone {
-		return theme.Dim.Render("y confirm · any other key cancel")
+		return m.st.Dim.Render("y confirm · any other key cancel")
 	}
 	if m.searching {
-		return theme.Dim.Render("type a vendor · enter apply · esc cancel")
+		return m.st.Dim.Render("type a vendor · enter apply · esc cancel")
 	}
 	if m.view == viewRevisions {
-		return theme.Dim.Render("↑/↓ move · p promote · a archive · x delete · b back · q quit")
+		return m.st.Dim.Render("↑/↓ move · p promote · a archive · x delete · b back · q quit")
 	}
-	return theme.Dim.Render("↑/↓ move · / vendor · o preview · enter revisions · d delete · r refresh · b back · q quit")
+	return m.st.Dim.Render("↑/↓ move · / vendor · o preview · enter revisions · d delete · r refresh · b back · q quit")
 }

@@ -286,7 +286,7 @@ func (a *app) apisList(ctx context.Context, o *apisListOptions) error {
 	if o.json {
 		return cmdcore.WriteList(a.Out, apis, nextCursor, nil)
 	}
-	a.printAPIList(apis)
+	a.printAPIList(ctx, apis)
 	return nil
 }
 
@@ -319,12 +319,13 @@ func (a *app) apisShow(ctx context.Context, o *apisShowOptions, ref string) erro
 		return cmdcore.WriteJSON(a.Out, out)
 	}
 
-	a.printAPIDetail(api)
+	a.printAPIDetail(ctx, api)
 	if operr != nil {
-		fmt.Fprintln(a.Out, cmdcore.DotWarn()+" "+theme.Warnf("operations unavailable: %v", operr))
+		st := theme.StylesFromContext(ctx)
+		fmt.Fprintln(a.Out, st.DotWarn()+" "+st.Warnf("operations unavailable: %v", operr))
 		return nil
 	}
-	a.printOperations(ops.Data, ops.HasMore)
+	a.printOperations(ctx, ops.Data, ops.HasMore)
 	return nil
 }
 
@@ -366,7 +367,7 @@ func (a *app) apisRevisions(ctx context.Context, o *apisRevisionsOptions, ref st
 	if o.json {
 		return cmdcore.WriteList(a.Out, revs, nextCursor, nil)
 	}
-	a.printRevisions(ref, revs)
+	a.printRevisions(ctx, ref, revs)
 	return nil
 }
 
@@ -410,7 +411,7 @@ func (a *app) apisOperations(ctx context.Context, o *apisOperationsOptions, ref 
 	if o.json {
 		return cmdcore.WriteList(a.Out, ops, nextCursor, nil)
 	}
-	a.printOperations(ops, hasMore && !o.all)
+	a.printOperations(ctx, ops, hasMore && !o.all)
 	return nil
 }
 

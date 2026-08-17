@@ -27,10 +27,6 @@ type app struct {
 type identityOptions = cmdcore.IdentityOptions
 
 var (
-	dotOK         = cmdcore.DotOK
-	dotWarn       = cmdcore.DotWarn
-	dotDown       = cmdcore.DotDown
-	dotFail       = cmdcore.DotFail
 	valueOr       = cmdcore.ValueOr
 	tokenStatus   = cmdcore.TokenStatus
 	identityLabel = cmdcore.IdentityLabel

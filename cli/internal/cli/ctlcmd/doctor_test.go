@@ -13,6 +13,7 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/config"
 	"github.com/jentic/jentic-one/cli/internal/install"
+	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
 // offlineOpts points the server probe at a closed port so doctor never depends
@@ -153,14 +154,15 @@ func TestDoctorCounts(t *testing.T) {
 }
 
 func TestDotFor(t *testing.T) {
-	if dotFor(statusPass) != dotOK() {
-		t.Error("statusPass should map to dotOK")
+	st := theme.Themes["dark"].Styles()
+	if dotFor(st, statusPass) != st.DotOK() {
+		t.Error("statusPass should map to DotOK")
 	}
-	if dotFor(statusWarn) != dotWarn() {
-		t.Error("statusWarn should map to dotWarn")
+	if dotFor(st, statusWarn) != st.DotWarn() {
+		t.Error("statusWarn should map to DotWarn")
 	}
-	if dotFor(statusFail) != dotFail() {
-		t.Error("statusFail should map to dotFail")
+	if dotFor(st, statusFail) != st.DotFail() {
+		t.Error("statusFail should map to DotFail")
 	}
 }
 
