@@ -110,7 +110,7 @@ func (a *app) doctorE(ctx context.Context, opts *doctorOptions) error {
 	d.checkConfigValidity()
 	d.checkServer()
 	d.checkAgent()
-	d.checkLocalAgent(cfg)
+	d.checkLocalAgent()
 
 	if opts.json || !cmdcore.StdoutIsTerminal() {
 		// Aligned with the jentic-side JSONOrPretty default (UX-5): machine
@@ -359,7 +359,7 @@ func (d *doctor) checkAgent() {
 // the operator's own uid — the boundary the whole isolation model exists to
 // establish. It is read-only and, like the rest of doctor, keeps warnings at a
 // zero exit so it stays CI-safe.
-func (d *doctor) checkLocalAgent(cfg *config.FileConfig) {
+func (d *doctor) checkLocalAgent() {
 	const section = "Local agent"
 
 	for _, p := range localagent.AgentUserPrereqs() {
@@ -370,7 +370,14 @@ func (d *doctor) checkLocalAgent(cfg *config.FileConfig) {
 		d.add(section, p.Name, statusWarn, p.Reason, p.Hint)
 	}
 
-	acct, hasAcct := cfg.AgentAccount()
+	// The account record lives in the XDG agent state (with a read-only legacy
+	// fallback). A load failure just skips the account checks — the prereq rows
+	// above already rendered, and doctor must stay warn-only.
+	st, err := config.LoadAgentState(d.app.Paths)
+	if err != nil {
+		return
+	}
+	acct, hasAcct := st.AgentAccount()
 	if !hasAcct || !acct.AccountCreated {
 		return
 	}

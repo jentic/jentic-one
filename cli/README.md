@@ -24,7 +24,7 @@ Run `jenticctl` or `jentic` (no args) for the grouped command list, or
 | `jentic` | **Identity & access** | `register` · `bootstrap` · `logout` · `context` · `env` · `identity` · `migrate` | Each identity is an agent keypair scoped to an environment; a **context** binds environment + identity + mode and is what commands act through. Register an agent (Ed25519 + RFC 7523), switch/inspect contexts, and `migrate` a legacy `~/.jentic` profile store into the XDG layout. (The old `profile` command was removed — use `context`; run `jentic migrate` to bring a legacy `~/.jentic` profile store across.) |
 | `jentic` | **APIs** | `catalog` · `apis` · `endpoints` · `credentials` | Browse, search, and import APIs from the public catalog, then manage the ones in your local registry — revisions, operations, promote/archive, spec download — with interactive TUI browsers. `endpoints` prints the platform's own endpoint + scope reference; `credentials` lists the credentials the control plane holds. |
 | `jentic` | **Find and run operations** | `search` · `inspect` · `execute` · `access` · `history` · `events` · `api` | The agent loop: find imported operations, inspect their method/params/schemas, and call them through the broker. `access` files/tracks access requests (`whoami` · `request` · `list` · `status` · `withdraw` · `refresh`); `history export` audits a trace; `events watch` streams live events; `api` is a `gh api`-style authenticated passthrough to any control-plane route (self-describing via `api ops` / `api describe`). |
-| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. |
+| `jentic` | **Local agent client** | `skill` · `run` · `reset` · `doctor` | `skill` installs the "how to use Jentic" skill into agent runtimes (Claude Code, Cursor, Codex, …); `run` launches a coding agent in an isolated local account; `reset` wipes local state; `doctor` is the agent-side read-only self-check. Flow + examples: [`docs/local-agent.md`](../docs/local-agent.md). |
 | `jentic` | **Administration** | `admin` · `theme` | Manage OAuth provider config and the persisted color theme. |
 
 The table mirrors the CLI's own command groups (what `jentic` with no args
@@ -526,7 +526,10 @@ State lives in the XDG layout (see below): the config in
 Machines with an existing `~/.jentic` profile store from a pre-activation CLI
 are **read-only** to this release until you run `jentic migrate`, which copies
 the profile(s) into the XDG context model (leaving `~/.jentic` intact apart from
-a `MIGRATED` marker). Until you migrate, non-exempt commands stop and point you
+a `MIGRATED` marker). It also adopts a legacy local-agent `agent_account:`
+record from `~/.jentic/config.yaml` into `~/.config/jentic/agent-account.yaml`
+(as does the first `jentic run`/`jentic reset` write, so localagent keeps no
+state in `~/.jentic`). Until you migrate, non-exempt commands stop and point you
 at `jentic migrate` (see the migrate gate). The V1 `register --profile` /
 `--base-url` onboarding flow has been **removed** in the activation release —
 there is no in-place V1 register/logout/status; migrate first, then use the V2
@@ -580,9 +583,10 @@ Directory spec, and `jentic migrate` copies a legacy profile store into it
 (leaving `~/.jentic` untouched apart from a `MIGRATED` marker):
 
 ```
-~/.config/jentic/config.yaml    # environments, identities, contexts, active_context, theme
-~/.local/state/jentic/          # per-identity key material and cached tokens
-~/.cache/jentic/                # disposable caches
+~/.config/jentic/config.yaml         # environments, identities, contexts, active_context, theme
+~/.config/jentic/agent-account.yaml  # local-agent account record + directory grants (see docs/local-agent.md)
+~/.local/state/jentic/               # per-identity key material and cached tokens
+~/.cache/jentic/                     # disposable caches
 ```
 
 `config.yaml` here is a different document from the legacy one: it declares

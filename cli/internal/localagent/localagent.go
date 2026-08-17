@@ -178,14 +178,33 @@ func DefaultHomeDir(agentUser string) string {
 	return "/opt/" + agentUser
 }
 
-// AgentConfigDir returns the agent's own jentic config directory (~/.jentic
-// inside the agent's home). This is the single source of truth for a self-user
-// agent's platform identity — the operator's config only references it (see
-// config.LocalAgent.ConfigDir). It matches the default JENTIC_HOME layout
-// (<home>/.jentic) so the agent, running as itself, finds its identity with no
-// extra configuration.
+// AgentConfigDir returns the agent's own LEGACY jentic config directory
+// (~/.jentic inside the agent's home) — the V1 home of a self-user agent's
+// platform identity, matching the default JENTIC_HOME layout. Current releases
+// export the agent's identity into its home's XDG store instead; this remains
+// only as the legacy entry in AgentIdentityDirs so reset keeps clearing it.
 func AgentConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".jentic")
+}
+
+// AgentIdentityDirs returns every agent-home location that holds the agent's
+// own jentic identity — the registration, tokens, and Ed25519 signing key:
+//
+//   - <home>/.config/jentic       (context export: minimal config + key)
+//   - <home>/.local/state/jentic  (context export: tokens)
+//   - <home>/.jentic              (legacy V1 identity/profiles)
+//
+// `jentic reset` removes all of them even when the home is KEPT, so credential
+// material handed to the agent never survives a teardown in the re-owned home,
+// and a later `jentic bootstrap` that reuses the home can't resurrect a
+// torn-down registration. Every path is a fixed join under the (validated)
+// home, so the list is safe to hand to a privileged rm.
+func AgentIdentityDirs(homeDir string) []string {
+	return []string{
+		filepath.Join(homeDir, ".config", "jentic"),
+		filepath.Join(homeDir, ".local", "state", "jentic"),
+		AgentConfigDir(homeDir),
+	}
 }
 
 // AgentLocalBinDir returns the agent's own ~/.local/bin — the home-local
@@ -600,15 +619,22 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 	return exec.Command("sudo", "rm", "-rf", homeDir) //nolint:gosec // homeDir is a resolved, config-recorded path; deletion is explicitly confirmed by the caller.
 }
 
-// RemoveAgentIdentityCmd permanently removes the agent's own jentic config dir
-// (its ~/.jentic — the reference-model home of the agent's platform identity: the
-// registration, tokens, and signing key). `jentic reset` runs it even when the
-// agent's home is KEPT, so a later `jentic bootstrap` that reuses the same home
-// can't resurrect a torn-down (now-archived) agent registration from a stale
-// ~/.jentic. It is a no-op when the dir is absent. Runs as root because the dir is
-// owned by the agent account (and is settled before the home re-own/delete step).
-func RemoveAgentIdentityCmd(configDir string) *exec.Cmd {
-	return exec.Command("sudo", "rm", "-rf", configDir) //nolint:gosec // configDir is the config-recorded agent ~/.jentic path.
+// RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
+// dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
+// legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
+// runs it even when the agent's home is KEPT, so a later `jentic bootstrap`
+// that reuses the same home can't resurrect a torn-down (now-archived) agent
+// registration, and no credential material outlives the account in the
+// re-owned home. `rm -f` makes absent dirs a no-op. Runs as root because the
+// dirs are owned by the agent account (and are settled before the home
+// re-own/delete step). Returns nil when there is nothing to remove. `--` ends
+// option parsing so a path can never be mistaken for an rm flag.
+func RemoveAgentIdentityCmd(dirs []string) *exec.Cmd {
+	if len(dirs) == 0 {
+		return nil
+	}
+	args := append([]string{"rm", "-rf", "--"}, dirs...)
+	return exec.Command("sudo", args...) //nolint:gosec // dirs are fixed joins under the validated, config-recorded agent home.
 }
 
 // RemoveAgentProfileCmd deletes a single profile directory (key, tokens, metadata)

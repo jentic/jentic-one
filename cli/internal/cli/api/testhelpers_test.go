@@ -17,7 +17,9 @@ import (
 // testApp builds an api-tree receiver backed by a throwaway cmdcore.App with a
 // temp-dir Paths and buffered streams, matching the pre-split white-box helper.
 // The approval-poll cadence is shrunk to milliseconds so pending-path register/
-// access tests don't burn real wall-clock seconds.
+// access tests don't burn real wall-clock seconds. It deliberately does NOT
+// touch XDG_CONFIG_HOME (tests re-build apps mid-test and must share one store);
+// any test that reaches the XDG config or agent state calls withXDG itself.
 func testApp(t *testing.T) *app {
 	t.Helper()
 	a := &app{App: &cmdcore.App{

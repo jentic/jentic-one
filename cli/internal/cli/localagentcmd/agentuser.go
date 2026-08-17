@@ -30,10 +30,8 @@ type agentUserFields struct {
 }
 
 // agentSetup is the outcome of the agent-user step, returned to the caller
-// (bootstrapE) so it can target the platform registration correctly. When an
-// account was created, the agent's jentic identity must be written into the
-// agent's own config dir (the single source of truth) rather than the operator's,
-// so the caller redirects bootstrapIdentity there and hands the dir to the agent.
+// (bootstrapE) so it can target the platform registration correctly and offer
+// to start a session in the new account's home.
 type agentSetup struct {
 	// created reports whether a dedicated Unix account now backs the agent.
 	created bool
@@ -46,9 +44,6 @@ type agentSetup struct {
 	// homeDir is the created agent's home directory (empty unless created), used to
 	// offer starting a session there.
 	homeDir string
-	// configDir is the agent's ~/.jentic, where its identity is written and owned.
-	// Empty unless created.
-	configDir string
 }
 
 // setupAgentUser is the shared agent-user-account step folded into both
@@ -81,7 +76,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// Non-interactive (--yes / no TTY): never trigger sudo unattended. Skip, but
 	// leave a discoverable pointer and record that no account was created.
 	if !interactive {
-		a.recordAgentAccount(defaultName, "", "", false)
+		a.recordAgentAccount(defaultName, "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Skipping agent-user isolation (non-interactive). Create it later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -106,7 +101,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 	if !create {
-		a.recordAgentAccount(defaultName, "", "", false)
+		a.recordAgentAccount(defaultName, "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Keeping same-user. You can isolate later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -153,13 +148,13 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// The privileged half (Unix user, home, ACLs, sudoers) now exists, so RECORD the
 	// account immediately — before the best-effort seeding below. Seeding can fail (a
 	// provider-config copy hiccup, a home-lookup race) and recording only afterwards
-	// would leave a fully-provisioned account with NO config entry: invisible residue
+	// would leave a fully-provisioned account with NO state entry: invisible residue
 	// that `jentic reset` — which keys off the recorded account — could never tear
 	// down. Recording first makes every created account reclaimable even if a later
-	// step errors. The agent's own jentic config lives in its home (see agentSetup /
-	// ConfigDir), so the operator's config need only reference it.
-	configDir := localagent.AgentConfigDir(fields.homeDir)
-	a.recordAgentAccount(fields.name, fields.homeDir, configDir, true)
+	// step errors. The agent's own jentic identity lives in its home's XDG store
+	// (exported per-launch by `jentic run`), so the operator's state need only
+	// record the account name and home.
+	a.recordAgentAccount(fields.name, fields.homeDir, true)
 
 	// Seed config/provider per the operator's toggles — best-effort, since the account
 	// is already usable without it (the operator can re-seed on `jentic run`) and a
@@ -178,7 +173,6 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		agentID:   agentID,
 		agentUser: fields.name,
 		homeDir:   fields.homeDir,
-		configDir: configDir,
 	}, nil
 }
 
@@ -208,7 +202,7 @@ func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localag
 	// Record the declined-by-necessity account up front so that even an aborted
 	// prompt (Ctrl-C) leaves the same consistent not-created state as an explicit
 	// "no".
-	a.recordAgentAccount(defaultName, "", "", false)
+	a.recordAgentAccount(defaultName, "", false)
 
 	sameUser := true
 	if err := prompt.RunConfirm(huh.NewConfirm().
@@ -394,26 +388,26 @@ func (a *Cmd) seedAgentConfig(ctx context.Context, fields agentUserFields, desc 
 // the AccountCreated/Enabled booleans the rest of the CLI keys off. A fresh entry
 // is stamped with CreatedAt; an existing one keeps its original stamp and its
 // recorded grants. Enabled tracks AccountCreated: creating the account enables it,
-// and recording a declined (created=false) account leaves it disabled.
-func (a *Cmd) recordAgentAccount(userName, homeDir, configDir string, created bool) {
-	// Route through Mutate: it reloads under the config lock before applying, so a
-	// concurrent grant that appended a dir to GrantedDirs isn't clobbered by this
-	// record write (which preserves whatever grants the reloaded config carries).
-	if _, err := config.Mutate(a.Paths, func(cfg *config.FileConfig) error {
-		acct, existed := cfg.AgentAccount()
+// and recording a declined (created=false) account leaves it disabled. New
+// records deliberately carry no config_dir — the legacy per-agent ~/.jentic is
+// dead; the agent's identity is exported into its home's XDG store per launch.
+func (a *Cmd) recordAgentAccount(userName, homeDir string, created bool) {
+	// Route through MutateAgentState: it reloads under the state lock before
+	// applying, so a concurrent grant that appended a dir to GrantedDirs isn't
+	// clobbered by this record write (which preserves whatever grants the
+	// reloaded state carries).
+	if _, err := config.MutateAgentState(a.Paths, func(st *config.AgentState) error {
+		acct, existed := st.AgentAccount()
 		acct.User = userName
 		acct.AccountCreated = created
 		acct.Enabled = created
 		if homeDir != "" {
 			acct.HomeDir = homeDir
 		}
-		if configDir != "" {
-			acct.ConfigDir = configDir
-		}
 		if !existed || acct.CreatedAt == "" {
 			acct.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		}
-		cfg.SetAgentAccount(acct)
+		st.SetAgentAccount(acct)
 		return nil
 	}); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not save the agent account: %v", err))

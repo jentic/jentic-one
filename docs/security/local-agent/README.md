@@ -11,6 +11,11 @@ machine**, where that guarantee doesn't hold — a compromised or prompt-injecte
 agent can read the keys straight off disk. These docs work through isolating the
 agent as its own unprivileged Unix user so the isolated posture is the default.
 
+> **Just want to use it?** The operator-facing guide — flow, examples, and
+> troubleshooting for `jentic bootstrap` / `jentic run` / `jentic reset` — is
+> [`docs/local-agent.md`](../../local-agent.md). The documents below are the
+> security analysis and design rationale behind it.
+
 | Doc | What it covers |
 | --- | -------------- |
 | [`analysis.md`](analysis.md) | **The problem.** The same-user attack paths (AP-1…AP-4), why isolating the *agent* is strictly stronger than isolating Jentic One, and the state before this work. |

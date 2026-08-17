@@ -1,9 +1,7 @@
 package config
 
 import (
-	"fmt"
 	"os"
-	"sync"
 	"testing"
 )
 
@@ -146,150 +144,10 @@ func TestSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAgentAccountRoundTrip(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	cfg, err := Load(paths)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.HasAgentUser() {
-		t.Fatal("fresh config should have no agent user")
-	}
-	cfg.SetAgentAccount(AgentAccount{
-		User:           "alice-local-agent",
-		AccountCreated: true,
-		Enabled:        true,
-		HomeDir:        "/Users/Shared/alice-local-agent",
-		ConfigDir:      "/Users/Shared/alice-local-agent/.jentic",
-	})
-	if !cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected AddGrantedDir to report a new grant")
-	}
-	if cfg.AddGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected duplicate AddGrantedDir to be idempotent")
-	}
-	if err := cfg.Save(paths); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	if !got.HasAgentUser() {
-		t.Fatal("expected an enabled agent account after reload")
-	}
-	acct, ok := got.AgentAccount()
-	if !ok {
-		t.Fatal("agent account not persisted")
-	}
-	if acct.User != "alice-local-agent" || acct.ConfigDir == "" {
-		t.Errorf("unexpected account: %+v", acct)
-	}
-	if !acct.AccountCreated || !acct.Enabled {
-		t.Error("expected AccountCreated and Enabled to round-trip as true")
-	}
-	if len(acct.GrantedDirs) != 1 {
-		t.Fatalf("granted dirs = %v", acct.GrantedDirs)
-	}
-
-	if !got.RemoveGrantedDir("/Users/Shared/alice-local-agent/work") {
-		t.Fatal("expected RemoveGrantedDir to report removal")
-	}
-	if got.RemoveGrantedDir("/nope") {
-		t.Fatal("did not expect removal of an absent dir")
-	}
-	acct, _ = got.AgentAccount()
-	if len(acct.GrantedDirs) != 0 {
-		t.Errorf("granted dirs after remove = %v", acct.GrantedDirs)
-	}
-}
-
-// TestMutateReloadsBeforeApplying proves Mutate does a fresh read UNDER the lock,
-// so a mutation applied to a STALE in-memory config (one loaded before another
-// writer committed) doesn't clobber the committed change. Here a first Mutate adds
-// grant A; a second Mutate — driven from a config loaded before A existed — adds
-// grant B. Both must survive, because the second reloads (seeing A) before adding
-// B rather than saving its stale two-grant-less snapshot.
-func TestMutateReloadsBeforeApplying(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	base := &FileConfig{}
-	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
-	if err := base.Save(paths); err != nil {
-		t.Fatalf("seed save: %v", err)
-	}
-
-	// Writer 1 commits grant A.
-	if _, err := Mutate(paths, func(c *FileConfig) error {
-		c.AddGrantedDir("/opt/a/A")
-		return nil
-	}); err != nil {
-		t.Fatalf("mutate A: %v", err)
-	}
-
-	// Writer 2 adds grant B. Even though it's a fresh Mutate, its fn reloads the
-	// on-disk config first, so it sees A and appends B rather than replacing.
-	got, err := Mutate(paths, func(c *FileConfig) error {
-		c.AddGrantedDir("/opt/a/B")
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("mutate B: %v", err)
-	}
-	acct, _ := got.AgentAccount()
-	if len(acct.GrantedDirs) != 2 {
-		t.Fatalf("expected both grants to survive, got %v", acct.GrantedDirs)
-	}
-}
-
-// TestMutateConcurrentContention exercises the advisory lock under REAL
-// contention (review gap: the lock had no contention test, and the Windows
-// LockFileEx path was never executed beyond smoke). N goroutines — separate
-// lock-file descriptors, exactly like N concurrent jentic processes — each
-// Mutate a distinct granted dir. The lock serialises the read-modify-write
-// cycles, so ALL N grants must survive; any lost update means two writers
-// interleaved inside their critical sections. Runs on every platform, so CI's
-// Windows job exercises lock_windows.go for real.
-func TestMutateConcurrentContention(t *testing.T) {
-	paths := Paths{Root: t.TempDir()}
-	base := &FileConfig{}
-	base.SetAgentAccount(AgentAccount{User: "a", AccountCreated: true, Enabled: true})
-	if err := base.Save(paths); err != nil {
-		t.Fatalf("seed save: %v", err)
-	}
-
-	const writers = 16
-	var wg sync.WaitGroup
-	errs := make(chan error, writers)
-	for i := range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := Mutate(paths, func(c *FileConfig) error {
-				c.AddGrantedDir(fmt.Sprintf("/opt/a/dir-%02d", i))
-				return nil
-			})
-			errs <- err
-		}()
-	}
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("concurrent Mutate: %v", err)
-		}
-	}
-
-	got, err := Load(paths)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	acct, _ := got.AgentAccount()
-	if len(acct.GrantedDirs) != writers {
-		t.Fatalf("lost update under contention: %d/%d grants survived: %v",
-			len(acct.GrantedDirs), writers, acct.GrantedDirs)
-	}
-}
+// The agent-account record and its Mutate-style contention guarantees moved to
+// the XDG agent state; see agentstate_test.go. FileConfig keeps only the legacy
+// read-side (the Agent fields parse) covered by TestLegacyAgentFieldsStillParse
+// there.
 
 // TestMutateErrorLeavesConfigUntouched proves a failing mutation does not write:
 // the on-disk config is unchanged when fn returns an error.

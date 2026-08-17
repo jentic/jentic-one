@@ -3,7 +3,8 @@
 > Builds on the [analysis](analysis.md). The structural fix is: run a CLI coding
 > agent (Claude Code is the worked example) under a **dedicated, unprivileged OS
 > user** distinct from the operator's login user, so it cannot read the
-> operator's `~/.jentic` keyset, DB, browser profile, or Keychain. It reaches
+> operator's jentic keyset (`~/.config/jentic`, `~/.local/state/jentic`, legacy
+> `~/.jentic`), DB, browser profile, or Keychain. It reaches
 > Jentic One the way any client does — loopback HTTP with its own scoped token.
 >
 > The raw mechanism is a handful of `sysadminctl`/`chmod`/`sudo -u` lines, but
@@ -41,17 +42,16 @@ prompts. Management
 shortcuts:
 
 ```bash
-jentic profile view                      # the active profile's access map (an agent's own view)
 jentic run claude --list-grants          # show every directory the agent can reach
 jentic run claude --grant   ~/work/api   # grant a directory, then exit
 jentic run claude --revoke  ~/work/api   # remove a grant, then exit
 ```
 
-`jentic profile view` with no name resolves the currently active profile and
-prints its access map non-interactively, so an agent can inspect exactly what it
-can reach without knowing its own profile name (`jentic access whoami` points at
-it for the filesystem side of "what can I do?"). Any command that prints the
-directory tree ends with a one-line reminder of how to revoke a grant.
+Any command that prints the directory tree ends with a one-line reminder of how
+to revoke a grant. (The V1 `jentic profile view` access map was removed with the
+`profile` surface in the V2 activation; `--list-grants` is how the agent's
+filesystem reach is inspected, and `jentic access whoami` covers the API side of
+"what can I do?".)
 
 ### Forwarding arguments to the agent
 
@@ -91,7 +91,8 @@ an interactive launch — forwarding argv does not widen the sandbox.
 
 If the agent runs as `<operator>-local-agent` and the operator is their normal
 login user, then by Unix ownership (plus macOS TCC for protected data) the agent
-user cannot read the operator's `~/.jentic` keyset, DB files, browser profile, or
+user cannot read the operator's jentic keyset (`~/.config/jentic`,
+`~/.local/state/jentic`, legacy `~/.jentic`), DB files, browser profile, or
 Keychain. That closes AP-1–AP-4 in one move — the agent can only reach Jentic One
 over loopback with its own scoped token.
 
@@ -111,14 +112,15 @@ deliberately does **not** partition the agent account against itself. Two limits
 are worth calling out plainly, because operators must not assume protections that
 aren't there:
 
-1. **No enforced boundary *between* agent profiles.** There is one shared agent
-   Unix user, and every profile's identity lives in that one account's home. Any
-   agent launched through `jentic run` — under any profile — runs as that same uid
-   and can therefore read **every** agent profile in the shared home (all keys,
-   tokens, and registrations), not just the one it was checked out with. Profiles
-   are an *identity-selection* convenience, **not** a security compartment. A hard
-   boundary between profiles (e.g. a Unix user per profile, or per-profile
-   confinement of `<config_dir>/profiles`) is a possible future addition; today it
+1. **No enforced boundary *between* agent identities.** There is one shared agent
+   Unix user, and every identity exported to the account lives in that one
+   account's home. Any agent launched through `jentic run` — under any context —
+   runs as that same uid and can therefore read **every** identity in the shared
+   home (all keys, tokens, and registrations), not just the one it was launched
+   with. Contexts/identities are an *identity-selection* convenience, **not** a
+   security compartment. A hard
+   boundary between identities (e.g. a Unix user per identity, or per-identity
+   confinement of the account's store) is a possible future addition; today it
    does not exist.
 
 2. **Secrets in the agent's environment are not secured.** Anything in the agent
@@ -185,7 +187,7 @@ their agent, `jentic bootstrap` and `jenticctl wizard` share one step (the same
 way they share the skill step: the wizard delegates to bootstrap, so the step
 lives in the bootstrap flow and both reach it) that offers to isolate the agent
 behind a dedicated Unix user. There is exactly **one** such account per operator,
-shared across every agent binary and profile; the step is deliberately
+shared across every agent binary and identity; the step is deliberately
 **sudo-last**: it asks *"Create a dedicated user account for your local agent?
 (requires sudo)"* **before any privileged command runs**, so an operator who
 declines never triggers a password prompt and no half-provisioned state is left
@@ -202,7 +204,7 @@ each toggle **names the exact files it would copy** ("Will copy: ~/.claude,
 defaults to Yes only when there is actually something to copy (otherwise it offers
 "No" with a *none found* note). On confirm it runs, idempotently and with platform
 detection, what is otherwise a short manual recipe. After registration completes
-and the profile summary is shown, `bootstrap` then **offers to start a session in
+and the identity summary is shown, `bootstrap` then **offers to start a session in
 the agent's home right there** — displaying `cd <agent home>; jentic run <agent>`
 and, on yes, launching it; declining leaves the command printed for later. For a
 single-user machine that recipe is:
@@ -281,46 +283,46 @@ Three things worth calling out, because they're the load-bearing parts:
   access without re-running anything. No group, no world access.
 - **Per-user auth is expected, not a bug.** The agent gets its own `$HOME`, so its
   own Claude config/history (`~/.claude`, `~/.claude.json`), its own login
-  Keychain, and its own `jentic` identity (Ed25519 key under `~/.jentic`). The
+  Keychain, and its own `jentic` identity (the per-launch context export under its
+  own `~/.config/jentic` / `~/.local/state/jentic`). The
   agent authenticates its own tools once, as itself — it can't ride the operator's
   sessions, which is the boundary working as designed.
 
 ### Where the platform identity is written — registration after the user decision
 
 The agent-user question is asked **before** the platform registration (DCR) so that
-by the time we mint and persist a jentic identity we already know *which config it
+by the time we mint and persist a jentic identity we already know *which store it
 belongs in*. Registration is deliberately sequenced after the isolation decision,
 not before it.
 
 The consequence is a small but important targeting rule for **every** command that
-writes an agent profile (bootstrap today; any create/update later):
+writes an agent identity (bootstrap today; any create/update later):
 
-- **Self-user agent (isolation accepted).** The agent's jentic identity — its
-  Ed25519 key, agent ID, and tokens — is written **once, into the shared account's
-  own `~/.jentic`** (`<agent home>/.jentic`), which belongs to the agent user. That
-  directory is the **single source of truth** for every agent-owned identity and
-  profile. The operator's config keeps only a **reference** to it: the single
-  `agent_account:` object records `config_dir` (a pointer to the agent's
-  `~/.jentic`) and `home_dir` (the agent's home). There is **no dual-write** — the
-  operator's config never holds a second copy of the identity, only the pointer and
-  the home metadata needed to find and manage it.
+- **Self-user agent (isolation accepted).** The identity minted by bootstrap lives
+  in the **operator's own XDG store** (`~/.config/jentic`, `~/.local/state/jentic`)
+  like any other. The agent account receives identity material through exactly one
+  channel: at every launch, `jentic run` exports the operator's *active context* —
+  a minimal config, the env-scoped key, and tokens — into the **agent home's own
+  XDG store** (`<agent home>/.config/jentic`, `<agent home>/.local/state/jentic`),
+  owned by the agent (see "`jentic run`" below). That per-launch export is a
+  refresh, not a second durable copy: the operator's store stays the single source
+  of truth, and the agent-side copy is overwritten on the next launch and removed
+  by `jentic reset`. The operator's side keeps only the management metadata: the
+  single `agent_account:` object (account name, `home_dir`, grant inventory) in the
+  operator's agent state at `~/.config/jentic/agent-account.yaml`.
 - **Same-user agent (isolation declined).** Nothing changes: the identity lives in
-  the operator's own `~/.jentic` as usual, and `config_dir` stays empty.
+  the operator's own store as usual, and there is nothing to export — the agent
+  shares the operator's home and reads the same store.
 
-Mechanically, bootstrap targets the write by re-rooting the config paths at the
-agent's `~/.jentic` for the identity + default-profile write, then `chown -R`s that
-directory to the agent so it owns its own `0600` key and tokens (the operator
-created the files, so they start operator-owned and must be handed over). This
-"reference, not copy" model is what keeps the multi-config problem simple: one
-writer, one source of truth, one pointer.
+This "export, not copy" model is what keeps the multi-config problem simple: one
+writer, one source of truth, one refreshed projection.
 
-> **Future improvement — dual-write / propagation.** If a later need arises to keep
-> a *projection* of agent state in the operator's config (e.g. so operator-side
-> tooling can list the account's profiles without reading the agent's `~/.jentic`),
-> that is a deliberate follow-up, not the current behaviour. For now, operator
-> commands that touch a self-user agent write **only** to the shared account's
-> config and update the operator-side reference/metadata — never a second identity
-> copy.
+> **Legacy note — `config_dir`.** Older releases wrote the agent's identity into a
+> V1-style config root inside the agent's home (`<agent home>/.jentic`) and
+> recorded a `config_dir` pointer to it in the operator's config. New accounts no
+> longer record `config_dir`; the field is retained read-only so `jentic migrate`
+> can rescue profiles from an old agent home and `jentic reset` keeps removing the
+> legacy directory on teardown.
 
 > **Future improvement — default agent home under the operator's home.** Today the
 > agent home lives under a shared parent (`/Users/Shared/<agent>`, `/opt/<agent>`).
@@ -413,8 +415,8 @@ jentic run -- <agent> [agent-args...]
 - **`<agent>`** — a known **runnable** coding-agent identifier (`claude`, `codex`,
   `cursor`, `hermes`), selecting only the **binary/descriptor** (binary name, how
   to detect it, how to install/copy it). It does **not** select an account or an
-  identity: there is one shared agent account, and identity is chosen by the
-  checked-out profile (see below). `generic` is a **skill-only** operator — it
+  identity: there is one shared agent account, and identity comes from the
+  operator's active context (see below). `generic` is a **skill-only** operator — it
   names an `AGENTS.md` placement target for `jentic skill`, has no binary, and is
   rejected by `jentic run` with a message that says so.
 - **`[path]`** — working directory for the session; defaults to the current dir.
@@ -426,23 +428,28 @@ jentic run -- <agent> [agent-args...]
   [Forwarding arguments to the agent](#forwarding-arguments-to-the-agent) for the
   trailing (`jentic run claude -- …`) and leading (`jentic run -- claude …`) forms.
 
-State — whether the shared agent account exists, its user/home/config-dir, and its
-consolidated directory grants — lives in the operator's own `jentic` config under
+State — whether the shared agent account exists, its user/home, and its
+consolidated directory grants — lives in the operator's own **agent state** at
+`~/.config/jentic/agent-account.yaml`, under
 the single `agent_account:` object. There is exactly one account per operator, so
 this is one object, not a per-agent map; the grants are one `granted_dirs` list
 because they are one uid's ACLs regardless of which binary made them. Nothing
-secret: paths and names, not keys. Reading/writing it is a plain load-mutate-save
-of the existing operator config, so `jentic run` never has to re-derive or
-re-prompt for the account's details.
+secret: paths and names, not keys. Reading/writing it is a lock-guarded
+load-mutate-save of that file (with a read-only fallback to a record left in the
+legacy `~/.jentic/config.yaml` by older releases, adopted on the first write), so
+`jentic run` never has to re-derive or re-prompt for the account's details.
 
-**Identity comes from the checked-out profile, not the `<agent>` argument.**
-Registering/bootstrapping a profile (when the account exists) writes it into the
-shared agent home's `<config_dir>/profiles`, chowns it to the agent, and **checks
-it out** — sets the agent home's own `default_profile` (in
-`<config_dir>/config.yaml`). `jentic run` injects `JENTIC_PROFILE` = that
-checked-out profile into the confined session, so the launched agent (and any
-`jentic` it runs) acts as that identity. `jentic run --profile <name>` overrides
-the checked-out default for a single invocation.
+**Identity comes from the operator's active context, not the `<agent>` argument.**
+Before every launch, `jentic run` exports the active context into the agent
+home's own XDG store (`<agent home>/.config/jentic` + `.local/state/jentic`): a
+minimal config holding exactly one environment/identity/context — mode forced to
+`agent` so command fencing holds inside the session — plus the env-scoped key
+and token state (0600, fsynced), chowned to the agent. The `jentic` the agent
+runs resolves that store from disk like any other user, so it acts as the
+operator's current identity with no flags and no environment-variable injection;
+switching contexts as the operator re-points the next launch automatically, with
+no drifting second copy. (This replaces the V1 model of profile check-out plus a
+`JENTIC_PROFILE` variable injected into the session.)
 
 What it does, in order:
 
@@ -616,23 +623,25 @@ tokens. Two further details from live testing, both baked into `jentic run`:
   it, bash emits `getcwd: Permission denied` noise. `jentic run` sets the child's
   dir to `/` for every agent-user invocation.
 
-## `jentic reset` — tear down the account, or remove a profile
+## `jentic reset` — tear down the account and this machine's identity state
 
 Onboarding (`bootstrap`/`wizard`) and `jentic run` accumulate real system state on
 the operator's machine: a Unix account and its home, a copied/installed agent binary,
 seeded config and provider credentials, named-user ACLs stamped across the
-operator's home (traverse grants + leaf grants), a `sudoers` drop-in, agent
-profiles in the account's home, and the single `agent_account:` object in the
-operator's `jentic` config. `jentic reset` removes that state — the inverse of
+operator's home (traverse grants + leaf grants), a `sudoers` drop-in, the agent's
+exported identity in the account's home, and the single `agent_account:` object in
+the operator's agent state. `jentic reset` removes that state — the inverse of
 setup — so an operator can cleanly decommission the agent account (or start over)
-without hand-reversing each `chmod`/`sysadminctl`. Because there is **one** shared
-account, its argument is now a **profile** name (removing a single profile), not an
-agent identifier; a bare `jentic reset` tears the whole account down.
+without hand-reversing each `chmod`/`sysadminctl`. It takes **no argument**: a
+`jentic reset` tears the whole account down and wipes this machine's jentic
+identity state. To remove a single context or identity instead, use
+`jentic context delete` / `jentic identity delete` — finer-grained removal is
+not reset's job.
 
 ### It requires sudo to complete — but you don't launch it with `sudo`
 
 ```bash
-jentic reset [profile] [--delete-home] [--force]
+jentic reset [--delete-home] [--force]
 ```
 
 Deleting a user account, removing another user's home, and stripping ACLs all
@@ -650,11 +659,10 @@ password prompt is never a surprise.
 
 Running as the operator (rather than under `sudo`) also removes a whole class of
 bugs: there is no `SUDO_USER` indirection to unwind and no risk of reading root's
-`~/.jentic` instead of the operator's — the current user simply *is* the operator.
+config trees instead of the operator's — the current user simply *is* the operator.
 
-With no argument it tears down the whole shared agent account (and wipes the
-operator's own config — the full clean slate); with a `[profile]` argument it
-removes just that one profile.
+It tears down the whole shared agent account (and wipes the operator's own
+identity state — the full clean slate).
 
 ### It shows the full plan before touching anything
 
@@ -677,9 +685,11 @@ preserved or deleted:
 
   Files & config to delete:
     - sudoers drop-in        /etc/sudoers.d/jentic-agent
-    - agent_account: object in ~/.jentic/config.yaml
-    - every agent profile in /Users/Shared/alice-local-agent/.jentic/profiles
-    - your own profiles under ~/.jentic/profiles + default_profile
+    - agent_account: object in ~/.config/jentic/agent-account.yaml
+    - the agent's identity dirs  /Users/Shared/alice-local-agent/.config/jentic,
+      /Users/Shared/alice-local-agent/.local/state/jentic (+ any legacy .jentic)
+    - your own identity state under ~/.config/jentic + ~/.local/state/jentic
+      (and any legacy V1 profile tree under ~/.jentic)
 
   Account to delete:
     - Unix user  alice-local-agent  (uid 502)
@@ -704,15 +714,14 @@ Type 'reset' to confirm, or anything else to abort: reset
 Design requirements baked into that plan:
 
 - **Everything is listed before the confirm**, resolved from two sources: the
-  `agent_account:` config object (user, home, config-dir, granted dirs) *and* a
-  live re-scan of the on-disk ACLs, so grants that drifted from the config are
+  `agent_account:` state object (user, home, granted dirs) *and* a
+  live re-scan of the on-disk ACLs, so grants that drifted from the record are
   still caught and shown. If the two disagree, `reset` shows both and flags the
   drift.
 - **A "danger zone"-style banner** headlines the irreversible nature, and
   confirmation is a **typed token**, not a keypress — the same bar as a dangerous
-  directory grant. A full clean slate (bare `jentic reset`) is confirmed by typing
-  **`reset`**; a single-profile `jentic reset <profile>` is confirmed by typing the
-  profile name. `--yes` does **not** skip it (there is no safe default for
+  directory grant. The full clean slate is confirmed by typing **`reset`**.
+  `--yes` does **not** skip it (there is no safe default for
   destruction); a separate explicit `--force` is the only non-interactive escape
   hatch, intended for scripted teardown.
 - **The agent home is preserved by default and needs a separate, explicit
@@ -743,16 +752,16 @@ Design requirements baked into that plan:
 
 ### Order of operations
 
-This applies to a full-account teardown (bare `jentic reset`, or a
-`jentic reset <profile>` that offered to tear down the account because it removed
-the last agent profile). Remove access before removing the account, so a failure
+Remove access before removing the account, so a failure
 part-way never leaves a live account with dangling grants: (1) drop leaf +
-traverse ACLs; (1c) remove the agent's **own** jentic identity dir — its
-`~/.jentic` (`config_dir`), holding the registration, cached tokens, Ed25519 keys,
-and every agent profile. This is torn down **even when the home is kept**, because
-that directory — not the operator's config — is the reference-model home of the
-agents' platform identities; leaving it behind lets a later `jentic bootstrap` that
-reuses the same home resurrect a torn-down (now-archived) registration. (When the
+traverse ACLs; (1c) remove the agent's **own** jentic identity dirs — the
+exported XDG store (`<agent home>/.config/jentic` with the Ed25519 key,
+`<agent home>/.local/state/jentic` with the cached tokens) plus any legacy
+`<agent home>/.jentic`. These are torn down **even when the home is kept**: the
+credential material handed to the agent must not survive the teardown in the
+soon-to-be-operator-owned home, and leaving a legacy registration behind lets a
+later `jentic bootstrap` that reuses the same home resurrect a torn-down
+(now-archived) registration. (When the
 home is being deleted, step (2)'s recursive `rm` already covers it, so this step is
 skipped.) (2) settle the agent home — **re-own it to the operator** by default, or
 delete it *only* when the separate home confirmation was answered affirmatively (or
@@ -762,8 +771,10 @@ preserves the home unless you explicitly opt into deleting it; (3) remove the
 DirectoryService record with `dscl . -delete /Users/<user>` (which has no
 filesystem side-effect), on Linux with `userdel` **without** `-r` — both leave the
 home in place, so the account goes but the already-settled home stays; (5) remove
-the `agent_account:` object from the operator's config last, flipping `enabled`
-off, so a re-run after a mid-way failure still has the record of what to finish
+the `agent_account:` object from the operator's agent state
+(`~/.config/jentic/agent-account.yaml`, clearing any legacy copy in
+`~/.jentic/config.yaml` too) last, so a re-run after a mid-way failure still has
+the record of what to finish
 cleaning. Each step reports success/failure; a failure stops the run with
 what's already been done and what remains. Note the account-deletion step (4) must
 not remove the home — the obvious macOS tool, `sysadminctl -deleteUser`, deletes it
@@ -781,50 +792,42 @@ continues to the account deletion rather than aborting — otherwise those
 unavoidable files would strand the teardown exactly the way the `-keepHome` bug
 did.
 
-### Scope follows the argument — single profile vs. full clean slate
+### Scope — the full clean slate
 
-Reset's blast radius is decided by whether a **profile** is named, not by a flag:
+`jentic reset` is the full clean slate: it tears down the shared agent account —
+the Unix user, the named-user ACLs, the sudoers drop-in, and the agents'
+identities in the account's home — and then also wipes the operator's **own**
+jentic identity state, so "start over" genuinely returns the machine to zero.
+That state is the XDG store (contexts, environments, identities, keys, and
+tokens under `~/.config/jentic` and `~/.local/state/jentic`) plus any legacy V1
+profile tree under `~/.jentic`. The wipe is purely local — deleting the key and
+tokens already severs this machine's access, so `reset` does **not** attempt to
+revoke tokens server-side (the cached tokens are typically expired, so a revoke
+call would only add `http 401` noise).
 
-- **`jentic reset <profile>`** removes just that one profile. If it is an
-  agent-owned profile and the **last** one in the shared account, `reset` **offers
-  to also tear down the whole account** (grants, sudoers, Unix user, home) — an
-  account with no profiles is dead weight; otherwise the account and its grants are
-  left in place and only that profile is deleted. If the removed profile was the
-  account's checked-out one, the agent home's `default_profile` is cleared;
-  likewise the operator's own `default_profile` is cleared if it named the profile.
-- **`jentic reset`** (no argument) is a full clean slate: it tears down the shared
-  agent account — the Unix user, the named-user ACLs, the sudoers drop-in, and
-  every agent profile in the account's home — and then also wipes the operator's
-  **own** jentic CLI state, so "start over" genuinely returns the machine to zero.
-  Every profile under `~/.jentic/profiles` (each profile's Ed25519 key, cached
-  tokens, and registration metadata) is removed, and `default_profile` in
-  `config.yaml` is cleared. The wipe is purely local — deleting the key and tokens
-  already severs this machine's access, so `reset` does **not** attempt to revoke
-  tokens server-side (the cached tokens are typically expired, so a revoke call
-  would only add `http 401` noise).
-
-This is intuitive — resetting a profile cleans up that profile; resetting
-everything tears down the account and cleans up yourself too — and needs no extra
-flag. Two properties keep the config wipe safe:
+Finer-grained removal is deliberately **not** reset's job: `jentic context
+delete` / `jentic identity delete` remove a single context or identity and leave
+the agent account, its grants, and everything else alone. (The V1
+`jentic reset <profile>` single-profile arm was removed with the profile surface
+in the V2 activation.) Two properties keep the identity wipe safe:
 
 - **Scoped to the invoking account.** Because `reset` runs *as the operator* (never
-  `sudo jentic reset`), the config wipe can only touch the account's own `~/.jentic`
+  `sudo jentic reset`), the wipe can only touch the account's own store
   — it can never reach across into another user's config. This is why the
   responsibility lives here at all: the command already runs as exactly the user
-  whose config is being cleared.
+  whose state is being cleared.
 - **One whole-slate confirmation.** A full reset previews **everything up front** —
-  the account teardown plan *and* the operator's own config wipe (its danger-zone
-  plan lists exactly which profiles will be deleted) — then takes a **single** typed
+  the account teardown plan *and* the operator's own identity wipe (its danger-zone
+  plan lists exactly what will be deleted) — then takes a **single** typed
   **`reset`** acknowledgement to proceed. Having seen the complete blast radius
-  once, one confirmation covers the account and the config wipe together. (The
-  single-profile `jentic reset <profile>` flow confirms with the typed **profile**
-  name instead.) `--force` skips the prompt for scripted use; without a TTY and
-  without `--force` it refuses. A bare `jentic reset` with nothing to remove — no
-  account and no config — is a friendly no-op.
+  once, one confirmation covers the account and the identity wipe together.
+  `--force` skips the prompt for scripted use; without a TTY and
+  without `--force` it refuses. A `jentic reset` with nothing to remove — no
+  account and no identity state — is a friendly no-op.
 
-The config wipe runs **last**, after the account is torn down, so a failure
-mid-teardown never removes the config that records what still needs cleaning — and
-a bare `jentic reset` with no agent account is a valid config-only clean slate.
+The identity wipe runs **last**, after the account is torn down, so a failure
+mid-teardown never removes the record of what still needs cleaning — and
+a `jentic reset` with no agent account is a valid identity-only clean slate.
 
 #### What a full reset deliberately leaves behind
 
@@ -836,13 +839,15 @@ by design:
   changes them; teardown only drops the agent's named-user ACLs.
 - **The agent home** — preserved and re-owned to the operator by default (the
   agent's work survives); deleting it is the separate, explicit home confirmation.
-  The agents' *identities* inside that home (`~/.jentic`) are **not** left behind,
-  though — they are torn down regardless of the home disposition (see step (1c)
-  above) so a re-bootstrap starts genuinely fresh.
-- **The rest of `config.yaml`** — the wipe clears `default_profile` and removes the
-  `agent_account:` object, but leaves other settings (`base_url`, `broker`,
-  telemetry consent) and the file itself in place. It resets your *identity and
-  agent account*, not every preference.
+  The agent's *identity* inside that home (the exported `~/.config/jentic` +
+  `~/.local/state/jentic`, and any legacy `~/.jentic`) is **not** left behind,
+  though — it is torn down regardless of the home disposition (see step (1c)
+  above) so no credential material outlives the account and a re-bootstrap starts
+  genuinely fresh.
+- **The rest of the operator's state** — the wipe removes identity state (the XDG
+  store and any legacy `~/.jentic/profiles`) and the `agent_account:` object, but
+  leaves other settings (telemetry consent, theme) and the config files themselves
+  in place. It resets your *identity and agent account*, not every preference.
 
 ### Not yet implemented — skill cleanup
 

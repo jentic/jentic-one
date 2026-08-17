@@ -117,10 +117,9 @@ func TestSurveyResetDefaultsUser(t *testing.T) {
 // honours the delete flag. Only present ACLs become steps.
 func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	plan := resetPlan{
-		user:      "alice-local-agent",
-		homeDir:   "/Users/Shared/alice-local-agent",
-		configDir: "/Users/Shared/alice-local-agent/.jentic",
-		operator:  "alice",
+		user:     "alice-local-agent",
+		homeDir:  "/Users/Shared/alice-local-agent",
+		operator: "alice",
 		acls: []aclRemoval{
 			{traverse: false, dir: "/Users/alice/projects/api", present: true},
 			{traverse: true, dir: "/Users/alice", present: true},
@@ -142,17 +141,32 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 		t.Errorf("drifted-off-disk ACL should be skipped, got steps:\n%s", joined)
 	}
 
-	// Ordering: leaf-revoke → traverse-revoke → identity dir → home → sudoers → account.
-	// The agent's own ~/.jentic is torn down before the home is settled and always
-	// (when the home is kept) so a re-bootstrap can't resurrect a torn-down agent.
+	// Ordering: leaf-revoke → traverse-revoke → identity dirs → home → sudoers → account.
+	// The agent's own identity dirs (exported XDG store + legacy ~/.jentic) are
+	// torn down before the home is settled and always (when the home is kept) so
+	// credential material never outlives the account and a re-bootstrap can't
+	// resurrect a torn-down agent.
 	idxLeaf := indexOfContains(whats, "read/write grant on /Users/alice/projects/api")
 	idxTraverse := indexOfContains(whats, "traverse grant on /Users/alice")
 	idxIdentity := indexOfContains(whats, "remove the agent's jentic identity")
 	idxHome := indexOfContains(whats, "re-own the agent's home")
 	idxSudoers := indexOfContains(whats, "sudoers drop-in")
 	idxAccount := indexOfContains(whats, "delete the Unix account")
-	if idxIdentity < 0 || !strings.Contains(joined, "/Users/Shared/alice-local-agent/.jentic") {
-		t.Errorf("expected the agent identity dir to be torn down, got:\n%s", joined)
+	if idxIdentity < 0 {
+		t.Errorf("expected the agent identity dirs to be torn down, got:\n%s", joined)
+	} else {
+		// The step's command must name every identity dir: the exported XDG
+		// config/state trees (the reset-scrub gap) and the legacy ~/.jentic.
+		idArgs := strings.Join(steps[idxIdentity].Cmd.Args, " ")
+		for _, dir := range []string{
+			"/Users/Shared/alice-local-agent/.config/jentic",
+			"/Users/Shared/alice-local-agent/.local/state/jentic",
+			"/Users/Shared/alice-local-agent/.jentic",
+		} {
+			if !strings.Contains(idArgs, dir) {
+				t.Errorf("identity step must remove %s, got args: %s", dir, idArgs)
+			}
+		}
 	}
 	if idxLeaf < 0 || idxLeaf >= idxTraverse || idxTraverse >= idxIdentity || idxIdentity >= idxHome || idxHome >= idxSudoers || idxSudoers >= idxAccount {
 		t.Fatalf("steps out of order: leaf=%d traverse=%d identity=%d home=%d sudoers=%d account=%d (%v)",
@@ -233,13 +247,12 @@ func TestResetRunsAsOperator(t *testing.T) {
 	withXDG(t)
 	out := &bytes.Buffer{}
 	app := &app{App: &cmdcore.App{Paths: config.Paths{Root: t.TempDir()}, Out: out, Err: &bytes.Buffer{}}}
-	cfg := &config.FileConfig{}
-	cfg.SetAgentAccount(config.AgentAccount{User: "alice-local-agent", AccountCreated: true, Enabled: true})
-	if err := cfg.Save(app.Paths); err != nil {
-		t.Fatalf("save config: %v", err)
+	err := errSeedAgentState(app.Paths, config.AgentAccount{User: "alice-local-agent", AccountCreated: true, Enabled: true})
+	if err != nil {
+		t.Fatalf("seed agent state: %v", err)
 	}
 
-	err := app.resetE(context.Background(), &resetOptions{})
+	err = app.resetE(context.Background(), &resetOptions{})
 	if err != nil && strings.Contains(err.Error(), "must run as root") {
 		t.Fatalf("reset must not require root, got %v", err)
 	}
@@ -345,4 +358,14 @@ func indexOfContains(hay []string, needle string) int {
 		}
 	}
 	return -1
+}
+
+// errSeedAgentState records an agent account in the XDG agent state (the tests
+// point XDG_CONFIG_HOME at a temp dir via withXDG).
+func errSeedAgentState(paths config.Paths, acct config.AgentAccount) error {
+	_, err := config.MutateAgentState(paths, func(s *config.AgentState) error {
+		s.SetAgentAccount(acct)
+		return nil
+	})
+	return err
 }

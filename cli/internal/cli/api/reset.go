@@ -69,21 +69,21 @@ func (a *app) resetE(ctx context.Context, opts *resetOptions) error {
 	// sudo-last posture as agent-user creation. We flag that up front so the
 	// prompt isn't a surprise, mirroring the "(requires sudo)" account gate.
 	operator, operatorHome := resetOperator()
-	cfg, err := config.Load(a.Paths)
+	st, err := config.LoadAgentState(a.Paths)
 	if err != nil {
 		return err
 	}
 
 	interactive := term.IsTerminal(os.Stdin.Fd())
-	return a.resetAll(ctx, cfg, opts, interactive, operator, operatorHome)
+	return a.resetAll(ctx, st, opts, interactive, operator, operatorHome)
 }
 
 // resetAll is the full clean slate: it tears down the shared agent account (Unix
 // user, ACLs, sudoers, home disposition) and then wipes the operator's OWN
 // jentic identity state — the XDG store and any legacy V1 tree. Everything is
 // previewed first, then a single "reset" confirmation authorises the lot.
-func (a *app) resetAll(ctx context.Context, cfg *config.FileConfig, opts *resetOptions, interactive bool, operator, operatorHome string) error {
-	acct, hasAcct := cfg.AgentAccount()
+func (a *app) resetAll(ctx context.Context, st *config.AgentState, opts *resetOptions, interactive bool, operator, operatorHome string) error {
+	acct, hasAcct := st.AgentAccount()
 	hasPlan := hasAcct && acct.User != ""
 
 	var plan resetPlan

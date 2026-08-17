@@ -340,6 +340,31 @@ func TestCanRunAsAgentCmdShape(t *testing.T) {
 	}
 }
 
+// TestAgentIdentityDirs pins the identity-scrub surface `jentic reset` removes
+// from a kept home: the exported XDG config/state trees plus the legacy
+// ~/.jentic, every one a strict descendant of the agent's home so the list is
+// safe to hand to a privileged rm.
+func TestAgentIdentityDirs(t *testing.T) {
+	home := "/Users/Shared/alice-local-agent"
+	got := AgentIdentityDirs(home)
+	want := []string{
+		filepath.Join(home, ".config", "jentic"),
+		filepath.Join(home, ".local", "state", "jentic"),
+		filepath.Join(home, ".jentic"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("AgentIdentityDirs = %v, want %v", got, want)
+	}
+	for i, dir := range want {
+		if got[i] != dir {
+			t.Errorf("AgentIdentityDirs[%d] = %q, want %q", i, got[i], dir)
+		}
+		if filepath.Clean(got[i]) == filepath.Clean(home) || !IsUnderHome(home, got[i]) {
+			t.Errorf("AgentIdentityDirs[%d] = %q must be a strict descendant of %q", i, got[i], home)
+		}
+	}
+}
+
 // TestTeardownCmdShape guards the reset primitives: every one is sudo-fronted and
 // names the agent user (and, where relevant, the target path) so a reset can't
 // silently no-op. TraverseRevokeCmd must mirror TraverseGrantCmd's target.
@@ -355,7 +380,7 @@ func TestTeardownCmdShape(t *testing.T) {
 		{"traverse-revoke", TraverseRevokeCmd("alice-local-agent", home).Args, home, true},
 		{"reown-home", ReownHomeCmd("alice", homeDir).Args, homeDir, false},
 		{"delete-home", DeleteHomeCmd(homeDir).Args, homeDir, false},
-		{"remove-identity", RemoveAgentIdentityCmd(homeDir + "/.jentic").Args, homeDir + "/.jentic", false},
+		{"remove-identity", RemoveAgentIdentityCmd(AgentIdentityDirs(homeDir)).Args, homeDir + "/.jentic", false},
 		{"remove-sudoers", RemoveSudoersCmd("alice-local-agent").Args, "", true},
 		{"delete-account", DeleteAccountCmd("alice-local-agent").Args, "", true},
 	}

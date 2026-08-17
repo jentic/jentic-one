@@ -34,7 +34,7 @@ var errCancelled = errors.New("cancelled")
 // process-confinement layer (see localagent/confine.go), not by an ACL deny sweep.
 // All grants are scoped to the agent user and never touch the operator's own
 // permissions.
-func (a *Cmd) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, abs string) error {
+func (a *Cmd) grantDir(ctx context.Context, st *config.AgentState, agentUser, abs string) error {
 	// SEC-22: belt-and-suspenders — validate the resolved grant path at the sink
 	// before ANY privileged ACL command is built, mirroring how export/reset
 	// guard HomeDir via ValidateHomeDir. Injection is already prevented downstream
@@ -74,18 +74,19 @@ func (a *Cmd) grantDir(ctx context.Context, cfg *config.FileConfig, agentUser, a
 		return fmt.Errorf("grant directory access: the access-control entry for %s did not "+
 			"appear on %s after granting — not recording it", agentUser, abs)
 	}
-	// Record the grant under the config lock, reloading first, so a concurrent
-	// `jentic run` granting a different directory can't drop this one (each would
-	// otherwise load, append its own dir, and the last Save would win). Mutate
-	// returns the committed config; adopt it so the in-memory cfg stays current.
-	updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-		c.AddGrantedDir(abs)
+	// Record the grant under the agent-state lock, reloading first, so a
+	// concurrent `jentic run` granting a different directory can't drop this one
+	// (each would otherwise load, append its own dir, and the last save would
+	// win). MutateAgentState returns the committed state; adopt it so the
+	// in-memory st stays current.
+	updated, err := config.MutateAgentState(a.Paths, func(s *config.AgentState) error {
+		s.AddGrantedDir(abs)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	*cfg = *updated
+	*st = *updated
 	return nil
 }
 
