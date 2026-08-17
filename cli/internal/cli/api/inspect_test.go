@@ -118,6 +118,47 @@ func TestInspectCmdNotFoundExitsCode2(t *testing.T) {
 	}
 }
 
+// TestInspectCmdRedactsUpstreamBody is the round-3 P0 regression guard: inspect
+// used to write the upstream contract body with zero redaction (a raw
+// fmt.Fprintln(a.Out, string(body))), so a secret in the returned schema/example
+// leaked straight to stdout. It now routes through ux.RedactBytes — including the
+// hardened structured pass that catches a secret carried as a NON-string JSON
+// value.
+func TestInspectCmdRedactsUpstreamBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A contrived contract that embeds secrets in an example block: one as a
+		// string value, one as a numeric value (the old regex-only backstop missed
+		// the number).
+		_, _ = w.Write([]byte(`{"method":"POST","path":"/login","example":{"api_key":"sk-LEAKED-STRING","token":9876543210}}`))
+	}))
+	defer srv.Close()
+
+	app := testApp(t)
+	seedRegistered(t, app, "default", srv.URL)
+
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs([]string{"inspect", "login", "--json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "sk-LEAKED-STRING") {
+		t.Errorf("string secret leaked from inspect output: %s", got)
+	}
+	if strings.Contains(got, "9876543210") {
+		t.Errorf("numeric secret leaked from inspect output (structured pass gap): %s", got)
+	}
+	// Non-secret structure survives.
+	if !strings.Contains(got, `"method":"POST"`) {
+		t.Errorf("inspect over-redacted / mangled the body: %s", got)
+	}
+}
+
 func TestInspectCmdRevisionParam(t *testing.T) {
 	var gotRevision string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

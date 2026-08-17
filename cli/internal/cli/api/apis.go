@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/jentic/jentic-one/cli/internal/cli/cmdcore"
 	"github.com/jentic/jentic-one/cli/internal/cli/prompt"
+	"github.com/jentic/jentic-one/cli/internal/cli/ux"
 	"github.com/jentic/jentic-one/cli/internal/theme"
 	"github.com/spf13/cobra"
 )
@@ -430,7 +431,8 @@ func (a *app) apisInspect(ctx context.Context, o *apisInspectOptions, operationI
 		}
 		return err
 	}
-	out := strings.TrimRight(string(body), "\n")
+	// SEC (review round-3 P0): same redaction funnel as `jentic inspect`.
+	out := strings.TrimRight(string(ux.RedactBytes(body)), "\n")
 	fmt.Fprintln(a.Out, out)
 	return nil
 }
@@ -537,18 +539,25 @@ func (a *app) apisSpec(ctx context.Context, o *apisSpecOptions, ref string) erro
 	if err != nil {
 		return apiNotFoundErr(err, ref)
 	}
+	// SEC (review round-3 P0): a spec can carry example auth blocks / secrets in
+	// securitySchemes or examples — run it through the same redaction funnel
+	// (inline at each write site so the redaction arch gate can see it) whether
+	// the spec goes to a file or stdout.
 	if o.out != "" {
-		if err := os.WriteFile(o.out, body, 0o600); err != nil {
+		if err := os.WriteFile(o.out, ux.RedactBytes(body), 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", o.out, err)
 		}
 		fmt.Fprintln(a.Out, theme.Successf("Wrote %s spec to %s", ref, o.out))
 		return nil
 	}
-	_, err = a.Out.Write(body)
-	if err == nil && len(body) > 0 && body[len(body)-1] != '\n' {
+	redacted := ux.RedactBytes(body)
+	if _, err = a.Out.Write(redacted); err != nil {
+		return err
+	}
+	if len(redacted) > 0 && redacted[len(redacted)-1] != '\n' {
 		fmt.Fprintln(a.Out)
 	}
-	return err
+	return nil
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

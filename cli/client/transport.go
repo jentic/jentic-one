@@ -158,7 +158,10 @@ func bufferBody(req *http.Request) (buf []byte, canRewind bool, err error) {
 	if req.Body == nil || req.Body == http.NoBody {
 		return nil, true, nil
 	}
-	data, err := io.ReadAll(req.Body)
+	// Bound the buffer: a retry needs the whole body in RAM, but an unbounded
+	// ReadAll lets a huge/hostile request body OOM the process (review round-3
+	// P0 / theme 2). MaxBodyBytes covers any legitimate request.
+	data, err := ReadAllBounded(req.Body, MaxBodyBytes)
 	_ = req.Body.Close()
 	if err != nil {
 		return nil, false, err

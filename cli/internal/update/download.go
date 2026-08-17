@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/jentic/jentic-one/cli/client"
 )
 
 // cosignCertIdentityRegexp / cosignOIDCIssuer pin the keyless-signing identity
@@ -52,7 +54,11 @@ func httpGet(ctx context.Context, url, token string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download %s: unexpected status %s", url, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	// Bound the read: checksums.txt / .sig / .pem are small metadata files, but a
+	// hostile or misconfigured origin must not be able to stream an unbounded body
+	// into RAM (review round-3 P0 / theme 2). The archive itself is streamed to
+	// disk with its own larger io.Copy limit; this path only buffers metadata.
+	return client.ReadAllBounded(resp.Body, client.MaxBodyBytes)
 }
 
 // verifyError marks a FAIL-CLOSED verification failure (checksum mismatch,
