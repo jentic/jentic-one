@@ -32,6 +32,18 @@ RUN uv build --wheel --out-dir /build/dist
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+# Apply Debian security updates for the util-linux family on top of the pinned
+# base. The base image lags the Debian archive's security point-releases, so
+# even the latest `python:3.12-slim` still ships util-linux 2.41-5 which Trivy
+# flags HIGH (CVE-2026-53615, libblkid integer overflow; fixed in
+# 2.41.5-0+deb13u1). Upgrading just this family clears the image CVE gate
+# without a non-reproducible full `apt upgrade`. Revisit when the pinned base
+# already carries the fixed util-linux (then this becomes a no-op and can drop).
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+        bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd -r jentic && useradd --no-log-init -r -g jentic jentic
 
 EXPOSE 8000
