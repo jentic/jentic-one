@@ -228,6 +228,10 @@ type AccountStep struct {
 // the directory; the operator ACL is an inherited `chmod +a` allow. Linux:
 // `useradd -m` creates the home in one step, then two `setfacl` calls lay down
 // the operator's access ACL and a matching default ACL for future contents.
+//
+// Note that sysadminctl can REFUSE the add yet still exit 0 (e.g. "User with
+// full name '…' already exists"), so callers must verify the account actually
+// exists afterwards (UserExists) rather than trusting the step's exit code.
 func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 	if runtime.GOOS == "darwin" {
 		return []AccountStep{
@@ -235,7 +239,7 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 				What: "create the agent account",
 				//nolint:gosec // operator/agentUser/homeDir are config-derived account names and a resolved path.
 				Cmd: exec.Command("sudo", "sysadminctl", "-addUser", agentUser,
-					"-fullName", operator+" Local Agent", "-home", homeDir, "-password", "-"),
+					"-fullName", AccountFullName(operator, agentUser), "-home", homeDir, "-password", "-"),
 			},
 			{
 				What: "create the agent's home directory",
@@ -265,6 +269,18 @@ func CreateAccountCmds(operator, agentUser, homeDir string) []AccountStep {
 			Cmd:  GrantOperatorHomeCmd(operator, homeDir),
 		},
 	}
+}
+
+// AccountFullName is the display (full) name recorded for the agent account on
+// macOS. It MUST be unique per account name, not merely per operator: macOS Open
+// Directory refuses a duplicate full name, so a constant "<operator> Local Agent"
+// made every SECOND agent account for the same operator (any custom name) collide
+// with the first's record — and sysadminctl reports that refusal on stderr while
+// still exiting 0, so the collision surfaced only as a cascade of "unknown user"
+// failures much later. Embedding the account name (which the OS already
+// guarantees unique) makes the full name collision-free by construction.
+func AccountFullName(operator, agentUser string) string {
+	return agentUser + " (jentic agent of " + operator + ")"
 }
 
 // GrantOperatorHomeCmd gives the operator RECURSIVE, inherited read/write on the
@@ -963,6 +979,65 @@ func VerifyManagedHome(agentUser, recordedHome string) error {
 			agentUser, actual, recordedHome)
 	}
 	return nil
+}
+
+// HomeClaimedBy returns the name of an existing OS account, OTHER than agentUser,
+// whose recorded home directory is exactly homeDir — or "" when no other account
+// claims it. It is the guard in front of CREATING an account: the account-setup
+// form prefixes the home from the DEFAULT name, so an operator who edits the name
+// but not the home (or hand-edits config) can point a brand-new account at an
+// EXISTING agent account's live home — and the create path (unlike reuse, which
+// goes through VerifyManagedHome) would then stamp operator ACLs over that home
+// and chown it wholesale to the new account. Refusing when another account claims
+// the home closes that.
+//
+// Enumeration shells to the platform account database (`dscl . -list /Users
+// NFSHomeDirectory` on macOS, `getent passwd` on Linux). It is best-effort in the
+// safe direction for a pure lookup: an enumeration failure returns "" (no claim
+// found) rather than blocking setup, because the post-create UserExists
+// verification still backstops a create that the OS refused.
+func HomeClaimedBy(ctx context.Context, agentUser, homeDir string) string {
+	target := filepath.Clean(homeDir)
+	for name, home := range accountHomes(ctx) {
+		if name != agentUser && filepath.Clean(home) == target {
+			return name
+		}
+	}
+	return ""
+}
+
+// accountHomes enumerates the OS account database as a name→home map, returning
+// nil on any failure (see HomeClaimedBy for why that is the safe direction).
+func accountHomes(ctx context.Context) map[string]string {
+	out := map[string]string{}
+	if runtime.GOOS == "darwin" {
+		data, err := exec.CommandContext(ctx, "dscl", ".", "-list", "/Users", "NFSHomeDirectory").Output()
+		if err != nil {
+			return nil
+		}
+		// Each line is "<name><spaces><home>"; the home may itself contain
+		// spaces, so split off the first field and take the trimmed remainder.
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			name := fields[0]
+			out[name] = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), name))
+		}
+		return out
+	}
+	data, err := exec.CommandContext(ctx, "getent", "passwd").Output()
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) >= 6 && parts[0] != "" {
+			out[parts[0]] = parts[5]
+		}
+	}
+	return out
 }
 
 // CopyBinaryCmd copies the operator's binary at src into the agent user's

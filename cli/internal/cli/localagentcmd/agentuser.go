@@ -146,6 +146,17 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 
+	// The home field was prefilled from the DEFAULT account name; if the operator
+	// renamed the account but left the home at that stale default, follow the name
+	// rather than silently keeping a directory derived from a name they rejected —
+	// which, when the default-named account already exists, is that OTHER account's
+	// live home (see HomeClaimedBy for the guard behind this convenience).
+	if home, changed := followRenamedHome(fields.name, defaultName, fields.homeDir); changed {
+		fields.homeDir = home
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"Agent home follows the account name: "+fields.homeDir))
+	}
+
 	if err := a.createAgentAccount(ctx, operator, fields); err != nil {
 		return agentSetup{}, err
 	}
@@ -268,6 +279,16 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 		}
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("Account %q already exists — reusing it.", fields.name)))
 	} else {
+		// A NEW account must not be pointed at a home some OTHER existing account
+		// already claims (typically another agent account's live home, left in the
+		// form's prefill after the operator renamed the account): the reclaim/grant
+		// steps below would chown that account's home wholesale to this one.
+		// VerifyManagedHome only guards the reuse branch, so check here too.
+		if claimant := localagent.HomeClaimedBy(ctx, fields.name, fields.homeDir); claimant != "" {
+			return fmt.Errorf("home directory %s already belongs to existing account %q — "+
+				"pick this account's own home (e.g. %s), or reuse that account by naming it %q",
+				fields.homeDir, claimant, localagent.DefaultHomeDir(fields.name), claimant)
+		}
 		fmt.Fprintln(a.Out, theme.Infof("Creating agent account %q (home %s) ...", fields.name, fields.homeDir))
 		for _, step := range localagent.CreateAccountCmds(operator, fields.name, fields.homeDir) {
 			c := step.Cmd
@@ -288,6 +309,18 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 				}
 				return fmt.Errorf("%s: %w", step.What, err)
 			}
+		}
+		// Fail closed on a create the OS refused: sysadminctl can reject the add
+		// (e.g. a Directory Services record conflict) while still EXITING 0, so the
+		// step loop above sails through with no account behind it. Without this
+		// check every later step degrades into best-effort "unknown user" noise,
+		// the account is recorded as created, and `jentic run` sends the operator
+		// back to bootstrap in a loop. Trust the account database, not exit codes.
+		if !localagent.UserExists(ctx, fields.name) {
+			return fmt.Errorf("agent account %q was not created — the account tool reported success "+
+				"but the account does not exist (see its messages above; a conflicting Directory "+
+				"Services record is the usual cause). Resolve the conflict or pick a different "+
+				"account name and re-run", fields.name)
 		}
 	}
 
@@ -440,6 +473,21 @@ func operatorNames(adapters []skillgen.Adapter) []string {
 		names = append(names, string(ad.Operator()))
 	}
 	return names
+}
+
+// followRenamedHome re-derives the agent home when the operator renamed the
+// account in the setup form but left the home at the DEFAULT name's prefill:
+// the two fields are edited independently, so the stale prefill would silently
+// point the new account at a directory derived from a name the operator
+// rejected — which, when the default-named account already exists, is that
+// other account's live home. Returns the home to use and whether it changed;
+// a deliberately customised home (anything but the exact stale prefill) is
+// always kept.
+func followRenamedHome(name, defaultName, homeDir string) (string, bool) {
+	if name != defaultName && homeDir == localagent.DefaultHomeDir(defaultName) {
+		return localagent.DefaultHomeDir(name), true
+	}
+	return homeDir, false
 }
 
 // firstKnownAgent returns the first selected operator that maps to a known local

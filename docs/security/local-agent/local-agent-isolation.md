@@ -210,8 +210,12 @@ single-user machine that recipe is:
 ```bash
 # macOS
 AGENT="$(whoami)-local-agent"; AGENT_HOME_DIR="/Users/Shared/$AGENT"
-sudo sysadminctl -addUser "$AGENT" -fullName "$(whoami) Local Agent" -home "$AGENT_HOME_DIR" -password -
+# The full name embeds the account name: macOS refuses duplicate full names (and
+# sysadminctl exits 0 on that refusal), so a per-operator constant would break
+# every second agent account.
+sudo sysadminctl -addUser "$AGENT" -fullName "$AGENT (jentic agent of $(whoami))" -home "$AGENT_HOME_DIR" -password -
 sudo createhomedir -c -u "$AGENT"                                  # sysadminctl only *records* the home; this creates it
+id -u "$AGENT" >/dev/null                                          # verify the add actually took — do not trust sysadminctl's exit code
 sudo chmod +a "user:$(whoami) allow read,write,execute,file_inherit,directory_inherit" "$AGENT_HOME_DIR"
 # The operator's home is NOT force-locked to 700 — in-home confidentiality against
 # the agent is enforced per session by the confinement profile (see below).
