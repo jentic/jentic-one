@@ -246,7 +246,7 @@ func TestRegister_TwoAgentsSameEnv_DistinctContexts(t *testing.T) {
 // identity, same derived context) is refused without --force.
 func TestRegister_ContextNameCollisionRefusedWithoutForce(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	// env "qa" → context = "qa-" + name, clamped to 64 chars. Two names sharing
 	// the first 61 chars (so "qa-"+prefix hits the 64-char clamp identically) but
@@ -282,7 +282,7 @@ func TestRegister_ContextNameCollisionRefusedWithoutForce(t *testing.T) {
 // operator deliberately repoint a colliding context.
 func TestRegister_ContextNameCollisionForceRepoints(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	prefix := strings.Repeat("a", 61)
 	nameA := prefix + "x"
