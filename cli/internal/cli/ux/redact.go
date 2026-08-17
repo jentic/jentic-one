@@ -202,6 +202,44 @@ const maxRedactDepth = 64
 
 func redactValue(v any) any { return redactValueDepth(v, 0) }
 
+// redactValueMarked is like redactValue but also reports whether it changed
+// anything (redacted at least one sensitive key or hit the depth guard). The
+// "changed" signal lets RedactBytes avoid re-marshaling — and thus reshaping —
+// JSON that had nothing sensitive in it (shape preservation for WriteJSON).
+func redactValueMarked(v any) (any, bool) {
+	changed := false
+	out := redactValueDepthMarked(v, 0, &changed)
+	return out, changed
+}
+
+func redactValueDepthMarked(v any, depth int, changed *bool) any {
+	if depth > maxRedactDepth {
+		*changed = true
+		return "[REDACTED: too deep]"
+	}
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if isSensitiveKey(k) || isRegisteredSensitiveName(k) {
+				out[k] = "[REDACTED]"
+				*changed = true
+			} else {
+				out[k] = redactValueDepthMarked(val, depth+1, changed)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = redactValueDepthMarked(val, depth+1, changed)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
 func redactValueDepth(v any, depth int) any {
 	if depth > maxRedactDepth {
 		return "[REDACTED: too deep]"
@@ -283,12 +321,15 @@ func redactString(s string) string { return string(redactSensitive([]byte(s))) }
 // (redactValue), which redacts a sensitive key regardless of its value's JSON
 // type — so a secret carried as a number, object, array, or bool is caught, not
 // just a `"key":"string"` pair (the reKV byte regex alone matched string values
-// only; review round-3 P0). The structured pass never reshapes non-sensitive
-// data: keys, ordering within objects is not guaranteed by encoding/json but the
-// document is semantically identical, and only sensitive subtrees change. The
-// byte backstop then still runs over the re-marshaled bytes to catch secrets
-// embedded in free-form string values (bearer tokens, PEM blocks) that carry no
-// sensitive key.
+// only; review round-3 P0). Shape is preserved when NOTHING is redacted: the
+// structured pass reports whether it changed anything, and if not, RedactBytes
+// runs only the byte backstop over the ORIGINAL bytes — so shape-preserving
+// callers like WriteJSON (which feed already-indented JSON through here) keep
+// their exact layout and key order. Only when a sensitive value is actually
+// redacted does the document get re-marshaled (matching the input's indentation);
+// on that path key order may change, which is fine because the document already
+// differs. The byte backstop then still runs to catch secrets embedded in
+// free-form string values (bearer tokens, PEM blocks) that carry no sensitive key.
 //
 // When data is NOT valid JSON (e.g. a Markdown inspect body, a YAML spec, a
 // plain-text error) it falls back to the byte backstop alone — the same
@@ -297,15 +338,67 @@ func RedactBytes(data []byte) []byte {
 	if trimmed := bytesTrimSpace(data); len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
 		var v any
 		if err := json.Unmarshal(data, &v); err == nil {
-			// Structured pass first: catches sensitive keys with non-string
-			// values. Re-marshal, then let the byte backstop scrub embedded
-			// free-form secrets in the (now-redacted) JSON.
-			if out, merr := json.Marshal(redactValue(v)); merr == nil {
+			// Structured pass: redact sensitive keys regardless of value type
+			// (number/object/array/bool), which the reKV byte regex — string
+			// values only — misses (review round-3 P0). redactValue returns a
+			// redacted DEEP COPY and reports whether it actually changed anything.
+			red, changed := redactValueMarked(v)
+			if !changed {
+				// Nothing sensitive in the structured view: DO NOT re-marshal —
+				// that would reshape the caller's JSON (compact it / reorder keys)
+				// and break shape-preserving callers like WriteJSON. Just run the
+				// byte backstop over the ORIGINAL bytes (catches free-form embedded
+				// secrets without touching layout).
+				return redactSensitive(data)
+			}
+			// Something was redacted, so the document already differs from the
+			// input. Re-marshal, preserving the caller's indentation when the
+			// input was pretty-printed, then run the byte backstop.
+			if out, merr := marshalLike(data, red); merr == nil {
 				return redactSensitive(out)
 			}
 		}
 	}
 	return redactSensitive(data)
+}
+
+// marshalLike marshals v to match the indentation style of the original bytes:
+// indented (2-space) when the original was pretty-printed, compact otherwise.
+// Key order is not preserved (encoding/json sorts map keys) — acceptable only on
+// the path where a redaction already changed the document.
+func marshalLike(original []byte, v any) ([]byte, error) {
+	if looksIndentedJSON(original) {
+		return json.MarshalIndent(v, "", "  ")
+	}
+	return json.Marshal(v)
+}
+
+// looksIndentedJSON reports whether the JSON body appears pretty-printed (a
+// newline followed by indentation after the opening brace/bracket). A cheap
+// heuristic sufficient to pick MarshalIndent vs Marshal for the redacted output.
+func looksIndentedJSON(b []byte) bool {
+	for i := range b {
+		switch b[i] {
+		case ' ', '\t', '\r':
+			continue
+		case '{', '[':
+			// Look past the opener for a newline before any non-space content.
+			for j := i + 1; j < len(b); j++ {
+				switch b[j] {
+				case ' ', '\t', '\r':
+					continue
+				case '\n':
+					return true
+				default:
+					return false
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // bytesTrimSpace is a tiny leading/trailing ASCII-space trim used only to peek at

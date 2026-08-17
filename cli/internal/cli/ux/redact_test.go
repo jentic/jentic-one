@@ -273,6 +273,24 @@ func TestRedactBytesPreservesNonSensitiveNonString(t *testing.T) {
 	}
 }
 
+// TestRedactBytesPreservesShapeWhenNothingRedacted pins the WriteJSON contract
+// (regression from the round-3 P0): when a body has NOTHING sensitive, RedactBytes
+// must return it byte-for-byte (no re-marshal, no key reordering, no
+// re-indentation). WriteJSON feeds already-indented JSON through here and a golden
+// test asserts the exact bytes; re-marshaling would silently compact/reorder it.
+func TestRedactBytesPreservesShapeWhenNothingRedacted(t *testing.T) {
+	// Indented, deliberately NON-alphabetical key order.
+	indented := "{\n  \"b\": \"2\",\n  \"a\": \"1\"\n}\n"
+	if got := string(RedactBytes([]byte(indented))); got != indented {
+		t.Errorf("indented non-sensitive JSON reshaped:\ngot  %q\nwant %q", got, indented)
+	}
+	// Compact form must likewise pass through untouched.
+	compact := `{"b":"2","a":"1"}`
+	if got := string(RedactBytes([]byte(compact))); got != compact {
+		t.Errorf("compact non-sensitive JSON reshaped:\ngot  %q\nwant %q", got, compact)
+	}
+}
+
 // TestRedactBytesNonJSONFallsBackToByteBackstop ensures a non-JSON body (e.g. a
 // Markdown inspect body or a YAML spec) is still scrubbed by the byte backstop
 // and is not mangled by a failed JSON parse.
