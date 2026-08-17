@@ -35,6 +35,37 @@ func isLoopbackHostname(host string) bool {
 	return false
 }
 
+// brokerIsLoopbackDefault reports whether hostPort (host or host:port) is a
+// loopback target — the built-in default the fail-closed guard must catch. An
+// empty/malformed value is treated as loopback: it can only have come from the
+// built-in default (config.DefaultBrokerHost), never from an explicit remote
+// broker, so failing closed here is correct.
+func brokerIsLoopbackDefault(hostPort string) bool {
+	if hostPort == "" {
+		return true
+	}
+	host := hostPort
+	if h, _, err := net.SplitHostPort(hostPort); err == nil {
+		host = h
+	}
+	return isLoopbackHostname(host)
+}
+
+// baseURLIsRemote reports whether the control-plane base_url points at a
+// non-loopback host (the "remote install" signal for the fail-closed guard). A
+// loopback, empty, or unparseable base_url is NOT remote, so a local workflow
+// never trips the guard.
+func baseURLIsRemote(base string) bool {
+	if base == "" {
+		return false
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	return !isLoopbackHostname(u.Hostname())
+}
+
 // brokerDeniedErr is the typed denial every broker-denial exit shares (AGT-6):
 // BROKER_DENIED (exit 2) with the denying HTTP status in Details, so the agent
 // envelope and the exit code come from the same table. The response body /

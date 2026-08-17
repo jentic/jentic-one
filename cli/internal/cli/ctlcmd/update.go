@@ -73,7 +73,7 @@ func (a *app) updateE(ctx context.Context, opts *updateOptions) error {
 	}
 	brewManaged := update.BrewManaged(ctlTarget)
 
-	fmt.Fprint(a.Out, a.BrandHeader(opts.baseURL, cliVersion))
+	fmt.Fprint(a.Out, a.BrandHeader(ctx, opts.baseURL, cliVersion))
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Field("cli", cliLine(cliVersion, installed)))
 	// Surface the stack's own recorded build separately from the CLI's. They

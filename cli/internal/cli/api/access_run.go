@@ -70,7 +70,7 @@ func (a *app) accessWhoamiE(cmd *cobra.Command, jsonFlag bool) error {
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return cmdcore.WriteJSON(a.Out, me)
 	}
-	a.printMe(me)
+	a.printMe(ctx, me)
 	return nil
 }
 
@@ -154,7 +154,7 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 				"or withdraw the pending one (`jentic access withdraw %s`) and re-file",
 				dup.ExistingRequestId, dup.ExistingRequestId, dup.ExistingRequestId)
 		}
-		fmt.Fprintln(a.Out, theme.Warnf("A pending request already exists (%s); attaching to it.", dup.ExistingRequestId))
+		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Warnf("A pending request already exists (%s); attaching to it.", dup.ExistingRequestId))
 		req, err = a.getAccessRequest(ctx, client, dup.ExistingRequestId)
 		if err != nil {
 			return err
@@ -190,7 +190,7 @@ func (a *app) accessRequestE(cmd *cobra.Command, opts *accessRequestOptions) err
 		}
 	} else {
 		absolutizeApproveURL(st.BaseURL, req)
-		a.printRequest(req, true)
+		a.printRequest(ctx, req, true)
 	}
 
 	switch {
@@ -282,7 +282,7 @@ func (a *app) refreshIfScopeGranted(cmd *cobra.Command, req *control.AccessReque
 		return
 	}
 	if _, err := auth.RefreshBearerToken(creds); err != nil {
-		fmt.Fprintln(a.Err, theme.Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
+		fmt.Fprintln(a.Err, theme.StylesFromContext(cmd.Context()).Dimf("granted scope not yet on your token; run `jentic access refresh` to pick it up"))
 	}
 }
 
@@ -346,7 +346,7 @@ func (a *app) accessListE(cmd *cobra.Command, opts *accessListOptions) error {
 	if cmdcore.JSONOrPretty(cmd, opts.json) {
 		return cmdcore.WriteList(a.Out, all, nextCursor, nil)
 	}
-	a.printRequestList(all, hasMore)
+	a.printRequestList(ctx, all, hasMore)
 	return nil
 }
 
@@ -368,7 +368,7 @@ func (a *app) accessStatusE(cmd *cobra.Command, id string, jsonFlag bool) error 
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return cmdcore.WriteJSON(a.Out, req)
 	}
-	a.printRequest(req, true)
+	a.printRequest(ctx, req, true)
 	return nil
 }
 
@@ -389,8 +389,8 @@ func (a *app) accessWithdrawE(cmd *cobra.Command, id string, jsonFlag bool) erro
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return cmdcore.WriteJSON(a.Out, req)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Withdrew access request %s.", req.Id))
-	a.printRequest(req, false)
+	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Withdrew access request %s.", req.Id))
+	a.printRequest(ctx, req, false)
 	return nil
 }
 
@@ -449,8 +449,8 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return cmdcore.WriteJSON(a.Out, me)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Refreshed token for %s.", me.Id))
-	a.printMe(me)
+	fmt.Fprintln(a.Out, theme.StylesFromContext(cmd.Context()).Successf("Refreshed token for %s.", me.Id))
+	a.printMe(cmd.Context(), me)
 	return nil
 }
 
@@ -458,7 +458,7 @@ func (a *app) accessRefreshContextE(cmd *cobra.Command, st *clictx.ActiveState, 
 // timeout elapses, or the context is cancelled. It reuses the register poll
 // cadence so the wait backs off the same way.
 func (a *app) pollAccessRequest(ctx context.Context, client *control.ClientWithResponses, id string, timeout time.Duration) (*control.AccessRequestResponse, error) {
-	fmt.Fprintln(a.Out, theme.Dimf("Waiting for a human to decide request %s (up to %s; Ctrl-C to stop) …", id, timeout))
+	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Dimf("Waiting for a human to decide request %s (up to %s; Ctrl-C to stop) …", id, timeout))
 	deadline := time.Now().Add(timeout)
 	pollInitial, pollMax, pollStep := a.PollCadence()
 	delay := pollInitial

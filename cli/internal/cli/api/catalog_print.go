@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,33 +9,34 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
-func (a *app) printCatalogList(entries []catalogEntry, meta *catalogListResult) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Catalog"))
+func (a *app) printCatalogList(ctx context.Context, entries []catalogEntry, meta *catalogListResult) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Catalog"))
 	if len(entries) == 0 {
-		fmt.Fprintln(a.Out, cmdcore.DotDown()+" "+theme.Dim.Render("no matching entries"))
+		fmt.Fprintln(a.Out, st.DotDown()+" "+st.Dim.Render("no matching entries"))
 		return
 	}
 	for _, e := range entries {
-		fmt.Fprintln(a.Out, catalogRow(e))
+		fmt.Fprintln(a.Out, catalogRow(st, e))
 	}
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render(catalogStatusLine(meta)))
+	fmt.Fprintln(a.Out, st.Dim.Render(catalogStatusLine(meta)))
 }
 
 // catalogRow renders one entry: a filled ring (registered) or hollow ring, the
 // accent api_id, a dim vendor when it differs, and an "UPDATE AVAILABLE" marker
 // when the entry's upstream spec has changed since import.
-func catalogRow(e catalogEntry) string {
-	glyph := theme.Dim.Render(theme.SelectOff)
+func catalogRow(st theme.Styles, e catalogEntry) string {
+	glyph := st.Dim.Render(theme.SelectOff)
 	if e.Registered {
-		glyph = theme.Success.Render(theme.SelectOn)
+		glyph = st.Success.Render(theme.SelectOn)
 	}
-	row := glyph + " " + theme.Accent.Render(e.APIID)
+	row := glyph + " " + st.Accent.Render(e.APIID)
 	if e.Vendor != "" && e.Vendor != e.APIID {
-		row += "  " + theme.Dim.Render(e.Vendor)
+		row += "  " + st.Dim.Render(e.Vendor)
 	}
 	if e.UpdateAvailable {
-		row += "  " + theme.Warn.Render("UPDATE AVAILABLE")
+		row += "  " + st.Warn.Render("UPDATE AVAILABLE")
 	}
 	return row
 }
@@ -51,63 +53,66 @@ func catalogStatusLine(m *catalogListResult) string {
 	return line
 }
 
-func (a *app) printCatalogEntry(e *catalogEntry) {
-	fmt.Fprintln(a.Out, theme.Heading.Render(e.APIID))
+func (a *app) printCatalogEntry(ctx context.Context, e *catalogEntry) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render(e.APIID))
 	if e.Vendor != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("vendor", e.Vendor))
+		fmt.Fprintln(a.Out, "  "+st.Field("vendor", e.Vendor))
 	}
 	status := "not imported"
-	dot := cmdcore.DotDown()
+	dot := st.DotDown()
 	if e.Registered {
-		status, dot = "imported", cmdcore.DotOK()
+		status, dot = "imported", st.DotOK()
 	}
-	fmt.Fprintln(a.Out, "  "+dot+" "+theme.Field("status", status))
-	fmt.Fprintln(a.Out, "  "+theme.Field("spec_url", cmdcore.ValueOr(e.SpecURL, "-")))
+	fmt.Fprintln(a.Out, "  "+dot+" "+st.Field("status", status))
+	fmt.Fprintln(a.Out, "  "+st.Field("spec_url", cmdcore.ValueOr(e.SpecURL, "-")))
 	if e.Links.Github != "" {
-		fmt.Fprintln(a.Out, "  "+theme.Field("github", e.Links.Github))
+		fmt.Fprintln(a.Out, "  "+st.Field("github", e.Links.Github))
 	}
 }
 
-func (a *app) printCatalogPreview(p *catalogPreview) {
+func (a *app) printCatalogPreview(ctx context.Context, p *catalogPreview) {
+	st := theme.StylesFromContext(ctx)
 	fmt.Fprintln(a.Out)
 	title := cmdcore.ValueOr(p.Info.Title, "(untitled)")
 	if p.Info.Version != "" {
 		title += " " + p.Info.Version
 	}
-	fmt.Fprintln(a.Out, theme.Heading.Render("Operations")+theme.Dim.Render("  "+title))
+	fmt.Fprintln(a.Out, st.Heading.Render("Operations")+st.Dim.Render("  "+title))
 	if len(p.Data) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no operations"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no operations"))
 		return
 	}
 	for _, op := range p.Data {
-		fmt.Fprintln(a.Out, "  "+catalogOpLine(op))
+		fmt.Fprintln(a.Out, "  "+catalogOpLine(st, op))
 	}
 	shown := p.Offset + len(p.Data)
 	if p.Truncated || shown < p.Total {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render(fmt.Sprintf("… showing %d of %d operations", len(p.Data), p.Total)))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render(fmt.Sprintf("… showing %d of %d operations", len(p.Data), p.Total)))
 	}
 }
 
 // catalogOpLine renders "METHOD  path  summary" with the method tinted.
-func catalogOpLine(op catalogPreviewOp) string {
-	method := theme.Accent.Render(fmt.Sprintf("%-6s", op.Method))
-	line := method + " " + theme.Command.Render(op.Path)
+func catalogOpLine(st theme.Styles, op catalogPreviewOp) string {
+	method := st.Accent.Render(fmt.Sprintf("%-6s", op.Method))
+	line := method + " " + st.Command.Render(op.Path)
 	if op.Summary != "" {
-		line += "  " + theme.Dim.Render(op.Summary)
+		line += "  " + st.Dim.Render(op.Summary)
 	}
 	return line
 }
 
-func (a *app) printImportResult(result *catalogImportResult, promoted map[string]string, noPromote bool) {
+func (a *app) printImportResult(ctx context.Context, result *catalogImportResult, promoted map[string]string, noPromote bool) {
+	st := theme.StylesFromContext(ctx)
 	if len(result.Revisions) == 0 {
-		fmt.Fprintln(a.Out, theme.Warnf("Import completed but produced no revisions."))
+		fmt.Fprintln(a.Out, st.Warnf("Import completed but produced no revisions."))
 		return
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Imported %d revision(s):", len(result.Revisions)))
+	fmt.Fprintln(a.Out, st.Successf("Imported %d revision(s):", len(result.Revisions)))
 	for _, rev := range result.Revisions {
 		ref := fmt.Sprintf("%s/%s/%s", rev.API.Vendor, rev.API.Name, rev.API.Version)
 		state := rev.State
-		dot := cmdcore.DotOK()
+		dot := st.DotOK()
 		if outcome, ok := promoted[rev.RevisionID]; ok {
 			switch outcome {
 			case "live":
@@ -116,12 +121,12 @@ func (a *app) printImportResult(result *catalogImportResult, promoted map[string
 				// unchanged (already non-draft)
 			default:
 				state = outcome
-				dot = cmdcore.DotWarn()
+				dot = st.DotWarn()
 			}
 		} else if noPromote {
 			state = rev.State + " (not promoted)"
 		}
-		fmt.Fprintln(a.Out, "  "+dot+" "+theme.Accent.Render(ref)+"  "+theme.Dim.Render(rev.RevisionID)+"  "+theme.Field("state", state))
+		fmt.Fprintln(a.Out, "  "+dot+" "+st.Accent.Render(ref)+"  "+st.Dim.Render(rev.RevisionID)+"  "+st.Field("state", state))
 	}
 }
 

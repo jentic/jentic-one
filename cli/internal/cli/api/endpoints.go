@@ -93,7 +93,7 @@ func (a *app) endpointsE(ctx context.Context, o *endpointsOptions) error {
 		}
 		return cmdcore.WriteList(a.Out, eps, "", nil)
 	}
-	a.printEndpoints(eps)
+	a.printEndpoints(ctx, eps)
 	return nil
 }
 
@@ -168,10 +168,11 @@ var groupOrder = []string{
 	groupPublic,
 }
 
-func (a *app) printEndpoints(eps []endpoint) {
-	fmt.Fprintln(a.Out, theme.Heading.Render("Endpoint & scope reference"))
+func (a *app) printEndpoints(ctx context.Context, eps []endpoint) {
+	st := theme.StylesFromContext(ctx)
+	fmt.Fprintln(a.Out, st.Heading.Render("Endpoint & scope reference"))
 	if len(eps) == 0 {
-		fmt.Fprintln(a.Out, "  "+theme.Dim.Render("no endpoints match the filter"))
+		fmt.Fprintln(a.Out, "  "+st.Dim.Render("no endpoints match the filter"))
 		return
 	}
 	grouped := map[string][]endpoint{}
@@ -185,17 +186,17 @@ func (a *app) printEndpoints(eps []endpoint) {
 			continue
 		}
 		fmt.Fprintln(a.Out)
-		fmt.Fprintln(a.Out, theme.Accent.Render(fmt.Sprintf("%s (%d)", g, len(rows))))
+		fmt.Fprintln(a.Out, st.Accent.Render(fmt.Sprintf("%s (%d)", g, len(rows))))
 		for _, ep := range rows {
-			fmt.Fprintln(a.Out, "  "+endpointLine(ep))
+			fmt.Fprintln(a.Out, "  "+endpointLine(st, ep))
 		}
 	}
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("%d endpoint(s)", len(eps))))
+	fmt.Fprintln(a.Out, st.Dim.Render(fmt.Sprintf("%d endpoint(s)", len(eps))))
 }
 
-func endpointLine(ep endpoint) string {
-	line := theme.Command.Render(fmt.Sprintf("%-6s", ep.Method)) + " " + ep.Path
+func endpointLine(st theme.Styles, ep endpoint) string {
+	line := st.Command.Render(fmt.Sprintf("%-6s", ep.Method)) + " " + ep.Path
 	scopes := "public — no auth"
 	if !ep.Public {
 		if len(ep.Scopes) > 0 {
@@ -204,12 +205,12 @@ func endpointLine(ep endpoint) string {
 			scopes = "any authenticated"
 		}
 	}
-	line += "  " + theme.Dim.Render("→ "+scopes)
+	line += "  " + st.Dim.Render("→ "+scopes)
 	if !ep.Public && ep.TypicalCaller != "" && ep.TypicalCaller != "any" {
-		line += " " + theme.Dim.Render("[typically: "+ep.TypicalCaller+"]")
+		line += " " + st.Dim.Render("[typically: "+ep.TypicalCaller+"]")
 	}
 	if ep.AuthNote != "" {
-		line += " " + theme.Dim.Render("("+ep.AuthNote+")")
+		line += " " + st.Dim.Render("("+ep.AuthNote+")")
 	}
 	return line
 }

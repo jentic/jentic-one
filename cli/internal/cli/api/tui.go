@@ -30,7 +30,7 @@ func browserVisibleRows(height int) int {
 // catalog browsers. It clamps *top so the cursor stays within the visible
 // window, renders each visible row via rowFn, appends a "↓ more" affordance when
 // further pages exist, and fixes the column width.
-func renderListColumn(cursor int, top *int, rows, n, width int, hasMore bool, rowFn func(i int) string) string {
+func renderListColumn(st theme.Styles, cursor int, top *int, rows, n, width int, hasMore bool, rowFn func(i int) string) string {
 	if cursor < *top {
 		*top = cursor
 	}
@@ -47,7 +47,7 @@ func renderListColumn(cursor int, top *int, rows, n, width int, hasMore bool, ro
 		lines = append(lines, rowFn(i))
 	}
 	if hasMore && end >= n {
-		lines = append(lines, theme.Dim.Render("  ↓ more"))
+		lines = append(lines, st.Dim.Render("  ↓ more"))
 	}
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }

@@ -236,7 +236,7 @@ func (a *app) catalogList(ctx context.Context, o *catalogListOptions, query stri
 			"manifest_age_seconds": first.ManifestAgeSeconds,
 		})
 	}
-	a.printCatalogList(entries, first)
+	a.printCatalogList(ctx, entries, first)
 	return nil
 }
 
@@ -265,12 +265,13 @@ func (a *app) catalogShow(ctx context.Context, o *catalogShowOptions, apiID stri
 		return cmdcore.WriteJSON(a.Out, out)
 	}
 
-	a.printCatalogEntry(entry)
+	a.printCatalogEntry(ctx, entry)
 	if perr != nil {
-		fmt.Fprintln(a.Out, cmdcore.DotWarn()+" "+theme.Warnf("operations preview unavailable: %v", perr))
+		st := theme.StylesFromContext(ctx)
+		fmt.Fprintln(a.Out, st.DotWarn()+" "+st.Warnf("operations preview unavailable: %v", perr))
 		return nil
 	}
-	a.printCatalogPreview(preview)
+	a.printCatalogPreview(ctx, preview)
 	return nil
 }
 
@@ -292,13 +293,13 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 			// sanctioned ux wrappers, so an agent can branch on the shape.
 			return cmdcore.WriteJSON(a.Out, map[string]any{"schema_version": apiEnvelopeSchemaVersion, "job_id": jobID, "status": "queued"})
 		}
-		fmt.Fprintln(a.Out, theme.Successf("Import queued: job %s", jobID))
-		fmt.Fprintln(a.Out, theme.Dim.Render("Re-run without --no-wait to track it to completion."))
+		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Import queued: job %s", jobID))
+		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Dim.Render("Re-run without --no-wait to track it to completion."))
 		return nil
 	}
 
 	if !o.json {
-		fmt.Fprintln(a.Out, theme.Infof("Importing %s …", apiID))
+		fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Infof("Importing %s …", apiID))
 	}
 	job, err := a.pollImportJob(ctx, client, jobID, o.timeout)
 	if err != nil {
@@ -327,7 +328,7 @@ func (a *app) catalogImport(ctx context.Context, o *catalogImportOptions, apiID 
 			"promoted":       promoted,
 		})
 	}
-	a.printImportResult(result, promoted, o.noPromote)
+	a.printImportResult(ctx, result, promoted, o.noPromote)
 	return nil
 }
 
@@ -375,7 +376,7 @@ func pollImportJobProgress(
 			return nil, fmt.Errorf("timed out after %s waiting for import job %s", timeout, jobID)
 		}
 		if now := time.Now(); progress != nil && now.After(nextHeartbeat) {
-			fmt.Fprintln(progress, theme.Dimf("  still importing (%ds elapsed) …", int(now.Sub(start).Seconds())))
+			fmt.Fprintln(progress, theme.StylesFromContext(ctx).Dimf("  still importing (%ds elapsed) …", int(now.Sub(start).Seconds())))
 			nextHeartbeat = now.Add(3 * time.Second)
 		}
 		select {
@@ -422,7 +423,7 @@ func (a *app) catalogRefresh(ctx context.Context) error {
 		}
 		return catalogListErr(err)
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Catalog refreshed: %d entries", count))
+	fmt.Fprintln(a.Out, theme.StylesFromContext(ctx).Successf("Catalog refreshed: %d entries", count))
 	return nil
 }
 

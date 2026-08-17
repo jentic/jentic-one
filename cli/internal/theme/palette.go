@@ -19,4 +19,14 @@ type Palette struct {
 	Success   lipgloss.TerminalColor
 	Warning   lipgloss.TerminalColor
 	Muted     lipgloss.TerminalColor
+
+	// Command / Accent / Step are additional runtime slots the CLI's semantic
+	// roles need but that don't collapse cleanly onto the six above (e.g. Command
+	// is green and Success is also green+bold, but Step is yellow+bold and Accent
+	// is plain yellow — distinct from Warning's orange). They are carried on the
+	// Palette so `theme light` can re-tint them too; the dark values equal the
+	// historical fixed brand tokens so dark output is unchanged.
+	Command lipgloss.TerminalColor
+	Accent  lipgloss.TerminalColor
+	Step    lipgloss.TerminalColor
 }

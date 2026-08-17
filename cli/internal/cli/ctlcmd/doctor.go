@@ -340,7 +340,7 @@ func (d *doctor) checkAgent() {
 	}
 
 	tokens, _ := auth.ReadTokens(ref)
-	state, _ := tokenStatus(tokens)
+	state, _ := tokenStatus(theme.StylesFromContext(d.ctx), tokens)
 	status := statusPass
 	hint := ""
 	if tokens == nil || tokens.AccessToken == "" || time.Now().After(tokens.ExpiresAt) {
@@ -443,6 +443,7 @@ func (d *doctor) checkConfigValidity() {
 // render prints the grouped report and returns a non-nil error when any check
 // failed, so the CLI exits non-zero.
 func (d *doctor) render() error {
+	st := theme.StylesFromContext(d.ctx)
 	var b strings.Builder
 	section := ""
 	for _, c := range d.checks {
@@ -450,15 +451,15 @@ func (d *doctor) render() error {
 			if section != "" {
 				b.WriteString("\n")
 			}
-			b.WriteString(theme.Heading.Render(c.section) + "\n")
+			b.WriteString(st.Heading.Render(c.section) + "\n")
 			section = c.section
 		}
-		b.WriteString(dotFor(c.status) + " " + theme.Field(c.name, c.detail) + "\n")
+		b.WriteString(dotFor(st, c.status) + " " + st.Field(c.name, c.detail) + "\n")
 		if c.hint != "" && c.status != statusPass {
-			b.WriteString("  " + theme.Dim.Render("↳ "+c.hint) + "\n")
+			b.WriteString("  " + st.Dim.Render("↳ "+c.hint) + "\n")
 		}
 	}
-	b.WriteString("\n" + d.summary() + "\n")
+	b.WriteString("\n" + d.summary(st) + "\n")
 	fmt.Fprint(d.app.Out, b.String())
 
 	if f := d.failed(); f > 0 {
@@ -524,26 +525,26 @@ func (d *doctor) failed() int {
 	return f
 }
 
-func (d *doctor) summary() string {
+func (d *doctor) summary(st theme.Styles) string {
 	p, w, f := d.counts()
-	parts := []string{theme.Successf("%d passed", p)}
+	parts := []string{st.Successf("%d passed", p)}
 	if w > 0 {
-		parts = append(parts, theme.Warnf("%d warnings", w))
+		parts = append(parts, st.Warnf("%d warnings", w))
 	}
 	if f > 0 {
-		parts = append(parts, theme.Error.Render(fmt.Sprintf("%d failed", f)))
+		parts = append(parts, st.Error.Render(fmt.Sprintf("%d failed", f)))
 	}
-	return strings.Join(parts, theme.Dim.Render(" · "))
+	return strings.Join(parts, st.Dim.Render(" · "))
 }
 
-func dotFor(s checkStatus) string {
+func dotFor(st theme.Styles, s checkStatus) string {
 	switch s {
 	case statusPass:
-		return dotOK()
+		return st.DotOK()
 	case statusWarn:
-		return dotWarn()
+		return st.DotWarn()
 	default:
-		return dotFail()
+		return st.DotFail()
 	}
 }
 

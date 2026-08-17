@@ -9,6 +9,7 @@ import (
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/theme"
 )
 
 // A fresh setup (no manifest, no server, no context) should render all four
@@ -54,13 +55,14 @@ func TestStatusShowsInstallManifest(t *testing.T) {
 }
 
 func TestTokenStatus(t *testing.T) {
-	if label, _ := tokenStatus(nil); label != "none" {
+	st := theme.Themes["dark"].Styles()
+	if label, _ := tokenStatus(st, nil); label != "none" {
 		t.Errorf("nil tokens label = %q, want none", label)
 	}
-	if label, _ := tokenStatus(&auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(-time.Hour)}); label != "expired" {
+	if label, _ := tokenStatus(st, &auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(-time.Hour)}); label != "expired" {
 		t.Errorf("past tokens label = %q, want expired", label)
 	}
-	if label, _ := tokenStatus(&auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)}); !strings.HasPrefix(label, "valid") {
+	if label, _ := tokenStatus(st, &auth.TokenSet{AccessToken: "a", ExpiresAt: time.Now().Add(time.Hour)}); !strings.HasPrefix(label, "valid") {
 		t.Errorf("future tokens label = %q, want valid*", label)
 	}
 }

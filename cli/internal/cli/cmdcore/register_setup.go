@@ -53,15 +53,16 @@ var ErrOnboardCancelled = errors.New("onboarding cancelled")
 // the resolved values so composed flows (bootstrap) can reuse them (e.g. the
 // install URL for skill templating).
 func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.Duration, force, interactive bool) (SetupValues, error) {
+	st := theme.StylesFromContext(ctx)
 	if interactive && vals.URL == "" {
-		fmt.Fprintln(a.Out, theme.Headingf("Agent onboarding"))
-		fmt.Fprintln(a.Out, theme.Dim.Render("Connect this machine to a Jentic install; an operator approves it, then tokens mint."))
+		fmt.Fprintln(a.Out, st.Headingf("Agent onboarding"))
+		fmt.Fprintln(a.Out, st.Dim.Render("Connect this machine to a Jentic install; an operator approves it, then tokens mint."))
 		if vals.Name == "" {
 			vals.Name = defaultIdentityName()
 		}
 		if err := promptOnboarding(&vals.URL, &vals.Name); err != nil {
 			if errors.Is(err, huh.ErrUserAborted) {
-				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
+				fmt.Fprintln(a.Out, st.Dim.Render("Cancelled."))
 				return vals, ErrOnboardCancelled
 			}
 			return vals, err
@@ -82,7 +83,7 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 	// invalid_grant (mis-read as "pending approval"). Normalising here removes
 	// the papercut at the source and keeps the seeded broker_url on 127.0.0.1 too.
 	if norm, changed := normalizeLoopbackURL(vals.URL); changed {
-		fmt.Fprintln(a.Err, theme.Dim.Render(fmt.Sprintf(
+		fmt.Fprintln(a.Err, st.Dim.Render(fmt.Sprintf(
 			"note: using %s (localhost is normalised to 127.0.0.1 so the token audience matches the local backend)", norm)))
 		vals.URL = norm
 	}
@@ -110,6 +111,14 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 	// env would hijack every context bound to it); the identity is upserted.
 	envName := vals.Env
 	contextName := sdkconfig.SanitizeName(envName + "-" + vals.Name)
+	// brokerConfigured records whether the resolved environment ends up with a
+	// broker_url — seeded here for a loopback control plane, or already present
+	// on a pre-existing env. A remote env with no broker gets a next-step hint
+	// below (remote-cli-usage F1/Phase B): `jentic execute` fail-closes without
+	// one. Reading the resolved value (not re-deriving from the URL) avoids a
+	// false hint when re-registering an existing remote env that already has a
+	// manually-set broker_url.
+	brokerConfigured := false
 	if err := sdkconfig.MutateConfig(func(cfg *sdkconfig.Config) error {
 		if env, ok := cfg.Environments[envName]; ok && env.BaseURL != vals.URL {
 			return &ux.CodedError{
@@ -134,6 +143,7 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 			}
 			cfg.Environments[envName] = env
 		}
+		brokerConfigured = cfg.Environments[envName].BrokerURL != ""
 		if _, ok := cfg.Identities[vals.Name]; !ok {
 			cfg.Identities[vals.Name] = sdkconfig.Identity{Type: "agent"}
 		}
@@ -150,9 +160,20 @@ func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.
 		return vals, err
 	}
 
-	a.registerProgress(ctx, theme.Successf("Environment %q → %s", envName, vals.URL))
-	a.registerProgress(ctx, theme.Successf("Identity %q (agent)", vals.Name))
-	a.registerProgress(ctx, theme.Successf("Context %q (active)", contextName))
+	a.registerProgress(ctx, st.Successf("Environment %q → %s", envName, vals.URL))
+	a.registerProgress(ctx, st.Successf("Identity %q (agent)", vals.Name))
+	a.registerProgress(ctx, st.Successf("Context %q (active)", contextName))
+
+	// Remote control plane with no broker → teach the mandatory next step now,
+	// at the moment it matters (remote-cli-usage F1/Phase B). `jentic execute`
+	// fail-closes when base_url is remote and broker_url is empty. Routed through
+	// registerProgress, so it goes to stderr and is suppressed in machine mode
+	// (never corrupts an agent's stdout stream).
+	if !brokerConfigured {
+		a.registerProgress(ctx, theme.Warnf("No broker_url set for remote environment %q. "+
+			"`jentic execute` needs one — set it with `jentic env add %s --url %s --broker-url https://<broker-host>:<port> --force` "+
+			"(ask your operator for the broker URL).", envName, envName, vals.URL))
+	}
 
 	return vals, a.registerAndWait(ctx, vals.Name, envName, vals.URL, vals.Name, timeout, force)
 }

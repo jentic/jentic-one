@@ -23,12 +23,13 @@ const registerResumeHint = "Waiting for approval (Ctrl-C to stop and resume late
 // approval by attempting the token exchange — exactly the credential every
 // data command will use, so success here IS end-to-end proof.
 func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, clientName string, timeout time.Duration, force bool) error {
+	st := theme.StylesFromContext(ctx)
 	ref := auth.IdentityRef{Identity: identity, Environment: envName}
 
 	// A jak_* API-key identity has nothing to register: the key IS the
 	// long-lived credential.
 	if key, err := auth.ReadAPIKey(ref); err == nil && key != "" {
-		a.registerProgress(ctx, theme.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", identity, envName))
+		a.registerProgress(ctx, st.Infof("Identity %q already authenticates to %q with an API key; nothing to register.", identity, envName))
 		if isMachineCtx(ctx) {
 			ux.FromContext(ctx).Render(ux.Result{
 				Status: ux.StatusRegistered, Resource: "identity", Name: identity,
@@ -64,7 +65,7 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	clientID := reg.ClientID
 	claimToken := ""
 	if clientID == "" {
-		a.registerProgress(ctx, theme.Infof("Registering agent %q with %s ...", clientName, baseURL))
+		a.registerProgress(ctx, st.Infof("Registering agent %q with %s ...", clientName, baseURL))
 		r, rerr := auth.Register(baseURL, clientName, auth.PublicKeyToJWKS(pub))
 		if rerr != nil {
 			// AGT-21: DCR is the most common failure point (control plane
@@ -90,9 +91,9 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 		if err := saveRegState(identity, envName, clientID, status); err != nil {
 			return err
 		}
-		a.registerProgress(ctx, theme.Successf("Registered: client_id=%s status=%s", clientID, status))
+		a.registerProgress(ctx, st.Successf("Registered: client_id=%s status=%s", clientID, status))
 	} else {
-		a.registerProgress(ctx, theme.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
+		a.registerProgress(ctx, st.Infof("Using existing registration client_id=%s (identity %q, environment %q)", clientID, identity, envName))
 	}
 
 	// If claiming is enabled, guide the HUMAN to take ownership. This is shown
@@ -135,36 +136,36 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 		ux.FromContext(ctx).Render(res)
 		return nil
 	}
-	fmt.Fprintln(a.Out, theme.Successf("Token minted for %s.", identity))
+	fmt.Fprintln(a.Out, st.Successf("Token minted for %s.", identity))
 	// Make the active identity unambiguous and switching obvious: register may
 	// have created a NEW per-identity context (env "-" identity), so spell out
 	// who you now are and how to move between agents. This is the same name
 	// RegisterSetup activated.
 	contextName := sdkconfig.SanitizeName(envName + "-" + identity)
-	fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
-	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch agents:"), theme.Command.Render("jentic context use <name>"))
-	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("See all:      "), theme.Command.Render("jentic context list"))
+	fmt.Fprintf(a.Out, "\n%s\n", st.Dimf("You are now %q on %q (context %q).", identity, envName, contextName))
+	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Switch agents:"), st.Command.Render("jentic context use <name>"))
+	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("See all:      "), st.Command.Render("jentic context list"))
 	// Human-context nudge (UX6): `register` mints tokens only — it silently skips
 	// the agent skill + isolation that `bootstrap` adds. A person who reached here
 	// by hand may have wanted the full setup, so point them at it. This whole
 	// success block is human-only (machine mode returned above), so no TTY guard
 	// is needed.
 	fmt.Fprintf(a.Out, "\n%s %s%s\n",
-		theme.Dim.Render("Tip:"),
-		theme.Command.Render("jentic bootstrap"),
-		theme.Dim.Render(" also installs the agent skill and can isolate the agent — run it if you're setting up a coding agent."))
+		st.Dim.Render("Tip:"),
+		st.Command.Render("jentic bootstrap"),
+		st.Dim.Render(" also installs the agent skill and can isolate the agent — run it if you're setting up a coding agent."))
 	// Multi-agent case: registering a SECOND agent into an env creates its own
 	// per-identity context and silently makes it active (RegisterSetup). Spell
 	// out WHY a new context appeared and how to get back, so a user who now sees
 	// an unfamiliar active context isn't left wondering what happened to their
 	// first agent (UX5).
 	if prev := siblingContextInEnv(envName, contextName); prev != "" {
-		fmt.Fprintf(a.Out, "\n%s\n", theme.Dimf(
+		fmt.Fprintf(a.Out, "\n%s\n", st.Dimf(
 			"Created a new context %q (another agent in env %q); your previous context %q is unchanged.",
 			contextName, envName, prev))
-		fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Switch back:  "), theme.Command.Render("jentic context use "+prev))
+		fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Switch back:  "), st.Command.Render("jentic context use "+prev))
 	}
-	a.printNextSteps()
+	a.printNextSteps(st)
 	return nil
 }
 
@@ -196,8 +197,8 @@ func siblingContextInEnv(envName, currentContext string) string {
 // used to (in V1) reopen onboarding; now it just re-mints, so this block is what
 // makes "what do I do now?" obvious — a few copy-pasteable examples plus the
 // pointer to full help, in place of a bare "Ready:" line.
-func (a *App) printNextSteps() {
-	fmt.Fprintf(a.Out, "\n%s\n", theme.Heading.Render("Next steps"))
+func (a *App) printNextSteps(st theme.Styles) {
+	fmt.Fprintf(a.Out, "\n%s\n", st.Heading.Render("Next steps"))
 	steps := []struct{ desc, cmd string }{
 		{"Browse the API catalog", "jentic catalog"},
 		{"Find an operation (each result prints a ready-to-paste inspect/execute target)", "jentic search \"send a slack message\""},
@@ -207,14 +208,14 @@ func (a *App) printNextSteps() {
 		{"Run it (same target)", "jentic execute <METHOD:url from search> -d '{\"key\":\"value\"}'"},
 	}
 	for _, s := range steps {
-		fmt.Fprintf(a.Out, "  %s\n    %s\n", theme.Dim.Render(s.desc), theme.Command.Render(s.cmd))
+		fmt.Fprintf(a.Out, "  %s\n    %s\n", st.Dim.Render(s.desc), st.Command.Render(s.cmd))
 	}
-	fmt.Fprintf(a.Out, "\n%s %s\n", theme.Dim.Render("See all commands:"), theme.Command.Render("jentic --help"))
+	fmt.Fprintf(a.Out, "\n%s %s\n", st.Dim.Render("See all commands:"), st.Command.Render("jentic --help"))
 	// Advertise doctor as the first thing to run when stuck (UX9): it is
 	// read-only and each of its warnings already carries the exact remediation,
 	// but it lives under "Local agent client" and isn't surfaced at the moments
 	// of confusion.
-	fmt.Fprintf(a.Out, "%s %s\n", theme.Dim.Render("Stuck? Check your setup:"), theme.Command.Render("jentic doctor"))
+	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Stuck? Check your setup:"), st.Command.Render("jentic doctor"))
 }
 
 // saveRegState persists the (identity, environment) registration record.
@@ -245,6 +246,7 @@ func saveRegState(identity, envName, clientID, status string) error {
 // rather than the hard audience-mismatch failure, which would abort the flow the
 // moment it started.
 func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clientID string, timeout time.Duration, claimPending bool) error {
+	st := theme.StylesFromContext(ctx)
 	// Force a FRESH mint even if a (stale-scoped or old-client) token is
 	// cached: register's contract is "when this returns, the server accepts
 	// this identity as of NOW".
@@ -298,13 +300,13 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 	case isMachineCtx(ctx):
 		fmt.Fprintf(a.Err, "waiting for approval: %s\n", agentConsoleURL(creds.BaseURL, clientID))
 	case claimPending:
-		fmt.Fprintln(a.Out, "\n"+theme.Dim.Render("Waiting for you to claim + approve this agent in the console (see the link above)..."))
-		fmt.Fprintln(a.Out, theme.Dim.Render(registerResumeHint))
+		fmt.Fprintln(a.Out, "\n"+st.Dim.Render("Waiting for you to claim + approve this agent in the console (see the link above)..."))
+		fmt.Fprintln(a.Out, st.Dim.Render(registerResumeHint))
 	default:
-		fmt.Fprintln(a.Out, "\n"+theme.Heading.Render("Approve this agent in the Jentic console:"))
-		fmt.Fprintf(a.Out, "    %s\n", theme.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
-		fmt.Fprintf(a.Out, "    %s\n\n", theme.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
-		fmt.Fprintln(a.Out, theme.Dim.Render(registerResumeHint))
+		fmt.Fprintln(a.Out, "\n"+st.Heading.Render("Approve this agent in the Jentic console:"))
+		fmt.Fprintf(a.Out, "    %s\n", st.Command.Render(agentConsoleURL(creds.BaseURL, clientID)))
+		fmt.Fprintf(a.Out, "    %s\n\n", st.Dim.Render(fmt.Sprintf("(or POST %s/agents/%s:approve — requires agents:write)", creds.BaseURL, clientID)))
+		fmt.Fprintln(a.Out, st.Dim.Render(registerResumeHint))
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -340,7 +342,7 @@ func (a *App) waitForApproval(ctx context.Context, creds auth.Credentials, clien
 		}
 
 		if _, err := auth.BearerToken(creds); err == nil {
-			a.registerProgress(ctx, theme.Success.Render("Agent approved."))
+			a.registerProgress(ctx, st.Success.Render("Agent approved."))
 			return nil
 		} else if pending, cerr := classify(err); !pending {
 			return cerr

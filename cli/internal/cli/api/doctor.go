@@ -108,7 +108,7 @@ func (a *app) doctorE(cmd *cobra.Command, jsonFlag bool) error {
 	if cmdcore.JSONOrPretty(cmd, jsonFlag) {
 		return d.renderJSON()
 	}
-	return d.render()
+	return d.render(theme.StylesFromContext(ctx))
 }
 
 // checkPaths verifies the XDG dirs the agent stores identity/state under exist
@@ -297,7 +297,7 @@ func jwtIssuedAt(token string) (time.Time, bool) {
 
 // render prints the grouped report to stdout and returns a non-nil error when any
 // check failed, so the CLI exits non-zero (warnings keep a zero exit — CI-safe).
-func (d *agentDoctor) render() error {
+func (d *agentDoctor) render(st theme.Styles) error {
 	var b strings.Builder
 	section := ""
 	for _, c := range d.checks {
@@ -305,15 +305,15 @@ func (d *agentDoctor) render() error {
 			if section != "" {
 				b.WriteString("\n")
 			}
-			b.WriteString(theme.Heading.Render(c.Section) + "\n")
+			b.WriteString(st.Heading.Render(c.Section) + "\n")
 			section = c.Section
 		}
-		b.WriteString(agentDotFor(c.Status) + " " + theme.Field(c.Name, c.Detail) + "\n")
+		b.WriteString(agentDotFor(st, c.Status) + " " + st.Field(c.Name, c.Detail) + "\n")
 		if c.Hint != "" && c.Status != agentPass {
-			b.WriteString("  " + theme.Dim.Render("↳ "+c.Hint) + "\n")
+			b.WriteString("  " + st.Dim.Render("↳ "+c.Hint) + "\n")
 		}
 	}
-	b.WriteString("\n" + d.summary() + "\n")
+	b.WriteString("\n" + d.summary(st) + "\n")
 	fmt.Fprint(d.app.Out, b.String())
 	if f := d.failed(); f > 0 {
 		return fmt.Errorf("doctor: %d check(s) failed", f)
@@ -360,25 +360,25 @@ func (d *agentDoctor) failed() int {
 	return f
 }
 
-func (d *agentDoctor) summary() string {
+func (d *agentDoctor) summary(st theme.Styles) string {
 	p, w, f := d.counts()
-	parts := []string{theme.Successf("%d passed", p)}
+	parts := []string{st.Successf("%d passed", p)}
 	if w > 0 {
-		parts = append(parts, theme.Warnf("%d warnings", w))
+		parts = append(parts, st.Warnf("%d warnings", w))
 	}
 	if f > 0 {
-		parts = append(parts, theme.Error.Render(fmt.Sprintf("%d failed", f)))
+		parts = append(parts, st.Error.Render(fmt.Sprintf("%d failed", f)))
 	}
-	return strings.Join(parts, theme.Dim.Render(" · "))
+	return strings.Join(parts, st.Dim.Render(" · "))
 }
 
-func agentDotFor(s agentCheckStatus) string {
+func agentDotFor(st theme.Styles, s agentCheckStatus) string {
 	switch s {
 	case agentPass:
-		return cmdcore.DotOK()
+		return st.DotOK()
 	case agentWarn:
-		return cmdcore.DotWarn()
+		return st.DotWarn()
 	default:
-		return cmdcore.DotFail()
+		return st.DotFail()
 	}
 }

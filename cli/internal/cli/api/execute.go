@@ -93,7 +93,9 @@ func newExecuteCmd(app *app) *cobra.Command {
 			"error like \"server gave HTTP response to HTTPS client\" means the target\n" +
 			"resolved to https against a local http broker — set the environment's\n" +
 			"broker_url (`jentic env add <env> --broker-url http://127.0.0.1:8100\n" +
-			"--force`) or override per call with --broker-scheme http.",
+			"--force`) or override per call with --broker-scheme http. For a REMOTE\n" +
+			"control plane you MUST set broker_url (or JENTIC_BROKER_URL); execute\n" +
+			"refuses with RESOLVE_FAILED rather than dialing the local default.",
 		Example: "  jentic execute GET:https://rest.coincap.io/v3/markets --json\n" +
 			"  jentic execute listPets --query limit=10 --json\n" +
 			"  jentic execute GET:/v1/pets/{petId} --path petId=123 --raw\n" +
@@ -155,6 +157,30 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 			}
 			if !flags.Changed("broker-host") {
 				opts.brokerHost = u.Host
+			}
+		}
+	}
+
+	// FAIL-CLOSED remote-broker guard (remote-cli-usage F1). Precedence has run;
+	// opts.brokerHost is now either the built-in loopback default or an explicit
+	// broker. If it is STILL the loopback default but the active environment's
+	// control plane (base_url) is remote, the user pointed the CLI at a remote
+	// install and never configured a broker. Silently dialing 127.0.0.1 would
+	// leak the agent bearer + injected upstream context at the caller's own
+	// loopback and fail with a confusing connection-refused. Refuse with a
+	// recovery directive instead. Keyed off loopback-ness (reusing the auth
+	// layer's classifier via isLoopbackHostname), so a genuinely-local workflow
+	// (loopback base_url, seeded loopback broker) never trips it.
+	if st := clictx.ActiveContext(cmd.Context()); st != nil {
+		if brokerIsLoopbackDefault(opts.brokerHost) && baseURLIsRemote(st.BaseURL) {
+			return &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg: fmt.Sprintf("environment %q has a remote control plane (%s) but no broker is configured; "+
+					"execute would target the local default %s://%s",
+					st.EnvironmentName, st.BaseURL, opts.brokerScheme, opts.brokerHost),
+				Actionable: fmt.Sprintf("Set the environment's broker_url: `jentic env add %s --url %s --broker-url https://<broker-host>:<port> --force`, "+
+					"or in file-less mode export JENTIC_BROKER_URL=https://<broker-host>:<port>. Ask your operator for the broker URL — it is never derived from the control plane.",
+					st.EnvironmentName, st.BaseURL),
 			}
 		}
 	}

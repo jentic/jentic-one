@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -56,7 +57,7 @@ func TestTerminalAccessError(t *testing.T) {
 // environment/identity/mode). It now points at `jentic doctor` for local setup.
 func TestWhoamiFooterDropsContextView(t *testing.T) {
 	a := testApp(t)
-	a.printMe(&control.MeAgent{Id: "agnt_1", Status: "active"})
+	a.printMe(context.Background(), &control.MeAgent{Id: "agnt_1", Status: "active"})
 	out := a.Out.(*bytes.Buffer).String()
 	if strings.Contains(out, "context view") {
 		t.Errorf("whoami footer must not reference `context view`:\n%s", out)
