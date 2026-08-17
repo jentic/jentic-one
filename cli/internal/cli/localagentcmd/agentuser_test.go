@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
@@ -34,6 +35,31 @@ func TestProviderToggleTitle(t *testing.T) {
 		if got := providerToggleTitle(name); got != "Copy your LLM provider config into the agent's home?" {
 			t.Errorf("providerToggleTitle(%q) = %q, want generic", name, got)
 		}
+	}
+}
+
+// TestFollowRenamedHome guards the form's home/name coupling: the home field is
+// prefilled from the DEFAULT account name, so an operator who renames the account
+// but leaves the home untouched must get the home re-derived from the new name —
+// otherwise the new account is silently pointed at a directory derived from a
+// name they rejected (the existing default-named account's live home, when one
+// exists). A deliberately customised home is always kept.
+func TestFollowRenamedHome(t *testing.T) {
+	defaultName := "alice-local-agent"
+	staleDefault := localagent.DefaultHomeDir(defaultName)
+
+	// Renamed account + untouched prefill → home follows the name.
+	if home, changed := followRenamedHome("alice-2", defaultName, staleDefault); !changed || home != localagent.DefaultHomeDir("alice-2") {
+		t.Errorf("followRenamedHome(renamed, stale prefill) = (%q, %v), want re-derived home", home, changed)
+	}
+	// Default name kept → prefill kept.
+	if home, changed := followRenamedHome(defaultName, defaultName, staleDefault); changed || home != staleDefault {
+		t.Errorf("followRenamedHome(default name) = (%q, %v), want unchanged", home, changed)
+	}
+	// Renamed account + deliberately customised home → the operator's choice wins.
+	custom := localagent.AgentHomeRoot() + "/team/alice-2"
+	if home, changed := followRenamedHome("alice-2", defaultName, custom); changed || home != custom {
+		t.Errorf("followRenamedHome(custom home) = (%q, %v), want operator's home kept", home, changed)
 	}
 }
 

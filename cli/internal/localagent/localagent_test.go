@@ -892,6 +892,52 @@ func TestVerifyManagedHome(t *testing.T) {
 	}
 }
 
+// TestAccountFullName guards the collision-freedom of the macOS display name:
+// Open Directory refuses a duplicate full name (and sysadminctl reports that
+// refusal while exiting 0), so two DIFFERENT account names for the same operator
+// must never map to the same full name — the old constant "<operator> Local
+// Agent" did exactly that and broke every second agent account.
+func TestAccountFullName(t *testing.T) {
+	a := AccountFullName("alice", "alice-local-agent")
+	b := AccountFullName("alice", "alice-agent-2")
+	if a == b {
+		t.Fatalf("full names for different account names must differ, both %q", a)
+	}
+	if !strings.Contains(a, "alice-local-agent") {
+		t.Errorf("full name %q should embed the account name for uniqueness", a)
+	}
+	// The create step must actually use the per-account full name.
+	if runtime.GOOS == "darwin" {
+		joined := strings.Join(CreateAccountCmds("alice", "alice-agent-2", DefaultHomeDir("alice-agent-2"))[0].Cmd.Args, " ")
+		if !strings.Contains(joined, AccountFullName("alice", "alice-agent-2")) {
+			t.Errorf("sysadminctl step must carry the per-account full name: %s", joined)
+		}
+	}
+}
+
+// TestHomeClaimedBy exercises the create-path guard against pointing a NEW
+// account at a home some other existing account already claims, using the real
+// account database (the current user is guaranteed to exist and record a home).
+func TestHomeClaimedBy(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || me.Username == "" || me.HomeDir == "" {
+		t.Skip("cannot resolve current user")
+	}
+	ctx := context.Background()
+	// Another account's recorded home is claimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", me.HomeDir); got != me.Username {
+		t.Errorf("HomeClaimedBy(other, %q) = %q, want %q", me.HomeDir, got, me.Username)
+	}
+	// The account's OWN home is not a conflict (that is the reuse path).
+	if got := HomeClaimedBy(ctx, me.Username, me.HomeDir); got != "" {
+		t.Errorf("HomeClaimedBy(self, own home) = %q, want \"\"", got)
+	}
+	// A home nobody records is unclaimed.
+	if got := HomeClaimedBy(ctx, "nope-no-such-agent-xyz", "/nowhere/definitely-unclaimed-xyz"); got != "" {
+		t.Errorf("HomeClaimedBy(unclaimed) = %q, want \"\"", got)
+	}
+}
+
 func TestIsUnderHome(t *testing.T) {
 	home := "/Users/alice"
 	if !IsUnderHome(home, "/Users/alice/projects/api") {
