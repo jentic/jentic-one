@@ -19,7 +19,7 @@ A self-hosted deployment exposes no MCP endpoint. Agents integrate through the `
 Jentic One runs on one machine and the agent runs on another. Install on both with the same bootstrap:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh | sh
 ```
 
 On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, run `jentic register` afterwards to create the agent identity against that deployment.
