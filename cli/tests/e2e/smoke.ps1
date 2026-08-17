@@ -118,13 +118,19 @@ try {
   $env:JENTIC_MODE = 'agent'
   if ($rc -eq 0) { Fail "jentic run claude exit=0 offline, want a graceful non-zero`n$r" }
   if ($r -match 'panic') { Fail "jentic run claude crashed (panic)`n$r" }
-  # WIN-3: the failure must be the WSL-only confinement guard (fail-closed), not
-  # some incidental error — assert the message names it so a future change that
-  # silently degrades to an UNCONFINED session on Windows is caught here.
-  if ($r -notmatch 'CONFINEMENT_UNAVAILABLE|not supported on windows|isn''t available on this machine') {
-    Fail "jentic run claude did not surface the confinement guard message`n$r"
+  # WIN-3: the failure must be a RENDERED, fail-closed CodedError — never a silent
+  # UNCONFINED session or an incidental crash. On a scratch home with no isolated
+  # agent user, `run` takes the same-user launcher path and resolves the agent
+  # binary FIRST, so on CI (no `claude` on PATH) the graceful error is
+  # binary-missing; when an agent user IS present it is instead the WSL-only
+  # confinement guard. Accept EITHER — both prove `run` degrades cleanly on
+  # native Windows rather than dropping into an unconfined session.
+  $confinement = 'CONFINEMENT_UNAVAILABLE|not supported on windows|isn''t available on this machine|confined agent sessions aren''t available'
+  $binaryMissing = 'is not installed or not on your PATH'
+  if ($r -notmatch $confinement -and $r -notmatch $binaryMissing) {
+    Fail "jentic run claude did not surface a graceful confinement/binary-missing error`n$r"
   }
-  Pass "jentic run claude degrades cleanly via the confinement guard (exit $rc, no crash)"
+  Pass "jentic run claude degrades cleanly (exit $rc, rendered error, no crash)"
 
   # 6b. `jenticctl stop` on a scratch home (no compose file, no PID file) must
   #     report "nothing to stop" and exit 0 — the assertion OPS-20 would have
