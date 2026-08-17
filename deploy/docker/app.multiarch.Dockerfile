@@ -54,6 +54,16 @@ RUN uv build --wheel --out-dir /build/dist
 
 FROM ${PYTHON_IMAGE} AS runtime
 
+# Apply Debian security updates for the util-linux family (kept IN LOCKSTEP with
+# python-base.Dockerfile's runtime stage). The pinned base lags the Debian
+# archive, so it still ships util-linux 2.41-5 which Trivy flags HIGH
+# (CVE-2026-53615; fixed in 2.41.5-0+deb13u1). Upgrading just this family clears
+# the image CVE gate for every published arch without a full `apt upgrade`.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+        bsdutils libblkid1 libmount1 libsmartcols1 libuuid1 mount util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd -r jentic && useradd --no-log-init -r -g jentic jentic
 
 EXPOSE 8000
