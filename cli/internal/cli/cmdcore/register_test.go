@@ -40,12 +40,12 @@ func TestFlagsAllowPrompt(t *testing.T) {
 	}
 }
 
-// TestBootstrapFlagsAllowPrompt proves bootstrap's extended field-flag set
+// TestSetupFlagsAllowPrompt proves setup's extended field-flag set
 // treats a flag-driven skill-target run (e.g. --operator) as non-interactive,
 // where the bare register set would still prompt.
-func TestBootstrapFlagsAllowPrompt(t *testing.T) {
+func TestSetupFlagsAllowPrompt(t *testing.T) {
 	newCmd := func() *cobra.Command {
-		c := &cobra.Command{Use: "bootstrap", Run: func(*cobra.Command, []string) {}}
+		c := &cobra.Command{Use: "setup", Run: func(*cobra.Command, []string) {}}
 		c.Flags().String("url", "", "")
 		c.Flags().String("env", "", "")
 		c.Flags().String("name", "", "")
@@ -56,16 +56,16 @@ func TestBootstrapFlagsAllowPrompt(t *testing.T) {
 		return c
 	}
 
-	if !flagsAllowPrompt(newCmd(), false, BootstrapFieldFlags...) {
-		t.Errorf("bare bootstrap (no flags, no --yes) should allow prompting")
+	if !flagsAllowPrompt(newCmd(), false, SetupFieldFlags...) {
+		t.Errorf("bare setup (no flags, no --yes) should allow prompting")
 	}
 	for _, f := range []string{"operator", "all", "scope", "skip-skill"} {
 		c := newCmd()
 		if err := c.Flags().Set(f, valueFor(f)); err != nil {
 			t.Fatalf("set %s: %v", f, err)
 		}
-		if flagsAllowPrompt(c, false, BootstrapFieldFlags...) {
-			t.Errorf("setting --%s should suppress prompting for bootstrap", f)
+		if flagsAllowPrompt(c, false, SetupFieldFlags...) {
+			t.Errorf("setting --%s should suppress prompting for setup", f)
 		}
 	}
 }

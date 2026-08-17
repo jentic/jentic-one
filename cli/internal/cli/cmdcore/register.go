@@ -86,11 +86,11 @@ func flagsAllowPrompt(cmd *cobra.Command, yes bool, fieldFlags ...string) bool {
 // registerFieldFlags are the flags whose presence makes `register` non-interactive.
 var registerFieldFlags = []string{"url", "env", "name"}
 
-// BootstrapFieldFlags extend the register set with the skill-target and
-// activation flags bootstrap adds, so a flag-driven run (e.g. `--operator
-// claude`) is not treated as interactive. Exported because bootstrap now lives
+// SetupFieldFlags extend the register set with the skill-target and
+// activation flags setup adds, so a flag-driven run (e.g. `--operator
+// claude`) is not treated as interactive. Exported because setup now lives
 // in the localagentcmd package (ARCH-1) and needs this set.
-var BootstrapFieldFlags = append(append([]string{}, registerFieldFlags...),
+var SetupFieldFlags = append(append([]string{}, registerFieldFlags...),
 	"operator", "all", "scope", "skip-skill")
 
 // WantsInteractive also requires a real terminal (so pipes/CI stay non-interactive).

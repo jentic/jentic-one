@@ -144,7 +144,7 @@ func TestBuildResetStepsOrderAndHome(t *testing.T) {
 	// Ordering: leaf-revoke → traverse-revoke → identity dirs → home → sudoers → account.
 	// The agent's own identity dirs (exported XDG store + legacy ~/.jentic) are
 	// torn down before the home is settled and always (when the home is kept) so
-	// credential material never outlives the account and a re-bootstrap can't
+	// credential material never outlives the account and a re-setup can't
 	// resurrect a torn-down agent.
 	idxLeaf := indexOfContains(whats, "read/write grant on /Users/alice/projects/api")
 	idxTraverse := indexOfContains(whats, "traverse grant on /Users/alice")

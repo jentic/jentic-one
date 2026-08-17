@@ -18,7 +18,7 @@ import (
 
 // --- onboarding body -------------------------------------------------------
 //
-// The rest of this file implements `jentic register` / `jentic bootstrap`
+// The rest of this file implements `jentic register` / `jentic setup`
 // against the XDG context store. `register` is the single onboarding FRONT
 // DOOR: a machine with an active context registers that context's identity; a
 // fresh machine gets the one-command setup. It is the human-facing composition
@@ -33,7 +33,7 @@ import (
 
 // SetupValues are the two things the fresh-machine arm must learn: where the
 // install lives and what to call this agent. Everything else is derived.
-// Exported (with exported fields) because bootstrap now lives in the
+// Exported (with exported fields) because setup now lives in the
 // localagentcmd package (ARCH-1) and constructs this to drive onboarding.
 type SetupValues struct {
 	URL  string // control-plane URL (becomes the environment's base_url)
@@ -43,14 +43,14 @@ type SetupValues struct {
 
 // ErrOnboardCancelled signals a user-aborted interactive onboarding (Esc in
 // the form). Callers treat it as a clean no-op exit (matching the legacy arm's
-// "Cancelled." + nil contract) — it exists so composed flows (bootstrap) can
+// "Cancelled." + nil contract) — it exists so composed flows (setup) can
 // stop their remaining steps without inventing a fake success.
 var ErrOnboardCancelled = errors.New("onboarding cancelled")
 
 // RegisterSetup is the fresh-machine onboarding: create the environment +
 // identity + context trio (idempotently — re-running reuses what exists),
 // activate it, then fall into the shared register-and-wait flow. It returns
-// the resolved values so composed flows (bootstrap) can reuse them (e.g. the
+// the resolved values so composed flows (setup) can reuse them (e.g. the
 // install URL for skill templating).
 func (a *App) RegisterSetup(ctx context.Context, vals SetupValues, timeout time.Duration, force, interactive bool) (SetupValues, error) {
 	st := theme.StylesFromContext(ctx)

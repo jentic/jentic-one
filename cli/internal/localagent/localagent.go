@@ -196,7 +196,7 @@ func AgentConfigDir(homeDir string) string {
 //
 // `jentic reset` removes all of them even when the home is KEPT, so credential
 // material handed to the agent never survives a teardown in the re-owned home,
-// and a later `jentic bootstrap` that reuses the home can't resurrect a
+// and a later `jentic setup` that reuses the home can't resurrect a
 // torn-down registration. Every path is a fixed join under the (validated)
 // home, so the list is safe to hand to a privileged rm.
 func AgentIdentityDirs(homeDir string) []string {
@@ -601,7 +601,7 @@ func ReownHomeCmd(operator, homeDir string) *exec.Cmd {
 // tree. It is run when setting up the agent account, and matters most when the
 // home ALREADY EXISTS: a prior `jentic reset` that kept the home re-owned it to
 // the operator (ReownHomeCmd), and `createhomedir` only creates missing files —
-// it never reclaims ownership of existing content. Without this, a re-bootstrap
+// it never reclaims ownership of existing content. Without this, a re-run of setup
 // over that home leaves .claude/.aws/etc. operator-owned, so the agent can read
 // but not WRITE them (fresh-config screens, provider token-cache failures,
 // EACCES transcript writes). It mirrors ReownHomeCmd's `-Rf`: a macOS home carries
@@ -638,7 +638,7 @@ func DeleteHomeCmd(homeDir string) *exec.Cmd {
 // RemoveAgentIdentityCmd permanently removes the agent's own jentic identity
 // dirs (see AgentIdentityDirs: the exported XDG config/state trees plus the
 // legacy ~/.jentic — registration, tokens, and signing key). `jentic reset`
-// runs it even when the agent's home is KEPT, so a later `jentic bootstrap`
+// runs it even when the agent's home is KEPT, so a later `jentic setup`
 // that reuses the same home can't resurrect a torn-down (now-archived) agent
 // registration, and no credential material outlives the account in the
 // re-owned home. `rm -f` makes absent dirs a no-op. Runs as root because the
@@ -688,7 +688,7 @@ func SudoersRule(operator, agentUser string) string {
 
 // InstallSudoersCmd adds operator's passwordless-launch rule for agentUser to the
 // shared /etc/sudoers.d/jentic-agent drop-in. It is OPTIONAL and gated on explicit
-// operator consent (bootstrap's passwordless prompt): without it, every `jentic
+// operator consent (setup's passwordless prompt): without it, every `jentic
 // run` prompts for the operator's password (cached per-terminal ~5 min); with it,
 // the operator can become the agent user (to launch it) with no prompt.
 //

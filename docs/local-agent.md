@@ -12,7 +12,7 @@ for the generated per-flag reference, see the platform docs (Reference → CLI).
 
 - [The mental model](#the-mental-model)
 - [Quickstart](#quickstart)
-- [What `jentic bootstrap` sets up](#what-jentic-bootstrap-sets-up)
+- [What `jentic setup` sets up](#what-jentic-setup-sets-up)
 - [The `jentic run` flow](#the-jentic-run-flow)
 - [Cookbook](#cookbook)
 - [Where state lives](#where-state-lives)
@@ -59,9 +59,9 @@ restrict network egress.
 ## Quickstart
 
 ```bash
-# 1. One-time: onboard. After you pick your agent, bootstrap offers to isolate
+# 1. One-time: onboard. After you pick your agent, setup offers to isolate
 #    it behind a dedicated Unix user (asks before any sudo runs).
-jentic bootstrap
+jentic setup
 
 # 2. Every session: launch the agent, confined, in the project you name.
 jentic run claude ~/projects/my-app
@@ -89,11 +89,11 @@ From then on that directory opens without a prompt.
 
 > **No isolated account?** `jentic run` still works: it launches the agent
 > directly **as you** — no sandbox — and prints a one-time warning telling you
-> so. Run `jentic bootstrap` to get the isolated setup.
+> so. Run `jentic setup` to get the isolated setup.
 
-## What `jentic bootstrap` sets up
+## What `jentic setup` sets up
 
-`jentic bootstrap` takes a fresh machine to ready: register an agent identity
+`jentic setup` takes a fresh machine to ready: register an agent identity
 with your Jentic install, write the CLI-usage skill into your agent runtime, and
 — the part this guide is about — offer to isolate the agent. The isolation step
 is **sudo-last**: it asks *"Create a dedicated user account for your local
@@ -111,7 +111,7 @@ Opting in shows one prefilled, editable form:
 | Passwordless launch? | Yes | Scoped sudoers rule to *become the agent user* — never root |
 
 Then, if your agent has a record of trusted workspaces (Claude Code's
-`~/.claude.json` projects you accepted the trust dialog for), bootstrap offers
+`~/.claude.json` projects you accepted the trust dialog for), setup offers
 them as a pre-selected multiselect — **"Bring your workspaces over"** — so you
 don't re-grant each project by hand on first run. Banned paths (see
 [the grant model](#granting-directories)) are never offered.
@@ -119,13 +119,13 @@ don't re-grant each project by hand on first run. Banned paths (see
 Non-interactive setup:
 
 ```bash
-jentic bootstrap --url https://jentic.example.com --operator claude --yes
-jentic bootstrap --skip-skill        # identity only
-jentic bootstrap --dry-run           # describe everything, change nothing
+jentic setup --url https://jentic.example.com --operator claude --yes
+jentic setup --skip-skill        # identity only
+jentic setup --dry-run           # describe everything, change nothing
 ```
 
 Prerequisites are checked **before** the first sudo. If something is missing
-(e.g. `bwrap` on a minimal Linux), bootstrap prints the exact install command
+(e.g. `bwrap` on a minimal Linux), setup prints the exact install command
 for your package manager and offers to continue same-user — a missing dependency
 never blocks the identity/skill provisioning you came for.
 
@@ -353,9 +353,9 @@ confirmation. To remove a single context or identity instead of everything, use
 | Symptom | Cause | Fix |
 | ------- | ----- | --- |
 | `confined agent sessions aren't available on this machine` (`CONFINEMENT_UNAVAILABLE`) | No `sandbox-exec` (macOS) or missing `bwrap` / unprivileged user namespaces / `acl` package (Linux) | Run the printed install command, e.g. `sudo apt install bubblewrap acl`; userns: `sudo sysctl -w kernel.unprivileged_userns_clone=1`. `jentic run` never falls back to an unconfined session. |
-| Password prompt on every launch | No passwordless rule installed | Re-run `jentic bootstrap` and accept the passwordless-launch toggle, or enable Touch ID for sudo on macOS. |
-| `agent account "…" does not exist` | Isolation was never set up (or was reset) | `jentic bootstrap` (or `jenticctl wizard`). |
-| "Running the agent as YOU" warning | Same-user fallback: no isolated account recorded | Expected if you declined isolation; `jentic bootstrap` to isolate. |
+| Password prompt on every launch | No passwordless rule installed | Re-run `jentic setup` and accept the passwordless-launch toggle, or enable Touch ID for sudo on macOS. |
+| `agent account "…" does not exist` | Isolation was never set up (or was reset) | `jentic setup` (or `jenticctl wizard`). |
+| "Running the agent as YOU" warning | Same-user fallback: no isolated account recorded | Expected if you declined isolation; `jentic setup` to isolate. |
 | Grant prompt reappears for a directory you granted before | The ACL drifted (e.g. the directory was recreated by a build) | Re-grant; `jentic run <agent> --list-grants` shows the recorded inventory. |
 | Agent can't see a file *next to* its workspace | Working as designed — only granted subtrees are visible | Grant the sibling directory too, or a common parent. |
 | `test -w` fails / editor save fails inside a granted dir on macOS | A grant made by an older build used a narrower ACE set | Re-granting (or re-running setup) re-applies the full ACE set. |
@@ -375,11 +375,11 @@ confirmation. To remove a single context or identity instead of everything, use
 
 - **`jentic skill`** — writes the "how to use Jentic" skill set into your agent
   runtime's native layout (`skill init` / `list` / `update` / `remove`), so the
-  launched agent knows how to drive the CLI. `jentic bootstrap` runs it for you.
+  launched agent knows how to drive the CLI. `jentic setup` runs it for you.
 - **`jentic doctor`** — read-only self-check, including whether the agent would
   run as the same uid as you.
 - **`jenticctl wizard`** — the installer-side onboarding; its agent-isolation
-  step is the same bootstrap flow described here.
+  step is the same setup flow described here.
 
 ## Further reading
 

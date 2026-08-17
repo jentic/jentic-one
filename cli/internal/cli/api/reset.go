@@ -30,7 +30,7 @@ func newResetCmd(app *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Tear down the agent account and wipe this machine's jentic identity state",
-		Long: "reset is the inverse of the agent-user setup folded into `jentic bootstrap`,\n" +
+		Long: "reset is the inverse of the agent-user setup folded into `jentic setup`,\n" +
 			"and the clean-slate hatch for this machine's jentic identity state.\n\n" +
 			"It tears down the agent account — the dedicated Unix user, the named-user\n" +
 			"ACLs stamped across your home (both the leaf read/write grants and the\n" +

@@ -17,10 +17,10 @@
 ## The operator's whole workflow — three commands
 
 ```bash
-# 1. One-time: onboard. Right after picking your operator, bootstrap/wizard offers
+# 1. One-time: onboard. Right after picking your operator, setup/wizard offers
 #    to create the dedicated agent user + its home (jentic run then confines each
 #    session so the agent sees only the directories you grant).
-jentic bootstrap                         # (or: jenticctl wizard — same flow)
+jentic setup                             # (or: jenticctl wizard — same flow)
 
 # 2. Every session: launch the agent, isolated, in the directory you name.
 jentic run claude ~/projects/my-app
@@ -33,7 +33,7 @@ jentic reset
 
 The agent-user account is **created as part of onboarding** — there is no
 separate `agent-user setup` command. After you choose an operator (Claude,
-Codex, Cursor, or Hermes), `jentic bootstrap` and `jenticctl wizard` both offer to
+Codex, Cursor, or Hermes), `jentic setup` and `jenticctl wizard` both offer to
 isolate it behind a dedicated Unix user; the account-creation step is shared
 between the two the same way the skill step is (see below). Everything else —
 provisioning the agent's binary, seeding config, granting a working directory,
@@ -180,12 +180,12 @@ scope what the boundary is *for* — protecting the operator and other users fro
 agent — versus what it is *not*: an intra-agent, network-egress, or secret-hiding
 sandbox.
 
-## Creating the account — folded into `bootstrap` / `wizard`
+## Creating the account — folded into `setup` / `wizard`
 
 Account creation is not a standalone command. Right after the operator picks
-their agent, `jentic bootstrap` and `jenticctl wizard` share one step (the same
-way they share the skill step: the wizard delegates to bootstrap, so the step
-lives in the bootstrap flow and both reach it) that offers to isolate the agent
+their agent, `jentic setup` and `jenticctl wizard` share one step (the same
+way they share the skill step: the wizard delegates to setup, so the step
+lives in the setup flow and both reach it) that offers to isolate the agent
 behind a dedicated Unix user. There is exactly **one** such account per operator,
 shared across every agent binary and identity; the step is deliberately
 **sudo-last**: it asks *"Create a dedicated user account for your local agent?
@@ -204,7 +204,7 @@ each toggle **names the exact files it would copy** ("Will copy: ~/.claude,
 defaults to Yes only when there is actually something to copy (otherwise it offers
 "No" with a *none found* note). On confirm it runs, idempotently and with platform
 detection, what is otherwise a short manual recipe. After registration completes
-and the identity summary is shown, `bootstrap` then **offers to start a session in
+and the identity summary is shown, `setup` then **offers to start a session in
 the agent's home right there** — displaying `cd <agent home>; jentic run <agent>`
 and, on yes, launching it; declining leaves the command printed for later. For a
 single-user machine that recipe is:
@@ -235,7 +235,7 @@ sudo setfacl -R -m u:"$USER":rwX "$AGENT_HOME_DIR" && sudo setfacl -R -d -m u:"$
 Because per-session confinement (below) is the actual isolation guarantee, an
 account that can never be launched under confinement would be a dead end. So the
 moment the operator opts into isolation — **before** the first `sudo` runs —
-`bootstrap`/`wizard` checks that this machine has what the model needs and,
+`setup`/`wizard` checks that this machine has what the model needs and,
 crucially, treats a missing prerequisite as *non-blocking for everything else*:
 
 | Platform | Prerequisites |
@@ -257,11 +257,11 @@ user namespaces, if disabled, are re-enabled with
 `/etc/sysctl.d/`). We **never run a package manager ourselves** — the command is
 printed, not executed. The operator then has two clearly-offered choices:
 
-1. **Continue same-user now** — bootstrap proceeds without an isolated account
+1. **Continue same-user now** — setup proceeds without an isolated account
    (recorded as `account_created=false`, exactly like declining isolation), so a
    missing dependency never blocks the identity/skill provisioning they came for.
 2. **Install the prerequisites and re-run** — the printed command, then
-   `jentic bootstrap` (or `jentic run <agent>`) again to isolate the agent.
+   `jentic setup` (or `jentic run <agent>`) again to isolate the agent.
 
 The same check is the launch-time gate in `jentic run`: `launchAgent` refuses to
 start an unconfined session and prints the same per-dependency breakdown, so the
@@ -300,9 +300,9 @@ belongs in*. Registration is deliberately sequenced after the isolation decision
 not before it.
 
 The consequence is a small but important targeting rule for **every** command that
-writes an agent identity (bootstrap today; any create/update later):
+writes an agent identity (setup today; any create/update later):
 
-- **Self-user agent (isolation accepted).** The identity minted by bootstrap lives
+- **Self-user agent (isolation accepted).** The identity minted by setup lives
   in the **operator's own XDG store** (`~/.config/jentic`, `~/.local/state/jentic`)
   like any other. The agent account receives identity material through exactly one
   channel: at every launch, `jentic run` exports the operator's *active context* —
@@ -343,7 +343,7 @@ writer, one source of truth, one refreshed projection.
 ### Optional: passwordless launch
 
 Without this, each `jentic run` prompts for the operator's password (cached
-per-terminal ~5 min). `bootstrap`/`wizard` offer this as a **consent gate during
+per-terminal ~5 min). `setup`/`wizard` offer this as a **consent gate during
 account setup** (defaulting to yes): accept it and the CLI installs a scoped
 `sudoers` drop-in; decline and you simply keep entering your login password on
 each launch. The rule it writes is exactly:
@@ -400,7 +400,7 @@ anything an offer would otherwise propose.
 > **single-choice today**, so this runs for the one binary picked (e.g.
 > `claude`), reading **its** trusted-projects list. Selection will become
 > **multi-choice** — the operator will be able to pick several agent binaries
-> (`claude`, `hermes`, …) in one bootstrap. When it does, this workspace offer must
+> (`claude`, `hermes`, …) in one setup run. When it does, this workspace offer must
 > run for **each** selected binary. Unlike a home-wide marker scan, the
 > trusted-projects source is **per-binary** (Claude Code's `~/.claude.json` here;
 > another agent would have its own), so each binary reads **its own** trusted list
@@ -459,7 +459,7 @@ What it does, in order:
 
 1. **Resolve the agent user** from config (or the `<operator>-local-agent`
    default); if the account doesn't exist, offer to create it — the same account
-   step `bootstrap`/`wizard` run, for operators who skipped it during onboarding.
+   step `setup`/`wizard` run, for operators who skipped it during onboarding.
 2. **Ensure the binary is installed** for that user (below).
 3. **Optionally seed config** — the agent's own settings, then the LLM-provider
    config (below).
@@ -629,7 +629,7 @@ tokens. Two further details from live testing, both baked into `jentic run`:
 
 ## `jentic reset` — tear down the account and this machine's identity state
 
-Onboarding (`bootstrap`/`wizard`) and `jentic run` accumulate real system state on
+Onboarding (`setup`/`wizard`) and `jentic run` accumulate real system state on
 the operator's machine: a Unix account and its home, a copied/installed agent binary,
 seeded config and provider credentials, named-user ACLs stamped across the
 operator's home (traverse grants + leaf grants), a `sudoers` drop-in, the agent's
@@ -764,7 +764,7 @@ exported XDG store (`<agent home>/.config/jentic` with the Ed25519 key,
 `<agent home>/.jentic`. These are torn down **even when the home is kept**: the
 credential material handed to the agent must not survive the teardown in the
 soon-to-be-operator-owned home, and leaving a legacy registration behind lets a
-later `jentic bootstrap` that reuses the same home resurrect a torn-down
+later `jentic setup` that reuses the same home resurrect a torn-down
 (now-archived) registration. (When the
 home is being deleted, step (2)'s recursive `rm` already covers it, so this step is
 skipped.) (2) settle the agent home — **re-own it to the operator** by default, or
@@ -846,7 +846,7 @@ by design:
   The agent's *identity* inside that home (the exported `~/.config/jentic` +
   `~/.local/state/jentic`, and any legacy `~/.jentic`) is **not** left behind,
   though — it is torn down regardless of the home disposition (see step (1c)
-  above) so no credential material outlives the account and a re-bootstrap starts
+  above) so no credential material outlives the account and a fresh setup starts
   genuinely fresh.
 - **The rest of the operator's state** — the wipe removes identity state (the XDG
   store and any legacy `~/.jentic/profiles`) and the `agent_account:` object, but
@@ -856,7 +856,7 @@ by design:
 ### Not yet implemented — skill cleanup
 
 One further teardown responsibility belongs to `jentic reset` by design but is
-**not implemented yet**: removing the generated skill files. `bootstrap`/`wizard`
+**not implemented yet**: removing the generated skill files. `setup`/`wizard`
 write the Jentic CLI-usage skill into each operator's native layout; a full
 decommission should delete the managed skill block/files it added for the agent, the
 inverse of the skill step, just as reset already inverts the account/ACL/sudoers/

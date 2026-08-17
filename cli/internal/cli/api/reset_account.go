@@ -257,7 +257,7 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 	// settled. This is where the agent's platform identity lives: registration,
 	// tokens, signing key. It must go even when the home is KEPT, or the
 	// credential material would survive the teardown in the now-operator-owned
-	// home and a later `jentic bootstrap` that reuses the same home could
+	// home and a later `jentic setup` that reuses the same home could
 	// resurrect the torn-down registration. When the home is being deleted the
 	// rm below covers it, so this only runs on keep.
 	if plan.homeDir != "" && !deleteHome {

@@ -57,7 +57,7 @@ func seedRegistered(t *testing.T, _ *app, _ string, baseURL string) {
 	t.Setenv("JENTIC_BEARER_TOKEN", "tok_abc")
 }
 
-// stubDetect wires the App's environment-detection seam so skill/bootstrap tests
+// stubDetect wires the App's environment-detection seam so skill/setup tests
 // can control which agents "exist" without touching the real filesystem beyond
 // the given home/cwd.
 func stubDetect(t *testing.T, app *app, home, cwd string, detected ...string) {

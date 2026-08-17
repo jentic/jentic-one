@@ -29,7 +29,7 @@ func (a *Cmd) ensureCanRunAsAgent(ctx context.Context, agentUser string) error {
 		return fmt.Errorf("couldn't switch to the agent user %q — the launch needs to run as that "+
 			"account (every step uses `sudo -u %s`).\n"+
 			"  If you were asked for your password and cancelled, re-run and enter it. To skip the\n"+
-			"  prompt each time, enable passwordless launch during `jentic bootstrap` (or re-run it)",
+			"  prompt each time, enable passwordless launch during `jentic setup` (or re-run it)",
 			agentUser, agentUser)
 	}
 	return nil

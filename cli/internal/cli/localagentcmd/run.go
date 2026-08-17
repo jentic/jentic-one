@@ -218,7 +218,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 
 	if !localagent.UserExists(ctx, agentUser) {
 		return accountMissingErr(fmt.Sprintf("agent account %q does not exist — create it first with "+
-			"`jentic bootstrap` or `jenticctl wizard` (see "+
+			"`jentic setup` or `jenticctl wizard` (see "+
 			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser))
 	}
 
@@ -299,7 +299,7 @@ func (a *Cmd) runSameUser(ctx context.Context, st *config.AgentState, desc local
 	binary, err := exec.LookPath(desc.Binary)
 	if err != nil {
 		return binaryMissingErr(fmt.Sprintf("%s is not installed or not on your PATH; install it, then re-run "+
-			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary))
+			"(or run `jentic setup` to set up an isolated agent user)", desc.Binary))
 	}
 
 	a.warnSameUserOnce(st)
@@ -347,7 +347,7 @@ func (a *Cmd) warnSameUserOnce(st *config.AgentState) {
 	fmt.Fprintln(a.Out, theme.Dim.Render(
 		"  It can read everything you can: your keys, browser session, and the jentic-one"))
 	fmt.Fprintln(a.Out, theme.Dim.Render(
-		"  credential store. Run `jentic bootstrap` to isolate it behind its own Unix user."))
+		"  credential store. Run `jentic setup` to isolate it behind its own Unix user."))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  (Shown once.)"))
 
 	if _, err := config.MutateAgentState(a.Paths, func(s *config.AgentState) error {
@@ -436,7 +436,7 @@ func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, st *con
 // ── step 4: launch ───────────────────────────────────────────────────────────
 
 // launchIsolated is the programmatic entry to the confined launch used by flows
-// that already know the agent user (bootstrap's "start a session now?" offer).
+// that already know the agent user (setup's "start a session now?" offer).
 // It reloads the recorded account (for grants + home), validates the user,
 // exports the active context into the agent's own store, and launches confined
 // — the same steps 3a/4 that a `jentic run` performs after its prompts.

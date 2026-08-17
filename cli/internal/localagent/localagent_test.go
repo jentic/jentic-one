@@ -94,7 +94,7 @@ func TestCreateAccountCmds(t *testing.T) {
 				t.Error("macOS operator-grant step must be BestEffort (SIP/TCC-protected home files can't be ACLed)")
 			}
 		}
-		// The operator grant must carry add_subdirectory: bootstrap writes the agent
+		// The operator grant must carry add_subdirectory: setup writes the agent
 		// identity by `mkdir <home>/.jentic` as the operator, and the macOS "write"
 		// shorthand omits add_subdirectory on a directory (files ok, mkdir EACCES).
 		if !strings.Contains(all, "add_subdirectory") {

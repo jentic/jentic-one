@@ -43,7 +43,7 @@ Small, additive. The ACL machinery is untouched.
 
 | # | Change | File(s) |
 |---|--------|---------|
-| 1 | **Stop enforcing `chmod 700 ~`.** Remove the `LockOperatorHomeCmd` call from bootstrap. Keep the function only if still referenced; otherwise delete it and its test. | `cli/internal/cmd/agentuser.go`, `cli/internal/localagent/localagent.go` |
+| 1 | **Stop enforcing `chmod 700 ~`.** Remove the `LockOperatorHomeCmd` call from setup. Keep the function only if still referenced; otherwise delete it and its test. | `cli/internal/cmd/agentuser.go`, `cli/internal/localagent/localagent.go` |
 | 2 | **Confinement launcher shim.** New `ConfineLaunchCmd(...)` (or wrap `LaunchCmd`) that runs the agent under `sandbox-exec -f <profile>` (macOS) / `bwrap ...` (Linux). When confinement is **unavailable** it does **not** fall back to an unconfined run — it **errors closed** (see below). | `cli/internal/localagent/` (new file, e.g. `confine.go` + `confine_darwin.go` / `confine_linux.go`) |
 | 3 | **Profile generation.** Build the deny-set (operator home) and allow-set (granted dirs + runtime needs) from `cfg.GrantedDirs`. Written to a temp file owned/readable by the agent, removed on exit. | same package |
 | 4 | **Wire into `jentic run`.** Launch through the shim instead of `LaunchCmd` directly. | `cli/internal/cmd/run.go` |

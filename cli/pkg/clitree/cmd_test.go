@@ -38,7 +38,7 @@ func TestCtlRootListsLifecycleCommands(t *testing.T) {
 		}
 	}
 	// API-only commands must not be registered on the lifecycle CLI.
-	for _, name := range []string{"bootstrap", "register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
+	for _, name := range []string{"register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
 		if hasCommand(root, name) {
 			t.Errorf("jenticctl root unexpectedly registers %q", name)
 		}
@@ -55,7 +55,7 @@ func TestAPIRootListsAPICommands(t *testing.T) {
 		t.Fatalf("help: %v", err)
 	}
 	got := out.String()
-	for _, name := range []string{"bootstrap", "register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
+	for _, name := range []string{"setup", "register", "logout", "catalog", "apis", "search", "inspect", "execute"} {
 		if !strings.Contains(got, name) {
 			t.Errorf("jentic help output missing command %q", name)
 		}
@@ -63,11 +63,21 @@ func TestAPIRootListsAPICommands(t *testing.T) {
 			t.Errorf("jentic root missing command %q", name)
 		}
 	}
+	// The pre-rename `bootstrap` name must keep working as a hidden alias:
+	// registered on the tree, but absent from help output.
+	if !hasCommand(root, "bootstrap") {
+		t.Errorf("jentic root missing the hidden bootstrap alias for setup")
+	}
+	if strings.Contains(got, "bootstrap") {
+		t.Errorf("jentic help output must not mention the hidden bootstrap alias")
+	}
 	// Lifecycle commands must not be registered on the API CLI. NOTE: `doctor` is
 	// intentionally NOT in this list — F8-4 ships an agent-side, read-only
 	// `jentic doctor` self-check (distinct from the operator `jenticctl doctor`),
-	// per impl/5.1 §3c.
-	for _, name := range []string{"install", "setup", "status", "start", "stop", "logs", "update", "uninstall"} {
+	// per impl/5.1 §3c. `setup` is not in it either: `jentic setup` (local-agent
+	// onboarding) and `jenticctl setup` (first admin) are distinct commands that
+	// legitimately share a name across the two binaries.
+	for _, name := range []string{"install", "status", "start", "stop", "logs", "update", "uninstall"} {
 		if hasCommand(root, name) {
 			t.Errorf("jentic root unexpectedly registers %q", name)
 		}

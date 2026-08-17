@@ -2,7 +2,7 @@ package localagentcmd
 
 import "github.com/jentic/jentic-one/cli/internal/cli/ux"
 
-// coded.go gives the local-agent commands (run/bootstrap/skill) the same coded
+// coded.go gives the local-agent commands (run/setup/skill) the same coded
 // error contract as api/cmdcore (ARCH-23/AGT-24). Before this the package
 // returned only raw fmt.Errorf, so a driving agent got exit 1 with no
 // error_code for the failures it most needs to branch on — a missing agent
@@ -35,16 +35,16 @@ func binaryMissingErr(msg string) error {
 	return &ux.CodedError{
 		Code:       ux.CodeResolveFailed,
 		Msg:        msg,
-		Actionable: "Install the agent binary (or run `jentic bootstrap` to provision the isolated agent user), then re-run.",
+		Actionable: "Install the agent binary (or run `jentic setup` to provision the isolated agent user), then re-run.",
 	}
 }
 
 // accountMissingErr codes an operation that needs a provisioned agent account
-// when none exists as RESOLVE_FAILED with the bootstrap remedy.
+// when none exists as RESOLVE_FAILED with the setup remedy.
 func accountMissingErr(msg string) error {
 	return &ux.CodedError{
 		Code:       ux.CodeResolveFailed,
 		Msg:        msg,
-		Actionable: "Run `jentic bootstrap` to create the isolated agent user first.",
+		Actionable: "Run `jentic setup` to create the isolated agent user first.",
 	}
 }

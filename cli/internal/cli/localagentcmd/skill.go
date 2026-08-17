@@ -24,7 +24,7 @@ var errOperatorAndAll = errors.New("--operator and --all are mutually exclusive;
 
 // errNothingDetected is returned when a non-interactive run has no explicit
 // selection and detection finds nothing. A sentinel so callers with a better
-// escape hatch (bootstrap's --skip-skill) can append it to the message.
+// escape hatch (setup's --skip-skill) can append it to the message.
 var errNothingDetected = errors.New("no operators given and none detected")
 
 // promptable reports whether the huh pickers can actually run interactively.
@@ -536,7 +536,7 @@ func (a *Cmd) skillInit(_ *cobra.Command, opts *skillOptions) error {
 
 // writeSkill renders each selected skill into each target and prints the
 // per-operator, per-skill outcome plus a closing hint. It is the shared body of
-// `skill init` and `bootstrap` so both report writes identically. Targets are
+// `skill init` and `setup` so both report writes identically. Targets are
 // resolved by the caller (so selection errors surface before any side effects).
 //
 // For a shared AGENTS.md, each skill's named block is spliced in turn: Apply

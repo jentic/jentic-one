@@ -393,11 +393,11 @@ func (d *doctor) checkLocalAgent() {
 	switch {
 	case err != nil:
 		d.add(section, "account", statusWarn, fmt.Sprintf("account %q not found on this host: %v", acct.User, err),
-			"run `jentic bootstrap` on the agent host, or `jentic reset` to clear the stale record")
+			"run `jentic setup` on the agent host, or `jentic reset` to clear the stale record")
 	case meErr == nil && agentUser.Uid == me.Uid:
 		d.add(section, "account uid", statusWarn,
 			fmt.Sprintf("agent account %q shares this operator's identity (%s)", acct.User, agentUser.Uid),
-			"the agent would run unconfined against your files; re-provision a dedicated account with `jentic bootstrap`")
+			"the agent would run unconfined against your files; re-provision a dedicated account with `jentic setup`")
 	default:
 		d.add(section, "account", statusPass, fmt.Sprintf("%s (uid %s)", acct.User, agentUser.Uid), "")
 	}

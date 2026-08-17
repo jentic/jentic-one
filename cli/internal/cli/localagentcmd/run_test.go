@@ -44,8 +44,8 @@ func TestRunGrantMgmtWithoutAccountIsCoded(t *testing.T) {
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
 	}
-	if !strings.Contains(coded.Actionable, "bootstrap") {
-		t.Errorf("actionable should point at bootstrap: %q", coded.Actionable)
+	if !strings.Contains(coded.Actionable, "setup") {
+		t.Errorf("actionable should point at setup: %q", coded.Actionable)
 	}
 }
 

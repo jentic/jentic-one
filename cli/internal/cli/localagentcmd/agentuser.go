@@ -30,7 +30,7 @@ type agentUserFields struct {
 }
 
 // agentSetup is the outcome of the agent-user step, returned to the caller
-// (bootstrapE) so it can target the platform registration correctly and offer
+// (setupE) so it can target the platform registration correctly and offer
 // to start a session in the new account's home.
 type agentSetup struct {
 	// created reports whether a dedicated Unix account now backs the agent.
@@ -47,9 +47,9 @@ type agentSetup struct {
 }
 
 // setupAgentUser is the shared agent-user-account step folded into both
-// `jenticctl wizard` and `jentic bootstrap`, right after the operator is
-// selected. It mirrors how skills are shared (bootstrap → chooseAdapters):
-// wizard delegates to bootstrap, so wiring it into bootstrapE lands it in the
+// `jenticctl wizard` and `jentic setup`, right after the operator is
+// selected. It mirrors how skills are shared (setup → chooseAdapters):
+// wizard delegates to setup, so wiring it into setupE lands it in the
 // wizard too.
 //
 // The flow is deliberately sudo-last: the "create an account? (requires sudo)"
@@ -113,7 +113,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// prerequisite is missing we stop the account-creation path here with the exact
 	// install command, then offer to continue same-user now rather than force a full
 	// re-run. Either branch records AccountCreated=false and returns cleanly, so the
-	// missing dependency never blocks the rest of bootstrap (identity, skills).
+	// missing dependency never blocks the rest of setup (identity, skills).
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		return a.agentUserPrereqGate(agentID, defaultName, missing)
 	}
@@ -196,7 +196,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 // It never runs a package manager itself (install commands are printed, not
 // executed) and never returns a hard error for the missing dependency: whichever
 // branch the operator picks, the account is recorded as not-created and setup
-// hands back cleanly so the rest of bootstrap continues.
+// hands back cleanly so the rest of setup continues.
 func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localagent.Prereq) (agentSetup, error) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warnf(
@@ -230,7 +230,7 @@ func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localag
 		return agentSetup{}, err
 	}
 
-	// Either choice continues bootstrap same-user (the account was not created);
+	// Either choice continues setup same-user (the account was not created);
 	// only the parting message differs so the operator's intent is reflected back.
 	if sameUser {
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
@@ -309,7 +309,7 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 		// step loop above sails through with no account behind it. Without this
 		// check every later step degrades into best-effort "unknown user" noise,
 		// the account is recorded as created, and `jentic run` sends the operator
-		// back to bootstrap in a loop. Trust the account database, not exit codes.
+		// back to setup in a loop. Trust the account database, not exit codes.
 		if !localagent.UserExists(ctx, fields.name) {
 			return fmt.Errorf("agent account %q was not created — the account tool reported success "+
 				"but the account does not exist (see its messages above; a conflicting Directory "+

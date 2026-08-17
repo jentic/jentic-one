@@ -79,7 +79,7 @@ func newWizardCmd(app *app) *cobra.Command {
 			"approve it, waits for the approval, and finally suggests example prompts you\n" +
 			"can try.\n\n" +
 			"Everything it does you can also do by hand (open the UI, `jenticctl setup`,\n" +
-			"`jentic bootstrap`); the wizard just sequences it into one continuous flow.\n" +
+			"`jentic setup`); the wizard just sequences it into one continuous flow.\n" +
 			"Re-run it any time — each step is idempotent.",
 		Example: "  jenticctl wizard\n" +
 			"  jenticctl wizard --operator claude --yes\n" +
@@ -128,7 +128,7 @@ func (a *app) wizardE(ctx context.Context, opts *wizardOptions) error {
 	}
 
 	if opts.skipOperator {
-		fmt.Fprintln(a.Out, theme.Dim.Render("Operator setup skipped (--skip-operator). Connect one later with `jentic bootstrap`."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("Operator setup skipped (--skip-operator). Connect one later with `jentic setup`."))
 		return nil
 	}
 
@@ -153,11 +153,11 @@ func (a *app) wizardE(ctx context.Context, opts *wizardOptions) error {
 		}
 	}
 
-	// Step 3+4: bootstrap (register + approval wait + skill) via the shared flow.
-	// bootstrap already prints the clickable console approval link and polls.
-	// operators empty + yes=false runs bootstrap's operator picker (detected
+	// Step 3+4: setup (register + approval wait + skill) via the shared flow.
+	// setup already prints the clickable console approval link and polls.
+	// operators empty + yes=false runs setup's operator picker (detected
 	// runtimes pre-selected). A named operator drives it non-interactively.
-	// Non-interactive with no operator auto-detects (bootstrap targets every
+	// Non-interactive with no operator auto-detects (setup targets every
 	// detected operator, or errors if it can't tell).
 	var operators []string
 	var bootYes bool
@@ -173,7 +173,7 @@ func (a *app) wizardE(ctx context.Context, opts *wizardOptions) error {
 
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Step.Render("Connecting your operator"))
-	if err := localagentcmd.New(a.App).BootstrapForWizard(ctx, baseURL, opts.timeout, operators, bootYes); err != nil {
+	if err := localagentcmd.New(a.App).SetupForWizard(ctx, baseURL, opts.timeout, operators, bootYes); err != nil {
 		return err
 	}
 
@@ -328,7 +328,7 @@ func (a *app) adminAlreadyExists(ctx context.Context, baseURL string) bool {
 // wizardExitHint tells the user how to finish setup later.
 func (a *app) wizardExitHint() {
 	fmt.Fprintln(a.Out)
-	fmt.Fprintln(a.Out, theme.Dim.Render("No problem. When you're ready, connect an operator with `jentic bootstrap`."))
+	fmt.Fprintln(a.Out, theme.Dim.Render("No problem. When you're ready, connect an operator with `jentic setup`."))
 }
 
 // wizardExamplePrompts prints a few copy-pasteable things the user can ask

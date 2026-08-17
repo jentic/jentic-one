@@ -35,7 +35,7 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 		"catalog. Register and switch agent identities, browse and import APIs from\n" +
 		"the public catalog into your local registry, inspect operations, and execute\n" +
 		"against them.\n\n" +
-		"New here? If you're a person setting up a local agent, run `jentic bootstrap`\n" +
+		"New here? If you're a person setting up a local agent, run `jentic setup`\n" +
 		"to set one up end to end (identity + skills + isolation). If you're an agent\n" +
 		"that just needs tokens for an existing identity, run `jentic register`. Then\n" +
 		"browse the public catalog with `jentic catalog`. To install and operate\n" +
@@ -60,7 +60,9 @@ func newAPIRootCmd(core *cmdcore.App) *cobra.Command {
 	root.PersistentFlags().String("mode", "", "Interaction mode: human|agent|service-account ($JENTIC_MODE)")
 	root.PersistentFlags().String("theme", "", "Color theme: dark|light|no-color ($JENTIC_THEME)")
 
-	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(localagentcmd.NewBootstrapCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
+	cmdcore.AddGrouped(root, "identity", fenced(bootstrapSafe(localagentcmd.NewSetupCmd(app.App)))) // fenced (AGT-5): registers + waits on a HUMAN approval and writes skill files — agents run `register`
+	// Hidden compatibility alias for setup's pre-rename name; same fencing.
+	root.AddCommand(fenced(bootstrapSafe(localagentcmd.NewSetupAliasCmd(app.App))))
 	cmdcore.AddGrouped(root, "identity", bootstrapSafe(cmdcore.NewRegisterCmd(app.App)))
 	cmdcore.AddGrouped(root, "identity", newLogoutCmd(app))
 	// The context model: the Environment × Identity × Context surface plus the
