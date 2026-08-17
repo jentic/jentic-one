@@ -19,7 +19,7 @@
   <a href="https://github.com/jentic/jentic-one/actions/workflows/ci.yml"><img src="https://github.com/jentic/jentic-one/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-A3CACC.svg" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/Python-3.12-68BAEC.svg?logo=python&logoColor=white" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Go-1.25-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.25">
+  <img src="https://img.shields.io/badge/Go-1.26-5EDEB9.svg?logo=go&logoColor=white" alt="Go 1.26">
   <img src="https://img.shields.io/badge/PostgreSQL-16-A3CACC.svg?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/SQLite-3-A3CACC.svg?logo=sqlite&logoColor=white" alt="SQLite">
   <br>
