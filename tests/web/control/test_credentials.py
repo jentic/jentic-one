@@ -15,8 +15,10 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import delete, text
 
+from jentic_one.registry.core.schema.apis import Api
+from jentic_one.registry.repos.api_repo import ApiRepository
 from jentic_one.shared.context import Context
 
 pytestmark = pytest.mark.integration
@@ -268,3 +270,60 @@ def test_catalog_api_id_defaults_to_null(cred_writer_client: TestClient) -> None
     cred_id = _create_api_key(cred_writer_client)
     got = cred_writer_client.get(f"/credentials/{cred_id}").json()
     assert got["catalog_api_id"] is None
+
+
+# --- Create-time unmatched-API advisory on the wire (#1020) ---
+
+
+def test_create_unmatched_scope_returns_warnings(cred_writer_client: TestClient) -> None:
+    """A scope covering no imported API still creates (201) but the response
+    carries the advisory `warnings` list."""
+    resp = cred_writer_client.post(
+        "/credentials",
+        json={
+            "type": "bearer_token",
+            "name": "web-cred-1020-unmatched",
+            "api": {"vendor": "webtest-unmatched.example", "name": "nothing-here", "version": ""},
+            "provider": "static",
+            "token": "sk-web-warn-token",
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    warnings = resp.json()["warnings"]
+    assert isinstance(warnings, list) and warnings
+    assert "matches no imported API" in warnings[0]
+    assert "webtest-unmatched-example/nothing-here" in warnings[0]
+
+
+async def test_create_matching_scope_returns_null_warnings(
+    cred_writer_client: TestClient, web_context: Context
+) -> None:
+    """When the (canonicalized) scope covers an imported registry API the
+    response `warnings` field is null."""
+    async with web_context.registry_db.session() as session:
+        api = await ApiRepository.upsert(
+            session,
+            vendor="webtest-match-example",
+            name="onecall",
+            version="3.0",
+            created_by="usr_test",
+        )
+        api_id = api.id
+        await session.commit()
+    try:
+        resp = cred_writer_client.post(
+            "/credentials",
+            json={
+                "type": "bearer_token",
+                "name": "web-cred-1020-matched",
+                "api": {"vendor": "webtest-match.example", "name": "onecall", "version": "3.0"},
+                "provider": "static",
+                "token": "sk-web-match-token",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["warnings"] is None
+    finally:
+        async with web_context.registry_db.session() as session:
+            await session.execute(delete(Api).where(Api.id == api_id))
+            await session.commit()

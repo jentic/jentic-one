@@ -19,6 +19,8 @@ from jentic_one.registry.core.schema.security_schemes import SecurityScheme, Sec
 from jentic_one.registry.core.schema.servers import Server, ServerVariable
 from jentic_one.registry.core.schema.spec_files import SpecFile
 from jentic_one.registry.ingest.exc import IngestJobError
+from jentic_one.registry.repos.api_repo import ApiRepository
+from jentic_one.registry.services.catalog.service import CatalogEntryView, CatalogService
 from jentic_one.registry.services.errors import OverlayStateConflictError
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.registry.services.overlay_service import OverlayService
@@ -2066,3 +2068,121 @@ async def test_url_source_via_mock(
     async with registry_db.session() as session:
         rows = (await session.execute(select(ApiRevision))).unique().scalars().all()
         assert len(rows) == 1
+
+
+def _mock_spec_client(spec_text: str) -> AsyncMock:
+    """An httpx.AsyncClient double serving ``spec_text`` for any GET."""
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.text = spec_text
+    mock_response.content = spec_text.encode()
+    mock_response.headers = {"content-length": str(len(spec_text.encode()))}
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    return mock_client
+
+
+async def test_catalog_import_lands_clean_identity_from_sub_segment(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """#1020 end-to-end: a ``domain/sub`` catalog entry lands the clean identity.
+
+    Threads the *real* production seam — ``CatalogService._to_import_source``
+    builds the job source (sub-segment ``api_name`` + verbatim
+    ``catalog_api_id``) and ``ImportHandler`` ingests it — and asserts the
+    registry row is ``posthog-com/posthog-api``, not the vendor-doubled
+    ``posthog-com/posthog-com-posthog-api`` the pre-fix full-id slug produced.
+    """
+    entry = CatalogEntryView(
+        api_id="posthog.com/posthog-api",
+        vendor="posthog.com",
+        path=None,
+        spec_url="https://catalog.example.com/posthog/openapi.json",
+        github_url=None,
+        registered=False,
+    )
+    source = CatalogService(integration_context)._to_import_source(
+        entry, Identity(sub="usr_test", email="t@test.com", permissions=["org:admin"])
+    )
+
+    with patch(
+        "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+        return_value=_mock_spec_client(MINIMAL_OPENAPI),
+    ):
+        result = await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={"sources": [source]},
+            created_by="usr_test",
+        )
+
+    [revision] = result.body["revisions"]
+    assert revision["api"]["vendor"] == "posthog-com"
+    assert revision["api"]["name"] == "posthog-api"
+
+    async with registry_db.session() as session:
+        rows = (await session.execute(select(Api))).scalars().all()
+        assert len(rows) == 1
+        assert (rows[0].vendor, rows[0].name) == ("posthog-com", "posthog-api")
+        assert rows[0].catalog_api_id == "posthog.com/posthog-api"
+
+
+async def test_catalog_identity_conflict_surfaces_as_readable_job_failure(
+    integration_context: Context,
+    registry_db: DatabaseSession,
+    _clean_registry: None,
+) -> None:
+    """The #1020 collision guard reaches the operator through the job error.
+
+    Two catalog ids collapsing to the same registry identity must fail the
+    second import job with the guard's readable conflict message, leaving no
+    new revision behind and the stored provenance untouched.
+    """
+    async with registry_db.session() as session:
+        await ApiRepository.upsert(
+            session,
+            vendor="posthog-com",
+            name="posthog-api",
+            version="1.0.0",
+            created_by="usr_test",
+            catalog_api_id="posthog.com/posthog-api",
+        )
+        await session.commit()
+
+    with (
+        patch(
+            "jentic_one.registry.ingest.fetch.httpx.AsyncClient",
+            return_value=_mock_spec_client(MINIMAL_OPENAPI),
+        ),
+        pytest.raises(IngestJobError, match="catalog identity conflict"),
+    ):
+        await ImportHandler(integration_context).execute(
+            job_id=str(uuid.uuid4()),
+            session=None,
+            payload={
+                "sources": [
+                    {
+                        "type": "url",
+                        "url": "https://catalog.example.com/other/openapi.json",
+                        "origin": "catalog",
+                        # The manifest's extract_vendor reduces both hosts to the
+                        # eTLD+1, so this entry carries the same vendor as the
+                        # seeded one — same identity, different catalog id.
+                        "vendor": "posthog.com",
+                        "api_name": "posthog-api",
+                        "catalog_api_id": "app.posthog.com/posthog-api",
+                    }
+                ]
+            },
+            created_by="usr_test",
+        )
+
+    async with registry_db.session() as session:
+        revisions = (await session.execute(select(ApiRevision))).unique().scalars().all()
+        assert revisions == []
+        api = (await session.execute(select(Api))).scalar_one()
+        assert api.catalog_api_id == "posthog.com/posthog-api"

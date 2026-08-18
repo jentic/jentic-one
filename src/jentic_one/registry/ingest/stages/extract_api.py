@@ -5,7 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-from jentic_one.registry.ingest.exc import DuplicateRevisionError, IngestStageError
+from jentic_one.registry.ingest.exc import (
+    CatalogIdentityConflictError,
+    DuplicateRevisionError,
+)
 from jentic_one.registry.ingest.pipeline.ctx import PipelineContext
 from jentic_one.registry.ingest.stages.base import BasePipelineStage
 from jentic_one.registry.repos import ApiRepository, ApiRevisionRepository, OverlayRepository
@@ -30,19 +33,22 @@ class ResolveApiStage(BasePipelineStage):
             # foreign spec onto the existing Api as a new revision — refuse
             # instead. A NULL stored id (manual import of the same identity)
             # stays a backfill, and a matching id is an ordinary re-import.
+            # The read locks the row (see get_by_identifier) so two concurrent
+            # colliding imports can't both pass the guard and race the backfill.
             existing = await ApiRepository.get_by_identifier(
-                ctx.session, identifier.vendor, identifier.name, identifier.version
+                ctx.session, identifier.vendor, identifier.name, identifier.version, for_update=True
             )
             if (
                 existing is not None
                 and existing.catalog_api_id
                 and existing.catalog_api_id != incoming_catalog_api_id
             ):
-                raise IngestStageError(
-                    f"catalog identity conflict: '{identifier.vendor}/{identifier.name}' "
-                    f"({identifier.version}) is already imported from catalog entry "
-                    f"'{existing.catalog_api_id}', which collides with "
-                    f"'{incoming_catalog_api_id}' on the same registry identity"
+                raise CatalogIdentityConflictError(
+                    vendor=identifier.vendor,
+                    name=identifier.name,
+                    version=identifier.version,
+                    stored_id=existing.catalog_api_id,
+                    incoming_id=incoming_catalog_api_id,
                 )
         api = await ApiRepository.upsert(
             ctx.session,

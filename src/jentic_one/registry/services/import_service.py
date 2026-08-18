@@ -50,6 +50,15 @@ _source_adapter: TypeAdapter[IngestSource] = TypeAdapter(IngestSource)
 #     can't catch this (it's keyed on api_id alone, independent of spec_digest).
 _DIGEST_CONSTRAINT = "uq_api_revisions_api_id_spec_digest"
 _ONE_ACTIVE_CONSTRAINT = "ix_api_revisions_one_active"
+# uq_apis_vendor_name_version: two concurrent imports both saw no Api row for the
+# same identity and both inserted; the loser lands here. Retrying re-runs the
+# catalog-identity collision guard against the winner's committed row, which then
+# either accepts (same/no catalog entry) or refuses with the readable conflict.
+_API_IDENTITY_CONSTRAINT = "uq_apis_vendor_name_version"
+_IDENTITY_RACE_MESSAGE = (
+    "A concurrent import created this API identity first; retry the import — "
+    "a colliding catalog entry will then be refused as a catalog identity conflict"
+)
 
 
 def _readable_source_error(exc: Exception) -> str:
@@ -60,10 +69,11 @@ def _readable_source_error(exc: Exception) -> str:
     race for the one-active slot) to a clear message and keep other failures as
     their (domain) exception text.
     """
-    if isinstance(exc, DatabaseIntegrityError) and (
-        _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail
-    ):
-        return DuplicateRevisionError().message
+    if isinstance(exc, DatabaseIntegrityError):
+        if _DIGEST_CONSTRAINT in exc.detail or _ONE_ACTIVE_CONSTRAINT in exc.detail:
+            return DuplicateRevisionError().message
+        if _API_IDENTITY_CONSTRAINT in exc.detail:
+            return _IDENTITY_RACE_MESSAGE
     return str(exc)
 
 

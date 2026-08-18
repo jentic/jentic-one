@@ -125,12 +125,32 @@ async def test_unmatched_scope_warns_with_nearest_identity_hint(
     [warning] = result.warnings
     assert "posthog-com/posthog-api" in warning
     assert "matches no imported API" in warning
+    # Both remedies: import the API, or re-create the (immutable-scope) credential.
+    assert "re-create" in warning
     assert "posthog-com/posthog-com-posthog-api (1.0)" in warning
 
     events = await _unmatched_events(integration_context)
     assert len(events) == 1
     assert events[0].severity == "warning"
+    # Short, bounded summary; the remedy + sibling hint travel in detail.
     assert result.credential_id in events[0].summary
+    assert "posthog-com/posthog-api" in events[0].summary
+    assert "imported APIs for this vendor" not in events[0].summary
+    assert events[0].detail == warning
+    assert (events[0].data or {}).get("credential_id") == result.credential_id
+
+
+async def test_version_only_wildcard_scope_covering_an_api_carries_no_warning(
+    integration_context: Context, svc: CredentialService, clean_tables: None
+) -> None:
+    """A name-wildcard, version-pinned scope (vendor/*/1.0) that covers an
+    imported API stays warning-free — the fourth wildcard combination."""
+    await _seed_api(integration_context, vendor="posthog-com", name="posthog-api", version="1.0")
+    result = await svc.create(
+        _payload(APIReference(vendor="posthog-com", name="", version="1.0")),
+        identity=_ADMIN_IDENTITY,
+    )
+    assert result.warnings is None
 
 
 async def test_unmatched_vendor_warns_without_hint(
