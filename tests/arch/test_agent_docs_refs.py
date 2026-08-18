@@ -35,23 +35,29 @@ AGENT_DOCS = [REPO_ROOT / "llms.txt", REPO_ROOT / "AGENTS.md"]
 
 CLI_REFERENCE = REPO_ROOT / "ui" / "public" / "cli-reference.json"
 
-#: Links into this repo's files on GitHub: both the ``refs/heads/<branch>`` and
-#: bare ``<branch>`` raw-URL forms are in use across the docs.
+#: Links into this repo's files on GitHub: the ``refs/heads/<branch>``,
+#: ``refs/tags/<tag>`` and bare ``<ref>`` raw-URL forms are all in use. The
+#: capture must not end in ``.`` so sentence punctuation is not swallowed.
 _RAW_LINK_RE = re.compile(
-    r"https://raw\.githubusercontent\.com/jentic/jentic-one/(?:refs/heads/)?[\w.-]+/([\w./-]+)"
+    r"https://raw\.githubusercontent\.com/jentic/jentic-one/"
+    r"(?:refs/(?:heads|tags)/)?[\w.-]+/([\w./-]*[\w-])"
 )
 
 #: Relative markdown link targets, e.g. ``[text](docs/quickstart.md)``.
-_MD_LINK_RE = re.compile(r"\]\((?!https?://|#|mailto:)([\w./-]+?)(?:#[\w-]*)?\)")
+#: Root-absolute targets (``](/app)``) are excluded: joining them onto
+#: ``REPO_ROOT`` would silently discard the root and check the host filesystem.
+_MD_LINK_RE = re.compile(r"\]\((?!https?://|#|mailto:|/)([\w./-]+?)(?:#[^)]*)?\)")
 
 #: Backticked repo paths mentioned in prose, e.g. ```docs/security/hardening.md``.
 #: Requires a ``/`` and a file extension so plain filenames and flags don't match.
-_PATH_MENTION_RE = re.compile(r"`([\w-]+(?:/[\w.-]+)+\.(?:md|ya?ml|json|sh|txt))`")
+_PATH_MENTION_RE = re.compile(r"`([\w-]+(?:/[\w.-]+)+\.(?:md|ya?ml|json|sh|txt|js|py|toml))`")
 
 #: CLI command mentions, e.g. ```jentic access request`` or ```jenticctl install``.
-#: Only lowercase word tokens count as command segments; args, flags and
-#: placeholders (``<...>``, ``--flag``, ``GET:...``) end the match.
-_CLI_MENTION_RE = re.compile(r"`((?:jentic|jenticctl)(?: [a-z][a-z-]+)*)")
+#: Longest alternative first — ``jentic|jenticctl`` would match the ``jentic``
+#: prefix of ``jenticctl`` and never backtrack, exempting every jenticctl
+#: mention. Only lowercase word tokens count as command segments; args, flags
+#: and placeholders (``<...>``, ``--flag``, ``GET:...``) end the match.
+_CLI_MENTION_RE = re.compile(r"`((?:jenticctl|jentic)\b(?: [a-z][a-z-]+)*)")
 
 
 def _command_paths() -> frozenset[str]:
