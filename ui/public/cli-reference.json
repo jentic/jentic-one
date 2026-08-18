@@ -2987,7 +2987,7 @@
           "path": "jenticctl install",
           "use": "install",
           "short": "Interactive wizard to configure and onboard jentic-one",
-          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.\n\nDocker path: by default this PULLS the published, signed app image\n(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\nUse --build-local to build from a checkout instead (auto-selected inside a\njentic-one source tree or with $JENTIC_SRC), or --image-tag to pin a specific\ntag or @sha256: digest.\n\nAdvanced: --preset and the generated --\u003csection\u003e-\u003cfield\u003e flags (e.g.\n--server-public-base-url, --logging-file-enabled) overlay schema-driven\nconfiguration onto the generated jentic-one.yaml, on top of the wizard.",
+          "long": "install walks you through choosing a deployment path (from source or\nDocker, SQLite or Postgres) and configuration, generates a jentic-one.yaml,\nthen builds the stack (local venv or Docker image), applies migrations, and\nstarts the app. Use --skip-build to only generate the config, or --no-start\nto build without launching.\n\nDocker path: by default this PULLS the published, signed app image\n(ghcr.io/jentic/jentic-one-app, version-matched to the CLI) — no local build.\nUse --build-local to build from a checkout instead (auto-selected inside a\njentic-one source tree or with $JENTIC_SRC), --ref to build a specific\nbranch/tag/commit, or --image-tag to pin a specific tag or @sha256: digest.\n\nAdvanced: --preset and the generated --\u003csection\u003e-\u003cfield\u003e flags (e.g.\n--server-public-base-url, --logging-file-enabled) overlay schema-driven\nconfiguration onto the generated jentic-one.yaml, on top of the wizard.",
           "group_title": "Setup \u0026 lifecycle",
           "flags": [
             {
@@ -3052,6 +3052,11 @@
               "name": "preset",
               "type": "string",
               "usage": "apply an embedded config preset over schema defaults (local-dev, production); empty means none"
+            },
+            {
+              "name": "ref",
+              "type": "string",
+              "usage": "git ref (branch/tag/commit) to build the stack from; implies --build-local (default: the ref this CLI was installed from, then the CLI version)"
             },
             {
               "name": "skip-build",

@@ -140,6 +140,13 @@ type Draft struct {
 	// directly instead of `make install` + `uv run`.
 	VenvPython string
 
+	// StackRef is the git ref the stack was actually built from, when the build
+	// synced the managed clone to one (build-local from git). Empty for a pulled
+	// release image or a local-checkout build; the manifest then records the CLI
+	// version as before. Recording the real ref keeps `jenticctl update`'s
+	// tracking honest when the stack was built from a branch/tag/commit.
+	StackRef string
+
 	// MigrationsDone reports whether the wizard already applied migrations. When
 	// true the next steps skip the migrate command and only cover starting the app.
 	MigrationsDone bool
