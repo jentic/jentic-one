@@ -606,7 +606,9 @@ curl_asset() {
         auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}") ;;
     esac
   fi
-  curl -fSL "${auth[@]}" -o "$dest" -- "$url"
+  # ${auth[@]+…} guard: macOS stock bash 3.2 treats an EMPTY array expansion as
+  # an unbound variable under `set -u` (same idiom as the git_auth call sites).
+  curl -fSL ${auth[@]+"${auth[@]}"} -o "$dest" -- "$url"
 }
 
 # sha256_file <path> prints the lowercase hex sha256 of a file, using whichever
@@ -668,7 +670,8 @@ release_assets_exist() {
   if [ -n "$GITHUB_TOKEN" ]; then
     auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
   fi
-  curl -fsSL "${auth[@]}" -I -o /dev/null -- "$url" 2>/dev/null
+  # Same empty-array-under-`set -u` guard as curl_asset (macOS bash 3.2).
+  curl -fsSL ${auth[@]+"${auth[@]}"} -I -o /dev/null -- "$url" 2>/dev/null
 }
 
 # download_binaries fetches + verifies the selected release archives and unpacks
@@ -1125,10 +1128,28 @@ provision_via_download() {
   download_binaries
 }
 
+# --- jentic home ------------------------------------------------------------
+# ensure_private_home creates the jentic home (~/.jentic) owner-only, or
+# TIGHTENS an existing looser one to 0700. `jenticctl install` bind-mounts a
+# world-writable (0777) logs dir under it for the container's uid and ASSERTS
+# the parent is 0700 (SEC-6) before creating it. The bare `mkdir -p` calls in
+# this script (bin/, toolchain/, the manifest) would otherwise create ~/.jentic
+# with the umask default (0755) first — making the chained `jenticctl install`
+# fail on every fresh machine. Best-effort: a chmod failure only warns, and the
+# Go side still fails closed on the invariant.
+ensure_private_home() {
+  local home_dir="${JENTIC_HOME:-$HOME/.jentic}"
+  mkdir -p "$home_dir" 2>/dev/null || true
+  if [ -d "$home_dir" ] && ! chmod 700 "$home_dir" 2>/dev/null; then
+    warn "could not chmod 700 ${home_dir} — 'jenticctl install' may refuse to create its logs dir there"
+  fi
+}
+
 # --- main -------------------------------------------------------------------
 main() {
   logo
   check_prereqs
+  ensure_private_home
   STATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jentic-install-state.XXXXXX")"
   STEP_LOG="$STATE_DIR/step.log"
   detect_platform

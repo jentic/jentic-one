@@ -431,6 +431,45 @@ out="$(JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 \
 assert_eq "release_asset_url: composes the GitHub releases download URL" \
   "https://github.com/jentic/jentic-one/releases/download/v0.31.0/checksums.txt" "$out"
 
+# --- download mode: empty auth array survives `set -u` on bash 3.2 -----------
+# With GITHUB_TOKEN unset the local auth=() arrays in release_assets_exist and
+# curl_asset expand EMPTY; macOS stock bash 3.2 treats a bare "${auth[@]}" as an
+# unbound variable under `set -u`, which crashed every explicit-JENTIC_REF
+# install ("auth[@]: unbound variable"). The ${auth[@]+…} guard must hold: with
+# curl stubbed to succeed, both helpers must run to completion with no token.
+set +e
+noauth_out="$(bash -c "set -euo pipefail; . '$INSTALL_SH'
+  curl() { return 0; }
+  GITHUB_TOKEN=\"\" JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 OS=darwin ARCH=arm64
+  release_assets_exist || exit 1
+  curl_asset https://github.com/x/y/releases/download/v0.31.0/a.tar.gz /dev/null || exit 1
+  echo survived" 2>&1)"
+noauth_rc=$?
+set -e
+assert_eq "empty-auth: helpers run under set -u with no token" "0" "$noauth_rc"
+assert_contains "empty-auth: both helpers completed" "$noauth_out" "survived"
+if printf '%s' "$noauth_out" | grep -q "unbound variable"; then
+  fail "empty-auth: 'unbound variable' crash regressed: $noauth_out"
+else
+  pass "empty-auth: no unbound-variable crash"
+fi
+
+# --- ensure_private_home: ~/.jentic is created/tightened to 0700 -------------
+# jenticctl install ASSERTS ~/.jentic is 0700 before creating the 0777 logs dir
+# (SEC-6). The installer's own mkdir -p calls run under the user's umask, so
+# ensure_private_home must (a) create the home 0700 on a fresh machine and
+# (b) tighten a pre-existing 0755 one — otherwise the chained `jenticctl
+# install` fails on every fresh curl|sh run.
+home_tmp="$(mktemp -d "${TMPDIR:-/tmp}/jentic-home-test.XXXXXX")"
+JENTIC_HOME="$home_tmp/fresh/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/fresh/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: fresh home created owner-only" "rwx------" "$mode"
+mkdir -p "$home_tmp/loose/.jentic" && chmod 755 "$home_tmp/loose/.jentic"
+JENTIC_HOME="$home_tmp/loose/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/loose/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: pre-existing 0755 home tightened to 0700" "rwx------" "$mode"
+rm -rf "$home_tmp"
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has
