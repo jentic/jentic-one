@@ -29,17 +29,18 @@ allow. See `docs/security/hardening.md` before using real credentials.
 
 1. `jentic bootstrap --base-url <control-plane URL>` creates the agent identity, waits for an
    operator to approve it, and installs the agent skill. (`jentic register --base-url …` is the
-   registration-only path; without `--base-url` both default to `http://localhost:8000`.)
+   registration-only path; without `--base-url` both fall back to the configured base URL or
+   `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
    Report the wait to the user: on a single-operator install they are the operator, and they
    approve the agent in the UI at `/app`.
 2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
    (terminal). This is a one-time step.
-3. Import an API from https://github.com/jentic/jentic-public-apis, or register a private
-   OpenAPI description of the user's own service.
+3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
+   step 6), or register a private OpenAPI description of the user's own service.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.
-5. Request access: `jentic access request` files a reviewable request; granting is always a
-   human action. The operator binds the agent to a toolkit — access is default-deny, and a
-   rule-less binding still blocks everything.
+5. Request access: `jentic access request --toolkit <vendor/name>` files a reviewable request;
+   granting is always a human action. The operator binds the agent to a toolkit — access is
+   default-deny, and a rule-less binding still blocks everything.
 6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
    credential injected. Give `execute` the operation's full upstream URL (as returned by
    `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a

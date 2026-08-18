@@ -20,9 +20,11 @@ Jentic One runs on one machine and the agent runs on another. Install on both wi
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh | sh
 ```
 
-On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, set `JENTIC_NO_INSTALL=1` (it needs only the binaries, not a second deployment), then run `jentic bootstrap --base-url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path; both default to `http://localhost:8000` when `--base-url` is omitted).
+On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, set `JENTIC_NO_INSTALL=1` (it needs only the binaries, not a second deployment), then run `jentic bootstrap --base-url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path; when `--base-url` is omitted both fall back to the configured base URL or `http://127.0.0.1:8000`).
 
 Keep the agent off the machine that runs Jentic One. An agent running as the same OS user can read the credential database and the encryption key directly off disk whatever the API-level controls say, so keep them on separate machines. The hardening guide below sets out the tiers; read it before pointing an instance at a real credential.
+
+A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, generated with that deployment's base URL and the onboarding sequence for an agent already pointed at it. Once you have an instance, prefer that document over this one for anything an agent does at runtime. This file covers evaluating and installing.
 
 ## Install
 
@@ -63,7 +65,6 @@ Keep the agent off the machine that runs Jentic One. An agent running as the sam
 
 ## Optional
 
-- A running instance serves its own `/llms.txt` and `/.well-known/llms.txt`, generated with that deployment's base URL and the onboarding sequence for an agent already pointed at it. Once you have an instance, prefer that document over this one for anything an agent does at runtime. This file covers evaluating and installing.
 - [Cloud platform compared with self-hosted](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/cloud-vs-self-hosted.md): the two products are easy to conflate and share no state. Read this before copying integration instructions from one into the other.
 - [Extending Jentic One](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/development/extending-jentic-one.md): adding a surface or a capability to the codebase itself.
 - [VERSIONING.md](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/VERSIONING.md): what the version number promises while the project is in public beta.

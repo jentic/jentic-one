@@ -32,7 +32,7 @@ public [Jentic API Directory](https://github.com/jentic/jentic-public-apis) with
 the catalog browser:
 
 ```bash
-jentic catalog search stripe   # find an API in the public directory
+jentic catalog search httpbin   # find an API in the public directory (used in step 6)
 ```
 
 `jentic catalog` opens an interactive browser to search the public directory and
@@ -76,8 +76,8 @@ first-match. An agent reaches only the operations it has been approved for, and
 asking for more is a reviewable request rather than a silent widening:
 
 ```bash
-jentic access request <operation>   # file a request the operator can review
-jentic access status                # check whether it has been granted
+jentic access request --toolkit httpbin.org/httpbin   # file a request the operator can review
+jentic access status <request-id>                     # check whether it has been granted
 ```
 
 ## 6. Make the call
