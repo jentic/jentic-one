@@ -2,13 +2,16 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jentic/jentic-one/cli/client/auth"
 	sdkconfig "github.com/jentic/jentic-one/cli/client/config"
@@ -331,6 +334,152 @@ func TestRegister_LegacyFlagsRemoved(t *testing.T) {
 	}
 	if len(cfg.Environments) != 0 || len(cfg.Identities) != 0 || cfg.ActiveContext != "" {
 		t.Errorf("failed register leaked into the XDG store: %+v", cfg)
+	}
+}
+
+// runRegisterCtx runs `jentic register …` through the full api tree with a
+// caller-supplied context (so a test can cancel it mid-poll). It mirrors
+// runJenticCapture but uses root.ExecuteContext, returning app.Out plus the
+// error. The poll cadence is already shrunk to milliseconds by testApp.
+func runRegisterCtx(ctx context.Context, t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	app := testApp(t)
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(new(bytes.Buffer))
+	root.SetErr(new(bytes.Buffer))
+	root.SetArgs(args)
+	err := root.ExecuteContext(ctx)
+	return out.String(), err
+}
+
+// TestRegister_ContextCancelExitsPromptly pins the cancellation branch of the
+// approval poll loop (review round-3 #8 F1: `case <-ctx.Done(): return
+// ctx.Err()` at register_flow.go was uncovered). A never-approving pending
+// server keeps the loop spinning; cancelling the command context must make
+// register return ctx.Err() quickly instead of waiting out the full --timeout.
+func TestRegister_ContextCancelExitsPromptly(t *testing.T) {
+	withXDG(t)
+
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/register":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending"}`))
+		case "/oauth/token":
+			polls.Add(1) // always pending → the loop never exits on its own
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"agent pending approval","instance":"/oauth/token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel shortly after the loop has certainly started polling (cadence is
+	// ~2ms in tests), well before the generous --timeout below would fire.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runRegisterCtx(ctx, t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "30s")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancel must surface context.Canceled, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("register did not return promptly after context cancel (the ctx.Done branch is not honoured)")
+	}
+}
+
+// TestRegister_AssertionInvalidNoClaimIsFatal pins the non-claim
+// assertion-invalid branch (review round-3 #8 F1 case (d)): with NO claim
+// token outstanding, an "Assertion is invalid" token-exchange failure is a hard
+// NOT_AUTHENTICATED (usually an audience mismatch) — the CLI must abort with the
+// coded error immediately, never treat it as pending and hang.
+func TestRegister_AssertionInvalidNoClaimIsFatal(t *testing.T) {
+	withXDG(t)
+
+	var polls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/register":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			// No claim_token → claimPending=false → assertion-invalid is fatal.
+			_, _ = w.Write([]byte(`{"client_id":"agnt_boot","status":"pending"}`))
+		case "/oauth/token":
+			polls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"invalid_grant","status":400,"detail":"Assertion is invalid","instance":"/oauth/token"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// A generous --timeout: if the classifier wrongly treated this as pending it
+	// would poll until this fires; the test's own deadline would then trip first.
+	_, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "30s")
+	if err == nil {
+		t.Fatal("a non-claim assertion-invalid must be fatal, not pending")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("error is not coded: %v", err)
+	}
+	if coded.Code != ux.CodeNotAuthenticated {
+		t.Errorf("code = %q, want NOT_AUTHENTICATED (audience-mismatch abort, no hang)", coded.Code)
+	}
+	// The very first exchange decides it; the loop must not have spun.
+	if got := polls.Load(); got != 1 {
+		t.Errorf("token exchange hit %d times, want exactly 1 (must abort before polling)", got)
+	}
+}
+
+// TestRegister_PendingTimeoutCarriesApproveURL pins the non-claim timeout branch
+// (review round-3 #8 F1): a pending agent that is never approved times out as
+// TIMEOUT_PENDING (exit 3) and the envelope details MUST carry approve_url +
+// agent_id so an agent that timed out can still route a human to approve
+// (AGT-4/AGT-21).
+func TestRegister_PendingTimeoutCarriesApproveURL(t *testing.T) {
+	withXDG(t)
+	srv, _ := setupServer(t, 1_000_000) // effectively always pending
+
+	_, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "20ms")
+	if err == nil {
+		t.Fatal("expected a pending timeout, got success")
+	}
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("error is not coded: %v", err)
+	}
+	if coded.Code != ux.CodeTimeoutPending {
+		t.Fatalf("code = %q, want TIMEOUT_PENDING", coded.Code)
+	}
+	if coded.Details["agent_id"] != "agnt_boot" {
+		t.Errorf("details.agent_id = %v, want agnt_boot", coded.Details["agent_id"])
+	}
+	approve, _ := coded.Details["approve_url"].(string)
+	if approve == "" || !strings.Contains(approve, "agnt_boot") {
+		t.Errorf("details.approve_url = %q, want a console URL naming the agent so a timed-out agent can route a human", approve)
+	}
+	// A non-claim timeout must NOT advertise a claim_url (nothing to claim).
+	if _, ok := coded.Details["claim_url"]; ok {
+		t.Errorf("non-claim timeout should not carry claim_url, details = %v", coded.Details)
 	}
 }
 

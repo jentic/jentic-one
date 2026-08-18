@@ -1,0 +1,61 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://raw.githubusercontent.com/jentic/api-problem-details/refs/heads/main/schemas/problem-details.yaml"
+description: Jentic Problem Details error schema (RFC 9457)
+type: object
+required:
+  - detail
+properties:
+  type:
+    type: string
+    format: uri
+    description: >-
+      A URI reference identifying the problem type. When set to "about:blank",
+      the title SHOULD be the standard HTTP status phrase. Use an IANA-registered
+      type URI where one applies.
+    default: about:blank
+    maxLength: 1024
+    example: about:blank
+  status:
+    type: integer
+    format: int32
+    description: The HTTP status code for this occurrence of the problem.
+    minimum: 100
+    maximum: 599
+    example: 400
+  title:
+    type: string
+    description: >-
+      A short, human-readable summary of the problem type. Should not change
+      between occurrences except for localisation purposes.
+    maxLength: 1024
+    example: Bad Request
+  detail:
+    type: string
+    description: >-
+      A human-readable explanation specific to this occurrence of the problem.
+      MUST be present. Provide actionable information where possible.
+    maxLength: 4096
+    example: The request body is missing required field 'name'.
+  instance:
+    type: string
+    format: uri-reference
+    description: >-
+      A URI reference identifying the specific occurrence of the problem.
+      Typically the request path.
+    maxLength: 1024
+    example: /v2/capability-sets
+  code:
+    type: string
+    description: >-
+      An optional provider-specific code for internal error taxonomy and
+      observability correlation.
+    maxLength: 50
+    example: JENTIC-4001
+  errors:
+    type: array
+    description: >-
+      An array of granular error details. Use when multiple validation errors
+      or field-level problems need to be surfaced in a single response.
+    maxItems: 1000
+    items:
+      $ref: "./error-item.yaml"

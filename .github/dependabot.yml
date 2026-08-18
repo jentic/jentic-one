@@ -15,12 +15,15 @@ updates:
   # The repo is a uv project (CI uses astral-sh/setup-uv + `make sync`), so the
   # updater must target the uv lockfile, not pip. The original "pip" ecosystem
   # pointed at a manifest this project does not use.
+  # Dependency bumps use the `build` type (not `chore`): release-please hides
+  # chore commits from the changelog, while build lands under "Build System",
+  # so lib updates stay visible in release notes.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
     open-pull-requests-limit: 5
     # uv does not support the group-level `dependency-type` selector (only
@@ -41,7 +44,7 @@ updates:
     schedule:
       interval: "weekly"
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
     open-pull-requests-limit: 5
     groups:
@@ -53,7 +56,7 @@ updates:
     schedule:
       interval: "weekly"
     commit-message:
-      prefix: "chore"
+      prefix: "build"
       include: "scope"
     open-pull-requests-limit: 5
     # Coupled toolchains must upgrade together or `npm ci` fails with ERESOLVE

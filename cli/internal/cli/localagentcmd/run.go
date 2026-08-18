@@ -489,6 +489,24 @@ func (a *Cmd) launchAgent(ctx context.Context, acct config.AgentAccount, agentUs
 		agentHome = localagent.DefaultHomeDir(agentUser)
 	}
 
+	// M1 (review round-3 #6): re-validate the operator-editable inputs
+	// IMMEDIATELY before the privileged launch, mirroring grantDir /
+	// exportContextToAgent. These reach the SBPL profile / bwrap argv; the sinks
+	// are independently defended (control-char strip, per-token shell-quoting),
+	// but the `local-agent-isolation` rule requires "validated at the source AND
+	// re-checked immediately before every privileged command" — grantedDirs were
+	// only trusted from recorded config, and agentHome is unvalidated when
+	// exportContextToAgent early-returned (no active context / file-less mode).
+	// Fail closed on the first bad entry rather than relying on sink-only defence.
+	if err := localagent.ValidateHomeDir(agentHome); err != nil {
+		return confinementUnavailableErr(fmt.Sprintf("recorded agent home is invalid: %v", err))
+	}
+	for _, gd := range grantedDirs {
+		if err := localagent.ValidateGrantPath(gd); err != nil {
+			return confinementUnavailableErr(fmt.Sprintf("recorded granted directory %q is invalid: %v", gd, err))
+		}
+	}
+
 	where := dir
 	if where == "" {
 		where = "the agent's home"
