@@ -18,7 +18,8 @@ rest of this file is for changing the codebase.
    `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`
    This downloads a Go toolchain if none is present, clones this repository, builds `jenticctl`
    and `jentic`, then runs `jenticctl install`. Set `JENTIC_NO_INSTALL=1` to stop after the
-   binaries are installed.
+   binaries are installed — do that on the agent machine, which needs only the binaries, not a
+   second deployment.
 
 **Run Jentic One on a different machine from the agent.** An agent running as the same OS user
 can read the credential database and encryption key from disk, whatever the API-level controls
@@ -26,16 +27,24 @@ allow. See `docs/security/hardening.md` before using real credentials.
 
 **Register and reach a first call:**
 
-1. `jentic register` creates the agent identity. It then blocks, waiting for an operator to
-   approve the agent. Report this to the user: on a single-operator install they are the
-   operator, and they approve it in the UI at `/app`.
+1. `jentic bootstrap --base-url <control-plane URL>` creates the agent identity, waits for an
+   operator to approve it, and installs the agent skill. (`jentic register --base-url …` is the
+   registration-only path; without `--base-url` both fall back to the configured base URL or
+   `http://127.0.0.1:8000`, and prompt for it on an interactive terminal.)
+   Report the wait to the user: on a single-operator install they are the operator, and they
+   approve the agent in the UI at `/app`.
 2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
    (terminal). This is a one-time step.
-3. Import an API from https://github.com/jentic/jentic-public-apis, or register a private
-   OpenAPI description of the user's own service.
+3. Import an API from https://github.com/jentic/jentic-public-apis (e.g. `httpbin.org`, used in
+   step 6), or register a private OpenAPI description of the user's own service.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.
-5. Bind the agent to a toolkit. A rule-less binding blocks everything; the default is deny.
-6. `jentic execute GET:/get --json` runs a call through the Broker with the credential injected.
+5. Request access: `jentic access request --toolkit <vendor/name>` files a reviewable request;
+   granting is always a human action. The operator binds the agent to a toolkit — access is
+   default-deny, and a rule-less binding still blocks everything.
+6. `jentic execute GET:https://httpbin.org/get --json` runs a call through the Broker with the
+   credential injected. Give `execute` the operation's full upstream URL (as returned by
+   `jentic search`/`jentic inspect`) or its operation_id — the Broker is a forward proxy, not a
+   path router.
 
 **Constraints to respect:**
 
