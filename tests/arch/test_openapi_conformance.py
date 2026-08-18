@@ -14,10 +14,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 import yaml
-from openapi_spec_validator import validate
+from jsonschema_path import SchemaPath
+from openapi_spec_validator.shortcuts import get_validator_cls
 from tools.broker_reference import (
     BROKER_SPEC_JSON,
     dump_spec_json,
@@ -36,13 +38,106 @@ SPECS = [
     ("control", OPENAPI_DIR / "control" / "control.openapi.yaml"),
 ]
 
+# The broker spec $refs its RFC 9457 problem-details schemas from
+# jentic/api-problem-details, pinned to an immutable commit. Validation must
+# resolve those refs from the vendored copies below — never the network — so a
+# GitHub outage cannot fail CI (as happened on 2026-08-17, when
+# raw.githubusercontent.com was returning errors on main pushes).
+# See tests/arch/vendored/README.md for the re-vendoring procedure.
+PROBLEM_DETAILS_PIN = "c741877182d2deea2bb38859e3df4caa76265d98"
+_PIN_BASE = (
+    f"https://raw.githubusercontent.com/jentic/api-problem-details/{PROBLEM_DETAILS_PIN}/schemas/"
+)
+# problem-details.yaml declares an $id on the upstream main branch; its
+# relative "./error-item.yaml" ref resolves against that $id, so both bases
+# must map onto the vendored copies.
+_ID_BASE = "https://raw.githubusercontent.com/jentic/api-problem-details/refs/heads/main/schemas/"
+_VENDORED_SCHEMA_DIR = Path(__file__).resolve().parent / "vendored" / "problem-details"
+_VENDORED_SCHEMA_BASES = (_PIN_BASE, _ID_BASE)
+
+
+def _vendored_schema_resolver(uri: str) -> Any:
+    """Serve pinned external ``$ref``s from the vendored copies, offline.
+
+    Any URI outside the vendored set fails loudly: adding a new external ref
+    to a spec requires vendoring it, otherwise CI would silently depend on a
+    third-party host being up.
+    """
+    base = next((b for b in _VENDORED_SCHEMA_BASES if uri.startswith(b)), None)
+    filename = Path(urlparse(uri).path).name
+    vendored = _VENDORED_SCHEMA_DIR / filename if base else None
+    if vendored is None or not vendored.is_file():
+        raise LookupError(
+            f"external $ref {uri!r} has no vendored copy. Spec validation must "
+            "not touch the network — vendor the schema under "
+            f"{_VENDORED_SCHEMA_DIR} (see tests/arch/vendored/README.md)."
+        )
+    return yaml.safe_load(vendored.read_text(encoding="utf-8"))
+
+
+_OFFLINE_HANDLERS = {
+    "http": _vendored_schema_resolver,
+    "https": _vendored_schema_resolver,
+}
+
+
+def _validate_offline(spec: dict[str, Any]) -> None:
+    """``openapi_spec_validator.validate`` with network resolution disabled."""
+    validator_cls = get_validator_cls(spec)
+    schema_path = SchemaPath.from_dict(spec, handlers=_OFFLINE_HANDLERS)
+    validator_cls(schema_path).validate()
+
+
+def _external_refs(node: Any) -> set[str]:
+    """Collect every absolute http(s) ``$ref`` target in a spec document."""
+    refs: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "$ref" and isinstance(value, str) and value.startswith("http"):
+                refs.add(value)
+            else:
+                refs.update(_external_refs(value))
+    elif isinstance(node, list):
+        for item in node:
+            refs.update(_external_refs(item))
+    return refs
+
 
 @pytest.mark.arch
 @pytest.mark.parametrize("name,spec_path", SPECS, ids=[s[0] for s in SPECS])
 def test_spec_is_valid(name: str, spec_path: Path) -> None:
     assert spec_path.exists(), f"OpenAPI spec not found: {spec_path}"
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-    validate(spec)
+    _validate_offline(spec)
+
+
+@pytest.mark.arch
+@pytest.mark.parametrize("name,spec_path", SPECS, ids=[s[0] for s in SPECS])
+def test_spec_external_refs_are_pinned_and_vendored(name: str, spec_path: Path) -> None:
+    """Every external ``$ref`` must point at the pinned, vendored schema set.
+
+    This is the drift guard for the vendored copies: bumping the
+    ``api-problem-details`` pin in a spec without re-vendoring (or vice versa)
+    fails here with instructions, instead of silently validating against stale
+    content or reaching for the network.
+    """
+    spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for ref in sorted(_external_refs(spec)):
+        if not ref.startswith(_PIN_BASE):
+            problems.append(
+                f"{ref} — not under the pinned base {_PIN_BASE!r}. External refs "
+                "must pin an immutable commit; update PROBLEM_DETAILS_PIN in "
+                "this test and re-vendor (tests/arch/vendored/README.md)."
+            )
+            continue
+        vendored = _VENDORED_SCHEMA_DIR / Path(urlparse(ref).path).name
+        if not vendored.is_file():
+            problems.append(
+                f"{ref} — no vendored copy at {vendored}. Vendor it so spec "
+                "validation stays offline (tests/arch/vendored/README.md)."
+            )
+    assert not problems, f"{name} spec external $refs out of sync:\n" + "\n".join(problems)
 
 
 @pytest.mark.arch
