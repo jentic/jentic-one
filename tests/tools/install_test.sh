@@ -454,6 +454,22 @@ else
   pass "empty-auth: no unbound-variable crash"
 fi
 
+# --- ensure_private_home: ~/.jentic is created/tightened to 0700 -------------
+# jenticctl install ASSERTS ~/.jentic is 0700 before creating the 0777 logs dir
+# (SEC-6). The installer's own mkdir -p calls run under the user's umask, so
+# ensure_private_home must (a) create the home 0700 on a fresh machine and
+# (b) tighten a pre-existing 0755 one — otherwise the chained `jenticctl
+# install` fails on every fresh curl|sh run.
+home_tmp="$(mktemp -d "${TMPDIR:-/tmp}/jentic-home-test.XXXXXX")"
+JENTIC_HOME="$home_tmp/fresh/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/fresh/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: fresh home created owner-only" "rwx------" "$mode"
+mkdir -p "$home_tmp/loose/.jentic" && chmod 755 "$home_tmp/loose/.jentic"
+JENTIC_HOME="$home_tmp/loose/.jentic" ensure_private_home
+mode="$(ls -ld "$home_tmp/loose/.jentic" | awk '{print $1}' | cut -c2-10)"
+assert_eq "ensure_private_home: pre-existing 0755 home tightened to 0700" "rwx------" "$mode"
+rm -rf "$home_tmp"
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has
