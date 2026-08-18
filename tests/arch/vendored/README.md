@@ -11,7 +11,10 @@ facts, plus vendored third-party schemas the arch tests need to run offline:
   [`jentic/api-problem-details`](https://github.com/jentic/api-problem-details),
   at the commit pinned by the broker spec's external `$ref`s. Used by
   `tests/arch/test_openapi_conformance.py` to validate the OpenAPI specs
-  **without touching the network** — a GitHub outage must not fail CI.
+  **without touching the network** — a GitHub outage must not fail CI. Two
+  guards keep the copies honest: a ref-pin guard (every external `$ref` must be
+  exactly a pinned, vendored URI) and a sha256 checksum guard (the vendored
+  bytes must be what was fetched at the pin).
 
 ## Why it's vendored
 
@@ -66,6 +69,13 @@ The broker spec's external `$ref`s pin an immutable commit of
    curl -sSf "$base/error-item.yaml"      -o tests/arch/vendored/problem-details/error-item.yaml
    ```
 
-3. Run `uv run pytest tests/arch/test_openapi_conformance.py`. The
-   `test_spec_external_refs_are_pinned_and_vendored` guard fails if the spec
-   refs and the vendored set are out of sync.
+3. Update the recorded checksums in `_VENDORED_SCHEMA_SHA256`
+   (`tests/arch/test_openapi_conformance.py`):
+
+   ```sh
+   shasum -a 256 tests/arch/vendored/problem-details/*.yaml
+   ```
+
+4. Run `uv run pytest tests/arch/test_openapi_conformance.py`. The guards fail
+   if the spec refs, `PROBLEM_DETAILS_PIN`, the vendored files, or the recorded
+   checksums are out of sync with each other.
