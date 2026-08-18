@@ -127,11 +127,23 @@ def test_resolve_url_falls_back_to_path_without_servers() -> None:
         # Legacy colon form stays supported.
         ("stripe:payments:2023-10-16", ("stripe", "payments", "2023-10-16")),
         ("stripe:payments", ("stripe", "payments", None)),
-        # Colon takes precedence when both separators appear, so a colon-form
-        # entry whose version contains a slash keeps that slash intact.
+        # First separator wins, so a verbatim version keeps the other separator:
+        # colon form with a slash-bearing version, and slash form with a
+        # colon-bearing version (versions are stored verbatim, never slugified).
         ("vendor:name:heads/main", ("vendor", "name", "heads/main")),
-        # Slash-form maxsplit: anything past the second slash belongs to the version.
+        ("vendor/name/2024-01:rc1", ("vendor", "name", "2024-01:rc1")),
+        # maxsplit: anything past the second separator belongs to the version —
+        # including further colons, which the old parser silently truncated.
         ("vendor/name/1.0.0/extra", ("vendor", "name", "1.0.0/extra")),
+        ("a:b:c:d", ("a", "b", "c:d")),
+        # Vendor/name are slugified like ingest does, so raw spellings resolve
+        # (the CLI's own `--api stripe.com/api/v1` example is this shape).
+        ("stripe.com/api/v1", ("stripe-com", "api", "v1")),
+        ("GitHub.com/API", ("github-com", "api", None)),
+        # Empty segments degrade to an unfiltered axis, not an '' exact match;
+        # the version is trimmed but never slugified.
+        ("vendor/", ("vendor", None, None)),
+        ("vendor/name/ 1.1.4 ", ("vendor", "name", "1.1.4")),
     ],
 )
 def test_parse_api_identifier(entry: str, expected: tuple[str, str | None, str | None]) -> None:

@@ -173,12 +173,12 @@ class SearchUnavailableError(RegistryServiceError):
 class InvalidApiFilterError(RegistryServiceError):
     """Raised when an api filter identifier cannot be resolved."""
 
-    def __init__(self, identifier: str) -> None:
-        super().__init__(
-            f"Unknown API filter: {identifier!r} "
-            "(expected 'vendor[/name[/version]]' matching an imported API, "
-            "e.g. 'github-com/api-github-com/1.1.4')"
+    def __init__(self, identifier: str, hint: str | None = None) -> None:
+        detail = hint or (
+            "expected 'vendor[/name[/version]]' matching an imported API, "
+            "e.g. 'github-com/api-github-com/1.1.4'"
         )
+        super().__init__(f"Unknown API filter: {identifier!r} ({detail})")
         self.identifier = identifier
 
 

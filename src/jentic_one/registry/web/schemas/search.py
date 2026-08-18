@@ -20,8 +20,10 @@ class SearchRequest(BaseModel):
         description=(
             "Restrict results to these APIs. Each entry is a "
             "'vendor[/name[/version]]' identifier of an imported API "
-            "(e.g. 'github-com/api-github-com/1.1.4'); the legacy "
-            "colon-separated form 'vendor[:name[:version]]' is also accepted."
+            "(e.g. 'github-com/api-github-com/1.1.4'); vendor and name are "
+            "normalized like ingest, so raw spellings such as 'stripe.com/api' "
+            "also resolve. The legacy colon-separated form "
+            "'vendor[:name[:version]]' is also accepted."
         ),
     )
     limit: int = Field(default=10, ge=1, le=100)
