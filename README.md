@@ -111,8 +111,8 @@ make dev       # idempotent local bring-up: fixtures + migrations + UI, then run
 
 Six steps from a running instance to a response from a real API.
 
-1. **Sign in** to the operator UI at `/app` with the bootstrap login `admin@local` / `1234`,
-   then change the password.
+1. **Create your admin account** at `/setup` (the wizard opens this automatically, or run
+   `jenticctl setup` to do it from the terminal).
 2. **Import an API** from the [Jentic API Directory](https://github.com/jentic/jentic-public-apis),
    or upload your own specification.
 3. **Store a credential** for that API. It is encrypted at rest and is never returned to a
