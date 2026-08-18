@@ -174,6 +174,7 @@ class ImportHandler:
                     await self._deprecate_superseded_overlay(
                         job_id,
                         str(supersede_overlay_id),
+                        superseding_revision=revisions[0],
                         actor_id=created_by,
                         actor_type=actor_type,
                     )
@@ -304,7 +305,13 @@ class ImportHandler:
             )
 
     async def _deprecate_superseded_overlay(
-        self, job_id: str, overlay_id: str, *, actor_id: str, actor_type: str | None
+        self,
+        job_id: str,
+        overlay_id: str,
+        *,
+        superseding_revision: dict[str, Any] | None = None,
+        actor_id: str,
+        actor_type: str | None,
     ) -> None:
         """Auto-deprecate an overlay superseded by an authorized catalog re-import (A4b).
 
@@ -315,6 +322,16 @@ class ImportHandler:
         re-ingest, so it is logged rather than raised (the served spec is already correct;
         only the overlay's status label lags and can be repaired).
 
+        Which overlay to deprecate: prefer the one that *actually backed the revision the
+        supersede just archived* (``superseding_revision["superseded_revision_id"]``),
+        re-resolved here rather than trusting the enqueue-time ``overlay_id``. A concurrent
+        confirm can make a *different* overlay live between the A4b authorization gate and
+        this worker; the ingest stage archives whatever is current *now*, so deprecating the
+        stale enqueue-time id would leave the actually-superseded overlay stuck CONFIRMED
+        over an archived revision (#940). Fall back to the enqueue-time ``overlay_id`` when
+        the archived revision or its backing overlay can't be re-resolved, so there is no
+        regression versus the prior behaviour.
+
         L2 (#921): on a successful demote we emit an attributed ``overlay.deprecated``
         event so the overlay is not *silently* flipped behind the audit log. ``actor_id``/
         ``actor_type`` are the authorizing operator (the job's ``created_by``); the event
@@ -322,12 +339,29 @@ class ImportHandler:
         show "deprecated by re-import on <date>" (L3). Emitted best-effort in the admin DB
         (events live there), requires_action=False — a notification, not an inbox item.
         """
+        # Resolve which overlay to deprecate first, isolating a *resolution* failure (a DB
+        # read error while re-resolving) from a *demote* failure. On a resolver error, fall
+        # back to the enqueue-time id and still attempt the demote — a transient resolver
+        # error must not skip the deprecate entirely (which would regress to leaving the
+        # overlay CONFIRMED over an archived revision). The resolver's own miss-cases already
+        # return the enqueue-time id internally; this guard only covers it *raising*.
+        try:
+            target_overlay_id = await self._resolve_superseded_overlay_id(
+                job_id, overlay_id, superseding_revision
+            )
+        except Exception:
+            logger.exception(
+                "overlay_supersede_resolve_failed",
+                job_id=job_id,
+                overlay_id=overlay_id,
+            )
+            target_overlay_id = overlay_id
         try:
             async with self._ctx.registry_db.transaction() as session:
-                overlay = await OverlayRepository.get_by_id(session, overlay_id)
+                overlay = await OverlayRepository.get_by_id(session, target_overlay_id)
                 demoted = await OverlayRepository.set_status(
                     session,
-                    overlay_id,
+                    target_overlay_id,
                     OverlayStatus.DEPRECATED,
                     deprecated_at=datetime.now(UTC),
                     deprecated_reason=OverlayDeprecationReason.SUPERSEDED_BY_REIMPORT,
@@ -337,14 +371,14 @@ class ImportHandler:
                 logger.warning(
                     "overlay_supersede_not_deprecated",
                     job_id=job_id,
-                    overlay_id=overlay_id,
+                    overlay_id=target_overlay_id,
                     reason="overlay_not_confirmed_or_missing",
                 )
                 return
             await self._emit_overlay_deprecated(
                 job_id=job_id,
                 overlay=overlay,
-                overlay_id=overlay_id,
+                overlay_id=target_overlay_id,
                 actor_id=actor_id,
                 actor_type=actor_type,
             )
@@ -353,8 +387,103 @@ class ImportHandler:
             logger.exception(
                 "overlay_supersede_deprecate_failed",
                 job_id=job_id,
-                overlay_id=overlay_id,
+                overlay_id=target_overlay_id,
             )
+
+    async def _resolve_superseded_overlay_id(
+        self,
+        job_id: str,
+        enqueue_overlay_id: str,
+        superseding_revision: dict[str, Any] | None,
+    ) -> str:
+        """Resolve the overlay that actually backed the supersede-archived revision (#940).
+
+        Returns the CONFIRMED overlay whose ``confirmed_revision_id`` is the revision the
+        worker just archived (captured pre-archive as
+        ``superseding_revision["superseded_revision_id"]``), re-resolved here rather than
+        trusting the enqueue-time id (a concurrent confirm may have changed the live overlay
+        after enqueue).
+
+        Two-stage resolution:
+        1. Strict: :meth:`OverlayRepository.get_live_confirmed_for_revision` on the archived
+           revision — unambiguous when the backing overlay is linked.
+        2. Lazy-link recovery: the strict lookup misses in the lazy-link window (the confirm
+           path makes the overlay's revision current *before* it stamps
+           ``confirmed_revision_id``; that link is a separate, best-effort txn, so a live
+           CONFIRMED overlay can transiently — or durably, on a failed link — have a NULL
+           link). When the archived revision was overlay-origin and there is *exactly one*
+           NULL-linked CONFIRMED overlay for the API, that is the live overlay → deprecate
+           it. This mirrors why :meth:`get_live_confirmed_for_api` refuses to key strictly.
+
+        Falls back to the enqueue-time ``enqueue_overlay_id`` only when neither stage
+        resolves (no archived revision captured, API/overlay unresolved, or an *ambiguous*
+        lazy-link set). Logs when the re-resolved overlay differs from the enqueue-time one,
+        or when it can't safely re-resolve, so the concurrent-confirm race is observable.
+        """
+        if superseding_revision is None:
+            return enqueue_overlay_id
+        archived_id_raw = superseding_revision.get("superseded_revision_id")
+        api = superseding_revision.get("api") or {}
+        vendor, name, version = api.get("vendor"), api.get("name"), api.get("version")
+        if not archived_id_raw or not (vendor and name and version):
+            return enqueue_overlay_id
+        try:
+            archived_revision_id = uuid.UUID(str(archived_id_raw))
+        except ValueError:
+            return enqueue_overlay_id
+
+        async with self._ctx.registry_db.session() as session:
+            api_row = await ApiRepository.get_by_identifier(session, vendor, name, version)
+            if api_row is None:
+                return enqueue_overlay_id
+            overlay = await OverlayRepository.get_live_confirmed_for_revision(
+                session, api_row.id, archived_revision_id
+            )
+            if overlay is None:
+                # Strict miss — try the lazy-link recovery. Only meaningful when the archived
+                # revision was itself overlay-origin (an overlay backed it); a catalog/manual
+                # base has no overlay to re-resolve.
+                archived_origin = await ApiRevisionRepository.origin_of(
+                    session, archived_revision_id
+                )
+                if archived_origin == ORIGIN_OVERLAY:
+                    unlinked = await OverlayRepository.list_confirmed_unlinked_for_api(
+                        session, api_row.id
+                    )
+                    if len(unlinked) == 1:
+                        overlay = unlinked[0]
+
+        if overlay is None:
+            # Could not safely re-resolve (no backing overlay, or an ambiguous lazy-link
+            # set). Do NOT silently trust the enqueue-time id — a concurrent confirm may have
+            # made it stale. Fall back to it (no worse than pre-#940), but warn so the
+            # wrong-overlay risk in this narrow window is observable rather than silent.
+            logger.warning(
+                "overlay_supersede_target_unresolved",
+                job_id=job_id,
+                enqueue_overlay_id=enqueue_overlay_id,
+                archived_revision_id=str(archived_revision_id),
+                detail=(
+                    "could not re-resolve the overlay backing the archived revision "
+                    "(lazy-link window or ambiguous confirmed set); falling back to the "
+                    "enqueue-time overlay id, which may be stale under a concurrent confirm "
+                    "(#940)"
+                ),
+            )
+            return enqueue_overlay_id
+        if overlay.id != enqueue_overlay_id:
+            logger.info(
+                "overlay_supersede_target_reresolved",
+                job_id=job_id,
+                enqueue_overlay_id=enqueue_overlay_id,
+                resolved_overlay_id=overlay.id,
+                archived_revision_id=str(archived_revision_id),
+                detail=(
+                    "a concurrent confirm changed the live overlay after enqueue; "
+                    "deprecating the overlay that backed the archived revision (#940)"
+                ),
+            )
+        return overlay.id
 
     async def _emit_overlay_deprecated(
         self,
@@ -452,6 +581,18 @@ class ImportHandler:
             return None
         # Finish the interrupted deprecate (idempotent: CAS on CONFIRMED — a no-op if a
         # prior attempt already demoted it).
+        #
+        # Residual (#940): this recovery path passes no ``superseding_revision``, so
+        # ``_deprecate_superseded_overlay`` cannot re-resolve and deprecates the enqueue-time
+        # ``overlay_id`` verbatim. Under a *concurrent confirm that changed the live overlay
+        # after enqueue* AND a crash mid-supersede (a double fault), that id can be stale, so
+        # the wrong overlay may be demoted here. We do not re-resolve because by recovery time
+        # the archived overlay revision is gone (the served revision is already the fresh
+        # non-overlay upstream — asserted by the ``origin == ORIGIN_OVERLAY`` guard above), so
+        # there is no reliable ``superseded_revision_id`` to key on. The CAS still guarantees
+        # we only ever demote a CONFIRMED overlay, never corrupt state; the narrow cost is a
+        # possibly-wrong-overlay demote in this double-fault corner. Left as a known residual
+        # rather than adding a heuristic that could misfire.
         await self._deprecate_superseded_overlay(
             job_id, overlay_id, actor_id=actor_id, actor_type=actor_type
         )

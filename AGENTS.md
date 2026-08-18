@@ -3,6 +3,54 @@
 > **If `.rules/` exists, read `.rules/AGENTS.md` and use it instead of this file.**
 > Otherwise use the guidance below.
 
+## Using Jentic One (not changing it)
+
+If your task is to install Jentic One and connect an agent to it, follow this section. The
+rest of this file is for changing the codebase.
+
+**Install.** Two supported paths:
+
+1. Signed release binary, from https://github.com/jentic/jentic-one/releases/latest. Verify
+   against `checksums.txt` (signature: `checksums.txt.sig`, certificate: `checksums.txt.pem`),
+   then run `jenticctl install`. Prefer this path: it is verifiable before execution, and a
+   sandboxed agent will usually be refused permission to pipe a script to a shell.
+2. Bootstrap script:
+   `curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/main/tools/install.sh | sh`
+   This downloads a Go toolchain if none is present, clones this repository, builds `jenticctl`
+   and `jentic`, then runs `jenticctl install`. Set `JENTIC_NO_INSTALL=1` to stop after the
+   binaries are installed.
+
+**Run Jentic One on a different machine from the agent.** An agent running as the same OS user
+can read the credential database and encryption key from disk, whatever the API-level controls
+allow. See `docs/security/hardening.md` before using real credentials.
+
+**Register and reach a first call:**
+
+1. `jentic register` creates the agent identity. It then blocks, waiting for an operator to
+   approve the agent. Report this to the user: on a single-operator install they are the
+   operator, and they approve it in the UI at `/app`.
+2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
+   (terminal). This is a one-time step.
+3. Import an API from https://github.com/jentic/jentic-public-apis, or register a private
+   OpenAPI description of the user's own service.
+4. Store a credential for that API, once. It is encrypted at rest and is never returned.
+5. Bind the agent to a toolkit. A rule-less binding blocks everything; the default is deny.
+6. `jentic execute GET:/get --json` runs a call through the Broker with the credential injected.
+
+**Constraints to respect:**
+
+- One governed upstream call per execution. Compose multi-step work yourself; the Broker does
+  not orchestrate.
+- A self-hosted deployment exposes no MCP endpoint. Integrate through the `jentic` CLI, the
+  skill it generates, or plain HTTP against the deployment's own API.
+- A running instance serves `/llms.txt` and `/.well-known/llms.txt` with that deployment's base
+  URL. Once an instance exists, prefer those over this file for anything at runtime.
+- Never print, log or echo a stored credential. The Broker does not return them.
+
+**If a step is blocked by your own sandbox or by network egress rules, say so and stop.** Do
+not work around a security control. Issue #994 tracks the install paths available to a
+restricted agent.
+
 ## In-repo guidance
 
 This repo's agent guidance lives in **[`CLAUDE.md`](CLAUDE.md)**. Read it first.
