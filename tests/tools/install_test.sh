@@ -431,6 +431,29 @@ out="$(JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 \
 assert_eq "release_asset_url: composes the GitHub releases download URL" \
   "https://github.com/jentic/jentic-one/releases/download/v0.31.0/checksums.txt" "$out"
 
+# --- download mode: empty auth array survives `set -u` on bash 3.2 -----------
+# With GITHUB_TOKEN unset the local auth=() arrays in release_assets_exist and
+# curl_asset expand EMPTY; macOS stock bash 3.2 treats a bare "${auth[@]}" as an
+# unbound variable under `set -u`, which crashed every explicit-JENTIC_REF
+# install ("auth[@]: unbound variable"). The ${auth[@]+…} guard must hold: with
+# curl stubbed to succeed, both helpers must run to completion with no token.
+set +e
+noauth_out="$(bash -c "set -euo pipefail; . '$INSTALL_SH'
+  curl() { return 0; }
+  GITHUB_TOKEN=\"\" JENTIC_REPO=jentic/jentic-one JENTIC_REF=v0.31.0 OS=darwin ARCH=arm64
+  release_assets_exist || exit 1
+  curl_asset https://github.com/x/y/releases/download/v0.31.0/a.tar.gz /dev/null || exit 1
+  echo survived" 2>&1)"
+noauth_rc=$?
+set -e
+assert_eq "empty-auth: helpers run under set -u with no token" "0" "$noauth_rc"
+assert_contains "empty-auth: both helpers completed" "$noauth_out" "survived"
+if printf '%s' "$noauth_out" | grep -q "unbound variable"; then
+  fail "empty-auth: 'unbound variable' crash regressed: $noauth_out"
+else
+  pass "empty-auth: no unbound-variable crash"
+fi
+
 # ---------------------------------------------------------------------------
 # Contract tier: run the installer through each shell and prove it re-execs and
 # reaches main() without a bash syntax error. We build a minimal PATH that has

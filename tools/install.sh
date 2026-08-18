@@ -606,7 +606,9 @@ curl_asset() {
         auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}") ;;
     esac
   fi
-  curl -fSL "${auth[@]}" -o "$dest" -- "$url"
+  # ${auth[@]+…} guard: macOS stock bash 3.2 treats an EMPTY array expansion as
+  # an unbound variable under `set -u` (same idiom as the git_auth call sites).
+  curl -fSL ${auth[@]+"${auth[@]}"} -o "$dest" -- "$url"
 }
 
 # sha256_file <path> prints the lowercase hex sha256 of a file, using whichever
@@ -668,7 +670,8 @@ release_assets_exist() {
   if [ -n "$GITHUB_TOKEN" ]; then
     auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
   fi
-  curl -fsSL "${auth[@]}" -I -o /dev/null -- "$url" 2>/dev/null
+  # Same empty-array-under-`set -u` guard as curl_asset (macOS bash 3.2).
+  curl -fsSL ${auth[@]+"${auth[@]}"} -I -o /dev/null -- "$url" 2>/dev/null
 }
 
 # download_binaries fetches + verifies the selected release archives and unpacks
