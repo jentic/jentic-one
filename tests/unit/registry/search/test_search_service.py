@@ -11,6 +11,7 @@ import pytest
 
 from jentic_one.registry.core.schema.operations import Operation
 from jentic_one.registry.services.search_service import (
+    _parse_api_identifier,
     _resolve_operation_url,
     compute_relevance_score,
 )
@@ -114,3 +115,25 @@ def test_resolve_url_preserves_server_base_path() -> None:
 def test_resolve_url_falls_back_to_path_without_servers() -> None:
     op = _operation(server_url=None, path="/v4/x")
     assert _resolve_operation_url(op) == "/v4/x"
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        # Canonical slash slug — what the CLI documents and sends (#1080).
+        ("github-com/api-github-com/1.1.4", ("github-com", "api-github-com", "1.1.4")),
+        ("github-com/api-github-com", ("github-com", "api-github-com", None)),
+        ("github-com", ("github-com", None, None)),
+        # Legacy colon form stays supported.
+        ("stripe:payments:2023-10-16", ("stripe", "payments", "2023-10-16")),
+        ("stripe:payments", ("stripe", "payments", None)),
+        # Colon takes precedence when both separators appear, so a colon-form
+        # entry whose version contains a slash keeps that slash intact.
+        ("vendor:name:heads/main", ("vendor", "name", "heads/main")),
+        # Slash-form maxsplit: anything past the second slash belongs to the version.
+        ("vendor/name/1.0.0/extra", ("vendor", "name", "1.0.0/extra")),
+    ],
+)
+def test_parse_api_identifier(entry: str, expected: tuple[str, str | None, str | None]) -> None:
+    """Both the canonical slash slug and the legacy colon form parse to the same tuple."""
+    assert _parse_api_identifier(entry) == expected

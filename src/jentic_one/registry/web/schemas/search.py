@@ -15,10 +15,25 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
-    apis: list[str] | None = None
+    apis: list[str] | None = Field(
+        default=None,
+        description=(
+            "Restrict results to these APIs. Each entry is a "
+            "'vendor[/name[/version]]' identifier of an imported API "
+            "(e.g. 'github-com/api-github-com/1.1.4'); the legacy "
+            "colon-separated form 'vendor[:name[:version]]' is also accepted."
+        ),
+    )
     limit: int = Field(default=10, ge=1, le=100)
     cursor: str | None = None
-    revision_pins: dict[str, str] | None = None
+    revision_pins: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Pin specific APIs to a revision for this search. Keys are full "
+            "'vendor/name/version' identifiers (colon-separated also accepted); "
+            "values are revision UUIDs."
+        ),
+    )
 
 
 class SearchLinksResponse(BaseModel):

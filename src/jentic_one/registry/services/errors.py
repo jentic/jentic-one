@@ -174,7 +174,11 @@ class InvalidApiFilterError(RegistryServiceError):
     """Raised when an api filter identifier cannot be resolved."""
 
     def __init__(self, identifier: str) -> None:
-        super().__init__(f"Unknown API filter: {identifier!r}")
+        super().__init__(
+            f"Unknown API filter: {identifier!r} "
+            "(expected 'vendor[/name[/version]]' matching an imported API, "
+            "e.g. 'github-com/api-github-com/1.1.4')"
+        )
         self.identifier = identifier
 
 

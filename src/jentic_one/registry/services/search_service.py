@@ -83,14 +83,28 @@ def _build_inspect_link(method: str, url: str) -> str:
     return f"/inspect?id={encoded_id}"
 
 
+def _parse_api_identifier(entry: str) -> tuple[str, str | None, str | None]:
+    """Parse an API filter entry into a ``(vendor, name, version)`` tuple.
+
+    Accepts the canonical ``vendor[/name[/version]]`` slug used everywhere else
+    (CLI ``--api`` flags, catalog references, access requests) as well as the
+    colon-separated form this endpoint historically required (#1080). Colon
+    takes precedence so any existing colon-encoded caller keeps working; a
+    slash-form version keeps embedded slashes intact via ``maxsplit``.
+    """
+    sep = ":" if ":" in entry else "/"
+    parts = entry.split(sep, 2)
+    vendor = parts[0]
+    name = parts[1] if len(parts) > 1 else None
+    version = parts[2] if len(parts) > 2 else None
+    return vendor, name, version
+
+
 async def _resolve_api_filters(session: Any, apis: list[str]) -> list[uuid.UUID]:
-    """Parse colon-encoded api identifiers and resolve to api_ids."""
+    """Resolve ``vendor[/name[/version]]`` api identifiers to api_ids."""
     all_ids: list[uuid.UUID] = []
     for entry in apis:
-        parts = entry.split(":")
-        vendor = parts[0]
-        name = parts[1] if len(parts) > 1 else None
-        version = parts[2] if len(parts) > 2 else None
+        vendor, name, version = _parse_api_identifier(entry)
         resolved = await ApiRepository.resolve_ids(
             session, vendor=vendor, name=name, version=version
         )
@@ -106,10 +120,9 @@ async def _resolve_revision_pins(
     """Resolve revision_pins from api identifier -> revision_id strings to uuid mapping."""
     resolved: dict[uuid.UUID, uuid.UUID] = {}
     for api_key, rev_id_str in revision_pins.items():
-        parts = api_key.split(":")
-        if len(parts) != 3:
+        vendor, name, version = _parse_api_identifier(api_key)
+        if name is None or version is None:
             raise InvalidApiFilterError(api_key)
-        vendor, name, version = parts[0], parts[1], parts[2]
         api = await ApiRepository.get_by_identifier(session, vendor, name, version)
         if api is None:
             raise InvalidApiFilterError(api_key)
