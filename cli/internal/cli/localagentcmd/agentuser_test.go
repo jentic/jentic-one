@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jentic/jentic-one/cli/internal/config"
+	"github.com/jentic/jentic-one/cli/internal/localagent"
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
@@ -34,6 +35,31 @@ func TestProviderToggleTitle(t *testing.T) {
 		if got := providerToggleTitle(name); got != "Copy your LLM provider config into the agent's home?" {
 			t.Errorf("providerToggleTitle(%q) = %q, want generic", name, got)
 		}
+	}
+}
+
+// TestFollowRenamedHome guards the form's home/name coupling: the home field is
+// prefilled from the DEFAULT account name, so an operator who renames the account
+// but leaves the home untouched must get the home re-derived from the new name —
+// otherwise the new account is silently pointed at a directory derived from a
+// name they rejected (the existing default-named account's live home, when one
+// exists). A deliberately customised home is always kept.
+func TestFollowRenamedHome(t *testing.T) {
+	defaultName := "alice-local-agent"
+	staleDefault := localagent.DefaultHomeDir(defaultName)
+
+	// Renamed account + untouched prefill → home follows the name.
+	if home, changed := followRenamedHome("alice-2", defaultName, staleDefault); !changed || home != localagent.DefaultHomeDir("alice-2") {
+		t.Errorf("followRenamedHome(renamed, stale prefill) = (%q, %v), want re-derived home", home, changed)
+	}
+	// Default name kept → prefill kept.
+	if home, changed := followRenamedHome(defaultName, defaultName, staleDefault); changed || home != staleDefault {
+		t.Errorf("followRenamedHome(default name) = (%q, %v), want unchanged", home, changed)
+	}
+	// Renamed account + deliberately customised home → the operator's choice wins.
+	custom := localagent.AgentHomeRoot() + "/team/alice-2"
+	if home, changed := followRenamedHome("alice-2", defaultName, custom); changed || home != custom {
+		t.Errorf("followRenamedHome(custom home) = (%q, %v), want operator's home kept", home, changed)
 	}
 }
 
@@ -79,44 +105,55 @@ func TestOperatorNames(t *testing.T) {
 }
 
 // TestRecordAgentAccount checks the persisted booleans and that a re-record keeps
-// the original CreatedAt stamp while updating the create flag.
+// the original CreatedAt stamp while updating the create flag. The record lives
+// in the XDG agent state and never carries a config_dir (the legacy per-agent
+// ~/.jentic reference is dead for new accounts).
 func TestRecordAgentAccount(t *testing.T) {
 	app := testApp(t)
 
-	// Declined: recorded as not created, no home, no config-dir reference.
-	app.recordAgentAccount("alice-local-agent", "", "", false)
-	cfg, err := config.Load(app.Paths)
+	// Declined: recorded as not created, no home.
+	app.recordAgentAccount("alice-local-agent", "", false)
+	st, err := config.LoadAgentState(app.Paths)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	acct, ok := cfg.AgentAccount()
+	acct, ok := st.AgentAccount()
 	if !ok || acct.AccountCreated || acct.Enabled || acct.User != "alice-local-agent" {
 		t.Fatalf("declined account = %+v (ok=%v)", acct, ok)
 	}
 	if acct.ConfigDir != "" {
-		t.Errorf("declined account should have no config-dir reference, got %q", acct.ConfigDir)
+		t.Errorf("account should have no config-dir reference, got %q", acct.ConfigDir)
 	}
 	if acct.CreatedAt == "" {
 		t.Fatal("expected CreatedAt to be stamped")
 	}
 	firstStamp := acct.CreatedAt
 
-	// Later opting in: create + enabled flags flip, home + config-dir reference are
-	// set, stamp is preserved.
-	app.recordAgentAccount("alice-local-agent", "/Users/Shared/alice-local-agent", "/Users/Shared/alice-local-agent/.jentic", true)
-	cfg, err = config.Load(app.Paths)
+	// The record must land in the XDG state, not the legacy ~/.jentic config.
+	legacy, err := config.Load(app.Paths)
+	if err != nil {
+		t.Fatalf("load legacy: %v", err)
+	}
+	if legacy.Agent != nil {
+		t.Error("record must not be written to the legacy config")
+	}
+
+	// Later opting in: create + enabled flags flip, home is set, stamp is
+	// preserved, and still no config_dir.
+	app.recordAgentAccount("alice-local-agent", "/Users/Shared/alice-local-agent", true)
+	st, err = config.LoadAgentState(app.Paths)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	acct, _ = cfg.AgentAccount()
+	acct, _ = st.AgentAccount()
 	if !acct.AccountCreated || !acct.Enabled {
 		t.Error("expected AccountCreated and Enabled to flip to true")
 	}
 	if acct.HomeDir != "/Users/Shared/alice-local-agent" {
 		t.Errorf("home = %q", acct.HomeDir)
 	}
-	if acct.ConfigDir != "/Users/Shared/alice-local-agent/.jentic" {
-		t.Errorf("config_dir = %q, want the agent's ~/.jentic", acct.ConfigDir)
+	if acct.ConfigDir != "" {
+		t.Errorf("config_dir must stay empty for new records, got %q", acct.ConfigDir)
 	}
 	if acct.CreatedAt != firstStamp {
 		t.Errorf("CreatedAt changed on re-record: %q → %q", firstStamp, acct.CreatedAt)

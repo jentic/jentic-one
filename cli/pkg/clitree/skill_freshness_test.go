@@ -10,7 +10,7 @@ import (
 
 // skillContentDir holds the shipped skill bodies embedded into the CLI
 // (go:embed content/*.md) and written into agent runtimes by `jentic skill
-// init` / `jentic bootstrap`. They are the authoritative "what the skill
+// init` / `jentic setup`. They are the authoritative "what the skill
 // teaches an agent to run" surface.
 const skillContentDir = "../../internal/skillgen/content"
 

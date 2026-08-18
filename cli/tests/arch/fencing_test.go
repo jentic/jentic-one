@@ -90,7 +90,7 @@ var fencingExemptPrefixes = []string{
 	"doctor", "whoami", "login", "logout",
 	// Skill self-provisioning + own-identity key management (writes only the
 	// agent's own runtime / its own credential, never another identity). NOTE:
-	// `bootstrap` is NOT here — it is fenced (AGT-5): it hangs on a human
+	// `setup` is NOT here — it is fenced (AGT-5): it hangs on a human
 	// approval poll and writes skill files; agents use `register`.
 	"skill", "register",
 	// Operator admin config surface (jentic-tree mirror) — reachable to operators;

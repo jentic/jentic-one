@@ -40,9 +40,9 @@ func (a *Cmd) offerWorkspaceGrants(ctx context.Context, desc localagent.Descript
 		return
 	}
 
-	cfg, err := config.Load(a.Paths)
+	st, err := config.LoadAgentState(a.Paths)
 	if err != nil {
-		fmt.Fprintln(a.Out, theme.Warnf("could not load config to record workspace grants: %v", err))
+		fmt.Fprintln(a.Out, theme.Warnf("could not load the agent state to record workspace grants: %v", err))
 		return
 	}
 
@@ -54,7 +54,7 @@ func (a *Cmd) offerWorkspaceGrants(ctx context.Context, desc localagent.Descript
 			fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("  Skipping %s — %s.", ws, v.Reason)))
 			continue
 		}
-		if err := a.grantDir(ctx, cfg, agentUser, ws); err != nil {
+		if err := a.grantDir(ctx, st, agentUser, ws); err != nil {
 			fmt.Fprintln(a.Out, theme.Warnf("could not grant %s: %v", ws, err))
 			continue
 		}

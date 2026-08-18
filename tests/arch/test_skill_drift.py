@@ -6,7 +6,7 @@ from it (or from each other):
 
 - ``cli/internal/skillgen/content/<name>.md`` — embedded in the Go CLI binary
   (``go:embed content/*.md``) and written into agent runtimes by
-  ``jentic skill init`` / ``jentic bootstrap``.
+  ``jentic skill init`` / ``jentic setup``.
 - ``src/jentic_one/shared/web/content/<name>.md`` — packaged with the backend
   and served raw at ``GET /skills/<name>.md`` (#651), referenced from
   ``GET /llms.txt`` (#809).

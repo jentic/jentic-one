@@ -18,9 +18,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// bootstrapOptions collects every knob for the zero-to-playing flow. It is a
-// superset of register + skill options because bootstrap orchestrates both.
-type bootstrapOptions struct {
+// setupOptions collects every knob for the zero-to-playing flow. It is a
+// superset of register + skill options because setup orchestrates both.
+type setupOptions struct {
 	url       string // install URL (fresh-machine setup arm)
 	env       string // environment name override
 	name      string
@@ -38,13 +38,13 @@ type bootstrapOptions struct {
 	interactive bool
 }
 
-// skillOptions projects the skill-related bootstrap flags onto the shared
-// skillOptions type so bootstrap reuses the exact skill selection and writing
-// code. bootstrap's --force is deliberately *not* forwarded: it means
+// skillOptions projects the skill-related setup flags onto the shared
+// skillOptions type so setup reuses the exact skill selection and writing
+// code. setup's --force is deliberately *not* forwarded: it means
 // "re-register the agent", and must not silently clobber a managed skill block
 // the user hand-edited. Refreshing an edited block stays an explicit, separate
 // `jentic skill init --force`.
-func (o *bootstrapOptions) skillOptions() *skillOptions {
+func (o *setupOptions) skillOptions() *skillOptions {
 	return &skillOptions{
 		operators: o.operators,
 		all:       o.all,
@@ -53,16 +53,16 @@ func (o *bootstrapOptions) skillOptions() *skillOptions {
 	}
 }
 
-// BootstrapForWizard runs the shared bootstrap flow (register + approval wait +
-// skill) from the ctl `wizard` command. It keeps bootstrapOptions private to
+// SetupForWizard runs the shared setup flow (register + approval wait +
+// skill) from the ctl `wizard` command. It keeps setupOptions private to
 // cmdcore while letting the ctl tree drive it with just the values the wizard
 // owns: the install URL the wizard just brought up, plus the operator picks.
-// operators empty + yes=false runs bootstrap's interactive operator picker; a
+// operators empty + yes=false runs setup's interactive operator picker; a
 // named operator (yes=true) drives it non-interactively; empty operators +
-// yes=true auto-detects. interactive stays false so bootstrap does not
+// yes=true auto-detects. interactive stays false so setup does not
 // re-prompt for the URL the wizard already collected.
-func (a *Cmd) BootstrapForWizard(ctx context.Context, installURL string, timeout time.Duration, operators []string, yes bool) error {
-	return a.bootstrapE(ctx, &bootstrapOptions{
+func (a *Cmd) SetupForWizard(ctx context.Context, installURL string, timeout time.Duration, operators []string, yes bool) error {
+	return a.setupE(ctx, &setupOptions{
 		url:       installURL,
 		timeout:   timeout,
 		operators: operators,
@@ -70,16 +70,16 @@ func (a *Cmd) BootstrapForWizard(ctx context.Context, installURL string, timeout
 	})
 }
 
-// NewBootstrapCmd builds the `bootstrap` command that runs first-time agent
+// NewSetupCmd builds the `setup` command that runs first-time agent
 // setup (register + skill install) in one step. Shared by both trees via cmdcore.
-func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
+func NewSetupCmd(app *cmdcore.App) *cobra.Command {
 	a := &Cmd{App: app}
-	opts := &bootstrapOptions{}
+	opts := &setupOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "bootstrap",
+		Use:   "setup",
 		Short: "Set up a new local agent (identity + skills + isolation) — start here if you're a person",
-		Long: "bootstrap takes a fresh machine from nothing to ready: it connects this\n" +
+		Long: "setup takes a fresh machine from nothing to ready: it connects this\n" +
 			"machine to a Jentic install (creating the environment, identity and context\n" +
 			"if needed), registers the agent (Dynamic Client Registration), prints an\n" +
 			"approval link and waits for a human to approve it, mints and saves tokens,\n" +
@@ -88,14 +88,14 @@ func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
 			"It is a thin orchestration of `jentic register` and `jentic skill`: nothing\n" +
 			"here you can't do by hand, just sequenced so you can start playing right\n" +
 			"away. Re-running refreshes everything idempotently.",
-		Example: "  jentic bootstrap\n" +
-			"  jentic bootstrap --url https://jentic.example.com --operator claude --yes\n" +
-			"  jentic bootstrap --skip-skill   # identity only\n" +
-			"  jentic bootstrap --dry-run",
+		Example: "  jentic setup\n" +
+			"  jentic setup --url https://jentic.example.com --operator claude --yes\n" +
+			"  jentic setup --skip-skill   # identity only\n" +
+			"  jentic setup --dry-run",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			opts.interactive = cmdcore.WantsInteractive(cmd, opts.yes, cmdcore.BootstrapFieldFlags...)
-			return a.bootstrapE(cmd.Context(), opts)
+			opts.interactive = cmdcore.WantsInteractive(cmd, opts.yes, cmdcore.SetupFieldFlags...)
+			return a.setupE(cmd.Context(), opts)
 		},
 	}
 
@@ -114,8 +114,19 @@ func NewBootstrapCmd(app *cmdcore.App) *cobra.Command {
 	return cmd
 }
 
-func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
-	fmt.Fprintln(a.Out, theme.Headingf("Bootstrap"))
+// NewSetupAliasCmd builds a hidden `bootstrap` command that is a pure
+// compatibility alias for `setup` (the command's pre-rename name). It is a
+// full second instance rather than a cobra alias so no help output, docs, or
+// generated reference ever mentions the old name — it only works when typed.
+func NewSetupAliasCmd(app *cmdcore.App) *cobra.Command {
+	cmd := NewSetupCmd(app)
+	cmd.Use = "bootstrap"
+	cmd.Hidden = true
+	return cmd
+}
+
+func (a *Cmd) setupE(ctx context.Context, opts *setupOptions) error {
+	fmt.Fprintln(a.Out, theme.Headingf("Setup"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("Register this machine as an agent, wait for approval, then prime your operator."))
 
 	// Flag validation happens before anything else, even for paths a flag
@@ -152,12 +163,12 @@ func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 		}
 		targets, err = a.chooseTargets(reg, env, opts.skillOptions())
 		if err != nil {
-			// Esc in the skill picker means "never mind", not a failed bootstrap.
+			// Esc in the skill picker means "never mind", not a failed setup.
 			if errors.Is(err, huh.ErrUserAborted) {
 				fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
 				return nil
 			}
-			// For bootstrap the natural escape hatch on a headless box with
+			// For setup the natural escape hatch on a headless box with
 			// no detectable operator is identity-only provisioning — name it.
 			if errors.Is(err, errNothingDetected) {
 				return fmt.Errorf("%w — or pass --skip-skill to provision identity only", err)
@@ -172,14 +183,14 @@ func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	}
 
 	if opts.dryRun {
-		return a.bootstrapDryRun(st, targets, env, opts)
+		return a.setupDryRun(st, targets, env, opts)
 	}
 
 	// After the operator is chosen, offer to isolate it behind a dedicated Unix
 	// user (the true credential boundary). This is asked BEFORE any registration
 	// side effect and BEFORE any sudo, so declining costs nothing and leaves no
 	// half-provisioned state. It is shared with `jenticctl wizard`, which reaches
-	// it through this same bootstrap flow. The identity itself stays in the
+	// it through this same setup flow. The identity itself stays in the
 	// operator's XDG store; `jentic run` exports the active context's material
 	// into the agent's home at launch.
 	var setup agentSetup
@@ -261,9 +272,9 @@ func (a *Cmd) bootstrapE(ctx context.Context, opts *bootstrapOptions) error {
 	return nil
 }
 
-// bootstrapDryRun describes the steps without registering or writing. st is
+// setupDryRun describes the steps without registering or writing. st is
 // the active context (nil for the fresh-machine setup arm).
-func (a *Cmd) bootstrapDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *bootstrapOptions) error {
+func (a *Cmd) setupDryRun(st *clictx.ActiveState, targets []skillTarget, env skillgen.DetectEnv, opts *setupOptions) error {
 	if st != nil {
 		fmt.Fprintln(a.Out, theme.Infof("would register identity %q with environment %q (%s), or reuse an existing registration",
 			st.IdentityName, st.EnvironmentName, st.BaseURL))

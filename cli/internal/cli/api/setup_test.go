@@ -14,12 +14,12 @@ import (
 	"github.com/jentic/jentic-one/cli/internal/skillgen"
 )
 
-// bootstrapServer is a fake control plane: /register always succeeds, and
+// setupServer is a fake control plane: /register always succeeds, and
 // /oauth/token returns a pending 400 for the first pendingPolls calls, then a
 // live token pair — modelling the human approving the agent mid-wait. The
 // returned counter records how many times /register was hit, so tests can
 // assert registration did (or did not) happen.
-func bootstrapServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomic.Int32) {
+func setupServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var polls atomic.Int32
 	var registers atomic.Int32
@@ -49,28 +49,28 @@ func bootstrapServer(t *testing.T, pendingPolls int32) (*httptest.Server, *atomi
 	return srv, &registers
 }
 
-// runBootstrap executes the bootstrap command through the full jentic tree,
+// runSetup executes the setup command through the full jentic tree,
 // returning the combined output.
-func runBootstrap(t *testing.T, app *app, args ...string) (string, error) {
+func runSetup(t *testing.T, app *app, args ...string) (string, error) {
 	t.Helper()
 	out := new(bytes.Buffer)
 	app.Out = out
 	root := newAPIRootCmd(app.App)
 	root.SetOut(out)
 	root.SetErr(out)
-	root.SetArgs(append([]string{"bootstrap"}, args...))
+	root.SetArgs(append([]string{"setup"}, args...))
 	err := root.Execute()
 	return out.String(), err
 }
 
-func TestBootstrapEndToEnd(t *testing.T) {
+func TestSetupEndToEnd(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, _ := bootstrapServer(t, 0) // approved immediately
+	srv, _ := setupServer(t, 0) // approved immediately
 
 	app := testApp(t)
-	got, err := runBootstrap(t, app,
+	got, err := runSetup(t, app,
 		"--url", srv.URL,
 		"--name", "demo",
 		"--env", "qa",
@@ -80,7 +80,7 @@ func TestBootstrapEndToEnd(t *testing.T) {
 		"--yes",
 	)
 	if err != nil {
-		t.Fatalf("bootstrap: %v\nout:\n%s", err, got)
+		t.Fatalf("setup: %v\nout:\n%s", err, got)
 	}
 
 	// The trio was created, activated, and approved with cached tokens.
@@ -102,10 +102,10 @@ func TestBootstrapEndToEnd(t *testing.T) {
 	if !strings.Contains(string(body), "BEGIN JENTIC MANAGED SKILL: jentic") {
 		t.Errorf("skill file missing named managed block:\n%s", body)
 	}
-	// Bootstrap installs the full shipped set by default.
+	// Setup installs the full shipped set by default.
 	for _, name := range skillgen.BundledNames() {
 		if !strings.Contains(string(body), "BEGIN JENTIC MANAGED SKILL: "+name) {
-			t.Errorf("bootstrap should install the full set; missing %s block:\n%s", name, body)
+			t.Errorf("setup should install the full set; missing %s block:\n%s", name, body)
 		}
 	}
 	// The skill is templated with THIS install's URL, never a localhost default.
@@ -124,14 +124,14 @@ func TestBootstrapEndToEnd(t *testing.T) {
 	}
 }
 
-func TestBootstrapWaitsThenApproves(t *testing.T) {
+func TestSetupWaitsThenApproves(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, _ := bootstrapServer(t, 2) // two pending polls before approval
+	srv, _ := setupServer(t, 2) // two pending polls before approval
 
 	app := testApp(t)
-	got, err := runBootstrap(t, app,
+	got, err := runSetup(t, app,
 		"--url", srv.URL,
 		"--name", "demo",
 		"--env", "qa",
@@ -140,7 +140,7 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 		"--yes",
 	)
 	if err != nil {
-		t.Fatalf("bootstrap: %v\nout:\n%s", err, got)
+		t.Fatalf("setup: %v\nout:\n%s", err, got)
 	}
 
 	if !strings.Contains(got, "Approve this agent") {
@@ -158,22 +158,62 @@ func TestBootstrapWaitsThenApproves(t *testing.T) {
 	}
 }
 
-// TestBootstrapSelectionErrorBeforeRegister proves operator selection is
+// TestSetupBootstrapAliasStillWorks pins the compatibility contract for the
+// command's pre-rename name: `jentic bootstrap` must keep executing the setup
+// flow (hidden alias), while staying out of the root help output.
+func TestSetupBootstrapAliasStillWorks(t *testing.T) {
+	withXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	srv, _ := setupServer(t, 0)
+
+	app := testApp(t)
+	out := new(bytes.Buffer)
+	app.Out = out
+	root := newAPIRootCmd(app.App)
+	root.SetOut(out)
+	root.SetErr(out)
+	root.SetArgs([]string{
+		"bootstrap",
+		"--url", srv.URL, "--name", "demo", "--env", "qa", "--skip-skill", "--timeout", "5s", "--yes",
+	})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("bootstrap alias: %v\nout:\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "You're ready") {
+		t.Errorf("alias should run the full setup flow:\n%s", out.String())
+	}
+
+	// And the alias must be invisible in help.
+	help := new(bytes.Buffer)
+	helpRoot := newAPIRootCmd(testApp(t).App)
+	helpRoot.SetOut(help)
+	helpRoot.SetErr(help)
+	helpRoot.SetArgs([]string{"--help"})
+	if err := helpRoot.Execute(); err != nil {
+		t.Fatalf("help: %v", err)
+	}
+	if strings.Contains(help.String(), "bootstrap") {
+		t.Errorf("root help must not mention the hidden bootstrap alias:\n%s", help.String())
+	}
+}
+
+// TestSetupSelectionErrorBeforeRegister proves operator selection is
 // validated before any irreversible side effect: a non-interactive run where
 // no operators are given AND none are detected must fail without registering
 // an agent or activating a context. (With detected operators, the run
 // degrades to them instead — #755.)
-func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
+func TestSetupSelectionErrorBeforeRegister(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, registers := bootstrapServer(t, 0)
+	srv, registers := setupServer(t, 0)
 
 	app := testApp(t)
 	stubDetect(t, app, home, t.TempDir()) // nothing detected
 
 	// --yes with no --operator/--all and no TTY: cannot resolve targets.
-	_, err := runBootstrap(t, app,
+	_, err := runSetup(t, app,
 		"--url", srv.URL,
 		"--name", "demo",
 		"--env", "qa",
@@ -187,7 +227,7 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 		t.Errorf("error = %v, want a 'no operators' selection error", err)
 	}
 	if !strings.Contains(err.Error(), "--skip-skill") {
-		t.Errorf("bootstrap's error should name --skip-skill as the identity-only escape hatch: %v", err)
+		t.Errorf("setup's error should name --skip-skill as the identity-only escape hatch: %v", err)
 	}
 	if n := registers.Load(); n != 0 {
 		t.Errorf("registered %d times before the selection error; want 0 (no side effects)", n)
@@ -198,17 +238,17 @@ func TestBootstrapSelectionErrorBeforeRegister(t *testing.T) {
 	}
 }
 
-// TestBootstrapSkipSkillRejectsInvalidScope pins that flag validation is not
+// TestSetupSkipSkillRejectsInvalidScope pins that flag validation is not
 // silently skipped on paths a flag doesn't apply to: `--skip-skill` with a
 // mistyped --scope must error before any registration side effect.
-func TestBootstrapSkipSkillRejectsInvalidScope(t *testing.T) {
+func TestSetupSkipSkillRejectsInvalidScope(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, registers := bootstrapServer(t, 0)
+	srv, registers := setupServer(t, 0)
 
 	app := testApp(t)
-	_, err := runBootstrap(t, app,
+	_, err := runSetup(t, app,
 		"--url", srv.URL,
 		"--skip-skill",
 		"--scope", "everywhere",
@@ -222,13 +262,13 @@ func TestBootstrapSkipSkillRejectsInvalidScope(t *testing.T) {
 	}
 }
 
-func TestBootstrapDryRunWritesNothing(t *testing.T) {
+func TestSetupDryRunWritesNothing(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	// No server needed: dry-run must not hit the network.
 	app := testApp(t)
-	got, err := runBootstrap(t, app,
+	got, err := runSetup(t, app,
 		"--url", "http://127.0.0.1:0",
 		"--name", "demo",
 		"--env", "qa",
@@ -238,7 +278,7 @@ func TestBootstrapDryRunWritesNothing(t *testing.T) {
 		"--dry-run",
 	)
 	if err != nil {
-		t.Fatalf("bootstrap dry-run: %v\nout:\n%s", err, got)
+		t.Fatalf("setup dry-run: %v\nout:\n%s", err, got)
 	}
 
 	if _, statErr := os.Stat(filepath.Join(home, "AGENTS.md")); statErr == nil {
@@ -254,16 +294,16 @@ func TestBootstrapDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestBootstrapOperatorAndAllRejected proves --operator and --all are mutually
+// TestSetupOperatorAndAllRejected proves --operator and --all are mutually
 // exclusive and rejected before any registration side effect.
-func TestBootstrapOperatorAndAllRejected(t *testing.T) {
+func TestSetupOperatorAndAllRejected(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, registers := bootstrapServer(t, 0)
+	srv, registers := setupServer(t, 0)
 
 	app := testApp(t)
-	_, err := runBootstrap(t, app,
+	_, err := runSetup(t, app,
 		"--url", srv.URL,
 		"--operator", "generic",
 		"--all",

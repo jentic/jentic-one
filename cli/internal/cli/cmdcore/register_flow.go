@@ -146,13 +146,13 @@ func (a *App) registerAndWait(ctx context.Context, identity, envName, baseURL, c
 	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("Switch agents:"), st.Command.Render("jentic context use <name>"))
 	fmt.Fprintf(a.Out, "%s %s\n", st.Dim.Render("See all:      "), st.Command.Render("jentic context list"))
 	// Human-context nudge (UX6): `register` mints tokens only — it silently skips
-	// the agent skill + isolation that `bootstrap` adds. A person who reached here
+	// the agent skill + isolation that `setup` adds. A person who reached here
 	// by hand may have wanted the full setup, so point them at it. This whole
 	// success block is human-only (machine mode returned above), so no TTY guard
 	// is needed.
 	fmt.Fprintf(a.Out, "\n%s %s%s\n",
 		st.Dim.Render("Tip:"),
-		st.Command.Render("jentic bootstrap"),
+		st.Command.Render("jentic setup"),
 		st.Dim.Render(" also installs the agent skill and can isolate the agent — run it if you're setting up a coding agent."))
 	// Multi-agent case: registering a SECOND agent into an env creates its own
 	// per-identity context and silently makes it active (RegisterSetup). Spell

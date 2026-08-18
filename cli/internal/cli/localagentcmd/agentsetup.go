@@ -15,7 +15,7 @@ import (
 
 // seedPrefs is the resolved decision inputs for config/provider seeding, decoupled
 // from any one command's flag struct so the same seeding logic can be driven by
-// `jentic run` and by the shared agent-user setup flow (wizard + bootstrap).
+// `jentic run` and by the shared agent-user setup flow (wizard + setup).
 //
 //   - forceSeed short-circuits to "copy" (the --seed-config escape hatch).
 //   - forceNoSeed short-circuits to "skip" (the --no-seed-config escape hatch).
@@ -29,7 +29,7 @@ type seedPrefs struct {
 }
 
 // seedPrefs projects run's flags onto the shared seedPrefs, mirroring how
-// bootstrap projects its flags onto skillOptions. wantsInteractive already folds
+// setup projects its flags onto skillOptions. wantsInteractive already folds
 // in --yes and the TTY check.
 func (o *runOptions) seedPrefs(cmd *cobra.Command) seedPrefs {
 	return seedPrefs{

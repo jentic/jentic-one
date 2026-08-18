@@ -44,8 +44,8 @@ func TestRunGrantMgmtWithoutAccountIsCoded(t *testing.T) {
 	if coded.Code != ux.CodeResolveFailed {
 		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
 	}
-	if !strings.Contains(coded.Actionable, "bootstrap") {
-		t.Errorf("actionable should point at bootstrap: %q", coded.Actionable)
+	if !strings.Contains(coded.Actionable, "setup") {
+		t.Errorf("actionable should point at setup: %q", coded.Actionable)
 	}
 }
 
@@ -160,11 +160,12 @@ func TestRunListGrantsEmpty(t *testing.T) {
 
 func TestRunListGrantsShowsRecorded(t *testing.T) {
 	app := testApp(t)
-	cfg, _ := config.Load(app.Paths)
-	cfg.SetAgentAccount(config.AgentAccount{User: "x-local-agent", AccountCreated: true, Enabled: true})
-	cfg.AddGrantedDir("/Users/Shared/x-local-agent/work")
-	if err := cfg.Save(app.Paths); err != nil {
-		t.Fatalf("save: %v", err)
+	if _, err := config.MutateAgentState(app.Paths, func(s *config.AgentState) error {
+		s.SetAgentAccount(config.AgentAccount{User: "x-local-agent", AccountCreated: true, Enabled: true})
+		s.AddGrantedDir("/Users/Shared/x-local-agent/work")
+		return nil
+	}); err != nil {
+		t.Fatalf("seed agent state: %v", err)
 	}
 
 	cmd := NewRunCmd(app.App)
@@ -179,33 +180,33 @@ func TestRunListGrantsShowsRecorded(t *testing.T) {
 
 // TestWarnSameUserOnce proves the unconfined-launch notice is shown exactly once:
 // the first call emits it and persists SameUserNoticeSeen; a second call (fresh
-// config loaded from disk) stays silent.
+// state loaded from disk) stays silent.
 func TestWarnSameUserOnce(t *testing.T) {
 	app := testApp(t)
 	out := app.Out.(*bytes.Buffer)
 
-	cfg1, err := config.Load(app.Paths)
+	st1, err := config.LoadAgentState(app.Paths)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	app.warnSameUserOnce(cfg1)
+	app.warnSameUserOnce(st1)
 	if !strings.Contains(out.String(), "no confinement") {
 		t.Fatalf("first launch should warn, got: %q", out.String())
 	}
-	if !cfg1.SameUserNoticeSeen {
-		t.Error("in-memory cfg should record the notice as seen")
+	if !st1.SameUserNoticeSeen {
+		t.Error("in-memory state should record the notice as seen")
 	}
 
-	// A subsequent launch reloads config from disk and must stay silent.
+	// A subsequent launch reloads the state from disk and must stay silent.
 	out.Reset()
-	cfg2, err := config.Load(app.Paths)
+	st2, err := config.LoadAgentState(app.Paths)
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if !cfg2.SameUserNoticeSeen {
+	if !st2.SameUserNoticeSeen {
 		t.Fatal("SameUserNoticeSeen must persist across reload")
 	}
-	app.warnSameUserOnce(cfg2)
+	app.warnSameUserOnce(st2)
 	if out.String() != "" {
 		t.Errorf("second launch must not warn again, got: %q", out.String())
 	}

@@ -52,7 +52,7 @@ func assertRegApproved(t *testing.T, identity, env string) {
 // command, zero prerequisite steps.
 func TestRegister_FreshMachine_OneCommand(t *testing.T) {
 	withXDG(t)
-	srv, registers := bootstrapServer(t, 0) // approved immediately
+	srv, registers := setupServer(t, 0) // approved immediately
 
 	if err := runJentic(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "5s"); err != nil {
 		t.Fatalf("register --url: %v", err)
@@ -84,7 +84,7 @@ func TestRegister_FreshMachine_OneCommand(t *testing.T) {
 // idempotent — reuse the trio and the existing client_id, not double-register.
 func TestRegister_FreshMachine_Rerun(t *testing.T) {
 	withXDG(t)
-	srv, registers := bootstrapServer(t, 0)
+	srv, registers := setupServer(t, 0)
 
 	for range 2 {
 		if err := runJentic(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "5s"); err != nil {
@@ -102,7 +102,7 @@ func TestRegister_FreshMachine_Rerun(t *testing.T) {
 // — no localhost default, no legacy profile.
 func TestRegister_ActiveContext_RegistersActivePair(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	if err := runJentic(t, "env", "add", "local", "--url", srv.URL); err != nil {
 		t.Fatalf("env add: %v", err)
@@ -133,7 +133,7 @@ func TestRegister_ActiveContext_RegistersActivePair(t *testing.T) {
 // approval console link and keeps polling until the operator approves.
 func TestRegister_V2PendingThenApproved(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 2) // two pending polls before approval
+	srv, _ := setupServer(t, 2) // two pending polls before approval
 
 	out, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "30s")
 	if err != nil {
@@ -209,7 +209,7 @@ func TestRegister_ClaimPending_AssertionInvalidIsNotFatal(t *testing.T) {
 // you can switch back with `jentic context use`.
 func TestRegister_TwoAgentsSameEnv_DistinctContexts(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0) // approved immediately
+	srv, _ := setupServer(t, 0) // approved immediately
 
 	if err := runJentic(t, "register", "--url", srv.URL, "--name", "alpha", "--env", "qa", "--timeout", "5s"); err != nil {
 		t.Fatalf("register alpha: %v", err)
@@ -249,7 +249,7 @@ func TestRegister_TwoAgentsSameEnv_DistinctContexts(t *testing.T) {
 // identity, same derived context) is refused without --force.
 func TestRegister_ContextNameCollisionRefusedWithoutForce(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	// env "qa" → context = "qa-" + name, clamped to 64 chars. Two names sharing
 	// the first 61 chars (so "qa-"+prefix hits the 64-char clamp identically) but
@@ -285,7 +285,7 @@ func TestRegister_ContextNameCollisionRefusedWithoutForce(t *testing.T) {
 // operator deliberately repoint a colliding context.
 func TestRegister_ContextNameCollisionForceRepoints(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	prefix := strings.Repeat("a", 61)
 	nameA := prefix + "x"
@@ -457,7 +457,7 @@ func TestRegister_AssertionInvalidNoClaimIsFatal(t *testing.T) {
 // (AGT-4/AGT-21).
 func TestRegister_PendingTimeoutCarriesApproveURL(t *testing.T) {
 	withXDG(t)
-	srv, _ := bootstrapServer(t, 1_000_000) // effectively always pending
+	srv, _ := setupServer(t, 1_000_000) // effectively always pending
 
 	_, err := runJenticCapture(t, "register", "--url", srv.URL, "--name", "crawler", "--env", "qa", "--timeout", "20ms")
 	if err == nil {
@@ -483,20 +483,20 @@ func TestRegister_PendingTimeoutCarriesApproveURL(t *testing.T) {
 	}
 }
 
-// TestBootstrap_V2FreshMachine: bootstrap composes the same V2 setup arm with
+// TestSetup_V2FreshMachine: setup composes the same V2 setup arm with
 // the skill step — the skill body must be templated with the INSTALL's URL,
 // not a localhost default.
-func TestBootstrap_V2FreshMachine(t *testing.T) {
+func TestSetup_V2FreshMachine(t *testing.T) {
 	withXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	srv, _ := bootstrapServer(t, 0)
+	srv, _ := setupServer(t, 0)
 
 	if err := runJentic(t,
-		"bootstrap", "--url", srv.URL, "--name", "crawler", "--env", "qa",
+		"setup", "--url", srv.URL, "--name", "crawler", "--env", "qa",
 		"--operator", "generic", "--scope", "user", "--timeout", "5s", "--yes",
 	); err != nil {
-		t.Fatalf("bootstrap --url: %v", err)
+		t.Fatalf("setup --url: %v", err)
 	}
 	assertRegApproved(t, "crawler", "qa")
 }

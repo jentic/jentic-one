@@ -7,7 +7,7 @@ especially for an AI agent (or its operator) that has used both:
 | --- | --- | --- |
 | Where it runs | Hosted by Jentic — dashboard at `app.jentic.com`, API at `api.jentic.com` | Your infrastructure (laptop, VM, Kubernetes) |
 | How agents connect | Remote **MCP server** (`https://api.jentic.com/mcp`) configured in the agent runtime with a workspace API key | **`jentic` CLI + generated skill** (or the raw HTTP flow) — see below |
-| Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic bootstrap`) |
+| Agent identity | Workspace API key | Per-agent Ed25519 keypair via dynamic client registration (`jentic register` / `jentic setup`) |
 | Dashboard | `app.jentic.com` | The bundled UI on your deployment (`/app`) |
 | Data | Jentic-hosted workspace | Stays on your infrastructure; stored secrets are decrypted only inside your Broker at execution time |
 
@@ -26,7 +26,7 @@ it cannot work.
 
 The supported integration paths for agents are:
 
-1. **CLI + skill (recommended).** Your operator runs `jentic bootstrap` — it
+1. **CLI + skill (recommended).** Your operator runs `jentic setup` — it
    registers the agent identity, waits for human approval, and installs the
    onboarding skill into detected agent runtimes (Claude Code, Cursor, Codex,
    Hermes, or a generic `AGENTS.md`). The skill teaches the agent to drive
@@ -75,6 +75,6 @@ answer from the wrong backend.
    catalog state does not transfer from the cloud workspace.
 3. Re-enter credentials in your deployment's dashboard — secrets cannot be
    exported from the cloud platform (nor from Jentic One; that's the point).
-4. Register your agents against the local install (`jentic bootstrap`).
+4. Register your agents against the local install (`jentic setup`).
 5. Remove the cloud MCP server entry from your agent runtime's config to
    avoid the split-brain scenario above.

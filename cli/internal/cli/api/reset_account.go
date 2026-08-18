@@ -40,18 +40,16 @@ func (a *app) confirmFullReset() (bool, error) {
 // account-teardown offered after removing the last agent-owned profile.
 func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bool) error {
 	// Re-validate every operator-editable path the teardown is about to hand to a
-	// privileged command BEFORE the first one runs. The steps do `rm -rf
-	// <configDir>`, chown/`rm -rf <homeDir>`, and ACL edits on each grant dir; a
-	// hand-edited config.yaml that pointed home_dir/config_dir at a system tree
+	// privileged command BEFORE the first one runs. The steps do `rm -rf` on the
+	// identity dirs under <homeDir>, chown/`rm -rf <homeDir>`, and ACL edits on
+	// each grant dir; a hand-edited record that pointed home_dir at a system tree
 	// would otherwise make reset a privileged wipe of the wrong directory. Failing
 	// closed here leaves the record intact so nothing is touched.
 	if err := localagent.ValidateAgentUser(plan.user); err != nil {
 		return fmt.Errorf("refusing to reset: recorded agent user is invalid: %w", err)
 	}
-	// homeDir/configDir may be empty on a legacy account recorded before they were
-	// tracked (buildResetSteps skips the steps that use them); validate only what is
-	// set. But if EITHER is set, both must be — and the config dir must be the home's
-	// own .jentic — so a partial or mismatched record can't reach `rm -rf`.
+	// homeDir may be empty on a legacy account recorded before it was tracked
+	// (buildResetSteps skips the steps that use it); validate only what is set.
 	if plan.homeDir != "" {
 		if err := localagent.ValidateHomeDir(plan.homeDir); err != nil {
 			return fmt.Errorf("refusing to reset: %w", err)
@@ -67,11 +65,6 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 			if err := localagent.VerifyManagedHome(plan.user, plan.homeDir); err != nil {
 				return fmt.Errorf("refusing to reset: %w", err)
 			}
-		}
-	}
-	if plan.configDir != "" {
-		if err := localagent.ValidateConfigDir(plan.homeDir, plan.configDir); err != nil {
-			return fmt.Errorf("refusing to reset: %w", err)
 		}
 	}
 	for _, acl := range plan.acls {
@@ -113,10 +106,11 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	}
 
 	// Clear the account record LAST, so a mid-way failure above leaves the record
-	// of what still needs cleaning for the next run. Under the config lock (Mutate)
-	// so it can't race a concurrent grant write.
-	if _, err := config.Mutate(paths, func(c *config.FileConfig) error {
-		c.ClearAgentAccount()
+	// of what still needs cleaning for the next run. Under the agent-state lock
+	// (MutateAgentState) so it can't race a concurrent grant write; this also
+	// clears any legacy copy still sitting in ~/.jentic/config.yaml.
+	if _, err := config.MutateAgentState(paths, func(st *config.AgentState) error {
+		st.ClearAgentAccount()
 		return nil
 	}); err != nil {
 		return err
@@ -124,8 +118,8 @@ func (a *app) execAccountReset(paths config.Paths, plan resetPlan, deleteHome bo
 	fmt.Fprintln(a.Out, theme.Successf("Reset complete for the agent account (user %q).", plan.user))
 	if !deleteHome && plan.homeDir != "" {
 		fmt.Fprintln(a.Out, theme.Dim.Render("  The agent's home was kept and re-owned to you: "+plan.homeDir))
-		fmt.Fprintln(a.Out, theme.Dim.Render("  Any seeded agent/provider config (e.g. ~/.claude, ~/.aws, ~/.codex) was cleared from it; "+
-			"re-run with --delete-home to remove the whole home."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("  Its jentic identity (keys, tokens) and any seeded agent/provider config "+
+			"(e.g. ~/.claude, ~/.aws, ~/.codex) were cleared from it; re-run with --delete-home to remove the whole home."))
 	}
 	return nil
 }
@@ -142,15 +136,11 @@ type aclRemoval struct {
 }
 
 // resetPlan is the fully-resolved teardown for the agent account, built by
-// surveyReset and rendered/executed without further disk probing of the config.
+// surveyReset and rendered/executed without further disk probing of the record.
 type resetPlan struct {
-	user     string
-	homeDir  string
-	operator string
-	// configDir is the agent's own ~/.jentic (the reference-model home of its
-	// platform identity). Removed during teardown even when the home is kept, so a
-	// later re-bootstrap can't resurrect a torn-down registration from it.
-	configDir     string
+	user          string
+	homeDir       string
+	operator      string
 	acls          []aclRemoval
 	accountExists bool
 }
@@ -209,7 +199,6 @@ func surveyReset(ctx context.Context, operator, operatorHome string, acct config
 		user:          agentUser,
 		homeDir:       acct.HomeDir,
 		operator:      operator,
-		configDir:     acct.ConfigDir,
 		acls:          acls,
 		accountExists: localagent.UserExists(ctx, agentUser),
 	}
@@ -262,17 +251,19 @@ func buildResetSteps(plan resetPlan, deleteHome bool) []localagent.AccountStep {
 		})
 	}
 
-	// (1c) Remove the agent's OWN jentic identity dir (its ~/.jentic) before the
-	// home is settled. This is the reference-model home of the agent's platform
-	// identity — registration, tokens, signing key. It must go even when the home
-	// is KEPT, or a later `jentic bootstrap` that reuses the same home would find
-	// the torn-down (now-archived) registration and try to re-use it. When the home
-	// is being deleted the rm below covers it too, but running it here is harmless
-	// and keeps the "identity gone" guarantee independent of the home disposition.
-	if plan.configDir != "" && !deleteHome {
+	// (1c) Remove the agent's OWN jentic identity dirs — the exported XDG store
+	// (<home>/.config/jentic with the signing key, <home>/.local/state/jentic
+	// with the tokens) plus the legacy <home>/.jentic — before the home is
+	// settled. This is where the agent's platform identity lives: registration,
+	// tokens, signing key. It must go even when the home is KEPT, or the
+	// credential material would survive the teardown in the now-operator-owned
+	// home and a later `jentic setup` that reuses the same home could
+	// resurrect the torn-down registration. When the home is being deleted the
+	// rm below covers it, so this only runs on keep.
+	if plan.homeDir != "" && !deleteHome {
 		steps = append(steps, localagent.AccountStep{
-			What: "remove the agent's jentic identity " + plan.configDir,
-			Cmd:  localagent.RemoveAgentIdentityCmd(plan.configDir),
+			What: "remove the agent's jentic identity (keys, tokens) from " + plan.homeDir,
+			Cmd:  localagent.RemoveAgentIdentityCmd(localagent.AgentIdentityDirs(plan.homeDir)),
 		})
 	}
 
@@ -366,9 +357,11 @@ func (a *app) printResetPlan(plan resetPlan) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warn.Render("  Files & config to remove:"))
 	fmt.Fprintln(a.Out, theme.Dim.Render("    - sudoers drop-in        /etc/sudoers.d/jentic-agent (if present)"))
-	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent_account entry    in your config"))
-	if plan.configDir != "" {
-		fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+plan.configDir+" (its registration, tokens, key)"))
+	fmt.Fprintln(a.Out, theme.Dim.Render("    - agent_account entry    in your agent state (~/.config/jentic/agent-account.yaml)"))
+	if plan.homeDir != "" {
+		for _, dir := range localagent.AgentIdentityDirs(plan.homeDir) {
+			fmt.Fprintln(a.Out, theme.Dim.Render("    - agent identity         "+dir+" (its registration, tokens, key)"))
+		}
 	}
 
 	fmt.Fprintln(a.Out)
@@ -384,7 +377,7 @@ func (a *app) printResetPlan(plan resetPlan) {
 		fmt.Fprintln(a.Out, theme.Warn.Render("  Agent home:"))
 		fmt.Fprintln(a.Out, theme.Dim.Render("    - "+plan.homeDir))
 		fmt.Fprintln(a.Out, theme.Dim.Render("      Default: KEPT on disk and re-owned to you ("+plan.operator+"),"))
-		fmt.Fprintln(a.Out, theme.Dim.Render("      with any seeded agent/provider config (~/.claude, ~/.aws, ~/.codex, …) cleared from it."))
+		fmt.Fprintln(a.Out, theme.Dim.Render("      with its jentic identity and any seeded agent/provider config (~/.claude, ~/.aws, ~/.codex, …) cleared from it."))
 		fmt.Fprintln(a.Out, theme.Dim.Render("      You'll be asked separately whether to delete the home entirely."))
 	}
 

@@ -89,7 +89,8 @@ func NewRunCmd(app *cmdcore.App) *cobra.Command {
 			"(the working directory defaults to the current one); use the trailing form to\n" +
 			"pass a path. Without any `--`, run takes at most the agent id and a path.\n\n" +
 			"The agent account, its home, and the directories it has been granted are\n" +
-			"recorded in ~/.jentic/config.yaml. See the security analysis in\n" +
+			"recorded in the CLI's agent state (~/.config/jentic/agent-account.yaml).\n" +
+			"See the security analysis in\n" +
 			"docs/security/local-agent/local-agent-isolation.md for the full rationale.",
 		// Only the positional args that are jentic's own (agent id, optional path)
 		// count against the limit; everything forwarded to the agent does not.
@@ -175,15 +176,15 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return fmt.Errorf("unknown agent %q; known agents: %s", agentID, strings.Join(localagent.Known(), ", "))
 	}
 
-	cfg, err := config.Load(a.Paths)
+	st, err := config.LoadAgentState(a.Paths)
 	if err != nil {
 		return err
 	}
 
-	// 1. Resolve the shared agent account (config record, --agent-user, or the
+	// 1. Resolve the shared agent account (recorded state, --agent-user, or the
 	// default). The binary is always the descriptor's — <agent> selects the
 	// binary, never the account (there is one account for every agent).
-	acct, hasAcct := cfg.AgentAccount()
+	acct, hasAcct := st.AgentAccount()
 	agentUser := resolveAgentUser(opts.agentUser, acct)
 	binary := desc.Binary
 
@@ -192,11 +193,11 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	// and a launch simply runs the agent binary directly as the operator — the CLI
 	// behaves exactly as it does for someone who never enabled isolation. The
 	// --agent-user override is the one way to still target an account explicitly.
-	if !cfg.HasAgentUser() && opts.agentUser == "" {
+	if !st.HasAgentUser() && opts.agentUser == "" {
 		if opts.listGrants || opts.grant != "" || opts.revoke != "" {
 			return accountMissingErr("no agent account is set up, so there are no directory grants to manage")
 		}
-		return a.runSameUser(ctx, cfg, desc, opts, posArgs, agentArgs)
+		return a.runSameUser(ctx, st, desc, opts, posArgs, agentArgs)
 	}
 
 	// Every step below threads agentUser into a privileged command (sudo -u, the
@@ -212,12 +213,12 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 		return a.runListGrants(agentID, agentUser, acct, hasAcct)
 	}
 	if opts.revoke != "" {
-		return a.runRevoke(ctx, cfg, agentUser, opts.revoke)
+		return a.runRevoke(ctx, st, agentUser, opts.revoke)
 	}
 
 	if !localagent.UserExists(ctx, agentUser) {
 		return accountMissingErr(fmt.Sprintf("agent account %q does not exist — create it first with "+
-			"`jentic bootstrap` or `jenticctl wizard` (see "+
+			"`jentic setup` or `jenticctl wizard` (see "+
 			"docs/security/local-agent/local-agent-isolation.md), then re-run", agentUser))
 	}
 
@@ -235,7 +236,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	// Management shortcut: grant a directory and exit (mirrors --revoke). It
 	// applies the same scoped ACL and danger-confirmation as an in-launch grant.
 	if opts.grant != "" {
-		return a.runGrantDir(ctx, cmd, cfg, opts, agentID, agentUser, opts.grant)
+		return a.runGrantDir(ctx, cmd, st, opts, agentID, agentUser, opts.grant)
 	}
 
 	// 2. Ensure the agent's binary is installed for that user.
@@ -264,7 +265,7 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 	}
 
 	// 3. Resolve the working directory and its access.
-	dir, err := a.resolveWorkingDir(ctx, cmd, cfg, opts, agentID, agentUser, posArgs)
+	dir, err := a.resolveWorkingDir(ctx, cmd, st, opts, agentID, agentUser, posArgs)
 	if err != nil {
 		if errors.Is(err, errCancelled) {
 			fmt.Fprintln(a.Out, theme.Dim.Render("Cancelled."))
@@ -294,14 +295,14 @@ func (a *Cmd) runE(cmd *cobra.Command, opts *runOptions, args []string) error {
 // working directory is the path argument if given, else the current directory
 // (there is nothing to grant — the agent already runs with the operator's own
 // filesystem access).
-func (a *Cmd) runSameUser(ctx context.Context, cfg *config.FileConfig, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
+func (a *Cmd) runSameUser(ctx context.Context, st *config.AgentState, desc localagent.Descriptor, opts *runOptions, posArgs, agentArgs []string) error {
 	binary, err := exec.LookPath(desc.Binary)
 	if err != nil {
 		return binaryMissingErr(fmt.Sprintf("%s is not installed or not on your PATH; install it, then re-run "+
-			"(or run `jentic bootstrap` to set up an isolated agent user)", desc.Binary))
+			"(or run `jentic setup` to set up an isolated agent user)", desc.Binary))
 	}
 
-	a.warnSameUserOnce(cfg)
+	a.warnSameUserOnce(st)
 
 	dir := ""
 	if !opts.home && len(posArgs) > 1 {
@@ -337,8 +338,8 @@ func (a *Cmd) runSameUser(ctx context.Context, cfg *config.FileConfig, desc loca
 // operator should know the boundary isn't there and how to get it. The notice is
 // shown once (persisted via SameUserNoticeSeen) so it informs without nagging every
 // launch. Persisting is best-effort: a save failure just means it may show again.
-func (a *Cmd) warnSameUserOnce(cfg *config.FileConfig) {
-	if cfg.SameUserNoticeSeen {
+func (a *Cmd) warnSameUserOnce(st *config.AgentState) {
+	if st.SameUserNoticeSeen {
 		return
 	}
 	fmt.Fprintln(a.Out, theme.Warnf(
@@ -346,16 +347,16 @@ func (a *Cmd) warnSameUserOnce(cfg *config.FileConfig) {
 	fmt.Fprintln(a.Out, theme.Dim.Render(
 		"  It can read everything you can: your keys, browser session, and the jentic-one"))
 	fmt.Fprintln(a.Out, theme.Dim.Render(
-		"  credential store. Run `jentic bootstrap` to isolate it behind its own Unix user."))
+		"  credential store. Run `jentic setup` to isolate it behind its own Unix user."))
 	fmt.Fprintln(a.Out, theme.Dim.Render("  (Shown once.)"))
 
-	if _, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-		c.SameUserNoticeSeen = true
+	if _, err := config.MutateAgentState(a.Paths, func(s *config.AgentState) error {
+		s.SameUserNoticeSeen = true
 		return nil
 	}); err != nil {
 		return // best-effort: the notice may show again next launch
 	}
-	cfg.SameUserNoticeSeen = true
+	st.SameUserNoticeSeen = true
 }
 
 // resolveAgentUser applies the precedence: --agent-user flag, then the recorded
@@ -384,7 +385,7 @@ func resolveAgentUser(flag string, acct config.AgentAccount) string {
 // missing install.
 // ── step 3: working directory + access ───────────────────────────────────────
 
-func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
+func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, st *config.AgentState, opts *runOptions, agentID, agentUser string, args []string) (string, error) {
 	if opts.home {
 		return "", nil // login shell starts in the agent's home
 	}
@@ -424,7 +425,7 @@ func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 		return "", nil
 	}
 
-	if err := a.grantDir(ctx, cfg, agentUser, abs); err != nil {
+	if err := a.grantDir(ctx, st, agentUser, abs); err != nil {
 		return "", err
 	}
 	fmt.Fprintln(a.Out, theme.Dim.Render("  Granted (persists across sessions; `jentic run "+agentID+" --list-grants` to review)."))
@@ -435,7 +436,7 @@ func (a *Cmd) resolveWorkingDir(ctx context.Context, cmd *cobra.Command, cfg *co
 // ── step 4: launch ───────────────────────────────────────────────────────────
 
 // launchIsolated is the programmatic entry to the confined launch used by flows
-// that already know the agent user (bootstrap's "start a session now?" offer).
+// that already know the agent user (setup's "start a session now?" offer).
 // It reloads the recorded account (for grants + home), validates the user,
 // exports the active context into the agent's own store, and launches confined
 // — the same steps 3a/4 that a `jentic run` performs after its prompts.
@@ -443,11 +444,11 @@ func (a *Cmd) launchIsolated(ctx context.Context, agentUser, binary, dir string,
 	if err := localagent.ValidateAgentUser(agentUser); err != nil {
 		return err
 	}
-	cfg, err := config.Load(a.Paths)
+	st, err := config.LoadAgentState(a.Paths)
 	if err != nil {
 		return err
 	}
-	acct, _ := cfg.AgentAccount()
+	acct, _ := st.AgentAccount()
 	if acct.User == "" {
 		acct.User = agentUser
 	}
@@ -553,7 +554,7 @@ func (a *Cmd) runListGrants(agentID, agentUser string, acct config.AgentAccount,
 // the agent already reaches dir it is a no-op; otherwise it applies the same
 // danger-confirmation and scoped-ACL grant (grantDir) as `jentic run <agent>
 // <path>` would, and records it.
-func (a *Cmd) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.FileConfig, opts *runOptions, agentID, agentUser, dir string) error {
+func (a *Cmd) runGrantDir(ctx context.Context, cmd *cobra.Command, st *config.AgentState, opts *runOptions, agentID, agentUser, dir string) error {
 	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}
@@ -577,14 +578,14 @@ func (a *Cmd) runGrantDir(ctx context.Context, cmd *cobra.Command, cfg *config.F
 		fmt.Fprintln(a.Out, theme.Dim.Render("Not granted."))
 		return nil
 	}
-	if err := a.grantDir(ctx, cfg, agentUser, abs); err != nil {
+	if err := a.grantDir(ctx, st, agentUser, abs); err != nil {
 		return err
 	}
 	fmt.Fprintln(a.Out, theme.Successf("Granted (persists across sessions; `jentic run %s --list-grants` to review).", agentID))
 	return nil
 }
 
-func (a *Cmd) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, dir string) error {
+func (a *Cmd) runRevoke(_ context.Context, st *config.AgentState, agentUser, dir string) error {
 	if _, err := filepath.Abs(dir); err != nil {
 		return err
 	}
@@ -606,14 +607,14 @@ func (a *Cmd) runRevoke(_ context.Context, cfg *config.FileConfig, agentUser, di
 		fmt.Fprintln(a.Out, theme.Dim.Render(
 			"  (some entries had no matching grant to remove — that's expected; continuing)"))
 	}
-	updated, err := config.Mutate(a.Paths, func(c *config.FileConfig) error {
-		c.RemoveGrantedDir(abs)
+	updated, err := config.MutateAgentState(a.Paths, func(s *config.AgentState) error {
+		s.RemoveGrantedDir(abs)
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	*cfg = *updated
+	*st = *updated
 	fmt.Fprintln(a.Out, theme.Successf("Revoked."))
 	return nil
 }

@@ -25,6 +25,7 @@ func offlineOpts() *doctorOptions {
 // A missing state directory is a hard failure, so doctor must return a non-nil
 // error (the non-zero exit path) and explain what to do.
 func TestDoctorMissingHomeFails(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // isolate the agent-state read
 	app := &app{App: &cmdcore.App{
 		Paths: config.Paths{Root: filepath.Join(t.TempDir(), "nope")},
 		Out:   new(bytes.Buffer),
@@ -310,13 +311,11 @@ func TestDoctorWarnsSameUIDAgentAccount(t *testing.T) {
 	}
 
 	app := testApp(t)
-	cfg, err := config.Load(app.Paths)
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-	cfg.SetAgentAccount(config.AgentAccount{User: me.Username, AccountCreated: true, Enabled: true})
-	if err := cfg.Save(app.Paths); err != nil {
-		t.Fatalf("save config: %v", err)
+	if _, err := config.MutateAgentState(app.Paths, func(s *config.AgentState) error {
+		s.SetAgentAccount(config.AgentAccount{User: me.Username, AccountCreated: true, Enabled: true})
+		return nil
+	}); err != nil {
+		t.Fatalf("seed agent state: %v", err)
 	}
 
 	opts := offlineOpts()

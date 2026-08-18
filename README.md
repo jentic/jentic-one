@@ -191,6 +191,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | ----- | ------ |
 | [Local development setup](docs/development/local-setup.md) | Running a stack on your machine |
 | [Credentials and toolkits](docs/credentials-and-toolkits.md) | Storing a credential and binding an agent to it |
+| [Local coding agents](docs/local-agent.md) | Run Claude Code, Codex, Cursor, or Hermes as an isolated Unix user with `jentic run` — flow, examples, grants, and troubleshooting |
 | [CLI reference](cli/README.md) | Every `jenticctl` and `jentic` command |
 
 **Running it somewhere real**
@@ -200,6 +201,7 @@ Full reference: [`cli/README.md`](cli/README.md).
 | [Security hardening](docs/security/hardening.md) | Deployment-tier ladder and production checklist. Read before using real credentials. |
 | [Build & deploy](deploy/README.md) | Docker, Helm, Terraform, versioning, kind, observability |
 | [Self-hosted containers + external Postgres](deploy/README.md#self-hosted-containers--external-postgres) | Production-shaped deployment without Kubernetes |
+| [Cloud vs self-hosted](docs/cloud-vs-self-hosted.md) | How Jentic One differs from the Jentic cloud platform, why there is no MCP endpoint, and how to run both (or migrate) without silent cross-talk |
 
 **Reference**
 

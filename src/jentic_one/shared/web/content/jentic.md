@@ -40,9 +40,9 @@ to external APIs and handles credentials for you.
 ### 1. Confirm you have a valid identity
 
 You normally don't set up your own identity — your human operator runs
-`jentic register` (or `jentic bootstrap`) out-of-band, which connects this
+`jentic register` (or `jentic setup`) out-of-band, which connects this
 machine to a Jentic install, registers this agent, waits for a human to approve
-it, and (for bootstrap) writes this skill. First, check your setup:
+it, and (for setup) writes this skill. First, check your setup:
 
 ```
 jentic doctor
@@ -441,7 +441,7 @@ jentic execute <operation_id> --broker-scheme http --broker-host 127.0.0.1:8100
   `jentic execute <operation_id | METHOD:URL>` — discover, inspect, and call
   operations through the broker (use the full upstream URL; the broker is a
   forward proxy, not a path router).
-- `jentic register` / `jentic bootstrap` — operator commands that create and
+- `jentic register` / `jentic setup` — operator commands that create and
   approve this identity (they block on human approval; not for autonomous use).
 - `jentic doctor` — read-only self-check of THIS agent's setup (config/state
   dirs, resolvable identity, a usable token, control-plane reachability, clock

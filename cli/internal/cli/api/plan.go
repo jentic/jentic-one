@@ -9,7 +9,7 @@ import (
 // planFlags registers --dry-run/--export-plan on a mutating API-calling command
 // (impl/5.0 §5). They are LOCAL, not persistent-root flags: the shipped V1 tree
 // already has local --dry-run flags with different (file-preview) semantics on
-// bootstrap/skill, so a persistent root flag would shadow them.
+// setup/skill, so a persistent root flag would shadow them.
 func planFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("dry-run", false, "Validate and print the request that WOULD be sent, without sending it")
 	cmd.Flags().Bool("export-plan", false, "Emit a machine-readable execution plan (implies --dry-run)")

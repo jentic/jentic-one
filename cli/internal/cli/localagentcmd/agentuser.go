@@ -30,10 +30,8 @@ type agentUserFields struct {
 }
 
 // agentSetup is the outcome of the agent-user step, returned to the caller
-// (bootstrapE) so it can target the platform registration correctly. When an
-// account was created, the agent's jentic identity must be written into the
-// agent's own config dir (the single source of truth) rather than the operator's,
-// so the caller redirects bootstrapIdentity there and hands the dir to the agent.
+// (setupE) so it can target the platform registration correctly and offer
+// to start a session in the new account's home.
 type agentSetup struct {
 	// created reports whether a dedicated Unix account now backs the agent.
 	created bool
@@ -46,15 +44,12 @@ type agentSetup struct {
 	// homeDir is the created agent's home directory (empty unless created), used to
 	// offer starting a session there.
 	homeDir string
-	// configDir is the agent's ~/.jentic, where its identity is written and owned.
-	// Empty unless created.
-	configDir string
 }
 
 // setupAgentUser is the shared agent-user-account step folded into both
-// `jenticctl wizard` and `jentic bootstrap`, right after the operator is
-// selected. It mirrors how skills are shared (bootstrap → chooseAdapters):
-// wizard delegates to bootstrap, so wiring it into bootstrapE lands it in the
+// `jenticctl wizard` and `jentic setup`, right after the operator is
+// selected. It mirrors how skills are shared (setup → chooseAdapters):
+// wizard delegates to setup, so wiring it into setupE lands it in the
 // wizard too.
 //
 // The flow is deliberately sudo-last: the "create an account? (requires sudo)"
@@ -81,7 +76,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// Non-interactive (--yes / no TTY): never trigger sudo unattended. Skip, but
 	// leave a discoverable pointer and record that no account was created.
 	if !interactive {
-		a.recordAgentAccount(defaultName, "", "", false)
+		a.recordAgentAccount(defaultName, "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Skipping agent-user isolation (non-interactive). Create it later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -106,7 +101,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 	if !create {
-		a.recordAgentAccount(defaultName, "", "", false)
+		a.recordAgentAccount(defaultName, "", false)
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
 			"Keeping same-user. You can isolate later with `jentic run %s`.", agentID)))
 		return agentSetup{agentID: agentID, agentUser: defaultName}, nil
@@ -118,7 +113,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// prerequisite is missing we stop the account-creation path here with the exact
 	// install command, then offer to continue same-user now rather than force a full
 	// re-run. Either branch records AccountCreated=false and returns cleanly, so the
-	// missing dependency never blocks the rest of bootstrap (identity, skills).
+	// missing dependency never blocks the rest of setup (identity, skills).
 	if missing := localagent.MissingPrereqs(); len(missing) > 0 {
 		return a.agentUserPrereqGate(agentID, defaultName, missing)
 	}
@@ -146,6 +141,17 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		return agentSetup{}, err
 	}
 
+	// The home field was prefilled from the DEFAULT account name; if the operator
+	// renamed the account but left the home at that stale default, follow the name
+	// rather than silently keeping a directory derived from a name they rejected —
+	// which, when the default-named account already exists, is that OTHER account's
+	// live home (see HomeClaimedBy for the guard behind this convenience).
+	if home, changed := followRenamedHome(fields.name, defaultName, fields.homeDir); changed {
+		fields.homeDir = home
+		fmt.Fprintln(a.Out, theme.Dim.Render(
+			"Agent home follows the account name: "+fields.homeDir))
+	}
+
 	if err := a.createAgentAccount(ctx, operator, fields); err != nil {
 		return agentSetup{}, err
 	}
@@ -153,13 +159,13 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 	// The privileged half (Unix user, home, ACLs, sudoers) now exists, so RECORD the
 	// account immediately — before the best-effort seeding below. Seeding can fail (a
 	// provider-config copy hiccup, a home-lookup race) and recording only afterwards
-	// would leave a fully-provisioned account with NO config entry: invisible residue
+	// would leave a fully-provisioned account with NO state entry: invisible residue
 	// that `jentic reset` — which keys off the recorded account — could never tear
 	// down. Recording first makes every created account reclaimable even if a later
-	// step errors. The agent's own jentic config lives in its home (see agentSetup /
-	// ConfigDir), so the operator's config need only reference it.
-	configDir := localagent.AgentConfigDir(fields.homeDir)
-	a.recordAgentAccount(fields.name, fields.homeDir, configDir, true)
+	// step errors. The agent's own jentic identity lives in its home's XDG store
+	// (exported per-launch by `jentic run`), so the operator's state need only
+	// record the account name and home.
+	a.recordAgentAccount(fields.name, fields.homeDir, true)
 
 	// Seed config/provider per the operator's toggles — best-effort, since the account
 	// is already usable without it (the operator can re-seed on `jentic run`) and a
@@ -178,7 +184,6 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 		agentID:   agentID,
 		agentUser: fields.name,
 		homeDir:   fields.homeDir,
-		configDir: configDir,
 	}, nil
 }
 
@@ -191,7 +196,7 @@ func (a *Cmd) setupAgentUser(ctx context.Context, operators []string, interactiv
 // It never runs a package manager itself (install commands are printed, not
 // executed) and never returns a hard error for the missing dependency: whichever
 // branch the operator picks, the account is recorded as not-created and setup
-// hands back cleanly so the rest of bootstrap continues.
+// hands back cleanly so the rest of setup continues.
 func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localagent.Prereq) (agentSetup, error) {
 	fmt.Fprintln(a.Out)
 	fmt.Fprintln(a.Out, theme.Warnf(
@@ -208,7 +213,7 @@ func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localag
 	// Record the declined-by-necessity account up front so that even an aborted
 	// prompt (Ctrl-C) leaves the same consistent not-created state as an explicit
 	// "no".
-	a.recordAgentAccount(defaultName, "", "", false)
+	a.recordAgentAccount(defaultName, "", false)
 
 	sameUser := true
 	if err := prompt.RunConfirm(huh.NewConfirm().
@@ -225,7 +230,7 @@ func (a *Cmd) agentUserPrereqGate(agentID, defaultName string, missing []localag
 		return agentSetup{}, err
 	}
 
-	// Either choice continues bootstrap same-user (the account was not created);
+	// Either choice continues setup same-user (the account was not created);
 	// only the parting message differs so the operator's intent is reflected back.
 	if sameUser {
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf(
@@ -268,6 +273,16 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 		}
 		fmt.Fprintln(a.Out, theme.Dim.Render(fmt.Sprintf("Account %q already exists — reusing it.", fields.name)))
 	} else {
+		// A NEW account must not be pointed at a home some OTHER existing account
+		// already claims (typically another agent account's live home, left in the
+		// form's prefill after the operator renamed the account): the reclaim/grant
+		// steps below would chown that account's home wholesale to this one.
+		// VerifyManagedHome only guards the reuse branch, so check here too.
+		if claimant := localagent.HomeClaimedBy(ctx, fields.name, fields.homeDir); claimant != "" {
+			return fmt.Errorf("home directory %s already belongs to existing account %q — "+
+				"pick this account's own home (e.g. %s), or reuse that account by naming it %q",
+				fields.homeDir, claimant, localagent.DefaultHomeDir(fields.name), claimant)
+		}
 		fmt.Fprintln(a.Out, theme.Infof("Creating agent account %q (home %s) ...", fields.name, fields.homeDir))
 		for _, step := range localagent.CreateAccountCmds(operator, fields.name, fields.homeDir) {
 			c := step.Cmd
@@ -288,6 +303,18 @@ func (a *Cmd) createAgentAccount(ctx context.Context, operator string, fields ag
 				}
 				return fmt.Errorf("%s: %w", step.What, err)
 			}
+		}
+		// Fail closed on a create the OS refused: sysadminctl can reject the add
+		// (e.g. a Directory Services record conflict) while still EXITING 0, so the
+		// step loop above sails through with no account behind it. Without this
+		// check every later step degrades into best-effort "unknown user" noise,
+		// the account is recorded as created, and `jentic run` sends the operator
+		// back to setup in a loop. Trust the account database, not exit codes.
+		if !localagent.UserExists(ctx, fields.name) {
+			return fmt.Errorf("agent account %q was not created — the account tool reported success "+
+				"but the account does not exist (see its messages above; a conflicting Directory "+
+				"Services record is the usual cause). Resolve the conflict or pick a different "+
+				"account name and re-run", fields.name)
 		}
 	}
 
@@ -394,26 +421,26 @@ func (a *Cmd) seedAgentConfig(ctx context.Context, fields agentUserFields, desc 
 // the AccountCreated/Enabled booleans the rest of the CLI keys off. A fresh entry
 // is stamped with CreatedAt; an existing one keeps its original stamp and its
 // recorded grants. Enabled tracks AccountCreated: creating the account enables it,
-// and recording a declined (created=false) account leaves it disabled.
-func (a *Cmd) recordAgentAccount(userName, homeDir, configDir string, created bool) {
-	// Route through Mutate: it reloads under the config lock before applying, so a
-	// concurrent grant that appended a dir to GrantedDirs isn't clobbered by this
-	// record write (which preserves whatever grants the reloaded config carries).
-	if _, err := config.Mutate(a.Paths, func(cfg *config.FileConfig) error {
-		acct, existed := cfg.AgentAccount()
+// and recording a declined (created=false) account leaves it disabled. New
+// records deliberately carry no config_dir — the legacy per-agent ~/.jentic is
+// dead; the agent's identity is exported into its home's XDG store per launch.
+func (a *Cmd) recordAgentAccount(userName, homeDir string, created bool) {
+	// Route through MutateAgentState: it reloads under the state lock before
+	// applying, so a concurrent grant that appended a dir to GrantedDirs isn't
+	// clobbered by this record write (which preserves whatever grants the
+	// reloaded state carries).
+	if _, err := config.MutateAgentState(a.Paths, func(st *config.AgentState) error {
+		acct, existed := st.AgentAccount()
 		acct.User = userName
 		acct.AccountCreated = created
 		acct.Enabled = created
 		if homeDir != "" {
 			acct.HomeDir = homeDir
 		}
-		if configDir != "" {
-			acct.ConfigDir = configDir
-		}
 		if !existed || acct.CreatedAt == "" {
 			acct.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		}
-		cfg.SetAgentAccount(acct)
+		st.SetAgentAccount(acct)
 		return nil
 	}); err != nil {
 		fmt.Fprintln(a.Out, theme.Warnf("could not save the agent account: %v", err))
@@ -440,6 +467,21 @@ func operatorNames(adapters []skillgen.Adapter) []string {
 		names = append(names, string(ad.Operator()))
 	}
 	return names
+}
+
+// followRenamedHome re-derives the agent home when the operator renamed the
+// account in the setup form but left the home at the DEFAULT name's prefill:
+// the two fields are edited independently, so the stale prefill would silently
+// point the new account at a directory derived from a name the operator
+// rejected — which, when the default-named account already exists, is that
+// other account's live home. Returns the home to use and whether it changed;
+// a deliberately customised home (anything but the exact stale prefill) is
+// always kept.
+func followRenamedHome(name, defaultName, homeDir string) (string, bool) {
+	if name != defaultName && homeDir == localagent.DefaultHomeDir(defaultName) {
+		return localagent.DefaultHomeDir(name), true
+	}
+	return homeDir, false
 }
 
 // firstKnownAgent returns the first selected operator that maps to a known local
