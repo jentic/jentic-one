@@ -179,8 +179,8 @@ migrate, or start) and print the next-step commands.
 Secrets (the credential-encryption key, admin JWT secret, invite pepper, connect
 state secret) are **freshly generated** on each run and written into the config
 with `0600` perms — never prompted for. After writing the file the wizard prints
-the next-step commands for your chosen path and the bootstrap-admin reminder
-(`admin@local` / `1234`, rotate to a 12+ char password on first login).
+the next-step commands for your chosen path, including the command to create
+the first admin account.
 
 > **Local development only.** Both the generated `jentic-one.yaml` and the
 > `docker-compose.yaml` embed credentials (including the Postgres password) in

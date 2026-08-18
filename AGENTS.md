@@ -29,7 +29,8 @@ allow. See `docs/security/hardening.md` before using real credentials.
 1. `jentic register` creates the agent identity. It then blocks, waiting for an operator to
    approve the agent. Report this to the user: on a single-operator install they are the
    operator, and they approve it in the UI at `/app`.
-2. The bootstrap operator login is `admin@local` / `1234`. Tell the user to change it.
+2. If no admin account exists yet, point the user to `/setup` (browser) or `jenticctl setup`
+   (terminal). This is a one-time step.
 3. Import an API from https://github.com/jentic/jentic-public-apis, or register a private
    OpenAPI description of the user's own service.
 4. Store a credential for that API, once. It is encrypted at rest and is never returned.

@@ -16,18 +16,14 @@ the Broker are running and reachable (the local default is
 > [security hardening guide](security/hardening.md) before pointing an instance
 > at a real credential.
 
-## 1. Sign in and change the bootstrap password
+## 1. Create your admin account
 
-Open the operator UI at `/app` and sign in with the bootstrap login:
+Open `/setup` in the operator UI and create the first administrator. This is a
+one-time step: once the account exists, this page redirects to login. The account
+you create here is the operator: it configures the instance, imports APIs, stores
+credentials, and approves agents.
 
-```
-email:    admin@local
-password: 1234
-```
-
-Change the password immediately — rotate to a 12+ character password on first
-login. This account is the operator: it configures the instance, imports APIs,
-stores credentials, and approves agents.
+To do this from the terminal instead, run `jenticctl setup`.
 
 ## 2. Import an API
 
