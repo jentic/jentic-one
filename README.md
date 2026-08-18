@@ -121,10 +121,12 @@ Six steps from a running instance to a response from a real API.
    agent. On a single-operator install, approve it in the UI and the command completes.
 5. **Grant access** by binding the agent to a toolkit. A rule-less binding blocks everything;
    the default is deny.
-6. **Make the call:** `jentic execute GET:/get --json`.
+6. **Make the call:** `jentic execute GET:https://httpbin.org/get --json` — the operation's
+   full URL, as returned by `jentic search`/`jentic inspect`.
 
 Full walkthrough: [docs/quickstart.md](docs/quickstart.md). To have a coding agent install and
-register itself, see [AGENTS.md](AGENTS.md).
+register itself, see [AGENTS.md](AGENTS.md); [llms.txt](llms.txt) is the machine-readable index
+of these docs for assistants evaluating the project.
 
 ## How it works
 
@@ -175,10 +177,10 @@ for APIs that already have one.
 ## CLI reference
 
 ```bash
-jenticctl install                 # interactive wizard: config + install (local venv or Docker)
-jentic register                   # mint an agent identity, then wait for operator approval
-jentic catalog search stripe      # find an API in the directory
-jentic execute GET:/get --json    # run a call through the Broker with the credential injected
+jenticctl install                                    # interactive wizard: config + install (local venv or Docker)
+jentic register                                      # mint an agent identity, then wait for operator approval
+jentic catalog search stripe                         # find an API in the directory
+jentic execute GET:https://httpbin.org/get --json    # run a call through the Broker with the credential injected
 ```
 
 Full reference: [`cli/README.md`](cli/README.md).

@@ -14,17 +14,17 @@ What it does not do. Jentic One bounds what a mistaken or compromised agent can 
 
 A self-hosted deployment exposes no MCP endpoint. Agents integrate through the `jentic` CLI and the skill it generates, or over plain HTTP against the deployment's own API. Both paths are documented below.
 
-## Install
-
 Jentic One runs on one machine and the agent runs on another. Install on both with the same bootstrap:
 
 ```
 curl -fsSL https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh | sh
 ```
 
-On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, run `jentic register` afterwards to create the agent identity against that deployment.
+On the host machine that is the whole command. The installer builds the two CLI binaries, `jenticctl` and `jentic`, then hands off into `jenticctl install`, which stands the deployment up through an interactive wizard. On the agent machine, set `JENTIC_NO_INSTALL=1` (it needs only the binaries, not a second deployment), then run `jentic bootstrap --base-url <deployment URL>` to create the agent identity against that deployment and install the agent skill (`jentic register` is the registration-only path; both default to `http://localhost:8000` when `--base-url` is omitted).
 
 Keep the agent off the machine that runs Jentic One. An agent running as the same OS user can read the credential database and the encryption key directly off disk whatever the API-level controls say, so keep them on separate machines. The hardening guide below sets out the tiers; read it before pointing an instance at a real credential.
+
+## Install
 
 - [tools/install.sh](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install.sh): the installer. Detects OS and architecture, provides a Go toolchain if you have none, builds only the `cli/` subtree, and installs to `~/.jentic/bin`.
 - [Installer reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/tools/install-README.md): every environment variable, including `JENTIC_REF` to build a specific release and `JENTIC_NO_INSTALL=1` to stop after the binaries.
@@ -44,7 +44,7 @@ Keep the agent off the machine that runs Jentic One. An agent running as the sam
 - [README](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/README.md): the architecture diagram and component table. An App control plane (Registry, Control, Admin) and a stateless Broker data plane over PostgreSQL or SQLite; both are supported production backends.
 - [Endpoint and authorization reference](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/reference/endpoints.md): every HTTP endpoint with the scopes it requires. This is the authoritative source for authorization, because the OpenAPI documents model authentication only.
 - [Control plane OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/control/control.openapi.yaml) and [Broker OpenAPI](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/openapi/broker/broker.openapi.yaml): the two machine-readable API descriptions, for calling an instance over raw HTTP instead of through the CLI.
-- [Agent skill](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/skills/jentic/SKILL.md): the instructions installed into an agent runtime by `jentic skill`, describing the identity, discover, request access, execute loop.
+- [Agent skill](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/skills/jentic/SKILL.md): the instructions installed into an agent runtime by `jentic skill init` (or `jentic bootstrap`), describing the identity, discover, request access, execute loop.
 - [Context and configuration](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/context-and-config.md): how a deployment is configured, and what an agent's execution context carries.
 - [Overlays](https://raw.githubusercontent.com/jentic/jentic-one/refs/heads/main/docs/overlays.md): correcting or adapting an imported API description without editing the original.
 

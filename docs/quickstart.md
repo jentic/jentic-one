@@ -87,8 +87,12 @@ Find an operation, inspect it, and run it through the Broker:
 ```bash
 jentic search get             # find an imported operation
 jentic inspect <operation>    # see its method, params and schemas
-jentic execute GET:/get --json
+jentic execute GET:https://httpbin.org/get --json
 ```
+
+The `execute` target is the operation's full upstream URL (the same form `search`
+and `inspect` report) or its operation_id — the Broker is a forward proxy, not a
+path router.
 
 The Broker checks the agent's permissions, attaches the stored credential after
 the permission check, forwards the request, and writes an audit record. The
