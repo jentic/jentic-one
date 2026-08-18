@@ -136,28 +136,41 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// install would still execute against the built-in local default.
 	flags := cmd.Flags()
 	if st := clictx.ActiveContext(cmd.Context()); st != nil && st.BrokerURL != "" {
-		if u, perr := url.Parse(st.BrokerURL); perr == nil && u.Host != "" && u.Scheme != "" {
-			// SEC-21: in a machine mode (agent/service-account) the broker host is
-			// pinned to the environment's configured broker_url. An agent must not
-			// be able to redirect its bearer + injected upstream context at an
-			// arbitrary host via --broker-host/--broker-scheme. A human operator
-			// keeps the override (they own the machine and may be testing). The
-			// scheme may still be overridden (http↔https on the same host is the
-			// common local papercut, guarded separately by RequireSecureURL).
-			if st.IsMachine() && flags.Changed("broker-host") && opts.brokerHost != u.Host {
-				return &ux.CodedError{
-					Code: ux.CodeResolveFailed,
-					Msg: fmt.Sprintf("--broker-host %q is not allowed in %s mode: the broker is pinned to the "+
-						"environment's broker_url host (%s)", opts.brokerHost, st.Mode, u.Host),
-					Actionable: "Drop --broker-host (it uses the environment's broker_url), or change the environment's broker_url with `jentic env add <env> --broker-url <URL> --force`.",
-				}
+		u, perr := url.Parse(st.BrokerURL)
+		if perr != nil || u.Host == "" || u.Scheme == "" {
+			// M2 (review round-3 #3): a broker_url that is SET but malformed
+			// (parse error, or missing host/scheme) must not silently fall through
+			// to the loopback default — that dials 127.0.0.1 and surfaces a
+			// confusing connection-refused instead of naming the real problem.
+			// Fail closed with a coded error pointing at the bad value.
+			return &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg: fmt.Sprintf("environment %q has a malformed broker_url (%q): it must be an absolute URL with a scheme and host",
+					st.EnvironmentName, st.BrokerURL),
+				Actionable: fmt.Sprintf("Fix it with `jentic env add %s --broker-url https://<broker-host>:<port> --force`, or export JENTIC_BROKER_URL with a valid URL.",
+					st.EnvironmentName),
 			}
-			if !flags.Changed("broker-scheme") {
-				opts.brokerScheme = u.Scheme
+		}
+		// SEC-21: in a machine mode (agent/service-account) the broker host is
+		// pinned to the environment's configured broker_url. An agent must not
+		// be able to redirect its bearer + injected upstream context at an
+		// arbitrary host via --broker-host/--broker-scheme. A human operator
+		// keeps the override (they own the machine and may be testing). The
+		// scheme may still be overridden (http↔https on the same host is the
+		// common local papercut, guarded separately by RequireSecureURL).
+		if st.IsMachine() && flags.Changed("broker-host") && opts.brokerHost != u.Host {
+			return &ux.CodedError{
+				Code: ux.CodeResolveFailed,
+				Msg: fmt.Sprintf("--broker-host %q is not allowed in %s mode: the broker is pinned to the "+
+					"environment's broker_url host (%s)", opts.brokerHost, st.Mode, u.Host),
+				Actionable: "Drop --broker-host (it uses the environment's broker_url), or change the environment's broker_url with `jentic env add <env> --broker-url <URL> --force`.",
 			}
-			if !flags.Changed("broker-host") {
-				opts.brokerHost = u.Host
-			}
+		}
+		if !flags.Changed("broker-scheme") {
+			opts.brokerScheme = u.Scheme
+		}
+		if !flags.Changed("broker-host") {
+			opts.brokerHost = u.Host
 		}
 	}
 
@@ -171,8 +184,18 @@ func (a *app) executeE(cmd *cobra.Command, opts *executeOptions, target string) 
 	// recovery directive instead. Keyed off loopback-ness (reusing the auth
 	// layer's classifier via isLoopbackHostname), so a genuinely-local workflow
 	// (loopback base_url, seeded loopback broker) never trips it.
+	//
+	// M1 (review round-3 #3): only fire when the loopback broker is the built-in
+	// DEFAULT, not an EXPLICIT operator choice. An operator running
+	// `jentic execute --broker-host 127.0.0.1:8100` against a remote control
+	// plane (an SSH tunnel / port-forward to the remote broker) deliberately
+	// chose a loopback broker — refusing that with "set broker_url" is wrong
+	// advice. `flags.Changed` distinguishes the explicit override from the
+	// surviving default. (In machine mode the SEC-21 pin above already blocks a
+	// disagreeing --broker-host, so honoring it here can't help an agent escape.)
 	if st := clictx.ActiveContext(cmd.Context()); st != nil {
-		if brokerIsLoopbackDefault(opts.brokerHost) && baseURLIsRemote(st.BaseURL) {
+		explicitBroker := flags.Changed("broker-scheme") || flags.Changed("broker-host")
+		if !explicitBroker && brokerIsLoopbackDefault(opts.brokerHost) && baseURLIsRemote(st.BaseURL) {
 			return &ux.CodedError{
 				Code: ux.CodeResolveFailed,
 				Msg: fmt.Sprintf("environment %q has a remote control plane (%s) but no broker is configured; "+

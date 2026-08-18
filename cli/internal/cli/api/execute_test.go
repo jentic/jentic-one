@@ -1135,3 +1135,74 @@ func TestExecuteLocalWorkflowGuardSilent(t *testing.T) {
 		t.Errorf("local workflow must not trip the remote-broker guard: %v", err)
 	}
 }
+
+// TestExecuteRemoteBrokerGuardHonoursExplicitLoopback pins M1 (review round-3
+// #3): an operator who EXPLICITLY points --broker-host at a loopback address (an
+// SSH tunnel / port-forward to a remote broker) against a remote control plane
+// must NOT be refused by the fail-closed guard — that is a deliberate, valid
+// setup. Only the surviving built-in DEFAULT loopback should trip the guard.
+func TestExecuteRemoteBrokerGuardHonoursExplicitLoopback(t *testing.T) {
+	remoteCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "me",
+			EnvironmentName:     "qa1",
+			BaseURL:             "https://jentic.example.com",
+			BrokerURL:           "", // no configured broker; operator tunnels instead
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	// Explicit loopback broker via the flag (marks flags.Changed("broker-host")).
+	if err := cmd.Flags().Set("broker-host", "127.0.0.1:8100"); err != nil {
+		t.Fatal(err)
+	}
+	cmd.SetContext(remoteCtx)
+
+	err := app.executeE(cmd, &executeOptions{
+		brokerHost:   "127.0.0.1:8100",
+		brokerScheme: config.DefaultBrokerScheme,
+	}, "someOp")
+	// It will fail later (no server), but must NOT be the guard's RESOLVE_FAILED.
+	var coded *ux.CodedError
+	if errors.As(err, &coded) && coded.Code == ux.CodeResolveFailed &&
+		strings.Contains(coded.Msg, "no broker is configured") {
+		t.Errorf("explicit loopback broker must be honoured, not refused by the guard: %v", err)
+	}
+}
+
+// TestExecuteMalformedBrokerURLErrors pins M2 (review round-3 #3): a broker_url
+// that is SET but malformed (no scheme/host) must fail closed with a coded
+// RESOLVE_FAILED naming the bad value, not silently fall through to dialing the
+// loopback default.
+func TestExecuteMalformedBrokerURLErrors(t *testing.T) {
+	badCtx := clictx.WithActiveState(context.Background(), &clictx.ActiveState{
+		ResolvedState: &sdkconfig.ResolvedState{
+			IdentityName:        "me",
+			EnvironmentName:     "qa1",
+			BaseURL:             "http://127.0.0.1:8000",
+			BrokerURL:           "not a url ::::", // parses to no scheme/host
+			InjectedBearerToken: "tok_abc",
+		},
+		Mode: clictx.ModeHuman,
+	})
+	app := testApp(t)
+	cmd := newExecuteCmd(app)
+	cmd.SetContext(badCtx)
+
+	err := app.executeE(cmd, &executeOptions{
+		brokerHost:   config.DefaultBrokerHost,
+		brokerScheme: config.DefaultBrokerScheme,
+	}, "someOp")
+	var coded *ux.CodedError
+	if !errors.As(err, &coded) {
+		t.Fatalf("malformed broker_url returned %T (%v), want *ux.CodedError", err, err)
+	}
+	if coded.Code != ux.CodeResolveFailed {
+		t.Errorf("code = %q, want RESOLVE_FAILED", coded.Code)
+	}
+	if !strings.Contains(coded.Msg, "malformed broker_url") {
+		t.Errorf("error should name the malformed broker_url: %q", coded.Msg)
+	}
+}

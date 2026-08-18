@@ -34,8 +34,13 @@ type Config struct {
 	// ControlBaseURL is the management/control-plane URL (registry, auth,
 	// executions). Required.
 	ControlBaseURL string
-	// BrokerBaseURL is the execution/broker-plane URL. Optional; NewBroker errors
-	// if it is empty.
+	// BrokerBaseURL is the execution/broker-plane URL. Optional and, today,
+	// informational only: the SDK exposes the broker as a transport
+	// (BrokerTransport) rather than a typed constructor, and `jentic execute`
+	// composes the broker catch-all URL itself ({scheme}://{host}/{upstreamURL})
+	// from its own flags/env — it does NOT read this field. It is carried on
+	// Config so a future typed broker seam (or a consumer that wants the resolved
+	// URL) has it without re-resolving; leaving it empty is harmless.
 	BrokerBaseURL string
 
 	IdentityName    string
