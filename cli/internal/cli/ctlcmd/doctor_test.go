@@ -195,6 +195,7 @@ func TestDoctorReportsDockerDaemonDown(t *testing.T) {
 	}
 	if daemon == nil {
 		t.Fatalf("deploy check did not record a `docker daemon` row: %+v", d.checks)
+		return
 	}
 	if daemon.status != statusWarn {
 		t.Errorf("down daemon should be statusWarn (CI-safe, zero exit), got %v", daemon.status)
@@ -242,6 +243,7 @@ func TestDoctorReportsDockerNotInstalled(t *testing.T) {
 	}
 	if row == nil {
 		t.Fatalf("deploy check did not record a `docker` row for a missing binary: %+v", d.checks)
+		return
 	}
 	if row.status != statusWarn {
 		t.Errorf("missing docker should be statusWarn (CI-safe), got %v", row.status)
