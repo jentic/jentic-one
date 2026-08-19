@@ -1,3 +1,9 @@
+// The context export pins POSIX permission bits (0700 dirs / 0600 files),
+// which Windows does not model — Lstat reports 0777/0666 there regardless of
+// Chmod — and the isolated-agent launch this file supports is Unix-only.
+//
+//go:build !windows
+
 package localagentcmd
 
 import (
