@@ -1,5 +1,14 @@
 import type { ComponentType } from 'react';
-import { Compass, Boxes, Bot, LayoutDashboard, LayoutGrid, KeyRound, Activity } from 'lucide-react';
+import {
+	Compass,
+	Boxes,
+	Bot,
+	LayoutDashboard,
+	LayoutGrid,
+	KeyRound,
+	Activity,
+	Webhook,
+} from 'lucide-react';
 
 /**
  * A primary-navigation entry. `order` (not array position) controls placement,
@@ -46,6 +55,18 @@ export const navItems: NavItem[] = [
 	{ id: 'credentials', label: 'Credentials', to: '/credentials', order: 50, icon: KeyRound },
 	{ id: 'agents', label: 'Agents', to: '/agents', order: 60, icon: Bot },
 	{ id: 'monitor', label: 'Monitor', to: '/monitor', order: 70, icon: Activity },
+	// Gated on `webhooks:read`: an operator surface. The console configures
+	// outbound notification endpoints (destinations, subscribed event types,
+	// signing secrets), so it's pointless and confusing to show to someone the
+	// backend would 403.
+	{
+		id: 'webhooks',
+		label: 'Webhooks',
+		to: '/webhooks',
+		order: 80,
+		icon: Webhook,
+		requiredPermission: 'webhooks:read',
+	},
 	// NOTE: the docs portal ("API Reference", /docs) deliberately does NOT live
 	// in this registry. It's reference material, not a product destination, so
 	// the TopNavbar renders it as a standalone icon next to the user menu.

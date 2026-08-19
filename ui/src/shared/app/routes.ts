@@ -46,6 +46,7 @@ export const ROUTES = {
 	monitor: '/monitor',
 	accessRequests: '/access-requests',
 	docs: '/docs',
+	webhooks: '/webhooks',
 } as const;
 
 /**
@@ -101,6 +102,7 @@ import { discoverRoutes } from '@/modules/discover/routes';
 import { workspaceRoutes } from '@/modules/workspace/routes';
 import { credentialsRoutes } from '@/modules/credentials/routes';
 import { monitorRoutes } from '@/modules/monitor/routes';
+import { webhooksRoutes } from '@/modules/webhooks/routes';
 
 export const moduleRoutes: RouteObject[] = [
 	// <-- feature route spreads go here (one `...xRoutes,` line per module) -->
@@ -111,4 +113,5 @@ export const moduleRoutes: RouteObject[] = [
 	...workspaceRoutes,
 	...credentialsRoutes,
 	...monitorRoutes,
+	...webhooksRoutes,
 ];

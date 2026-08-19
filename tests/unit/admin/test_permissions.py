@@ -28,6 +28,8 @@ from jentic_one.admin.core.permissions import (
     TOOLKITS_WRITE,
     USERS_READ,
     USERS_WRITE,
+    WEBHOOKS_READ,
+    WEBHOOKS_WRITE,
     compute_effective,
 )
 
@@ -94,6 +96,8 @@ def test_compute_effective_org_admin_expands_all() -> None:
         SERVICE_ACCOUNTS_READ,
         CONFIG_WRITE,
         CONFIG_READ,
+        WEBHOOKS_WRITE,
+        WEBHOOKS_READ,
     }
     assert result == expected
 

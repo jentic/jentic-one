@@ -18,6 +18,8 @@ from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
 from jentic_one import __version__
+from jentic_one.admin.core.schema.webhook_endpoints import WebhookEndpoint
+from jentic_one.admin.services.webhooks import WebhookSecretService
 from jentic_one.registry.services.import_service import ImportHandler
 from jentic_one.shared.context import Context
 from jentic_one.shared.events import emit_event_best_effort
@@ -47,6 +49,8 @@ from jentic_one.shared.web.openapi_responses import COMMON_ERROR_RESPONSES
 from jentic_one.shared.web.reference_router import get_reference_router
 from jentic_one.shared.web.static import SPA_MOUNT_PATH
 from jentic_one.shared.web.system import get_system_router
+from jentic_one.shared.webhooks.delivery import WebhookDeliveryDispatcher
+from jentic_one.shared.webhooks.relay import InternalEventRelay
 
 _logger = structlog.get_logger(__name__)
 
@@ -304,6 +308,93 @@ async def _stop_catalog_update_scanner(
         await asyncio.wait_for(task, timeout=5.0)
 
 
+def _start_webhook_dispatcher(
+    ctx: Context,
+) -> tuple[WebhookDeliveryDispatcher, asyncio.Task[None]] | None:
+    """Start the outbound webhook delivery dispatcher when the admin DB exists.
+
+    Everything it touches — endpoints, events, deliveries — lives in the
+    **admin** DB, so without it there is no queue to drain.
+
+    A dispatcher rather than a ``JobKind`` handler on the shared ``WorkerLoop``:
+    the worker wraps each handler call in a single transaction, which would hold
+    a pooled connection for the whole of every outbound POST. The dispatcher
+    owns its own sessions so it can close them before sending.
+    """
+    if not ctx.has_db("admin"):
+        return None
+    dispatcher = WebhookDeliveryDispatcher(
+        ctx.admin_db,
+        egress=ctx.config.broker.egress,
+        secret_resolver=_build_secret_resolver(ctx),
+    )
+    task = asyncio.create_task(dispatcher.run())
+    _logger.info("webhook_delivery_dispatcher_task_started")
+    return dispatcher, task
+
+
+async def _stop_webhook_dispatcher(
+    handle: tuple[WebhookDeliveryDispatcher, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the webhook delivery dispatcher (best-effort)."""
+    if handle is None:
+        return
+    dispatcher, task = handle
+    dispatcher.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
+def _start_webhook_relay(
+    ctx: Context,
+) -> tuple[InternalEventRelay, asyncio.Task[None]] | None:
+    """Start the internal-event relay when the admin DB exists.
+
+    The relay reads the ``events`` table and queues outbound deliveries, both in
+    the **admin** DB. It is what makes notifications react to real platform
+    activity (a credential expiring, a job dying) rather than to hand-inserted
+    rows.
+    """
+    if not ctx.has_db("admin"):
+        return None
+    relay = InternalEventRelay(ctx)
+    task = asyncio.create_task(relay.run())
+    _logger.info("webhook_event_relay_task_started")
+    return relay, task
+
+
+async def _stop_webhook_relay(
+    handle: tuple[InternalEventRelay, asyncio.Task[None]] | None,
+) -> None:
+    """Signal and cancel the internal-event relay (best-effort)."""
+    if handle is None:
+        return
+    relay, task = handle
+    relay.stop()
+    if not task.done():
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await asyncio.wait_for(task, timeout=5.0)
+
+
+def _build_secret_resolver(ctx: Context) -> Callable[[WebhookEndpoint], str | None]:
+    """Build the dispatcher's signing-secret resolver.
+
+    Secrets are stored **encrypted** rather than hashed, because HMAC needs the key
+    itself (a digest cannot produce a signature). This resolves the newest valid
+    secret for the endpoint through the encryption facade; during a rotation grace
+    window the newest is the one we sign with, while verification accepts the
+    previous one too.
+
+    Returning ``None`` makes the dispatcher dead-letter the delivery rather than
+    send it unsigned; unsigned is never an acceptable fallback.
+    """
+    secret_service = WebhookSecretService(ctx)
+    return secret_service.resolve_signing_secret
+
+
 async def _stop_worker(handle: tuple[WorkerLoop, asyncio.Task[None]] | None) -> None:
     """Gracefully drain then stop the worker (§09 E4.3 teardown step 2).
 
@@ -465,6 +556,8 @@ def create_surface_app(
             )
             scanner_task = _start_expiry_scanner(ctx, enabled_apps)
             catalog_scanner_task = _start_catalog_update_scanner(ctx, enabled_apps)
+            webhook_task = _start_webhook_dispatcher(ctx)
+            webhook_relay_task = _start_webhook_relay(ctx)
             try:
                 yield
             finally:
@@ -476,6 +569,10 @@ def create_surface_app(
                 gate = getattr(app.state, "broker_admission_gate", None)
                 if gate is not None and hasattr(gate, "start_draining"):
                     gate.start_draining()
+                # Relay first, then the dispatcher: stop *producing* deliveries
+                # before stopping the thing that sends them.
+                await _stop_webhook_relay(webhook_relay_task)
+                await _stop_webhook_dispatcher(webhook_task)
                 await _stop_catalog_update_scanner(catalog_scanner_task)
                 await _stop_expiry_scanner(scanner_task)
                 await _stop_worker(worker_task)
@@ -553,9 +650,13 @@ def create_combined_app(
         worker_task = _start_worker(ctx, set(apps))
         scanner_task = _start_expiry_scanner(ctx, set(apps))
         catalog_scanner_task = _start_catalog_update_scanner(ctx, set(apps))
+        webhook_task = _start_webhook_dispatcher(ctx)
+        webhook_relay_task = _start_webhook_relay(ctx)
         try:
             yield
         finally:
+            await _stop_webhook_relay(webhook_relay_task)
+            await _stop_webhook_dispatcher(webhook_task)
             await _stop_catalog_update_scanner(catalog_scanner_task)
             await _stop_expiry_scanner(scanner_task)
             await _stop_worker(worker_task)

@@ -203,6 +203,22 @@ class AuditEntryNotFoundError(NotFoundError):
         self.audit_id = audit_id
 
 
+class WebhookEndpointNotFoundError(NotFoundError):
+    """Raised when a webhook endpoint identified by ID does not exist."""
+
+    def __init__(self, endpoint_id: str) -> None:
+        super().__init__(f"WebhookEndpoint '{endpoint_id}' not found")
+        self.endpoint_id = endpoint_id
+
+
+class WebhookDeliveryNotFoundError(NotFoundError):
+    """Raised when a webhook delivery identified by ID does not exist."""
+
+    def __init__(self, delivery_id: str) -> None:
+        super().__init__(f"WebhookDelivery '{delivery_id}' not found")
+        self.delivery_id = delivery_id
+
+
 class AgentNotFoundError(NotFoundError):
     """Raised when an agent identified by ID does not exist."""
 

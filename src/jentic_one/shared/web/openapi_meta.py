@@ -492,6 +492,19 @@ OPENAPI_TAGS: list[dict[str, str]] = [
         ),
     },
     {
+        "name": "Webhooks",
+        "description": (
+            "Outbound event delivery, plus the operator surface that configures it.\n\n"
+            "**Outbound notifications** push signed platform events (a credential expiring, a "
+            "job failing) to a destination URL, with retries, capped jittered backoff, and "
+            "dead-lettering for inspection.\n\n"
+            "**Management** routes are ordinary identity-authenticated endpoints requiring "
+            "`webhooks:write` — creating an endpoint is privileged and audited. Signing secrets "
+            "are returned **once**, at creation and rotation; they are never readable "
+            "afterwards, so a lost secret is rotated rather than recovered."
+        ),
+    },
+    {
         "name": "Users",
         "description": (
             "Part of the **Admin / Audit** bounded context — the human roster of the "
@@ -694,6 +707,7 @@ X_TAG_GROUPS: list[dict[str, Any]] = [
             "Executions",
             "Jobs",
             "Events",
+            "Webhooks",
             "Audit",
             "Monitoring",
             "Configuration",
@@ -832,6 +846,7 @@ _TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^/executions"), "Executions"),
     (re.compile(r"^/jobs"), "Jobs"),
     (re.compile(r"^/events"), "Events"),
+    (re.compile(r"^/webhooks"), "Webhooks"),
     (re.compile(r"^/permissions"), "Permissions"),
     (re.compile(r"^/actors"), "Actors"),
     (re.compile(r"^/users"), "Users"),

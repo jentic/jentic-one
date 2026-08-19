@@ -84,6 +84,7 @@ const MODULE_QUERY_KEY_ROOTS = {
 	agents: ['agents', 'service-accounts'],
 	monitor: ['monitor'],
 	docs: ['docs'],
+	webhooks: ['webhooks'],
 };
 
 // Guard: every module dir under src/modules MUST appear in the map above, so a

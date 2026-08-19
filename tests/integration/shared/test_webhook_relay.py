@@ -1,0 +1,379 @@
+"""Integration tests for webhook fan-out and the internal-event relay.
+
+Covers the second half of the notification path: a real row in the ``events``
+table becoming queued deliveries for exactly the endpoints that should get them.
+Real Postgres throughout — the deduplication and cursor behaviour being tested
+are database guarantees, not Python ones.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+
+import pytest
+from sqlalchemy import delete
+
+from jentic_one.admin.core.schema.events import Event
+from jentic_one.admin.core.schema.webhook_deliveries import WebhookDelivery
+from jentic_one.admin.core.schema.webhook_endpoints import WebhookEndpoint
+from jentic_one.admin.core.schema.webhook_events import WebhookEvent
+from jentic_one.admin.repos.event_repo import EventRepository
+from jentic_one.admin.repos.webhook_repo import (
+    WebhookDeliveryRepository,
+    WebhookEndpointRepository,
+    WebhookEventRepository,
+)
+from jentic_one.admin.services.webhooks.fanout import (
+    WebhookFanoutService,
+    build_notification_payload,
+)
+from jentic_one.shared.context import Context
+from jentic_one.shared.db.session import DatabaseSession
+from jentic_one.shared.models.events import EventSeverity, EventType
+from jentic_one.shared.webhooks.relay import InternalEventRelay
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture()
+async def clean_all(admin_db: DatabaseSession) -> AsyncGenerator[None, None]:
+    """Clear webhook tables *and* events, so cursors start from a known place."""
+
+    async def _wipe() -> None:
+        async with admin_db.session() as session:
+            await session.execute(delete(WebhookDelivery))
+            await session.execute(delete(WebhookEvent))
+            await session.execute(delete(WebhookEndpoint))
+            await session.execute(delete(Event))
+            await session.commit()
+
+    await _wipe()
+    yield
+    await _wipe()
+
+
+async def _endpoint(
+    admin_db: DatabaseSession,
+    *,
+    name: str,
+    event_types: list[str] | None = None,
+    target_url: str | None = "https://receiver.test/hook",
+    active: bool = True,
+) -> str:
+    async with admin_db.transaction() as session:
+        endpoint = await WebhookEndpointRepository.create(
+            session,
+            name=name,
+            secret_hash="hashed",  # pragma: allowlist secret
+            secret_encrypted="encrypted-blob",  # pragma: allowlist secret
+            target_url=target_url,
+            event_types=event_types or [],
+            created_by="test",
+        )
+        endpoint_id = endpoint.id
+        if not active:
+            await WebhookEndpointRepository.deactivate(session, endpoint_id)
+        return endpoint_id
+
+
+async def _emit(admin_db: DatabaseSession, event_type: str, **data: object) -> str:
+    """Write a real row to the events table, as the platform would."""
+    async with admin_db.transaction() as session:
+        event = await EventRepository.create(
+            session,
+            type=event_type,
+            severity=EventSeverity.WARNING,
+            summary=f"{event_type} happened",
+            data=dict(data),
+            created_by=None,
+        )
+        return event.id
+
+
+async def _deliveries(admin_db: DatabaseSession, endpoint_id: str) -> list[WebhookDelivery]:
+    async with admin_db.session() as session:
+        return await WebhookDeliveryRepository.list_for_endpoint(session, endpoint_id)
+
+
+# --- fan-out ------------------------------------------------------------------
+
+
+async def test_fan_out_queues_one_delivery_per_subscriber(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """One event, three subscribers, three independent deliveries."""
+    first = await _endpoint(admin_db, name="sub-a", event_types=[EventType.CREDENTIAL_EXPIRED])
+    second = await _endpoint(admin_db, name="sub-b", event_types=[EventType.CREDENTIAL_EXPIRED])
+    catch_all = await _endpoint(admin_db, name="sub-all", event_types=[])
+
+    service = WebhookFanoutService(integration_context)
+    async with admin_db.transaction() as session:
+        ids = await service.fan_out(
+            session,
+            source_event_id="evt_fake_1",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={"credential": "stripe-prod"},
+        )
+
+    assert len(ids) == 3
+    for endpoint_id in (first, second, catch_all):
+        assert len(await _deliveries(admin_db, endpoint_id)) == 1
+
+
+async def test_fan_out_skips_unsubscribed_endpoints(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    subscribed = await _endpoint(
+        admin_db, name="wants-it", event_types=[EventType.CREDENTIAL_EXPIRED]
+    )
+    other = await _endpoint(admin_db, name="wants-other", event_types=[EventType.IMPORT_FAILED])
+
+    service = WebhookFanoutService(integration_context)
+    async with admin_db.transaction() as session:
+        ids = await service.fan_out(
+            session,
+            source_event_id="evt_fake_2",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={},
+        )
+
+    assert len(ids) == 1
+    assert len(await _deliveries(admin_db, subscribed)) == 1
+    assert await _deliveries(admin_db, other) == []
+
+
+async def test_fan_out_skips_inactive_endpoints(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    off = await _endpoint(admin_db, name="switched-off", active=False)
+
+    service = WebhookFanoutService(integration_context)
+    async with admin_db.transaction() as session:
+        ids = await service.fan_out(
+            session,
+            source_event_id="evt_fake_3",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={},
+        )
+
+    assert ids == []
+    assert await _deliveries(admin_db, off) == []
+
+
+async def test_fan_out_is_idempotent(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """Fanning out the same event twice must not double-deliver.
+
+    This is what lets the relay be at-least-once safely.
+    """
+    endpoint_id = await _endpoint(admin_db, name="sub", event_types=[])
+    service = WebhookFanoutService(integration_context)
+
+    async with admin_db.transaction() as session:
+        first = await service.fan_out(
+            session,
+            source_event_id="evt_same",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={},
+        )
+    async with admin_db.transaction() as session:
+        second = await service.fan_out(
+            session,
+            source_event_id="evt_same",
+            event_type=EventType.CREDENTIAL_EXPIRED,
+            payload={},
+        )
+
+    assert len(first) == 1
+    assert second == [], "second fan-out must be suppressed by the dedupe constraint"
+    assert len(await _deliveries(admin_db, endpoint_id)) == 1
+
+
+async def test_withheld_event_types_are_never_relayed(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """A catch-all endpoint must not receive per-use credential audit records."""
+    endpoint_id = await _endpoint(admin_db, name="catch-all", event_types=[])
+    service = WebhookFanoutService(integration_context)
+
+    async with admin_db.transaction() as session:
+        ids = await service.fan_out(
+            session,
+            source_event_id="evt_sensitive",
+            event_type=EventType.CREDENTIAL_ACCESSED,
+            payload={},
+        )
+
+    assert ids == []
+    assert await _deliveries(admin_db, endpoint_id) == []
+
+
+async def test_fan_out_with_no_endpoints_is_not_an_error(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    service = WebhookFanoutService(integration_context)
+    async with admin_db.transaction() as session:
+        assert (
+            await service.fan_out(
+                session,
+                source_event_id="evt_nobody",
+                event_type=EventType.CREDENTIAL_EXPIRED,
+                payload={},
+            )
+            == []
+        )
+
+
+async def test_notification_payload_excludes_internal_detail() -> None:
+    """``detail`` and actor columns must not leave the box."""
+    payload = build_notification_payload(
+        event_id="evt_1",
+        event_type=EventType.CREDENTIAL_EXPIRED,
+        severity=EventSeverity.WARNING,
+        summary="a summary",
+        data={"credential": "stripe-prod"},
+        created_at="2026-08-13T00:00:00+00:00",
+    )
+    assert set(payload) == {"event_id", "event_type", "severity", "summary", "created_at", "data"}
+    assert "detail" not in payload
+    assert "actor_id" not in payload
+
+
+# --- the relay ----------------------------------------------------------------
+
+
+async def test_relay_turns_a_real_event_into_a_delivery(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """The headline behaviour: platform emits, subscriber gets queued a delivery."""
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[EventType.CREDENTIAL_EXPIRED])
+    relay = InternalEventRelay(integration_context)
+    # Establish the cursor before emitting, as a long-running process would.
+    await relay.relay_once()
+
+    event_id = await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, credential="stripe-prod")
+    handled = await relay.relay_once()
+
+    assert handled == 1
+    rows = await _deliveries(admin_db, endpoint_id)
+    assert len(rows) == 1
+
+    async with admin_db.session() as session:
+        webhook_event = await WebhookEventRepository.get_by_id(session, rows[0].event_id)
+    assert webhook_event is not None
+    assert webhook_event.source_event_id == event_id, "delivery must trace to the real event"
+    assert webhook_event.payload["event_type"] == EventType.CREDENTIAL_EXPIRED
+    assert webhook_event.payload["data"]["credential"] == "stripe-prod"
+
+
+async def test_relay_starts_from_now_on_a_fresh_install(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """Historical events must not be dumped at a newly created endpoint."""
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, note="ancient history")
+    endpoint_id = await _endpoint(admin_db, name="new-endpoint", event_types=[])
+
+    relay = InternalEventRelay(integration_context)
+    await relay.relay_once()
+
+    assert await _deliveries(admin_db, endpoint_id) == []
+
+
+async def test_relay_does_not_replay_already_relayed_events(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+    relay = InternalEventRelay(integration_context)
+    await relay.relay_once()
+
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
+    assert await relay.relay_once() == 1
+    assert await relay.relay_once() == 0, "cursor must have advanced past the event"
+    assert len(await _deliveries(admin_db, endpoint_id)) == 1
+
+
+async def test_relay_advances_through_a_batch(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+    relay = InternalEventRelay(integration_context, batch_limit=2)
+    await relay.relay_once()
+
+    for _ in range(5):
+        await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
+
+    total = 0
+    for _ in range(5):
+        total += await relay.relay_once()
+    assert total == 5
+    assert len(await _deliveries(admin_db, endpoint_id)) == 5
+
+
+async def test_relay_resumes_after_a_restart(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """A new relay instance must not re-deliver, nor skip what it missed.
+
+    The cursor is derived from what has already been relayed, so a fresh
+    instance (a restarted process) picks up where the old one left off.
+    """
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+
+    first_relay = InternalEventRelay(integration_context)
+    await first_relay.relay_once()
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, seq=1)
+    await first_relay.relay_once()
+    assert len(await _deliveries(admin_db, endpoint_id)) == 1
+
+    # Process restarts: brand-new instance, no in-memory cursor.
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED, seq=2)
+    second_relay = InternalEventRelay(integration_context)
+    handled = await second_relay.relay_once()
+
+    assert handled == 1, "must pick up the event emitted while 'down'"
+    assert len(await _deliveries(admin_db, endpoint_id)) == 2, "and not re-deliver the first"
+
+
+async def test_relay_with_no_subscribers_still_advances(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """Events must not pile up as perpetually-unread when nobody subscribes."""
+    relay = InternalEventRelay(integration_context)
+    await relay.relay_once()
+
+    await _emit(admin_db, EventType.CREDENTIAL_EXPIRED)
+    assert await relay.relay_once() == 1
+    assert await relay.relay_once() == 0
+
+
+async def test_relay_cursor_survives_events_in_the_same_moment(
+    integration_context: Context, admin_db: DatabaseSession, clean_all: None
+) -> None:
+    """Two events sharing a timestamp must both be relayed exactly once.
+
+    A timestamp-only cursor would skip one of them.
+    """
+    endpoint_id = await _endpoint(admin_db, name="ops", event_types=[])
+    relay = InternalEventRelay(integration_context)
+    await relay.relay_once()
+
+    same_moment = datetime.now(UTC)
+    async with admin_db.transaction() as session:
+        for index in range(3):
+            event = await EventRepository.create(
+                session,
+                type=EventType.CREDENTIAL_EXPIRED,
+                severity=EventSeverity.WARNING,
+                summary=f"same-moment {index}",
+                created_by=None,
+            )
+            event.created_at = same_moment
+
+    total = 0
+    for _ in range(4):
+        total += await relay.relay_once()
+
+    assert total == 3
+    assert len(await _deliveries(admin_db, endpoint_id)) == 3

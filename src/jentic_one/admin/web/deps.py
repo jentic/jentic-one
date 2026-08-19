@@ -18,6 +18,7 @@ from jentic_one.admin.services.monitoring_service import MonitoringService
 from jentic_one.admin.services.permission_service import PermissionService
 from jentic_one.admin.services.provider_config_service import ProviderConfigService
 from jentic_one.admin.services.user_service import UserService
+from jentic_one.admin.services.webhooks.endpoints import WebhookEndpointService
 from jentic_one.shared.context import Context
 from jentic_one.shared.web import get_ctx
 
@@ -72,6 +73,10 @@ def get_event_service(ctx: Context = Depends(get_ctx)) -> EventService:
 
 def get_event_stream_service(ctx: Context = Depends(get_ctx)) -> EventStreamService:
     return EventStreamService(ctx)
+
+
+def get_webhook_endpoint_service(ctx: Context = Depends(get_ctx)) -> WebhookEndpointService:
+    return WebhookEndpointService(ctx)
 
 
 def get_monitoring_service(request: Request) -> MonitoringService:

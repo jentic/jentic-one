@@ -7,6 +7,7 @@ import { workspaceHandlers } from '@/modules/workspace/mocks/handlers';
 import { credentialsHandlers, credentialsE2eHooks } from '@/shared/credentials/mocks/handlers';
 import { railEventsHandlers } from '@/shared/app/rail/mocks/handlers';
 import { monitorHandlers } from '@/modules/monitor/mocks/handlers';
+import { webhooksHandlers } from '@/modules/webhooks/mocks/handlers';
 
 /**
  * Root MSW handler table.
@@ -38,7 +39,11 @@ const mockUser = {
 	first_name: 'Admin',
 	last_name: 'User',
 	active: true,
-	permissions: ['org:admin'],
+	// The real `/users/me` returns the EFFECTIVE (implication-expanded) set, not
+	// the raw grant — `org:admin` implies everything. Listing the webhook scopes
+	// explicitly keeps this fixture faithful for `usePermission('webhooks:write')`,
+	// which compares literally and would otherwise hide the console from an admin.
+	permissions: ['org:admin', 'webhooks:read', 'webhooks:write'],
 	must_change_password: false,
 	created_at: '2026-01-01T00:00:00Z',
 	updated_at: null,
@@ -166,6 +171,7 @@ export const handlers = [
 	// here keeps the Monitor page working in mocked dev when no other module's
 	// handler claimed the path.
 	...monitorHandlers,
+	...webhooksHandlers,
 	// Extensibility seam: `handlers` is exported (not module-private) so a
 	// consumer can compose `[...handlers, ...extraHandlers]`. MSW is
 	// FIRST-MATCH-WINS, so a consumer must append at a DELIBERATE position —

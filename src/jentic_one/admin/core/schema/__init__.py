@@ -23,6 +23,9 @@ from jentic_one.admin.core.schema.setup_sentinel import SetupSentinel
 from jentic_one.admin.core.schema.user_permission_grants import UserPermissionGrant
 from jentic_one.admin.core.schema.user_secrets import UserSecret
 from jentic_one.admin.core.schema.users import User
+from jentic_one.admin.core.schema.webhook_deliveries import WebhookDelivery
+from jentic_one.admin.core.schema.webhook_endpoints import WebhookEndpoint
+from jentic_one.admin.core.schema.webhook_events import WebhookEvent
 from jentic_one.shared.db.base import AdminBase
 
 __all__ = [
@@ -48,4 +51,7 @@ __all__ = [
     "User",
     "UserPermissionGrant",
     "UserSecret",
+    "WebhookDelivery",
+    "WebhookEndpoint",
+    "WebhookEvent",
 ]

@@ -22,6 +22,7 @@ from jentic_one.admin.web.routers import (
     monitoring,
     permissions,
     users,
+    webhook_endpoints,
 )
 from jentic_one.shared.auth.api_key_resolver import (
     AGENT_API_KEY_PREFIX,
@@ -60,6 +61,9 @@ def get_routers() -> list[tuple[APIRouter, str, list[str]]]:
         (audit.router, "", []),
         (monitoring.router, "", []),
         (config.router, "", []),
+        # Management of webhook endpoints is identity-authenticated and requires
+        # the privileged webhooks:write scope.
+        (webhook_endpoints.router, "", []),
     ]
 
 

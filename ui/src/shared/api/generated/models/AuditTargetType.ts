@@ -27,4 +27,6 @@ export enum AuditTargetType {
     CREDENTIAL_BINDING = 'credential_binding',
     SESSION = 'session',
     PROVIDER_CONFIG = 'provider_config',
+    WEBHOOK_ENDPOINT = 'webhook_endpoint',
+    WEBHOOK_DELIVERY = 'webhook_delivery',
 }

@@ -1256,6 +1256,8 @@ components:
       - credential_binding
       - session
       - provider_config
+      - webhook_endpoint
+      - webhook_delivery
       title: AuditTargetType
       type: string
     BasicAuthCreateRequest:
@@ -5475,6 +5477,220 @@ components:
       - current
       - update_available
       title: VersionResponse
+      type: object
+    WebhookDeliveryListResponse:
+      description: Delivery history for an endpoint.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/WebhookDeliveryResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: WebhookDeliveryListResponse
+      type: object
+    WebhookDeliveryResponse:
+      description: One delivery attempt record — the operator's debugging view.
+      properties:
+        attempt_count:
+          title: Attempt Count
+          type: integer
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        delivery_id:
+          title: Delivery Id
+          type: string
+        endpoint_id:
+          title: Endpoint Id
+          type: string
+        event_id:
+          title: Event Id
+          type: string
+        last_attempt_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Last Attempt At
+        last_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Last Error
+        last_status_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Last Status Code
+        next_attempt_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Next Attempt At
+        status:
+          title: Status
+          type: string
+      required:
+      - delivery_id
+      - event_id
+      - endpoint_id
+      - status
+      - attempt_count
+      - next_attempt_at
+      - last_attempt_at
+      - last_status_code
+      - last_error
+      - created_at
+      title: WebhookDeliveryResponse
+      type: object
+    WebhookEndpointCreateRequest:
+      description: Request body for creating a webhook endpoint.
+      properties:
+        event_types:
+          description: Event types to subscribe to. Empty means all relayable types.
+          items:
+            type: string
+          title: Event Types
+          type: array
+        name:
+          maxLength: 255
+          minLength: 1
+          title: Name
+          type: string
+        target_url:
+          anyOf:
+          - maxLength: 2048
+            type: string
+          - type: 'null'
+          description: 'Required for notification endpoints: the URL signed events are POSTed to.'
+          title: Target Url
+      required:
+      - name
+      title: WebhookEndpointCreateRequest
+      type: object
+    WebhookEndpointCreatedResponse:
+      description: |-
+        Creation result, including the one-time secret.
+
+        This is the **only** response that carries the plaintext secret (alongside
+        rotation). It is not recoverable afterwards: it is stored encrypted so the
+        platform can sign and verify with it, but exposing it again would make every
+        read a secret-disclosure endpoint. Lost secret ⇒ rotate.
+      properties:
+        endpoint:
+          $ref: '#/components/schemas/WebhookEndpointResponse'
+        secret:
+          description: Shown once and never again. Store it now.
+          title: Secret
+          type: string
+      required:
+      - endpoint
+      - secret
+      title: WebhookEndpointCreatedResponse
+      type: object
+    WebhookEndpointListResponse:
+      description: All configured webhook endpoints.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/WebhookEndpointResponse'
+          title: Data
+          type: array
+      required:
+      - data
+      title: WebhookEndpointListResponse
+      type: object
+    WebhookEndpointResponse:
+      description: A webhook endpoint. Deliberately carries no secret material.
+      properties:
+        active:
+          title: Active
+          type: boolean
+        created_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Created At
+        endpoint_id:
+          title: Endpoint Id
+          type: string
+        event_types:
+          items:
+            type: string
+          title: Event Types
+          type: array
+        name:
+          title: Name
+          type: string
+        target_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Target Url
+      required:
+      - endpoint_id
+      - name
+      - target_url
+      - event_types
+      - active
+      - created_at
+      title: WebhookEndpointResponse
+      type: object
+    WebhookSecretRotateRequest:
+      description: Request body for rotating an endpoint secret.
+      properties:
+        grace_seconds:
+          anyOf:
+          - maximum: 604800.0
+            minimum: 0.0
+            type: integer
+          - type: 'null'
+          description: How long the previous secret keeps working, so the far side can be updated without dropping in-flight events. 0 revokes immediately — correct for a leaked secret, at the cost of those events. Omit for the 24 hour default.
+          title: Grace Seconds
+      title: WebhookSecretRotateRequest
+      type: object
+    WebhookSecretRotatedResponse:
+      description: Rotation result, including the new one-time secret.
+      properties:
+        endpoint_id:
+          title: Endpoint Id
+          type: string
+        previous_secret_expires_at:
+          anyOf:
+          - format: date-time
+            type: string
+          - type: 'null'
+          title: Previous Secret Expires At
+        secret:
+          description: The new secret. Shown once and never again.
+          title: Secret
+          type: string
+      required:
+      - endpoint_id
+      - secret
+      - previous_secret_expires_at
+      title: WebhookSecretRotatedResponse
+      type: object
+    WebhookTestQueuedResponse:
+      description: Result of queueing a test event.
+      properties:
+        delivery_id:
+          title: Delivery Id
+          type: string
+        message:
+          default: Test event queued; the dispatcher will send it shortly.
+          title: Message
+          type: string
+      required:
+      - delivery_id
+      title: WebhookTestQueuedResponse
       type: object
     jentic_one__auth__web__schemas__agents__DenyRequest:
       description: Request body for denying an agent.
@@ -17040,6 +17256,519 @@ paths:
       summary: Redeem invite
       tags:
       - Users
+  /webhooks/deliveries/{delivery_id}:resend:
+    post:
+      description: 'Requeues a delivery for another attempt — including a dead-lettered one, which is the point: an operator can retry after fixing the receiver. Requeues rather than sending inline, so the dispatcher stays the only thing doing outbound network I/O.'
+      operationId: resendDelivery
+      parameters:
+      - in: path
+        name: delivery_id
+        required: true
+        schema:
+          title: Delivery Id
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Resend a delivery
+      tags:
+      - Webhooks
+  /webhooks/endpoints:
+    get:
+      description: List all configured endpoints. Never includes secret material.
+      operationId: listEndpoints
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List webhook endpoints
+      tags:
+      - Webhooks
+    post:
+      description: Creates an outbound notification endpoint and returns the signing secret **once**. Requires the privileged `webhooks:write` scope, and the creation is audited.
+      operationId: createEndpoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointCreateRequest'
+        required: true
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointCreatedResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Create a webhook endpoint
+      tags:
+      - Webhooks
+  /webhooks/endpoints/{endpoint_id}:
+    delete:
+      description: Delete an endpoint and its delivery history (audited).
+      operationId: deleteEndpoint
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      responses:
+        '204':
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Delete a webhook endpoint
+      tags:
+      - Webhooks
+    get:
+      description: Inspect one endpoint.
+      operationId: getEndpoint
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Get a webhook endpoint
+      tags:
+      - Webhooks
+  /webhooks/endpoints/{endpoint_id}/deliveries:
+    get:
+      description: 'The delivery log: what was sent, what came back, how many attempts, and when the next one is due. Dead-lettered rows stay here for inspection rather than being deleted, so a failure can be diagnosed after the fact.'
+      operationId: listDeliveries
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryListResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: List delivery attempts for an endpoint
+      tags:
+      - Webhooks
+  /webhooks/endpoints/{endpoint_id}:rotate-secret:
+    post:
+      description: 'Issues a new secret and returns it once. The previous secret keeps working for a grace period so both sides can be updated without dropping events; pass `grace_seconds: 0` to revoke it immediately (correct for a leak).'
+      operationId: rotateSecret
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/WebhookSecretRotateRequest'
+              - type: 'null'
+              title: Payload
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookSecretRotatedResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Rotate an endpoint's signing secret
+      tags:
+      - Webhooks
+  /webhooks/endpoints/{endpoint_id}:test:
+    post:
+      description: Queues a synthetic `webhook.test` event so wiring can be confirmed without waiting for something real to happen. The payload is explicitly marked as a test so a receiver can avoid acting on it.
+      operationId: sendTestEvent
+      parameters:
+      - in: path
+        name: endpoint_id
+        required: true
+        schema:
+          title: Endpoint Id
+          type: string
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookTestQueuedResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/problem+json:
+              example: *id001
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Bad Request
+        '401':
+          content:
+            application/problem+json:
+              example: *id005
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unauthorized
+        '403':
+          content:
+            application/problem+json:
+              example: *id006
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Forbidden
+        '422':
+          content:
+            application/problem+json:
+              example: *id002
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Unprocessable Entity
+        '500':
+          content:
+            application/problem+json:
+              example: *id003
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Internal Server Error
+        '503':
+          content:
+            application/problem+json:
+              example: *id004
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+          description: Service Unavailable
+      security:
+      - BearerAuth: []
+      summary: Send a test event
+      tags:
+      - Webhooks
 security:
 - BearerAuth: []
 servers:
@@ -17146,6 +17875,13 @@ tags:
 - description: Curated, severity-tagged event stream surfaced to dashboards and operators. Each event is either **informational** (no action required, e.g. `import.completed`) or **actionable** (requires operator follow-up, e.g. `credential.expiring_soon`, `execution.repeated_failure`). Events reference the underlying `ExecutionRecord` or `Job` via `_links` and share `trace_id` for correlation. Subscribe live via `GET /events/stream` (Server-Sent Events) or poll `GET /events` with a `since=` filter.
   name: Events
 - description: |-
+    Outbound event delivery, plus the operator surface that configures it.
+
+    **Outbound notifications** push signed platform events (a credential expiring, a job failing) to a destination URL, with retries, capped jittered backoff, and dead-lettering for inspection.
+
+    **Management** routes are ordinary identity-authenticated endpoints requiring `webhooks:write` — creating an endpoint is privileged and audited. Signing secrets are returned **once**, at creation and rotation; they are never readable afterwards, so a lost secret is rotated rather than recovered.
+  name: Webhooks
+- description: |-
     Part of the **Admin / Audit** bounded context — the human roster of the organisation. One organisation, many users; admin surfaces here cover create / list / read / update / delete plus the AIP-style action verbs (`:disable`, `:enable`, `:reissue-invite`). Self-service is intentionally minimal: `GET /users/me` to introspect, `POST /users/me:change-password` to rotate (which re-mints and returns a fresh token, clearing any `must_change_password` gate so the caller need not re-login).
 
     **First-run setup (no default credentials).** The platform ships with an empty users table — there is no seeded `admin@local` account. On a fresh install `GET /health` reports `setup_required: true` (with `next_step: create_admin`). The operator creates the first administrator via `POST /users:create-admin {email, password}`: a one-time, unauthenticated endpoint that succeeds only while no user exists, grants `org:admin`, and returns an auto-login `LoginResponse` with `must_change_password: false` (the operator chose the password, so there is no forced rotation). It **self-closes** — once any user exists it returns `410 setup_already_complete`, so it is safe to leave exposed during first boot; a single-row setup sentinel is the concurrency backstop against racing callers (even ones using different emails). After the first user exists, `setup_required` flips to `false`.
@@ -17215,6 +17951,7 @@ x-tagGroups:
   - Executions
   - Jobs
   - Events
+  - Webhooks
   - Audit
   - Monitoring
   - Configuration

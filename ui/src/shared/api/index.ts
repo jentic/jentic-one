@@ -263,3 +263,18 @@ export type { VersionResponse } from '@/shared/api/generated/models/VersionRespo
 // session bundle as password login. Append-only, like the rest.
 export { getIdpDescriptor, exchangeAuthCode } from '@/shared/api/idp';
 export type { IdpDescriptor } from '@/shared/api/idp';
+
+// Webhooks module (outbound notifications). The management surface —
+// endpoint CRUD, one-time secret reveal/rotate, test-event queueing, and the
+// delivery log — lives on `WebhooksService`. This build ships outbound
+// notifications only. Append-only, like the rest.
+export { WebhooksService } from '@/shared/api/generated/services/WebhooksService';
+export type { WebhookEndpointResponse } from '@/shared/api/generated/models/WebhookEndpointResponse';
+export type { WebhookEndpointListResponse } from '@/shared/api/generated/models/WebhookEndpointListResponse';
+export type { WebhookEndpointCreateRequest } from '@/shared/api/generated/models/WebhookEndpointCreateRequest';
+export type { WebhookEndpointCreatedResponse } from '@/shared/api/generated/models/WebhookEndpointCreatedResponse';
+export type { WebhookDeliveryResponse } from '@/shared/api/generated/models/WebhookDeliveryResponse';
+export type { WebhookDeliveryListResponse } from '@/shared/api/generated/models/WebhookDeliveryListResponse';
+export type { WebhookSecretRotateRequest } from '@/shared/api/generated/models/WebhookSecretRotateRequest';
+export type { WebhookSecretRotatedResponse } from '@/shared/api/generated/models/WebhookSecretRotatedResponse';
+export type { WebhookTestQueuedResponse } from '@/shared/api/generated/models/WebhookTestQueuedResponse';

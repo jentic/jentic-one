@@ -1604,7 +1604,9 @@
           "toolkits:read",
           "toolkits:write",
           "users:read",
-          "users:write"
+          "users:write",
+          "webhooks:read",
+          "webhooks:write"
         ]
       },
       "method": "POST",
@@ -2198,7 +2200,9 @@
           "toolkits:read",
           "toolkits:write",
           "users:read",
-          "users:write"
+          "users:write",
+          "webhooks:read",
+          "webhooks:write"
         ]
       },
       "method": "GET",
@@ -2247,7 +2251,9 @@
           "toolkits:read",
           "toolkits:write",
           "users:read",
-          "users:write"
+          "users:write",
+          "webhooks:read",
+          "webhooks:write"
         ]
       },
       "method": "GET",
@@ -3637,6 +3643,208 @@
     },
     {
       "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "resendDelivery",
+      "path": "/webhooks/deliveries/{delivery_id}:resend",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Resend a delivery",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "listEndpoints",
+      "path": "/webhooks/endpoints",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "List webhook endpoints",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "createEndpoint",
+      "path": "/webhooks/endpoints",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Create a webhook endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "DELETE",
+      "operation_id": "deleteEndpoint",
+      "path": "/webhooks/endpoints/{endpoint_id}",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Delete a webhook endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "getEndpoint",
+      "path": "/webhooks/endpoints/{endpoint_id}",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "Get a webhook endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:read": []
+      },
+      "method": "GET",
+      "operation_id": "listDeliveries",
+      "path": "/webhooks/endpoints/{endpoint_id}/deliveries",
+      "public": false,
+      "required_scopes": [
+        "webhooks:read"
+      ],
+      "summary": "List delivery attempts for an endpoint",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "rotateSecret",
+      "path": "/webhooks/endpoints/{endpoint_id}:rotate-secret",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Rotate an endpoint's signing secret",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
+        "user",
+        "agent",
+        "service_account",
+        "toolkit"
+      ],
+      "auth_note": null,
+      "authenticated": true,
+      "group": "Any authenticated actor",
+      "implied_scopes": {
+        "webhooks:write": [
+          "webhooks:read"
+        ]
+      },
+      "method": "POST",
+      "operation_id": "sendTestEvent",
+      "path": "/webhooks/endpoints/{endpoint_id}:test",
+      "public": false,
+      "required_scopes": [
+        "webhooks:write"
+      ],
+      "summary": "Send a test event",
+      "surface": "webhooks",
+      "typical_caller": "any"
+    },
+    {
+      "actor_types": [
         "agent",
         "service_account",
         "toolkit"
@@ -3813,7 +4021,9 @@
               "toolkits:read",
               "toolkits:write",
               "users:read",
-              "users:write"
+              "users:write",
+              "webhooks:read",
+              "webhooks:write"
             ],
             "implies_transitive": [
               "agents:read",
@@ -3839,7 +4049,9 @@
               "toolkits:read",
               "toolkits:write",
               "users:read",
-              "users:write"
+              "users:write",
+              "webhooks:read",
+              "webhooks:write"
             ],
             "is_superuser": true,
             "name": "org:admin"
@@ -4282,6 +4494,35 @@
             "name": "config:write"
           }
         ]
+      },
+      {
+        "blurb": "",
+        "label": "Webhooks",
+        "name": "webhooks",
+        "scopes": [
+          {
+            "action": "read",
+            "description": "Read webhook endpoint configuration and delivery history",
+            "family": "webhooks",
+            "implies": [],
+            "implies_transitive": [],
+            "is_superuser": false,
+            "name": "webhooks:read"
+          },
+          {
+            "action": "write",
+            "description": "Create, rotate, and delete webhook endpoints. Privileged: an endpoint receives signed platform events at a destination URL, so configuring one is deliberately operator-only and never granted to agents by default",
+            "family": "webhooks",
+            "implies": [
+              "webhooks:read"
+            ],
+            "implies_transitive": [
+              "webhooks:read"
+            ],
+            "is_superuser": false,
+            "name": "webhooks:write"
+          }
+        ]
       }
     ],
     "schema": "jentic.scope-catalog/v1",
@@ -4505,7 +4746,9 @@
           "toolkits:read",
           "toolkits:write",
           "users:read",
-          "users:write"
+          "users:write",
+          "webhooks:read",
+          "webhooks:write"
         ],
         "implies_transitive": [
           "agents:read",
@@ -4531,7 +4774,9 @@
           "toolkits:read",
           "toolkits:write",
           "users:read",
-          "users:write"
+          "users:write",
+          "webhooks:read",
+          "webhooks:write"
         ],
         "is_superuser": true,
         "name": "org:admin"
@@ -4676,9 +4921,31 @@
         ],
         "is_superuser": false,
         "name": "users:write"
+      },
+      {
+        "action": "read",
+        "description": "Read webhook endpoint configuration and delivery history",
+        "family": "webhooks",
+        "implies": [],
+        "implies_transitive": [],
+        "is_superuser": false,
+        "name": "webhooks:read"
+      },
+      {
+        "action": "write",
+        "description": "Create, rotate, and delete webhook endpoints. Privileged: an endpoint receives signed platform events at a destination URL, so configuring one is deliberately operator-only and never granted to agents by default",
+        "family": "webhooks",
+        "implies": [
+          "webhooks:read"
+        ],
+        "implies_transitive": [
+          "webhooks:read"
+        ],
+        "is_superuser": false,
+        "name": "webhooks:write"
       }
     ],
-    "total": 31
+    "total": 33
   },
-  "total": 159
+  "total": 167
 }

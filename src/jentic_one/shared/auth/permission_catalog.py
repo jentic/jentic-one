@@ -54,6 +54,8 @@ SERVICE_ACCOUNTS_READ = "service-accounts:read"
 SERVICE_ACCOUNTS_WRITE = "service-accounts:write"
 CONFIG_READ = "config:read"
 CONFIG_WRITE = "config:write"
+WEBHOOKS_READ = "webhooks:read"
+WEBHOOKS_WRITE = "webhooks:write"
 ORG_ADMIN = "org:admin"
 
 
@@ -96,6 +98,8 @@ ALL_PERMISSIONS: dict[str, Permission] = {
                 SERVICE_ACCOUNTS_READ,
                 CONFIG_WRITE,
                 CONFIG_READ,
+                WEBHOOKS_WRITE,
+                WEBHOOKS_READ,
             }
         ),
     ),
@@ -210,6 +214,19 @@ ALL_PERMISSIONS: dict[str, Permission] = {
         name=CONFIG_READ,
         description="Read runtime platform configuration",
     ),
+    WEBHOOKS_WRITE: Permission(
+        name=WEBHOOKS_WRITE,
+        description=(
+            "Create, rotate, and delete webhook endpoints. Privileged: an endpoint "
+            "receives signed platform events at a destination URL, so configuring one "
+            "is deliberately operator-only and never granted to agents by default"
+        ),
+        implies=frozenset({WEBHOOKS_READ}),
+    ),
+    WEBHOOKS_READ: Permission(
+        name=WEBHOOKS_READ,
+        description="Read webhook endpoint configuration and delivery history",
+    ),
     OWNER_RESOURCES_READ: Permission(
         name=OWNER_RESOURCES_READ,
         description="Read resources owned by the agent's creator (umbrella)",
@@ -302,6 +319,8 @@ __all__ = [
     "TOOLKITS_WRITE",
     "USERS_READ",
     "USERS_WRITE",
+    "WEBHOOKS_READ",
+    "WEBHOOKS_WRITE",
     "Permission",
     "compute_effective",
     "compute_implies_transitive",
