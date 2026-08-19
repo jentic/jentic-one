@@ -782,16 +782,32 @@ func agentBashArgs(agentUser, snippet string) []string {
 // typically inside the operator's now-700 home, which the agent user cannot
 // read — inheriting it makes bash spew `getcwd: Permission denied` before the
 // snippet even runs. "/" is traversable by everyone.
+//
+// The environment is the curated launchEnv allowlist, NOT the operator's full
+// environment — the same env the confined launch hands to sudo. This is what
+// keeps the binary PROBE truthful: sudo's env_reset preserves the caller's
+// PATH unless sudoers sets secure_path (macOS's default sudoers sets none), so
+// an inherited environment leaks the OPERATOR's PATH into the agent's shell —
+// `command -v <binary>` then resolves the operator's copy under the operator's
+// (agent-unreachable) home, the provisioning flow is skipped as "already
+// installed", and the launch (which does use the curated env) dies with
+// `exec: <binary>: not found`. Probing with the launch's own environment makes
+// the probe answer the question the launch will actually ask. It also stops
+// operator-exported secrets from riding into agent-side commands.
 func agentCmd(agentUser, snippet string) *exec.Cmd {
 	cmd := exec.Command("sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted / a fixed literal.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
-// agentCmdContext is agentCmd with a cancellation context (for the launch).
+// agentCmdContext is agentCmd with a cancellation context. It carries the same
+// curated launchEnv environment — see agentCmd for why the probe/launch envs
+// must match.
 func agentCmdContext(ctx context.Context, agentUser, snippet string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "sudo", agentBashArgs(agentUser, snippet)...) //nolint:gosec // agentUser is a config account name; snippet is shell-quoted.
 	cmd.Dir = "/"
+	cmd.Env = launchEnv()
 	return cmd
 }
 
